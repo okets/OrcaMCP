@@ -1,12 +1,266 @@
-# CLAUDE.md
+# CLAUDE.md - OrcaMCP Project
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code when working with the OrcaMCP project.
+
+---
+
+## CRITICAL: MIGRATION TASK IN PROGRESS
+
+**This is a fresh fork of OrcaSlicer with a pending migration task.**
+
+The goal is to add an MCP (Model Context Protocol) server that enables Claude Code CLI to control the slicer. The MCP server code exists in a separate project (JusPrin) and needs to be migrated here with renaming.
+
+### Source Code Location
+The MCP server source code is at:
+```
+/Users/hanan/Projects/JusPrin/src/slic3r/GUI/JusPrin/
+```
+
+You have READ access to this folder. Use it to copy and adapt the MCP server code.
+
+---
+
+## Migration Checklist
+
+### Phase 1: Copy and Rename MCP Files
+- [ ] Create `src/slic3r/GUI/OrcaMCP/` directory
+- [ ] Copy and rename MCP server files (see table below)
+- [ ] Apply find/replace renaming in all copied files
+- [ ] Remove JusPrinChatPanel dependencies
+
+### Phase 2: Modify Core Files
+- [ ] Modify `src/slic3r/GUI/HttpServer.hpp` - Add ResponseJson, RequestHandlerFn
+- [ ] Modify `src/slic3r/GUI/HttpServer.cpp` - Add read_body(), JSON response impl
+- [ ] Modify `src/slic3r/GUI/GUI_App.cpp` - Add MCP route handler
+- [ ] Modify `src/slic3r/CMakeLists.txt` - Add OrcaMCP source files
+
+### Phase 3: Build and Test
+- [ ] Build dependencies: `./build_release_macos.sh -d`
+- [ ] Build slicer: `./build_release_macos.sh -s`
+- [ ] Test: `curl http://localhost:13618/mcp`
+- [ ] Test with Claude Code
+
+---
+
+## Files to Copy
+
+| Source (JusPrin) | Destination (OrcaMCP) |
+|------------------|----------------------|
+| `GUI/JusPrin/JusPrinMCPServer.hpp` | `GUI/OrcaMCP/OrcaMCPServer.hpp` |
+| `GUI/JusPrin/JusPrinMCPServer.cpp` | `GUI/OrcaMCP/OrcaMCPServer.cpp` |
+| `GUI/JusPrin/JusPrinPlateUtils.hpp` | `GUI/OrcaMCP/OrcaMCPPlateUtils.hpp` |
+| `GUI/JusPrin/JusPrinPlateUtils.cpp` | `GUI/OrcaMCP/OrcaMCPPlateUtils.cpp` |
+| `GUI/JusPrin/JusPrinPresetConfigUtils.hpp` | `GUI/OrcaMCP/OrcaMCPPresetConfigUtils.hpp` |
+| `GUI/JusPrin/JusPrinPresetConfigUtils.cpp` | `GUI/OrcaMCP/OrcaMCPPresetConfigUtils.cpp` |
+| `scripts/jusprin-mcp-bridge.py` | `scripts/orcamcp-bridge.py` |
+
+---
+
+## Renaming Rules
+
+Apply these find/replace operations to ALL copied files:
+
+| Find | Replace |
+|------|---------|
+| `JusPrinMCPServer` | `OrcaMCPServer` |
+| `JusPrinPlateUtils` | `OrcaMCPPlateUtils` |
+| `JusPrinPresetConfigUtils` | `OrcaMCPPresetConfigUtils` |
+| `slic3r_JusPrinMCPServer_hpp_` | `slic3r_OrcaMCPServer_hpp_` |
+| `slic3r_GUI_JusPrinPlateUtils_hpp_` | `slic3r_GUI_OrcaMCPPlateUtils_hpp_` |
+| `slic3r_GUI_JusPrinPresetConfigUtils_hpp_` | `slic3r_GUI_OrcaMCPPresetConfigUtils_hpp_` |
+| `#include "JusPrinPlateUtils.hpp"` | `#include "OrcaMCPPlateUtils.hpp"` |
+| `#include "JusPrinPresetConfigUtils.hpp"` | `#include "OrcaMCPPresetConfigUtils.hpp"` |
+| `/tmp/jusprin_` | `/tmp/orcamcp_` |
+| `"jusprin"` | `"orcamcp"` |
+| `"JusPrin"` | `"OrcaSlicer"` (in user-facing strings) |
+
+---
+
+## Lines to DELETE (JusPrinChatPanel Dependencies)
+
+In `OrcaMCPPlateUtils.cpp` and `OrcaMCPPresetConfigUtils.cpp`, DELETE any lines containing:
+```cpp
+jusprinChatPanel()->SendNativeErrorOccurredEvent
+```
+
+These are calls to a chat UI that doesn't exist in OrcaMCP.
+
+---
+
+## HttpServer Modifications
+
+The upstream OrcaSlicer HttpServer lacks POST body reading and JSON responses. You need to add these.
+
+### HttpServer.hpp - Add after ResponseRedirect class:
+
+```cpp
+class ResponseJson : public Response
+{
+    const std::string json_str;
+    int status_code;
+
+public:
+    ResponseJson(const std::string& json, int status = 200) : json_str(json), status_code(status) {}
+    ~ResponseJson() override = default;
+    void write_response(std::stringstream& ssOut) override;
+};
+
+// Request handler type that includes method, URL, and body
+using RequestHandlerFn = std::function<std::shared_ptr<Response>(const std::string& method, const std::string& url, const std::string& body)>;
+```
+
+### HttpServer.hpp - Update declarations:
+
+```cpp
+void set_request_handler(const RequestHandlerFn& request_handler);
+void set_request_handler(const std::function<std::shared_ptr<Response>(const std::string&)>& request_handler);
+static std::shared_ptr<Response> bbl_auth_handle_request(const std::string& method, const std::string& url, const std::string& body);
+```
+
+### HttpServer.hpp - Add to session class:
+
+```cpp
+std::string body;
+void read_body();
+```
+
+### HttpServer.cpp - Reference Implementation
+
+Copy the following implementations from JusPrin's HttpServer.cpp:
+- `ResponseJson::write_response()`
+- `session::read_body()`
+- Updated `session::process_request()` with body parameter
+- Updated `set_request_handler()` overloads
+
+The JusPrin HttpServer.cpp is at:
+```
+/Users/hanan/Projects/JusPrin/src/slic3r/GUI/HttpServer.cpp
+```
+
+---
+
+## CMakeLists.txt Modification
+
+**File:** `src/slic3r/CMakeLists.txt`
+
+Find the `set(SLIC3R_GUI_SOURCES` section and add:
+
+```cmake
+    GUI/OrcaMCP/OrcaMCPServer.hpp
+    GUI/OrcaMCP/OrcaMCPServer.cpp
+    GUI/OrcaMCP/OrcaMCPPlateUtils.hpp
+    GUI/OrcaMCP/OrcaMCPPlateUtils.cpp
+    GUI/OrcaMCP/OrcaMCPPresetConfigUtils.hpp
+    GUI/OrcaMCP/OrcaMCPPresetConfigUtils.cpp
+```
+
+---
+
+## GUI_App.cpp Modification
+
+**File:** `src/slic3r/GUI/GUI_App.cpp`
+
+### Add include at top:
+```cpp
+#include "OrcaMCP/OrcaMCPServer.hpp"
+```
+
+### Find and update `start_http_server()` method:
+
+```cpp
+void GUI_App::start_http_server()
+{
+    if (!m_http_server.is_started()) {
+        m_http_server.set_request_handler([](const std::string& method, const std::string& url, const std::string& body)
+            -> std::shared_ptr<HttpServer::Response> {
+            // Route /mcp requests to MCP server
+            if (url.find("/mcp") != std::string::npos) {
+                return OrcaMCPServer::handle_request(method, url, body);
+            }
+            // Fall back to default handler
+            return HttpServer::bbl_auth_handle_request(method, url, body);
+        });
+        m_http_server.start();
+    }
+}
+```
+
+---
+
+## Bridge Script (orcamcp-bridge.py)
+
+Update these in the copied script:
+
+```python
+# Environment variables
+ORCAMCP_HOST = os.environ.get("ORCAMCP_HOST", "localhost")
+ORCAMCP_PORT = int(os.environ.get("ORCAMCP_PORT", "13618"))
+ORCAMCP_URL = f"http://{ORCAMCP_HOST}:{ORCAMCP_PORT}/mcp"
+TIMEOUT = int(os.environ.get("ORCAMCP_TIMEOUT", "120"))
+
+# Debug logging
+def log_debug(message: str):
+    if os.environ.get("ORCAMCP_DEBUG"):
+        print(f"[orcamcp-bridge] {message}", file=sys.stderr)
+```
+
+---
+
+## .mcp.json Configuration
+
+Create `.mcp.json` in project root:
+
+```json
+{
+  "mcpServers": {
+    "orcamcp": {
+      "command": "python3",
+      "args": ["./scripts/orcamcp-bridge.py"]
+    }
+  }
+}
+```
+
+---
+
+## Testing Checklist
+
+After building, verify:
+
+1. **App launches:** Run OrcaSlicer, check for errors
+2. **HTTP endpoint:** `curl http://localhost:13618/mcp` returns server info JSON
+3. **Initialize:** POST `{"jsonrpc":"2.0","method":"initialize","id":1}` works
+4. **Tools list:** POST `{"jsonrpc":"2.0","method":"tools/list","id":2}` returns 44 tools
+5. **get_scene_info:** Works and returns bed dimensions
+6. **load_model:** Successfully loads an STL file
+7. **slice_all:** Starts slicing
+8. **render_plate_view:** Returns base64 image
+
+---
 
 ## Overview
 
-OrcaSlicer is an open-source 3D slicer application forked from Bambu Studio, built using C++ with wxWidgets for the GUI and CMake as the build system. The project uses a modular architecture with separate libraries for core slicing functionality, GUI components, and platform-specific code.
+OrcaSlicer is an open-source 3D slicer application forked from Bambu Studio, built using C++ with wxWidgets for the GUI and CMake as the build system.
 
 ## Build Commands
+
+### Building on macOS
+```bash
+# Build everything (dependencies and slicer)
+./build_release_macos.sh
+
+# Build only dependencies (first time)
+./build_release_macos.sh -d
+
+# Build only slicer (after deps are built)
+./build_release_macos.sh -s
+
+# Use Ninja generator for faster builds
+./build_release_macos.sh -x
+
+# Build for specific architecture
+./build_release_macos.sh -a arm64    # or x86_64 or universal
+```
 
 ### Building on Windows
 ```bash
@@ -21,29 +275,6 @@ build_release_vs2022.bat deps
 
 # Build only slicer (after deps are built)
 build_release_vs2022.bat slicer
-
-
-```
-
-### Building on macOS
-```bash
-# Build everything (dependencies and slicer)
-./build_release_macos.sh
-
-# Build only dependencies
-./build_release_macos.sh -d
-
-# Build only slicer (after deps are built)
-./build_release_macos.sh -s
-
-# Use Ninja generator for faster builds
-./build_release_macos.sh -x
-
-# Build for specific architecture
-./build_release_macos.sh -a arm64    # or x86_64 or universal
-
-# Build for specific macOS version target
-./build_release_macos.sh -t 11.3
 ```
 
 ### Building on Linux
@@ -54,206 +285,62 @@ build_release_vs2022.bat slicer
 # Build dependencies and slicer
 ./build_linux.sh -dsi
 
-# Build everything (alternative)
-./build_linux.sh -dsi
-
 # Individual options:
 ./build_linux.sh -d    # dependencies only
-./build_linux.sh -s    # slicer only  
+./build_linux.sh -s    # slicer only
 ./build_linux.sh -i    # build AppImage
-
-# Performance and debug options:
-./build_linux.sh -j N  # limit to N cores
-./build_linux.sh -1    # single core build
-./build_linux.sh -b    # Debug build
-./build_linux.sh -e    # RelWithDebInfo build
-./build_linux.sh -c    # clean build
-./build_linux.sh -r    # skip RAM/disk checks
-./build_linux.sh -l    # use Clang instead of GCC
 ```
 
 ### Build System
-- Uses CMake with minimum version 3.13 (maximum 3.31.x on Windows)
+- Uses CMake with minimum version 3.13
 - Primary build directory: `build/`
 - Dependencies are built in `deps/build/`
-- The build process is split into dependency building and main application building
-- Windows builds use Visual Studio generators
-- macOS builds use Xcode by default, Ninja with -x flag
-- Linux builds use Ninja generator
 
-### Testing
-Tests are located in the `tests/` directory and use the Catch2 testing framework. Test structure:
-- `tests/libslic3r/` - Core library tests (21 test files)
-  - Geometry processing, algorithms, file formats (STL, 3MF, AMF)
-  - Polygon operations, clipper utilities, Voronoi diagrams
-- `tests/fff_print/` - Fused Filament Fabrication tests (12 test files)
-  - Slicing algorithms, G-code generation, print mechanics
-  - Fill patterns, extrusion, support material
-- `tests/sla_print/` - Stereolithography tests (4 test files)
-  - SLA-specific printing algorithms, support generation
-- `tests/libnest2d/` - 2D nesting algorithm tests
-- `tests/slic3rutils/` - Utility function tests
-- `tests/sandboxes/` - Experimental/sandbox test code
+---
 
-Run all tests after building:
-```bash
-cd build && ctest
+## MCP Server Architecture (After Migration)
+
+The MCP server exposes 44 tools for slicer automation:
+
+### Tool Categories
+- **Scene Management:** get_scene_info, new_project, load_project, save_project
+- **Plate Management:** add_plate, select_plate, delete_plate
+- **Model Operations:** load_model, auto_orient, arrange_objects
+- **Transforms:** move_object, rotate_object, scale_object, mirror_object, flatten_object, clone_object, cut_object, delete_object
+- **Configuration:** get_presets, select_preset, apply_config, get_valid_config_keys
+- **Per-Object Settings:** get_object_config, set_object_config, reset_object_config
+- **Layer Ranges:** get_object_layer_ranges, set_object_layer_range, delete_object_layer_range
+- **Slicing:** slice_all, get_slicing_status, export_gcode, get_print_estimate
+- **Visualization:** render_plate_view
+- **Printer:** get_printers, select_printer, send_to_printer
+- **Adaptive Layers:** apply_adaptive_layer_height, clear_adaptive_layer_height
+- **History:** undo, redo
+
+### Communication Flow
+```
+Claude Code CLI → stdio → orcamcp-bridge.py → HTTP POST → OrcaSlicer:13618/mcp → OrcaMCPServer
 ```
 
-Run tests with verbose output:
-```bash
-cd build && ctest --output-on-failure
-```
+---
 
-Run individual test suites:
-```bash
-# From build directory
-ctest --test-dir ./tests/libslic3r/libslic3r_tests
-ctest --test-dir ./tests/fff_print/fff_print_tests
-ctest --test-dir ./tests/sla_print/sla_print_tests
-# and so on
-```
+## Code Style Standards
 
-## Architecture
-
-### Core Libraries
-- **libslic3r/**: Core slicing engine and algorithms (platform-independent)
-  - Main slicing logic, geometry processing, G-code generation
-  - Key classes: Print, PrintObject, Layer, GCode, Config
-  - Modular design with specialized subdirectories:
-    - `GCode/` - G-code generation, cooling, pressure equalization, thumbnails
-    - `Fill/` - Infill pattern implementations (gyroid, honeycomb, lightning, etc.)
-    - `Support/` - Tree supports and traditional support generation
-    - `Geometry/` - Advanced geometry operations, Voronoi diagrams, medial axis
-    - `Format/` - File I/O for 3MF, AMF, STL, OBJ, STEP formats
-    - `SLA/` - SLA-specific print processing and support generation
-    - `Arachne/` - Advanced wall generation using skeletal trapezoidation
-
-- **src/slic3r/**: Main application framework and GUI
-  - GUI application built with wxWidgets
-  - Integration between libslic3r core and user interface
-  - Located in `src/slic3r/GUI/` (not shown in this directory but exists)
-
-### Key Algorithmic Components
-- **Arachne Wall Generation**: Variable-width perimeter generation using skeletal trapezoidation
-- **Tree Supports**: Organic support generation algorithm  
-- **Lightning Infill**: Sparse infill optimization for internal structures
-- **Adaptive Slicing**: Variable layer height based on geometry
-- **Multi-material**: Multi-extruder and soluble support processing
-- **G-code Post-processing**: Cooling, fan control, pressure advance, conflict checking
-
-### File Format Support
-- **3MF/BBS_3MF**: Native format with extensions for multi-material and metadata
-- **STL**: Standard tessellation language for 3D models
-- **AMF**: Additive Manufacturing Format with color/material support  
-- **OBJ**: Wavefront OBJ with material definitions
-- **STEP**: CAD format support for precise geometry
-- **G-code**: Output format with extensive post-processing capabilities
-
-### External Dependencies
-- **Clipper2**: Advanced 2D polygon clipping and offsetting
-- **libigl**: Computational geometry library for mesh operations
-- **TBB**: Intel Threading Building Blocks for parallelization
-- **wxWidgets**: Cross-platform GUI framework
-- **OpenGL**: 3D graphics rendering and visualization
-- **CGAL**: Computational Geometry Algorithms Library (selective use)
-- **OpenVDB**: Volumetric data structures for advanced operations
-- **Eigen**: Linear algebra library for mathematical operations
-
-## File Organization
-
-### Resources and Configuration
-- `resources/profiles/` - Printer and material profiles organized by manufacturer
-- `resources/printers/` - Printer-specific configurations and G-code templates  
-- `resources/images/` - UI icons, logos, calibration images
-- `resources/calib/` - Calibration test patterns and data
-- `resources/handy_models/` - Built-in test models (benchy, calibration cubes)
-
-### Internationalization and Localization  
-- `localization/i18n/` - Source translation files (.pot, .po)
-- `resources/i18n/` - Runtime language resources
-- Translation managed via `scripts/run_gettext.sh` / `scripts/run_gettext.bat`
-
-### Platform-Specific Code
-- `src/libslic3r/Platform.cpp` - Platform abstractions and utilities
-- `src/libslic3r/MacUtils.mm` - macOS-specific utilities (Objective-C++)
-- Windows-specific build scripts and configurations
-- Linux distribution support scripts in `scripts/linux.d/`
-
-### Build and Development Tools
-- `cmake/modules/` - Custom CMake find modules and utilities
-- `scripts/` - Python utilities for profile generation and validation  
-- `tools/` - Windows build tools (gettext utilities)
-- `deps/` - External dependency build configurations
-
-## Development Workflow
-
-### Code Style and Standards
+- **Single Responsibility:** Each method has one clear purpose
+- **DRY:** Validation logic is centralized
+- **Clean Code:** Methods are small, focused, and well-named
 - **C++17 standard** with selective C++20 features
-- **Naming conventions**: PascalCase for classes, snake_case for functions/variables
-- **Header guards**: Use `#pragma once` 
-- **Memory management**: Prefer smart pointers, RAII patterns
-- **Thread safety**: Use TBB for parallelization, be mindful of shared state
+- **Naming:** PascalCase for classes, snake_case for functions/variables
 
-### Common Development Tasks
+---
 
-#### Adding New Print Settings
-1. Define setting in `PrintConfig.cpp` with proper bounds and defaults
-2. Add UI controls in appropriate GUI components  
-3. Update serialization in config save/load
-4. Add tooltips and help text for user guidance
-5. Test with different printer profiles
+## Key Files Reference
 
-#### Modifying Slicing Algorithms  
-1. Core algorithms live in `libslic3r/` subdirectories
-2. Performance-critical code should be profiled and optimized
-3. Consider multi-threading implications (TBB integration)
-4. Validate changes don't break existing profiles
-5. Add regression tests where appropriate
-
-#### GUI Development
-1. GUI code resides in `src/slic3r/GUI/` (not visible in current tree)
-2. Use existing wxWidgets patterns and custom controls
-3. Support both light and dark themes
-4. Consider DPI scaling on high-resolution displays
-5. Maintain cross-platform compatibility
-
-#### Adding Printer Support
-1. Create JSON profile in `resources/profiles/[manufacturer].json`
-2. Add printer-specific start/end G-code templates
-3. Configure build volume, capabilities, and material compatibility
-4. Test thoroughly with actual hardware when possible
-5. Follow existing profile structure and naming conventions
-
-### Dependencies and Build System
-- **CMake-based** with separate dependency building phase
-- **Dependencies** built once in `deps/build/`, then linked to main application  
-- **Cross-platform** considerations important for all changes
-- **Resource files** embedded at build time, platform-specific handling
-
-### Performance Considerations
-- **Slicing algorithms** are CPU-intensive, profile before optimizing
-- **Memory usage** can be substantial with complex models
-- **Multi-threading** extensively used via TBB
-- **File I/O** optimized for large 3MF files with embedded textures
-- **Real-time preview** requires efficient mesh processing
-
-## Important Development Notes
-
-### Codebase Navigation
-- Use search tools extensively - codebase has 500k+ lines
-- Key entry points: `src/OrcaSlicer.cpp` for application startup
-- Core slicing: `libslic3r/Print.cpp` orchestrates the slicing pipeline
-- Configuration: `PrintConfig.cpp` defines all print/printer/material settings
-
-### Compatibility and Stability
-- **Backward compatibility** maintained for project files and profiles
-- **Cross-platform** support essential (Windows/macOS/Linux)  
-- **File format** changes require careful version handling
-- **Profile migrations** needed when settings change significantly
-
-### Quality and Testing
-- **Regression testing** important due to algorithm complexity
-- **Performance benchmarks** help catch performance regressions
-- **Memory leak** detection important for long-running GUI application
-- **Cross-platform** testing required before releases
+| File | Purpose |
+|------|---------|
+| `src/slic3r/GUI/OrcaMCP/OrcaMCPServer.hpp` | MCP server class definition |
+| `src/slic3r/GUI/OrcaMCP/OrcaMCPServer.cpp` | 44 tool implementations (~3,700 lines) |
+| `src/slic3r/GUI/OrcaMCP/OrcaMCPPlateUtils.cpp` | Plate rendering, turntable previews |
+| `src/slic3r/GUI/OrcaMCP/OrcaMCPPresetConfigUtils.cpp` | Preset/config management |
+| `src/slic3r/GUI/HttpServer.hpp` | HTTP server with JSON responses |
+| `src/slic3r/GUI/GUI_App.cpp` | MCP route registration |
+| `scripts/orcamcp-bridge.py` | stdio-to-HTTP bridge |

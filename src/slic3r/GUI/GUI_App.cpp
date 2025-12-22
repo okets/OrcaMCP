@@ -117,6 +117,9 @@
 #include "ModelMall.hpp"
 #include "HintNotification.hpp"
 
+// OrcaMCP Server for Claude Code integration
+#include "OrcaMCP/OrcaMCPServer.hpp"
+
 //#ifdef WIN32
 //#include "BaseException.h"
 //#endif
@@ -1029,6 +1032,9 @@ void GUI_App::post_init()
     CallAfter([this] {
             mainframe->refresh_plugin_tips();
         });
+
+    // Start HTTP server for MCP integration
+    start_http_server();
 
     // remove old log files over LOG_FILES_MAX_NUM
     std::string log_addr = data_dir();
@@ -5428,8 +5434,19 @@ void GUI_App::stop_sync_user_preset()
 
 void GUI_App::start_http_server()
 {
-    if (!m_http_server.is_started())
+    if (!m_http_server.is_started()) {
+        // Set up request handler that routes /mcp requests to MCP server
+        m_http_server.set_request_handler([](const std::string& method, const std::string& url, const std::string& body)
+            -> std::shared_ptr<HttpServer::Response> {
+            // Route /mcp requests to MCP server
+            if (url.find("/mcp") != std::string::npos) {
+                return OrcaMCPServer::handle_request(method, url, body);
+            }
+            // Fall back to default handler for other requests (BBL auth, etc.)
+            return HttpServer::bbl_auth_handle_request(method, url, body);
+        });
         m_http_server.start();
+    }
 }
 void GUI_App::stop_http_server()
 {

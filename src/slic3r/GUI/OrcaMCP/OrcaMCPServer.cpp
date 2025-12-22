@@ -1,0 +1,3698 @@
+#include "OrcaMCPServer.hpp"
+#include "OrcaMCPPresetConfigUtils.hpp"
+#include "OrcaMCPPlateUtils.hpp"
+#include "slic3r/GUI/GUI_App.hpp"
+#include "slic3r/GUI/Plater.hpp"
+#include "slic3r/GUI/MainFrame.hpp"
+#include "slic3r/GUI/GUI_ObjectList.hpp"
+#include "slic3r/GUI/DeviceManager.hpp"
+#include "slic3r/GUI/DeviceCore/DevManager.h"
+#include "slic3r/GUI/GLCanvas3D.hpp"
+#include "libslic3r/Model.hpp"
+#include "libslic3r/CutUtils.hpp"
+#include "libslic3r/Geometry.hpp"
+#include "libslic3r/PrintConfig.hpp"
+#include "libslic3r/Slicing.hpp"
+#include "libslic3r/Print.hpp"
+
+#include <boost/log/trivial.hpp>
+#include <future>
+
+namespace Slic3r { namespace GUI {
+
+// Static member initialization
+std::map<std::string, OrcaMCPServer::ToolDefinition> OrcaMCPServer::s_tools;
+bool OrcaMCPServer::s_initialized = false;
+
+void OrcaMCPServer::init()
+{
+    if (s_initialized) return;
+
+    BOOST_LOG_TRIVIAL(info) << "OrcaMCPServer: Initializing MCP server";
+
+    // Clean up old preview files from previous sessions
+    OrcaMCPPlateUtils::CleanupPreviews();
+
+    register_builtin_tools();
+    s_initialized = true;
+}
+
+void OrcaMCPServer::register_tool(const ToolDefinition& tool)
+{
+    s_tools[tool.name] = tool;
+    BOOST_LOG_TRIVIAL(debug) << "OrcaMCPServer: Registered tool '" << tool.name << "'";
+}
+
+std::shared_ptr<HttpServer::Response> OrcaMCPServer::handle_request(
+    const std::string& method,
+    const std::string& url,
+    const std::string& body)
+{
+    // Only handle /mcp endpoint
+    if (url.find("/mcp") == std::string::npos) {
+        return nullptr;  // Not for us
+    }
+
+    // Ensure initialized
+    if (!s_initialized) {
+        init();
+    }
+
+    BOOST_LOG_TRIVIAL(debug) << "OrcaMCPServer: Handling " << method << " " << url;
+
+    // Handle GET /mcp for server info
+    if (method == "GET") {
+        nlohmann::json info = {
+            {"name", "orcamcp"},
+            {"version", "1.0.0"},
+            {"protocol", "mcp"},
+            {"description", "OrcaSlicer 3D Slicer MCP Server for Claude Code integration"}
+        };
+        return std::make_shared<HttpServer::ResponseJson>(info.dump());
+    }
+
+    // Handle POST /mcp for JSON-RPC requests
+    if (method != "POST") {
+        auto error = make_error_response(nlohmann::json(nullptr), -32600, "Method not allowed. Use POST for MCP requests.");
+        return std::make_shared<HttpServer::ResponseJson>(error.dump(), 405);
+    }
+
+    // Parse JSON-RPC request
+    nlohmann::json request;
+    try {
+        request = nlohmann::json::parse(body);
+    } catch (const std::exception& e) {
+        auto error = make_error_response(nlohmann::json(nullptr), -32700, std::string("Parse error: ") + e.what());
+        return std::make_shared<HttpServer::ResponseJson>(error.dump(), 400);
+    }
+
+    // Get the id field (can be number, string, or null)
+    nlohmann::json id = request.contains("id") ? request["id"] : nlohmann::json(nullptr);
+
+    // Validate JSON-RPC structure
+    if (!request.contains("jsonrpc") || request["jsonrpc"] != "2.0") {
+        auto error = make_error_response(id, -32600, "Invalid JSON-RPC version");
+        return std::make_shared<HttpServer::ResponseJson>(error.dump(), 400);
+    }
+
+    if (!request.contains("method")) {
+        auto error = make_error_response(id, -32600, "Missing method");
+        return std::make_shared<HttpServer::ResponseJson>(error.dump(), 400);
+    }
+
+    std::string rpc_method = request["method"];
+    nlohmann::json params = request.contains("params") ? request["params"] : nlohmann::json::object();
+
+    BOOST_LOG_TRIVIAL(debug) << "OrcaMCPServer: RPC method: " << rpc_method;
+
+    // Route to appropriate handler
+    nlohmann::json result;
+    try {
+        if (rpc_method == "initialize") {
+            result = handle_initialize(params);
+        } else if (rpc_method == "tools/list") {
+            result = handle_tools_list();
+        } else if (rpc_method == "tools/call") {
+            result = handle_tools_call(params);
+        } else if (rpc_method == "ping") {
+            result = nlohmann::json::object();  // Empty response for ping
+        } else {
+            auto error = make_error_response(id, -32601, "Method not found: " + rpc_method);
+            return std::make_shared<HttpServer::ResponseJson>(error.dump(), 400);
+        }
+
+        auto response = make_success_response(id, result);
+        return std::make_shared<HttpServer::ResponseJson>(response.dump());
+
+    } catch (const std::exception& e) {
+        BOOST_LOG_TRIVIAL(error) << "OrcaMCPServer: Error handling " << rpc_method << ": " << e.what();
+        auto error = make_error_response(id, -32603, std::string("Internal error: ") + e.what());
+        // Return HTTP 200 with JSON-RPC error (per MCP protocol spec)
+        // HTTP 500 causes clients to interpret this as a connection failure
+        return std::make_shared<HttpServer::ResponseJson>(error.dump(), 200);
+    }
+}
+
+nlohmann::json OrcaMCPServer::handle_initialize(const nlohmann::json& params)
+{
+    BOOST_LOG_TRIVIAL(info) << "OrcaMCPServer: Initialize handshake";
+
+    return {
+        {"protocolVersion", "2024-11-05"},
+        {"capabilities", {
+            {"tools", nlohmann::json::object()}
+        }},
+        {"serverInfo", {
+            {"name", "orcamcp"},
+            {"version", "1.0.0"}
+        }}
+    };
+}
+
+nlohmann::json OrcaMCPServer::handle_tools_list()
+{
+    nlohmann::json tools_array = nlohmann::json::array();
+
+    for (const auto& [name, tool] : s_tools) {
+        nlohmann::json tool_def = {
+            {"name", tool.name},
+            {"description", tool.description},
+            {"inputSchema", tool.input_schema}
+        };
+        tools_array.push_back(tool_def);
+    }
+
+    return {{"tools", tools_array}};
+}
+
+nlohmann::json OrcaMCPServer::handle_tools_call(const nlohmann::json& params)
+{
+    if (!params.contains("name")) {
+        throw std::runtime_error("Missing tool name");
+    }
+
+    std::string tool_name = params["name"];
+    nlohmann::json arguments = params.value("arguments", nlohmann::json::object());
+
+    auto it = s_tools.find(tool_name);
+    if (it == s_tools.end()) {
+        throw std::runtime_error("Unknown tool: " + tool_name);
+    }
+
+    BOOST_LOG_TRIVIAL(info) << "OrcaMCPServer: Calling tool '" << tool_name << "'";
+
+    // Execute the tool handler
+    nlohmann::json tool_result = it->second.handler(arguments);
+
+    // Format as MCP tool result
+    return {
+        {"content", {{
+            {"type", "text"},
+            {"text", tool_result.dump()}
+        }}}
+    };
+}
+
+nlohmann::json OrcaMCPServer::make_success_response(const nlohmann::json& id, const nlohmann::json& result)
+{
+    return {
+        {"jsonrpc", "2.0"},
+        {"id", id},
+        {"result", result}
+    };
+}
+
+nlohmann::json OrcaMCPServer::make_error_response(const nlohmann::json& id, int code, const std::string& message)
+{
+    return {
+        {"jsonrpc", "2.0"},
+        {"id", id},
+        {"error", {
+            {"code", code},
+            {"message", message}
+        }}
+    };
+}
+
+// Helper to run code on the main GUI thread and wait for result
+template<typename Func>
+nlohmann::json run_on_main_thread(Func&& func)
+{
+    std::promise<nlohmann::json> promise;
+    auto future = promise.get_future();
+
+    GUI::wxGetApp().CallAfter([&promise, func = std::forward<Func>(func)]() {
+        try {
+            promise.set_value(func());
+        } catch (const std::exception& e) {
+            promise.set_exception(std::current_exception());
+        }
+    });
+
+    return future.get();
+}
+
+// Helper to get validation warnings as JSON array
+// Note: get_validation_warnings() not available in upstream OrcaSlicer
+nlohmann::json get_validation_warnings_json(Plater* plater) {
+    // Return empty array - validation warnings API not available in this version
+    return nlohmann::json::array();
+}
+
+// Helper to add turntable preview to result if requested
+void add_turntable_preview_if_requested(nlohmann::json& result, bool include_preview,
+                                         int view_count = 4, int resolution = 128) {
+    if (!include_preview) return;
+
+    Plater* plater = wxGetApp().plater();
+    int plate_index = plater->get_partplate_list().get_curr_plate_index();
+
+    nlohmann::json preview = OrcaMCPPlateUtils::CaptureTurntablePreview(plate_index, view_count, resolution);
+    if (preview.contains("preview_path")) {
+        result["preview_path"] = preview["preview_path"];
+    }
+}
+
+void OrcaMCPServer::register_builtin_tools()
+{
+    // ==================== SERVER INFO ====================
+
+    // get_server_info - Get comprehensive server documentation
+    register_tool({
+        "get_server_info",
+        "Get comprehensive documentation about the OrcaSlicer MCP server, available tools, concepts, and workflows",
+        {
+            {"type", "object"},
+            {"properties", nlohmann::json::object()}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            return nlohmann::json{
+                {"server", {
+                    {"name", "OrcaSlicer MCP Server"},
+                    {"version", "1.0.0"},
+                    {"description", "Model Context Protocol server for controlling OrcaSlicer from Claude Code CLI"},
+                    {"protocol", "JSON-RPC 2.0 over HTTP"},
+                    {"endpoint", "http://localhost:13618/mcp"}
+                }},
+
+                // ==================== QUICK START ====================
+                {"quick_start", {
+                    {"first_steps", {
+                        "1. Call get_scene_info to understand current project state",
+                        "2. Use render_plate_view with save_to_file=true to visualize",
+                        "3. Use get_server_info (this) for full documentation"
+                    }},
+                    {"common_tasks", {
+                        {"load_and_slice", "load_model -> arrange_objects -> slice_all -> poll get_slicing_status -> export_gcode"},
+                        {"change_settings", "apply_config with settings array"},
+                        {"modify_object", "get_scene_info (get object_id) -> transform tools"},
+                        {"visualize", "render_plate_view with save_to_file=true, then Read the file"}
+                    }}
+                }},
+
+                // ==================== SUGGESTED TOOL FLOWS ====================
+                {"suggested_flows", {
+                    {"basic_print_workflow", {
+                        {"description", "Load a model and prepare it for printing"},
+                        {"steps", {
+                            {"step", "1. Load model"},
+                            {"tool", "load_model"},
+                            {"example", R"({"file_path": "/path/to/model.stl"})"},
+                            {"next", "2. Arrange on plate"},
+                            {"tool2", "arrange_objects"},
+                            {"example2", "{}"},
+                            {"next2", "3. Start slicing"},
+                            {"tool3", "slice_all"},
+                            {"example3", "{}"},
+                            {"next3", "4. Wait for completion (poll every 2-3 seconds)"},
+                            {"tool4", "get_slicing_status"},
+                            {"example4", "{} -> repeat until is_slicing=false"},
+                            {"next4", "5. Export G-code"},
+                            {"tool5", "export_gcode"},
+                            {"example5", R"({"output_path": "/path/to/output.gcode"})"}
+                        }}
+                    }},
+                    {"visual_inspection_workflow", {
+                        {"description", "View the model before making changes"},
+                        {"steps", {
+                            {"step", "1. Render views to temp files (saves tokens!)"},
+                            {"tool", "render_plate_view"},
+                            {"example", R"({"plate_index": 0, "save_to_file": true, "views": [{"camera_position": [300, -200, 150], "target": [155, 155, 30]}]})"},
+                            {"next", "2. Read the image file with Claude's Read tool"},
+                            {"note", "The file_path returned can be read directly by Claude"}
+                        }}
+                    }},
+                    {"settings_modification_workflow", {
+                        {"description", "Change print settings"},
+                        {"steps", {
+                            {"step", "1. Apply settings (can batch multiple)"},
+                            {"tool", "apply_config"},
+                            {"example", R"({"settings": [{"type": "print", "key": "layer_height", "value": "0.15"}, {"type": "print", "key": "sparse_infill_density", "value": "20%"}]})"}
+                        }},
+                        {"note", "Settings become 'dirty' until user saves preset in UI"}
+                    }},
+                    {"object_manipulation_workflow", {
+                        {"description", "Transform objects (move, rotate, scale, cut)"},
+                        {"steps", {
+                            {"step", "1. Get object IDs"},
+                            {"tool", "get_scene_info"},
+                            {"example", R"({"with_model_object_features": false})"},
+                            {"note", "Objects are 0-indexed. Look for model_objects array in response."},
+                            {"step2", "2. Transform as needed"},
+                            {"tools", "move_object, rotate_object, scale_object, mirror_object, cut_object"},
+                            {"examples", {
+                                {"move", R"({"object_id": 0, "x": 10, "y": 0, "z": 0})"},
+                                {"rotate", R"({"object_id": 0, "z": 45})"},
+                                {"scale", R"({"object_id": 0, "x": 1.5, "uniform": true})"},
+                                {"cut", R"({"object_id": 0, "z_height": 25, "keep": "below"})"}
+                            }}
+                        }}
+                    }},
+                    {"per_object_settings_workflow", {
+                        {"description", "Apply different settings to specific objects"},
+                        {"steps", {
+                            {"step", "1. Get object IDs from get_scene_info"},
+                            {"step2", "2. Set per-object overrides"},
+                            {"tool", "set_object_config"},
+                            {"example", R"({"object_id": 0, "settings": [{"key": "sparse_infill_density", "value": "30%"}, {"key": "enable_support", "value": "1"}]})"},
+                            {"step3", "3. Verify with get_object_config"},
+                            {"step4", "4. Reset if needed with reset_object_config"}
+                        }}
+                    }},
+                    {"layer_range_workflow", {
+                        {"description", "Different settings at different Z heights within one object"},
+                        {"steps", {
+                            {"step", "1. Define layer range"},
+                            {"tool", "set_object_layer_range"},
+                            {"example", R"({"object_id": 0, "z_min": 10, "z_max": 20, "settings": [{"key": "layer_height", "value": "0.1"}]})"},
+                            {"use_case", "Fine detail at specific heights, variable infill, etc."}
+                        }}
+                    }},
+                    {"undo_recovery_workflow", {
+                        {"description", "Recover from mistakes"},
+                        {"steps", {
+                            {"step", "1. Undo last operation"},
+                            {"tool", "undo"},
+                            {"note", "Can call multiple times to undo multiple operations"},
+                            {"step2", "2. Redo if needed"},
+                            {"tool2", "redo"}
+                        }},
+                        {"warning", "Undo history may be limited. For safety, save project (export_3mf) before major changes."}
+                    }},
+                    {"printer_workflow", {
+                        {"description", "Slice and send to printer (OctoPrint/Klipper or Bambu)"},
+                        {"steps", {
+                            {"step", "1. Check available printers"},
+                            {"tool", "get_printers"},
+                            {"example", "{}"},
+                            {"note", "Look for current_print_host (OctoPrint/Klipper) or local_printers (Bambu)"},
+                            {"step2", "2. Slice the project"},
+                            {"tool2", "slice_all"},
+                            {"step3", "3. Wait for slicing to complete"},
+                            {"tool3", "get_slicing_status"},
+                            {"note2", "Poll every 2-3 seconds until is_slicing=false"},
+                            {"step4", "4. Send to printer"},
+                            {"tool4", "send_to_printer"},
+                            {"example4", R"({})"},
+                            {"note3", "Auto-detects printer type and opens appropriate dialog"}
+                        }},
+                        {"octoprint_note", "For OctoPrint/Klipper: print_host must be configured in printer preset. Dialog shows Upload/Upload and Print options."},
+                        {"bambu_note", "For Bambu: use select_printer with dev_id first if needed. Dialog shows printer selection."}
+                    }}
+                }},
+
+                // ==================== TOOL EXAMPLES ====================
+                {"tool_examples", {
+                    {"get_scene_info", {
+                        {"minimal", R"({})"},
+                        {"with_features", R"({"with_model_object_features": true})"},
+                        {"when_to_use", "Start of session, after loading models, before transforms"},
+                        {"response_includes", {
+                            {"bed", "origin (corner), min_x, min_y, max_x, max_y, max_z - printable area bounds"},
+                            {"plates[].model_objects[]", "object_index, name, position, rotation_degrees, scale, bounding_box, instance_count"}
+                        }},
+                        {"tip", "Use bed info to calculate valid positions. Object positions are center points."}
+                    }},
+                    {"render_plate_view", {
+                        {"single_view", R"({"plate_index": 0, "save_to_file": true, "views": [{"camera_position": [300, -200, 150], "target": [155, 155, 30]}]})"},
+                        {"multiple_views", R"({"plate_index": 0, "save_to_file": true, "views": [{"camera_position": [300, -200, 150], "target": [155, 155, 30]}, {"camera_position": [155, -200, 50], "target": [155, 155, 30]}, {"camera_position": [10, -100, 80], "target": [155, 155, 30]}]})"},
+                        {"when_to_use", "Before/after transforms, to verify object state, to analyze geometry"},
+                        {"tip", "ALWAYS use save_to_file=true to avoid huge base64 responses"}
+                    }},
+                    {"apply_config", {
+                        {"single_setting", R"({"settings": [{"type": "print", "key": "layer_height", "value": "0.2"}]})"},
+                        {"multiple_settings", R"({"settings": [{"type": "print", "key": "layer_height", "value": "0.15"}, {"type": "print", "key": "wall_loops", "value": "3"}, {"type": "print", "key": "sparse_infill_density", "value": "20%"}]})"},
+                        {"filament_temp", R"({"settings": [{"type": "filament", "key": "nozzle_temperature", "value": ["210"]}]})"},
+                        {"when_to_use", "Adjusting print quality, speed, supports, etc."}
+                    }},
+                    {"cut_object", {
+                        {"keep_bottom", R"({"object_id": 0, "z_height": 30, "keep": "below"})"},
+                        {"keep_top", R"({"object_id": 0, "z_height": 30, "keep": "above"})"},
+                        {"keep_both", R"({"object_id": 0, "z_height": 30, "keep": "both"})"},
+                        {"when_to_use", "Splitting models, removing overhangs, creating multi-part prints"}
+                    }},
+                    {"move_object", {
+                        {"relative", R"({"object_id": 0, "x": 10, "y": -5})"},
+                        {"absolute", R"({"object_id": 0, "x": 155, "y": 155, "relative": false})"},
+                        {"when_to_use", "Positioning objects on bed, separating objects"},
+                        {"response_includes", "position, rotation_degrees, scale, on_bed, warnings"},
+                        {"tip", "Unspecified axes are preserved. Use on_bed to verify valid placement."}
+                    }},
+                    {"rotate_object", {
+                        {"example", R"({"object_id": 0, "z": 90})"},
+                        {"when_to_use", "Orienting objects for better print quality or bed adhesion"},
+                        {"response_includes", "position, rotation_degrees, scale, on_bed, warnings"}
+                    }},
+                    {"scale_object", {
+                        {"uniform", R"({"object_id": 0, "x": 1.5, "uniform": true})"},
+                        {"non_uniform", R"({"object_id": 0, "x": 1.0, "y": 1.0, "z": 2.0})"},
+                        {"when_to_use", "Resizing models, adjusting proportions"},
+                        {"response_includes", "position, rotation_degrees, scale, on_bed, warnings"}
+                    }},
+                    {"get_printers", {
+                        {"example", "{}"},
+                        {"response_fields", "local_printers, cloud_printers, physical_printers, current_print_host, total_count"},
+                        {"when_to_use", "Check what printers are available before sending"},
+                        {"tip", "current_print_host shows OctoPrint/Klipper configured in printer preset"}
+                    }},
+                    {"select_printer", {
+                        {"example", R"({"dev_id": "00M00A2B0123456"})"},
+                        {"when_to_use", "Select Bambu printer by device ID (not needed for OctoPrint/Klipper)"}
+                    }},
+                    {"clone_object", {
+                        {"to_current_plate", R"({"object_id": 0, "count": 2, "duplicate": true})"},
+                        {"to_specific_plate", R"({"object_id": 0, "count": 2, "duplicate": true, "destination_plate": 1})"},
+                        {"destination_behavior", "If destination_plate is OMITTED, clones go to CURRENT plate. If specified, clones go to that plate."},
+                        {"example_scenario", "You're on plate 1, cloning object from plate 0: clone_object(object_id=0, count=2) -> clones appear on plate 1 (current). clone_object(object_id=0, count=2, destination_plate=0) -> clones appear on plate 0 (explicit)."},
+                        {"response_includes", "source_plate, destination_plate, current_plate_at_call, destination_mode (explicit/defaulted_to_current)"},
+                        {"tip", "Use duplicate=true for independent objects, duplicate=false (default) for linked instances."}
+                    }},
+                    {"send_to_printer", {
+                        {"current_plate", R"({})"},
+                        {"all_plates", R"({"all_plates": true})"},
+                        {"when_to_use", "After slicing complete - opens upload dialog"},
+                        {"auto_detect", "Opens OctoPrint dialog if print_host configured, otherwise Bambu dialog"}
+                    }}
+                }},
+
+                // ==================== CONCEPTS ====================
+                {"concepts", {
+                    {"presets", {
+                        {"description", "OrcaSlicer uses a preset system with three types: Printer, Filament, and Print presets. Each defines a set of configuration options."},
+                        {"printer_preset", "Defines machine capabilities: build volume, nozzle size, speeds, G-code flavor, start/end G-code"},
+                        {"filament_preset", "Defines material properties: temperatures, cooling, flow ratio, retraction (if not using printer defaults)"},
+                        {"print_preset", "Defines slicing parameters: layer height, speeds, infill, walls, supports, etc."}
+                    }},
+                    {"dirty_values", {
+                        {"description", "When you modify a setting, it becomes 'dirty' - meaning it differs from the saved preset. Dirty values are tracked in the 'dirty_options' array."},
+                        {"example", "If you change layer_height from 0.2 to 0.22, 'layer_height' appears in dirty_options"},
+                        {"persistence", "Dirty values are NOT automatically saved. They exist only in the current editing session."},
+                        {"saving", "To save dirty values permanently, the user must save the preset through the UI (Ctrl+S or right-click preset -> Save)"},
+                        {"use_case", "Dirty tracking lets you experiment with settings without modifying saved presets. You can always revert by reloading the preset."}
+                    }},
+                    {"plates", {
+                        {"description", "OrcaSlicer supports multiple build plates in a single project. Each plate can contain different objects and be sliced independently."},
+                        {"indexing", "Plates are 0-indexed in the API (plate_index: 0 is the first plate)"}
+                    }},
+                    {"coordinate_system", {
+                        {"origin", "CORNER origin (0,0) = front-left of bed. NOT center origin!"},
+                        {"valid_range", "X: 0 to max_x, Y: 0 to max_y. Negative coordinates are OFF the bed."},
+                        {"z_axis", "Z=0 is the bed surface. Object bottoms rest at Z=0. Object center Z = half the object height."},
+                        {"get_bed_bounds", "Call get_scene_info and read bed.min_x, bed.max_x, bed.min_y, bed.max_y"},
+                        {"transform_response", "All transforms return position, rotation_degrees, scale, on_bed. Use on_bed to verify placement."},
+                        {"rotation_degrees_note", "rotation_degrees reflects UI/initial rotation only. MCP rotate_object applies rotation directly to mesh geometry, so the field may not update. Use bounding_box dimensions to verify rotation was applied."},
+                        {"recommendation", "Read bed bounds first. Use arrange_objects to auto-place, or relative=true with offsets."}
+                    }},
+                    {"slicing", {
+                        {"description", "Slicing converts 3D models into G-code layer by layer. It's an async operation."},
+                        {"workflow", "1) Load model 2) Configure settings 3) Call slice_all 4) Poll get_slicing_status until complete 5) Export G-code"}
+                    }},
+                    {"object_ids", {
+                        {"description", "Each object has two identifiers: 'id' (stable string) and 'object_index' (transient 0-based integer)."},
+                        {"id_stable", "The 'id' field is a unique stable identifier that persists across add/delete operations. Use for tracking objects across sessions."},
+                        {"object_index_transient", "The 'object_index' field is a 0-based array index used for MCP tool operations (move, rotate, etc.). It shifts when objects are added/deleted."},
+                        {"finding_ids", "Call get_scene_info and look at plates[].model_objects[] array for both 'id' and 'object_index'"},
+                        {"best_practice", "For multi-step workflows: store 'id' to track objects, re-query get_scene_info for current 'object_index' before each operation."}
+                    }},
+                    {"instances_vs_objects", {
+                        {"description", "A ModelObject can have multiple instances. Instances share geometry and per-object settings but have independent positions."},
+                        {"instances", "Created by clone_object with duplicate=false (default). All instances transform together - move one, all move. Ideal for printing multiple identical copies."},
+                        {"independent_objects", "Created by clone_object with duplicate=true. Each copy is a separate ModelObject with its own object_id and can be transformed independently."},
+                        {"instance_count", "The 'instance_count' field in get_scene_info shows how many instances an object has."},
+                        {"when_to_use_instances", "Use instances (duplicate=false) when you want multiple identical prints and don't need to move them separately."},
+                        {"when_to_use_duplicates", "Use duplicates (duplicate=true) when you need to position, rotate, or scale each copy independently."}
+                    }},
+                    {"per_object_settings", {
+                        {"description", "Individual objects can have their own settings that override global print settings."},
+                        {"use_cases", "Different layer heights for detail vs speed, enable support only for specific objects, vary infill density"},
+                        {"api", "Use get_object_config/set_object_config to manage per-object overrides. object_id is 0-indexed."},
+                        {"reset", "Use reset_object_config to remove overrides and fall back to global settings"}
+                    }},
+                    {"layer_ranges", {
+                        {"description", "Within a single object, you can define different settings for specific Z height ranges."},
+                        {"example", "Use 0.1mm layers from Z=10-20mm for fine detail, 0.3mm elsewhere for speed"},
+                        {"api", "Use get_object_layer_ranges/set_object_layer_range/delete_object_layer_range to manage"},
+                        {"key_format", "Ranges are defined by z_min and z_max in millimeters"}
+                    }}
+                }},
+
+                // ==================== TOOLS BY CATEGORY ====================
+                {"tools_by_category", {
+                    {"information", {
+                        {"get_server_info", "This documentation"},
+                        {"get_scene_info", "Get current project state: plates, objects, positions"},
+                        {"get_presets", "List all available presets (printer, filament, print)"},
+                        {"get_edited_presets", "Get currently active presets with their config values and dirty_options"},
+                        {"get_slicing_status", "Check if slicing is in progress"}
+                    }},
+                    {"configuration", {
+                        {"select_preset", "Switch to a different preset by name"},
+                        {"apply_config", "Modify individual settings (creates dirty values)"}
+                    }},
+                    {"model_operations", {
+                        {"load_model", "Import STL, OBJ, STEP, 3MF model files"},
+                        {"load_project", "Open a complete 3MF project with settings"},
+                        {"new_project", "Clear all objects and start fresh"},
+                        {"auto_orient", "Automatically orient objects for optimal printing"},
+                        {"arrange_objects", "Auto-arrange objects on the build plate"},
+                        {"undo", "Undo last operation"},
+                        {"redo", "Redo last undone operation"}
+                    }},
+                    {"object_transforms", {
+                        {"move_object", "Move/translate an object (relative offset or absolute position)"},
+                        {"rotate_object", "Rotate an object around X, Y, Z axes (degrees)"},
+                        {"scale_object", "Scale an object (uniform or per-axis factors)"},
+                        {"mirror_object", "Mirror an object across X, Y, or Z axis"},
+                        {"clone_object", "Copy an object to current or specified plate. duplicate=false (default) creates instances, duplicate=true creates independent objects. destination_plate specifies where clones go (defaults to current plate)."},
+                        {"delete_object", "Remove an object from the scene"},
+                        {"flatten_object", "Auto-orient object to lay flat on best face"},
+                        {"cut_object", "Cut object horizontally at Z height (keep above/below/both)"}
+                    }},
+                    {"slicing_export", {
+                        {"slice_all", "Start slicing (async, poll get_slicing_status)"},
+                        {"export_gcode", "Export sliced G-code to file"},
+                        {"export_3mf", "Export project as 3MF file"}
+                    }},
+                    {"visualization", {
+                        {"render_plate_view", "Render plate thumbnail from custom camera angles (use save_to_file=true for file paths instead of base64)"}
+                    }},
+                    {"per_object_settings", {
+                        {"get_object_config", "Get per-object setting overrides for a specific object"},
+                        {"set_object_config", "Set per-object settings (override global settings)"},
+                        {"reset_object_config", "Remove per-object overrides (revert to global)"},
+                        {"get_object_layer_ranges", "Get layer-range-specific configs for an object"},
+                        {"set_object_layer_range", "Set settings for a specific Z height range"},
+                        {"delete_object_layer_range", "Remove layer range configs"}
+                    }},
+                    {"variable_layer_height", {
+                        {"apply_adaptive_layer_height", "Apply VLH to object based on geometry. Quality 0.0-1.0 controls layer variation."},
+                        {"clear_adaptive_layer_height", "Remove VLH from object, revert to fixed layer height."}
+                    }},
+                    {"printer_management", {
+                        {"get_printers", "List printers: Bambu (local/cloud), OctoPrint/Klipper (current_print_host)"},
+                        {"select_printer", "Select Bambu printer by dev_id"},
+                        {"send_to_printer", "Send G-code: auto-detects OctoPrint/Klipper vs Bambu dialog"}
+                    }}
+                }},
+
+                // ==================== COMMON SETTINGS ====================
+                {"setting_types", {
+                    {"print", "Print process settings like layer_height, infill, speeds, supports"},
+                    {"filament", "Filament settings like temperatures, cooling, flow_ratio"},
+                    {"printer", "Printer/machine settings like retraction, speeds, G-code flavor"}
+                }},
+                {"common_print_settings", {
+                    {"layer_height", "Layer height in mm (e.g., '0.2')"},
+                    {"initial_layer_print_height", "First layer height in mm"},
+                    {"wall_loops", "Number of perimeter walls (integer)"},
+                    {"sparse_infill_density", "Infill percentage as string (e.g., '15%')"},
+                    {"sparse_infill_pattern", "Infill pattern: grid, honeycomb, gyroid, etc."},
+                    {"enable_support", "Enable supports: '0' or '1'"},
+                    {"support_type", "Support type: normal(auto), tree(auto), etc."},
+                    {"top_shell_layers", "Number of top solid layers"},
+                    {"bottom_shell_layers", "Number of bottom solid layers"},
+                    {"outer_wall_speed", "Outer wall print speed in mm/s"},
+                    {"inner_wall_speed", "Inner wall print speed in mm/s"},
+                    {"sparse_infill_speed", "Infill print speed in mm/s"},
+                    {"travel_speed", "Travel move speed in mm/s"}
+                }},
+                {"common_filament_settings", {
+                    {"nozzle_temperature", "Nozzle temperature array (e.g., ['200'])"},
+                    {"nozzle_temperature_initial_layer", "First layer nozzle temp array"},
+                    {"hot_plate_temp", "Bed temperature array"},
+                    {"hot_plate_temp_initial_layer", "First layer bed temp array"},
+                    {"filament_flow_ratio", "Flow multiplier array (e.g., ['0.95'])"},
+                    {"fan_max_speed", "Maximum fan speed array (e.g., ['100'])"},
+                    {"fan_min_speed", "Minimum fan speed array"}
+                }},
+                {"common_printer_settings", {
+                    {"retraction_length", "Retraction distance array in mm (e.g., ['0.8'])"},
+                    {"retraction_speed", "Retraction speed array in mm/s (e.g., ['30'])"},
+                    {"z_hop", "Z hop distance array in mm (e.g., ['0.4'])"},
+                    {"machine_max_speed_x", "Max X speed array in mm/s"},
+                    {"machine_max_speed_y", "Max Y speed array in mm/s"},
+                    {"machine_max_acceleration_x", "Max X acceleration array"},
+                    {"machine_start_gcode", "Start G-code template"},
+                    {"machine_end_gcode", "End G-code template"}
+                }},
+
+                // ==================== WARNINGS AND BEST PRACTICES ====================
+                {"warnings_and_best_practices", {
+                    {"token_optimization", {
+                        {"critical", "ALWAYS use save_to_file=true with render_plate_view to avoid 5KB+ base64 images per view"},
+                        {"avoid_heavy_tools", {
+                            {"get_edited_presets", "~15-20KB response. Use sparingly, cache results."},
+                            {"get_presets", "Can be large. Call once, remember preset names."},
+                            {"get_scene_info", "Use with_model_object_features=false unless you need volume/overhang data."}
+                        }},
+                        {"prefer_light_tools", {
+                            "get_slicing_status - tiny response, safe for polling",
+                            "apply_config - small response",
+                            "undo/redo - minimal response",
+                            "All transform tools (move, rotate, scale, etc.) - minimal responses"
+                        }}
+                    }},
+                    {"common_pitfalls", {
+                        {"object_index_shifts", "After delete/add, object_index values shift. Use stable 'id' to track objects, re-query for current object_index."},
+                        {"async_operations", "slice_all, auto_orient, arrange_objects are async. Poll or wait before next step."},
+                        {"cut_object_caution", "Cut removes original and creates new object(s). Use undo if result is wrong."},
+                        {"settings_not_saved", "apply_config creates dirty values. User must save preset in UI to persist."},
+                        {"undo_limits", "Undo history is limited. Save project before destructive operations."},
+                        {"positioning", "For absolute move_object: unspecified axes preserve current position. To spread objects, use relative=true with offsets, or arrange_objects."}
+                    }},
+                    {"efficiency_tips", {
+                        "Batch settings: put multiple items in one apply_config call",
+                        "Store stable 'id' values, re-query object_index only when needed for operations",
+                        "Use render_plate_view before and after transforms to verify",
+                        "Poll get_slicing_status every 2-3 seconds, not faster"
+                    }},
+                    {"visual_preview", {
+                        {"description", "Many tools support include_preview=true to return a turntable preview image path alongside results."},
+                        {"supported_tools", {
+                            "get_scene_info", "move_object", "rotate_object", "scale_object", "mirror_object",
+                            "flatten_object", "clone_object", "arrange_objects", "auto_orient",
+                            "apply_adaptive_layer_height", "clear_adaptive_layer_height"
+                        }},
+                        {"preview_hint", "When include_preview=true, the response includes a 'preview_hint' message encouraging you to check the preview image for a visual sense of the plate and objects."},
+                        {"recommendation", "Use include_preview to visually verify the result of operations, especially after transforms, cloning, or arrangement changes."}
+                    }}
+                }}
+            };
+        }
+    });
+
+    // ==================== READ OPERATIONS ====================
+
+    // get_scene_info - Get current project state
+    register_tool({
+        "get_scene_info",
+        "Get current project state including plates, model objects, and hash code for change detection. USE THIS FIRST to get object_ids before any transform operations. Use with_model_object_features=false to reduce response size.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"with_model_object_features", {
+                    {"type", "boolean"},
+                    {"description", "Include detailed model features like overhang, bottom area, volume"}
+                }},
+                {"include_preview", {
+                    {"type", "boolean"},
+                    {"description", "Include turntable preview image path for the current plate"}
+                }},
+                {"preview_views", {
+                    {"type", "integer"},
+                    {"description", "Number of preview views: 4 or 8 (default: 4)"}
+                }},
+                {"preview_resolution", {
+                    {"type", "integer"},
+                    {"description", "Preview resolution per view in pixels (default: 256)"}
+                }}
+            }}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            bool with_features = params.value("with_model_object_features", false);
+            bool include_preview = params.value("include_preview", false);
+            int preview_views = params.value("preview_views", 4);
+            int preview_resolution = params.value("preview_resolution", 256);
+            return run_on_main_thread([with_features, include_preview, preview_views, preview_resolution]() {
+                nlohmann::json result = OrcaMCPPlateUtils::GetCurrentProject(with_features);
+
+                // Add turntable preview if requested
+                if (include_preview) {
+                    Plater* plater = wxGetApp().plater();
+                    int plate_index = plater->get_partplate_list().get_curr_plate_index();
+                    nlohmann::json preview = OrcaMCPPlateUtils::CaptureTurntablePreview(
+                        plate_index, preview_views, preview_resolution);
+                    if (preview.contains("preview_path")) {
+                        result["preview_path"] = preview["preview_path"];
+                        result["preview_hint"] = "Check the preview image to get a visual overview of objects on the current plate.";
+                    }
+                }
+
+                return result;
+            });
+        }
+    });
+
+    // get_presets - Get all available presets
+    register_tool({
+        "get_presets",
+        "Get all available printer, filament, and print presets",
+        {
+            {"type", "object"},
+            {"properties", nlohmann::json::object()}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            return run_on_main_thread([]() {
+                return OrcaMCPPresetConfigUtils::GetAllPresetJson();
+            });
+        }
+    });
+
+    // get_edited_presets - Get currently edited presets
+    register_tool({
+        "get_edited_presets",
+        "Get currently edited presets with dirty (modified) options",
+        {
+            {"type", "object"},
+            {"properties", nlohmann::json::object()}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            return run_on_main_thread([]() {
+                return OrcaMCPPresetConfigUtils::GetAllEditedPresetJson();
+            });
+        }
+    });
+
+    // ==================== VISUALIZATION ====================
+
+    // render_plate_view - Render plate thumbnail
+    register_tool({
+        "render_plate_view",
+        "Render plate thumbnail from custom camera angles. IMPORTANT: Always use save_to_file=true to get file paths instead of base64 (saves ~5KB per image). Then use Read tool to view the image. Good camera position: [300, -200, 150] target: [155, 155, 30]",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"plate_index", {
+                    {"type", "integer"},
+                    {"description", "Index of the plate to render (0-based)"}
+                }},
+                {"save_to_file", {
+                    {"type", "boolean"},
+                    {"description", "If true, saves images to /tmp/ and returns file paths instead of base64 (reduces token usage)"},
+                    {"default", false}
+                }},
+                {"resolution", {
+                    {"type", "integer"},
+                    {"description", "Image resolution in pixels (width=height). Default 512. Use 128 or 256 for faster renders."},
+                    {"default", 512}
+                }},
+                {"views", {
+                    {"type", "array"},
+                    {"description", "Array of view configurations"},
+                    {"items", {
+                        {"type", "object"},
+                        {"properties", {
+                            {"camera_position", {
+                                {"type", "array"},
+                                {"items", {{"type", "number"}}},
+                                {"description", "Camera position [x, y, z]"}
+                            }},
+                            {"target", {
+                                {"type", "array"},
+                                {"items", {{"type", "number"}}},
+                                {"description", "Camera target point [x, y, z]"}
+                            }}
+                        }}
+                    }}
+                }}
+            }},
+            {"required", {"plate_index", "views"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            return run_on_main_thread([params]() {
+                nlohmann::json render_params = {{"payload", params}};
+                return OrcaMCPPlateUtils::RenderPlateView(render_params);
+            });
+        }
+    });
+
+    // ==================== CONFIGURATION ====================
+
+    // select_preset - Select a preset
+    register_tool({
+        "select_preset",
+        "Select a printer, filament, or print preset by name",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"type", {
+                    {"type", "string"},
+                    {"enum", {"printer", "filament", "print"}},
+                    {"description", "Type of preset to select"}
+                }},
+                {"name", {
+                    {"type", "string"},
+                    {"description", "Name of the preset to select"}
+                }}
+            }},
+            {"required", {"type", "name"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            std::string type = params["type"];
+            std::string name = params["name"];
+            return run_on_main_thread([type, name]() {
+                OrcaMCPPresetConfigUtils::SelectPreset(type, name);
+                return nlohmann::json{{"status", "success"}};
+            });
+        }
+    });
+
+    // apply_config - Apply print settings
+    register_tool({
+        "apply_config",
+        "Apply print settings. Can batch multiple settings in one call. Settings become 'dirty' (unsaved). Types: 'print' for slicing settings, 'filament' for temperatures, 'printer' for machine settings.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"settings", {
+                    {"type", "array"},
+                    {"description", "Array of settings to apply"},
+                    {"items", {
+                        {"type", "object"},
+                        {"properties", {
+                            {"type", {
+                                {"type", "string"},
+                                {"enum", {"print", "filament", "printer"}},
+                                {"description", "Type of setting"}
+                            }},
+                            {"key", {
+                                {"type", "string"},
+                                {"description", "Setting key name"}
+                            }},
+                            {"value", {
+                                {"description", "Setting value (type depends on the setting)"}
+                            }}
+                        }},
+                        {"required", {"type", "key", "value"}}
+                    }}
+                }}
+            }},
+            {"required", {"settings"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            nlohmann::json settings = params["settings"];
+            return run_on_main_thread([settings]() {
+                for (const auto& item : settings) {
+                    OrcaMCPPresetConfigUtils::ApplyConfig(item);
+                }
+                OrcaMCPPresetConfigUtils::UpdatePresetTabs();
+                return nlohmann::json{{"status", "success"}, {"applied_count", settings.size()}};
+            });
+        }
+    });
+
+    // ==================== MODEL MANIPULATION ====================
+
+    // auto_orient - Auto-orient all objects
+    register_tool({
+        "auto_orient",
+        "Automatically orient all objects for optimal printing",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"include_preview", {
+                    {"type", "boolean"},
+                    {"description", "Include a preview image path to visually verify the new orientations"}
+                }}
+            }}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            bool include_preview = params.value("include_preview", false);
+            return run_on_main_thread([include_preview]() {
+                Plater* plater = wxGetApp().plater();
+                plater->set_prepare_state(Job::PREPARE_STATE_MENU);
+                plater->orient();
+
+                // Get validation warnings
+                nlohmann::json warnings = get_validation_warnings_json(plater);
+
+                nlohmann::json result = {{"status", "orient_started"}};
+                if (!warnings.empty()) {
+                    result["warnings"] = warnings;
+                }
+
+                // Add preview if requested
+                if (include_preview) {
+                    add_turntable_preview_if_requested(result, true);
+                    result["preview_hint"] = "Check the preview image to see how objects are now oriented on the plate.";
+                }
+
+                return result;
+            });
+        }
+    });
+
+    // arrange_objects - Arrange objects on plate
+    register_tool({
+        "arrange_objects",
+        "Automatically arrange all objects on the build plate",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"include_preview", {
+                    {"type", "boolean"},
+                    {"description", "Include a preview image path to visually verify the arrangement"}
+                }}
+            }}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            bool include_preview = params.value("include_preview", false);
+            return run_on_main_thread([include_preview]() {
+                Plater* plater = wxGetApp().plater();
+                plater->set_prepare_state(Job::PREPARE_STATE_MENU);
+                plater->arrange();
+
+                // Get validation warnings
+                nlohmann::json warnings = get_validation_warnings_json(plater);
+
+                nlohmann::json result = {{"status", "arrange_started"}};
+                if (!warnings.empty()) {
+                    result["warnings"] = warnings;
+                }
+
+                // Add preview if requested
+                if (include_preview) {
+                    add_turntable_preview_if_requested(result, true);
+                    result["preview_hint"] = "Check the preview image to see the new arrangement of objects on the plate.";
+                }
+
+                return result;
+            });
+        }
+    });
+
+    // undo - Undo last operation
+    register_tool({
+        "undo",
+        "Undo the last operation. Can call multiple times. Use after cut_object or delete_object to recover. Note: History is limited, save project before major changes.",
+        {
+            {"type", "object"},
+            {"properties", nlohmann::json::object()}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            return run_on_main_thread([]() {
+                Plater* plater = wxGetApp().plater();
+                plater->undo();
+                return nlohmann::json{{"status", "success"}};
+            });
+        }
+    });
+
+    // redo - Redo last undone operation
+    register_tool({
+        "redo",
+        "Redo the last undone operation",
+        {
+            {"type", "object"},
+            {"properties", nlohmann::json::object()}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            return run_on_main_thread([]() {
+                Plater* plater = wxGetApp().plater();
+                plater->redo();
+                return nlohmann::json{{"status", "success"}};
+            });
+        }
+    });
+
+    // ==================== PER-OBJECT SETTINGS ====================
+
+    // get_object_config - Get per-object settings
+    register_tool({
+        "get_object_config",
+        "Get per-object setting overrides for a specific object. Returns only settings that differ from global.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"object_id", {
+                    {"type", "integer"},
+                    {"description", "Index of the object in the model (0-based)"}
+                }}
+            }},
+            {"required", {"object_id"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            int object_id = params["object_id"];
+            return run_on_main_thread([object_id]() {
+                Plater* plater = wxGetApp().plater();
+                Model& model = plater->model();
+
+                if (object_id < 0 || object_id >= static_cast<int>(model.objects.size())) {
+                    throw std::runtime_error("Invalid object_id: " + std::to_string(object_id));
+                }
+
+                ModelObject* obj = model.objects[object_id];
+                const DynamicPrintConfig& cfg = obj->config.get();
+
+                nlohmann::json config_json = nlohmann::json::object();
+                for (const std::string& key : cfg.keys()) {
+                    config_json[key] = cfg.opt_serialize(key);
+                }
+
+                return nlohmann::json{
+                    {"object_id", object_id},
+                    {"object_name", obj->name},
+                    {"config", config_json},
+                    {"has_overrides", !cfg.keys().empty()}
+                };
+            });
+        }
+    });
+
+    // set_object_config - Set per-object settings (supports batch)
+    register_tool({
+        "set_object_config",
+        "Set per-object setting overrides. Supports batch operations via configs array.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"object_id", {
+                    {"type", "integer"},
+                    {"description", "Index of the object in the model (0-based). Use configs for batch operations."}
+                }},
+                {"settings", {
+                    {"type", "array"},
+                    {"description", "Array of settings to apply (used with object_id)"},
+                    {"items", {
+                        {"type", "object"},
+                        {"properties", {
+                            {"key", {{"type", "string"}}},
+                            {"value", {}}
+                        }},
+                        {"required", {"key", "value"}}
+                    }}
+                }},
+                {"configs", {
+                    {"type", "array"},
+                    {"description", "Array of per-object configs for batch operations. Each item has object_id and settings."},
+                    {"items", {
+                        {"type", "object"},
+                        {"properties", {
+                            {"object_id", {{"type", "integer"}}},
+                            {"settings", {{"type", "array"}}}
+                        }},
+                        {"required", {"object_id", "settings"}}
+                    }}
+                }}
+            }}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            // Build list of configs to process
+            std::vector<std::pair<int, nlohmann::json>> config_list;
+
+            if (params.contains("configs") && params["configs"].is_array()) {
+                for (const auto& cfg : params["configs"]) {
+                    config_list.push_back({cfg["object_id"].get<int>(), cfg["settings"]});
+                }
+            } else if (params.contains("object_id") && params.contains("settings")) {
+                config_list.push_back({params["object_id"].get<int>(), params["settings"]});
+            } else {
+                return nlohmann::json{
+                    {"status", "error"},
+                    {"message", "Either (object_id + settings) or configs array is required"}
+                };
+            }
+
+            return run_on_main_thread([config_list]() {
+                Plater* plater = wxGetApp().plater();
+                Model& model = plater->model();
+                ConfigSubstitutionContext context(ForwardCompatibilitySubstitutionRule::Enable);
+
+                nlohmann::json results = nlohmann::json::array();
+                bool any_changes = false;
+
+                for (const auto& [object_id, settings] : config_list) {
+                    nlohmann::json obj_result;
+                    obj_result["object_id"] = object_id;
+
+                    if (object_id < 0 || object_id >= static_cast<int>(model.objects.size())) {
+                        obj_result["status"] = "error";
+                        obj_result["message"] = "Invalid object_id";
+                        results.push_back(obj_result);
+                        continue;
+                    }
+
+                    ModelObject* obj = model.objects[object_id];
+                    std::vector<std::string> applied_keys;
+                    std::vector<std::string> invalid_keys;
+
+                    for (const auto& item : settings) {
+                        std::string key = item["key"];
+                        std::string value_str = item["value"].is_string() ?
+                            item["value"].get<std::string>() : item["value"].dump();
+
+                        try {
+                            obj->config.set_deserialize(key, value_str, context);
+                            if (obj->config.has(key)) {
+                                applied_keys.push_back(key);
+                            } else {
+                                invalid_keys.push_back(key);
+                            }
+                        } catch (...) {
+                            invalid_keys.push_back(key);
+                        }
+                    }
+
+                    if (!applied_keys.empty()) {
+                        wxGetApp().obj_list()->changed_object(object_id);
+                        any_changes = true;
+                    }
+
+                    obj_result["status"] = invalid_keys.empty() ? "success" : "partial";
+                    obj_result["applied_count"] = applied_keys.size();
+                    obj_result["applied_keys"] = applied_keys;
+                    if (!invalid_keys.empty()) {
+                        obj_result["invalid_keys"] = invalid_keys;
+                    }
+                    results.push_back(obj_result);
+                }
+
+                if (any_changes) {
+                    plater->update();
+                }
+
+                // Return single result for single config, array for batch
+                if (config_list.size() == 1) {
+                    return results[0];
+                }
+
+                return nlohmann::json{
+                    {"status", "success"},
+                    {"objects_processed", results.size()},
+                    {"results", results}
+                };
+            });
+        }
+    });
+
+    // reset_object_config - Remove per-object overrides
+    register_tool({
+        "reset_object_config",
+        "Remove per-object setting overrides, reverting to global settings. If keys not specified, removes all overrides.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"object_id", {
+                    {"type", "integer"},
+                    {"description", "Index of the object in the model (0-based)"}
+                }},
+                {"keys", {
+                    {"type", "array"},
+                    {"description", "Optional list of setting keys to reset. If empty, resets all overrides."},
+                    {"items", {{"type", "string"}}}
+                }}
+            }},
+            {"required", {"object_id"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            int object_id = params["object_id"];
+            std::vector<std::string> keys;
+            if (params.contains("keys") && params["keys"].is_array()) {
+                for (const auto& k : params["keys"]) {
+                    keys.push_back(k.get<std::string>());
+                }
+            }
+            return run_on_main_thread([object_id, keys]() {
+                Plater* plater = wxGetApp().plater();
+                Model& model = plater->model();
+
+                if (object_id < 0 || object_id >= static_cast<int>(model.objects.size())) {
+                    throw std::runtime_error("Invalid object_id: " + std::to_string(object_id));
+                }
+
+                ModelObject* obj = model.objects[object_id];
+                int reset_count = 0;
+
+                if (keys.empty()) {
+                    // Reset all overrides
+                    const auto all_keys = obj->config.get().keys();
+                    reset_count = all_keys.size();
+                    for (const auto& key : all_keys) {
+                        obj->config.erase(key);
+                    }
+                } else {
+                    // Reset specific keys
+                    for (const auto& key : keys) {
+                        if (obj->config.has(key)) {
+                            obj->config.erase(key);
+                            reset_count++;
+                        }
+                    }
+                }
+
+                // Notify UI of changes
+                wxGetApp().obj_list()->changed_object(object_id);
+                plater->update();
+
+                return nlohmann::json{
+                    {"status", "success"},
+                    {"object_id", object_id},
+                    {"reset_count", reset_count}
+                };
+            });
+        }
+    });
+
+    // get_valid_config_keys - Get valid configuration keys for settings
+    register_tool({
+        "get_valid_config_keys",
+        "Get valid configuration keys for per-object settings, print settings, etc. Helps discover available settings.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"category", {
+                    {"type", "string"},
+                    {"description", "Category of keys to return: 'per_object' (default), 'print', 'filament', 'printer', or 'all'"}
+                }},
+                {"include_descriptions", {
+                    {"type", "boolean"},
+                    {"description", "Include descriptions for each key (default: false, reduces response size)"}
+                }}
+            }}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            std::string category = params.value("category", "per_object");
+            bool include_descriptions = params.value("include_descriptions", false);
+
+            return run_on_main_thread([category, include_descriptions]() {
+                nlohmann::json result;
+                result["category"] = category;
+
+                // Get the config definition
+                const ConfigDef& def = print_config_def;
+
+                // Commonly used per-object settings (subset that makes sense for per-object overrides)
+                static const std::set<std::string> per_object_keys = {
+                    "layer_height", "initial_layer_print_height", "adaptive_layer_height",
+                    "wall_loops", "top_shell_layers", "bottom_shell_layers",
+                    "sparse_infill_density", "sparse_infill_pattern",
+                    "enable_support", "support_type", "support_style",
+                    "brim_type", "brim_width",
+                    "seam_position", "xy_hole_compensation", "xy_contour_compensation",
+                    "ironing_type", "detect_thin_wall", "detect_overhang_wall",
+                    "wall_infill_order", "bridge_no_support", "max_bridge_length",
+                    "thick_bridges", "internal_bridge_support_thickness",
+                    "fuzzy_skin", "fuzzy_skin_thickness", "fuzzy_skin_point_dist",
+                    "extruder", "wall_filament", "sparse_infill_filament",
+                    "solid_infill_filament", "support_filament", "support_interface_filament"
+                };
+
+                nlohmann::json keys_array = nlohmann::json::array();
+
+                for (const auto& [key, opt_def] : def.options) {
+                    bool include_key = false;
+
+                    if (category == "all") {
+                        include_key = true;
+                    } else if (category == "per_object") {
+                        include_key = per_object_keys.count(key) > 0;
+                    } else if (category == "print") {
+                        // PrintConfig keys - slicer settings
+                        include_key = opt_def.mode == comSimple || opt_def.mode == comAdvanced || opt_def.mode == comDevelop;
+                    } else if (category == "filament") {
+                        include_key = key.find("filament") != std::string::npos ||
+                                     key.find("temperature") != std::string::npos ||
+                                     key.find("fan") != std::string::npos ||
+                                     key.find("cooling") != std::string::npos;
+                    } else if (category == "printer") {
+                        include_key = key.find("machine") != std::string::npos ||
+                                     key.find("retract") != std::string::npos ||
+                                     key.find("gcode") != std::string::npos ||
+                                     key.find("nozzle") != std::string::npos;
+                    }
+
+                    if (include_key) {
+                        nlohmann::json key_info;
+                        key_info["key"] = key;
+
+                        // Convert type to string
+                        std::string type_str;
+                        switch (opt_def.type) {
+                            case coFloat: type_str = "float"; break;
+                            case coFloats: type_str = "floats"; break;
+                            case coInt: type_str = "int"; break;
+                            case coInts: type_str = "ints"; break;
+                            case coString: type_str = "string"; break;
+                            case coStrings: type_str = "strings"; break;
+                            case coPercent: type_str = "percent"; break;
+                            case coPercents: type_str = "percents"; break;
+                            case coBool: type_str = "bool"; break;
+                            case coBools: type_str = "bools"; break;
+                            case coEnum: type_str = "enum"; break;
+                            case coFloatOrPercent: type_str = "float_or_percent"; break;
+                            case coFloatsOrPercents: type_str = "floats_or_percents"; break;
+                            case coPoint: type_str = "point"; break;
+                            case coPoints: type_str = "points"; break;
+                            default: type_str = "unknown"; break;
+                        }
+                        key_info["type"] = type_str;
+
+                        if (include_descriptions && !opt_def.tooltip.empty()) {
+                            key_info["description"] = opt_def.tooltip;
+                        }
+
+                        // Add enum values if applicable
+                        if (opt_def.type == coEnum && !opt_def.enum_keys_map) {
+                            nlohmann::json enum_values = nlohmann::json::array();
+                            for (const auto& ev : opt_def.enum_values) {
+                                enum_values.push_back(ev);
+                            }
+                            if (!enum_values.empty()) {
+                                key_info["enum_values"] = enum_values;
+                            }
+                        }
+
+                        keys_array.push_back(key_info);
+                    }
+                }
+
+                result["keys"] = keys_array;
+                result["count"] = keys_array.size();
+
+                return result;
+            });
+        }
+    });
+
+    // get_object_layer_ranges - Get layer-range-specific configs
+    register_tool({
+        "get_object_layer_ranges",
+        "Get layer-range-specific settings for an object. These allow different settings at different Z heights.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"object_id", {
+                    {"type", "integer"},
+                    {"description", "Index of the object in the model (0-based)"}
+                }}
+            }},
+            {"required", {"object_id"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            int object_id = params["object_id"];
+            return run_on_main_thread([object_id]() {
+                Plater* plater = wxGetApp().plater();
+                Model& model = plater->model();
+
+                if (object_id < 0 || object_id >= static_cast<int>(model.objects.size())) {
+                    throw std::runtime_error("Invalid object_id: " + std::to_string(object_id));
+                }
+
+                ModelObject* obj = model.objects[object_id];
+                nlohmann::json ranges_array = nlohmann::json::array();
+
+                for (const auto& [range, config] : obj->layer_config_ranges) {
+                    nlohmann::json config_json = nlohmann::json::object();
+                    const DynamicPrintConfig& cfg = config.get();
+                    for (const std::string& key : cfg.keys()) {
+                        config_json[key] = cfg.opt_serialize(key);
+                    }
+
+                    ranges_array.push_back({
+                        {"z_min", range.first},
+                        {"z_max", range.second},
+                        {"config", config_json}
+                    });
+                }
+
+                return nlohmann::json{
+                    {"object_id", object_id},
+                    {"object_name", obj->name},
+                    {"layer_ranges", ranges_array}
+                };
+            });
+        }
+    });
+
+    // set_object_layer_range - Set layer-range-specific settings
+    register_tool({
+        "set_object_layer_range",
+        "Set settings for a specific Z height range within an object. Creates or updates the range config.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"object_id", {
+                    {"type", "integer"},
+                    {"description", "Index of the object in the model (0-based)"}
+                }},
+                {"z_min", {
+                    {"type", "number"},
+                    {"description", "Minimum Z height of the range in mm"}
+                }},
+                {"z_max", {
+                    {"type", "number"},
+                    {"description", "Maximum Z height of the range in mm"}
+                }},
+                {"settings", {
+                    {"type", "array"},
+                    {"description", "Array of settings to apply to this layer range"},
+                    {"items", {
+                        {"type", "object"},
+                        {"properties", {
+                            {"key", {{"type", "string"}, {"description", "Setting key name"}}},
+                            {"value", {{"description", "Setting value (string, number, or boolean)"}}}
+                        }},
+                        {"required", {"key", "value"}}
+                    }}
+                }}
+            }},
+            {"required", {"object_id", "z_min", "z_max", "settings"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            int object_id = params["object_id"];
+            double z_min = params["z_min"];
+            double z_max = params["z_max"];
+            nlohmann::json settings = params["settings"];
+            return run_on_main_thread([object_id, z_min, z_max, settings]() {
+                Plater* plater = wxGetApp().plater();
+                Model& model = plater->model();
+
+                if (object_id < 0 || object_id >= static_cast<int>(model.objects.size())) {
+                    throw std::runtime_error("Invalid object_id: " + std::to_string(object_id));
+                }
+
+                ModelObject* obj = model.objects[object_id];
+                t_layer_height_range range = {z_min, z_max};
+                ModelConfig& layer_cfg = obj->layer_config_ranges[range];
+
+                ConfigSubstitutionContext context(ForwardCompatibilitySubstitutionRule::Enable);
+                for (const auto& item : settings) {
+                    std::string key = item["key"];
+                    std::string value_str = item["value"].is_string() ?
+                        item["value"].get<std::string>() : item["value"].dump();
+                    layer_cfg.set_deserialize(key, value_str, context);
+                }
+
+                // Notify UI of changes
+                wxGetApp().obj_list()->changed_object(object_id);
+                plater->update();
+
+                return nlohmann::json{
+                    {"status", "success"},
+                    {"object_id", object_id},
+                    {"range", {z_min, z_max}},
+                    {"applied_count", settings.size()}
+                };
+            });
+        }
+    });
+
+    // delete_object_layer_range - Remove layer-range config
+    register_tool({
+        "delete_object_layer_range",
+        "Remove a layer range config. If z_min and z_max not specified, removes ALL layer ranges.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"object_id", {
+                    {"type", "integer"},
+                    {"description", "Index of the object in the model (0-based)"}
+                }},
+                {"z_min", {
+                    {"type", "number"},
+                    {"description", "Minimum Z height of the range to delete (optional)"}
+                }},
+                {"z_max", {
+                    {"type", "number"},
+                    {"description", "Maximum Z height of the range to delete (optional)"}
+                }}
+            }},
+            {"required", {"object_id"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            int object_id = params["object_id"];
+            bool has_range = params.contains("z_min") && params.contains("z_max");
+            double z_min = has_range ? params["z_min"].get<double>() : 0;
+            double z_max = has_range ? params["z_max"].get<double>() : 0;
+            return run_on_main_thread([object_id, has_range, z_min, z_max]() {
+                Plater* plater = wxGetApp().plater();
+                Model& model = plater->model();
+
+                if (object_id < 0 || object_id >= static_cast<int>(model.objects.size())) {
+                    throw std::runtime_error("Invalid object_id: " + std::to_string(object_id));
+                }
+
+                ModelObject* obj = model.objects[object_id];
+                int deleted_count = 0;
+
+                if (has_range) {
+                    // Delete specific range
+                    t_layer_height_range range = {z_min, z_max};
+                    if (obj->layer_config_ranges.erase(range) > 0) {
+                        deleted_count = 1;
+                    }
+                } else {
+                    // Delete all ranges
+                    deleted_count = obj->layer_config_ranges.size();
+                    obj->layer_config_ranges.clear();
+                }
+
+                // Notify UI of changes
+                wxGetApp().obj_list()->changed_object(object_id);
+                plater->update();
+
+                return nlohmann::json{
+                    {"status", "success"},
+                    {"object_id", object_id},
+                    {"deleted_count", deleted_count}
+                };
+            });
+        }
+    });
+
+    // ==================== VARIABLE LAYER HEIGHT ====================
+
+    // apply_adaptive_layer_height - Apply VLH to objects (supports batch)
+    register_tool({
+        "apply_adaptive_layer_height",
+        "Apply automatic Variable Layer Height to object(s) based on surface geometry. Supports batch operations via object_ids array.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"object_id", {
+                    {"type", "integer"},
+                    {"description", "Single object index (0-based). Use object_ids for batch operations."}
+                }},
+                {"object_ids", {
+                    {"type", "array"},
+                    {"items", {{"type", "integer"}}},
+                    {"description", "Array of object indices to apply VLH to (0-based). Preferred for batch operations."}
+                }},
+                {"quality", {
+                    {"type", "number"},
+                    {"description", "Quality factor from 0.0 to 1.0. Lower values (0.0) favor speed with larger layers. Higher values (1.0) favor quality with finer layers on curves. Default: 0.5"}
+                }},
+                {"include_preview", {
+                    {"type", "boolean"},
+                    {"description", "Include a preview image path in the response to visually verify the result"}
+                }}
+            }}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            // Build list of object IDs to process
+            std::vector<int> object_ids;
+            if (params.contains("object_ids") && params["object_ids"].is_array()) {
+                for (const auto& id : params["object_ids"]) {
+                    object_ids.push_back(id.get<int>());
+                }
+            } else if (params.contains("object_id")) {
+                object_ids.push_back(params["object_id"].get<int>());
+            } else {
+                return nlohmann::json{
+                    {"status", "error"},
+                    {"message", "Either object_id or object_ids is required"}
+                };
+            }
+
+            float quality = params.value("quality", 0.5f);
+            bool include_preview = params.value("include_preview", false);
+
+            return run_on_main_thread([object_ids, quality, include_preview]() {
+                Plater* plater = wxGetApp().plater();
+                Model& model = plater->model();
+
+                // Clamp quality to valid range
+                float clamped_quality = std::max(0.0f, std::min(1.0f, quality));
+
+                // Get slicing config once (shared across all objects)
+                DynamicPrintConfig full_config;
+                full_config.apply(wxGetApp().preset_bundle->prints.get_edited_preset().config);
+                full_config.apply(wxGetApp().preset_bundle->filaments.get_edited_preset().config);
+                full_config.apply(wxGetApp().preset_bundle->printers.get_edited_preset().config);
+
+                nlohmann::json results = nlohmann::json::array();
+
+                for (int object_id : object_ids) {
+                    nlohmann::json obj_result;
+                    obj_result["object_id"] = object_id;
+
+                    if (object_id < 0 || object_id >= static_cast<int>(model.objects.size())) {
+                        obj_result["status"] = "error";
+                        obj_result["message"] = "Invalid object_id";
+                        results.push_back(obj_result);
+                        continue;
+                    }
+
+                    ModelObject* obj = model.objects[object_id];
+
+                    float object_max_z = static_cast<float>(obj->max_z());
+                    Vec3d shrinkage(1.0, 1.0, 1.0);
+
+                    SlicingParameters slicing_params = PrintObject::slicing_parameters(
+                        full_config, *obj, object_max_z, shrinkage);
+
+                    // Generate adaptive layer height profile
+                    std::vector<double> profile = layer_height_profile_adaptive(slicing_params, *obj, clamped_quality);
+
+                    // Set the profile on the model object
+                    obj->layer_height_profile.set(profile);
+
+                    // Notify UI of changes
+                    wxGetApp().obj_list()->update_info_items(object_id);
+
+                    // Calculate profile statistics
+                    double min_layer_height = slicing_params.max_layer_height;
+                    double max_layer_height = slicing_params.min_layer_height;
+
+                    for (size_t i = 1; i < profile.size(); i += 2) {
+                        double h = profile[i];
+                        if (h > 0) {
+                            min_layer_height = std::min(min_layer_height, h);
+                            max_layer_height = std::max(max_layer_height, h);
+                        }
+                    }
+
+                    int layer_count = 0;
+                    if (profile.size() >= 4) {
+                        double total_z = profile[profile.size() - 2];
+                        double avg_height = (min_layer_height + max_layer_height) / 2.0;
+                        layer_count = static_cast<int>(total_z / avg_height);
+                    }
+
+                    obj_result["status"] = "success";
+                    obj_result["object_name"] = obj->name;
+                    obj_result["vlh_enabled"] = true;
+                    obj_result["min_layer_height"] = min_layer_height;
+                    obj_result["max_layer_height"] = max_layer_height;
+                    obj_result["estimated_layer_count"] = layer_count;
+                    obj_result["profile_points"] = profile.size() / 2;
+                    results.push_back(obj_result);
+                }
+
+                // Schedule background process once (after all objects processed)
+                GLCanvas3D* canvas = plater->get_view3D_canvas3D();
+                if (canvas) {
+                    canvas->post_event(SimpleEvent(EVT_GLCANVAS_SCHEDULE_BACKGROUND_PROCESS));
+                }
+                plater->update();
+
+                // Return single result for single object, array for batch
+                nlohmann::json result;
+                if (object_ids.size() == 1) {
+                    result = results[0];
+                    result["quality_factor"] = clamped_quality;
+                } else {
+                    result = nlohmann::json{
+                        {"status", "success"},
+                        {"quality_factor", clamped_quality},
+                        {"objects_processed", results.size()},
+                        {"results", results}
+                    };
+                }
+
+                // Add preview if requested
+                if (include_preview) {
+                    add_turntable_preview_if_requested(result, true);
+                    result["preview_hint"] = "Check the preview image to visually verify the VLH changes on the plate.";
+                }
+
+                return result;
+            });
+        }
+    });
+
+    // clear_adaptive_layer_height - Remove VLH from objects (supports batch)
+    register_tool({
+        "clear_adaptive_layer_height",
+        "Remove Variable Layer Height from object(s), reverting to fixed layer height. Supports batch operations.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"object_id", {
+                    {"type", "integer"},
+                    {"description", "Single object index (0-based). Use object_ids for batch operations."}
+                }},
+                {"object_ids", {
+                    {"type", "array"},
+                    {"items", {{"type", "integer"}}},
+                    {"description", "Array of object indices to clear VLH from (0-based)."}
+                }},
+                {"include_preview", {
+                    {"type", "boolean"},
+                    {"description", "Include a preview image path to visually verify the result"}
+                }}
+            }}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            // Build list of object IDs to process
+            std::vector<int> object_ids;
+            if (params.contains("object_ids") && params["object_ids"].is_array()) {
+                for (const auto& id : params["object_ids"]) {
+                    object_ids.push_back(id.get<int>());
+                }
+            } else if (params.contains("object_id")) {
+                object_ids.push_back(params["object_id"].get<int>());
+            } else {
+                return nlohmann::json{
+                    {"status", "error"},
+                    {"message", "Either object_id or object_ids is required"}
+                };
+            }
+
+            bool include_preview = params.value("include_preview", false);
+
+            return run_on_main_thread([object_ids, include_preview]() {
+                Plater* plater = wxGetApp().plater();
+                Model& model = plater->model();
+
+                nlohmann::json results = nlohmann::json::array();
+
+                for (int object_id : object_ids) {
+                    nlohmann::json obj_result;
+                    obj_result["object_id"] = object_id;
+
+                    if (object_id < 0 || object_id >= static_cast<int>(model.objects.size())) {
+                        obj_result["status"] = "error";
+                        obj_result["message"] = "Invalid object_id";
+                        results.push_back(obj_result);
+                        continue;
+                    }
+
+                    ModelObject* obj = model.objects[object_id];
+
+                    bool had_vlh = !obj->layer_height_profile.get().empty();
+                    obj->layer_height_profile.clear();
+                    wxGetApp().obj_list()->update_info_items(object_id);
+
+                    obj_result["status"] = "success";
+                    obj_result["object_name"] = obj->name;
+                    obj_result["vlh_enabled"] = false;
+                    obj_result["previous_vlh_active"] = had_vlh;
+                    results.push_back(obj_result);
+                }
+
+                // Schedule background process once
+                GLCanvas3D* canvas = plater->get_view3D_canvas3D();
+                if (canvas) {
+                    canvas->post_event(SimpleEvent(EVT_GLCANVAS_SCHEDULE_BACKGROUND_PROCESS));
+                }
+                plater->update();
+
+                // Return single result for single object, array for batch
+                nlohmann::json result;
+                if (object_ids.size() == 1) {
+                    result = results[0];
+                } else {
+                    result = nlohmann::json{
+                        {"status", "success"},
+                        {"objects_processed", results.size()},
+                        {"results", results}
+                    };
+                }
+
+                // Add preview if requested
+                if (include_preview) {
+                    add_turntable_preview_if_requested(result, true);
+                    result["preview_hint"] = "Check the preview image to verify VLH has been cleared from the object(s).";
+                }
+
+                return result;
+            });
+        }
+    });
+
+    // ==================== SLICING & EXPORT ====================
+
+    // slice_all - Start slicing
+    register_tool({
+        "slice_all",
+        "Start slicing all plates. ASYNC: Returns immediately. Poll get_slicing_status every 2-3 seconds until is_slicing=false, then export_gcode.",
+        {
+            {"type", "object"},
+            {"properties", nlohmann::json::object()}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            return run_on_main_thread([]() {
+                wxGetApp().plater()->reslice();
+                return nlohmann::json{{"status", "slicing_started"}};
+            });
+        }
+    });
+
+    // export_gcode - Export G-code
+    register_tool({
+        "export_gcode",
+        "Export G-code to file. If output_path is provided, exports silently without dialog. Requires slicing to be complete.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"output_path", {
+                    {"type", "string"},
+                    {"description", "Output file path. If provided, exports silently. If omitted, opens file dialog."}
+                }}
+            }}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            std::string output_path = params.value("output_path", "");
+            return run_on_main_thread([output_path]() {
+                Plater* plater = wxGetApp().plater();
+                if (plater->is_background_process_slicing()) {
+                    return nlohmann::json{{"status", "error"}, {"message", "Slicing still in progress"}};
+                }
+                // Note: Silent export to specific path not available in upstream OrcaSlicer
+                // Always opens the export dialog
+                plater->export_gcode(false);
+                return nlohmann::json{{"status", "export_dialog_opened"},
+                                      {"note", "Use the file dialog to choose export location"}};
+            });
+        }
+    });
+
+    // export_3mf - Export project as 3MF
+    register_tool({
+        "export_3mf",
+        "Export project as 3MF file. If output_path is provided, exports silently without dialog.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"output_path", {
+                    {"type", "string"},
+                    {"description", "Output file path. If provided, exports silently. If omitted, opens file dialog."}
+                }}
+            }}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            std::string output_path = params.value("output_path", "");
+            return run_on_main_thread([output_path]() {
+                Plater* plater = wxGetApp().plater();
+                if (!output_path.empty()) {
+                    // Silent export with path
+                    int result = plater->export_3mf(boost::filesystem::path(output_path), SaveStrategy::Silence | SaveStrategy::SplitModel);
+                    if (result == 0) {
+                        return nlohmann::json{{"status", "success"}, {"output_path", output_path}};
+                    } else {
+                        return nlohmann::json{{"status", "error"}, {"message", "Export failed"}};
+                    }
+                } else {
+                    // Show dialog
+                    plater->export_3mf();
+                    return nlohmann::json{{"status", "export_dialog_opened"}};
+                }
+            });
+        }
+    });
+
+    // save_project - Save current project
+    register_tool({
+        "save_project",
+        "Save current project. If project has a filename, saves silently. Otherwise shows save dialog.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"save_as", {
+                    {"type", "boolean"},
+                    {"description", "If true, always shows save dialog. If false (default), saves to existing filename or shows dialog if new project."}
+                }}
+            }}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            bool saveAs = params.value("save_as", false);
+            return run_on_main_thread([saveAs]() {
+                Plater* plater = wxGetApp().plater();
+                int result = plater->save_project(saveAs);
+                if (result == 0) {
+                    std::string filename = into_u8(plater->get_project_filename(".3mf"));
+                    return nlohmann::json{{"status", "success"}, {"filename", filename}};
+                } else {
+                    return nlohmann::json{{"status", "cancelled"}};
+                }
+            });
+        }
+    });
+
+    // load_model - Import 3D model file
+    register_tool({
+        "load_model",
+        "Import a 3D model file (STL, 3MF, OBJ, STEP, etc.)",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"file_path", {
+                    {"type", "string"},
+                    {"description", "Absolute path to the 3D model file to import"}
+                }}
+            }},
+            {"required", {"file_path"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            std::string file_path = params["file_path"];
+            return run_on_main_thread([file_path]() {
+                Plater* plater = wxGetApp().plater();
+                wxArrayString files;
+                files.Add(wxString::FromUTF8(file_path));
+
+                bool result = plater->load_files(files);
+                if (result) {
+                    return nlohmann::json{
+                        {"status", "success"},
+                        {"file", file_path}
+                    };
+                } else {
+                    return nlohmann::json{
+                        {"status", "error"},
+                        {"message", "Failed to load model file"}
+                    };
+                }
+            });
+        }
+    });
+
+    // get_slicing_status - Check slicing progress
+    register_tool({
+        "get_slicing_status",
+        "Get the current slicing status and progress",
+        {
+            {"type", "object"},
+            {"properties", nlohmann::json::object()}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            return run_on_main_thread([]() {
+                Plater* plater = wxGetApp().plater();
+                bool is_running = plater->is_background_process_slicing();
+
+                return nlohmann::json{
+                    {"is_slicing", is_running},
+                    {"status", is_running ? "slicing" : "idle"}
+                };
+            });
+        }
+    });
+
+    // get_print_estimate - Get print time and filament estimates after slicing
+    register_tool({
+        "get_print_estimate",
+        "Get print time estimates and filament usage after slicing completes. Call after slice_all finishes.",
+        {
+            {"type", "object"},
+            {"properties", nlohmann::json::object()}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            return run_on_main_thread([]() {
+                Plater* plater = wxGetApp().plater();
+
+                // Check if slicing is actively running
+                if (plater->is_background_process_slicing()) {
+                    return nlohmann::json{
+                        {"status", "in_progress"},
+                        {"message", "Slicing still in progress. Poll again in 2-3 seconds."}
+                    };
+                }
+
+                const Print& print = plater->fff_print();
+
+                // Check if G-code export is complete (statistics are populated during this step)
+                if (!print.finished()) {
+                    return nlohmann::json{
+                        {"status", "in_progress"},
+                        {"message", "G-code export still processing. Poll again shortly."}
+                    };
+                }
+
+                const PrintStatistics& stats = print.print_statistics();
+
+                // Check if we have valid stats (non-empty time string indicates slicing was done)
+                if (stats.estimated_normal_print_time.empty()) {
+                    return nlohmann::json{
+                        {"status", "error"},
+                        {"message", "No print statistics available. Run slice_all first."}
+                    };
+                }
+
+                // Calculate total layer count (max across all print objects)
+                size_t total_layers = 0;
+                for (const PrintObject* obj : print.objects()) {
+                    total_layers = std::max(total_layers, obj->total_layer_count());
+                }
+
+                return nlohmann::json{
+                    {"status", "success"},
+                    {"estimated_time", stats.estimated_normal_print_time},
+                    {"estimated_time_silent", stats.estimated_silent_print_time},
+                    {"layer_count", total_layers},
+                    {"filament", {
+                        {"total_length_mm", stats.total_used_filament},
+                        {"total_volume_mm3", stats.total_extruded_volume},
+                        {"total_weight_grams", stats.total_weight},
+                        {"total_cost", stats.total_cost}
+                    }},
+                    {"total_toolchanges", stats.total_toolchanges}
+                };
+            });
+        }
+    });
+
+    // new_project - Create new project
+    register_tool({
+        "new_project",
+        "Create a new empty project, clearing all existing objects",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"skip_confirm", {
+                    {"type", "boolean"},
+                    {"description", "Skip confirmation dialog if there are unsaved changes"}
+                }}
+            }}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            return run_on_main_thread([]() {
+                Plater* plater = wxGetApp().plater();
+                plater->new_project();
+                return nlohmann::json{{"status", "success"}};
+            });
+        }
+    });
+
+    // load_project - Load 3MF project file
+    register_tool({
+        "load_project",
+        "Load a 3MF project file",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"file_path", {
+                    {"type", "string"},
+                    {"description", "Absolute path to the 3MF project file"}
+                }}
+            }},
+            {"required", {"file_path"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            std::string file_path = params["file_path"];
+            return run_on_main_thread([file_path]() {
+                Plater* plater = wxGetApp().plater();
+                wxArrayString files;
+                files.Add(wxString::FromUTF8(file_path));
+
+                plater->load_files(files);
+                return nlohmann::json{
+                    {"status", "success"},
+                    {"file", file_path}
+                };
+            });
+        }
+    });
+
+    // ==================== PLATE MANAGEMENT ====================
+
+    // add_plate - Create a new plate
+    register_tool({
+        "add_plate",
+        "Create a new plate. Returns the index of the new plate and context about the operation.",
+        {
+            {"type", "object"},
+            {"properties", nlohmann::json::object()}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            return run_on_main_thread([]() {
+                Plater* plater = wxGetApp().plater();
+                PartPlateList& plate_list = plater->get_partplate_list();
+
+                // Capture state before creation
+                int previous_plate_count = plate_list.get_plate_count();
+                int current_plate_before = plate_list.get_curr_plate_index();
+
+                // Create the new plate
+                int new_index = plate_list.create_plate(true);
+                int total_plates = plate_list.get_plate_count();
+                int current_plate_after = plate_list.get_curr_plate_index();
+
+                return nlohmann::json{
+                    {"status", "success"},
+                    {"new_plate_index", new_index},
+                    {"previous_plate_count", previous_plate_count},
+                    {"total_plates", total_plates},
+                    {"current_plate_before", current_plate_before},
+                    {"current_plate_after", current_plate_after},
+                    {"note", "New plate " + std::to_string(new_index) + " created. Use select_plate to switch to it if needed."}
+                };
+            });
+        }
+    });
+
+    // delete_plate - Delete a plate
+    register_tool({
+        "delete_plate",
+        "Delete a plate by index. Cannot delete the last remaining plate. Objects on deleted plate are moved to another plate.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"plate_index", {
+                    {"type", "integer"},
+                    {"description", "Index of the plate to delete (0-based). If not specified, deletes current plate."}
+                }}
+            }}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            int plate_index = params.value("plate_index", -1);
+            return run_on_main_thread([plate_index]() {
+                Plater* plater = wxGetApp().plater();
+                PartPlateList& plate_list = plater->get_partplate_list();
+
+                // Capture state before deletion
+                int plate_count_before = plate_list.get_plate_count();
+                int current_plate_before = plate_list.get_curr_plate_index();
+                int actual_plate_to_delete = (plate_index == -1) ? current_plate_before : plate_index;
+
+                // Check if we have more than one plate
+                if (plate_count_before <= 1) {
+                    return nlohmann::json{
+                        {"status", "error"},
+                        {"message", "Cannot delete the last remaining plate"},
+                        {"total_plates", plate_count_before}
+                    };
+                }
+
+                // Validate plate index
+                if (actual_plate_to_delete < 0 || actual_plate_to_delete >= plate_count_before) {
+                    return nlohmann::json{
+                        {"status", "error"},
+                        {"message", "Invalid plate_index: " + std::to_string(actual_plate_to_delete) +
+                                    ". Valid range: 0 to " + std::to_string(plate_count_before - 1)}
+                    };
+                }
+
+                int result = plater->delete_plate(plate_index);
+                if (result == 0) {
+                    int current_plate_after = plate_list.get_curr_plate_index();
+                    int plate_count_after = plate_list.get_plate_count();
+
+                    nlohmann::json response = {
+                        {"status", "success"},
+                        {"deleted_plate_index", actual_plate_to_delete},
+                        {"plate_count_before", plate_count_before},
+                        {"plate_count_after", plate_count_after},
+                        {"current_plate_before", current_plate_before},
+                        {"current_plate_after", current_plate_after}
+                    };
+
+                    // Add note about plate indices shifting
+                    if (actual_plate_to_delete < plate_count_before - 1) {
+                        response["note"] = "Plates after index " + std::to_string(actual_plate_to_delete) +
+                                          " have shifted down. Re-query get_scene_info for updated indices.";
+                    }
+
+                    return response;
+                } else {
+                    return nlohmann::json{
+                        {"status", "error"},
+                        {"message", "Failed to delete plate"}
+                    };
+                }
+            });
+        }
+    });
+
+    // select_plate - Select/switch to a plate
+    register_tool({
+        "select_plate",
+        "Select a plate by index to make it the active/current plate. Operations like clone_object (without destination_plate) will target the current plate.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"plate_index", {
+                    {"type", "integer"},
+                    {"description", "Index of the plate to select (0-based)"}
+                }}
+            }},
+            {"required", {"plate_index"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            int plate_index = params["plate_index"];
+            return run_on_main_thread([plate_index]() {
+                Plater* plater = wxGetApp().plater();
+                PartPlateList& plate_list = plater->get_partplate_list();
+
+                // Capture state before selection
+                int previous_plate = plate_list.get_curr_plate_index();
+                int plate_count = plate_list.get_plate_count();
+
+                if (plate_index < 0 || plate_index >= plate_count) {
+                    return nlohmann::json{
+                        {"status", "error"},
+                        {"message", "Invalid plate_index: " + std::to_string(plate_index) +
+                                    ". Valid range: 0 to " + std::to_string(plate_count - 1)},
+                        {"current_plate", previous_plate},
+                        {"total_plates", plate_count}
+                    };
+                }
+
+                // Check if already on requested plate
+                if (plate_index == previous_plate) {
+                    return nlohmann::json{
+                        {"status", "success"},
+                        {"previous_plate", previous_plate},
+                        {"current_plate", plate_index},
+                        {"total_plates", plate_count},
+                        {"note", "Already on plate " + std::to_string(plate_index) + ", no change needed."}
+                    };
+                }
+
+                int result = plater->select_plate(plate_index);
+                int current_plate = plate_list.get_curr_plate_index();
+
+                nlohmann::json response = {
+                    {"status", result == 0 ? "success" : "error"},
+                    {"previous_plate", previous_plate},
+                    {"current_plate", current_plate},
+                    {"total_plates", plate_count}
+                };
+
+                if (result == 0 && previous_plate != current_plate) {
+                    response["note"] = "Switched from plate " + std::to_string(previous_plate) +
+                                      " to plate " + std::to_string(current_plate) + ".";
+                }
+
+                return response;
+            });
+        }
+    });
+
+    // ==================== OBJECT TRANSFORMS ====================
+
+    // move_object - Move/translate an object
+    register_tool({
+        "move_object",
+        "Move an object by offset or to absolute position. Default is relative movement. Unspecified axes are preserved (0 offset for relative, current position for absolute).",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"object_id", {
+                    {"type", "integer"},
+                    {"description", "Index of the object in the model (0-based)"}
+                }},
+                {"x", {
+                    {"type", "number"},
+                    {"description", "X offset or position in mm (unspecified = no change)"}
+                }},
+                {"y", {
+                    {"type", "number"},
+                    {"description", "Y offset or position in mm (unspecified = no change)"}
+                }},
+                {"z", {
+                    {"type", "number"},
+                    {"description", "Z offset or position in mm (unspecified = no change)"}
+                }},
+                {"relative", {
+                    {"type", "boolean"},
+                    {"description", "If true (default), values are offsets. If false, values are absolute positions."}
+                }},
+                {"include_preview", {
+                    {"type", "boolean"},
+                    {"description", "Include turntable preview image path in response"}
+                }},
+                {"preview_views", {
+                    {"type", "integer"},
+                    {"description", "Number of preview views: 4 or 8 (default: 4)"}
+                }},
+                {"preview_resolution", {
+                    {"type", "integer"},
+                    {"description", "Preview resolution per view in pixels (default: 128)"}
+                }}
+            }},
+            {"required", {"object_id"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            int object_id = params["object_id"];
+            bool has_x = params.contains("x");
+            bool has_y = params.contains("y");
+            bool has_z = params.contains("z");
+            double x = params.value("x", 0.0);
+            double y = params.value("y", 0.0);
+            double z = params.value("z", 0.0);
+            bool relative = params.value("relative", true);
+            bool include_preview = params.value("include_preview", false);
+            int preview_views = params.value("preview_views", 4);
+            int preview_resolution = params.value("preview_resolution", 128);
+            return run_on_main_thread([object_id, x, y, z, has_x, has_y, has_z, relative,
+                                       include_preview, preview_views, preview_resolution]() {
+                Plater* plater = wxGetApp().plater();
+                Model& model = plater->model();
+
+                if (object_id < 0 || object_id >= static_cast<int>(model.objects.size())) {
+                    throw std::runtime_error("Invalid object_id: " + std::to_string(object_id));
+                }
+
+                ModelObject* obj = model.objects[object_id];
+                BoundingBoxf3 bbox = obj->bounding_box_approx();
+                Vec3d current_center = bbox.center();
+
+                if (relative) {
+                    // Relative: only apply offset for specified axes (unspecified = 0 offset)
+                    obj->translate(Vec3d(x, y, z));
+                } else {
+                    // Absolute: only change specified axes, preserve others
+                    Vec3d target(
+                        has_x ? x : current_center.x(),
+                        has_y ? y : current_center.y(),
+                        has_z ? z : current_center.z()
+                    );
+                    obj->translate(target - current_center);
+                }
+
+                // Notify UI of changes
+                obj->invalidate_bounding_box();
+                plater->update();
+
+                // Get resulting state
+                BoundingBoxf3 new_bbox = obj->bounding_box_approx();
+                Vec3d new_center = new_bbox.center();
+                Vec3d rotation = obj->instances[0]->get_rotation();
+                Vec3d scale = obj->instances[0]->get_scaling_factor();
+
+                // Check if object is within printable area
+                auto plate = plater->get_partplate_list().get_curr_plate();
+                BoundingBoxf3 bed_box = plate->get_plate_box();
+                bool on_bed = new_bbox.min.x() >= bed_box.min.x() &&
+                              new_bbox.min.y() >= bed_box.min.y() &&
+                              new_bbox.max.x() <= bed_box.max.x() &&
+                              new_bbox.max.y() <= bed_box.max.y() &&
+                              new_bbox.min.z() >= -0.1;  // Allow tiny tolerance for bed contact
+
+                // Get validation warnings
+                nlohmann::json warnings = get_validation_warnings_json(plater);
+                if (!on_bed) {
+                    warnings.push_back("Object positioned outside printable area");
+                }
+
+                // Build enhanced response with context
+                nlohmann::json result = {
+                    {"status", "success"},
+                    {"object_id", object_id},
+                    {"movement_mode", relative ? "relative" : "absolute"},
+                    {"previous_position", {{"x", current_center.x()}, {"y", current_center.y()}, {"z", current_center.z()}}},
+                    {"position", {{"x", new_center.x()}, {"y", new_center.y()}, {"z", new_center.z()}}},
+                    {"axes_specified", {{"x", has_x}, {"y", has_y}, {"z", has_z}}},
+                    {"rotation_degrees", {
+                        {"x", Geometry::rad2deg(rotation.x())},
+                        {"y", Geometry::rad2deg(rotation.y())},
+                        {"z", Geometry::rad2deg(rotation.z())}
+                    }},
+                    {"scale", {{"x", scale.x()}, {"y", scale.y()}, {"z", scale.z()}}},
+                    {"on_bed", on_bed}
+                };
+
+                // Add movement delta for clarity
+                Vec3d delta = new_center - current_center;
+                if (delta.norm() > 0.001) {
+                    result["movement_delta"] = {{"x", delta.x()}, {"y", delta.y()}, {"z", delta.z()}};
+                }
+
+                if (!warnings.empty()) {
+                    result["warnings"] = warnings;
+                }
+
+                // Add turntable preview if requested
+                add_turntable_preview_if_requested(result, include_preview, preview_views, preview_resolution);
+
+                return result;
+            });
+        }
+    });
+
+    // rotate_object - Rotate an object
+    register_tool({
+        "rotate_object",
+        "Rotate an object around X, Y, and/or Z axes. Values are in degrees. Note: rotation is applied to mesh geometry, so rotation_degrees field may not reflect cumulative MCP rotations. Verify with bounding_box dimensions.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"object_id", {
+                    {"type", "integer"},
+                    {"description", "Index of the object in the model (0-based)"}
+                }},
+                {"x", {
+                    {"type", "number"},
+                    {"description", "Rotation around X axis in degrees"}
+                }},
+                {"y", {
+                    {"type", "number"},
+                    {"description", "Rotation around Y axis in degrees"}
+                }},
+                {"z", {
+                    {"type", "number"},
+                    {"description", "Rotation around Z axis in degrees"}
+                }},
+                {"relative", {
+                    {"type", "boolean"},
+                    {"description", "If true (default), rotation is added to current. If false, sets absolute rotation."}
+                }},
+                {"include_preview", {
+                    {"type", "boolean"},
+                    {"description", "Include turntable preview image path in response"}
+                }},
+                {"preview_views", {
+                    {"type", "integer"},
+                    {"description", "Number of preview views: 4 or 8 (default: 4)"}
+                }},
+                {"preview_resolution", {
+                    {"type", "integer"},
+                    {"description", "Preview resolution per view in pixels (default: 128)"}
+                }}
+            }},
+            {"required", {"object_id"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            int object_id = params["object_id"];
+            double x_deg = params.value("x", 0.0);
+            double y_deg = params.value("y", 0.0);
+            double z_deg = params.value("z", 0.0);
+            bool relative = params.value("relative", true);
+            (void)relative;  // Reserved for future absolute rotation support
+            bool include_preview = params.value("include_preview", false);
+            int preview_views = params.value("preview_views", 4);
+            int preview_resolution = params.value("preview_resolution", 128);
+            return run_on_main_thread([object_id, x_deg, y_deg, z_deg,
+                                       include_preview, preview_views, preview_resolution]() {
+                Plater* plater = wxGetApp().plater();
+                Model& model = plater->model();
+
+                if (object_id < 0 || object_id >= static_cast<int>(model.objects.size())) {
+                    throw std::runtime_error("Invalid object_id: " + std::to_string(object_id));
+                }
+
+                ModelObject* obj = model.objects[object_id];
+
+                // Convert degrees to radians
+                const double deg_to_rad = M_PI / 180.0;
+
+                if (x_deg != 0.0) obj->rotate(x_deg * deg_to_rad, Axis::X);
+                if (y_deg != 0.0) obj->rotate(y_deg * deg_to_rad, Axis::Y);
+                if (z_deg != 0.0) obj->rotate(z_deg * deg_to_rad, Axis::Z);
+
+                // Notify UI of changes
+                obj->invalidate_bounding_box();
+                plater->update();
+
+                // Get resulting state
+                BoundingBoxf3 new_bbox = obj->bounding_box_approx();
+                Vec3d new_center = new_bbox.center();
+                Vec3d rotation = obj->instances[0]->get_rotation();
+                Vec3d scale = obj->instances[0]->get_scaling_factor();
+
+                // Check if object is within printable area
+                auto plate = plater->get_partplate_list().get_curr_plate();
+                BoundingBoxf3 bed_box = plate->get_plate_box();
+                bool on_bed = new_bbox.min.x() >= bed_box.min.x() &&
+                              new_bbox.min.y() >= bed_box.min.y() &&
+                              new_bbox.max.x() <= bed_box.max.x() &&
+                              new_bbox.max.y() <= bed_box.max.y() &&
+                              new_bbox.min.z() >= -0.1;
+
+                // Get validation warnings
+                nlohmann::json warnings = get_validation_warnings_json(plater);
+                if (!on_bed) {
+                    warnings.push_back("Object positioned outside printable area");
+                }
+
+                nlohmann::json result = {
+                    {"status", "success"},
+                    {"object_id", object_id},
+                    {"position", {{"x", new_center.x()}, {"y", new_center.y()}, {"z", new_center.z()}}},
+                    {"rotation_degrees", {
+                        {"x", Geometry::rad2deg(rotation.x())},
+                        {"y", Geometry::rad2deg(rotation.y())},
+                        {"z", Geometry::rad2deg(rotation.z())}
+                    }},
+                    {"scale", {{"x", scale.x()}, {"y", scale.y()}, {"z", scale.z()}}},
+                    {"on_bed", on_bed}
+                };
+                if (!warnings.empty()) {
+                    result["warnings"] = warnings;
+                }
+
+                // Add turntable preview if requested
+                add_turntable_preview_if_requested(result, include_preview, preview_views, preview_resolution);
+
+                return result;
+            });
+        }
+    });
+
+    // scale_object - Scale an object
+    register_tool({
+        "scale_object",
+        "Scale an object by factors on each axis. Use uniform=true to scale uniformly using x value.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"object_id", {
+                    {"type", "integer"},
+                    {"description", "Index of the object in the model (0-based)"}
+                }},
+                {"x", {
+                    {"type", "number"},
+                    {"description", "Scale factor for X axis (1.0 = no change, 2.0 = double size)"}
+                }},
+                {"y", {
+                    {"type", "number"},
+                    {"description", "Scale factor for Y axis"}
+                }},
+                {"z", {
+                    {"type", "number"},
+                    {"description", "Scale factor for Z axis"}
+                }},
+                {"uniform", {
+                    {"type", "boolean"},
+                    {"description", "If true, use x value for all axes (uniform scaling)"}
+                }},
+                {"include_preview", {
+                    {"type", "boolean"},
+                    {"description", "Include turntable preview image path in response"}
+                }},
+                {"preview_views", {
+                    {"type", "integer"},
+                    {"description", "Number of preview views: 4 or 8 (default: 4)"}
+                }},
+                {"preview_resolution", {
+                    {"type", "integer"},
+                    {"description", "Preview resolution per view in pixels (default: 128)"}
+                }}
+            }},
+            {"required", {"object_id"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            int object_id = params["object_id"];
+            double x = params.value("x", 1.0);
+            double y = params.value("y", 1.0);
+            double z = params.value("z", 1.0);
+            bool uniform = params.value("uniform", false);
+            bool include_preview = params.value("include_preview", false);
+            int preview_views = params.value("preview_views", 4);
+            int preview_resolution = params.value("preview_resolution", 128);
+            return run_on_main_thread([object_id, x, y, z, uniform,
+                                       include_preview, preview_views, preview_resolution]() {
+                Plater* plater = wxGetApp().plater();
+                Model& model = plater->model();
+
+                if (object_id < 0 || object_id >= static_cast<int>(model.objects.size())) {
+                    throw std::runtime_error("Invalid object_id: " + std::to_string(object_id));
+                }
+
+                ModelObject* obj = model.objects[object_id];
+
+                if (uniform) {
+                    obj->scale(x);  // Uniform scale
+                } else {
+                    obj->scale(Vec3d(x, y, z));
+                }
+
+                // Notify UI of changes
+                obj->invalidate_bounding_box();
+                plater->update();
+
+                // Get resulting state
+                BoundingBoxf3 new_bbox = obj->bounding_box_approx();
+                Vec3d new_center = new_bbox.center();
+                Vec3d rotation = obj->instances[0]->get_rotation();
+                Vec3d scale_result = obj->instances[0]->get_scaling_factor();
+
+                // Check if object is within printable area
+                auto plate = plater->get_partplate_list().get_curr_plate();
+                BoundingBoxf3 bed_box = plate->get_plate_box();
+                bool on_bed = new_bbox.min.x() >= bed_box.min.x() &&
+                              new_bbox.min.y() >= bed_box.min.y() &&
+                              new_bbox.max.x() <= bed_box.max.x() &&
+                              new_bbox.max.y() <= bed_box.max.y() &&
+                              new_bbox.min.z() >= -0.1;
+
+                // Get validation warnings
+                nlohmann::json warnings = get_validation_warnings_json(plater);
+                if (!on_bed) {
+                    warnings.push_back("Object positioned outside printable area");
+                }
+
+                nlohmann::json result = {
+                    {"status", "success"},
+                    {"object_id", object_id},
+                    {"position", {{"x", new_center.x()}, {"y", new_center.y()}, {"z", new_center.z()}}},
+                    {"rotation_degrees", {
+                        {"x", Geometry::rad2deg(rotation.x())},
+                        {"y", Geometry::rad2deg(rotation.y())},
+                        {"z", Geometry::rad2deg(rotation.z())}
+                    }},
+                    {"scale", {{"x", scale_result.x()}, {"y", scale_result.y()}, {"z", scale_result.z()}}},
+                    {"on_bed", on_bed}
+                };
+                if (!warnings.empty()) {
+                    result["warnings"] = warnings;
+                }
+
+                // Add turntable preview if requested
+                add_turntable_preview_if_requested(result, include_preview, preview_views, preview_resolution);
+
+                return result;
+            });
+        }
+    });
+
+    // transform_objects - Batch transform multiple objects
+    register_tool({
+        "transform_objects",
+        "Apply transforms to multiple objects in a single operation. More efficient than multiple individual calls.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"transforms", {
+                    {"type", "array"},
+                    {"description", "Array of transform operations"},
+                    {"items", {
+                        {"type", "object"},
+                        {"properties", {
+                            {"object_id", {{"type", "integer"}, {"description", "Index of the object (0-based)"}}},
+                            {"position", {{"type", "object"}, {"description", "Absolute position {x, y, z} - unspecified axes preserved"}}},
+                            {"rotation", {{"type", "object"}, {"description", "Rotation in degrees {x, y, z} - applied incrementally"}}},
+                            {"scale", {{"type", "object"}, {"description", "Scale factors {x, y, z} or {uniform: value}"}}}
+                        }},
+                        {"required", {"object_id"}}
+                    }}
+                }}
+            }},
+            {"required", {"transforms"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            auto transforms = params["transforms"];
+            return run_on_main_thread([transforms]() {
+                Plater* plater = wxGetApp().plater();
+                Model& model = plater->model();
+                nlohmann::json results = nlohmann::json::array();
+
+                const double deg_to_rad = M_PI / 180.0;
+
+                // Apply all transforms
+                for (const auto& t : transforms) {
+                    int object_id = t["object_id"];
+
+                    if (object_id < 0 || object_id >= static_cast<int>(model.objects.size())) {
+                        results.push_back({
+                            {"object_id", object_id},
+                            {"status", "error"},
+                            {"message", "Invalid object_id"}
+                        });
+                        continue;
+                    }
+
+                    ModelObject* obj = model.objects[object_id];
+
+                    // Apply position (absolute, unspecified axes preserved)
+                    if (t.contains("position")) {
+                        auto pos = t["position"];
+                        BoundingBoxf3 bbox = obj->bounding_box_approx();
+                        Vec3d current_center = bbox.center();
+                        Vec3d target(
+                            pos.contains("x") ? pos["x"].get<double>() : current_center.x(),
+                            pos.contains("y") ? pos["y"].get<double>() : current_center.y(),
+                            pos.contains("z") ? pos["z"].get<double>() : current_center.z()
+                        );
+                        obj->translate(target - current_center);
+                    }
+
+                    // Apply rotation (incremental)
+                    if (t.contains("rotation")) {
+                        auto rot = t["rotation"];
+                        if (rot.contains("x") && rot["x"].get<double>() != 0.0)
+                            obj->rotate(rot["x"].get<double>() * deg_to_rad, Axis::X);
+                        if (rot.contains("y") && rot["y"].get<double>() != 0.0)
+                            obj->rotate(rot["y"].get<double>() * deg_to_rad, Axis::Y);
+                        if (rot.contains("z") && rot["z"].get<double>() != 0.0)
+                            obj->rotate(rot["z"].get<double>() * deg_to_rad, Axis::Z);
+                    }
+
+                    // Apply scale
+                    if (t.contains("scale")) {
+                        auto sc = t["scale"];
+                        if (sc.contains("uniform")) {
+                            obj->scale(sc["uniform"].get<double>());
+                        } else {
+                            double sx = sc.value("x", 1.0);
+                            double sy = sc.value("y", 1.0);
+                            double sz = sc.value("z", 1.0);
+                            obj->scale(Vec3d(sx, sy, sz));
+                        }
+                    }
+
+                    obj->invalidate_bounding_box();
+                }
+
+                // Single UI update for all transforms
+                plater->update();
+
+                // Build results for each object
+                auto plate = plater->get_partplate_list().get_curr_plate();
+                BoundingBoxf3 bed_box = plate->get_plate_box();
+
+                for (const auto& t : transforms) {
+                    int object_id = t["object_id"];
+                    if (object_id < 0 || object_id >= static_cast<int>(model.objects.size())) {
+                        continue;  // Already reported error
+                    }
+
+                    ModelObject* obj = model.objects[object_id];
+                    BoundingBoxf3 bbox = obj->bounding_box_approx();
+                    Vec3d center = bbox.center();
+
+                    bool on_bed = bbox.min.x() >= bed_box.min.x() &&
+                                  bbox.min.y() >= bed_box.min.y() &&
+                                  bbox.max.x() <= bed_box.max.x() &&
+                                  bbox.max.y() <= bed_box.max.y() &&
+                                  bbox.min.z() >= -0.1;
+
+                    results.push_back({
+                        {"object_id", object_id},
+                        {"status", "success"},
+                        {"position", {{"x", center.x()}, {"y", center.y()}, {"z", center.z()}}},
+                        {"on_bed", on_bed}
+                    });
+                }
+
+                // Get validation warnings
+                nlohmann::json warnings = get_validation_warnings_json(plater);
+
+                nlohmann::json response = {
+                    {"status", "success"},
+                    {"results", results}
+                };
+                if (!warnings.empty()) {
+                    response["warnings"] = warnings;
+                }
+                return response;
+            });
+        }
+    });
+
+    // mirror_object - Mirror an object across an axis
+    register_tool({
+        "mirror_object",
+        "Mirror an object across the specified axis",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"object_id", {
+                    {"type", "integer"},
+                    {"description", "Index of the object in the model (0-based)"}
+                }},
+                {"axis", {
+                    {"type", "string"},
+                    {"enum", {"x", "y", "z"}},
+                    {"description", "Axis to mirror across: x, y, or z"}
+                }},
+                {"include_preview", {
+                    {"type", "boolean"},
+                    {"description", "Include turntable preview image path in response"}
+                }},
+                {"preview_views", {
+                    {"type", "integer"},
+                    {"description", "Number of preview views: 4 or 8 (default: 4)"}
+                }},
+                {"preview_resolution", {
+                    {"type", "integer"},
+                    {"description", "Preview resolution per view in pixels (default: 128)"}
+                }}
+            }},
+            {"required", {"object_id", "axis"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            int object_id = params["object_id"];
+            std::string axis_str = params["axis"];
+            bool include_preview = params.value("include_preview", false);
+            int preview_views = params.value("preview_views", 4);
+            int preview_resolution = params.value("preview_resolution", 128);
+            return run_on_main_thread([object_id, axis_str,
+                                       include_preview, preview_views, preview_resolution]() {
+                Plater* plater = wxGetApp().plater();
+                Model& model = plater->model();
+
+                if (object_id < 0 || object_id >= static_cast<int>(model.objects.size())) {
+                    throw std::runtime_error("Invalid object_id: " + std::to_string(object_id));
+                }
+
+                ModelObject* obj = model.objects[object_id];
+
+                Axis axis;
+                if (axis_str == "x" || axis_str == "X") axis = Axis::X;
+                else if (axis_str == "y" || axis_str == "Y") axis = Axis::Y;
+                else if (axis_str == "z" || axis_str == "Z") axis = Axis::Z;
+                else throw std::runtime_error("Invalid axis: " + axis_str);
+
+                obj->mirror(axis);
+
+                // Notify UI of changes
+                obj->invalidate_bounding_box();
+                plater->update();
+
+                // Get validation warnings
+                nlohmann::json warnings = get_validation_warnings_json(plater);
+
+                nlohmann::json result = {
+                    {"status", "success"},
+                    {"object_id", object_id},
+                    {"axis", axis_str}
+                };
+                if (!warnings.empty()) {
+                    result["warnings"] = warnings;
+                }
+
+                // Add turntable preview if requested
+                add_turntable_preview_if_requested(result, include_preview, preview_views, preview_resolution);
+
+                return result;
+            });
+        }
+    });
+
+    // clone_object - Duplicate an object
+    register_tool({
+        "clone_object",
+        "Create copies of an object. By default creates instances (share transforms). Use duplicate=true for independent objects that can be transformed separately. Use destination_plate to specify where clones go (defaults to current plate).",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"object_id", {
+                    {"type", "integer"},
+                    {"description", "Index of the object to clone (0-based)"}
+                }},
+                {"count", {
+                    {"type", "integer"},
+                    {"description", "Number of copies to create (default: 1)"}
+                }},
+                {"duplicate", {
+                    {"type", "boolean"},
+                    {"description", "If true, creates independent objects with separate object_ids that can be transformed individually. If false (default), creates instances that share transformations - useful for printing multiple identical copies."}
+                }},
+                {"destination_plate", {
+                    {"type", "integer"},
+                    {"description", "Plate index where clones will be placed (0-based). If omitted, clones go to the CURRENT plate (not the source object's plate)."}
+                }},
+                {"include_preview", {
+                    {"type", "boolean"},
+                    {"description", "Include a preview image path to visually verify the cloned objects on the plate"}
+                }}
+            }},
+            {"required", {"object_id"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            int object_id = params["object_id"];
+            int count = params.value("count", 1);
+            bool duplicate = params.value("duplicate", false);
+            // Support both "destination_plate" (new) and "target_plate" (legacy) for backward compatibility
+            int destination_plate = params.contains("destination_plate") ? params["destination_plate"].get<int>() :
+                                    params.value("target_plate", -1);  // -1 means current plate
+            bool destination_was_explicit = params.contains("destination_plate") || params.contains("target_plate");
+            bool include_preview = params.value("include_preview", false);
+            return run_on_main_thread([object_id, count, duplicate, destination_plate, destination_was_explicit, include_preview]() {
+                Plater* plater = wxGetApp().plater();
+                Model& model = plater->model();
+
+                if (object_id < 0 || object_id >= static_cast<int>(model.objects.size())) {
+                    throw std::runtime_error("Invalid object_id: " + std::to_string(object_id));
+                }
+
+                // Determine source and destination plates
+                PartPlateList& plate_list = plater->get_partplate_list();
+                int current_plate = plate_list.get_curr_plate_index();
+                int source_plate = plate_list.find_instance_belongs(object_id, 0);
+                if (source_plate < 0) {
+                    source_plate = current_plate;  // Fallback to current plate
+                }
+                // Default to current plate when destination_plate not specified
+                int actual_destination = (destination_plate >= 0) ? destination_plate : current_plate;
+
+                if (actual_destination != current_plate) {
+                    int plate_count = plate_list.get_plate_count();
+                    if (actual_destination >= plate_count) {
+                        throw std::runtime_error("Invalid destination_plate: " + std::to_string(actual_destination) +
+                                                 " (only " + std::to_string(plate_count) + " plates exist)");
+                    }
+                    // Select destination plate before cloning
+                    plater->select_plate(actual_destination);
+                }
+
+                ModelObject* obj = model.objects[object_id];
+                nlohmann::json result;
+
+                if (duplicate) {
+                    // Create independent copies - each gets its own object_id
+                    std::vector<int> new_object_ids;
+
+                    // Calculate position offset if cloning to a different plate
+                    Vec3d position_offset(0, 0, 0);
+                    if (actual_destination != source_plate) {
+                        Vec3d source_origin = plate_list.get_plate(source_plate)->get_origin();
+                        Vec3d dest_origin = plate_list.get_plate(actual_destination)->get_origin();
+                        position_offset = dest_origin - source_origin;
+                    }
+
+                    for (int i = 0; i < count; ++i) {
+                        ModelObject* new_obj = model.add_object(*obj);
+                        new_obj->name = obj->name;  // Keep the same name
+
+                        // Offset the new object's instances to the destination plate
+                        if (position_offset.norm() > 0) {
+                            for (ModelInstance* inst : new_obj->instances) {
+                                Vec3d current_offset = inst->get_offset();
+                                inst->set_offset(current_offset + position_offset);
+                            }
+                        }
+
+                        int new_id = static_cast<int>(model.objects.size()) - 1;
+                        new_object_ids.push_back(new_id);
+
+                        // Register with GUI object list
+                        wxGetApp().obj_list()->add_object_to_list(new_id, false, true, false);
+                    }
+
+                    // Update UI
+                    plater->update();
+
+                    // Arrange to place the new objects on the destination plate
+                    plater->set_prepare_state(Job::PREPARE_STATE_MENU);
+                    plater->arrange();
+
+                    // Get validation warnings
+                    nlohmann::json warnings = get_validation_warnings_json(plater);
+
+                    // Build enhanced response with clear metadata
+                    result = {
+                        {"status", "success"},
+                        {"source_object_id", object_id},
+                        {"source_plate", source_plate},
+                        {"destination_plate", actual_destination},
+                        {"current_plate_at_call", current_plate},
+                        {"destination_mode", destination_was_explicit ? "explicit" : "defaulted_to_current"},
+                        {"copies_created", count},
+                        {"new_object_ids", new_object_ids},
+                        {"mode", "duplicate"},
+                        {"total_objects", model.objects.size()}
+                    };
+                    // Add note if source and destination are the same
+                    if (source_plate == actual_destination) {
+                        result["note"] = "Clones created on same plate as source (plate " + std::to_string(source_plate) + ")";
+                    }
+                    if (!warnings.empty()) {
+                        result["warnings"] = warnings;
+                    }
+                } else {
+                    // Create instances (share transforms) - original behavior
+                    plater->select_all();
+                    plater->deselect_all();
+
+                    // Calculate position offset if cloning to a different plate
+                    Vec3d position_offset(0, 0, 0);
+                    if (actual_destination != source_plate) {
+                        Vec3d source_origin = plate_list.get_plate(source_plate)->get_origin();
+                        Vec3d dest_origin = plate_list.get_plate(actual_destination)->get_origin();
+                        position_offset = dest_origin - source_origin;
+                    }
+
+                    size_t original_instance_count = obj->instances.size();
+                    for (int i = 0; i < count; ++i) {
+                        obj->add_instance(*obj->instances.back());
+
+                        // Offset the new instance to the destination plate
+                        if (position_offset.norm() > 0) {
+                            ModelInstance* new_inst = obj->instances.back();
+                            Vec3d current_offset = new_inst->get_offset();
+                            new_inst->set_offset(current_offset + position_offset);
+                        }
+                    }
+
+                    // Notify plate list about new instances
+                    if (position_offset.norm() > 0) {
+                        for (size_t i = original_instance_count; i < obj->instances.size(); ++i) {
+                            plate_list.notify_instance_update(object_id, static_cast<int>(i), true);
+                        }
+                    }
+
+                    // Arrange to place the new instances on the destination plate
+                    plater->set_prepare_state(Job::PREPARE_STATE_MENU);
+                    plater->arrange();
+
+                    // Get validation warnings
+                    nlohmann::json warnings = get_validation_warnings_json(plater);
+
+                    // Build enhanced response with clear metadata
+                    result = {
+                        {"status", "success"},
+                        {"object_id", object_id},
+                        {"source_plate", source_plate},
+                        {"destination_plate", actual_destination},
+                        {"current_plate_at_call", current_plate},
+                        {"destination_mode", destination_was_explicit ? "explicit" : "defaulted_to_current"},
+                        {"copies_created", count},
+                        {"total_instances", obj->instances.size()},
+                        {"mode", "instance"}
+                    };
+                    // Add note if source and destination are the same
+                    if (source_plate == actual_destination) {
+                        result["note"] = "Instances created on same plate as source (plate " + std::to_string(source_plate) + ")";
+                    }
+                    if (!warnings.empty()) {
+                        result["warnings"] = warnings;
+                    }
+                }
+
+                // Add preview if requested
+                if (include_preview) {
+                    add_turntable_preview_if_requested(result, true);
+                    result["preview_hint"] = "Check the preview image to see the cloned object(s) and their arrangement on the plate.";
+                }
+
+                return result;
+            });
+        }
+    });
+
+    // get_object_info - Get lightweight info about a single object
+    register_tool({
+        "get_object_info",
+        "Get information about a single object without fetching entire scene. Faster than get_scene_info for targeted queries.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"object_id", {
+                    {"type", "integer"},
+                    {"description", "Index of the object (0-based)"}
+                }}
+            }},
+            {"required", {"object_id"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            int object_id = params["object_id"];
+            return run_on_main_thread([object_id]() {
+                Plater* plater = wxGetApp().plater();
+                Model& model = plater->model();
+
+                if (object_id < 0 || object_id >= static_cast<int>(model.objects.size())) {
+                    throw std::runtime_error("Invalid object_id: " + std::to_string(object_id));
+                }
+
+                ModelObject* obj = model.objects[object_id];
+
+                // Get bounding box (used for position and size)
+                BoundingBoxf3 bbox = obj->bounding_box_approx();
+                Vec3d center = bbox.center();
+                Vec3d size = bbox.size();
+
+                nlohmann::json result = {
+                    {"status", "success"},
+                    {"object_id", object_id},
+                    {"name", obj->name},
+                    {"instance_count", static_cast<int>(obj->instances.size())},
+                    {"position", {{"x", center.x()}, {"y", center.y()}, {"z", center.z()}}},
+                    {"bounding_box", {
+                        {"size_x", size.x()},
+                        {"size_y", size.y()},
+                        {"size_z", size.z()},
+                        {"min", {{"x", bbox.min.x()}, {"y", bbox.min.y()}, {"z", bbox.min.z()}}},
+                        {"max", {{"x", bbox.max.x()}, {"y", bbox.max.y()}, {"z", bbox.max.z()}}}
+                    }}
+                };
+
+                // Add transform info from first instance
+                if (!obj->instances.empty()) {
+                    auto* inst = obj->instances[0];
+                    Vec3d rotation = inst->get_rotation();
+                    Vec3d scale = inst->get_scaling_factor();
+
+                    result["rotation_degrees"] = {
+                        {"x", Geometry::rad2deg(rotation.x())},
+                        {"y", Geometry::rad2deg(rotation.y())},
+                        {"z", Geometry::rad2deg(rotation.z())}
+                    };
+                    result["scale"] = {
+                        {"x", scale.x()},
+                        {"y", scale.y()},
+                        {"z", scale.z()}
+                    };
+                }
+
+                // Check if on bed
+                auto plate = plater->get_partplate_list().get_curr_plate();
+                BoundingBoxf3 bed_box = plate->get_plate_box();
+                bool on_bed = bbox.min.x() >= bed_box.min.x() &&
+                              bbox.min.y() >= bed_box.min.y() &&
+                              bbox.max.x() <= bed_box.max.x() &&
+                              bbox.max.y() <= bed_box.max.y() &&
+                              bbox.min.z() >= -0.1;
+                result["on_bed"] = on_bed;
+
+                return result;
+            });
+        }
+    });
+
+    // rename_object - Rename an object
+    register_tool({
+        "rename_object",
+        "Rename an object for identification purposes",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"object_id", {
+                    {"type", "integer"},
+                    {"description", "Index of the object to rename (0-based)"}
+                }},
+                {"new_name", {
+                    {"type", "string"},
+                    {"description", "New name for the object"}
+                }}
+            }},
+            {"required", {"object_id", "new_name"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            int object_id = params["object_id"];
+            std::string new_name = params["new_name"];
+            return run_on_main_thread([object_id, new_name]() {
+                Plater* plater = wxGetApp().plater();
+                Model& model = plater->model();
+
+                if (object_id < 0 || object_id >= static_cast<int>(model.objects.size())) {
+                    throw std::runtime_error("Invalid object_id: " + std::to_string(object_id));
+                }
+
+                std::string old_name = model.objects[object_id]->name;
+                model.objects[object_id]->name = new_name;
+
+                // Update the object list UI to reflect the new name
+                wxGetApp().obj_list()->update_name_for_items();
+
+                return nlohmann::json{
+                    {"status", "success"},
+                    {"object_id", object_id},
+                    {"old_name", old_name},
+                    {"new_name", new_name}
+                };
+            });
+        }
+    });
+
+    // delete_object - Remove an object from the scene
+    register_tool({
+        "delete_object",
+        "Remove an object from the scene",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"object_id", {
+                    {"type", "integer"},
+                    {"description", "Index of the object to delete (0-based)"}
+                }}
+            }},
+            {"required", {"object_id"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            int object_id = params["object_id"];
+            return run_on_main_thread([object_id]() {
+                Plater* plater = wxGetApp().plater();
+                Model& model = plater->model();
+
+                if (object_id < 0 || object_id >= static_cast<int>(model.objects.size())) {
+                    throw std::runtime_error("Invalid object_id: " + std::to_string(object_id));
+                }
+
+                std::string deleted_name = model.objects[object_id]->name;
+                plater->remove(object_id);
+
+                return nlohmann::json{
+                    {"status", "success"},
+                    {"deleted_object_id", object_id},
+                    {"deleted_object_name", deleted_name}
+                };
+            });
+        }
+    });
+
+    // flatten_object - Lay object flat on its best face
+    register_tool({
+        "flatten_object",
+        "Automatically orient an object to lay flat on its best face for printing",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"object_id", {
+                    {"type", "integer"},
+                    {"description", "Index of the object to flatten (0-based)"}
+                }},
+                {"include_preview", {
+                    {"type", "boolean"},
+                    {"description", "Include turntable preview image path in response"}
+                }},
+                {"preview_views", {
+                    {"type", "integer"},
+                    {"description", "Number of preview views: 4 or 8 (default: 4)"}
+                }},
+                {"preview_resolution", {
+                    {"type", "integer"},
+                    {"description", "Preview resolution per view in pixels (default: 128)"}
+                }}
+            }},
+            {"required", {"object_id"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            int object_id = params["object_id"];
+            bool include_preview = params.value("include_preview", false);
+            int preview_views = params.value("preview_views", 4);
+            int preview_resolution = params.value("preview_resolution", 128);
+            return run_on_main_thread([object_id, include_preview, preview_views, preview_resolution]() {
+                Plater* plater = wxGetApp().plater();
+                Model& model = plater->model();
+
+                if (object_id < 0 || object_id >= static_cast<int>(model.objects.size())) {
+                    throw std::runtime_error("Invalid object_id: " + std::to_string(object_id));
+                }
+
+                // Use the orient function which auto-orients for optimal printing
+                plater->set_prepare_state(Job::PREPARE_STATE_MENU);
+                plater->orient();
+
+                // Get validation warnings
+                nlohmann::json warnings = get_validation_warnings_json(plater);
+
+                nlohmann::json result = {
+                    {"status", "orient_started"},
+                    {"object_id", object_id}
+                };
+                if (!warnings.empty()) {
+                    result["warnings"] = warnings;
+                }
+
+                // Add turntable preview if requested
+                add_turntable_preview_if_requested(result, include_preview, preview_views, preview_resolution);
+
+                return result;
+            });
+        }
+    });
+
+    // ==================== PRINTER MANAGEMENT ====================
+
+    // get_printers - Get list of available printers
+    register_tool({
+        "get_printers",
+        "Get list of available/configured printers with their status. Returns: local_printers (Bambu via SSDP), cloud_printers (Bambu cloud), physical_printers (configured print hosts), and current_print_host (OctoPrint/Klipper/etc. from current printer preset).",
+        {
+            {"type", "object"},
+            {"properties", nlohmann::json::object()}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            return run_on_main_thread([]() {
+                DeviceManager* device_mgr = wxGetApp().getDeviceManager();
+                if (!device_mgr) {
+                    return nlohmann::json{
+                        {"status", "error"},
+                        {"message", "Device manager not available"}
+                    };
+                }
+
+                nlohmann::json result;
+                result["local_printers"] = nlohmann::json::array();
+                result["cloud_printers"] = nlohmann::json::array();
+
+                // Get local network printers
+                auto local_machines = device_mgr->get_local_machinelist();
+                for (const auto& [dev_id, machine] : local_machines) {
+                    if (!machine) continue;
+                    nlohmann::json printer_info = {
+                        {"dev_id", machine->get_dev_id()},
+                        {"dev_name", machine->get_dev_name()},
+                        {"dev_ip", machine->get_dev_ip()},
+                        {"printer_type", machine->printer_type},
+                        {"connection_type", machine->connection_type()},
+                        {"is_online", machine->m_is_online},
+                        {"bind_state", machine->bind_state},
+                        {"has_access_right", machine->has_access_right()}
+                    };
+
+                    // Add print status if available
+                    if (machine->is_system_printing()) {
+                        printer_info["print_status"] = "printing";
+                        printer_info["print_percent"] = machine->mc_print_percent;
+                    } else {
+                        printer_info["print_status"] = "idle";
+                    }
+
+                    result["local_printers"].push_back(printer_info);
+                }
+
+                // Get cloud printers (user's machines)
+                auto cloud_machines = device_mgr->get_my_cloud_machine_list();
+                for (const auto& [dev_id, machine] : cloud_machines) {
+                    if (!machine) continue;
+                    // Skip if already in local list
+                    bool in_local = false;
+                    for (const auto& local : result["local_printers"]) {
+                        if (local["dev_id"] == machine->get_dev_id()) {
+                            in_local = true;
+                            break;
+                        }
+                    }
+                    if (in_local) continue;
+
+                    nlohmann::json printer_info = {
+                        {"dev_id", machine->get_dev_id()},
+                        {"dev_name", machine->get_dev_name()},
+                        {"printer_type", machine->printer_type},
+                        {"connection_type", machine->connection_type()},
+                        {"is_online", machine->m_is_online}
+                    };
+
+                    if (machine->is_system_printing()) {
+                        printer_info["print_status"] = "printing";
+                        printer_info["print_percent"] = machine->mc_print_percent;
+                    } else {
+                        printer_info["print_status"] = "idle";
+                    }
+
+                    result["cloud_printers"].push_back(printer_info);
+                }
+
+                // Get currently selected printer
+                MachineObject* selected = device_mgr->get_selected_machine();
+                if (selected) {
+                    result["selected_printer"] = {
+                        {"dev_id", selected->get_dev_id()},
+                        {"dev_name", selected->get_dev_name()}
+                    };
+                }
+
+                // Get physical printers (OctoPrint, Klipper, Duet, etc.)
+                result["physical_printers"] = nlohmann::json::array();
+                PresetBundle* preset_bundle = wxGetApp().preset_bundle;
+                if (preset_bundle) {
+                    // First check the PhysicalPrinterCollection
+                    const auto& physical_printers = preset_bundle->physical_printers;
+                    for (const auto& printer : physical_printers) {
+                        nlohmann::json printer_info = {
+                            {"name", printer.name},
+                            {"type", "physical_printer"}
+                        };
+
+                        // Get print host info from config
+                        if (printer.config.has("print_host")) {
+                            printer_info["print_host"] = printer.config.opt_string("print_host");
+                        }
+                        if (printer.config.has("host_type")) {
+                            auto* opt = printer.config.option<ConfigOptionEnum<PrintHostType>>("host_type");
+                            if (opt) {
+                                // Map host type enum to string
+                                switch (opt->value) {
+                                    case htPrusaLink: printer_info["host_type"] = "prusalink"; break;
+                                    case htPrusaConnect: printer_info["host_type"] = "prusaconnect"; break;
+                                    case htOctoPrint: printer_info["host_type"] = "octoprint"; break;
+                                    case htDuet: printer_info["host_type"] = "duet"; break;
+                                    case htFlashAir: printer_info["host_type"] = "flashair"; break;
+                                    case htAstroBox: printer_info["host_type"] = "astrobox"; break;
+                                    case htRepetier: printer_info["host_type"] = "repetier"; break;
+                                    case htMKS: printer_info["host_type"] = "mks"; break;
+                                    case htESP3D: printer_info["host_type"] = "esp3d"; break;
+                                    case htCrealityPrint: printer_info["host_type"] = "creality"; break;
+                                    case htObico: printer_info["host_type"] = "obico"; break;
+                                    case htFlashforge: printer_info["host_type"] = "flashforge"; break;
+                                    case htSimplyPrint: printer_info["host_type"] = "simplyprint"; break;
+                                    case htElegooLink: printer_info["host_type"] = "elegoo"; break;
+                                    default: printer_info["host_type"] = "unknown"; break;
+                                }
+                            }
+                        }
+
+                        // Get associated preset names
+                        nlohmann::json presets = nlohmann::json::array();
+                        for (const auto& preset_name : printer.get_preset_names()) {
+                            presets.push_back(preset_name);
+                        }
+                        printer_info["preset_names"] = presets;
+
+                        result["physical_printers"].push_back(printer_info);
+                    }
+
+                    // Also check current printer preset for embedded print host config
+                    const Preset& current_printer = preset_bundle->printers.get_edited_preset();
+                    const DynamicPrintConfig& printer_config = current_printer.config;
+                    if (printer_config.has("print_host")) {
+                        std::string print_host = printer_config.opt_string("print_host");
+                        if (!print_host.empty()) {
+                            nlohmann::json current_host = {
+                                {"name", current_printer.name},
+                                {"type", "printer_preset_host"},
+                                {"print_host", print_host},
+                                {"is_current", true}
+                            };
+
+                            if (printer_config.has("host_type")) {
+                                auto* opt = printer_config.option<ConfigOptionEnum<PrintHostType>>("host_type");
+                                if (opt) {
+                                    switch (opt->value) {
+                                        case htPrusaLink: current_host["host_type"] = "prusalink"; break;
+                                        case htPrusaConnect: current_host["host_type"] = "prusaconnect"; break;
+                                        case htOctoPrint: current_host["host_type"] = "octoprint"; break;
+                                        case htDuet: current_host["host_type"] = "duet"; break;
+                                        case htFlashAir: current_host["host_type"] = "flashair"; break;
+                                        case htAstroBox: current_host["host_type"] = "astrobox"; break;
+                                        case htRepetier: current_host["host_type"] = "repetier"; break;
+                                        case htMKS: current_host["host_type"] = "mks"; break;
+                                        case htESP3D: current_host["host_type"] = "esp3d"; break;
+                                        case htCrealityPrint: current_host["host_type"] = "creality"; break;
+                                        case htObico: current_host["host_type"] = "obico"; break;
+                                        case htFlashforge: current_host["host_type"] = "flashforge"; break;
+                                        case htSimplyPrint: current_host["host_type"] = "simplyprint"; break;
+                                        case htElegooLink: current_host["host_type"] = "elegoo"; break;
+                                        default: current_host["host_type"] = "unknown"; break;
+                                    }
+                                }
+                            }
+
+                            result["current_print_host"] = current_host;
+                        }
+                    }
+                }
+
+                result["total_count"] = result["local_printers"].size() + result["cloud_printers"].size() + result["physical_printers"].size();
+                return result;
+            });
+        }
+    });
+
+    // select_printer - Select a printer as the active/target printer
+    register_tool({
+        "select_printer",
+        "Select a printer as the active/target printer for print jobs. Use get_printers first to get available dev_ids.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"dev_id", {
+                    {"type", "string"},
+                    {"description", "Device ID of the printer to select (from get_printers)"}
+                }}
+            }},
+            {"required", {"dev_id"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            std::string dev_id = params["dev_id"];
+            return run_on_main_thread([dev_id]() {
+                DeviceManager* device_mgr = wxGetApp().getDeviceManager();
+                if (!device_mgr) {
+                    return nlohmann::json{
+                        {"status", "error"},
+                        {"message", "Device manager not available"}
+                    };
+                }
+
+                bool success = device_mgr->set_selected_machine(dev_id);
+                if (success) {
+                    MachineObject* machine = device_mgr->get_selected_machine();
+                    return nlohmann::json{
+                        {"status", "success"},
+                        {"dev_id", dev_id},
+                        {"dev_name", machine ? machine->get_dev_name() : ""},
+                        {"is_online", machine ? machine->m_is_online : false}
+                    };
+                } else {
+                    return nlohmann::json{
+                        {"status", "error"},
+                        {"message", "Failed to select printer with dev_id: " + dev_id}
+                    };
+                }
+            });
+        }
+    });
+
+    // send_to_printer - Open the send-to-printer dialog
+    register_tool({
+        "send_to_printer",
+        "Open the send-to-printer dialog to send sliced G-code to a printer. Requires slicing to be complete first. Use slice_all and wait for completion before calling this. Auto-detects printer type: opens OctoPrint/Klipper upload dialog if print_host is configured, otherwise opens Bambu printer dialog.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"all_plates", {
+                    {"type", "boolean"},
+                    {"description", "If true, send all plates. If false (default), send current plate only."}
+                }}
+            }}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            bool all_plates = params.value("all_plates", false);
+            return run_on_main_thread([all_plates]() {
+                Plater* plater = wxGetApp().plater();
+                if (!plater) {
+                    return nlohmann::json{
+                        {"status", "error"},
+                        {"message", "Plater not available"}
+                    };
+                }
+
+                // Check if slicing is complete
+                if (plater->is_background_process_slicing()) {
+                    return nlohmann::json{
+                        {"status", "error"},
+                        {"message", "Slicing is still in progress. Wait for slicing to complete before sending to printer."}
+                    };
+                }
+
+                // Check if current printer preset has a print host configured (OctoPrint, Klipper, etc.)
+                PresetBundle* preset_bundle = wxGetApp().preset_bundle;
+                bool has_print_host = false;
+                std::string host_type_str = "unknown";
+                std::string print_host;
+
+                if (preset_bundle) {
+                    const DynamicPrintConfig& printer_config = preset_bundle->printers.get_edited_preset().config;
+                    if (printer_config.has("print_host")) {
+                        print_host = printer_config.opt_string("print_host");
+                        has_print_host = !print_host.empty();
+                    }
+                    if (has_print_host && printer_config.has("host_type")) {
+                        auto* opt = printer_config.option<ConfigOptionEnum<PrintHostType>>("host_type");
+                        if (opt) {
+                            switch (opt->value) {
+                                case htOctoPrint: host_type_str = "octoprint"; break;
+                                case htPrusaLink: host_type_str = "prusalink"; break;
+                                case htPrusaConnect: host_type_str = "prusaconnect"; break;
+                                case htDuet: host_type_str = "duet"; break;
+                                case htRepetier: host_type_str = "repetier"; break;
+                                case htMKS: host_type_str = "mks"; break;
+                                case htObico: host_type_str = "obico"; break;
+                                default: host_type_str = "other"; break;
+                            }
+                        }
+                    }
+                }
+
+                if (has_print_host) {
+                    // Use legacy send for OctoPrint/Klipper/etc. printers
+                    int plate_idx = all_plates ? -1 : plater->get_partplate_list().get_curr_plate_index();
+                    plater->send_gcode_legacy(plate_idx);
+
+                    return nlohmann::json{
+                        {"status", "dialog_opened"},
+                        {"method", "send_gcode_legacy"},
+                        {"host_type", host_type_str},
+                        {"print_host", print_host},
+                        {"note", "Send G-code dialog opened for print host upload."}
+                    };
+                } else {
+                    // Use Bambu-specific send dialog
+                    plater->send_to_printer(all_plates);
+
+                    return nlohmann::json{
+                        {"status", "dialog_opened"},
+                        {"method", "send_to_printer"},
+                        {"all_plates", all_plates},
+                        {"note", "The send-to-printer dialog is now open. User can select printer and options."}
+                    };
+                }
+            });
+        }
+    });
+
+    // ==================== OBJECT CUTTING ====================
+
+    // cut_object - Cut an object at a specified Z height
+    register_tool({
+        "cut_object",
+        "Cut an object horizontally at Z height. CAUTION: Removes original object and creates new one(s). Object IDs will change! Use undo to recover if result is wrong. Render views before cutting to find correct Z height.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"object_id", {
+                    {"type", "integer"},
+                    {"description", "Index of the object to cut (0-based)"}
+                }},
+                {"z_height", {
+                    {"type", "number"},
+                    {"description", "Z height in mm where to cut the object"}
+                }},
+                {"keep", {
+                    {"type", "string"},
+                    {"enum", nlohmann::json::array({"below", "above", "both"})},
+                    {"description", "Which part to keep: below (default), above, or both"}
+                }}
+            }},
+            {"required", nlohmann::json::array({"object_id", "z_height"})}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            int object_id = params["object_id"];
+            double z_height = params["z_height"];
+            std::string keep = params.value("keep", "below");
+            return run_on_main_thread([object_id, z_height, keep]() {
+                Plater* plater = wxGetApp().plater();
+                Model& model = plater->model();
+
+                if (object_id < 0 || object_id >= static_cast<int>(model.objects.size())) {
+                    throw std::runtime_error("Invalid object_id: " + std::to_string(object_id));
+                }
+
+                ModelObject* obj = model.objects[object_id];
+
+                // Get instance offset to calculate cut position relative to object
+                const Vec3d instance_offset = obj->instances[0]->get_offset();
+
+                // For horizontal cut at z_height (world coords), the cut plane offset
+                // relative to instance is (0, 0, z_height - instance_offset.z)
+                // Since objects on bed have z_offset=0, this simplifies to (0, 0, z_height)
+                Vec3d cut_center_offset(0, 0, z_height - instance_offset.z());
+
+                // Create cut matrix: translation to cut position (no rotation for horizontal cut)
+                Transform3d cut_matrix = Geometry::translation_transform(cut_center_offset);
+
+                // Set attributes based on what to keep
+                // PlaceOnCut flips the piece so the cut face becomes the new bottom
+                // - "below": keep lower part, no flip needed (already on bed)
+                // - "above": keep upper part, flip so cut face is down (printable)
+                // - "both": keep both, flip both so cut faces are down (both printable)
+                ModelObjectCutAttributes attributes;
+                if (keep == "above") {
+                    attributes = ModelObjectCutAttribute::KeepUpper | ModelObjectCutAttribute::PlaceOnCutUpper;
+                } else if (keep == "both") {
+                    attributes = ModelObjectCutAttribute::KeepUpper | ModelObjectCutAttribute::KeepLower |
+                                 ModelObjectCutAttribute::PlaceOnCutUpper | ModelObjectCutAttribute::PlaceOnCutLower;
+                } else { // below (default)
+                    attributes = ModelObjectCutAttribute::KeepLower;  // No flip - bottom already on bed
+                }
+
+                // Perform the cut
+                Cut cut(obj, 0, cut_matrix, attributes);
+                const ModelObjectPtrs& new_objects = cut.perform_with_plane();
+
+                // Add the resulting objects to the model
+                for (ModelObject* new_obj : new_objects) {
+                    model.add_object(*new_obj);
+                }
+
+                // Remove the original object
+                std::string original_name = obj->name;
+                plater->remove(object_id);
+
+                plater->update();
+
+                // Get validation warnings
+                nlohmann::json warnings = get_validation_warnings_json(plater);
+
+                nlohmann::json result = {
+                    {"status", "success"},
+                    {"original_object", original_name},
+                    {"z_height", z_height},
+                    {"kept", keep},
+                    {"new_objects_count", new_objects.size()}
+                };
+                if (!warnings.empty()) {
+                    result["warnings"] = warnings;
+                }
+                return result;
+            });
+        }
+    });
+
+    BOOST_LOG_TRIVIAL(info) << "OrcaMCPServer: Registered " << s_tools.size() << " tools";
+}
+
+}} // namespace Slic3r::GUI

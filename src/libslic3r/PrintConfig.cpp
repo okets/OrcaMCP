@@ -8003,15 +8003,19 @@ static void extend_extruder_variant(DynamicPrintConfig& config, const unsigned i
 {
     // 1. Make sure the `extruder_variant_list` is the same length as extruder cnt
     auto extruder_variant_opt = dynamic_cast<ConfigOptionStrings*>(config.option("extruder_variant_list"));
-    assert(extruder_variant_opt != nullptr);
+    // Skip if extruder_variant_list doesn't exist (e.g., 3MF files from older versions or other slicers)
+    if (extruder_variant_opt == nullptr)
+        return;
     extruder_variant_opt->resize(num_extruders, extruder_variant_opt); // Use the first option as the default value, so all extruders have the same variant
 
     // 2. Update `printer_extruder_variant` and `printer_extruder_id` based on `extruder_variant_list`
     auto printer_extruder_id_opt = dynamic_cast<ConfigOptionInts*>(config.option("printer_extruder_id"));
-    assert(printer_extruder_id_opt != nullptr);
+    if (printer_extruder_id_opt == nullptr)
+        return;
     printer_extruder_id_opt->values.clear();
     auto printer_extruder_variant_opt = dynamic_cast<ConfigOptionStrings*>(config.option("printer_extruder_variant"));
-    assert(printer_extruder_variant_opt != nullptr);
+    if (printer_extruder_variant_opt == nullptr)
+        return;
     printer_extruder_variant_opt->values.clear();
     for (int i = 0; i < num_extruders; i++) {
         // `extruder_variant_list` specifies supported variant of each nozzle/extruder,

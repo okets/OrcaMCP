@@ -57,10 +57,66 @@ void session::read_body()
 {
     auto self(shared_from_this());
 
-    int                                nbuffer = 1000;
-    std::shared_ptr<std::vector<char>> bufptr  = std::make_shared<std::vector<char>>(nbuffer);
-    async_read(socket, boost::asio::buffer(*bufptr, nbuffer),
-               [this, self](const boost::beast::error_code& e, std::size_t s) { server.stop(self); });
+    int content_len = headers.content_length();
+    if (content_len <= 0) {
+        process_request();
+        return;
+    }
+
+    // Allocate buffer for body
+    auto body_buffer = std::make_shared<std::vector<char>>(content_len);
+
+    // Check if we already have some body data in the streambuf
+    size_t already_read = buff.size();
+    if (already_read > 0) {
+        std::istream stream{&buff};
+        size_t to_copy = std::min(already_read, static_cast<size_t>(content_len));
+        stream.read(body_buffer->data(), to_copy);
+        body.assign(body_buffer->data(), to_copy);
+
+        if (to_copy >= static_cast<size_t>(content_len)) {
+            process_request();
+            return;
+        }
+    }
+
+    // Read remaining body
+    size_t remaining = content_len - body.size();
+    auto remaining_buffer = std::make_shared<std::vector<char>>(remaining);
+
+    async_read(socket, boost::asio::buffer(*remaining_buffer, remaining),
+               [this, self, remaining_buffer](const boost::beast::error_code& e, std::size_t bytes_read) {
+                   if (!e) {
+                       body.append(remaining_buffer->data(), bytes_read);
+                       process_request();
+                   } else if (e != boost::asio::error::operation_aborted) {
+                       server.stop(self);
+                   }
+               });
+}
+
+void session::process_request()
+{
+    auto self(shared_from_this());
+
+    std::cout << "Request received: " << headers.get_method() << " " << headers.get_url();
+    if (!body.empty()) {
+        std::cout << " (body: " << body.size() << " bytes)";
+    }
+    std::cout << std::endl;
+
+    const std::string url_str = Http::url_decode(headers.get_url());
+    const auto resp = server.server.m_request_handler(headers.get_method(), url_str, body);
+
+    std::stringstream ssOut;
+    resp->write_response(ssOut);
+    std::shared_ptr<std::string> str = std::make_shared<std::string>(ssOut.str());
+
+    async_write(socket, boost::asio::buffer(str->c_str(), str->length()),
+                [this, self, str](const boost::beast::error_code& e, std::size_t s) {
+        std::cout << "done" << std::endl;
+        server.stop(self);
+    });
 }
 
 void session::read_next_line()
@@ -76,26 +132,17 @@ void session::read_next_line()
             headers.on_read_header(line);
 
             if (line.length() == 0) {
-                if (headers.content_length() == 0) {
-                    std::cout << "Request received: " << headers.method << " " << headers.get_url();
-                    if (headers.method == "OPTIONS") {
-                        // Ignore http OPTIONS
-                        server.stop(self);
-                        return;
-                    }
+                // Handle OPTIONS preflight requests for CORS
+                if (headers.get_method() == "OPTIONS") {
+                    server.stop(self);
+                    return;
+                }
 
-                    const std::string url_str = Http::url_decode(headers.get_url());
-                    const auto        resp    = server.server.m_request_handler(url_str);
-                    std::stringstream ssOut;
-                    resp->write_response(ssOut);
-                    std::shared_ptr<std::string> str = std::make_shared<std::string>(ssOut.str());
-                    async_write(socket, boost::asio::buffer(str->c_str(), str->length()),
-                                [this, self, str](const boost::beast::error_code& e, std::size_t s) {
-                        std::cout << "done" << std::endl;
-                        server.stop(self);
-                    });
-                } else {
+                // If there's a body to read, read it; otherwise process immediately
+                if (headers.content_length() > 0) {
                     read_body();
+                } else {
+                    process_request();
                 }
             } else {
                 read_next_line();
@@ -173,12 +220,20 @@ void HttpServer::stop()
     server_.reset();
 }
 
-void HttpServer::set_request_handler(const std::function<std::shared_ptr<Response>(const std::string&)>& request_handler)
+void HttpServer::set_request_handler(const RequestHandlerFn& request_handler)
 {
     this->m_request_handler = request_handler;
 }
 
-std::shared_ptr<HttpServer::Response> HttpServer::bbl_auth_handle_request(const std::string& url)
+void HttpServer::set_request_handler(const std::function<std::shared_ptr<Response>(const std::string&)>& request_handler)
+{
+    // Wrap legacy handler in new signature
+    this->m_request_handler = [request_handler](const std::string& method, const std::string& url, const std::string& body) {
+        return request_handler(url);
+    };
+}
+
+std::shared_ptr<HttpServer::Response> HttpServer::bbl_auth_handle_request(const std::string& method, const std::string& url, const std::string& body)
 {
     BOOST_LOG_TRIVIAL(info) << "thirdparty_login: get_response";
 
@@ -256,6 +311,29 @@ void HttpServer::ResponseRedirect::write_response(std::stringstream& ssOut)
     ssOut << "content-length: " << sHTML.length() << std::endl;
     ssOut << std::endl;
     ssOut << sHTML;
+}
+
+void HttpServer::ResponseJson::write_response(std::stringstream& ssOut)
+{
+    std::string status_text;
+    switch (status_code) {
+        case 200: status_text = "OK"; break;
+        case 201: status_text = "Created"; break;
+        case 400: status_text = "Bad Request"; break;
+        case 404: status_text = "Not Found"; break;
+        case 405: status_text = "Method Not Allowed"; break;
+        case 500: status_text = "Internal Server Error"; break;
+        default: status_text = "OK"; break;
+    }
+
+    ssOut << "HTTP/1.1 " << status_code << " " << status_text << std::endl;
+    ssOut << "Content-Type: application/json" << std::endl;
+    ssOut << "Access-Control-Allow-Origin: *" << std::endl;
+    ssOut << "Access-Control-Allow-Methods: GET, POST, OPTIONS" << std::endl;
+    ssOut << "Access-Control-Allow-Headers: Content-Type" << std::endl;
+    ssOut << "Content-Length: " << json_str.length() << std::endl;
+    ssOut << std::endl;
+    ssOut << json_str;
 }
 
 } // GUI

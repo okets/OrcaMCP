@@ -353,6 +353,12 @@ set(SLIC3R_GUI_SOURCES
     GUI/OG_CustomCtrl.hpp
     GUI/OpenGLManager.cpp
     GUI/OpenGLManager.hpp
+    GUI/OrcaMCP/OrcaMCPServer.hpp
+    GUI/OrcaMCP/OrcaMCPServer.cpp
+    GUI/OrcaMCP/OrcaMCPPlateUtils.hpp
+    GUI/OrcaMCP/OrcaMCPPlateUtils.cpp
+    GUI/OrcaMCP/OrcaMCPPresetConfigUtils.hpp
+    GUI/OrcaMCP/OrcaMCPPresetConfigUtils.cpp
     GUI/OptionsGroup.cpp
     GUI/OptionsGroup.hpp
     GUI/ParamsDialog.cpp
@@ -692,7 +698,7 @@ if (WIN32)
 else ()
     add_library(libslic3r_gui STATIC ${SLIC3R_GUI_SOURCES})
 endif ()
-target_include_directories(libslic3r_gui PRIVATE Utils ${CMAKE_CURRENT_BINARY_DIR})
+target_include_directories(libslic3r_gui PRIVATE Utils ${CMAKE_CURRENT_BINARY_DIR} GUI/OrcaMCP)
 
 if (WIN32)
     target_include_directories(libslic3r_gui SYSTEM PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../deps/WebView2/include)

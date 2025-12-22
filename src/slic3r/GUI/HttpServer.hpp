@@ -1,6 +1,8 @@
 #ifndef slic3r_Http_App_hpp_
 #define slic3r_Http_App_hpp_
 
+#include <algorithm>
+#include <cctype>
 #include <iostream>
 #include <mutex>
 #include <stack>
@@ -32,6 +34,7 @@ class http_headers
     friend class session;
 public:
     std::string get_url() { return url; }
+    std::string get_method() { return method; }
 
     int content_length()
     {
@@ -53,8 +56,17 @@ public:
         std::string       headerName;
         std::getline(ssHeader, headerName, ':');
 
+        // Normalize header name to lowercase (HTTP headers are case-insensitive)
+        std::transform(headerName.begin(), headerName.end(), headerName.begin(),
+                       [](unsigned char c) { return std::tolower(c); });
+
         std::string value;
         std::getline(ssHeader, value);
+        // Trim leading whitespace from value
+        size_t start = value.find_first_not_of(" \t");
+        if (start != std::string::npos) {
+            value = value.substr(start);
+        }
         headers[headerName] = value;
     }
 
@@ -98,6 +110,20 @@ public:
         void write_response(std::stringstream& ssOut) override;
     };
 
+    class ResponseJson : public Response
+    {
+        const std::string json_str;
+        int status_code;
+
+    public:
+        ResponseJson(const std::string& json, int status = 200) : json_str(json), status_code(status) {}
+        ~ResponseJson() override = default;
+        void write_response(std::stringstream& ssOut) override;
+    };
+
+    // Request handler type that includes method, URL, and body
+    using RequestHandlerFn = std::function<std::shared_ptr<Response>(const std::string& method, const std::string& url, const std::string& body)>;
+
     HttpServer(boost::asio::ip::port_type port = LOCALHOST_PORT);
 
     boost::thread m_http_server_thread;
@@ -106,9 +132,15 @@ public:
     bool is_started() { return start_http_server; }
     void start();
     void stop();
-    void set_request_handler(const std::function<std::shared_ptr<Response>(const std::string&)>& m_request_handler);
 
-    static std::shared_ptr<Response> bbl_auth_handle_request(const std::string& url);
+    // Set request handler with full signature (method, url, body)
+    void set_request_handler(const RequestHandlerFn& request_handler);
+
+    // Legacy: Set request handler with URL only (for backward compatibility)
+    void set_request_handler(const std::function<std::shared_ptr<Response>(const std::string&)>& request_handler);
+
+    // Default handler for BBL authentication
+    static std::shared_ptr<Response> bbl_auth_handle_request(const std::string& method, const std::string& url, const std::string& body);
 
 private:
     class IOServer
@@ -131,7 +163,7 @@ private:
 
     std::unique_ptr<IOServer> server_{nullptr};
 
-    std::function<std::shared_ptr<Response>(const std::string&)> m_request_handler{&HttpServer::bbl_auth_handle_request};
+    RequestHandlerFn m_request_handler{&HttpServer::bbl_auth_handle_request};
 };
 
 class session : public std::enable_shared_from_this<session>
@@ -141,10 +173,12 @@ class session : public std::enable_shared_from_this<session>
 
     boost::asio::streambuf buff;
     http_headers headers;
+    std::string body;
 
     void read_first_line();
     void read_next_line();
     void read_body();
+    void process_request();
 
 public:
     session(HttpServer::IOServer& server, boost::asio::ip::tcp::socket socket) : server(server), socket(std::move(socket)) {}
