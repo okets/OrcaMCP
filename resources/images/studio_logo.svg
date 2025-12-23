@@ -66,7 +66,7 @@
            transform="translate(479.0017,536.9419)">
           <path
              d="m 0,0 -419.273,-421.59 c 0.298,-0.298 0.606,-0.587 0.906,-0.884 146.894,74.925 348.023,206.579 486.003,316.297 C 52.756,-65.97 29.506,-29.859 0,0"
-             style="fill:#009789;fill-opacity:1;fill-rule:nonzero;stroke:none"
+             style="fill:#9333EA;fill-opacity:1;fill-rule:nonzero;stroke:none"
              id="path24" />
         </g>
         <g
@@ -95,5 +95,9 @@
         </g>
       </g>
     </g>
+  </g>
+  <g id="mcp-badge" transform="translate(207, 850)">
+    <rect x="0" y="0" width="400" height="120" rx="20" ry="20" style="fill:#9333EA;"/>
+    <text x="200" y="85" style="fill:#fff;font-family:Arial,sans-serif;font-size:80px;font-weight:bold;text-anchor:middle;">MCP</text>
   </g>
 </svg>
