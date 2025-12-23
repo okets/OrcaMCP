@@ -43,14 +43,14 @@ docs/
 
 ---
 
-## Milestone 0 — JusPrin → OrcaMCP Transition
+## Milestone 0 — JusPrin → OrcaMCP Transition (Completed)
 
 - [x] App renamed to OrcaMCP (version.inc, CMakeLists.txt)
 - [x] Custom branding (purple accent, MCP badges, build plate logo)
 - [x] CLAUDE.md updated with project vision and architecture
-- [ ] Re-read JusPrin's original docs for any missed insights
+- [x] Re-read JusPrin's original docs for any missed insights
 - [x] `.mcp.json` configured for `scripts/orcamcp-bridge.py`
-- [ ] Verify Claude Desktop MCP config works
+- [x] Verify Claude Desktop MCP config works
 - [x] OrcaSlicer build includes OrcaMCP HTTP server on port 13618
 - [x] Environment vars documented (ORCAMCP_HOST/PORT/TIMEOUT/DEBUG)
 
