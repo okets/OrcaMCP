@@ -154,10 +154,23 @@ nlohmann::json OrcaMCPServer::handle_tools_list()
     nlohmann::json tools_array = nlohmann::json::array();
 
     for (const auto& [name, tool] : s_tools) {
+        // Ensure schema is valid JSON Schema draft 2020-12
+        nlohmann::json schema = tool.input_schema;
+
+        // Ensure additionalProperties is set (required for valid schema)
+        if (!schema.contains("additionalProperties")) {
+            schema["additionalProperties"] = false;
+        }
+
+        // Ensure required array exists
+        if (!schema.contains("required")) {
+            schema["required"] = nlohmann::json::array();
+        }
+
         nlohmann::json tool_def = {
             {"name", tool.name},
             {"description", tool.description},
-            {"inputSchema", tool.input_schema}
+            {"inputSchema", schema}
         };
         tools_array.push_back(tool_def);
     }
