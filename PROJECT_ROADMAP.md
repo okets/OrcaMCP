@@ -53,6 +53,7 @@ docs/
 - [x] Verify Claude Desktop MCP config works
 - [x] OrcaSlicer build includes OrcaMCP HTTP server on port 13618
 - [x] Environment vars documented (ORCAMCP_HOST/PORT/TIMEOUT/DEBUG)
+- [x] Fix JSON Schema compliance for Claude API (set_object_config, set_object_layer_range, transform_objects)
 
 ---
 
@@ -195,5 +196,6 @@ docs/
 | 2024-12 | Main thread execution | wxWidgets/OpenGL require main thread |
 | 2024-12 | Hybrid docs structure | CLAUDE.md entry point + docs/ for depth |
 | 2024-12 | Purple branding | Distinguish from upstream OrcaSlicer |
+| 2024-12 | Strict JSON Schema compliance | Claude API requires draft 2020-12; all properties need type |
 
 See `docs/adr/` for detailed Architecture Decision Records.

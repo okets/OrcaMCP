@@ -248,7 +248,52 @@ Follow these conventions:
 
 ## Common Pitfalls
 
-### 1. Forgetting run_on_main_thread
+### 1. Invalid JSON Schema (CRITICAL)
+
+Claude's API requires **JSON Schema draft 2020-12** compliance. Invalid schemas cause API errors like:
+```
+API Error: 400 "tools.X.custom.input_schema: JSON schema is invalid"
+```
+
+**Rules:**
+- Every property MUST have a `type` defined
+- Objects with `"type": "object"` MUST have `properties` or `additionalProperties`
+- Arrays MUST have `items` defined
+
+```cpp
+// WRONG - value has no type
+{"value", {}}
+{"value", {{"description", "some value"}}}
+
+// CORRECT
+{"value", {{"type", "string"}, {"description", "some value"}}}
+
+// WRONG - object without properties
+{"position", {{"type", "object"}, {"description", "x,y,z position"}}}
+
+// CORRECT - object with explicit properties
+{"position", {
+    {"type", "object"},
+    {"description", "x,y,z position"},
+    {"properties", {
+        {"x", {{"type", "number"}}},
+        {"y", {{"type", "number"}}},
+        {"z", {{"type", "number"}}}
+    }},
+    {"additionalProperties", false}
+}}
+
+// WRONG - array without items
+{"object_ids", {{"type", "array"}}}
+
+// CORRECT
+{"object_ids", {
+    {"type", "array"},
+    {"items", {{"type", "integer"}}}
+}}
+```
+
+### 2. Forgetting run_on_main_thread
 Symptoms: Random crashes, inconsistent behavior
 Solution: Wrap ALL GUI operations
 
