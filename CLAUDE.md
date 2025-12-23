@@ -78,6 +78,26 @@ Traditional 3D printing workflow requires manual interaction with slicer softwar
 
 ---
 
+## Documentation Index
+
+For detailed documentation beyond this quick reference, see the `docs/` folder:
+
+| Document | Description |
+|----------|-------------|
+| [Architecture Overview](docs/architecture/overview.md) | System design with detailed diagrams |
+| [Threading Model](docs/architecture/threading-model.md) | GUI thread requirements and patterns |
+| [Transport Layer](docs/architecture/transport-layer.md) | HTTP + stdio bridge design |
+| [ADRs](docs/adr/) | Architecture Decision Records |
+| [Tools Reference](docs/tools/reference.md) | All 44 tools with parameters and examples |
+| [Workflows](docs/tools/workflows.md) | Common multi-tool patterns |
+| [Adding Tools](docs/contributing/adding-tools.md) | How to add new MCP tools |
+| [Code Style](docs/contributing/code-style.md) | C++ and Python conventions |
+| [Building](docs/setup/building.md) | Cross-platform build guide |
+| [Configuration](docs/setup/configuration.md) | Claude Code and environment setup |
+| [Troubleshooting](docs/setup/troubleshooting.md) | Common issues and solutions |
+
+---
+
 ## Quick Start
 
 ### Test the MCP Server

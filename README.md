@@ -1,213 +1,202 @@
 <div align="center">
 
 <picture>
-  <img alt="OrcaSlicer logo" src="resources/images/OrcaSlicer.png" width="15%" height="15%">
+  <img alt="OrcaMCP logo" src="resources/images/OrcaSlicer.png" width="15%" height="15%">
 </picture>
 
-<a href="https://trendshift.io/repositories/952" target="_blank"><img src="https://trendshift.io/api/badge/repositories/952" alt="SoftFever%2FOrcaSlicer | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+# OrcaMCP
 
-[![GitHub Repo stars](https://img.shields.io/github/stars/OrcaSlicer/OrcaSlicer)](https://github.com/OrcaSlicer/OrcaSlicer/stargazers) [![Build all](https://github.com/OrcaSlicer/OrcaSlicer/actions/workflows/build_all.yml/badge.svg?branch=main)](https://github.com/OrcaSlicer/OrcaSlicer/actions/workflows/build_all.yml)
+**AI-Powered Slicing**
 
-OrcaSlicer: an open source Next-Gen Slicing Software for Precision 3D Prints.  
-Optimize your prints with ultra-fast slicing, intelligent support generation, and seamless printer compatibility—engineered for perfection.
-<h3>
+*Natural language control for OrcaSlicer through the Model Context Protocol (MCP)*
 
-# Official links and community
-
-#### Official Website:
-<a href="https://www.orcaslicer.com/" style="font-size:2em;">OrcaSlicer.com</a>
-
-#### Github Repository:
-<a href="https://github.com/OrcaSlicer/OrcaSlicer"><img src="https://img.shields.io/badge/OrcaSlicer-181717?style=flat&logo=github&logoColor=white" width="200" alt="GitHub Logo"/> </a>
-
-#### Follow us:
-<a href="https://twitter.com/real_OrcaSlicer"><img src="https://img.shields.io/badge/real__OrcaSlicer-000000?style=flat&logo=x&logoColor=white" width="200" alt="X Logo"/> </a>
-
-#### Join our Discord community:
-<a href="https://discord.gg/P4VE9UY9gJ"><img src="https://img.shields.io/badge/-Discord-5865F2?style=flat&logo=discord&logoColor=fff" width="200" alt="discord logo"/> </a>
-
-<table border="2" style="border-color: #ffa500; background-color:rgb(232, 220, 180); color: #856404;">
-<tr>
-<td>
-<strong>⚠️ CAUTION:</strong><br>
-Several clickbait and malicious websites, such as <b>orca-slicer[.]com</b> and <b>orcaslicer[.]net</b>, are pretending to be the official OrcaSlicer site. These sites may redirect you to dangerous downloads or contain misleading information.<br>
-<b>Our only official website is <a href="https://www.orcaslicer.com/">www.orcaslicer.com</a>.</b><br><br>
-If you come across any of these in search results, please <b>report them</b> as unsafe or phishing to help keep the community secure with:<br>
- - <a href="https://safebrowsing.google.com/safebrowsing/report_phish/">Google Safe Browsing</a><br>
- - <a href="https://www.microsoft.com/en-us/wdsi/support/report-unsafe-site">Microsoft Security Intelligence</a><br>
- - <a href="https://ipthreat.net/tools/reportphishing">IPThreat</a>
-</td>
-</tr>
-</table>
+[![Build Status](https://img.shields.io/badge/build-passing-brightgreen)](https://github.com/your-username/OrcaMCP)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
+[![MCP Protocol](https://img.shields.io/badge/MCP-2024--11--05-purple)](https://modelcontextprotocol.io/)
 
 </div>
 
-# Main features
+## What is OrcaMCP?
 
-- **[Advanced Calibration Tools](https://github.com/OrcaSlicer/OrcaSlicer/wiki/Calibration)**  
-  Comprehensive suite: temperature towers, flow rate, retraction & more for optimal performance.
-- **[Precise Wall](https://github.com/OrcaSlicer/OrcaSlicer/wiki/quality_settings_precision#precise-wall) and [Seam Control](https://github.com/OrcaSlicer/OrcaSlicer/wiki/quality_settings_seam)**  
-  Adjust outer wall spacing and apply scarf seams to enhance print accuracy.
-- **[Sandwich Mode](https://github.com/OrcaSlicer/OrcaSlicer/wiki/quality_settings_wall_and_surfaces#innerouterinner) and [Polyholes](https://github.com/OrcaSlicer/OrcaSlicer/wiki/quality_settings_precision#polyholes) Support**  
-  Use varied infill [patterns](https://github.com/OrcaSlicer/OrcaSlicer/wiki/strength_settings_patterns) and accurate hole shapes for improved clarity.
-- **[Overhang](https://github.com/OrcaSlicer/OrcaSlicer/wiki/quality_settings_overhangs) and [Support Optimization](https://github.com/OrcaSlicer/OrcaSlicer/wiki#support-settings)**  
-  Modify geometry for printable overhangs with precise support placement.
-- **[Granular Controls and Customization](https://github.com/OrcaSlicer/OrcaSlicer/wiki#process-settings)**  
-  Fine-tune print speed, layer height, pressure, and temperature with precision.
-- **Network Printer Support**  
-  Seamless integration with Klipper, PrusaLink, and OctoPrint for remote control.
-- **[Mouse Ear Brims](https://github.com/OrcaSlicer/OrcaSlicer/wiki/others_settings_brim) & [Adaptive Bed Mesh](https://github.com/OrcaSlicer/OrcaSlicer/wiki/printer_basic_information_adaptive_bed_mesh)**  
-  Automatic brims and adaptive mesh calibration ensure consistent adhesion.
-- **User-Friendly Interface**  
-  Intuitive drag-and-drop design with pre-made profiles for popular printers.
-- **[Open-Source](https://github.com/OrcaSlicer/OrcaSlicer) & [Community Driven](https://discord.gg/P4VE9UY9gJ)**  
-  Regular updates fueled by continuous community contributions.
-- **Wide Printer Compatibility**  
-  Supports a broad range of printers: Bambu Lab, Prusa, Creality, Voron, and more.
-- Additional features can be found in the [change notes](https://github.com/OrcaSlicer/OrcaSlicer/releases/).
+OrcaMCP adds an MCP server to OrcaSlicer, enabling AI assistants like Claude Code to control the entire 3D printing workflow through natural language:
 
-# Wiki
+- **Load and manipulate 3D models** - Import STL/OBJ files, transform, arrange, cut
+- **Configure print settings** - Change layer height, infill, supports via simple commands
+- **Slice and export G-code** - Full slicing pipeline controlled programmatically
+- **Visualize the build plate** - Render preview images for AI inspection
+- **Send to printers** - Direct integration with OctoPrint/Klipper and Bambu printers
 
-The [wiki](https://github.com/OrcaSlicer/OrcaSlicer/wiki) aims to provide a detailed explanation of the slicer settings, including how to maximize their use and how to calibrate and set up your printer.
+### Why OrcaMCP?
 
-- **[Access the wiki here](https://github.com/OrcaSlicer/OrcaSlicer/wiki)**
-- **[Contribute to the wiki](https://github.com/OrcaSlicer/OrcaSlicer/wiki/How-to-wiki)**
+Traditional 3D printing requires manual interaction with slicer software. OrcaMCP enables:
 
-# Download
+```
+You: "Load benchy.stl, orient it for minimal supports, use 0.2mm layers with 20% infill,
+      and slice it. Then show me what it looks like."
 
-## Stable Release
-
-📥 **[Download the Latest Stable Release](https://github.com/OrcaSlicer/OrcaSlicer/releases/latest)**  
-Visit our GitHub Releases page for the latest stable version of OrcaSlicer, recommended for most users.
-
-## Nightly Builds
-
-🌙 **[Download the Latest Nightly Build](https://github.com/OrcaSlicer/OrcaSlicer/releases/tag/nightly-builds)**  
-Explore the latest developments in OrcaSlicer with our nightly builds. Feedback on these versions is highly appreciated.
-
-# How to install
-
-## Windows
-
-Download the **Windows Installer exe**  for your preferred version from the [releases page](https://github.com/OrcaSlicer/OrcaSlicer/releases).
-
- - *For convenience there is also a portable build available.*
-    <details>
-    <summary>Troubleshooting</summary>
-
-    - *If you have troubles to run the build, you might need to install following runtimes:*
-    - [MicrosoftEdgeWebView2RuntimeInstallerX64](https://github.com/OrcaSlicer/OrcaSlicer/releases/download/v1.0.10-sf2/MicrosoftEdgeWebView2RuntimeInstallerX64.exe)
-        - [Details of this runtime](https://aka.ms/webview2)
-        - [Alternative Download Link Hosted by Microsoft](https://go.microsoft.com/fwlink/p/?LinkId=2124703)
-    - [vcredist2019_x64](https://github.com/OrcaSlicer/OrcaSlicer/releases/download/v1.0.10-sf2/vcredist2019_x64.exe)
-        -  [Alternative Download Link Hosted by Microsoft](https://aka.ms/vs/17/release/vc_redist.x64.exe)
-        -  This file may already be available on your computer if you've installed visual studio.  Check the following location: `%VCINSTALLDIR%Redist\MSVC\v142`
-    </details>
-
-Windows Package Manager
-
-```shell
-winget install --id=SoftFever.OrcaSlicer -e
+Claude: [Executes load_model, auto_orient, apply_config, slice_all, render_plate_view]
+        "Here's your benchy positioned for optimal printing. Estimated print time: 2h 15m"
 ```
 
-## Mac
+## Quick Start
 
-1. Download the DMG for your computer: `arm64` version for Apple Silicon and `x86_64` for Intel CPU.
-2. Drag OrcaSlicer.app to Application folder.
-3. *If you want to run a build from a PR, you also need to follow the instructions below:*
+### 1. Launch OrcaMCP
 
-    <details>
-    <summary>Quarantine</summary>
+Build from source (see [Building](docs/setup/building.md)) or use a pre-built release.
 
-    - Option 1 (You only need to do this once. After that the app can be opened normally.):
-      - Step 1: Hold _cmd_ and right click the app, from the context menu choose **Open**.
-      - Step 2: A warning window will pop up, click _Open_
+### 2. Verify MCP Server
 
-    - Option 2:
-      Execute this command in terminal:
-
-      ```shell
-      xattr -dr com.apple.quarantine /Applications/OrcaSlicer.app
-      ```
-
-    - Option 3:
-        - Step 1: open the app, a warning window will pop up  
-            ![mac_cant_open](./SoftFever_doc/mac_cant_open.png)
-        - Step 2: in `System Settings` -> `Privacy & Security`, click `Open Anyway`:  
-            ![mac_security_setting](./SoftFever_doc/mac_security_setting.png)
-    </details>
-
-## Linux (Ubuntu)
-
- 1. If you run into trouble executing it, try this command in the terminal:
-    `chmod +x /path_to_appimage/OrcaSlicer_Linux.AppImage`
-
-# How to Compile
-
-All updated build instructions for Windows, macOS, and Linux are now available on the official [OrcaSlicer Wiki - How to build](https://github.com/OrcaSlicer/OrcaSlicer/wiki/How-to-build) page.
-
-Please refer to the wiki to ensure you're following the latest and most accurate steps for your platform.
-
-# Klipper Note
-
-If you're running Klipper, it's recommended to add the following configuration to your `printer.cfg` file.
-
-```gcode
-# Enable object exclusion
-[exclude_object]
-
-# Enable arcs support
-[gcode_arcs]
-resolution: 0.1
+```bash
+curl -s http://localhost:13618/mcp | jq .
 ```
 
-# Supports
+Should return:
+```json
+{
+  "name": "orcamcp",
+  "version": "1.0.0",
+  "protocol": "mcp"
+}
+```
 
-**OrcaSlicer** is an open-source project and I'm deeply grateful to all my sponsors and backers.  
-Their generous support enables me to purchase filaments and other essential 3D printing materials for the project.  
-Thank you! :)
+### 3. Configure Claude Code
 
-## Sponsors:
+The repository includes `.mcp.json` for automatic configuration. Just open the project folder in Claude Code.
 
-<table>
-<tr>
-<td>
-<a href="https://qidi3d.com/" style="display:inline-block; border-radius:8px; background:#fff;">
-  <img src="SoftFever_doc\sponsor_logos\QIDI.png" alt="QIDI" width="100" height="100">
-</a>
-</td>
-<td>
-<a href="https://bigtree-tech.com/" style="display:inline-block; border-radius:8px; background:#222;">
-    <img src="SoftFever_doc\sponsor_logos\BigTreeTech.png" alt="BIGTREE TECH" width="100" height="100">
-</a>
-</td>
-</tr>
-</table>
+Or add to `~/.claude.json`:
+```json
+{
+  "mcpServers": {
+    "orcamcp": {
+      "command": "python3",
+      "args": ["/path/to/OrcaMCP/scripts/orcamcp-bridge.py"]
+    }
+  }
+}
+```
 
-## Backers:
+### 4. Start Using Natural Language
 
-**Ko-fi supporters** ☕: [Backers list](https://github.com/user-attachments/files/16147016/Supporters_638561417699952499.csv)
+```
+"What tools are available?"
+"Load the file ~/Downloads/model.stl"
+"Show me the build plate"
+"Slice it and export to ~/Desktop/output.gcode"
+```
 
-## Support me
+## Architecture
 
-<a href="https://github.com/sponsors/SoftFever"><img src="https://img.shields.io/badge/GitHub%20Sponsors-30363D?style=flat&logo=GitHub-Sponsors&logoColor=EA4AAA" height="50"></a>
-<a href="https://ko-fi.com/G2G5IP3CP"><img src="https://img.shields.io/badge/Support_me_on_Ko--fi-FF5E5B?style=flat&logo=ko-fi&logoColor=white" height="50"></a>
-<a href="https://paypal.me/softfever3d"><img src="https://img.shields.io/badge/PayPal-003087?style=flat&logo=paypal&logoColor=fff" height="50"></a>
+```
+┌─────────────────┐     stdio     ┌──────────────────┐     HTTP      ┌─────────────┐
+│   Claude Code   │ ◄───────────► │ orcamcp-bridge   │ ◄───────────► │  OrcaMCP    │
+│      CLI        │               │    (Python)      │               │ Port 13618  │
+└─────────────────┘               └──────────────────┘               └─────────────┘
+```
 
-## Some background
+See [Architecture Overview](docs/architecture/overview.md) for details.
 
-OrcaSlicer was originally forked from Bambu Studio, it was previously known as BambuStudio-SoftFever.
+## Available Tools (44)
 
-[Bambu Studio](https://github.com/bambulab/BambuStudio) is forked from [PrusaSlicer](https://github.com/prusa3d/PrusaSlicer) by Prusa Research, which is from [Slic3r](https://github.com/Slic3r/Slic3r) by Alessandro Ranellucci and the RepRap community.
-OrcaSlicer incorporates a lot of features from [SuperSlicer](https://github.com/supermerill/SuperSlicer) by @supermerill
-OrcaSlicer's logo is designed by community member Justin Levine (@freejstnalxndr).
+| Category | Tools |
+|----------|-------|
+| **Scene** | `get_scene_info`, `new_project`, `load_project`, `save_project`, `export_3mf` |
+| **Models** | `load_model`, `auto_orient`, `arrange_objects` |
+| **Transforms** | `move_object`, `rotate_object`, `scale_object`, `mirror_object`, `flatten_object`, `cut_object` |
+| **Config** | `get_presets`, `select_preset`, `apply_config`, `get_edited_presets` |
+| **Per-Object** | `get_object_config`, `set_object_config`, `reset_object_config` |
+| **Slicing** | `slice_all`, `get_slicing_status`, `export_gcode`, `get_print_estimate` |
+| **Visualization** | `render_plate_view` |
+| **Printers** | `get_printers`, `select_printer`, `send_to_printer` |
+| **History** | `undo`, `redo` |
 
-# License
+See [Tools Reference](docs/tools/reference.md) for complete documentation.
 
-- **OrcaSlicer** is licensed under the GNU Affero General Public License, version 3. OrcaSlicer is based on Bambu Studio by BambuLab.
-- **Bambu Studio** is licensed under the GNU Affero General Public License, version 3. Bambu Studio is based on PrusaSlicer by PrusaResearch.
-- **PrusaSlicer** is licensed under the GNU Affero General Public License, version 3. PrusaSlicer is owned by Prusa Research. PrusaSlicer is originally based on Slic3r by Alessandro Ranellucci.
-- **Slic3r** is licensed under the GNU Affero General Public License, version 3. Slic3r was created by Alessandro Ranellucci with the help of many other contributors.
-- The **GNU Affero General Public License**, version 3 ensures that if you use any part of this software in any way (even behind a web server), your software must be released under the same license.
-- OrcaSlicer includes a **pressure advance calibration pattern test** adapted from Andrew Ellis' generator, which is licensed under GNU General Public License, version 3. Ellis' generator is itself adapted from a generator developed by Sineos for Marlin, which is licensed under GNU General Public License, version 3.
-- The **Bambu networking plugin** is based on non-free libraries from BambuLab. It is optional to the OrcaSlicer and provides extended functionalities for Bambulab printer users.
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [CLAUDE.md](CLAUDE.md) | **AI Agent Quick Reference** - Start here for coding agents |
+| [Architecture](docs/architecture/) | System design, threading model, transport layer |
+| [ADRs](docs/adr/) | Architecture Decision Records |
+| [Tools Reference](docs/tools/reference.md) | All 44 tools with parameters and examples |
+| [Workflows](docs/tools/workflows.md) | Common task patterns |
+| [Contributing](docs/contributing/) | Adding tools, code style |
+| [Setup](docs/setup/) | Building, configuration, troubleshooting |
+
+## Example Workflows
+
+### Basic Print Workflow
+```json
+load_model → arrange_objects → slice_all → get_slicing_status → export_gcode
+```
+
+### Visual Inspection
+```json
+render_plate_view (with save_to_file=true) → Read the image file
+```
+
+### Change Settings
+```json
+apply_config (with settings array) → slice_all
+```
+
+See [Workflows Guide](docs/tools/workflows.md) for more examples.
+
+## Building from Source
+
+### macOS
+```bash
+git clone https://github.com/your-username/OrcaMCP.git
+cd OrcaMCP
+./build_release_macos.sh -s -x
+```
+
+### Linux
+```bash
+git clone https://github.com/your-username/OrcaMCP.git
+cd OrcaMCP
+./build_release.sh
+```
+
+See [Building Guide](docs/setup/building.md) for detailed instructions.
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ORCAMCP_HOST` | `localhost` | OrcaSlicer HTTP host |
+| `ORCAMCP_PORT` | `13618` | OrcaSlicer HTTP port |
+| `ORCAMCP_TIMEOUT` | `120` | Request timeout (seconds) |
+| `ORCAMCP_DEBUG` | (unset) | Enable debug logging |
+
+See [Configuration Guide](docs/setup/configuration.md) for more options.
+
+## Project Origin
+
+OrcaMCP is a fork of [OrcaSlicer](https://github.com/SoftFever/OrcaSlicer) with an embedded MCP server for AI integration. The MCP implementation originated from [JusPrin](https://github.com/jusprin/jusprin) and was adapted for OrcaSlicer's broader ecosystem.
+
+## License
+
+OrcaMCP is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0), the same license as OrcaSlicer.
+
+See [LICENSE](LICENSE) for details.
+
+## Acknowledgments
+
+- **[OrcaSlicer](https://github.com/SoftFever/OrcaSlicer)** - The excellent slicer this project is based on
+- **[JusPrin](https://github.com/jusprin/jusprin)** - Original MCP server implementation
+- **[Anthropic](https://anthropic.com)** - Model Context Protocol specification
+- **[PrusaSlicer](https://github.com/prusa3d/PrusaSlicer)** & **[BambuStudio](https://github.com/bambulab/BambuStudio)** - Upstream slicer projects
+
+## Contributing
+
+Contributions are welcome! See [Contributing Guide](docs/contributing/) for:
+- [Adding New Tools](docs/contributing/adding-tools.md)
+- [Code Style](docs/contributing/code-style.md)
+
+## Support
+
+- **Issues**: [GitHub Issues](https://github.com/your-username/OrcaMCP/issues)
+- **Documentation**: [docs/](docs/)
