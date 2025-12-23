@@ -192,6 +192,13 @@ public:
 		ErrorNotificationLevel,
 	};
 
+	// Warning info for MCP API
+	struct ActiveWarning {
+		std::string level;   // "warning", "serious_warning", "error"
+		std::string message;
+		std::string type;    // notification type name
+	};
+
 	NotificationManager(wxEvtHandler* evt_handler);
 	~NotificationManager(){}
 
@@ -326,6 +333,8 @@ public:
 	bool update_notifications(GLCanvas3D& canvas);
 	// returns number of all notifications shown
 	size_t get_notification_count() const;
+	// returns active warnings/errors for MCP API
+	std::vector<ActiveWarning> get_active_warnings() const;
 
 
 	//BBS Notice

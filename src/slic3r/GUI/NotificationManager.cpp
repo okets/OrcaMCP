@@ -2850,6 +2850,71 @@ size_t NotificationManager::get_notification_count() const
 	return ret;
 }
 
+std::vector<NotificationManager::ActiveWarning> NotificationManager::get_active_warnings() const
+{
+	std::vector<ActiveWarning> warnings;
+
+	for (const std::unique_ptr<PopNotification>& notification : m_pop_notifications) {
+		// Skip notifications that are hidden, finished, or pending close
+		auto state = notification->get_state();
+		if (state == PopNotification::EState::Hidden ||
+			state == PopNotification::EState::Finished ||
+			state == PopNotification::EState::ClosePending) {
+			continue;
+		}
+
+		const auto& data = notification->get_data();
+
+		// Only include warning-level and above notifications
+		std::string level_str;
+		switch (data.level) {
+			case NotificationLevel::WarningNotificationLevel:
+				level_str = "warning";
+				break;
+			case NotificationLevel::SeriousWarningNotificationLevel:
+				level_str = "serious_warning";
+				break;
+			case NotificationLevel::ErrorNotificationLevel:
+				level_str = "error";
+				break;
+			default:
+				continue;  // Skip non-warning notifications
+		}
+
+		// Get notification type as string
+		std::string type_str;
+		switch (data.type) {
+			case NotificationType::PlaterWarning: type_str = "PlaterWarning"; break;
+			case NotificationType::PlaterError: type_str = "PlaterError"; break;
+			case NotificationType::ValidateError: type_str = "ValidateError"; break;
+			case NotificationType::ValidateWarning: type_str = "ValidateWarning"; break;
+			case NotificationType::SlicingError: type_str = "SlicingError"; break;
+			case NotificationType::SlicingSeriousWarning: type_str = "SlicingSeriousWarning"; break;
+			case NotificationType::SlicingWarning: type_str = "SlicingWarning"; break;
+			case NotificationType::BBLGeneralError: type_str = "GeneralError"; break;
+			case NotificationType::LeftExtruderUnprintableError: type_str = "LeftExtruderUnprintable"; break;
+			case NotificationType::RightExtruderUnprintableError: type_str = "RightExtruderUnprintable"; break;
+			case NotificationType::BBLSliceEmptyLayer: type_str = "SliceEmptyLayer"; break;
+			case NotificationType::BBLNeedSupportON: type_str = "NeedSupportOn"; break;
+			case NotificationType::BBLGcodeOverlap: type_str = "GcodeOverlap"; break;
+			case NotificationType::BBLBedFilamentIncompatible: type_str = "BedFilamentIncompatible"; break;
+			case NotificationType::BBLMixUsePLAAndPETG: type_str = "MixUsePLAAndPETG"; break;
+			case NotificationType::BBLNozzleFilamentIncompatible: type_str = "NozzleFilamentIncompatible"; break;
+			case NotificationType::BBLFilamentPrintableError: type_str = "FilamentPrintableError"; break;
+			case NotificationType::BBLSliceLimitError: type_str = "SliceLimitError"; break;
+			case NotificationType::BBLSliceMultiExtruderHeightOutside: type_str = "MultiExtruderHeightOutside"; break;
+			default: type_str = "Other"; break;
+		}
+
+		// Get the message text
+		std::string message = notification->get_text1();
+
+		warnings.push_back({level_str, message, type_str});
+	}
+
+	return warnings;
+}
+
 void NotificationManager::bbl_show_plateinfo_notification(const std::string &text)
 {
     NotificationData data{NotificationType::BBLPlateInfo, NotificationLevel::PrintInfoNotificationLevel, BBL_NOTICE_MAX_INTERVAL, text};
