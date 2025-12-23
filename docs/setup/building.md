@@ -125,7 +125,7 @@ curl -s http://localhost:13618/mcp | jq .
 
 # Should return:
 # {
-#   "name": "orcamcp",
+#   "name": "orca-slicer",
 #   "version": "1.0.0",
 #   "protocol": "mcp",
 #   "description": "OrcaSlicer 3D Slicer MCP Server..."

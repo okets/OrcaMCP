@@ -53,7 +53,7 @@ curl -s http://localhost:13618/mcp | jq .
 Should return:
 ```json
 {
-  "name": "orcamcp",
+  "name": "orca-slicer",
   "version": "1.0.0",
   "protocol": "mcp"
 }
@@ -67,7 +67,7 @@ Or add to `~/.claude.json`:
 ```json
 {
   "mcpServers": {
-    "orcamcp": {
+    "orca-slicer": {
       "command": "python3",
       "args": ["/path/to/OrcaMCP/scripts/orcamcp-bridge.py"]
     }

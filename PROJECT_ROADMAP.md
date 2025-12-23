@@ -70,9 +70,48 @@ docs/
 
 - [x] README.md rewritten for OrcaMCP
 - [x] Documentation framework complete
+- [x] Active warnings exposed through MCP interface (see below)
 - [ ] GitHub Actions: build artifacts (macOS/Linux/Windows)
 - [ ] License clarification (AGPL-3.0 from OrcaSlicer)
 - [ ] Attribution notes for OrcaSlicer, JusPrin, upstream projects
+
+---
+
+## Active Warnings Feature (Completed 2024-12-23)
+
+Added `active_warnings` section to MCP tool responses, exposing OrcaSlicer notifications (warnings, serious warnings, errors) through the API.
+
+**Changes:**
+- Added `get_active_warnings()` method to `NotificationManager` class
+- Added `get_active_warnings_json()` helper in `OrcaMCPServer.cpp`
+- Added `active_warnings` field to 18 key endpoints
+
+**Endpoints with active_warnings:**
+- Scene: `get_scene_info`
+- Slicing: `slice_all`, `get_slicing_status`, `get_print_estimate`
+- Model ops: `load_model`, `arrange_objects`, `auto_orient`
+- Transforms: `move_object`, `rotate_object`, `scale_object`, `transform_objects`, `mirror_object`, `clone_object`, `flatten_object`, `cut_object`, `delete_object`
+- History: `undo`, `redo`
+
+**Response format:**
+```json
+{
+  "active_warnings": {
+    "count": 1,
+    "warnings": [
+      {
+        "level": "serious_warning",
+        "message": "Conflicts of G-code paths have been found...",
+        "type": "GcodeOverlap"
+      }
+    ]
+  }
+}
+```
+
+**Warning levels:** `warning`, `serious_warning`, `error`
+
+**Warning types:** `PlaterWarning`, `PlaterError`, `ValidateError`, `ValidateWarning`, `SlicingError`, `SlicingSeriousWarning`, `SlicingWarning`, `GeneralError`, `GcodeOverlap`, `NeedSupportOn`, `BedFilamentIncompatible`, and more.
 
 ---
 
@@ -80,7 +119,7 @@ docs/
 
 - [ ] Direct file export without dialogs
 - [ ] Slicing progress percentage (not just running/idle)
-- [ ] WebSocket support for real-time notifications
+- [ ] WebSocket support for real-time notifications? (investigate Claude capabilities, can we really benefit from websockets?)
 - [ ] Batch operations for multiple files
 - [ ] Calibration tools (flow rate, pressure advance)
 
@@ -197,5 +236,6 @@ docs/
 | 2024-12 | Hybrid docs structure | CLAUDE.md entry point + docs/ for depth |
 | 2024-12 | Purple branding | Distinguish from upstream OrcaSlicer |
 | 2024-12 | Strict JSON Schema compliance | Claude API requires draft 2020-12; all properties need type |
+| 2024-12 | Server name: orca-slicer | Renamed from "orcamcp" for better TTS pronunciation |
 
 See `docs/adr/` for detailed Architecture Decision Records.

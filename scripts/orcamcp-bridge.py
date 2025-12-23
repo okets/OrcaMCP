@@ -12,7 +12,7 @@ Configuration (Claude Code):
     Add to ~/.claude.json or project .mcp.json:
     {
         "mcpServers": {
-            "orcamcp": {
+            "orca-slicer": {
                 "command": "python3",
                 "args": ["/path/to/OrcaMCP/scripts/orcamcp-bridge.py"]
             }

@@ -124,7 +124,7 @@ The project includes `.mcp.json` for automatic configuration:
 ```json
 {
   "mcpServers": {
-    "orcamcp": {
+    "orca-slicer": {
       "command": "python3",
       "args": ["./scripts/orcamcp-bridge.py"]
     }
@@ -233,6 +233,34 @@ T run_on_main_thread(std::function<T()> func);
 1. **Export dialogs**: `export_gcode` and `export_3mf` open file dialogs if no path specified
 2. **Slicing progress**: `get_slicing_status` reports running/idle, not percentage
 3. **Threading**: Long operations may cause HTTP timeouts (120s default)
+
+---
+
+## Active Warnings
+
+Most tool responses include an `active_warnings` section that exposes OrcaSlicer's notification system. This helps AI agents detect and respond to issues like G-code conflicts, missing supports, or slicing errors.
+
+```json
+{
+  "status": "success",
+  "active_warnings": {
+    "count": 1,
+    "warnings": [
+      {
+        "level": "serious_warning",
+        "message": "Conflicts of G-code paths have been found...",
+        "type": "GcodeOverlap"
+      }
+    ]
+  }
+}
+```
+
+**Warning levels:** `warning`, `serious_warning`, `error`
+
+**Endpoints with active_warnings:** `get_scene_info`, `slice_all`, `get_slicing_status`, `get_print_estimate`, `load_model`, `arrange_objects`, `auto_orient`, all transform tools, `undo`, `redo`
+
+The `count` field is always present (even when 0) to help confirm issues have been resolved.
 
 ---
 

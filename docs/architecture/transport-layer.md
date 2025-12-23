@@ -83,7 +83,7 @@ In `.mcp.json`:
 ```json
 {
   "mcpServers": {
-    "orcamcp": {
+    "orca-slicer": {
       "command": "python3",
       "args": ["./scripts/orcamcp-bridge.py"]
     }

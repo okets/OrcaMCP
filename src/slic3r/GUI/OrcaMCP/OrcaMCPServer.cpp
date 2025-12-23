@@ -8,6 +8,7 @@
 #include "slic3r/GUI/DeviceManager.hpp"
 #include "slic3r/GUI/DeviceCore/DevManager.h"
 #include "slic3r/GUI/GLCanvas3D.hpp"
+#include "slic3r/GUI/NotificationManager.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/CutUtils.hpp"
 #include "libslic3r/Geometry.hpp"
@@ -63,7 +64,7 @@ std::shared_ptr<HttpServer::Response> OrcaMCPServer::handle_request(
     // Handle GET /mcp for server info
     if (method == "GET") {
         nlohmann::json info = {
-            {"name", "orcamcp"},
+            {"name", "orca-slicer"},
             {"version", "1.0.0"},
             {"protocol", "mcp"},
             {"description", "OrcaSlicer 3D Slicer MCP Server for Claude Code integration"}
@@ -143,7 +144,7 @@ nlohmann::json OrcaMCPServer::handle_initialize(const nlohmann::json& params)
             {"tools", nlohmann::json::object()}
         }},
         {"serverInfo", {
-            {"name", "orcamcp"},
+            {"name", "orca-slicer"},
             {"version", "1.0.0"}
         }}
     };
@@ -245,11 +246,28 @@ nlohmann::json run_on_main_thread(Func&& func)
     return future.get();
 }
 
-// Helper to get validation warnings as JSON array
-// Note: get_validation_warnings() not available in upstream OrcaSlicer
-nlohmann::json get_validation_warnings_json(Plater* plater) {
-    // Return empty array - validation warnings API not available in this version
-    return nlohmann::json::array();
+// Helper to get active warnings as JSON object (always includes count, even if 0)
+nlohmann::json get_active_warnings_json(Plater* plater) {
+    nlohmann::json result;
+    nlohmann::json warnings_array = nlohmann::json::array();
+
+    if (plater) {
+        auto* notification_manager = plater->get_notification_manager();
+        if (notification_manager) {
+            auto warnings = notification_manager->get_active_warnings();
+            for (const auto& warning : warnings) {
+                warnings_array.push_back({
+                    {"level", warning.level},
+                    {"message", warning.message},
+                    {"type", warning.type}
+                });
+            }
+        }
+    }
+
+    result["count"] = warnings_array.size();
+    result["warnings"] = warnings_array;
+    return result;
 }
 
 // Helper to add turntable preview to result if requested
@@ -741,6 +759,9 @@ void OrcaMCPServer::register_builtin_tools()
                     }
                 }
 
+                // Always include active warnings section
+                result["active_warnings"] = get_active_warnings_json(wxGetApp().plater());
+
                 return result;
             });
         }
@@ -926,13 +947,10 @@ void OrcaMCPServer::register_builtin_tools()
                 plater->set_prepare_state(Job::PREPARE_STATE_MENU);
                 plater->orient();
 
-                // Get validation warnings
-                nlohmann::json warnings = get_validation_warnings_json(plater);
-
-                nlohmann::json result = {{"status", "orient_started"}};
-                if (!warnings.empty()) {
-                    result["warnings"] = warnings;
-                }
+                nlohmann::json result = {
+                    {"status", "orient_started"},
+                    {"active_warnings", get_active_warnings_json(plater)}
+                };
 
                 // Add preview if requested
                 if (include_preview) {
@@ -965,13 +983,10 @@ void OrcaMCPServer::register_builtin_tools()
                 plater->set_prepare_state(Job::PREPARE_STATE_MENU);
                 plater->arrange();
 
-                // Get validation warnings
-                nlohmann::json warnings = get_validation_warnings_json(plater);
-
-                nlohmann::json result = {{"status", "arrange_started"}};
-                if (!warnings.empty()) {
-                    result["warnings"] = warnings;
-                }
+                nlohmann::json result = {
+                    {"status", "arrange_started"},
+                    {"active_warnings", get_active_warnings_json(plater)}
+                };
 
                 // Add preview if requested
                 if (include_preview) {
@@ -996,7 +1011,10 @@ void OrcaMCPServer::register_builtin_tools()
             return run_on_main_thread([]() {
                 Plater* plater = wxGetApp().plater();
                 plater->undo();
-                return nlohmann::json{{"status", "success"}};
+                return nlohmann::json{
+                    {"status", "success"},
+                    {"active_warnings", get_active_warnings_json(plater)}
+                };
             });
         }
     });
@@ -1013,7 +1031,10 @@ void OrcaMCPServer::register_builtin_tools()
             return run_on_main_thread([]() {
                 Plater* plater = wxGetApp().plater();
                 plater->redo();
-                return nlohmann::json{{"status", "success"}};
+                return nlohmann::json{
+                    {"status", "success"},
+                    {"active_warnings", get_active_warnings_json(plater)}
+                };
             });
         }
     });
@@ -1840,8 +1861,12 @@ void OrcaMCPServer::register_builtin_tools()
         },
         [](const nlohmann::json& params) -> nlohmann::json {
             return run_on_main_thread([]() {
-                wxGetApp().plater()->reslice();
-                return nlohmann::json{{"status", "slicing_started"}};
+                Plater* plater = wxGetApp().plater();
+                plater->reslice();
+                return nlohmann::json{
+                    {"status", "slicing_started"},
+                    {"active_warnings", get_active_warnings_json(plater)}
+                };
             });
         }
     });
@@ -1962,12 +1987,14 @@ void OrcaMCPServer::register_builtin_tools()
                 if (result) {
                     return nlohmann::json{
                         {"status", "success"},
-                        {"file", file_path}
+                        {"file", file_path},
+                        {"active_warnings", get_active_warnings_json(plater)}
                     };
                 } else {
                     return nlohmann::json{
                         {"status", "error"},
-                        {"message", "Failed to load model file"}
+                        {"message", "Failed to load model file"},
+                        {"active_warnings", get_active_warnings_json(plater)}
                     };
                 }
             });
@@ -1987,10 +2014,13 @@ void OrcaMCPServer::register_builtin_tools()
                 Plater* plater = wxGetApp().plater();
                 bool is_running = plater->is_background_process_slicing();
 
-                return nlohmann::json{
+                nlohmann::json result = {
                     {"is_slicing", is_running},
-                    {"status", is_running ? "slicing" : "idle"}
+                    {"status", is_running ? "slicing" : "idle"},
+                    {"active_warnings", get_active_warnings_json(plater)}
                 };
+
+                return result;
             });
         }
     });
@@ -2052,7 +2082,8 @@ void OrcaMCPServer::register_builtin_tools()
                         {"total_weight_grams", stats.total_weight},
                         {"total_cost", stats.total_cost}
                     }},
-                    {"total_toolchanges", stats.total_toolchanges}
+                    {"total_toolchanges", stats.total_toolchanges},
+                    {"active_warnings", get_active_warnings_json(plater)}
                 };
             });
         }
@@ -2386,12 +2417,6 @@ void OrcaMCPServer::register_builtin_tools()
                               new_bbox.max.y() <= bed_box.max.y() &&
                               new_bbox.min.z() >= -0.1;  // Allow tiny tolerance for bed contact
 
-                // Get validation warnings
-                nlohmann::json warnings = get_validation_warnings_json(plater);
-                if (!on_bed) {
-                    warnings.push_back("Object positioned outside printable area");
-                }
-
                 // Build enhanced response with context
                 nlohmann::json result = {
                     {"status", "success"},
@@ -2406,7 +2431,8 @@ void OrcaMCPServer::register_builtin_tools()
                         {"z", Geometry::rad2deg(rotation.z())}
                     }},
                     {"scale", {{"x", scale.x()}, {"y", scale.y()}, {"z", scale.z()}}},
-                    {"on_bed", on_bed}
+                    {"on_bed", on_bed},
+                    {"active_warnings", get_active_warnings_json(plater)}
                 };
 
                 // Add movement delta for clarity
@@ -2415,8 +2441,9 @@ void OrcaMCPServer::register_builtin_tools()
                     result["movement_delta"] = {{"x", delta.x()}, {"y", delta.y()}, {"z", delta.z()}};
                 }
 
-                if (!warnings.empty()) {
-                    result["warnings"] = warnings;
+                // Add local warning if off bed
+                if (!on_bed) {
+                    result["placement_warning"] = "Object positioned outside printable area";
                 }
 
                 // Add turntable preview if requested
@@ -2516,12 +2543,6 @@ void OrcaMCPServer::register_builtin_tools()
                               new_bbox.max.y() <= bed_box.max.y() &&
                               new_bbox.min.z() >= -0.1;
 
-                // Get validation warnings
-                nlohmann::json warnings = get_validation_warnings_json(plater);
-                if (!on_bed) {
-                    warnings.push_back("Object positioned outside printable area");
-                }
-
                 nlohmann::json result = {
                     {"status", "success"},
                     {"object_id", object_id},
@@ -2532,10 +2553,13 @@ void OrcaMCPServer::register_builtin_tools()
                         {"z", Geometry::rad2deg(rotation.z())}
                     }},
                     {"scale", {{"x", scale.x()}, {"y", scale.y()}, {"z", scale.z()}}},
-                    {"on_bed", on_bed}
+                    {"on_bed", on_bed},
+                    {"active_warnings", get_active_warnings_json(plater)}
                 };
-                if (!warnings.empty()) {
-                    result["warnings"] = warnings;
+
+                // Add local warning if off bed
+                if (!on_bed) {
+                    result["placement_warning"] = "Object positioned outside printable area";
                 }
 
                 // Add turntable preview if requested
@@ -2633,12 +2657,6 @@ void OrcaMCPServer::register_builtin_tools()
                               new_bbox.max.y() <= bed_box.max.y() &&
                               new_bbox.min.z() >= -0.1;
 
-                // Get validation warnings
-                nlohmann::json warnings = get_validation_warnings_json(plater);
-                if (!on_bed) {
-                    warnings.push_back("Object positioned outside printable area");
-                }
-
                 nlohmann::json result = {
                     {"status", "success"},
                     {"object_id", object_id},
@@ -2649,10 +2667,13 @@ void OrcaMCPServer::register_builtin_tools()
                         {"z", Geometry::rad2deg(rotation.z())}
                     }},
                     {"scale", {{"x", scale_result.x()}, {"y", scale_result.y()}, {"z", scale_result.z()}}},
-                    {"on_bed", on_bed}
+                    {"on_bed", on_bed},
+                    {"active_warnings", get_active_warnings_json(plater)}
                 };
-                if (!warnings.empty()) {
-                    result["warnings"] = warnings;
+
+                // Add local warning if off bed
+                if (!on_bed) {
+                    result["placement_warning"] = "Object positioned outside printable area";
                 }
 
                 // Add turntable preview if requested
@@ -2811,16 +2832,11 @@ void OrcaMCPServer::register_builtin_tools()
                     });
                 }
 
-                // Get validation warnings
-                nlohmann::json warnings = get_validation_warnings_json(plater);
-
                 nlohmann::json response = {
                     {"status", "success"},
-                    {"results", results}
+                    {"results", results},
+                    {"active_warnings", get_active_warnings_json(plater)}
                 };
-                if (!warnings.empty()) {
-                    response["warnings"] = warnings;
-                }
                 return response;
             });
         }
@@ -2886,17 +2902,12 @@ void OrcaMCPServer::register_builtin_tools()
                 obj->invalidate_bounding_box();
                 plater->update();
 
-                // Get validation warnings
-                nlohmann::json warnings = get_validation_warnings_json(plater);
-
                 nlohmann::json result = {
                     {"status", "success"},
                     {"object_id", object_id},
-                    {"axis", axis_str}
+                    {"axis", axis_str},
+                    {"active_warnings", get_active_warnings_json(plater)}
                 };
-                if (!warnings.empty()) {
-                    result["warnings"] = warnings;
-                }
 
                 // Add turntable preview if requested
                 add_turntable_preview_if_requested(result, include_preview, preview_views, preview_resolution);
@@ -3014,9 +3025,6 @@ void OrcaMCPServer::register_builtin_tools()
                     plater->set_prepare_state(Job::PREPARE_STATE_MENU);
                     plater->arrange();
 
-                    // Get validation warnings
-                    nlohmann::json warnings = get_validation_warnings_json(plater);
-
                     // Build enhanced response with clear metadata
                     result = {
                         {"status", "success"},
@@ -3028,14 +3036,12 @@ void OrcaMCPServer::register_builtin_tools()
                         {"copies_created", count},
                         {"new_object_ids", new_object_ids},
                         {"mode", "duplicate"},
-                        {"total_objects", model.objects.size()}
+                        {"total_objects", model.objects.size()},
+                        {"active_warnings", get_active_warnings_json(plater)}
                     };
                     // Add note if source and destination are the same
                     if (source_plate == actual_destination) {
                         result["note"] = "Clones created on same plate as source (plate " + std::to_string(source_plate) + ")";
-                    }
-                    if (!warnings.empty()) {
-                        result["warnings"] = warnings;
                     }
                 } else {
                     // Create instances (share transforms) - original behavior
@@ -3073,9 +3079,6 @@ void OrcaMCPServer::register_builtin_tools()
                     plater->set_prepare_state(Job::PREPARE_STATE_MENU);
                     plater->arrange();
 
-                    // Get validation warnings
-                    nlohmann::json warnings = get_validation_warnings_json(plater);
-
                     // Build enhanced response with clear metadata
                     result = {
                         {"status", "success"},
@@ -3086,14 +3089,12 @@ void OrcaMCPServer::register_builtin_tools()
                         {"destination_mode", destination_was_explicit ? "explicit" : "defaulted_to_current"},
                         {"copies_created", count},
                         {"total_instances", obj->instances.size()},
-                        {"mode", "instance"}
+                        {"mode", "instance"},
+                        {"active_warnings", get_active_warnings_json(plater)}
                     };
                     // Add note if source and destination are the same
                     if (source_plate == actual_destination) {
                         result["note"] = "Instances created on same plate as source (plate " + std::to_string(source_plate) + ")";
-                    }
-                    if (!warnings.empty()) {
-                        result["warnings"] = warnings;
                     }
                 }
 
@@ -3262,7 +3263,8 @@ void OrcaMCPServer::register_builtin_tools()
                 return nlohmann::json{
                     {"status", "success"},
                     {"deleted_object_id", object_id},
-                    {"deleted_object_name", deleted_name}
+                    {"deleted_object_name", deleted_name},
+                    {"active_warnings", get_active_warnings_json(plater)}
                 };
             });
         }
@@ -3311,16 +3313,11 @@ void OrcaMCPServer::register_builtin_tools()
                 plater->set_prepare_state(Job::PREPARE_STATE_MENU);
                 plater->orient();
 
-                // Get validation warnings
-                nlohmann::json warnings = get_validation_warnings_json(plater);
-
                 nlohmann::json result = {
                     {"status", "orient_started"},
-                    {"object_id", object_id}
+                    {"object_id", object_id},
+                    {"active_warnings", get_active_warnings_json(plater)}
                 };
-                if (!warnings.empty()) {
-                    result["warnings"] = warnings;
-                }
 
                 // Add turntable preview if requested
                 add_turntable_preview_if_requested(result, include_preview, preview_views, preview_resolution);
@@ -3730,19 +3727,14 @@ void OrcaMCPServer::register_builtin_tools()
 
                 plater->update();
 
-                // Get validation warnings
-                nlohmann::json warnings = get_validation_warnings_json(plater);
-
                 nlohmann::json result = {
                     {"status", "success"},
                     {"original_object", original_name},
                     {"z_height", z_height},
                     {"kept", keep},
-                    {"new_objects_count", new_objects.size()}
+                    {"new_objects_count", new_objects.size()},
+                    {"active_warnings", get_active_warnings_json(plater)}
                 };
-                if (!warnings.empty()) {
-                    result["warnings"] = warnings;
-                }
                 return result;
             });
         }

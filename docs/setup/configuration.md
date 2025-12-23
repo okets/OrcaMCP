@@ -11,7 +11,7 @@ OrcaMCP includes a `.mcp.json` file in the repository root:
 ```json
 {
   "mcpServers": {
-    "orcamcp": {
+    "orca-slicer": {
       "command": "python3",
       "args": ["./scripts/orcamcp-bridge.py"]
     }
@@ -28,7 +28,7 @@ For global availability, add to `~/.claude.json`:
 ```json
 {
   "mcpServers": {
-    "orcamcp": {
+    "orca-slicer": {
       "command": "python3",
       "args": ["/full/path/to/OrcaMCP/scripts/orcamcp-bridge.py"]
     }
@@ -53,7 +53,7 @@ The bridge script accepts these environment variables:
 ```json
 {
   "mcpServers": {
-    "orcamcp": {
+    "orca-slicer": {
       "command": "python3",
       "args": ["./scripts/orcamcp-bridge.py"],
       "env": {
@@ -101,7 +101,7 @@ For Claude Desktop (not Claude Code CLI), add to the MCP configuration:
 ```json
 {
   "mcpServers": {
-    "orcamcp": {
+    "orca-slicer": {
       "command": "python3",
       "args": ["/path/to/OrcaMCP/scripts/orcamcp-bridge.py"]
     }
@@ -129,7 +129,7 @@ curl -s http://localhost:13618/mcp | jq .
 Expected output:
 ```json
 {
-  "name": "orcamcp",
+  "name": "orca-slicer",
   "version": "1.0.0",
   "protocol": "mcp",
   "description": "OrcaSlicer 3D Slicer MCP Server for Claude Code integration"
