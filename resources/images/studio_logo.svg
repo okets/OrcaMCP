@@ -96,8 +96,8 @@
       </g>
     </g>
   </g>
-  <g id="mcp-badge" transform="translate(207, 850)">
-    <rect x="0" y="0" width="400" height="120" rx="20" ry="20" style="fill:#9333EA;"/>
-    <text x="200" y="85" style="fill:#fff;font-family:Arial,sans-serif;font-size:80px;font-weight:bold;text-anchor:middle;">MCP</text>
+  <g id="mcp-badge" transform="translate(107, 820)">
+    <rect x="0" y="0" width="600" height="180" rx="30" ry="30" style="fill:#9333EA;"/>
+    <text x="300" y="130" style="fill:#fff;font-family:Arial,sans-serif;font-size:120px;font-weight:bold;text-anchor:middle;">MCP</text>
   </g>
 </svg>

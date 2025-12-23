@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="790" height="790" viewBox="0 0 790 790">
+  <!-- Transparent background -->
+  <rect width="790" height="790" fill="transparent"/>
+
+  <!-- Subtle watermark logo - bottom left corner -->
+  <g transform="translate(20, 710)" opacity="0.5">
+    <!-- Orca icon -->
+    <g transform="translate(0, 5) scale(0.085)">
+      <path d="M97,442c35.15,35,83.03,56.41,135.95,56.64,106.99,.47,194.46-87.83,194.07-195.49-.19-53.24-21.66-101.39-56.27-136.38l-273.75,275.22Z" style="fill:#ffffff"/>
+      <path d="M370.78,167.24l-273.75,275.22s.41,.39,.57,.56c96.04-48.94,227.17-134.86,317.18-206.46-9.73-26.24-24.91-49.83-44.01-69.32" style="fill:#9333EA"/>
+      <path d="M317.5,28.77c-106.92,0-193.63,87.17-193.63,194.68,0,53.54,21.5,102.02,56.28,137.26l273.75-275.22c-35.01-35.01-83.23-56.71-136.4-56.71" style="fill:#ffffff"/>
+      <path d="M317.5,28.77c-37.03,0-71.62,10.48-101.07,28.63-15.77-4.13-35.31-7.44-57.76-7.28-39.14,.27-70.97,10.86-92.63,20.73-5.37,2.45-4.48,10.43,1.27,11.62,14.22,2.99,32.99,9.35,51.51,23.04,11.71,8.64,20.6,18.21,27.35,27.18-14.22,27.14-22.32,58,-22.32,90.84,0,19.57,2.87,38.42,8.24,55.86,8.2-18.15,16.79-30.3,19.57-34.08,17.79-24.44,36.61-37.17,64.39-55.92,20.47-13.82,48.86-30.08,130.55-63.6,0,0,25.56-7.2,59.79-27.58,13.66-8.12,24.04-15.76,27.34-27.8,.22-.85,.42-1.68,.61-2.51-32.49-24.74-72.97-39.46-116.84-39.14" style="fill:#ffffff"/>
+      <path d="M349.92,89.35c7.11,12.54-7.14,34.17-31.77,48.25-24.64,14.08-50.38,15.32-57.49,2.78-7.11-12.54,7.14-34.17,31.77-48.25,24.64-14.08,50.38-15.32,57.49-2.78" style="fill:#333"/>
+    </g>
+
+    <!-- Text block - aligned -->
+    <g transform="translate(52, 0)">
+      <!-- "OrcaMCP" text -->
+      <text x="0" y="28" style="font-family:'SF Pro Display',Helvetica,Arial,sans-serif;font-size:26px;">
+        <tspan style="fill:#ffffff;font-weight:300;">Orca</tspan><tspan style="fill:#9333EA;font-weight:700;">MCP</tspan>
+      </text>
+
+      <!-- Tagline - aligned with text above -->
+      <text x="0" y="48" style="fill:#cccccc;font-family:'SF Pro Display',Helvetica,Arial,sans-serif;font-size:13px;font-weight:400;">AI-Powered Slicing</text>
+    </g>
+  </g>
+</svg>
