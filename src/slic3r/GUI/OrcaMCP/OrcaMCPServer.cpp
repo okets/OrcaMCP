@@ -1080,9 +1080,10 @@ void OrcaMCPServer::register_builtin_tools()
                         {"type", "object"},
                         {"properties", {
                             {"key", {{"type", "string"}}},
-                            {"value", {}}
+                            {"value", {{"type", "string"}, {"description", "Setting value as string"}}}
                         }},
-                        {"required", {"key", "value"}}
+                        {"required", {"key", "value"}},
+                        {"additionalProperties", false}
                     }}
                 }},
                 {"configs", {
@@ -1092,9 +1093,21 @@ void OrcaMCPServer::register_builtin_tools()
                         {"type", "object"},
                         {"properties", {
                             {"object_id", {{"type", "integer"}}},
-                            {"settings", {{"type", "array"}}}
+                            {"settings", {
+                                {"type", "array"},
+                                {"items", {
+                                    {"type", "object"},
+                                    {"properties", {
+                                        {"key", {{"type", "string"}}},
+                                        {"value", {{"type", "string"}}}
+                                    }},
+                                    {"required", {"key", "value"}},
+                                    {"additionalProperties", false}
+                                }}
+                            }}
                         }},
-                        {"required", {"object_id", "settings"}}
+                        {"required", {"object_id", "settings"}},
+                        {"additionalProperties", false}
                     }}
                 }}
             }}
@@ -1453,9 +1466,10 @@ void OrcaMCPServer::register_builtin_tools()
                         {"type", "object"},
                         {"properties", {
                             {"key", {{"type", "string"}, {"description", "Setting key name"}}},
-                            {"value", {{"description", "Setting value (string, number, or boolean)"}}}
+                            {"value", {{"type", "string"}, {"description", "Setting value as string"}}}
                         }},
-                        {"required", {"key", "value"}}
+                        {"required", {"key", "value"}},
+                        {"additionalProperties", false}
                     }}
                 }}
             }},
@@ -2663,11 +2677,40 @@ void OrcaMCPServer::register_builtin_tools()
                         {"type", "object"},
                         {"properties", {
                             {"object_id", {{"type", "integer"}, {"description", "Index of the object (0-based)"}}},
-                            {"position", {{"type", "object"}, {"description", "Absolute position {x, y, z} - unspecified axes preserved"}}},
-                            {"rotation", {{"type", "object"}, {"description", "Rotation in degrees {x, y, z} - applied incrementally"}}},
-                            {"scale", {{"type", "object"}, {"description", "Scale factors {x, y, z} or {uniform: value}"}}}
+                            {"position", {
+                                {"type", "object"},
+                                {"description", "Absolute position {x, y, z} - unspecified axes preserved"},
+                                {"properties", {
+                                    {"x", {{"type", "number"}}},
+                                    {"y", {{"type", "number"}}},
+                                    {"z", {{"type", "number"}}}
+                                }},
+                                {"additionalProperties", false}
+                            }},
+                            {"rotation", {
+                                {"type", "object"},
+                                {"description", "Rotation in degrees {x, y, z} - applied incrementally"},
+                                {"properties", {
+                                    {"x", {{"type", "number"}}},
+                                    {"y", {{"type", "number"}}},
+                                    {"z", {{"type", "number"}}}
+                                }},
+                                {"additionalProperties", false}
+                            }},
+                            {"scale", {
+                                {"type", "object"},
+                                {"description", "Scale factors {x, y, z} or {uniform: value}"},
+                                {"properties", {
+                                    {"x", {{"type", "number"}}},
+                                    {"y", {{"type", "number"}}},
+                                    {"z", {{"type", "number"}}},
+                                    {"uniform", {{"type", "number"}}}
+                                }},
+                                {"additionalProperties", false}
+                            }}
                         }},
-                        {"required", {"object_id"}}
+                        {"required", {"object_id"}},
+                        {"additionalProperties", false}
                     }}
                 }}
             }},
