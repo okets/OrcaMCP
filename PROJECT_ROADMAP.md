@@ -60,7 +60,7 @@ docs/
 ## Milestone 1 — Endpoint Reliability (Completed)
 
 - [x] Test fixture project created: `/Users/hanan/Documents/STL/delme.3mf`
-- [x] Run full endpoint checklist (see below) - 43/46 tools tested (3 require file dialogs)
+- [x] Run full endpoint checklist (see below) - 44/46 tools tested
 - [x] Verify 360°/multi-view rendering outputs - Working perfectly
 - [x] Verify error handling for invalid inputs
 
@@ -105,14 +105,14 @@ docs/
 
 **Project / scene**
 - [x] `get_scene_info` (with and without `with_model_object_features`)
-- [ ] `new_project` *(skipped - would clear current scene)*
-- [ ] `load_project` *(skipped - requires file dialog)*
-- [ ] `save_project` *(skipped - requires file dialog)*
-- [ ] `export_3mf` *(skipped - requires file dialog)*
+- [x] `new_project`
+- [x] `load_project` *(works but may timeout on large files)*
+- [x] `save_project` *(opens dialog if no filename set)*
+- [x] `export_3mf` *(silent export with output_path)*
 
 **Presets / configuration**
 - [x] `get_presets`
-- [ ] `select_preset` *(skipped - would change config)*
+- [x] `select_preset`
 - [x] `apply_config` (batch apply + "dirty preset" behavior)
 - [x] `get_edited_presets`
 - [x] `get_valid_config_keys`
@@ -122,7 +122,7 @@ docs/
 - [x] `render_plate_view` with `save_to_file=true` (multi-view / 360°)
 
 **Model import**
-- [ ] `load_model` *(skipped - requires file path)*
+- [x] `load_model`
 
 **Plate management**
 - [x] `add_plate`
@@ -164,7 +164,7 @@ docs/
 - [x] `slice_all`
 - [x] `get_slicing_status`
 - [x] `get_print_estimate`
-- [ ] `export_gcode` *(skipped - requires file dialog)*
+- [x] `export_gcode` *(opens dialog - silent export TODO)*
 
 **Printers**
 - [x] `get_printers`
