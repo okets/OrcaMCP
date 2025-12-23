@@ -283,11 +283,7 @@ This fork includes a fix for loading 3MF files from other slicers (like JusPrin)
 
 ## Future Enhancements
 
-- [ ] Direct file export without dialogs
-- [ ] Slicing progress percentage
-- [ ] WebSocket support for real-time notifications
-- [ ] Batch operations for multiple files
-- [ ] Calibration tools (flow rate, pressure advance)
+Post-release features will be driven by user feedback. See GitHub Issues for current requests.
 
 ---
 

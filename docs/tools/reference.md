@@ -731,6 +731,56 @@ Redo the last undone operation.
 
 ---
 
+## Active Warnings
+
+Many tools return an `active_warnings` section in their response, providing visibility into OrcaSlicer's notification system. This helps AI agents understand when issues exist that need attention.
+
+**Endpoints with active_warnings:**
+- Scene: `get_scene_info`
+- Slicing: `slice_all`, `get_slicing_status`, `get_print_estimate`
+- Model ops: `load_model`, `arrange_objects`, `auto_orient`
+- Transforms: `move_object`, `rotate_object`, `scale_object`, `transform_objects`, `mirror_object`, `clone_object`, `flatten_object`, `cut_object`, `delete_object`
+- History: `undo`, `redo`
+
+**Response format:**
+```json
+{
+  "status": "success",
+  "active_warnings": {
+    "count": 1,
+    "warnings": [
+      {
+        "level": "serious_warning",
+        "message": "Conflicts of G-code paths have been found at layer 231, Z = 18.60mm. Please separate the conflicted objects farther (cute-rumistl.stl <-> cute-rumistl.stl).",
+        "type": "GcodeOverlap"
+      }
+    ]
+  }
+}
+```
+
+**Warning levels:**
+| Level | Description |
+|-------|-------------|
+| `warning` | General warning, non-critical |
+| `serious_warning` | Important issue that may affect print quality |
+| `error` | Critical error that prevents printing |
+
+**Common warning types:**
+| Type | Description |
+|------|-------------|
+| `GcodeOverlap` | Objects' toolpaths conflict - separate them |
+| `NeedSupportOn` | Object may need supports enabled |
+| `BedFilamentIncompatible` | Filament incompatible with bed type |
+| `SlicingError` | Slicing failed |
+| `SlicingSeriousWarning` | Serious slicing issue |
+| `ValidateError` | Validation failed |
+| `PlaterWarning` | General plater warning |
+
+**Note:** The `count` field is always present (even when 0) to help agents confirm issues have been resolved.
+
+---
+
 ## Error Handling
 
 All tools return errors in JSON-RPC format:

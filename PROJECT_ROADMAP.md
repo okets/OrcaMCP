@@ -71,10 +71,6 @@ docs/
 - [x] README.md rewritten for OrcaMCP
 - [x] Documentation framework complete
 - [x] Active warnings exposed through MCP interface (see below)
-- [ ] GitHub Actions: build artifacts (macOS/Linux/Windows)
-- [ ] License clarification (AGPL-3.0 from OrcaSlicer)
-- [ ] Attribution notes for OrcaSlicer, JusPrin, upstream projects
-
 ---
 
 ## Active Warnings Feature (Completed 2024-12-23)
@@ -115,13 +111,27 @@ Added `active_warnings` section to MCP tool responses, exposing OrcaSlicer notif
 
 ---
 
-## Milestone 3 — Future Enhancements
+## Milestone 3 — Public Release Preparation
+**docs finalization**
+- [ ] License clarification (AGPL-3.0 from OrcaSlicer)
+- [ ] Attribution notes for OrcaSlicer, JusPrin, upstream projects
+- [ ] CONTRIBUTING.md with guidelines for contributors
+- [ ] GitHub Actions: build artifacts (macOS/Linux/Windows)
+- [ ] Issue templates for bug reports and feature requests
+**Update process**
+- [ ] First public release tag (v0.0.1)
+- [ ] work on update flow for future releases (GitHub Actions draft release on push to main)
+- [ ] once the update flow is ready, make 1.0.0 release, check full automation flow and client update prompts. (we can now update the app post first installation)
+**Announcement**
+- [ ] Polish README.md for public audience (clear, inviting, contributor-friendly)
+- [ ] Script and prepare demo video showcasing key features
+- [ ] Announce on OrcaSlicer Discord, Reddit, relevant forums
 
-- [ ] Direct file export without dialogs
-- [ ] Slicing progress percentage (not just running/idle)
-- [ ] WebSocket support for real-time notifications? (investigate Claude capabilities, can we really benefit from websockets?)
-- [ ] Batch operations for multiple files
-- [ ] Calibration tools (flow rate, pressure advance)
+---
+
+## Future Enhancements
+
+Post-release features will be driven by user feedback and community contributions. No pre-planned roadmap - we ship what users actually need.
 
 ---
 
