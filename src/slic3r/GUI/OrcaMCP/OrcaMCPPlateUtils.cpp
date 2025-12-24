@@ -527,7 +527,7 @@ void OrcaMCPPlateUtils::CleanupPreviews() {
         for (fs::directory_iterator it(tmp_dir); it != fs::directory_iterator(); ++it) {
             if (fs::is_regular_file(*it)) {
                 std::string filename = it->path().filename().string();
-                if (filename.find("jusprin_preview_") == 0 &&
+                if (filename.find("orcamcp_preview_") == 0 &&
                     filename.find(".jpg") != std::string::npos) {
                     fs::remove(*it);
                 }

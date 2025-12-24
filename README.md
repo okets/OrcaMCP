@@ -175,7 +175,7 @@ See [Configuration Guide](docs/setup/configuration.md) for more options.
 
 ## Project Origin
 
-OrcaMCP is a fork of [OrcaSlicer](https://github.com/SoftFever/OrcaSlicer) with an embedded MCP server for AI integration. The MCP implementation originated from [JusPrin](https://github.com/jusprin/jusprin) and was adapted for OrcaSlicer's broader ecosystem.
+OrcaMCP is a fork of [OrcaSlicer](https://github.com/SoftFever/OrcaSlicer) with an embedded MCP server for AI integration.
 
 ## License
 
@@ -186,7 +186,6 @@ See [LICENSE.txt](LICENSE.txt) for details.
 ## Acknowledgments
 
 - **[OrcaSlicer](https://github.com/SoftFever/OrcaSlicer)** - The excellent slicer this project is based on
-- **[JusPrin](https://github.com/jusprin/jusprin)** - Original MCP server implementation
 - **[Anthropic](https://anthropic.com)** - Model Context Protocol specification
 - **[PrusaSlicer](https://github.com/prusa3d/PrusaSlicer)** & **[BambuStudio](https://github.com/bambulab/BambuStudio)** - Upstream slicer projects
 

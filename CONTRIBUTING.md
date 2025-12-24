@@ -150,7 +150,6 @@ By contributing to OrcaMCP, you agree that your contributions will be licensed u
 
 OrcaMCP is built on:
 - **[OrcaSlicer](https://github.com/SoftFever/OrcaSlicer)** - The excellent slicer we extend
-- **[JusPrin](https://github.com/jusprin/jusprin)** - Original MCP implementation
 - **[PrusaSlicer](https://github.com/prusa3d/PrusaSlicer)** & **[BambuStudio](https://github.com/bambulab/BambuStudio)** - Upstream projects
 
 When contributing, please respect the upstream projects' contributions and licenses.
