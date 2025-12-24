@@ -147,16 +147,17 @@ on:
 | Step | First Build | Subsequent Builds |
 |------|-------------|-------------------|
 | Tag pushed | instant | instant |
-| Build Deps (cached) | 30-60 min each | **0s** (cached) |
+| Build Deps (cached) | 30-60 min each | 30-50 min (partial rebuild) |
 | Build Linux | ~50 min | ~50 min |
 | Build Windows | ~1 hour | ~1 hour |
 | Build macOS (universal) | ~2 hours | ~2 hours |
 | Create release | ~1 min | ~1 min |
+| **Total wall time** | **~3 hours** | **~3 hours** |
 
 **Notes:**
-- All platforms build **in parallel**, so total wall time ≈ macOS time (~2 hours)
+- All platforms build **in parallel**, so total wall time ≈ macOS time (~3 hours)
 - macOS is slowest because it builds a **universal binary** (ARM + Intel)
-- Dependencies are cached based on `hashFiles('deps/**')` - only rebuilt if deps change
+- Dependencies may partially rebuild even when cached (observed 30-50 min on subsequent builds)
 - Large C++ codebase (~500K lines) means long compile times are unavoidable
 
 ---
