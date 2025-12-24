@@ -122,7 +122,7 @@ Added `active_warnings` section to MCP tool responses, exposing OrcaSlicer notif
 - [x] Create release workflow (.github/workflows/release.yml)
 - [x] Document update process with flow diagrams
 - [x] First public release tag (v2.3.2.0) - workflow tested successfully
-- [ ] Verify update check in app detects new release
+- [x] Verify update check in app detects new release - "This is the newest version" ✓
 - [ ] Make 1.0.0 release when stable
 **Announcement**
 - [ ] Polish README.md for public audience (clear, inviting, contributor-friendly)
