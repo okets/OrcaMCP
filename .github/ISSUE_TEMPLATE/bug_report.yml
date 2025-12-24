@@ -1,16 +1,18 @@
-name: 🐞 Bug Report
-description: File a bug report
+name: Bug Report
+description: File a bug report for OrcaMCP
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        **Thank you for using Orca Slicer and wanting to report a bug.**
-        
+        **Thank you for using OrcaMCP and wanting to report a bug.**
+
         Please note that this is not the place to make feature requests or ask for help.
-        For this, please use the [Feature request](https://github.com/OrcaSlicer/OrcaSlicer/issues/new?assignees=&labels=&projects=&template=feature_request.yml) issue type or you can discuss your idea on our [Discord server](https://discord.gg/P4VE9UY9gJ) with others.
-        
+        For feature requests, please use the [Feature request](https://github.com/okets/OrcaMCP/issues/new?template=feature_request.yml) template.
+
         Before filing, please check if the issue already exists (either open or closed) by using the search bar on the issues page. If it does, comment there. Even if it's closed, we can reopen it based on your comment.
+
+        **Note:** For MCP-specific issues (tools not working, bridge errors, etc.), please include any relevant curl commands or Claude Code output.
   - type: checkboxes
     attributes:
       label: Is there an existing issue for this problem?
@@ -21,9 +23,9 @@ body:
   - type: input
     id: version
     attributes:
-      label: OrcaSlicer Version
-      description: Which version of Orca Slicer are you running? You can see the full version in `Help` -> `About Orca Slicer`.
-      placeholder: e.g. 1.9.0
+      label: OrcaMCP Version
+      description: Which version of OrcaMCP are you running? You can see the full version in `Help` -> `About OrcaMCP`.
+      placeholder: e.g. 0.1.0
     validations:
       required: true
   - type: dropdown
@@ -100,11 +102,12 @@ body:
             You can export the project file from the application menu in `File`->`Save project as...`, then zip it
           * A **log file** for crashes and similar issues.
             You can find your log file here:
-            Windows: `%APPDATA%\OrcaSlicer\log` or usually `C:\Users\<your username>\AppData\Roaming\OrcaSlicer\log`
-            MacOS: `$HOME/Library/Application Support/OrcaSlicer/log`
-            Linux: `$HOME/.config/OrcaSlicer/log`
-            If Orca Slicer still starts, you can also reach this directory from the application menu in `Help` -> `Show Configuration Folder`
+            Windows: `%APPDATA%\OrcaMCP\log` or usually `C:\Users\<your username>\AppData\Roaming\OrcaMCP\log`
+            macOS: `$HOME/Library/Application Support/OrcaMCP/log`
+            Linux: `$HOME/.config/OrcaMCP/log`
+            If OrcaMCP still starts, you can also reach this directory from the application menu in `Help` -> `Show Configuration Folder`
             You can zip the log directory, or just select the newest logs when this issue happens, and zip them
+          * For **MCP-specific issues**: Include the curl command and response, or Claude Code conversation excerpt
   - type: textarea
     id: file_uploads
     attributes:

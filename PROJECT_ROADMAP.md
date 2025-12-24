@@ -112,13 +112,14 @@ Added `active_warnings` section to MCP tool responses, exposing OrcaSlicer notif
 ---
 
 ## Milestone 3 — Public Release Preparation
-**docs finalization**
-- [ ] License clarification (AGPL-3.0 from OrcaSlicer)
-- [ ] Attribution notes for OrcaSlicer, JusPrin, upstream projects
-- [ ] CONTRIBUTING.md with guidelines for contributors
-- [ ] GitHub Actions: build artifacts (macOS/Linux/Windows)
-- [ ] Issue templates for bug reports and feature requests
+**docs finalization** (Completed 2024-12-23)
+- [x] License clarification (AGPL-3.0 from OrcaSlicer) - LICENSE.txt already present, links fixed
+- [x] Attribution notes for OrcaSlicer, JusPrin, upstream projects - in README.md Acknowledgments section
+- [x] CONTRIBUTING.md with guidelines for contributors
+- [x] GitHub Actions: build artifacts (macOS/Linux/Windows) - inherited from OrcaSlicer workflows
+- [x] Issue templates for bug reports and feature requests - updated for OrcaMCP
 **Update process**
+- [x] Configure VERSION_CHECK_URL to point to OrcaMCP GitHub releases (prevents updates to OrcaSlicer)
 - [ ] First public release tag (v0.0.1)
 - [ ] work on update flow for future releases (GitHub Actions draft release on push to main)
 - [ ] once the update flow is ready, make 1.0.0 release, check full automation flow and client update prompts. (we can now update the app post first installation)

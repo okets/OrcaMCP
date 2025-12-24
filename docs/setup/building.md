@@ -36,7 +36,7 @@ sudo apt install -y build-essential cmake ninja-build ccache \
 
 ```bash
 # Clone repository
-git clone https://github.com/your-username/OrcaMCP.git
+git clone https://github.com/okets/OrcaMCP.git
 cd OrcaMCP
 
 # Build everything (first time - builds dependencies too)
@@ -55,7 +55,7 @@ The built app will be at: `build/arm64/src/Release/OrcaSlicer.app`
 
 ```bash
 # Clone repository
-git clone https://github.com/your-username/OrcaMCP.git
+git clone https://github.com/okets/OrcaMCP.git
 cd OrcaMCP
 
 # Build
@@ -71,7 +71,7 @@ make -j$(nproc)
 
 ```batch
 REM Clone repository
-git clone https://github.com/your-username/OrcaMCP.git
+git clone https://github.com/okets/OrcaMCP.git
 cd OrcaMCP
 
 REM Build with Visual Studio

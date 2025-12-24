@@ -1,5 +1,5 @@
-name: 🚀 Feature Request / Enhancement
-description: Suggest an improvement to make Orca Slicer even better!
+name: Feature Request / Enhancement
+description: Suggest an improvement to make OrcaMCP even better!
 labels: ["enhancement"]
 body:
   - type: markdown
@@ -7,9 +7,7 @@ body:
       value: |
         Thanks for taking the time to fill out this feature request!
 
-        If your idea is still at the formulation stage, or you're not sure it would
-        be useful to many users, you can raise it as a discussion topic under [Ideas](https://github.com/OrcaSlicer/OrcaSlicer/discussions/categories/ideas)
-        or you can raise it on the [Discord server](https://discord.gg/P4VE9UY9gJ).
+        Before submitting, please check if a similar feature has been requested already.
   - type: checkboxes
     attributes:
       label: Is there an existing issue for this feature request?
@@ -28,16 +26,30 @@ body:
       required: true
   - type: dropdown
     attributes:
-      label: Which printers will be beneficial to this feature?
-      description: Select affected printer firmware type.
-      multiple: true
-      options: 
-        - Klipper
-        - Marlin
-        - Others
-        - All
+      label: Feature Category
+      description: What type of feature is this?
+      multiple: false
+      options:
+        - MCP Tool (new or enhanced tool)
+        - Slicing/Printing feature
+        - UI/UX improvement
+        - Documentation
+        - Other
     validations:
       required: true
+  - type: dropdown
+    attributes:
+      label: Affected Printers (if applicable)
+      description: Select affected printer firmware type (for slicing features).
+      multiple: true
+      options:
+        - Klipper
+        - Marlin
+        - Bambu Lab
+        - All
+        - N/A (MCP-only feature)
+    validations:
+      required: false
   - type: textarea
     attributes:
       label: Describe the solution you'd like

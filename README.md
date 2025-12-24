@@ -10,8 +10,8 @@
 
 *Natural language control for OrcaSlicer through the Model Context Protocol (MCP)*
 
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen)](https://github.com/your-username/OrcaMCP)
-[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
+[![Build Status](https://img.shields.io/badge/build-passing-brightgreen)](https://github.com/okets/OrcaMCP)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE.txt)
 [![MCP Protocol](https://img.shields.io/badge/MCP-2024--11--05-purple)](https://modelcontextprotocol.io/)
 
 </div>
@@ -146,14 +146,14 @@ See [Workflows Guide](docs/tools/workflows.md) for more examples.
 
 ### macOS
 ```bash
-git clone https://github.com/your-username/OrcaMCP.git
+git clone https://github.com/okets/OrcaMCP.git
 cd OrcaMCP
 ./build_release_macos.sh -s -x
 ```
 
 ### Linux
 ```bash
-git clone https://github.com/your-username/OrcaMCP.git
+git clone https://github.com/okets/OrcaMCP.git
 cd OrcaMCP
 ./build_release.sh
 ```
@@ -181,7 +181,7 @@ OrcaMCP is a fork of [OrcaSlicer](https://github.com/SoftFever/OrcaSlicer) with 
 
 OrcaMCP is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0), the same license as OrcaSlicer.
 
-See [LICENSE](LICENSE) for details.
+See [LICENSE.txt](LICENSE.txt) for details.
 
 ## Acknowledgments
 
@@ -198,5 +198,5 @@ Contributions are welcome! See [Contributing Guide](docs/contributing/) for:
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/your-username/OrcaMCP/issues)
+- **Issues**: [GitHub Issues](https://github.com/okets/OrcaMCP/issues)
 - **Documentation**: [docs/](docs/)
