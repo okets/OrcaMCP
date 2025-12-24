@@ -1,0 +1,146 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'  # Triggers on v0.1.0, v1.0.0, etc.
+
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g., v0.1.0)'
+        required: true
+        type: string
+      draft:
+        description: 'Create as draft release'
+        type: boolean
+        default: true
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Build for all platforms using existing workflow
+  # Uses build_check_cache which handles deps caching + building
+  build_macos:
+    name: Build macOS
+    uses: ./.github/workflows/build_check_cache.yml
+    with:
+      os: macos-14
+      arch: arm64
+    secrets: inherit
+
+  build_linux:
+    name: Build Linux
+    uses: ./.github/workflows/build_check_cache.yml
+    with:
+      os: ubuntu-24.04
+    secrets: inherit
+
+  build_windows:
+    name: Build Windows
+    uses: ./.github/workflows/build_check_cache.yml
+    with:
+      os: windows-latest
+    secrets: inherit
+
+  # Create release with all artifacts
+  create_release:
+    name: Create Release
+    needs: [build_macos, build_linux, build_windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get version from tag
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          # Remove 'v' prefix for artifact matching
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Tag: $TAG, Version: $VERSION"
+
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: OrcaSlicer_Mac_universal_V${{ steps.version.outputs.version }}
+          path: artifacts/macos
+
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: OrcaSlicer_Linux_ubuntu_2404_V${{ steps.version.outputs.version }}
+          path: artifacts/linux
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: OrcaSlicer_Windows_V${{ steps.version.outputs.version }}
+          path: artifacts/windows
+
+      - name: List artifacts
+        run: |
+          echo "=== Downloaded Artifacts ==="
+          find artifacts -type f -name "*" | head -50
+
+      - name: Rename artifacts with version
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+
+          # Rename files from OrcaSlicer naming to OrcaMCP naming
+          for file in artifacts/macos/*.dmg; do
+            [ -f "$file" ] && mv "$file" "artifacts/OrcaMCP-${TAG}-macos-universal.dmg"
+          done
+
+          for file in artifacts/linux/*.AppImage; do
+            [ -f "$file" ] && mv "$file" "artifacts/OrcaMCP-${TAG}-linux-x64.AppImage"
+          done
+
+          for file in artifacts/windows/*Installer*.exe; do
+            [ -f "$file" ] && mv "$file" "artifacts/OrcaMCP-${TAG}-windows-x64-installer.exe"
+          done
+
+          echo "=== Renamed Artifacts ==="
+          find artifacts -type f -name "OrcaMCP-*"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: OrcaMCP ${{ steps.version.outputs.tag }}
+          draft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft || true }}
+          generate_release_notes: true
+          files: |
+            artifacts/OrcaMCP-*.dmg
+            artifacts/OrcaMCP-*.AppImage
+            artifacts/OrcaMCP-*.exe
+          body: |
+            ## OrcaMCP ${{ steps.version.outputs.tag }}
+
+            AI-powered 3D slicing with Model Context Protocol (MCP) support.
+
+            ### Downloads
+
+            | Platform | File |
+            |----------|------|
+            | macOS (Universal) | `OrcaMCP-${{ steps.version.outputs.tag }}-macos-universal.dmg` |
+            | Linux (x64) | `OrcaMCP-${{ steps.version.outputs.tag }}-linux-x64.AppImage` |
+            | Windows (x64) | `OrcaMCP-${{ steps.version.outputs.tag }}-windows-x64-installer.exe` |
+
+            ### What's Changed
+
+            See below for auto-generated changelog.
+
+            ---
+
+            **Full Changelog**: https://github.com/okets/OrcaMCP/compare/...v${{ steps.version.outputs.version }}

@@ -12,6 +12,7 @@ Welcome to the OrcaMCP documentation. This folder contains detailed documentatio
 | [Tools Reference](tools/) | Complete API reference for all 44 MCP tools |
 | [Contributing](contributing/) | How to contribute to OrcaMCP |
 | [Setup](setup/) | Building, configuration, and troubleshooting |
+| [Release](release/) | Update process and release workflows |
 
 ## For AI Coding Agents
 
@@ -41,10 +42,12 @@ docs/
 ├── contributing/
 │   ├── adding-tools.md      # Guide for new MCP tools
 │   └── code-style.md        # C++ and Python conventions
-└── setup/
-    ├── building.md          # Cross-platform build instructions
-    ├── configuration.md     # .mcp.json, environment variables
-    └── troubleshooting.md   # Common issues and solutions
+├── setup/
+│   ├── building.md          # Cross-platform build instructions
+│   ├── configuration.md     # .mcp.json, environment variables
+│   └── troubleshooting.md   # Common issues and solutions
+└── release/
+    └── update-process.md    # Release workflow and update mechanism
 ```
 
 ## Key Concepts

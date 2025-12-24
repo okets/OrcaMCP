@@ -117,11 +117,13 @@ Added `active_warnings` section to MCP tool responses, exposing OrcaSlicer notif
 - [x] CONTRIBUTING.md with guidelines for contributors
 - [x] GitHub Actions: build artifacts (macOS/Linux/Windows) - inherited from OrcaSlicer workflows
 - [x] Issue templates for bug reports and feature requests - updated for OrcaMCP
-**Update process**
+**Update process** - See [docs/release/update-process.md](docs/release/update-process.md)
 - [x] Configure VERSION_CHECK_URL to point to OrcaMCP GitHub releases (prevents updates to OrcaSlicer)
-- [ ] First public release tag (v0.0.1)
-- [ ] work on update flow for future releases (GitHub Actions draft release on push to main)
-- [ ] once the update flow is ready, make 1.0.0 release, check full automation flow and client update prompts. (we can now update the app post first installation)
+- [x] Create release workflow (.github/workflows/release.yml)
+- [x] Document update process with flow diagrams
+- [ ] First public release tag (v0.0.1) - test the workflow
+- [ ] Verify update check in app detects new release
+- [ ] Make 1.0.0 release when stable
 **Announcement**
 - [ ] Polish README.md for public audience (clear, inviting, contributor-friendly)
 - [ ] Script and prepare demo video showcasing key features
