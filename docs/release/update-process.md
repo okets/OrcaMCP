@@ -144,13 +144,20 @@ on:
       - 'v*'
 ```
 
-| Step | Duration | Result |
-|------|----------|--------|
-| Tag pushed | instant | Workflow starts |
-| Build macOS | ~10 min | .dmg artifact |
-| Build Linux | ~10 min | .AppImage artifact |
-| Build Windows | ~10 min | .exe artifact |
-| Create release | ~1 min | Draft release with all artifacts |
+| Step | First Build | Subsequent Builds |
+|------|-------------|-------------------|
+| Tag pushed | instant | instant |
+| Build Deps (cached) | 30-60 min each | **0s** (cached) |
+| Build Linux | ~50 min | ~50 min |
+| Build Windows | ~1 hour | ~1 hour |
+| Build macOS (universal) | ~2 hours | ~2 hours |
+| Create release | ~1 min | ~1 min |
+
+**Notes:**
+- All platforms build **in parallel**, so total wall time ≈ macOS time (~2 hours)
+- macOS is slowest because it builds a **universal binary** (ARM + Intel)
+- Dependencies are cached based on `hashFiles('deps/**')` - only rebuilt if deps change
+- Large C++ codebase (~500K lines) means long compile times are unavoidable
 
 ---
 
