@@ -277,7 +277,60 @@ The `count` field is always present (even when 0) to help confirm issues have be
 
 ## Upstream Compatibility Notes
 
-This fork includes a fix for loading 3MF files from other slicers (like JusPrin). The fix is in `src/libslic3r/PrintConfig.cpp` in `extend_extruder_variant()` - adds null checks for config options that may not exist in older 3MF files.
+This fork includes a fix for loading 3MF files from other slicers. The fix is in `src/libslic3r/PrintConfig.cpp` in `extend_extruder_variant()` - adds null checks for config options that may not exist in older 3MF files.
+
+---
+
+## Syncing with Upstream OrcaSlicer
+
+This fork tracks `SoftFever/OrcaSlicer` as `upstream`. To incorporate upstream updates:
+
+### Branch Strategy
+
+```
+upstream/main (OrcaSlicer)
+      │
+      ▼
+    main  ──────► keeps in sync with OrcaSlicer
+      │
+      ▼
+    mcp   ──────► MCP work + upstream updates (default branch)
+```
+
+### Sync Commands
+
+```bash
+# 1. Fetch latest from upstream
+git fetch upstream
+
+# 2. Update local main branch
+git checkout main
+git merge upstream/main
+
+# 3. Merge upstream changes into mcp branch
+git checkout mcp
+git merge main
+# (resolve any conflicts if needed)
+
+# 4. Push updated branches
+git push origin main
+git push origin mcp
+```
+
+### One-Liner for Quick Sync
+
+```bash
+git fetch upstream && git checkout main && git merge upstream/main && git checkout mcp && git merge main && git push origin main mcp
+```
+
+### Alternative: Rebase (cleaner history)
+
+```bash
+git fetch upstream
+git checkout mcp
+git rebase upstream/main
+git push origin mcp --force-with-lease
+```
 
 ---
 
@@ -285,6 +338,3 @@ This fork includes a fix for loading 3MF files from other slicers (like JusPrin)
 
 Post-release features will be driven by user feedback. See GitHub Issues for current requests.
 
----
-
-*This project originated from JusPrin's MCP server implementation and was migrated to OrcaSlicer for broader compatibility.*
