@@ -154,6 +154,7 @@ One-click setup for AI agents to connect to OrcaSlicer's MCP server.
 - [x] First public release tag (v2.3.2.0) - workflow tested successfully
 - [x] Verify update check in app detects new release - "This is the newest version" ✓
 - [x] Fix artifact naming: OrcaSlicer → OrcaMCP (v2.3.2.2) - DMG now contains OrcaMCP.app
+- [ ] macOS code signing & notarization - See [docs/release/macos-code-signing.md](docs/release/macos-code-signing.md)
 - [ ] Make 1.0.0 release when stable
 **Announcement**
 - [ ] Polish README.md for public audience (clear, inviting, contributor-friendly)
