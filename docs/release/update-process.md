@@ -103,7 +103,7 @@ git commit -m "Release X.Y.Z.N"
 git tag -a vX.Y.Z.N -m "Release X.Y.Z.N: description"
 git push origin mcp vX.Y.Z.N
 
-# 3. Wait for GitHub Actions (~15 min)
+# 3. Wait for GitHub Actions (~3 hours)
 # 4. Publish draft release at github.com/okets/OrcaMCP/releases
 ```
 
@@ -192,9 +192,9 @@ git push origin :refs/tags/v2.3.2.1
 ## Version History Example
 
 ```
-v2.3.2.0  ← Synced to OrcaSlicer 2.3.2
-v2.3.2.1  ← Added MCP tool
-v2.3.2.2  ← Bug fixes
+v2.3.2.0  ← First OrcaMCP release (synced to OrcaSlicer 2.3.2)
+v2.3.2.1  ← Update flow testing
+v2.3.2.2  ← Fixed artifact naming (OrcaMCP.app)
 v2.4.0.0  ← Synced to OrcaSlicer 2.4.0 (reset)
 v2.4.0.1  ← OrcaMCP improvements
 v2.4.1.0  ← Synced to OrcaSlicer 2.4.1 (reset)

@@ -110,6 +110,36 @@ Added `active_warnings` section to MCP tool responses, exposing OrcaSlicer notif
 
 ---
 
+## MCP Client Auto-Configuration (Completed 2024-12-25)
+
+One-click setup for AI agents to connect to OrcaSlicer's MCP server.
+
+**Features:**
+- [x] New "MCP Clients" tab in Preferences dialog
+- [x] Support for 7 MCP clients: Claude Desktop, Claude Code, Cursor, Windsurf, Cline, Codex CLI, GitHub Copilot
+- [x] "Connect AI" card on home screen with official MCP logo
+- [x] Bridge script uses shared path (`~/.orcamcp/`) for dev/prod compatibility
+- [x] Auto-copies and updates bridge script on connect
+- [x] Cross-platform support (macOS, Windows, Linux)
+- [x] Platform-aware tab indexing (Associate tab only on Windows)
+
+**Files added:**
+- `src/slic3r/GUI/OrcaMCP/MCPClientConfig.hpp` - Client metadata and config management
+- `src/slic3r/GUI/OrcaMCP/MCPClientConfig.cpp` - Implementation (~620 lines)
+- `resources/scripts/orcamcp-bridge.py` - Bundled bridge script
+- `resources/web/homepage/img/i6_ai.svg` - MCP logo icon (teal)
+- `docs/MCP-AUTO-CONFIGURATION-GUIDE.md` - Implementation reference
+
+**Files modified:**
+- `src/slic3r/GUI/Preferences.cpp` - MCP Clients tab UI
+- `src/slic3r/GUI/Preferences.hpp` - Tab declarations
+- `src/slic3r/GUI/GUI_App.cpp` - Home screen handler
+- `resources/web/homepage/index.html` - Connect AI card
+- `resources/web/homepage/js/home.js` - Click handler
+- `resources/web/data/text.js` - Localization strings
+
+---
+
 ## Milestone 3 — Public Release Preparation
 **docs finalization** (Completed 2024-12-23)
 - [x] License clarification (AGPL-3.0 from OrcaSlicer) - LICENSE.txt already present, links fixed
@@ -123,6 +153,7 @@ Added `active_warnings` section to MCP tool responses, exposing OrcaSlicer notif
 - [x] Document update process with flow diagrams
 - [x] First public release tag (v2.3.2.0) - workflow tested successfully
 - [x] Verify update check in app detects new release - "This is the newest version" ✓
+- [x] Fix artifact naming: OrcaSlicer → OrcaMCP (v2.3.2.2) - DMG now contains OrcaMCP.app
 - [ ] Make 1.0.0 release when stable
 **Announcement**
 - [ ] Polish README.md for public audience (clear, inviting, contributor-friendly)
@@ -249,5 +280,6 @@ Post-release features will be driven by user feedback and community contribution
 | 2024-12 | Purple branding | Distinguish from upstream OrcaSlicer |
 | 2024-12 | Strict JSON Schema compliance | Claude API requires draft 2020-12; all properties need type |
 | 2024-12 | Server name: orca-slicer | Renamed from "orcamcp" for better TTS pronunciation |
+| 2024-12 | OrcaMCP artifact naming | GitHub workflow creates OrcaMCP.app, not OrcaSlicer.app |
 
 See `docs/adr/` for detailed Architecture Decision Records.

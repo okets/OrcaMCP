@@ -4020,6 +4020,15 @@ std::string GUI_App::handle_web_request(std::string cmd)
             else if (command_str.compare("homepage_openproject") == 0) {
                 this->request_open_project({});
             }
+            else if (command_str.compare("homepage_connectai") == 0) {
+                // Open Preferences dialog to MCP Clients tab
+                // Tab index differs by platform: Associate tab only exists on Windows
+#ifdef _WIN32
+                this->open_preferences(4);  // General, Control, Online, Associate, MCP Clients
+#else
+                this->open_preferences(3);  // General, Control, Online, MCP Clients
+#endif
+            }
             else if (command_str.compare("get_recent_projects") == 0) {
                 if (mainframe) {
                     if (mainframe->m_webview) {

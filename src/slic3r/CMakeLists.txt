@@ -359,6 +359,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/OrcaMCP/OrcaMCPPlateUtils.cpp
     GUI/OrcaMCP/OrcaMCPPresetConfigUtils.hpp
     GUI/OrcaMCP/OrcaMCPPresetConfigUtils.cpp
+    GUI/OrcaMCP/MCPClientConfig.hpp
+    GUI/OrcaMCP/MCPClientConfig.cpp
     GUI/OptionsGroup.cpp
     GUI/OptionsGroup.hpp
     GUI/ParamsDialog.cpp

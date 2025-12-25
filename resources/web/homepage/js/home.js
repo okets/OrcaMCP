@@ -289,8 +289,17 @@ function OnClickOpenProject()
 	var tSend={};
 	tSend['sequence_id']=Math.round(new Date() / 1000);
 	tSend['command']="homepage_openproject";
-	
-	SendWXMessage( JSON.stringify(tSend) );		
+
+	SendWXMessage( JSON.stringify(tSend) );
+}
+
+function OnClickConnectAI()
+{
+	var tSend={};
+	tSend['sequence_id']=Math.round(new Date() / 1000);
+	tSend['command']="homepage_connectai";
+
+	SendWXMessage( JSON.stringify(tSend) );
 }
 
 function OnOpenRecentFile( strPath )

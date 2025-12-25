@@ -13,6 +13,7 @@
 #include "Widgets/CheckBox.hpp"
 #include "Widgets/TextInput.hpp"
 #include "Widgets/TabCtrl.hpp"
+#include "Widgets/Button.hpp"
 
 namespace Slic3r { namespace GUI {
 
@@ -38,6 +39,8 @@ protected:
     wxBoxSizer *  m_sizer_body;
     wxScrolledWindow* m_parent;
     TabCtrl* m_pref_tabs;
+    size_t m_initial_tab{0};
+    std::string m_highlight_option;
 
     // bool								m_settings_layout_changed {false};
     bool m_seq_top_layer_only_changed{false};
@@ -50,11 +53,8 @@ public:
 
 public:
     PreferencesDialog(wxWindow *      parent,
-                      wxWindowID      id    = wxID_ANY,
-                      const wxString &title = wxT(""),
-                      const wxPoint & pos   = wxDefaultPosition,
-                      const wxSize &  size  = wxDefaultSize,
-                      long            style = wxSYSTEM_MENU | wxCAPTION | wxCLOSE_BOX);
+                      size_t          open_on_tab = 0,
+                      const std::string& highlight_option = std::string());
 
     ~PreferencesDialog();
 
@@ -68,6 +68,13 @@ public:
     ::CheckBox * m_dark_mode_ckeckbox        = {nullptr};
     ::TextInput *m_backup_interval_textinput = {nullptr};
     ::CheckBox * m_legacy_networking_ckeckbox     = {nullptr};
+
+    // MCP Clients tab UI elements
+    struct MCPClientUIElements {
+        wxStaticText* status_label = nullptr;
+        Button* button = nullptr;
+    };
+    std::map<int, MCPClientUIElements> m_mcp_client_ui;
 
     wxString m_developer_mode_def;
     wxString m_internal_developer_mode_def;
@@ -99,6 +106,8 @@ public:
     void create_items();
     void create_sync_page();
     void create_shortcuts_page();
+    void create_mcp_clients_page(wxFlexGridSizer* g_sizer);
+    void refresh_mcp_client_buttons();
     wxBoxSizer* create_debug_page();
 
     // BBS

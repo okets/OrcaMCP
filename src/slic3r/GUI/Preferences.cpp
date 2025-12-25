@@ -6,6 +6,7 @@
 #include "MsgDialog.hpp"
 #include "I18N.hpp"
 #include "libslic3r/AppConfig.hpp"
+#include "OrcaMCP/MCPClientConfig.hpp"
 #include <wx/language.h>
 #include "OG_CustomCtrl.hpp"
 #include "wx/graphics.h"
@@ -1114,8 +1115,10 @@ wxBoxSizer* PreferencesDialog::create_item_link_association( wxString url_prefix
 }
 #endif // WIN32
 
-PreferencesDialog::PreferencesDialog(wxWindow *parent, wxWindowID id, const wxString &title, const wxPoint &pos, const wxSize &size, long style)
-    : DPIDialog(parent, id, _L("Preferences"), pos, size, style)
+PreferencesDialog::PreferencesDialog(wxWindow *parent, size_t open_on_tab, const std::string& highlight_option)
+    : DPIDialog(parent, wxID_ANY, _L("Preferences"), wxDefaultPosition, wxDefaultSize, wxSYSTEM_MENU | wxCAPTION | wxCLOSE_BOX)
+    , m_initial_tab(open_on_tab)
+    , m_highlight_option(highlight_option)
 {
     SetBackgroundColour(*wxWHITE);
     SetMinSize(DESIGN_WINDOW_SIZE);
@@ -1161,7 +1164,15 @@ void PreferencesDialog::create()
     for (size_t i = 0; i < m_pref_tabs->GetCount(); ++i)
         m_pref_tabs->SetItemTextColour(i, item_color);
 
-    m_pref_tabs->SelectItem(0);
+    // Select the initial tab (default 0, or specified by open_on_tab parameter)
+    size_t tab_to_select = (m_initial_tab < m_pref_tabs->GetCount()) ? m_initial_tab : 0;
+    m_pref_tabs->SelectItem(tab_to_select);
+
+    // Also show the correct sizer for the selected tab
+    for (size_t i = 0; i < f_sizers.size(); ++i) {
+        m_pref_tabs->SetItemBold(i, i == tab_to_select);
+        f_sizers[i]->Show(i == tab_to_select);
+    }
 
     m_sizer_body->Add(m_pref_tabs, 0, wxEXPAND | wxBOTTOM | wxTOP, FromDIP(5));
     m_sizer_body->Add(m_parent, 1, wxEXPAND);
@@ -1459,6 +1470,19 @@ void PreferencesDialog::create_items()
 #endif // _WIN32
 
     //////////////////////////
+    //// MCP CLIENTS TAB
+    /////////////////////////////////////
+    m_pref_tabs->AppendItem(_L("MCP Clients"));
+    f_sizers.push_back(new wxFlexGridSizer(1, 1, v_gap, 0));
+    g_sizer = f_sizers.back();
+    g_sizer->AddGrowableCol(0, 1);
+
+    create_mcp_clients_page(g_sizer);
+
+    g_sizer->AddSpacer(FromDIP(10));
+    sizer_page->Add(g_sizer, 0, wxEXPAND);
+
+    //////////////////////////
     //// DEVELOPER TAB
     /////////////////////////////////////
     m_pref_tabs->AppendItem(_L("Developer"));
@@ -1512,6 +1536,196 @@ void PreferencesDialog::create_items()
     m_parent->SetSizer(sizer_page);
     m_parent->Layout();
     sizer_page->Fit(m_parent);
+}
+
+void PreferencesDialog::create_mcp_clients_page(wxFlexGridSizer* g_sizer)
+{
+    //// MCP CLIENTS > Server Status
+    g_sizer->Add(create_item_title(_L("MCP Server")), 1, wxEXPAND);
+
+    // Server status row
+    {
+        wxBoxSizer* sizer = new wxBoxSizer(wxHORIZONTAL);
+        sizer->AddSpacer(FromDIP(DESIGN_LEFT_MARGIN));
+
+        auto label = new wxStaticText(m_parent, wxID_ANY, _L("Status: Running on port 13618"), wxDefaultPosition, wxDefaultSize);
+        label->SetForegroundColour(wxColour("#00A86B"));  // Green color for running status
+        label->SetFont(::Label::Body_14);
+        sizer->Add(label, 0, wxALIGN_CENTER_VERTICAL);
+
+        g_sizer->Add(sizer, 0, wxEXPAND | wxTOP, FromDIP(4));
+    }
+
+    //// MCP CLIENTS > AI Agents
+    g_sizer->Add(create_item_title(_L("AI Agents")), 1, wxEXPAND);
+
+    // Get all supported clients
+    auto clients = MCPClientConfig::get_all_clients();
+
+    for (const auto& client : clients) {
+        wxBoxSizer* row_sizer = new wxBoxSizer(wxHORIZONTAL);
+        row_sizer->AddSpacer(FromDIP(DESIGN_LEFT_MARGIN));
+
+        // Client name
+        auto name_label = new wxStaticText(m_parent, wxID_ANY, wxString::FromUTF8(client.name),
+                                           wxDefaultPosition, DESIGN_TITLE_SIZE, wxST_NO_AUTORESIZE);
+        name_label->SetForegroundColour(DESIGN_GRAY900_COLOR);
+        name_label->SetFont(::Label::Body_14);
+        name_label->SetToolTip(wxString::FromUTF8(client.description));
+        row_sizer->Add(name_label, 0, wxALIGN_CENTER_VERTICAL);
+
+        // Status label
+        MCPClientStatus status = MCPClientConfig::get_client_status(client.id);
+        wxString status_text;
+        wxColour status_color;
+
+        switch (status) {
+            case MCPClientStatus::Configured:
+                status_text = _L("Connected");
+                status_color = wxColour("#00A86B");  // Green
+                break;
+            case MCPClientStatus::NotConfigured:
+                status_text = _L("Not Connected");
+                status_color = wxColour("#FFA500");  // Orange
+                break;
+            case MCPClientStatus::NotInstalled:
+            default:
+                status_text = _L("Not Installed");
+                status_color = DESIGN_GRAY600_COLOR;
+                break;
+        }
+
+        auto status_label = new wxStaticText(m_parent, wxID_ANY, status_text,
+                                             wxDefaultPosition, wxSize(FromDIP(100), -1));
+        status_label->SetForegroundColour(status_color);
+        status_label->SetFont(::Label::Body_14);
+        row_sizer->Add(status_label, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(10));
+
+        // Connect/Disconnect button
+        wxString button_text;
+        bool button_enabled = true;
+
+        switch (status) {
+            case MCPClientStatus::Configured:
+                button_text = _L("Disconnect");
+                break;
+            case MCPClientStatus::NotConfigured:
+                button_text = _L("Connect");
+                break;
+            case MCPClientStatus::NotInstalled:
+            default:
+                button_text = _L("---");
+                button_enabled = false;
+                break;
+        }
+
+        auto button = new Button(m_parent, button_text);
+        button->SetMinSize(wxSize(FromDIP(90), FromDIP(28)));
+        button->SetFont(::Label::Body_14);
+        button->Enable(button_enabled);
+
+        int client_id = static_cast<int>(client.id);
+
+        button->Bind(wxEVT_BUTTON, [this, client_id](wxCommandEvent& e) {
+            MCPClientId id = static_cast<MCPClientId>(client_id);
+            MCPClientStatus current_status = MCPClientConfig::get_client_status(id);
+            MCPClientInfo info = MCPClientConfig::get_client_info(id);
+            std::string error;
+            bool success = false;
+
+            if (current_status == MCPClientStatus::Configured) {
+                // Disconnect
+                success = MCPClientConfig::disconnect_client(id, error);
+            } else if (current_status == MCPClientStatus::NotConfigured) {
+                // Connect
+                success = MCPClientConfig::connect_client(id, error);
+            }
+
+            if (success) {
+                wxString msg = current_status == MCPClientStatus::Configured
+                    ? wxString::Format(_L("%s has been disconnected."), wxString::FromUTF8(info.name))
+                    : wxString::Format(_L("%s has been configured.\n\nPlease restart %s for changes to take effect."),
+                                       wxString::FromUTF8(info.name), wxString::FromUTF8(info.name));
+
+                MessageDialog dlg(this, msg, _L("Configuration Updated"), wxOK | wxICON_INFORMATION);
+                dlg.ShowModal();
+            } else {
+                wxString msg = wxString::Format(_L("Failed to configure %s:\n%s"),
+                                                wxString::FromUTF8(info.name), wxString::FromUTF8(error));
+                MessageDialog dlg(this, msg, _L("Configuration Error"), wxOK | wxICON_ERROR);
+                dlg.ShowModal();
+            }
+
+            // Refresh the UI
+            refresh_mcp_client_buttons();
+        });
+
+        row_sizer->Add(button, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(10));
+
+        // Store UI elements for later refresh
+        m_mcp_client_ui[client_id] = {status_label, button};
+
+        g_sizer->Add(row_sizer, 0, wxEXPAND | wxTOP, FromDIP(8));
+    }
+
+    // Note at bottom
+    {
+        wxBoxSizer* note_sizer = new wxBoxSizer(wxHORIZONTAL);
+        note_sizer->AddSpacer(FromDIP(DESIGN_LEFT_MARGIN));
+
+        auto note = new wxStaticText(m_parent, wxID_ANY,
+            _L("Note: Restart the AI agent after connecting for changes to take effect."));
+        note->SetForegroundColour(DESIGN_GRAY600_COLOR);
+        note->SetFont(::Label::Body_12);
+        note_sizer->Add(note, 0, wxALIGN_CENTER_VERTICAL);
+
+        g_sizer->Add(note_sizer, 0, wxEXPAND | wxTOP, FromDIP(16));
+    }
+}
+
+void PreferencesDialog::refresh_mcp_client_buttons()
+{
+    for (auto& [client_id, ui] : m_mcp_client_ui) {
+        MCPClientId id = static_cast<MCPClientId>(client_id);
+        MCPClientStatus status = MCPClientConfig::get_client_status(id);
+
+        wxString status_text;
+        wxColour status_color;
+        wxString button_text;
+        bool button_enabled = true;
+
+        switch (status) {
+            case MCPClientStatus::Configured:
+                status_text = _L("Connected");
+                status_color = wxColour("#00A86B");
+                button_text = _L("Disconnect");
+                break;
+            case MCPClientStatus::NotConfigured:
+                status_text = _L("Not Connected");
+                status_color = wxColour("#FFA500");
+                button_text = _L("Connect");
+                break;
+            case MCPClientStatus::NotInstalled:
+            default:
+                status_text = _L("Not Installed");
+                status_color = DESIGN_GRAY600_COLOR;
+                button_text = _L("---");
+                button_enabled = false;
+                break;
+        }
+
+        if (ui.status_label) {
+            ui.status_label->SetLabel(status_text);
+            ui.status_label->SetForegroundColour(status_color);
+        }
+
+        if (ui.button) {
+            ui.button->SetLabel(button_text);
+            ui.button->Enable(button_enabled);
+        }
+    }
+
+    m_parent->Layout();
 }
 
 void PreferencesDialog::create_sync_page()
