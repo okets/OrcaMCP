@@ -263,10 +263,11 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
         for (const GLVolume* vol : visible_volumes) {
             volumes_box.merge(vol->transformed_bounding_box());
         }
-        // Add padding
+        // Add padding (20% on each side for comfortable framing)
         Vec3d size = volumes_box.size();
-        volumes_box.min -= size * 0.01;
-        volumes_box.max += size * 0.01;
+        Vec3d padding = size * 0.20;
+        volumes_box.min -= padding;
+        volumes_box.max += padding;
         volumes_box.min.z() = -Slic3r::BuildVolume::SceneEpsilon;
     }
 
@@ -277,8 +278,10 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
     camera.set_viewport(0, 0, thumbnail_data.width, thumbnail_data.height);
     camera.apply_viewport();
 
-    plate_build_volume.min.z() = plate_build_volume.max.z() = 0.0;
-    camera.zoom_to_box(plate_build_volume, 1.0);
+    // Zoom to objects if present, otherwise fall back to plate
+    BoundingBoxf3 zoom_box = (!visible_volumes.empty() && volumes_box.defined) ? volumes_box : plate_build_volume;
+    zoom_box.min.z() = zoom_box.max.z() = 0.0;
+    camera.zoom_to_box(zoom_box, 1.0);
     camera.look_at(camera_position, target, Vec3d::UnitZ());
 
     const Transform3d& view_matrix = camera.get_view_matrix();
@@ -540,23 +543,55 @@ void OrcaMCPPlateUtils::CleanupPreviews() {
 }
 
 nlohmann::json OrcaMCPPlateUtils::CaptureTurntablePreview(int plate_index, int view_count, int resolution) {
-    // Get plate center for camera target
+    // Get plate and calculate object bounding box for adaptive camera
     Plater* plater = wxGetApp().plater();
     PartPlate* plate = plater->get_partplate_list().get_plate(plate_index);
     if (!plate) {
         return {{"error", "Invalid plate index"}};
     }
 
-    BoundingBoxf3 plate_box = plate->get_plate_box();
-    Vec3d plate_center(
-        (plate_box.min.x() + plate_box.max.x()) / 2.0,
-        (plate_box.min.y() + plate_box.max.y()) / 2.0,
-        30.0  // Look at point slightly above bed
-    );
+    // Calculate bounding box of objects on this plate
+    BoundingBoxf3 objects_box;
+    for (const auto& obj : plate->get_objects_on_this_plate()) {
+        objects_box.merge(obj->bounding_box_approx());
+    }
 
-    // Camera distance and height for 45° viewing angle
-    double radius = 300.0;
-    double height = 250.0;
+    // Determine target (center of objects) and camera distance
+    Vec3d target;
+    double radius;
+    double height;
+
+    if (objects_box.defined && objects_box.size().norm() > 0) {
+        // Adaptive camera based on object bounding box
+        Vec3d obj_center = objects_box.center();
+        Vec3d obj_size = objects_box.size();
+
+        // Target the center of objects
+        target = Vec3d(obj_center.x(), obj_center.y(), obj_center.z() * 0.4);
+
+        // Calculate camera distance based on object size
+        // Use the largest horizontal dimension + height to determine framing
+        double max_horizontal = std::max(obj_size.x(), obj_size.y());
+        double diagonal = std::sqrt(max_horizontal * max_horizontal + obj_size.z() * obj_size.z());
+
+        // Camera distance: ~2.5x the diagonal for good framing at 45° angle
+        radius = diagonal * 2.5;
+        // Ensure minimum distance for very small objects
+        radius = std::max(radius, 80.0);
+
+        // Height proportional to object height, maintaining ~40° elevation angle
+        height = target.z() + radius * 0.7;
+    } else {
+        // Fallback to plate center if no objects
+        BoundingBoxf3 plate_box = plate->get_plate_box();
+        target = Vec3d(
+            (plate_box.min.x() + plate_box.max.x()) / 2.0,
+            (plate_box.min.y() + plate_box.max.y()) / 2.0,
+            30.0
+        );
+        radius = 300.0;
+        height = 250.0;
+    }
 
     // Calculate angle step based on view count
     double angle_step = 360.0 / view_count;
@@ -590,14 +625,14 @@ nlohmann::json OrcaMCPPlateUtils::CaptureTurntablePreview(int plate_index, int v
         double angle_rad = angle_deg * M_PI / 180.0;
 
         Vec3d camera_position(
-            plate_center.x() + radius * cos(angle_rad),
-            plate_center.y() + radius * sin(angle_rad),
+            target.x() + radius * cos(angle_rad),
+            target.y() + radius * sin(angle_rad),
             height
         );
 
         ThumbnailData data;
         data.set(resolution, resolution);
-        RenderThumbnail(data, camera_position, plate_center, plate_index);
+        RenderThumbnail(data, camera_position, target, plate_index);
         thumbnails.push_back(std::move(data));
     }
 

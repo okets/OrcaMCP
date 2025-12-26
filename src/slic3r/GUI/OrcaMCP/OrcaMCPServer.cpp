@@ -272,7 +272,7 @@ nlohmann::json get_active_warnings_json(Plater* plater) {
 
 // Helper to add turntable preview to result if requested
 void add_turntable_preview_if_requested(nlohmann::json& result, bool include_preview,
-                                         int view_count = 4, int resolution = 128) {
+                                         int view_count = 4, int resolution = 256) {
     if (!include_preview) return;
 
     Plater* plater = wxGetApp().plater();
@@ -2355,7 +2355,7 @@ void OrcaMCPServer::register_builtin_tools()
                 }},
                 {"preview_resolution", {
                     {"type", "integer"},
-                    {"description", "Preview resolution per view in pixels (default: 128)"}
+                    {"description", "Preview resolution per view in pixels (default: 256)"}
                 }}
             }},
             {"required", {"object_id"}}
@@ -2371,7 +2371,7 @@ void OrcaMCPServer::register_builtin_tools()
             bool relative = params.value("relative", true);
             bool include_preview = params.value("include_preview", false);
             int preview_views = params.value("preview_views", 4);
-            int preview_resolution = params.value("preview_resolution", 128);
+            int preview_resolution = params.value("preview_resolution", 256);
             return run_on_main_thread([object_id, x, y, z, has_x, has_y, has_z, relative,
                                        include_preview, preview_views, preview_resolution]() {
                 Plater* plater = wxGetApp().plater();
@@ -2491,7 +2491,7 @@ void OrcaMCPServer::register_builtin_tools()
                 }},
                 {"preview_resolution", {
                     {"type", "integer"},
-                    {"description", "Preview resolution per view in pixels (default: 128)"}
+                    {"description", "Preview resolution per view in pixels (default: 256)"}
                 }}
             }},
             {"required", {"object_id"}}
@@ -2505,7 +2505,7 @@ void OrcaMCPServer::register_builtin_tools()
             (void)relative;  // Reserved for future absolute rotation support
             bool include_preview = params.value("include_preview", false);
             int preview_views = params.value("preview_views", 4);
-            int preview_resolution = params.value("preview_resolution", 128);
+            int preview_resolution = params.value("preview_resolution", 256);
             return run_on_main_thread([object_id, x_deg, y_deg, z_deg,
                                        include_preview, preview_views, preview_resolution]() {
                 Plater* plater = wxGetApp().plater();
@@ -2607,7 +2607,7 @@ void OrcaMCPServer::register_builtin_tools()
                 }},
                 {"preview_resolution", {
                     {"type", "integer"},
-                    {"description", "Preview resolution per view in pixels (default: 128)"}
+                    {"description", "Preview resolution per view in pixels (default: 256)"}
                 }}
             }},
             {"required", {"object_id"}}
@@ -2620,7 +2620,7 @@ void OrcaMCPServer::register_builtin_tools()
             bool uniform = params.value("uniform", false);
             bool include_preview = params.value("include_preview", false);
             int preview_views = params.value("preview_views", 4);
-            int preview_resolution = params.value("preview_resolution", 128);
+            int preview_resolution = params.value("preview_resolution", 256);
             return run_on_main_thread([object_id, x, y, z, uniform,
                                        include_preview, preview_views, preview_resolution]() {
                 Plater* plater = wxGetApp().plater();
@@ -2868,7 +2868,7 @@ void OrcaMCPServer::register_builtin_tools()
                 }},
                 {"preview_resolution", {
                     {"type", "integer"},
-                    {"description", "Preview resolution per view in pixels (default: 128)"}
+                    {"description", "Preview resolution per view in pixels (default: 256)"}
                 }}
             }},
             {"required", {"object_id", "axis"}}
@@ -2878,7 +2878,7 @@ void OrcaMCPServer::register_builtin_tools()
             std::string axis_str = params["axis"];
             bool include_preview = params.value("include_preview", false);
             int preview_views = params.value("preview_views", 4);
-            int preview_resolution = params.value("preview_resolution", 128);
+            int preview_resolution = params.value("preview_resolution", 256);
             return run_on_main_thread([object_id, axis_str,
                                        include_preview, preview_views, preview_resolution]() {
                 Plater* plater = wxGetApp().plater();
@@ -3291,7 +3291,7 @@ void OrcaMCPServer::register_builtin_tools()
                 }},
                 {"preview_resolution", {
                     {"type", "integer"},
-                    {"description", "Preview resolution per view in pixels (default: 128)"}
+                    {"description", "Preview resolution per view in pixels (default: 256)"}
                 }}
             }},
             {"required", {"object_id"}}
@@ -3300,7 +3300,7 @@ void OrcaMCPServer::register_builtin_tools()
             int object_id = params["object_id"];
             bool include_preview = params.value("include_preview", false);
             int preview_views = params.value("preview_views", 4);
-            int preview_resolution = params.value("preview_resolution", 128);
+            int preview_resolution = params.value("preview_resolution", 256);
             return run_on_main_thread([object_id, include_preview, preview_views, preview_resolution]() {
                 Plater* plater = wxGetApp().plater();
                 Model& model = plater->model();
