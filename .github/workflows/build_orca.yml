@@ -151,13 +151,17 @@ jobs:
 
           # Notarize main DMG (30 min timeout to avoid infinite hangs)
           xcrun notarytool store-credentials "notarytool-profile" --apple-id "${{ secrets.APPLE_DEV_ACCOUNT }}" --team-id "${{ secrets.TEAM_ID }}" --password "${{ secrets.APP_PWD }}"
-          timeout 1800 xcrun notarytool submit "OrcaMCP_Mac_universal_${{ env.ver }}.dmg" --keychain-profile "notarytool-profile" --wait || echo "Notarization timed out or failed - continuing without notarization"
-          xcrun stapler staple OrcaMCP_Mac_universal_${{ env.ver }}.dmg || echo "Stapling skipped - notarization may not have completed"
+          if ! timeout 1800 xcrun notarytool submit "OrcaMCP_Mac_universal_${{ env.ver }}.dmg" --keychain-profile "notarytool-profile" --wait; then
+            echo "::warning::Notarization failed or timed out! DMG is signed but NOT notarized. Users will see Gatekeeper warning."
+          fi
+          xcrun stapler staple OrcaMCP_Mac_universal_${{ env.ver }}.dmg || echo "::warning::Stapling failed - notarization may not have completed"
 
           # Notarize profile validator DMG if it exists
           if [ -f "OrcaMCP_profile_validator_Mac_universal_${{ env.ver }}.dmg" ]; then
-            timeout 1800 xcrun notarytool submit "OrcaMCP_profile_validator_Mac_universal_${{ env.ver }}.dmg" --keychain-profile "notarytool-profile" --wait || echo "Notarization timed out or failed"
-            xcrun stapler staple OrcaMCP_profile_validator_Mac_universal_${{ env.ver }}.dmg || echo "Stapling skipped"
+            if ! timeout 1800 xcrun notarytool submit "OrcaMCP_profile_validator_Mac_universal_${{ env.ver }}.dmg" --keychain-profile "notarytool-profile" --wait; then
+              echo "::warning::Profile validator notarization failed or timed out!"
+            fi
+            xcrun stapler staple OrcaMCP_profile_validator_Mac_universal_${{ env.ver }}.dmg || true
           fi
 
       - name: Create DMG without notary
