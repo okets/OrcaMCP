@@ -15,12 +15,58 @@ Pre-release testing checklist for Windows builds of OrcaMCP.
 - [ ] Desktop shortcut name: `OrcaMCP`
 - [ ] Uninstaller entry shows "OrcaMCP" in Add/Remove Programs
 
-### 1.2 Code Signing (Windows Defender / SmartScreen)
-- [ ] **Unsigned installer**: Does Windows SmartScreen block installation?
-- [ ] **Unsigned installer**: Can user bypass with "Run anyway"?
-- [ ] **Signed installer** (if applicable): SmartScreen passes without warning?
-- [ ] Document: Is Authenticode signing required for acceptable UX?
-- [ ] Document: What certificate type is needed? (Standard vs EV Code Signing)
+### 1.2 SmartScreen Behavior (Unsigned Installer)
+
+**Expected behavior for unsigned OrcaMCP installer:**
+
+Unlike macOS (which blocks unsigned apps), Windows allows unsigned installers with warnings.
+Users can bypass with 2 clicks. This is acceptable for open-source software.
+
+#### Download & Launch Tests
+
+| Step | Expected Behavior | Pass |
+|------|-------------------|------|
+| Download in Edge | "This file is not commonly downloaded" warning | [ ] |
+| Download in Chrome | Similar warning or clean download | [ ] |
+| Download in Firefox | Usually no warning | [ ] |
+| Run installer | SmartScreen popup appears | [ ] |
+
+#### SmartScreen Popup Test
+
+When running the unsigned installer, verify this exact flow:
+
+1. **Initial popup appears:**
+   - [ ] Title: "Windows protected your PC"
+   - [ ] Text: "Microsoft Defender SmartScreen prevented an unrecognized app from starting"
+   - [ ] Publisher shows: "Unknown publisher"
+   - [ ] Blue "Don't run" button visible
+   - [ ] "More info" link visible
+
+2. **After clicking "More info":**
+   - [ ] App name shown (should include "OrcaMCP")
+   - [ ] "Run anyway" button appears
+   - [ ] Clicking "Run anyway" launches installer
+
+3. **Installation proceeds:**
+   - [ ] Installer runs normally after bypass
+   - [ ] No additional SmartScreen warnings during install
+   - [ ] Application launches without SmartScreen warning after install
+
+#### Windows Defender Tests
+- [ ] Defender does not flag installer as malware
+- [ ] Defender does not flag installed application
+- [ ] Real-time protection doesn't quarantine any files
+- [ ] If flagged: Document the detection name and submit false positive report
+
+#### Enterprise/Managed Environment (if testable)
+- [ ] Document: Does Group Policy block unsigned installers?
+- [ ] Document: Does Windows S Mode block installation?
+
+#### Future: Signed Installer
+If code signing is added later:
+- [ ] SmartScreen passes without "Unknown publisher" warning
+- [ ] Publisher name shows correctly (requires EV cert for immediate trust)
+- [ ] Standard cert: May still warn until reputation builds
 
 ### 1.3 Installation Paths
 - [ ] Default installation works: `C:\Program Files\OrcaMCP`
