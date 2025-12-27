@@ -247,7 +247,7 @@ jobs:
         uses: actions/upload-artifact@v5
         with:
           name: OrcaMCP_Windows_${{ env.ver }}
-          path: ${{ github.workspace }}/build/OrcaSlicer*.exe
+          path: ${{ github.workspace }}/build/OrcaMCP*.exe
 
       - name: Upload artifacts Win PDB
         if: inputs.os == 'windows-latest'
