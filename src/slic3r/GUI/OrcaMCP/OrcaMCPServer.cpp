@@ -578,7 +578,11 @@ void OrcaMCPServer::register_builtin_tools()
                     }},
                     {"configuration", {
                         {"select_preset", "Switch to a different preset by name"},
-                        {"apply_config", "Modify individual settings (creates dirty values)"}
+                        {"apply_config", "Modify individual settings (creates dirty values)"},
+                        {"clone_preset", "Duplicate an existing preset with a new name"},
+                        {"save_preset", "Persist dirty changes to disk"},
+                        {"delete_preset", "Remove user-created presets"},
+                        {"reset_preset", "Discard dirty changes without saving"}
                     }},
                     {"model_operations", {
                         {"load_model", "Import STL, OBJ, STEP, 3MF model files"},
@@ -921,6 +925,153 @@ void OrcaMCPServer::register_builtin_tools()
                 }
                 OrcaMCPPresetConfigUtils::UpdatePresetTabs();
                 return nlohmann::json{{"status", "success"}, {"applied_count", settings.size()}};
+            });
+        }
+    });
+
+    // clone_preset - Clone/duplicate an existing preset
+    register_tool({
+        "clone_preset",
+        "Clone an existing preset with a new name. Creates a user preset from any source (including system presets).",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"type", {
+                    {"type", "string"},
+                    {"enum", {"printer", "filament", "print"}},
+                    {"description", "Type of preset to clone"}
+                }},
+                {"source_name", {
+                    {"type", "string"},
+                    {"description", "Name of the preset to clone"}
+                }},
+                {"new_name", {
+                    {"type", "string"},
+                    {"description", "Name for the new cloned preset"}
+                }}
+            }},
+            {"required", {"type", "source_name", "new_name"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            std::string type = params["type"];
+            std::string source_name = params["source_name"];
+            std::string new_name = params["new_name"];
+            return run_on_main_thread([type, source_name, new_name]() {
+                try {
+                    OrcaMCPPresetConfigUtils::ClonePreset(type, source_name, new_name);
+                    return nlohmann::json{
+                        {"status", "success"},
+                        {"message", "Preset '" + source_name + "' cloned to '" + new_name + "'"},
+                        {"cloned_preset", new_name}
+                    };
+                } catch (const std::exception& e) {
+                    return nlohmann::json{{"status", "error"}, {"error", e.what()}};
+                }
+            });
+        }
+    });
+
+    // save_preset - Save dirty changes to a preset
+    register_tool({
+        "save_preset",
+        "Save the current dirty changes to a preset. If name is provided, saves as a new preset with that name. Otherwise saves to the current preset (fails for system presets).",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"type", {
+                    {"type", "string"},
+                    {"enum", {"printer", "filament", "print"}},
+                    {"description", "Type of preset to save"}
+                }},
+                {"name", {
+                    {"type", "string"},
+                    {"description", "Optional: Save as a new preset with this name. If omitted, saves to current preset."}
+                }}
+            }},
+            {"required", {"type"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            std::string type = params["type"];
+            std::string name = params.value("name", "");
+            return run_on_main_thread([type, name]() {
+                try {
+                    OrcaMCPPresetConfigUtils::SavePreset(type, name);
+                    std::string saved_name = name.empty() ? "current preset" : name;
+                    return nlohmann::json{
+                        {"status", "success"},
+                        {"message", "Preset saved successfully"},
+                        {"saved_preset", saved_name}
+                    };
+                } catch (const std::exception& e) {
+                    return nlohmann::json{{"status", "error"}, {"error", e.what()}};
+                }
+            });
+        }
+    });
+
+    // delete_preset - Delete a user-created preset
+    register_tool({
+        "delete_preset",
+        "Delete a user-created preset. Cannot delete system/default presets or presets with dependents.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"type", {
+                    {"type", "string"},
+                    {"enum", {"printer", "filament", "print"}},
+                    {"description", "Type of preset to delete"}
+                }},
+                {"name", {
+                    {"type", "string"},
+                    {"description", "Name of the preset to delete"}
+                }}
+            }},
+            {"required", {"type", "name"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            std::string type = params["type"];
+            std::string name = params["name"];
+            return run_on_main_thread([type, name]() {
+                try {
+                    OrcaMCPPresetConfigUtils::DeletePreset(type, name);
+                    return nlohmann::json{
+                        {"status", "success"},
+                        {"message", "Preset '" + name + "' deleted successfully"}
+                    };
+                } catch (const std::exception& e) {
+                    return nlohmann::json{{"status", "error"}, {"error", e.what()}};
+                }
+            });
+        }
+    });
+
+    // reset_preset - Discard dirty changes and revert to saved state
+    register_tool({
+        "reset_preset",
+        "Discard all unsaved changes to the current preset and revert to the last saved state.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"type", {
+                    {"type", "string"},
+                    {"enum", {"printer", "filament", "print"}},
+                    {"description", "Type of preset to reset"}
+                }}
+            }},
+            {"required", {"type"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            std::string type = params["type"];
+            return run_on_main_thread([type]() {
+                try {
+                    OrcaMCPPresetConfigUtils::ResetPreset(type);
+                    return nlohmann::json{
+                        {"status", "success"},
+                        {"message", "Preset changes discarded for " + type}
+                    };
+                } catch (const std::exception& e) {
+                    return nlohmann::json{{"status", "error"}, {"error", e.what()}};
+                }
             });
         }
     });

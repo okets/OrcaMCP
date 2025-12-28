@@ -8,7 +8,7 @@ Keep this lightweight and execution-focused. Use the checkboxes as the single so
 
 - [x] Create `docs/` folder structure with hybrid approach
 - [x] Architecture Decision Records (ADRs) for key decisions
-- [x] API reference for all 44 MCP tools
+- [x] API reference for all 48 MCP tools
 - [x] Workflow guides for common tasks
 - [x] Contributing guides (adding tools, code style)
 - [x] Setup guides (building, configuration, troubleshooting)
@@ -30,7 +30,7 @@ docs/
 │   ├── 0003-json-rpc-protocol.md # JSON-RPC 2.0
 │   └── 0004-main-thread-execution.md # Threading model
 ├── tools/
-│   ├── reference.md             # All 44 tools documented
+│   ├── reference.md             # All 48 tools documented
 │   └── workflows.md             # Common patterns
 ├── contributing/
 │   ├── adding-tools.md          # Guide for new tools

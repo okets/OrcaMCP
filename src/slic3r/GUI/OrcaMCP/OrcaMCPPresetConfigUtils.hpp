@@ -18,6 +18,16 @@ public:
     static void UpdatePresetTabs();
     static void ApplyConfig(const nlohmann::json& item);
     static void SelectPreset(const std::string& type, const std::string& presetName);
+
+    // Preset management tools
+    static void ClonePreset(const std::string& type, const std::string& sourceName, const std::string& newName);
+    static void SavePreset(const std::string& type, const std::string& name = "");
+    static void DeletePreset(const std::string& type, const std::string& name);
+    static void ResetPreset(const std::string& type);
+
+private:
+    static Preset::Type GetPresetTypeFromString(const std::string& type);
+    static PresetCollection* GetPresetCollection(Preset::Type type);
 };
 
 }} // namespace Slic3r::GUI

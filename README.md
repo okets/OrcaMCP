@@ -118,7 +118,7 @@ See [Tools Reference](docs/tools/reference.md) for complete documentation.
 | [CLAUDE.md](CLAUDE.md) | **AI Agent Quick Reference** - Start here for coding agents |
 | [Architecture](docs/architecture/) | System design, threading model, transport layer |
 | [ADRs](docs/adr/) | Architecture Decision Records |
-| [Tools Reference](docs/tools/reference.md) | All 44 tools with parameters and examples |
+| [Tools Reference](docs/tools/reference.md) | All 48 tools with parameters and examples |
 | [Workflows](docs/tools/workflows.md) | Common task patterns |
 | [Contributing](docs/contributing/) | Adding tools, code style |
 | [Setup](docs/setup/) | Building, configuration, troubleshooting |

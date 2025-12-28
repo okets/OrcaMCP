@@ -164,7 +164,7 @@ HTTP Worker Thread              Main Thread (GUI)
 ```
 src/slic3r/GUI/OrcaMCP/
 ├── OrcaMCPServer.hpp              # Class definition
-├── OrcaMCPServer.cpp              # 44 tool implementations
+├── OrcaMCPServer.cpp              # 48 tool implementations
 ├── OrcaMCPPlateUtils.hpp          # Rendering utilities header
 ├── OrcaMCPPlateUtils.cpp          # Rendering implementations
 ├── OrcaMCPPresetConfigUtils.hpp   # Config utilities header

@@ -1,6 +1,6 @@
 # OrcaMCP Tools Reference
 
-Complete reference for all 44 MCP tools available in OrcaMCP.
+Complete reference for all 48 MCP tools available in OrcaMCP.
 
 ## Quick Reference Table
 
@@ -12,7 +12,7 @@ Complete reference for all 44 MCP tools available in OrcaMCP.
 | **Transforms** | `move_object`, `rotate_object`, `scale_object`, `mirror_object`, `flatten_object` |
 | **Object Ops** | `clone_object`, `cut_object`, `delete_object`, `rename_object`, `transform_objects` |
 | **Plates** | `add_plate`, `select_plate`, `delete_plate` |
-| **Presets** | `get_presets`, `get_edited_presets`, `select_preset`, `apply_config`, `get_valid_config_keys` |
+| **Presets** | `get_presets`, `get_edited_presets`, `select_preset`, `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset`, `get_valid_config_keys` |
 | **Per-Object** | `get_object_info`, `get_object_config`, `set_object_config`, `reset_object_config` |
 | **Layer Ranges** | `get_object_layer_ranges`, `set_object_layer_range`, `delete_object_layer_range` |
 | **Slicing** | `slice_all`, `export_gcode`, `get_print_estimate` |

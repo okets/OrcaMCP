@@ -161,17 +161,7 @@ void OrcaMCPPresetConfigUtils::ApplyConfig(const nlohmann::json& item) {
 }
 
 void OrcaMCPPresetConfigUtils::SelectPreset(const std::string& type, const std::string& presetName) {
-    Preset::Type preset_type;
-    if (type == "print") {
-        preset_type = Preset::Type::TYPE_PRINT;
-    } else if (type == "filament") {
-        preset_type = Preset::Type::TYPE_FILAMENT;
-    } else if (type == "printer") {
-        preset_type = Preset::Type::TYPE_PRINTER;
-    } else {
-        BOOST_LOG_TRIVIAL(error) << "SelectPreset: invalid type parameter";
-        throw std::runtime_error("Invalid type parameter");
-    }
+    Preset::Type preset_type = GetPresetTypeFromString(type);
 
     DiscardCurrentPresetChanges(); // Selecting a printer will result in selecting a filament or print preset. So we need to discard changes for all presets in order not to have the "transfer or discard" dialog pop up
 
@@ -179,6 +169,164 @@ void OrcaMCPPresetConfigUtils::SelectPreset(const std::string& type, const std::
     if (tab != nullptr) {
         tab->select_preset(presetName, false, std::string(), false);
     }
+}
+
+Preset::Type OrcaMCPPresetConfigUtils::GetPresetTypeFromString(const std::string& type) {
+    if (type == "print") {
+        return Preset::Type::TYPE_PRINT;
+    } else if (type == "filament") {
+        return Preset::Type::TYPE_FILAMENT;
+    } else if (type == "printer") {
+        return Preset::Type::TYPE_PRINTER;
+    } else {
+        BOOST_LOG_TRIVIAL(error) << "GetPresetTypeFromString: invalid type parameter: " << type;
+        throw std::runtime_error("Invalid preset type: " + type + ". Must be 'print', 'filament', or 'printer'.");
+    }
+}
+
+PresetCollection* OrcaMCPPresetConfigUtils::GetPresetCollection(Preset::Type type) {
+    PresetBundle* bundle = wxGetApp().preset_bundle;
+    if (!bundle) {
+        throw std::runtime_error("Preset bundle not available");
+    }
+
+    switch (type) {
+        case Preset::Type::TYPE_PRINT:
+            return &bundle->prints;
+        case Preset::Type::TYPE_FILAMENT:
+            return &bundle->filaments;
+        case Preset::Type::TYPE_PRINTER:
+            return &bundle->printers;
+        default:
+            throw std::runtime_error("Unsupported preset type");
+    }
+}
+
+void OrcaMCPPresetConfigUtils::ClonePreset(const std::string& type, const std::string& sourceName, const std::string& newName) {
+    Preset::Type preset_type = GetPresetTypeFromString(type);
+    PresetCollection* presets = GetPresetCollection(preset_type);
+
+    // Find source preset
+    const Preset* source = presets->find_preset(sourceName, false);
+    if (!source) {
+        throw std::runtime_error("Source preset '" + sourceName + "' not found");
+    }
+
+    // Check if target name already exists
+    if (presets->find_preset(newName, false)) {
+        throw std::runtime_error("Preset '" + newName + "' already exists");
+    }
+
+    // Clone the preset
+    std::vector<Preset const*> to_clone = { source };
+    std::vector<std::string> failures;
+
+    bool success = presets->clone_presets(to_clone, failures,
+        [&newName](Preset& p, Preset::Type& t) {
+            p.name = newName;
+        });
+
+    if (!success || !failures.empty()) {
+        std::string error_msg = "Failed to clone preset";
+        if (!failures.empty()) {
+            error_msg += ": " + failures[0];
+        }
+        throw std::runtime_error(error_msg);
+    }
+
+    UpdatePresetTabs();
+}
+
+void OrcaMCPPresetConfigUtils::SavePreset(const std::string& type, const std::string& name) {
+    Preset::Type preset_type = GetPresetTypeFromString(type);
+    Tab* tab = wxGetApp().get_tab(preset_type);
+    if (!tab) {
+        throw std::runtime_error("Tab not found for type: " + type);
+    }
+
+    PresetCollection* presets = tab->get_presets();
+    if (!presets) {
+        throw std::runtime_error("Preset collection not available");
+    }
+
+    const Preset& edited = presets->get_edited_preset();
+
+    // Determine the name to save as
+    std::string save_name = name.empty() ? edited.name : name;
+
+    // Check if we're trying to overwrite a system preset
+    const Preset* existing = presets->find_preset(save_name, false);
+    if (existing && (existing->is_system || existing->is_default)) {
+        throw std::runtime_error("Cannot overwrite system preset '" + save_name + "'. Use a different name.");
+    }
+
+    // Save the preset
+    presets->save_current_preset(save_name, false, false);
+
+    UpdatePresetTabs();
+}
+
+void OrcaMCPPresetConfigUtils::DeletePreset(const std::string& type, const std::string& name) {
+    Preset::Type preset_type = GetPresetTypeFromString(type);
+    PresetCollection* presets = GetPresetCollection(preset_type);
+
+    // Find the preset
+    const Preset* preset = presets->find_preset(name, false);
+    if (!preset) {
+        throw std::runtime_error("Preset '" + name + "' not found");
+    }
+
+    // Cannot delete system or default presets
+    if (preset->is_system || preset->is_default) {
+        throw std::runtime_error("Cannot delete system preset '" + name + "'");
+    }
+
+    // Check if it's a base preset with dependent children
+    bool has_dependents = false;
+    for (const Preset& p : presets->get_presets()) {
+        if (p.inherits() == name) {
+            has_dependents = true;
+            break;
+        }
+    }
+    if (has_dependents) {
+        throw std::runtime_error("Cannot delete preset '" + name + "' - it has dependent presets that inherit from it");
+    }
+
+    // Delete the preset
+    bool success = presets->delete_preset(name);
+    if (!success) {
+        throw std::runtime_error("Failed to delete preset '" + name + "'");
+    }
+
+    UpdatePresetTabs();
+}
+
+void OrcaMCPPresetConfigUtils::ResetPreset(const std::string& type) {
+    Preset::Type preset_type = GetPresetTypeFromString(type);
+    Tab* tab = wxGetApp().get_tab(preset_type);
+    if (!tab) {
+        throw std::runtime_error("Tab not found for type: " + type);
+    }
+
+    PresetCollection* presets = tab->get_presets();
+    if (!presets) {
+        throw std::runtime_error("Preset collection not available");
+    }
+
+    // Check if there are unsaved changes
+    const bool deep_compare = (preset_type == Preset::TYPE_PRINTER || preset_type == Preset::TYPE_SLA_MATERIAL);
+    if (!presets->current_is_dirty()) {
+        throw std::runtime_error("No unsaved changes to discard for " + type + " preset");
+    }
+
+    // Discard changes - revert to the selected preset's last saved state
+    presets->discard_current_changes();
+
+    // Update UI
+    tab->reload_config();
+    tab->update();
+    tab->update_dirty();
 }
 
 }} // namespace Slic3r::GUI

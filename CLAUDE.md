@@ -38,7 +38,7 @@ Traditional 3D printing workflow requires manual interaction with slicer softwar
                                                              │  OrcaMCPServer  │
                                                              │                 │
                                                              │ - JSON-RPC 2.0  │
-                                                             │ - 44 MCP Tools  │
+                                                             │ - 48 MCP Tools  │
                                                              │ - Thread-safe   │
                                                              └─────────────────┘
 ```
@@ -58,7 +58,7 @@ Traditional 3D printing workflow requires manual interaction with slicer softwar
 
 **Status**: Complete & Tested ✓
 
-### MCP Tools (44 total)
+### MCP Tools (48 total)
 
 | Category | Tools |
 |----------|-------|
@@ -66,7 +66,7 @@ Traditional 3D printing workflow requires manual interaction with slicer softwar
 | **Models** | `load_model`, `auto_orient`, `arrange_objects`, `get_object_info`, `rename_object` |
 | **Transforms** | `move_object`, `rotate_object`, `scale_object`, `mirror_object`, `flatten_object`, `clone_object`, `cut_object`, `delete_object`, `transform_objects` |
 | **Plates** | `add_plate`, `select_plate`, `delete_plate` |
-| **Config** | `get_presets`, `get_edited_presets`, `select_preset`, `apply_config`, `get_valid_config_keys` |
+| **Config** | `get_presets`, `get_edited_presets`, `select_preset`, `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset`, `get_valid_config_keys` |
 | **Per-Object** | `get_object_config`, `set_object_config`, `reset_object_config` |
 | **Layer Ranges** | `get_object_layer_ranges`, `set_object_layer_range`, `delete_object_layer_range` |
 | **Slicing** | `slice_all`, `get_slicing_status`, `export_gcode`, `get_print_estimate` |
@@ -88,7 +88,7 @@ For detailed documentation beyond this quick reference, see the `docs/` folder:
 | [Threading Model](docs/architecture/threading-model.md) | GUI thread requirements and patterns |
 | [Transport Layer](docs/architecture/transport-layer.md) | HTTP + stdio bridge design |
 | [ADRs](docs/adr/) | Architecture Decision Records |
-| [Tools Reference](docs/tools/reference.md) | All 44 tools with parameters and examples |
+| [Tools Reference](docs/tools/reference.md) | All 48 tools with parameters and examples |
 | [Workflows](docs/tools/workflows.md) | Common multi-tool patterns |
 | [Adding Tools](docs/contributing/adding-tools.md) | How to add new MCP tools |
 | [Code Style](docs/contributing/code-style.md) | C++ and Python conventions |
@@ -154,7 +154,7 @@ cp -R build/arm64/src/Release/OrcaSlicer.app /Applications/
 | File | Purpose |
 |------|---------|
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPServer.hpp` | MCP server class definition |
-| `src/slic3r/GUI/OrcaMCP/OrcaMCPServer.cpp` | 44 tool implementations (~3,700 lines) |
+| `src/slic3r/GUI/OrcaMCP/OrcaMCPServer.cpp` | 48 tool implementations (~3,900 lines) |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPPlateUtils.cpp` | Plate rendering, turntable previews |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPPresetConfigUtils.cpp` | Preset/config management |
 | `src/slic3r/GUI/HttpServer.hpp` | HTTP server with JSON responses |
