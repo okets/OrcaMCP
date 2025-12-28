@@ -164,13 +164,50 @@ security find-certificate -c "Developer ID Application" -p | openssl x509 -noout
 
 ## Summary Checklist
 
-- [ ] Apple Developer Program approved
-- [ ] Developer ID Application certificate created
-- [ ] Certificate exported as .p12
-- [ ] Team ID noted
-- [ ] App-specific password created
-- [ ] Certificate base64 encoded
-- [ ] All 7 GitHub secrets added
-- [ ] Workflow updated for okets/OrcaMCP
-- [ ] Test build successful
-- [ ] Signed app verified with `spctl`
+- [x] Apple Developer Program approved
+- [x] Developer ID Application certificate created
+- [x] Certificate exported as .p12
+- [x] Team ID noted (9PCJMHHHK6)
+- [x] App-specific password created
+- [x] Certificate base64 encoded
+- [x] All 7 GitHub secrets added
+- [x] Workflow updated for okets/OrcaMCP
+- [x] Test build successful (v2.3.2.8)
+- [x] Signed app verified with `spctl`
+
+---
+
+## Local Signing (Optional)
+
+For faster iteration (~5 minutes vs 3 hours on GitHub), use the local signing script.
+
+### One-time setup
+
+Store your notarization credentials in the macOS Keychain:
+
+```bash
+xcrun notarytool store-credentials "local-notary" \
+    --apple-id "your@email.com" \
+    --team-id "9PCJMHHHK6"
+# Enter app-specific password when prompted
+```
+
+### Usage
+
+```bash
+# Sign an existing app bundle
+./scripts/sign-and-notarize.sh /Applications/OrcaMCP.app
+
+# Sign from build directory
+./scripts/sign-and-notarize.sh build/arm64/src/Release/OrcaSlicer.app
+```
+
+The script will:
+1. Sign the app bundle with your Developer ID certificate
+2. Create a DMG with Applications symlink
+3. Sign the DMG
+4. Submit to Apple for notarization (2-10 min wait)
+5. Staple the notarization ticket
+6. Verify everything passes Gatekeeper
+
+Output: `OrcaMCP.dmg` in current directory, fully signed and notarized.
