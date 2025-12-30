@@ -481,6 +481,8 @@ public:
 
     void send_to_printer(bool isall = false);
     void export_gcode(bool prefer_removable);
+    // Silent G-code export to a specific file path (for MCP automation)
+    bool export_gcode_to_file(const std::string& output_path);
     void export_gcode_3mf(bool export_all = false);
     void send_gcode_finish(wxString name);
     void export_core_3mf();

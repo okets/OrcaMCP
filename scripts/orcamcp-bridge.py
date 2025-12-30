@@ -276,12 +276,12 @@ def get_minimal_tools_list() -> list:
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "path": {
+                    "file_path": {
                         "type": "string",
                         "description": "Path to the 3D model file"
                     }
                 },
-                "required": ["path"]
+                "required": ["file_path"]
             }
         },
         {

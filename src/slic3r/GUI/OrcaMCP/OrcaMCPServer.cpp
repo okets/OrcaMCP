@@ -749,12 +749,14 @@ void OrcaMCPServer::register_builtin_tools()
                     {"visual_preview", {
                         {"description", "Many tools support include_preview=true to return a turntable preview image path alongside results."},
                         {"supported_tools", {
-                            "get_scene_info", "move_object", "rotate_object", "scale_object", "mirror_object",
-                            "flatten_object", "clone_object", "arrange_objects", "auto_orient",
+                            "get_scene_info", "load_model", "load_project",
+                            "move_object", "rotate_object", "scale_object", "mirror_object",
+                            "flatten_object", "clone_object", "delete_object", "cut_object",
+                            "arrange_objects", "auto_orient", "undo", "redo",
                             "apply_adaptive_layer_height", "clear_adaptive_layer_height"
                         }},
                         {"preview_hint", "When include_preview=true, the response includes a 'preview_hint' message encouraging you to check the preview image for a visual sense of the plate and objects."},
-                        {"recommendation", "Use include_preview to visually verify the result of operations, especially after transforms, cloning, or arrangement changes."}
+                        {"recommendation", "Use include_preview to visually verify the result of operations, especially after loading, transforms, or destructive changes."}
                     }}
                 }}
             };
@@ -945,8 +947,17 @@ void OrcaMCPServer::register_builtin_tools()
             std::string type = params["type"];
             std::string name = params["name"];
             return run_on_main_thread([type, name]() {
+                // Suppress any dialogs during preset selection
+                set_mcp_dialog_suppression(true);
                 OrcaMCPPresetConfigUtils::SelectPreset(type, name);
-                return nlohmann::json{{"status", "success"}};
+                auto info_messages = get_mcp_suppressed_messages();
+                set_mcp_dialog_suppression(false);
+
+                nlohmann::json response = {{"status", "success"}};
+                if (!info_messages.empty()) {
+                    response["info_messages"] = info_messages;
+                }
+                return response;
             });
         }
     });
@@ -986,11 +997,20 @@ void OrcaMCPServer::register_builtin_tools()
         [](const nlohmann::json& params) -> nlohmann::json {
             nlohmann::json settings = params["settings"];
             return run_on_main_thread([settings]() {
+                // Suppress any dialogs during config application
+                set_mcp_dialog_suppression(true);
                 for (const auto& item : settings) {
                     OrcaMCPPresetConfigUtils::ApplyConfig(item);
                 }
                 OrcaMCPPresetConfigUtils::UpdatePresetTabs();
-                return nlohmann::json{{"status", "success"}, {"applied_count", settings.size()}};
+                auto info_messages = get_mcp_suppressed_messages();
+                set_mcp_dialog_suppression(false);
+
+                nlohmann::json response = {{"status", "success"}, {"applied_count", settings.size()}};
+                if (!info_messages.empty()) {
+                    response["info_messages"] = info_messages;
+                }
+                return response;
             });
         }
     });
@@ -1023,15 +1043,28 @@ void OrcaMCPServer::register_builtin_tools()
             std::string source_name = params["source_name"];
             std::string new_name = params["new_name"];
             return run_on_main_thread([type, source_name, new_name]() {
+                set_mcp_dialog_suppression(true);
                 try {
                     OrcaMCPPresetConfigUtils::ClonePreset(type, source_name, new_name);
-                    return nlohmann::json{
+                    auto info_messages = get_mcp_suppressed_messages();
+                    set_mcp_dialog_suppression(false);
+                    nlohmann::json response = {
                         {"status", "success"},
                         {"message", "Preset '" + source_name + "' cloned to '" + new_name + "'"},
                         {"cloned_preset", new_name}
                     };
+                    if (!info_messages.empty()) {
+                        response["info_messages"] = info_messages;
+                    }
+                    return response;
                 } catch (const std::exception& e) {
-                    return nlohmann::json{{"status", "error"}, {"error", e.what()}};
+                    auto info_messages = get_mcp_suppressed_messages();
+                    set_mcp_dialog_suppression(false);
+                    nlohmann::json response = {{"status", "error"}, {"error", e.what()}};
+                    if (!info_messages.empty()) {
+                        response["info_messages"] = info_messages;
+                    }
+                    return response;
                 }
             });
         }
@@ -1060,16 +1093,29 @@ void OrcaMCPServer::register_builtin_tools()
             std::string type = params["type"];
             std::string name = params.value("name", "");
             return run_on_main_thread([type, name]() {
+                set_mcp_dialog_suppression(true);
                 try {
                     OrcaMCPPresetConfigUtils::SavePreset(type, name);
+                    auto info_messages = get_mcp_suppressed_messages();
+                    set_mcp_dialog_suppression(false);
                     std::string saved_name = name.empty() ? "current preset" : name;
-                    return nlohmann::json{
+                    nlohmann::json response = {
                         {"status", "success"},
                         {"message", "Preset saved successfully"},
                         {"saved_preset", saved_name}
                     };
+                    if (!info_messages.empty()) {
+                        response["info_messages"] = info_messages;
+                    }
+                    return response;
                 } catch (const std::exception& e) {
-                    return nlohmann::json{{"status", "error"}, {"error", e.what()}};
+                    auto info_messages = get_mcp_suppressed_messages();
+                    set_mcp_dialog_suppression(false);
+                    nlohmann::json response = {{"status", "error"}, {"error", e.what()}};
+                    if (!info_messages.empty()) {
+                        response["info_messages"] = info_messages;
+                    }
+                    return response;
                 }
             });
         }
@@ -1098,14 +1144,27 @@ void OrcaMCPServer::register_builtin_tools()
             std::string type = params["type"];
             std::string name = params["name"];
             return run_on_main_thread([type, name]() {
+                set_mcp_dialog_suppression(true);
                 try {
                     OrcaMCPPresetConfigUtils::DeletePreset(type, name);
-                    return nlohmann::json{
+                    auto info_messages = get_mcp_suppressed_messages();
+                    set_mcp_dialog_suppression(false);
+                    nlohmann::json response = {
                         {"status", "success"},
                         {"message", "Preset '" + name + "' deleted successfully"}
                     };
+                    if (!info_messages.empty()) {
+                        response["info_messages"] = info_messages;
+                    }
+                    return response;
                 } catch (const std::exception& e) {
-                    return nlohmann::json{{"status", "error"}, {"error", e.what()}};
+                    auto info_messages = get_mcp_suppressed_messages();
+                    set_mcp_dialog_suppression(false);
+                    nlohmann::json response = {{"status", "error"}, {"error", e.what()}};
+                    if (!info_messages.empty()) {
+                        response["info_messages"] = info_messages;
+                    }
+                    return response;
                 }
             });
         }
@@ -1129,14 +1188,27 @@ void OrcaMCPServer::register_builtin_tools()
         [](const nlohmann::json& params) -> nlohmann::json {
             std::string type = params["type"];
             return run_on_main_thread([type]() {
+                set_mcp_dialog_suppression(true);
                 try {
                     OrcaMCPPresetConfigUtils::ResetPreset(type);
-                    return nlohmann::json{
+                    auto info_messages = get_mcp_suppressed_messages();
+                    set_mcp_dialog_suppression(false);
+                    nlohmann::json response = {
                         {"status", "success"},
                         {"message", "Preset changes discarded for " + type}
                     };
+                    if (!info_messages.empty()) {
+                        response["info_messages"] = info_messages;
+                    }
+                    return response;
                 } catch (const std::exception& e) {
-                    return nlohmann::json{{"status", "error"}, {"error", e.what()}};
+                    auto info_messages = get_mcp_suppressed_messages();
+                    set_mcp_dialog_suppression(false);
+                    nlohmann::json response = {{"status", "error"}, {"error", e.what()}};
+                    if (!info_messages.empty()) {
+                        response["info_messages"] = info_messages;
+                    }
+                    return response;
                 }
             });
         }
@@ -1222,16 +1294,24 @@ void OrcaMCPServer::register_builtin_tools()
         "Undo the last operation. Can call multiple times. Use after cut_object or delete_object to recover. Note: History is limited, save project before major changes.",
         {
             {"type", "object"},
-            {"properties", nlohmann::json::object()}
+            {"properties", {
+                {"include_preview", {
+                    {"type", "boolean"},
+                    {"description", "Include a preview image path to see the state after undo"}
+                }}
+            }}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
-            return run_on_main_thread([]() {
+            bool include_preview = params.value("include_preview", false);
+            return run_on_main_thread([include_preview]() {
                 Plater* plater = wxGetApp().plater();
                 plater->undo();
-                return nlohmann::json{
+                nlohmann::json result = {
                     {"status", "success"},
                     {"active_warnings", get_active_warnings_json(plater)}
                 };
+                add_turntable_preview_if_requested(result, include_preview);
+                return result;
             });
         }
     });
@@ -1242,16 +1322,24 @@ void OrcaMCPServer::register_builtin_tools()
         "Redo the last undone operation",
         {
             {"type", "object"},
-            {"properties", nlohmann::json::object()}
+            {"properties", {
+                {"include_preview", {
+                    {"type", "boolean"},
+                    {"description", "Include a preview image path to see the state after redo"}
+                }}
+            }}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
-            return run_on_main_thread([]() {
+            bool include_preview = params.value("include_preview", false);
+            return run_on_main_thread([include_preview]() {
                 Plater* plater = wxGetApp().plater();
                 plater->redo();
-                return nlohmann::json{
+                nlohmann::json result = {
                     {"status", "success"},
                     {"active_warnings", get_active_warnings_json(plater)}
                 };
+                add_turntable_preview_if_requested(result, include_preview);
+                return result;
             });
         }
     });
@@ -2079,11 +2167,21 @@ void OrcaMCPServer::register_builtin_tools()
         [](const nlohmann::json& params) -> nlohmann::json {
             return run_on_main_thread([]() {
                 Plater* plater = wxGetApp().plater();
+
+                // Suppress any dialogs during slicing initiation
+                set_mcp_dialog_suppression(true);
                 plater->reslice();
-                return nlohmann::json{
+                auto info_messages = get_mcp_suppressed_messages();
+                set_mcp_dialog_suppression(false);
+
+                nlohmann::json result = {
                     {"status", "slicing_started"},
                     {"active_warnings", get_active_warnings_json(plater)}
                 };
+                if (!info_messages.empty()) {
+                    result["info_messages"] = info_messages;
+                }
+                return result;
             });
         }
     });
@@ -2108,11 +2206,62 @@ void OrcaMCPServer::register_builtin_tools()
                 if (plater->is_background_process_slicing()) {
                     return nlohmann::json{{"status", "error"}, {"message", "Slicing still in progress"}};
                 }
-                // Note: Silent export to specific path not available in upstream OrcaSlicer
-                // Always opens the export dialog
-                plater->export_gcode(false);
-                return nlohmann::json{{"status", "export_dialog_opened"},
-                                      {"note", "Use the file dialog to choose export location"}};
+
+                // Enable dialog suppression to capture any error messages
+                set_mcp_dialog_suppression(true);
+
+                nlohmann::json result;
+
+                if (!output_path.empty()) {
+                    // Silent export to specific path
+                    bool success = plater->export_gcode_to_file(output_path);
+                    auto info_messages = get_mcp_suppressed_messages();
+                    set_mcp_dialog_suppression(false);
+
+                    if (success) {
+                        result["status"] = "export_started";
+                        result["output_path"] = output_path;
+                        result["note"] = "G-code export started. The file will be written asynchronously.";
+                    } else {
+                        result["status"] = "error";
+                        result["message"] = "Failed to start G-code export. Check that slicing completed successfully.";
+                    }
+                    if (!info_messages.empty()) {
+                        result["info_messages"] = info_messages;
+                    }
+                } else {
+                    // No path provided - open file dialog
+                    plater->export_gcode(false);
+
+                    // Get any suppressed messages (errors, warnings)
+                    auto info_messages = get_mcp_suppressed_messages();
+                    set_mcp_dialog_suppression(false);
+
+                    // Check if there were error messages
+                    bool has_errors = false;
+                    for (const auto& msg : info_messages) {
+                        if (msg.find("error") != std::string::npos ||
+                            msg.find("Error") != std::string::npos ||
+                            msg.find("Failed") != std::string::npos ||
+                            msg.find("failed") != std::string::npos) {
+                            has_errors = true;
+                            break;
+                        }
+                    }
+
+                    if (has_errors) {
+                        result["status"] = "error";
+                        result["error_messages"] = info_messages;
+                    } else {
+                        result["status"] = "export_dialog_opened";
+                        result["note"] = "Use the file dialog to choose export location";
+                        if (!info_messages.empty()) {
+                            result["info_messages"] = info_messages;
+                        }
+                    }
+                }
+
+                return result;
             });
         }
     });
@@ -2134,19 +2283,60 @@ void OrcaMCPServer::register_builtin_tools()
             std::string output_path = params.value("output_path", "");
             return run_on_main_thread([output_path]() {
                 Plater* plater = wxGetApp().plater();
+
+                // Enable dialog suppression to capture any error messages
+                set_mcp_dialog_suppression(true);
+
+                nlohmann::json result;
+
                 if (!output_path.empty()) {
                     // Silent export with path
-                    int result = plater->export_3mf(boost::filesystem::path(output_path), SaveStrategy::Silence | SaveStrategy::SplitModel);
-                    if (result == 0) {
-                        return nlohmann::json{{"status", "success"}, {"output_path", output_path}};
+                    int export_result = plater->export_3mf(boost::filesystem::path(output_path), SaveStrategy::Silence | SaveStrategy::SplitModel);
+
+                    auto info_messages = get_mcp_suppressed_messages();
+                    set_mcp_dialog_suppression(false);
+
+                    if (export_result == 0) {
+                        result["status"] = "success";
+                        result["output_path"] = output_path;
                     } else {
-                        return nlohmann::json{{"status", "error"}, {"message", "Export failed"}};
+                        result["status"] = "error";
+                        result["message"] = "Export failed";
+                    }
+                    if (!info_messages.empty()) {
+                        result["info_messages"] = info_messages;
                     }
                 } else {
                     // Show dialog
                     plater->export_3mf();
-                    return nlohmann::json{{"status", "export_dialog_opened"}};
+
+                    auto info_messages = get_mcp_suppressed_messages();
+                    set_mcp_dialog_suppression(false);
+
+                    // Check for errors in messages
+                    bool has_errors = false;
+                    for (const auto& msg : info_messages) {
+                        if (msg.find("error") != std::string::npos ||
+                            msg.find("Error") != std::string::npos ||
+                            msg.find("Failed") != std::string::npos ||
+                            msg.find("failed") != std::string::npos) {
+                            has_errors = true;
+                            break;
+                        }
+                    }
+
+                    if (has_errors) {
+                        result["status"] = "error";
+                        result["error_messages"] = info_messages;
+                    } else {
+                        result["status"] = "export_dialog_opened";
+                        if (!info_messages.empty()) {
+                            result["info_messages"] = info_messages;
+                        }
+                    }
                 }
+
+                return result;
             });
         }
     });
@@ -2168,13 +2358,24 @@ void OrcaMCPServer::register_builtin_tools()
             bool saveAs = params.value("save_as", false);
             return run_on_main_thread([saveAs]() {
                 Plater* plater = wxGetApp().plater();
+
+                // Suppress any dialogs during save
+                set_mcp_dialog_suppression(true);
                 int result = plater->save_project(saveAs);
+                auto info_messages = get_mcp_suppressed_messages();
+                set_mcp_dialog_suppression(false);
+
+                nlohmann::json response;
                 if (result == 0) {
                     std::string filename = into_u8(plater->get_project_filename(".3mf"));
-                    return nlohmann::json{{"status", "success"}, {"filename", filename}};
+                    response = {{"status", "success"}, {"filename", filename}};
                 } else {
-                    return nlohmann::json{{"status", "cancelled"}};
+                    response = {{"status", "cancelled"}};
                 }
+                if (!info_messages.empty()) {
+                    response["info_messages"] = info_messages;
+                }
+                return response;
             });
         }
     });
@@ -2189,13 +2390,18 @@ void OrcaMCPServer::register_builtin_tools()
                 {"file_path", {
                     {"type", "string"},
                     {"description", "Absolute path to the 3D model file to import"}
+                }},
+                {"include_preview", {
+                    {"type", "boolean"},
+                    {"description", "Include a preview image path to visually verify the loaded model"}
                 }}
             }},
             {"required", {"file_path"}}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
             std::string file_path = params["file_path"];
-            return run_on_main_thread([file_path]() {
+            bool include_preview = params.value("include_preview", false);
+            return run_on_main_thread([file_path, include_preview]() {
                 Plater* plater = wxGetApp().plater();
                 wxArrayString files;
                 files.Add(wxString::FromUTF8(file_path));
@@ -2213,6 +2419,8 @@ void OrcaMCPServer::register_builtin_tools()
                         {"file", file_path},
                         {"active_warnings", get_active_warnings_json(plater)}
                     };
+                    // Add turntable preview if requested
+                    add_turntable_preview_if_requested(response, include_preview);
                 } else {
                     response = {
                         {"status", "error"},
@@ -2322,21 +2530,26 @@ void OrcaMCPServer::register_builtin_tools()
     // new_project - Create new project
     register_tool({
         "new_project",
-        "Create a new empty project, clearing all existing objects",
+        "Create a new empty project, clearing all existing objects. Automatically skips save confirmation dialog.",
         {
             {"type", "object"},
-            {"properties", {
-                {"skip_confirm", {
-                    {"type", "boolean"},
-                    {"description", "Skip confirmation dialog if there are unsaved changes"}
-                }}
-            }}
+            {"properties", nlohmann::json::object()}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
             return run_on_main_thread([]() {
                 Plater* plater = wxGetApp().plater();
+
+                // Suppress dialogs (like "save unsaved changes?") and capture messages
+                set_mcp_dialog_suppression(true);
                 plater->new_project();
-                return nlohmann::json{{"status", "success"}};
+                auto info_messages = get_mcp_suppressed_messages();
+                set_mcp_dialog_suppression(false);
+
+                nlohmann::json response = {{"status", "success"}};
+                if (!info_messages.empty()) {
+                    response["info_messages"] = info_messages;
+                }
+                return response;
             });
         }
     });
@@ -2351,13 +2564,18 @@ void OrcaMCPServer::register_builtin_tools()
                 {"file_path", {
                     {"type", "string"},
                     {"description", "Absolute path to the 3MF project file"}
+                }},
+                {"include_preview", {
+                    {"type", "boolean"},
+                    {"description", "Include a preview image path to visually verify the loaded project"}
                 }}
             }},
             {"required", {"file_path"}}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
             std::string file_path = params["file_path"];
-            return run_on_main_thread([file_path]() {
+            bool include_preview = params.value("include_preview", false);
+            return run_on_main_thread([file_path, include_preview]() {
                 Plater* plater = wxGetApp().plater();
                 wxArrayString files;
                 files.Add(wxString::FromUTF8(file_path));
@@ -2372,6 +2590,11 @@ void OrcaMCPServer::register_builtin_tools()
                     {"status", result ? "success" : "error"},
                     {"file", file_path}
                 };
+
+                // Add turntable preview if requested and load succeeded
+                if (result) {
+                    add_turntable_preview_if_requested(response, include_preview);
+                }
 
                 // Add any captured info messages
                 if (!info_messages.empty()) {
@@ -3485,13 +3708,18 @@ void OrcaMCPServer::register_builtin_tools()
                 {"object_id", {
                     {"type", "integer"},
                     {"description", "Index of the object to delete (0-based)"}
+                }},
+                {"include_preview", {
+                    {"type", "boolean"},
+                    {"description", "Include a preview image path to see what remains after deletion"}
                 }}
             }},
             {"required", {"object_id"}}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
             int object_id = params["object_id"];
-            return run_on_main_thread([object_id]() {
+            bool include_preview = params.value("include_preview", false);
+            return run_on_main_thread([object_id, include_preview]() {
                 Plater* plater = wxGetApp().plater();
                 Model& model = plater->model();
 
@@ -3502,12 +3730,17 @@ void OrcaMCPServer::register_builtin_tools()
                 std::string deleted_name = model.objects[object_id]->name;
                 plater->remove(object_id);
 
-                return nlohmann::json{
+                nlohmann::json result = {
                     {"status", "success"},
                     {"deleted_object_id", object_id},
                     {"deleted_object_name", deleted_name},
                     {"active_warnings", get_active_warnings_json(plater)}
                 };
+
+                // Add turntable preview if requested
+                add_turntable_preview_if_requested(result, include_preview);
+
+                return result;
             });
         }
     });
@@ -3862,12 +4095,16 @@ void OrcaMCPServer::register_builtin_tools()
                     }
                 }
 
+                // Suppress any dialogs during send operation
+                set_mcp_dialog_suppression(true);
+
+                nlohmann::json result;
                 if (has_print_host) {
                     // Use legacy send for OctoPrint/Klipper/etc. printers
                     int plate_idx = all_plates ? -1 : plater->get_partplate_list().get_curr_plate_index();
                     plater->send_gcode_legacy(plate_idx);
 
-                    return nlohmann::json{
+                    result = {
                         {"status", "dialog_opened"},
                         {"method", "send_gcode_legacy"},
                         {"host_type", host_type_str},
@@ -3878,13 +4115,37 @@ void OrcaMCPServer::register_builtin_tools()
                     // Use Bambu-specific send dialog
                     plater->send_to_printer(all_plates);
 
-                    return nlohmann::json{
+                    result = {
                         {"status", "dialog_opened"},
                         {"method", "send_to_printer"},
                         {"all_plates", all_plates},
                         {"note", "The send-to-printer dialog is now open. User can select printer and options."}
                     };
                 }
+
+                auto info_messages = get_mcp_suppressed_messages();
+                set_mcp_dialog_suppression(false);
+
+                // Check for errors
+                bool has_errors = false;
+                for (const auto& msg : info_messages) {
+                    if (msg.find("error") != std::string::npos ||
+                        msg.find("Error") != std::string::npos ||
+                        msg.find("Failed") != std::string::npos ||
+                        msg.find("failed") != std::string::npos) {
+                        has_errors = true;
+                        break;
+                    }
+                }
+
+                if (has_errors) {
+                    result["status"] = "error";
+                    result["error_messages"] = info_messages;
+                } else if (!info_messages.empty()) {
+                    result["info_messages"] = info_messages;
+                }
+
+                return result;
             });
         }
     });
@@ -3910,6 +4171,10 @@ void OrcaMCPServer::register_builtin_tools()
                     {"type", "string"},
                     {"enum", nlohmann::json::array({"below", "above", "both"})},
                     {"description", "Which part to keep: below (default), above, or both"}
+                }},
+                {"include_preview", {
+                    {"type", "boolean"},
+                    {"description", "Include a preview image path to see the cut result"}
                 }}
             }},
             {"required", nlohmann::json::array({"object_id", "z_height"})}
@@ -3918,7 +4183,8 @@ void OrcaMCPServer::register_builtin_tools()
             int object_id = params["object_id"];
             double z_height = params["z_height"];
             std::string keep = params.value("keep", "below");
-            return run_on_main_thread([object_id, z_height, keep]() {
+            bool include_preview = params.value("include_preview", false);
+            return run_on_main_thread([object_id, z_height, keep, include_preview]() {
                 Plater* plater = wxGetApp().plater();
                 Model& model = plater->model();
 
@@ -3977,6 +4243,10 @@ void OrcaMCPServer::register_builtin_tools()
                     {"new_objects_count", new_objects.size()},
                     {"active_warnings", get_active_warnings_json(plater)}
                 };
+
+                // Add turntable preview if requested
+                add_turntable_preview_if_requested(result, include_preview);
+
                 return result;
             });
         }

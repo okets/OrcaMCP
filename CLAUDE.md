@@ -23,6 +23,10 @@ Traditional 3D printing workflow requires manual interaction with slicer softwar
 - **Full automation**: Complete slicing workflows via Claude Code CLI
 - **Visual feedback**: Turntable previews show results of operations
 
+### Testing Guidelines
+
+**IMPORTANT:** When testing OrcaMCP functionality, always use the MCP tools directly (`mcp__orca-slicer__*`), NOT direct HTTP calls via curl. The MCP interface is what we're testing - direct HTTP bypasses the bridge and doesn't validate the full integration.
+
 ---
 
 ## Architecture
@@ -270,9 +274,9 @@ MCP operations automatically suppress GUI dialogs that would block automation. I
 
 ### How It Works
 
-When `load_model` or `load_project` is called:
+When `load_model`, `load_project`, or `new_project` is called:
 1. Dialog suppression is enabled
-2. The file is loaded
+2. The operation is performed
 3. Any dialogs that would have appeared are captured
 4. Suppression is disabled
 5. Messages are returned in `info_messages` array
@@ -296,6 +300,7 @@ When `load_model` or `load_project` is called:
 |-------------|----------------|
 | Info dialogs (OK only) | Auto-OK, message captured |
 | Yes/No dialogs (scaling) | Auto-YES (safer to scale) |
+| Yes/No/Cancel (save changes) | Auto-NO (discard changes for new_project) |
 | Warning dialogs | Auto-OK, message captured |
 | 3MF version warnings | Auto-OK, message captured |
 | Object too large/small | Auto-YES (scale to fit) |
@@ -305,7 +310,17 @@ When `load_model` or `load_project` is called:
 Dialog suppression is implemented in:
 - `GUI.hpp/cpp`: `set_mcp_dialog_suppression()`, `is_mcp_dialog_suppression_enabled()`
 - `MsgDialog.cpp`: `ShowModal()` override checks suppression flag
-- `OrcaMCPServer.cpp`: `load_model` and `load_project` enable suppression during loading
+- `OrcaMCPServer.cpp`: All critical endpoints enable suppression
+
+### Endpoints with Dialog Suppression
+
+| Category | Endpoints |
+|----------|-----------|
+| File Operations | `load_model`, `load_project`, `new_project`, `save_project`, `export_gcode`, `export_3mf` |
+| Preset Management | `select_preset`, `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset` |
+| Slicing & Printing | `slice_all`, `send_to_printer` |
+
+Error messages that would have been shown in dialogs are captured and returned in the response as `error_messages` (for failures) or `info_messages` (for non-critical information).
 
 ---
 

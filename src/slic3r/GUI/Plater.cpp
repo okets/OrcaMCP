@@ -14385,6 +14385,45 @@ void Plater::export_gcode(bool prefer_removable)
     }
 }
 
+// Silent G-code export to a specific file path (for MCP automation)
+bool Plater::export_gcode_to_file(const std::string& output_path)
+{
+    if (p->model.objects.empty()) {
+        BOOST_LOG_TRIVIAL(warning) << "export_gcode_to_file: No objects in model";
+        return false;
+    }
+
+    if (p->process_completed_with_error == p->partplate_list.get_curr_plate_index()) {
+        BOOST_LOG_TRIVIAL(warning) << "export_gcode_to_file: Process completed with error";
+        return false;
+    }
+
+    try {
+        // Update the background processing
+        unsigned int state = this->p->update_restart_background_process(false, false);
+        if (state & priv::UPDATE_BACKGROUND_PROCESS_INVALID) {
+            BOOST_LOG_TRIVIAL(warning) << "export_gcode_to_file: Background process invalid";
+            return false;
+        }
+    } catch (const Slic3r::PlaceholderParserError &ex) {
+        BOOST_LOG_TRIVIAL(error) << "export_gcode_to_file: PlaceholderParserError: " << ex.what();
+        return false;
+    } catch (const std::exception &ex) {
+        BOOST_LOG_TRIVIAL(error) << "export_gcode_to_file: Exception: " << ex.what();
+        return false;
+    }
+
+    fs::path path(output_path);
+    p->notification_manager->new_export_began(false);
+    p->exporting_status = ExportingStatus::EXPORTING_TO_LOCAL;
+    p->last_output_path = output_path;
+    p->last_output_dir_path = path.parent_path().string();
+    p->export_gcode(path, false);
+
+    BOOST_LOG_TRIVIAL(info) << "export_gcode_to_file: Started export to " << output_path;
+    return true;
+}
+
 void Plater::send_to_printer(bool isall)
 {
     p->on_action_send_to_printer(isall);
