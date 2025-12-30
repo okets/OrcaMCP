@@ -43,3 +43,8 @@ test.js
 /.cache/
 .clangd
 /.claude/smarter-claude
+
+# Local build scripts
+build_openssl.ps1
+build_wrapper.ps1
+nul
