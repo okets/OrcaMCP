@@ -2,6 +2,9 @@
 @echo off
 set WP=%CD%
 
+@REM Add vswhere to PATH so CMake can find Visual Studio
+set "PATH=%PATH%;C:\Program Files (x86)\Microsoft Visual Studio\Installer"
+
 @REM Detect Visual Studio version using msbuild
 echo Detecting Visual Studio version using msbuild...
 

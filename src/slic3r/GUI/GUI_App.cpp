@@ -2531,7 +2531,7 @@ bool GUI_App::on_init_inner()
         //BBS use BBL splashScreen
         scrn = new SplashScreen(bmp, wxSPLASH_CENTRE_ON_SCREEN | wxSPLASH_TIMEOUT, 1500, splashscreen_pos);
         wxYield();
-        scrn->SetText(_L("Loading configuration")+ dots);
+        scrn->SetText(_L("Loading configuration (this may take a couple of minutes)")+ dots);
     }
 
     BOOST_LOG_TRIVIAL(info) << "loading systen presets...";

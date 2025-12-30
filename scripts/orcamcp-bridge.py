@@ -30,6 +30,8 @@ Configuration (Claude Code):
 import sys
 import json
 import os
+import subprocess
+import time
 import urllib.request
 import urllib.error
 
@@ -50,6 +52,126 @@ SERVER_INFO = {
 # Cached tools list - served when OrcaSlicer isn't available
 # This allows MCP clients to see available tools even when OrcaSlicer is offline
 CACHED_TOOLS = None  # Will be populated on first successful connection
+
+# Connection state cache to avoid repeated slow checks during startup
+_connection_cache = {"connected": None, "last_check": 0}
+CONNECTION_CACHE_TTL = 3  # seconds
+
+
+def get_orcamcp_executable() -> str | None:
+    """Find the OrcaMCP executable based on platform"""
+    import platform
+    system = platform.system()
+
+    if system == "Darwin":  # macOS
+        paths = [
+            "/Applications/OrcaMCP.app/Contents/MacOS/OrcaSlicer",
+            os.path.expanduser("~/Applications/OrcaMCP.app/Contents/MacOS/OrcaSlicer"),
+        ]
+    elif system == "Windows":
+        paths = [
+            os.path.join(os.environ.get("ProgramFiles", "C:\\Program Files"), "OrcaMCP", "orcamcp.exe"),
+            os.path.join(os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)"), "OrcaMCP", "orcamcp.exe"),
+            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "OrcaMCP", "orcamcp.exe"),
+        ]
+    else:  # Linux
+        paths = [
+            "/usr/bin/orcamcp",
+            "/usr/local/bin/orcamcp",
+            os.path.expanduser("~/.local/bin/orcamcp"),
+            "/opt/OrcaMCP/bin/orcamcp",
+        ]
+
+    # Also check environment variable for custom path
+    custom_path = os.environ.get("ORCAMCP_APP_PATH")
+    if custom_path:
+        paths.insert(0, custom_path)
+
+    for path in paths:
+        if path and os.path.isfile(path):
+            return path
+
+    return None
+
+
+def launch_orcamcp() -> dict:
+    """Launch OrcaMCP application and wait for it to be ready"""
+    # Check if already running
+    if check_orcaslicer_connection():
+        return {"success": True, "message": "OrcaMCP is already running"}
+
+    executable = get_orcamcp_executable()
+    if not executable:
+        return {
+            "success": False,
+            "message": "Could not find OrcaMCP executable. "
+                      "Set ORCAMCP_APP_PATH environment variable to specify the path."
+        }
+
+    try:
+        log_debug(f"Launching OrcaMCP from: {executable}")
+
+        # Launch detached from this process
+        import platform
+        if platform.system() == "Windows":
+            # Windows: use CREATE_NEW_PROCESS_GROUP and DETACHED_PROCESS
+            DETACHED_PROCESS = 0x00000008
+            CREATE_NEW_PROCESS_GROUP = 0x00000200
+            subprocess.Popen(
+                [executable],
+                creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+                close_fds=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+        elif platform.system() == "Darwin":
+            # macOS: use 'open' command for .app bundles
+            app_path = executable.replace("/Contents/MacOS/OrcaSlicer", "")
+            if app_path.endswith(".app"):
+                subprocess.Popen(["open", app_path], close_fds=True)
+            else:
+                subprocess.Popen(
+                    [executable],
+                    start_new_session=True,
+                    close_fds=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+        else:
+            # Linux: start new session
+            subprocess.Popen(
+                [executable],
+                start_new_session=True,
+                close_fds=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+
+        # Wait for the HTTP server to become available
+        max_wait = 30  # seconds
+        start_time = time.time()
+
+        while time.time() - start_time < max_wait:
+            time.sleep(1)
+            # Bypass cache when polling for startup
+            if check_orcaslicer_connection(use_cache=False):
+                elapsed = int(time.time() - start_time)
+                return {
+                    "success": True,
+                    "message": f"OrcaMCP started successfully (took {elapsed}s)"
+                }
+
+        return {
+            "success": False,
+            "message": f"OrcaMCP was launched but HTTP server did not respond within {max_wait}s. "
+                      "The application may still be starting up."
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Failed to launch OrcaMCP: {str(e)}"
+        }
 
 
 def log_debug(message: str):
@@ -92,16 +214,28 @@ def make_tool_error_result(message: str) -> dict:
     }
 
 
-def check_orcaslicer_connection() -> bool:
-    """Check if OrcaSlicer is reachable"""
+def check_orcaslicer_connection(use_cache: bool = True, timeout: float = 0.3) -> bool:
+    """Check if OrcaSlicer is reachable (with caching to speed up startup)"""
+    global _connection_cache
+
+    # Use cached result if still valid (avoids repeated slow checks during startup)
+    if use_cache:
+        now = time.time()
+        if now - _connection_cache["last_check"] < CONNECTION_CACHE_TTL:
+            if _connection_cache["connected"] is not None:
+                return _connection_cache["connected"]
+
     try:
         req = urllib.request.Request(
             ORCAMCP_URL,
             method="GET"
         )
-        with urllib.request.urlopen(req, timeout=2) as response:
-            return response.status == 200
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            connected = response.status == 200
+            _connection_cache = {"connected": connected, "last_check": time.time()}
+            return connected
     except Exception:
+        _connection_cache = {"connected": False, "last_check": time.time()}
         return False
 
 
@@ -109,6 +243,15 @@ def get_minimal_tools_list() -> list:
     """Return a minimal tools list when OrcaMCP isn't connected"""
     # This is a subset of tools that helps users understand what's available
     return [
+        {
+            "name": "start_orca",
+            "description": "Start the OrcaMCP application. Use this when OrcaMCP is not running. The tool will launch OrcaMCP and wait for it to be ready.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        },
         {
             "name": "get_server_info",
             "description": "Get OrcaMCP server information and connection status",
@@ -186,6 +329,30 @@ def handle_local_request(request: dict) -> dict | None:
     if method == "ping":
         return make_success_response(request_id, {})
 
+    # Handle start_orca tool - always handled locally (works whether connected or not)
+    if method == "tools/call":
+        tool_name = params.get("name", "")
+        if tool_name == "start_orca":
+            result = launch_orcamcp()
+            if result["success"]:
+                return make_success_response(request_id, {
+                    "content": [{"type": "text", "text": result["message"]}],
+                    "isError": False
+                })
+            else:
+                return make_success_response(request_id, make_tool_error_result(result["message"]))
+
+    # Optimization: For tools/list during initial startup (no cached tools),
+    # return minimal list immediately without slow connection check
+    if method == "tools/list" and CACHED_TOOLS is None:
+        # First time - try a quick check, but return minimal list fast if offline
+        is_connected = check_orcaslicer_connection(timeout=0.1)
+        if not is_connected:
+            log_debug("Quick startup: returning minimal tools list")
+            return make_success_response(request_id, {"tools": get_minimal_tools_list()})
+        # Connected - let it through to get full tools list
+        return None
+
     # For other methods, check if OrcaSlicer is available
     is_connected = check_orcaslicer_connection()
 
@@ -202,14 +369,9 @@ def handle_local_request(request: dict) -> dict | None:
         return make_success_response(request_id, {"tools": tools})
 
     elif method == "tools/call":
-        tool_name = request.get("params", {}).get("name", "unknown")
+        # start_orca is handled above, so any tool call here is for an unavailable tool
         return make_success_response(request_id, make_tool_error_result(
-            f"OrcaMCP is not running. Please start OrcaMCP to use the '{tool_name}' tool.\n\n"
-            f"To start OrcaMCP:\n"
-            f"- macOS: Open /Applications/OrcaMCP.app\n"
-            f"- Windows: Run OrcaMCP from Start Menu\n"
-            f"- Linux: Run orcamcp from terminal\n\n"
-            f"The MCP server will automatically connect once OrcaMCP is running."
+            f"OrcaMCP is not running. Use the 'start_orca' tool to start it, then try again."
         ))
 
     # For other methods, return a graceful error
@@ -305,12 +467,26 @@ def main():
             response = send_request(request)
 
             # Cache tools list on successful tools/list response
+            # Also inject start_orca tool (handled by bridge, not OrcaSlicer)
             method = request.get("method", "")
             if method == "tools/list" and "result" in response:
                 tools = response.get("result", {}).get("tools")
                 if tools:
+                    # Add start_orca tool to the list (handled by bridge)
+                    start_orca_tool = {
+                        "name": "start_orca",
+                        "description": "Start the OrcaMCP application. Use this when OrcaMCP is not running. The tool will launch OrcaMCP and wait for it to be ready.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {},
+                            "required": []
+                        }
+                    }
+                    # Insert at beginning so it's visible
+                    tools = [start_orca_tool] + [t for t in tools if t.get("name") != "start_orca"]
+                    response["result"]["tools"] = tools
                     CACHED_TOOLS = tools
-                    log_debug(f"Cached {len(tools)} tools from OrcaSlicer")
+                    log_debug(f"Cached {len(tools)} tools (including start_orca)")
 
             # Send response to stdout
             print(json.dumps(response), flush=True)

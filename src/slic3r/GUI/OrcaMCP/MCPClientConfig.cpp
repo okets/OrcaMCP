@@ -5,6 +5,7 @@
 #include <boost/algorithm/string.hpp>
 #include <wx/stdpaths.h>
 #include <wx/utils.h>
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 #include <regex>
@@ -609,9 +610,13 @@ bool MCPClientConfig::add_to_toml_config(const std::string& path, std::string& e
 
         // Generate TOML entry
         std::string bridge_path = get_bridge_script_path();
+        // Convert backslashes to forward slashes for TOML compatibility
+        // (backslashes in TOML are escape sequences, e.g., \U is unicode)
+        std::replace(bridge_path.begin(), bridge_path.end(), '\\', '/');
         std::string toml_entry = "\n[mcp_servers." + SERVER_NAME + "]\n"
                                  "command = \"python3\"\n"
-                                 "args = [\"" + bridge_path + "\"]\n";
+                                 "args = [\"" + bridge_path + "\"]\n"
+                                 "startup_timeout_sec = 5\n";
 
         // Append to file
         boost::nowide::ofstream ofs(path, std::ios::app);

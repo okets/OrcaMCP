@@ -2,6 +2,11 @@
 @echo off
 set WP=%CD%
 
+@REM Add CMake, Perl, and vswhere to PATH
+set "PATH=%PATH%;C:\Program Files\CMake\bin"
+set "PATH=%PATH%;C:\Strawberry\perl\bin"
+set "PATH=%PATH%;C:\Program Files (x86)\Microsoft Visual Studio\Installer"
+
 @REM Pack deps
 if "%1"=="pack" (
     setlocal ENABLEDELAYEDEXPANSION 

@@ -1596,7 +1596,7 @@ void PreferencesDialog::create_mcp_clients_page(wxFlexGridSizer* g_sizer)
         }
 
         auto status_label = new wxStaticText(m_parent, wxID_ANY, status_text,
-                                             wxDefaultPosition, wxSize(FromDIP(100), -1));
+                                             wxDefaultPosition, wxSize(FromDIP(120), -1));
         status_label->SetForegroundColour(status_color);
         status_label->SetFont(::Label::Body_14);
         row_sizer->Add(status_label, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(10));
@@ -1717,6 +1717,7 @@ void PreferencesDialog::refresh_mcp_client_buttons()
         if (ui.status_label) {
             ui.status_label->SetLabel(status_text);
             ui.status_label->SetForegroundColour(status_color);
+            ui.status_label->Refresh();
         }
 
         if (ui.button) {
