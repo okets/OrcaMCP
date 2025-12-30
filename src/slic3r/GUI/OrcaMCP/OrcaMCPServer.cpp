@@ -285,6 +285,50 @@ void add_turntable_preview_if_requested(nlohmann::json& result, bool include_pre
     }
 }
 
+// Handler for get_preview_base64 tool - converts preview image to base64
+nlohmann::json OrcaMCPServer::handle_get_preview_base64(const nlohmann::json& params)
+{
+    std::string path = params.at("path").get<std::string>();
+
+    // Security: Only allow orcamcp preview/render files
+    if (path.find("orcamcp_preview_") == std::string::npos &&
+        path.find("orcamcp_render_") == std::string::npos) {
+        return {
+            {"status", "error"},
+            {"message", "Invalid path: only orcamcp preview files are allowed"}
+        };
+    }
+
+    // Load image
+    wxImage image;
+    if (!image.LoadFile(wxString::FromUTF8(path))) {
+        return {
+            {"status", "error"},
+            {"message", "Failed to load image file: " + path}
+        };
+    }
+
+    // Encode to JPEG in memory
+    wxMemoryOutputStream stream;
+    image.SaveFile(stream, wxBITMAP_TYPE_JPEG);
+
+    // Get binary data
+    wxStreamBuffer* buf = stream.GetOutputStreamBuffer();
+    size_t size = buf->GetBufferSize();
+    std::vector<unsigned char> buffer(size);
+    std::memcpy(buffer.data(), buf->GetBufferStart(), size);
+
+    // Convert to base64 using wxWidgets
+    wxString base64_wx = wxBase64Encode(buffer.data(), size);
+    std::string base64_data = base64_wx.ToStdString();
+
+    return {
+        {"status", "success"},
+        {"preview_base64", "data:image/jpeg;base64," + base64_data},
+        {"source_path", path}
+    };
+}
+
 void OrcaMCPServer::register_builtin_tools()
 {
     // ==================== SERVER INFO ====================
@@ -852,6 +896,27 @@ void OrcaMCPServer::register_builtin_tools()
                 nlohmann::json render_params = {{"payload", params}};
                 return OrcaMCPPlateUtils::RenderPlateView(render_params);
             });
+        }
+    });
+
+    // get_preview_base64 - Convert preview image to base64 (for remote clients)
+    register_tool({
+        "get_preview_base64",
+        "Convert a preview image file to base64 data URI. "
+        "Only use this tool if you do NOT have direct filesystem access to read the preview_path. "
+        "Agents with local filesystem access (like Claude Code CLI) should use the Read tool instead.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"path", {
+                    {"type", "string"},
+                    {"description", "Path to the preview image file (from preview_path in other tool responses)"}
+                }}
+            }},
+            {"required", {"path"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            return handle_get_preview_base64(params);
         }
     });
 

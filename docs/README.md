@@ -9,7 +9,7 @@ Welcome to the OrcaMCP documentation. This folder contains detailed documentatio
 | [CLAUDE.md](../CLAUDE.md) | **Start here** - AI agent quick reference guide |
 | [Architecture](architecture/) | System design and technical decisions |
 | [ADRs](adr/) | Architecture Decision Records |
-| [Tools Reference](tools/) | Complete API reference for all 48 MCP tools |
+| [Tools Reference](tools/) | Complete API reference for all 49 MCP tools |
 | [Contributing](contributing/) | How to contribute to OrcaMCP |
 | [Setup](setup/) | Building, configuration, and troubleshooting |
 | [Release](release/) | Update process and release workflows |
@@ -37,7 +37,7 @@ docs/
 │   ├── README.md            # ADR index and template
 │   └── 0001-*.md            # Individual decision records
 ├── tools/
-│   ├── reference.md         # All 48 tools with parameters
+│   ├── reference.md         # All 49 tools with parameters
 │   └── workflows.md         # Common multi-tool patterns
 ├── contributing/
 │   ├── adding-tools.md      # Guide for new MCP tools
@@ -61,8 +61,8 @@ Claude Code CLI  ←→  orcamcp-bridge.py  ←→  OrcaSlicer HTTP Server (port
     (stdio)              (Python)                    (C++)
 ```
 
-### The 48 Tools
-OrcaMCP provides 48 tools across these categories:
+### The 49 Tools
+OrcaMCP provides 49 tools across these categories:
 - **Scene**: Project management (new, load, save, export)
 - **Models**: Import and manipulation
 - **Transforms**: Move, rotate, scale, mirror, cut

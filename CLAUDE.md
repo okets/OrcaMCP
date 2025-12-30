@@ -38,7 +38,7 @@ Traditional 3D printing workflow requires manual interaction with slicer softwar
                                                              │  OrcaMCPServer  │
                                                              │                 │
                                                              │ - JSON-RPC 2.0  │
-                                                             │ - 48 MCP Tools  │
+                                                             │ - 49 MCP Tools  │
                                                              │ - Thread-safe   │
                                                              └─────────────────┘
 ```
@@ -58,7 +58,7 @@ Traditional 3D printing workflow requires manual interaction with slicer softwar
 
 **Status**: Complete & Tested ✓
 
-### MCP Tools (48 total)
+### MCP Tools (49 total)
 
 | Category | Tools |
 |----------|-------|
@@ -70,7 +70,7 @@ Traditional 3D printing workflow requires manual interaction with slicer softwar
 | **Per-Object** | `get_object_config`, `set_object_config`, `reset_object_config` |
 | **Layer Ranges** | `get_object_layer_ranges`, `set_object_layer_range`, `delete_object_layer_range` |
 | **Slicing** | `slice_all`, `get_slicing_status`, `export_gcode`, `get_print_estimate` |
-| **Visualization** | `render_plate_view` |
+| **Visualization** | `render_plate_view`, `get_preview_base64` |
 | **Printers** | `get_printers`, `select_printer`, `send_to_printer` |
 | **Adaptive** | `apply_adaptive_layer_height`, `clear_adaptive_layer_height` |
 | **History** | `undo`, `redo` |
@@ -88,7 +88,7 @@ For detailed documentation beyond this quick reference, see the `docs/` folder:
 | [Threading Model](docs/architecture/threading-model.md) | GUI thread requirements and patterns |
 | [Transport Layer](docs/architecture/transport-layer.md) | HTTP + stdio bridge design |
 | [ADRs](docs/adr/) | Architecture Decision Records |
-| [Tools Reference](docs/tools/reference.md) | All 48 tools with parameters and examples |
+| [Tools Reference](docs/tools/reference.md) | All 49 tools with parameters and examples |
 | [Workflows](docs/tools/workflows.md) | Common multi-tool patterns |
 | [Adding Tools](docs/contributing/adding-tools.md) | How to add new MCP tools |
 | [Code Style](docs/contributing/code-style.md) | C++ and Python conventions |

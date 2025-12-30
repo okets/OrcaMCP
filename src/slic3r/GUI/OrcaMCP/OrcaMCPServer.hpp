@@ -48,6 +48,9 @@ private:
     static nlohmann::json handle_tools_list();
     static nlohmann::json handle_tools_call(const nlohmann::json& params);
 
+    // Tool-specific handlers
+    static nlohmann::json handle_get_preview_base64(const nlohmann::json& params);
+
     // JSON-RPC 2.0 response helpers
     static nlohmann::json make_success_response(const nlohmann::json& id, const nlohmann::json& result);
     static nlohmann::json make_error_response(const nlohmann::json& id, int code, const std::string& message);

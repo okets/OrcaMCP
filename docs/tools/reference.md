@@ -1,6 +1,6 @@
 # OrcaMCP Tools Reference
 
-Complete reference for all 48 MCP tools available in OrcaMCP.
+Complete reference for all 49 MCP tools available in OrcaMCP.
 
 ## Quick Reference Table
 
@@ -16,7 +16,7 @@ Complete reference for all 48 MCP tools available in OrcaMCP.
 | **Per-Object** | `get_object_info`, `get_object_config`, `set_object_config`, `reset_object_config` |
 | **Layer Ranges** | `get_object_layer_ranges`, `set_object_layer_range`, `delete_object_layer_range` |
 | **Slicing** | `slice_all`, `export_gcode`, `get_print_estimate` |
-| **Visualization** | `render_plate_view` |
+| **Visualization** | `render_plate_view`, `get_preview_base64` |
 | **Adaptive** | `apply_adaptive_layer_height`, `clear_adaptive_layer_height` |
 | **Printers** | `get_printers`, `select_printer`, `send_to_printer` |
 | **History** | `undo`, `redo` |
@@ -646,6 +646,36 @@ Capture plate images from specified camera angles.
 ```
 
 **Important:** Always use `save_to_file: true` to avoid large base64-encoded responses.
+
+---
+
+### get_preview_base64
+Convert a preview image file to base64 data URI for remote/containerized clients.
+
+**When to use:** Only use this tool if you do NOT have direct filesystem access to read the `preview_path`. Agents with local filesystem access (like Claude Code CLI) should use the Read tool instead.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `path` | string | Yes | Path to the preview image file (from `preview_path` in other tool responses) |
+
+**Example:**
+```json
+{"name": "get_preview_base64", "arguments": {
+  "path": "/tmp/orcamcp_preview_1234567890.jpg"
+}}
+```
+
+**Returns:**
+```json
+{
+  "status": "success",
+  "preview_base64": "data:image/jpeg;base64,/9j/4AAQSkZJRg...",
+  "source_path": "/tmp/orcamcp_preview_1234567890.jpg"
+}
+```
+
+**Security:** Only `orcamcp_preview_*` and `orcamcp_render_*` files can be converted. Other paths are rejected.
 
 ---
 
