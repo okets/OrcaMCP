@@ -62,6 +62,9 @@ struct MsgDialog : DPIDialog
 	MsgDialog &operator=(const MsgDialog &) = delete;
 	virtual ~MsgDialog();
 
+	// Override ShowModal to support MCP dialog suppression
+	virtual int ShowModal() override;
+
 	void show_dsa_button(wxString const & title = {});
 	bool get_checkbox_state();
 	virtual void on_dpi_changed(const wxRect& suggested_rect);
@@ -94,6 +97,8 @@ protected:
     MsgButtonsHash  m_buttons;
 	CheckBox* m_checkbox_dsa{nullptr};
     wxString  m_forward_str;
+	long      m_style{wxOK};           // Store dialog style for MCP suppression
+	wxString  m_mcp_message;           // Store message for MCP suppression
 };
 
 

@@ -36,6 +36,33 @@ class AppConfig;
 
 namespace GUI {
 
+// MCP dialog suppression state
+static bool s_mcp_dialog_suppression = false;
+static std::vector<std::string> s_mcp_suppressed_messages;
+
+void set_mcp_dialog_suppression(bool suppress) {
+    s_mcp_dialog_suppression = suppress;
+    if (suppress) {
+        s_mcp_suppressed_messages.clear();
+    }
+}
+
+bool is_mcp_dialog_suppression_enabled() {
+    return s_mcp_dialog_suppression;
+}
+
+std::vector<std::string> get_mcp_suppressed_messages() {
+    return s_mcp_suppressed_messages;
+}
+
+void add_mcp_suppressed_message(const std::string& msg) {
+    s_mcp_suppressed_messages.push_back(msg);
+}
+
+void clear_mcp_suppressed_messages() {
+    s_mcp_suppressed_messages.clear();
+}
+
 #if __APPLE__
 IOPMAssertionID assertionID;
 #endif
@@ -261,6 +288,15 @@ void show_error_id(int id, const std::string& message)
 
 void show_info(wxWindow* parent, const wxString& message, const wxString& title)
 {
+	// MCP mode: capture message instead of showing dialog
+	if (s_mcp_dialog_suppression) {
+		std::string msg = message.ToUTF8().data();
+		if (!title.empty()) {
+			msg = std::string(title.ToUTF8().data()) + ": " + msg;
+		}
+		s_mcp_suppressed_messages.push_back(msg);
+		return;
+	}
 	//wxMessageDialog msg_wingow(parent, message, wxString(SLIC3R_APP_NAME " - ") + (title.empty() ? _L("Notice") : title), wxOK | wxICON_INFORMATION);
 	MessageDialog msg_wingow(parent, message, wxString(SLIC3R_APP_FULL_NAME " - ") + (title.empty() ? _L("Notice") : title), wxOK | wxICON_INFORMATION);
 	msg_wingow.ShowModal();

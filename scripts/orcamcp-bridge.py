@@ -70,9 +70,9 @@ def get_orcamcp_executable() -> str | None:
         ]
     elif system == "Windows":
         paths = [
-            os.path.join(os.environ.get("ProgramFiles", "C:\\Program Files"), "OrcaMCP", "orcamcp.exe"),
-            os.path.join(os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)"), "OrcaMCP", "orcamcp.exe"),
-            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "OrcaMCP", "orcamcp.exe"),
+            os.path.join(os.environ.get("ProgramFiles", "C:\\Program Files"), "OrcaMCP", "orca-mcp.exe"),
+            os.path.join(os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)"), "OrcaMCP", "orca-mcp.exe"),
+            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "OrcaMCP", "orca-mcp.exe"),
         ]
     else:  # Linux
         paths = [
@@ -380,9 +380,48 @@ def handle_local_request(request: dict) -> dict | None:
     ))
 
 
+def normalize_paths_for_windows(request: dict) -> dict:
+    """
+    Normalize file paths in tool call arguments for Windows.
+    Converts forward slashes to backslashes for path parameters.
+    """
+    import platform
+    if platform.system() != "Windows":
+        return request
+
+    # Only process tools/call requests
+    if request.get("method") != "tools/call":
+        return request
+
+    params = request.get("params", {})
+    arguments = params.get("arguments", {})
+    if not arguments:
+        return request
+
+    # Path parameter names used by OrcaMCP tools
+    path_params = ["file_path", "output_path", "path"]
+
+    modified = False
+    for param in path_params:
+        if param in arguments and isinstance(arguments[param], str):
+            # Convert forward slashes to backslashes
+            original = arguments[param]
+            normalized = original.replace("/", "\\")
+            if normalized != original:
+                arguments[param] = normalized
+                log_debug(f"Normalized path: {original} -> {normalized}")
+                modified = True
+
+    return request
+
+
 def send_request(request: dict) -> dict:
     """Send JSON-RPC request to OrcaSlicer HTTP server"""
     request_id = request.get("id", 0)
+
+    # Normalize paths for Windows before sending
+    request = normalize_paths_for_windows(request)
+
     data = json.dumps(request).encode("utf-8")
 
     req = urllib.request.Request(

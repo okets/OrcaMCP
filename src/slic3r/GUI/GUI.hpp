@@ -49,6 +49,13 @@ void show_info(wxWindow* parent, const wxString& message, const wxString& title 
 void show_info(wxWindow* parent, const char* message, const char* title = nullptr);
 inline void show_info(wxWindow* parent, const std::string& message,const std::string& title = std::string()) { show_info(parent, message.c_str(), title.c_str()); }
 void warning_catcher(wxWindow* parent, const wxString& message);
+
+// MCP dialog suppression - captures info messages instead of showing dialogs
+void set_mcp_dialog_suppression(bool suppress);
+bool is_mcp_dialog_suppression_enabled();
+std::vector<std::string> get_mcp_suppressed_messages();
+void add_mcp_suppressed_message(const std::string& msg);
+void clear_mcp_suppressed_messages();
 void show_substitutions_info(const PresetsConfigSubstitutions& presets_config_substitutions);
 void show_substitutions_info(const ConfigSubstitutions& config_substitutions, const std::string& filename);
 

@@ -1,6 +1,7 @@
 #include "OrcaMCPServer.hpp"
 #include "OrcaMCPPresetConfigUtils.hpp"
 #include "OrcaMCPPlateUtils.hpp"
+#include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/MainFrame.hpp"
@@ -2134,20 +2135,33 @@ void OrcaMCPServer::register_builtin_tools()
                 wxArrayString files;
                 files.Add(wxString::FromUTF8(file_path));
 
+                // Suppress dialogs and capture info messages
+                set_mcp_dialog_suppression(true);
                 bool result = plater->load_files(files);
+                auto info_messages = get_mcp_suppressed_messages();
+                set_mcp_dialog_suppression(false);
+
+                nlohmann::json response;
                 if (result) {
-                    return nlohmann::json{
+                    response = {
                         {"status", "success"},
                         {"file", file_path},
                         {"active_warnings", get_active_warnings_json(plater)}
                     };
                 } else {
-                    return nlohmann::json{
+                    response = {
                         {"status", "error"},
                         {"message", "Failed to load model file"},
                         {"active_warnings", get_active_warnings_json(plater)}
                     };
                 }
+
+                // Add any captured info messages
+                if (!info_messages.empty()) {
+                    response["info_messages"] = info_messages;
+                }
+
+                return response;
             });
         }
     });
@@ -2283,11 +2297,23 @@ void OrcaMCPServer::register_builtin_tools()
                 wxArrayString files;
                 files.Add(wxString::FromUTF8(file_path));
 
-                plater->load_files(files);
-                return nlohmann::json{
-                    {"status", "success"},
+                // Suppress dialogs and capture info messages
+                set_mcp_dialog_suppression(true);
+                bool result = plater->load_files(files);
+                auto info_messages = get_mcp_suppressed_messages();
+                set_mcp_dialog_suppression(false);
+
+                nlohmann::json response = {
+                    {"status", result ? "success" : "error"},
                     {"file", file_path}
                 };
+
+                // Add any captured info messages
+                if (!info_messages.empty()) {
+                    response["info_messages"] = info_messages;
+                }
+
+                return response;
             });
         }
     });
