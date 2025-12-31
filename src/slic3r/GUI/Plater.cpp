@@ -5765,8 +5765,12 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                     if (en_3mf_file_type == En3mfType::From_Prusa) {
                         // do not reset the model config
                         load_config = false;
-                        if(load_type != LoadType::LoadGeometry)
-                            show_info(q, _L("The 3MF is not supported by OrcaSlicer, loading geometry data only."), _L("Load 3MF"));
+                        if(load_type != LoadType::LoadGeometry) {
+                            if (silence)
+                                add_mcp_suppressed_message("Load 3MF: " + into_u8(_L("The 3MF is not supported by OrcaSlicer, loading geometry data only.")));
+                            else
+                                show_info(q, _L("The 3MF is not supported by OrcaSlicer, loading geometry data only."), _L("Load 3MF"));
+                        }
                     }
                     // else if (load_config && (file_version.maj() != app_version.maj())) {
                     //     // version mismatch, only load geometries
@@ -5803,16 +5807,23 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                                      _sparse_infill_pattern == ipZigZag || _sparse_infill_pattern == ipCrossZag ||
                                                      _sparse_infill_pattern == ipLockedZag;
                             if (!is_safe_to_rotate) {
-                                wxString msg_text = _(
-                                    L("This project was created with an OrcaSlicer 2.3.1-alpha and uses "
-                                      "infill rotation template settings that may not work properly with your current infill pattern. "
-                                      "This could result in weak support or print quality issues."));
-                                msg_text += "\n\n" +
-                                            _(L("Would you like OrcaSlicer to automatically fix this by clearing the rotation template settings?"));
-                                MessageDialog dialog(wxGetApp().plater(), msg_text, "", wxICON_WARNING | wxYES | wxNO);
-                                dialog.SetButtonLabel(wxID_YES, _L("Yes"));
-                                dialog.SetButtonLabel(wxID_NO, _L("No"));
-                                if (dialog.ShowModal() == wxID_YES) {
+                                // In silence mode, auto-fix the issue and log; otherwise ask user
+                                bool should_fix = silence;
+                                if (silence) {
+                                    add_mcp_suppressed_message("Load 3MF: " + into_u8(_L("Auto-fixed infill rotation template settings from OrcaSlicer 2.3.1-alpha project.")));
+                                } else {
+                                    wxString msg_text = _(
+                                        L("This project was created with an OrcaSlicer 2.3.1-alpha and uses "
+                                          "infill rotation template settings that may not work properly with your current infill pattern. "
+                                          "This could result in weak support or print quality issues."));
+                                    msg_text += "\n\n" +
+                                                _(L("Would you like OrcaSlicer to automatically fix this by clearing the rotation template settings?"));
+                                    MessageDialog dialog(wxGetApp().plater(), msg_text, "", wxICON_WARNING | wxYES | wxNO);
+                                    dialog.SetButtonLabel(wxID_YES, _L("Yes"));
+                                    dialog.SetButtonLabel(wxID_NO, _L("No"));
+                                    should_fix = (dialog.ShowModal() == wxID_YES);
+                                }
+                                if (should_fix) {
                                     config_loaded.opt_string("sparse_infill_rotate_template") = "";
                                 }
                             }
@@ -5838,7 +5849,10 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                             context += "\n\n";
                             // context += into_u8(append);
                             context += append;
-                            show_info(q, context, _L("Newer 3MF version"));
+                            if (silence)
+                                add_mcp_suppressed_message("Newer 3MF version: " + into_u8(context));
+                            else
+                                show_info(q, context, _L("Newer 3MF version"));
                         }
                         else {
                             //if the minor version is not matched
@@ -5846,13 +5860,19 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                 wxString text  = wxString::Format(_L("The 3MF file version %s is newer than %s's version %s, we suggest to upgrade your software."),
                                                  file_version.to_string(), std::string(SLIC3R_APP_FULL_NAME), app_version.to_string());
                                 text += "\n";
-                                show_info(q, text, _L("Newer 3MF version"));
+                                if (silence)
+                                    add_mcp_suppressed_message("Newer 3MF version: " + into_u8(text));
+                                else
+                                    show_info(q, text, _L("Newer 3MF version"));
                             }
                         }
-                    } 
+                    }
                     else if (load_config && config_loaded.empty()) {
                         load_config = false;
-                        show_info(q, _L("The 3MF file was generated by an old OrcaSlicer version, loading geometry data only."), _L("Load 3MF"));
+                        if (silence)
+                            add_mcp_suppressed_message("Load 3MF: " + into_u8(_L("The 3MF file was generated by an old OrcaSlicer version, loading geometry data only.")));
+                        else
+                            show_info(q, _L("The 3MF file was generated by an old OrcaSlicer version, loading geometry data only."), _L("Load 3MF"));
                     }
                     else if (!load_config) {
                         // reset config except color

@@ -2577,14 +2577,19 @@ void OrcaMCPServer::register_builtin_tools()
             bool include_preview = params.value("include_preview", false);
             return run_on_main_thread([file_path, include_preview]() {
                 Plater* plater = wxGetApp().plater();
-                wxArrayString files;
-                files.Add(wxString::FromUTF8(file_path));
 
                 // Suppress dialogs and capture info messages
                 set_mcp_dialog_suppression(true);
-                bool result = plater->load_files(files);
+
+                // Use load_project with "<silence>" to suppress dialogs via LoadStrategy::Silence
+                // This ensures both MCP suppression AND the silence flag are active
+                plater->load_project(wxString::FromUTF8(file_path), "<silence>");
+
                 auto info_messages = get_mcp_suppressed_messages();
                 set_mcp_dialog_suppression(false);
+
+                // Check if project loaded by seeing if there are objects
+                bool result = !plater->model().objects.empty();
 
                 nlohmann::json response = {
                     {"status", result ? "success" : "error"},
@@ -2600,6 +2605,9 @@ void OrcaMCPServer::register_builtin_tools()
                 if (!info_messages.empty()) {
                     response["info_messages"] = info_messages;
                 }
+
+                // Add active warnings
+                response["active_warnings"] = get_active_warnings_json(plater);
 
                 return response;
             });
