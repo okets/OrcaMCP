@@ -275,6 +275,12 @@ if (WIN32)
         install(TARGETS OrcaSlicer_app_gui RUNTIME DESTINATION ".")
     endif ()
     install(FILES ${output_dlls_${build_type}} DESTINATION ".")
+    # Install MCP bridge scripts for Windows installer
+    install(DIRECTORY ${CMAKE_SOURCE_DIR}/scripts/ DESTINATION "scripts"
+            FILES_MATCHING PATTERN "*.py" PATTERN "*.json")
 else ()
     install(TARGETS OrcaSlicer RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}" BUNDLE DESTINATION ${CMAKE_INSTALL_BINDIR})
+    # Install MCP bridge scripts for non-Windows installers
+    install(DIRECTORY ${CMAKE_SOURCE_DIR}/scripts/ DESTINATION "${CMAKE_INSTALL_BINDIR}/../scripts"
+            FILES_MATCHING PATTERN "*.py" PATTERN "*.json")
 endif ()

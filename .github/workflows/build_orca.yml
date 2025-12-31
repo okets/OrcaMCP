@@ -135,6 +135,7 @@ jobs:
           mkdir -p ${{ github.workspace }}/build/universal/OrcaMCP_dmg
           rm -rf ${{ github.workspace }}/build/universal/OrcaMCP_dmg/*
           cp -R ${{ github.workspace }}/build/universal/OrcaSlicer/OrcaSlicer.app ${{ github.workspace }}/build/universal/OrcaMCP_dmg/OrcaMCP.app
+          cp -R ${{ github.workspace }}/scripts ${{ github.workspace }}/build/universal/OrcaMCP_dmg/scripts
           ln -sfn /Applications ${{ github.workspace }}/build/universal/OrcaMCP_dmg/Applications
           hdiutil create -volname "OrcaMCP" -srcfolder ${{ github.workspace }}/build/universal/OrcaMCP_dmg -ov -format UDZO OrcaMCP_Mac_universal_${{ env.ver }}.dmg
           codesign --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" OrcaMCP_Mac_universal_${{ env.ver }}.dmg
@@ -176,6 +177,7 @@ jobs:
           mkdir -p ${{ github.workspace }}/build/universal/OrcaMCP_dmg
           rm -rf ${{ github.workspace }}/build/universal/OrcaMCP_dmg/*
           cp -R ${{ github.workspace }}/build/universal/OrcaSlicer/OrcaSlicer.app ${{ github.workspace }}/build/universal/OrcaMCP_dmg/OrcaMCP.app
+          cp -R ${{ github.workspace }}/scripts ${{ github.workspace }}/build/universal/OrcaMCP_dmg/scripts
           ln -sfn /Applications ${{ github.workspace }}/build/universal/OrcaMCP_dmg/Applications
           hdiutil create -volname "OrcaMCP" -srcfolder ${{ github.workspace }}/build/universal/OrcaMCP_dmg -ov -format UDZO OrcaMCP_Mac_universal_${{ env.ver }}.dmg
 
@@ -227,6 +229,12 @@ jobs:
         working-directory: ${{ github.workspace }}/build
         run: |
           cpack -G NSIS
+
+      - name: Copy MCP scripts to portable package
+        if: inputs.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          Copy-Item -Path "${{ github.workspace }}/scripts" -Destination "${{ github.workspace }}/build/OrcaSlicer/scripts" -Recurse
 
       - name: Pack app
         if: inputs.os == 'windows-latest'
