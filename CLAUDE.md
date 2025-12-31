@@ -153,6 +153,62 @@ cp -R build/arm64/src/Release/OrcaSlicer.app /Applications/
 
 ---
 
+## Release Workflow
+
+**CRITICAL: Always use `release.yml`, never `build_all.yml` for releases!**
+
+### Creating a New Release
+
+1. **Bump version** in `version.inc`:
+   ```bash
+   # Edit version.inc and change SoftFever_VERSION
+   # e.g., "2.3.2.10" -> "2.3.2.11"
+   ```
+
+2. **Commit and push** the version bump:
+   ```bash
+   git add version.inc
+   git commit -m "Bump version to 2.3.2.11"
+   git push origin mcp
+   ```
+
+3. **Create and push a tag**:
+   ```bash
+   git tag v2.3.2.11
+   git push origin v2.3.2.11
+   ```
+   This automatically triggers `release.yml` which builds AND creates a GitHub Release.
+
+### Alternative: Manual Release Trigger
+
+```bash
+gh workflow run release.yml -R okets/OrcaMCP -f tag=v2.3.2.11 -f draft=true
+```
+
+### Workflow Differences
+
+| Workflow | Trigger | Creates Release? | Use Case |
+|----------|---------|------------------|----------|
+| `build_all.yml` | Push to main, PR, schedule, manual | No (artifacts only) | CI/testing |
+| `release.yml` | Tag push `v*`, manual | Yes (with assets) | **Production releases** |
+
+### Recovery: Replace Release Assets
+
+If you ran `build_all.yml` instead of `release.yml`, you can recover by downloading artifacts and updating the release:
+
+```bash
+# 1. Download artifacts from the build run
+gh run download <RUN_ID> -R okets/OrcaMCP
+
+# 2. Delete old release assets
+gh release delete-asset v2.3.2.10 OrcaMCP-v2.3.2.10-windows-x64-installer.exe -R okets/OrcaMCP
+
+# 3. Upload new assets
+gh release upload v2.3.2.10 ./path/to/new/artifact.exe -R okets/OrcaMCP
+```
+
+---
+
 ## Key Files Reference
 
 | File | Purpose |
