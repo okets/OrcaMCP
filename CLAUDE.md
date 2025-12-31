@@ -92,7 +92,7 @@ For detailed documentation beyond this quick reference, see the `docs/` folder:
 | [Threading Model](docs/architecture/threading-model.md) | GUI thread requirements and patterns |
 | [Transport Layer](docs/architecture/transport-layer.md) | HTTP + stdio bridge design |
 | [ADRs](docs/adr/) | Architecture Decision Records |
-| [Tools Reference](docs/tools/reference.md) | All 49 tools with parameters and examples |
+| [Tools Reference](docs/tools/reference.md) | All 50 tools with parameters and examples |
 | [Workflows](docs/tools/workflows.md) | Common multi-tool patterns |
 | [Adding Tools](docs/contributing/adding-tools.md) | How to add new MCP tools |
 | [Code Style](docs/contributing/code-style.md) | C++ and Python conventions |

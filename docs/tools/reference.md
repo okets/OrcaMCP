@@ -1,11 +1,12 @@
 # OrcaMCP Tools Reference
 
-Complete reference for all 49 MCP tools available in OrcaMCP.
+Complete reference for all 50 MCP tools available in OrcaMCP.
 
 ## Quick Reference Table
 
 | Category | Tools |
 |----------|-------|
+| **Bridge** | `start_orca` |
 | **Information** | `get_server_info`, `get_scene_info`, `get_slicing_status` |
 | **Project** | `new_project`, `load_project`, `save_project`, `export_3mf` |
 | **Models** | `load_model`, `auto_orient`, `arrange_objects` |
@@ -455,6 +456,128 @@ Modify configuration settings.
 
 ---
 
+### clone_preset
+Clone an existing preset with a new name. Creates a user preset from any source (including system presets).
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `type` | string | Yes | Preset type: "printer", "filament", or "print" |
+| `source_name` | string | Yes | Name of the preset to clone |
+| `new_name` | string | Yes | Name for the new cloned preset |
+
+**Example:**
+```json
+{"name": "clone_preset", "arguments": {
+  "type": "print",
+  "source_name": "0.20mm Standard @BBL X1C",
+  "new_name": "My Custom 0.20mm"
+}}
+```
+
+**Returns:**
+```json
+{
+  "status": "success",
+  "message": "Preset cloned successfully",
+  "new_preset": "My Custom 0.20mm"
+}
+```
+
+---
+
+### save_preset
+Save current dirty changes to a preset. If name is provided, saves as a new preset. Otherwise saves to the current preset (fails for system presets).
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `type` | string | Yes | Preset type: "printer", "filament", or "print" |
+| `name` | string | No | Save as new preset with this name. Omit to save current. |
+
+**Examples:**
+```json
+// Save changes to current preset
+{"name": "save_preset", "arguments": {
+  "type": "print"
+}}
+
+// Save as new preset
+{"name": "save_preset", "arguments": {
+  "type": "print",
+  "name": "My New Preset"
+}}
+```
+
+**Returns:**
+```json
+{
+  "status": "success",
+  "message": "Preset saved successfully",
+  "saved_preset": "My New Preset"
+}
+```
+
+**Note:** Cannot overwrite system presets. Use `clone_preset` first if you need to modify a system preset.
+
+---
+
+### delete_preset
+Delete a user-created preset. Cannot delete system/default presets or presets with dependents.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `type` | string | Yes | Preset type: "printer", "filament", or "print" |
+| `name` | string | Yes | Name of the preset to delete |
+
+**Example:**
+```json
+{"name": "delete_preset", "arguments": {
+  "type": "print",
+  "name": "My Custom Preset"
+}}
+```
+
+**Returns:**
+```json
+{
+  "status": "success",
+  "message": "Preset 'My Custom Preset' deleted successfully"
+}
+```
+
+**Safety:** System presets and presets with child dependents cannot be deleted.
+
+---
+
+### reset_preset
+Discard all unsaved changes to the current preset and revert to the last saved state.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `type` | string | Yes | Preset type: "printer", "filament", or "print" |
+
+**Example:**
+```json
+{"name": "reset_preset", "arguments": {
+  "type": "print"
+}}
+```
+
+**Returns:**
+```json
+{
+  "status": "success",
+  "message": "Preset changes discarded for print"
+}
+```
+
+**Use case:** Undo experimental changes made via `apply_config` without saving them.
+
+---
+
 ### get_valid_config_keys
 List valid configuration keys for a category.
 
@@ -829,3 +952,61 @@ Common error codes:
 | -32602 | Invalid parameters |
 | -32603 | Internal error |
 | -32601 | Unknown tool |
+
+---
+
+## Bridge Tools
+
+These tools are handled by the MCP bridge script (`orcamcp-bridge.py`), not the OrcaSlicer server. They work even when OrcaSlicer is not running.
+
+### start_orca
+Start the OrcaMCP application. Use this when OrcaMCP is not running.
+
+**Parameters:** None
+
+**Example:**
+```json
+{"name": "start_orca", "arguments": {}}
+```
+
+**Returns (success):**
+```json
+{
+  "content": [{"type": "text", "text": "OrcaMCP started successfully. Ready for commands."}],
+  "isError": false
+}
+```
+
+**Returns (already running):**
+```json
+{
+  "content": [{"type": "text", "text": "OrcaMCP is already running"}],
+  "isError": false
+}
+```
+
+**Behavior:**
+- Checks if OrcaMCP is already running (returns immediately if so)
+- Launches OrcaMCP in detached mode
+- Waits up to 30 seconds for the MCP server to become available
+- Returns success once the server responds to ping
+
+**Platform-specific launch:**
+| Platform | Method |
+|----------|--------|
+| macOS | Uses `open` command for .app bundles |
+| Windows | Uses `subprocess.Popen` with detached flags |
+| Linux | Uses `subprocess.Popen` with new session |
+
+**Executable search paths:**
+
+*macOS:*
+- `/Applications/OrcaMCP.app`
+- `~/Applications/OrcaMCP.app`
+
+*Windows:*
+- `%ProgramFiles%\OrcaMCP\orca-mcp.exe`
+- `%ProgramFiles(x86)%\OrcaMCP\orca-mcp.exe`
+- `%LOCALAPPDATA%\Programs\OrcaMCP\orca-mcp.exe`
+
+*Override:* Set `ORCAMCP_APP_PATH` environment variable to specify a custom path.
