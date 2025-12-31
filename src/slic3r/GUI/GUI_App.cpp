@@ -119,6 +119,7 @@
 
 // OrcaMCP Server for Claude Code integration
 #include "OrcaMCP/OrcaMCPServer.hpp"
+#include "OrcaMCP/MCPClientConfig.hpp"
 
 //#ifdef WIN32
 //#include "BaseException.h"
@@ -1035,6 +1036,14 @@ void GUI_App::post_init()
 
     // Start HTTP server for MCP integration
     start_http_server();
+
+    // Ensure MCP bridge script is up-to-date in user's ~/.orcamcp/ directory
+    // This auto-updates the bridge when users install a new version of OrcaMCP
+    {
+        std::string bridge_error;
+        MCPClientConfig::ensure_bridge_script_copied(bridge_error);
+        // Best-effort - don't fail startup if this doesn't work
+    }
 
     // remove old log files over LOG_FILES_MAX_NUM
     std::string log_addr = data_dir();

@@ -73,6 +73,11 @@ include(CMakeDependentOption)
 set(SLIC3R_RESOURCES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/resources")
 file(TO_NATIVE_PATH "${SLIC3R_RESOURCES_DIR}" SLIC3R_RESOURCES_DIR_WIN)
 
+# Copy bridge script from scripts/ to resources/scripts/ for app bundle
+# This ensures the canonical version in scripts/ is always used
+file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/scripts/orcamcp-bridge.py"
+     DESTINATION "${SLIC3R_RESOURCES_DIR}/scripts")
+
 if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   message(STATUS "No build type selected, default to Release")
   set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type (default Release)" FORCE)
