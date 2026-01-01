@@ -272,70 +272,16 @@ def check_orcaslicer_connection(use_cache: bool = True, timeout: float = 0.3) ->
 
 
 def get_minimal_tools_list() -> list:
-    """Return a minimal tools list when OrcaMCP isn't connected"""
-    # This is a subset of tools that helps users understand what's available
+    """Return minimal tools list when OrcaMCP isn't connected.
+
+    Only includes start_orca (handled by bridge) to avoid schema mismatches.
+    All other tools come from OrcaMCP when online - this ensures schemas
+    are always authoritative and consistent.
+    """
     return [
         {
             "name": "start_orca",
-            "description": "Start the OrcaMCP application. Use this when OrcaMCP is not running. The tool will launch OrcaMCP and wait for it to be ready.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        },
-        {
-            "name": "get_server_info",
-            "description": "Get OrcaMCP server information and connection status",
-            "inputSchema": {
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        },
-        {
-            "name": "get_scene_info",
-            "description": "Get detailed information about the current 3D printing scene including objects, plates, and print settings. Requires OrcaMCP to be running.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "with_model_object_features": {
-                        "type": "boolean",
-                        "description": "Include detailed model features like overhang, bottom area, volume"
-                    },
-                    "include_preview": {
-                        "type": "boolean",
-                        "description": "Include turntable preview image path for the current plate"
-                    },
-                    "preview_views": {
-                        "type": "integer",
-                        "description": "Number of preview views: 4 or 8 (default: 4)"
-                    },
-                    "preview_resolution": {
-                        "type": "integer",
-                        "description": "Preview resolution per view in pixels (default: 256)"
-                    }
-                },
-                "required": []
-            }
-        },
-        {
-            "name": "load_model",
-            "description": "Load a 3D model file (STL, OBJ, 3MF, STEP) into OrcaMCP. Requires OrcaMCP to be running.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "Path to the 3D model file"
-                    }
-                },
-                "required": ["file_path"]
-            }
-        },
-        {
-            "name": "slice_all",
-            "description": "Slice all plates in the current project. Requires OrcaMCP to be running.",
+            "description": "Start the OrcaMCP application. Use this first when OrcaMCP is not running. The tool will launch OrcaMCP and wait for it to be ready. Once started, all other tools become available.",
             "inputSchema": {
                 "type": "object",
                 "properties": {},
