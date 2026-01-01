@@ -11,6 +11,7 @@ blib
 xs/buildtmp
 *.o
 *.log
+**/__pycache__/
 MANIFEST.bak
 xs/MANIFEST.bak
 xs/assertlib*
