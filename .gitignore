@@ -37,6 +37,7 @@ src/OrcaSlicer-doc/
 /deps/DL_CACHE
 **/.flatpak-builder/
 resources/profiles/user/default
+resources/scripts/
 *.code-workspace
 deps_src/build/
 test.js

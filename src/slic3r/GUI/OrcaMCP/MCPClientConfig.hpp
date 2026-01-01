@@ -72,10 +72,13 @@ public:
     // Test if MCP server is responding on port 13618
     static bool test_mcp_server();
 
+    // Ensure bridge script is copied to user's ~/.orcamcp/ directory
+    // Called on startup to auto-update the bridge script when app is updated
+    static bool ensure_bridge_script_copied(std::string& error);
+
 private:
     // Shared scripts directory management
     static std::string get_shared_scripts_dir();
-    static bool ensure_bridge_script_copied(std::string& error);
 
     // Platform-specific path resolution
     static std::string resolve_config_path(const std::string& path_template);
