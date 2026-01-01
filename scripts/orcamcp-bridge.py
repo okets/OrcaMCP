@@ -35,6 +35,14 @@ import time
 import urllib.request
 import urllib.error
 
+# Import full tools schema (generated from OrcaMCP server)
+# This ensures clients always have correct schemas even when OrcaMCP is offline
+try:
+    from tools_schema import FULL_TOOLS_LIST
+except ImportError:
+    # Fallback if tools_schema.py is not available
+    FULL_TOOLS_LIST = []
+
 # Configuration
 ORCAMCP_HOST = os.environ.get("ORCAMCP_HOST", "localhost")
 ORCAMCP_PORT = int(os.environ.get("ORCAMCP_PORT", "13618"))
@@ -271,24 +279,28 @@ def check_orcaslicer_connection(use_cache: bool = True, timeout: float = 0.3) ->
         return False
 
 
-def get_minimal_tools_list() -> list:
-    """Return minimal tools list when OrcaMCP isn't connected.
+def get_full_tools_list() -> list:
+    """Return complete tools list with correct schemas.
 
-    Only includes start_orca (handled by bridge) to avoid schema mismatches.
-    All other tools come from OrcaMCP when online - this ensures schemas
-    are always authoritative and consistent.
+    Uses FULL_TOOLS_LIST from tools_schema.py (generated from OrcaMCP server)
+    plus start_orca (handled by bridge). This ensures clients always have
+    correct schemas even when OrcaMCP is offline - tools will return helpful
+    errors when called if OrcaMCP isn't running.
     """
-    return [
-        {
-            "name": "start_orca",
-            "description": "Start the OrcaMCP application. Use this first when OrcaMCP is not running. The tool will launch OrcaMCP and wait for it to be ready. Once started, all other tools become available.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
+    # start_orca is always first - it's the entry point when OrcaMCP is offline
+    start_orca = {
+        "name": "start_orca",
+        "description": "Start the OrcaMCP application. Use this first when OrcaMCP is not running. The tool will launch OrcaMCP and wait for it to be ready. Once started, all other tools become available.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "required": []
         }
-    ]
+    }
+
+    # Return start_orca + all tools from schema (excluding any duplicate start_orca)
+    other_tools = [t for t in FULL_TOOLS_LIST if t.get("name") != "start_orca"]
+    return [start_orca] + other_tools
 
 
 def handle_local_request(request: dict) -> dict | None:
@@ -344,7 +356,7 @@ def handle_local_request(request: dict) -> dict | None:
         is_connected = check_orcaslicer_connection(timeout=0.1)
         if not is_connected:
             log_debug("Quick startup: returning minimal tools list")
-            return make_success_response(request_id, {"tools": get_minimal_tools_list()})
+            return make_success_response(request_id, {"tools": get_full_tools_list()})
         # Connected - let it through to get full tools list
         return None
 
@@ -360,7 +372,7 @@ def handle_local_request(request: dict) -> dict | None:
 
     if method == "tools/list":
         # Return cached tools if available, otherwise minimal list
-        tools = CACHED_TOOLS if CACHED_TOOLS else get_minimal_tools_list()
+        tools = CACHED_TOOLS if CACHED_TOOLS else get_full_tools_list()
         return make_success_response(request_id, {"tools": tools})
 
     elif method == "tools/call":
