@@ -298,7 +298,24 @@ def get_minimal_tools_list() -> list:
             "description": "Get detailed information about the current 3D printing scene including objects, plates, and print settings. Requires OrcaMCP to be running.",
             "inputSchema": {
                 "type": "object",
-                "properties": {},
+                "properties": {
+                    "with_model_object_features": {
+                        "type": "boolean",
+                        "description": "Include detailed model features like overhang, bottom area, volume"
+                    },
+                    "include_preview": {
+                        "type": "boolean",
+                        "description": "Include turntable preview image path for the current plate"
+                    },
+                    "preview_views": {
+                        "type": "integer",
+                        "description": "Number of preview views: 4 or 8 (default: 4)"
+                    },
+                    "preview_resolution": {
+                        "type": "integer",
+                        "description": "Preview resolution per view in pixels (default: 256)"
+                    }
+                },
                 "required": []
             }
         },
