@@ -69,6 +69,9 @@ public:
     // Get the bridge script path (bundled with app)
     static std::string get_bridge_script_path();
 
+    // Get MCP server config as JSON string for copying to project .mcp.json
+    static std::string get_mcp_server_json();
+
     // Test if MCP server is responding on port 13618
     static bool test_mcp_server();
 

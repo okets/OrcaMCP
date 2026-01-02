@@ -8,6 +8,7 @@
 #include "libslic3r/AppConfig.hpp"
 #include "OrcaMCP/MCPClientConfig.hpp"
 #include <wx/language.h>
+#include <wx/clipbrd.h>
 #include "OG_CustomCtrl.hpp"
 #include "wx/graphics.h"
 #include <wx/listimpl.cpp>
@@ -1556,8 +1557,8 @@ void PreferencesDialog::create_mcp_clients_page(wxFlexGridSizer* g_sizer)
         g_sizer->Add(sizer, 0, wxEXPAND | wxTOP, FromDIP(4));
     }
 
-    //// MCP CLIENTS > AI Agents
-    g_sizer->Add(create_item_title(_L("AI Agents")), 1, wxEXPAND);
+    //// MCP CLIENTS > Global Install
+    g_sizer->Add(create_item_title(_L("Global Install")), 1, wxEXPAND);
 
     // Get all supported clients
     auto clients = MCPClientConfig::get_all_clients();
@@ -1666,6 +1667,41 @@ void PreferencesDialog::create_mcp_clients_page(wxFlexGridSizer* g_sizer)
         m_mcp_client_ui[client_id] = {status_label, button};
 
         g_sizer->Add(row_sizer, 0, wxEXPAND | wxTOP, FromDIP(8));
+    }
+
+    //// MCP CLIENTS > Per-Project Configuration
+    g_sizer->Add(create_item_title(_L("Per-Project Configuration")), 1, wxEXPAND);
+
+    {
+        wxBoxSizer* project_sizer = new wxBoxSizer(wxHORIZONTAL);
+        project_sizer->AddSpacer(FromDIP(DESIGN_LEFT_MARGIN));
+
+        auto label = new wxStaticText(m_parent, wxID_ANY, _L("Copy config for .mcp.json:"));
+        label->SetForegroundColour(DESIGN_GRAY900_COLOR);
+        label->SetFont(::Label::Body_14);
+        project_sizer->Add(label, 0, wxALIGN_CENTER_VERTICAL);
+
+        auto copy_btn = new Button(m_parent, _L("Copy JSON"));
+        copy_btn->SetMinSize(wxSize(FromDIP(90), FromDIP(28)));
+        copy_btn->SetFont(::Label::Body_14);
+        copy_btn->Bind(wxEVT_BUTTON, [copy_btn](wxCommandEvent&) {
+            std::string json = MCPClientConfig::get_mcp_server_json();
+            if (wxTheClipboard->Open()) {
+                wxTheClipboard->SetData(new wxTextDataObject(wxString::FromUTF8(json)));
+                wxTheClipboard->Close();
+            }
+            copy_btn->SetLabel(_L("Copied!"));
+            auto timer = new wxTimer();
+            timer->Bind(wxEVT_TIMER, [copy_btn, timer](wxTimerEvent&) {
+                copy_btn->SetLabel(_L("Copy JSON"));
+                timer->Stop();
+                delete timer;
+            });
+            timer->StartOnce(2000);
+        });
+        project_sizer->Add(copy_btn, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(10));
+
+        g_sizer->Add(project_sizer, 0, wxEXPAND | wxTOP, FromDIP(8));
     }
 
     // Note at bottom

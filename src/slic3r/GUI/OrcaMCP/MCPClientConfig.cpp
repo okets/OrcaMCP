@@ -303,6 +303,27 @@ std::string MCPClientConfig::get_bridge_script_path()
     return script_path.string();
 }
 
+// Get MCP server config as JSON string for copying to project .mcp.json
+std::string MCPClientConfig::get_mcp_server_json()
+{
+    std::string bridge_path = get_bridge_script_path();
+
+    // Escape backslashes for JSON string
+    std::string escaped_path;
+    for (char c : bridge_path) {
+        if (c == '\\') {
+            escaped_path += "\\\\";
+        } else {
+            escaped_path += c;
+        }
+    }
+
+    return "\"orca-slicer\": {\n"
+           "  \"command\": \"python3\",\n"
+           "  \"args\": [\"" + escaped_path + "\"]\n"
+           "}";
+}
+
 // Get all supported clients with resolved paths
 std::vector<MCPClientInfo> MCPClientConfig::get_all_clients()
 {
