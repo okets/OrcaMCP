@@ -137,6 +137,8 @@ jobs:
             | Linux (x64) | `OrcaMCP-${{ steps.version.outputs.tag }}-linux-x64.AppImage` |
             | Windows (x64) | `OrcaMCP-${{ steps.version.outputs.tag }}-windows-x64-installer.exe` |
 
+            > **Windows Users:** The installer is not code-signed. When downloading, your browser may warn you - click "Keep" or "Keep anyway". When running, Windows SmartScreen may appear - click "More info" then "Run anyway".
+
             ### What's Changed
 
             See below for auto-generated changelog.
