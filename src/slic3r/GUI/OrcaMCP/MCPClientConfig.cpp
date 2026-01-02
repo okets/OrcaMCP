@@ -238,14 +238,32 @@ std::string MCPClientConfig::get_shared_scripts_dir()
 }
 
 // Ensure bridge script is copied from app bundle to shared location
+// Helper: copy file if newer than destination
+static bool copy_file_if_newer(const boost::filesystem::path& src,
+                               const boost::filesystem::path& dst,
+                               std::string& error)
+{
+    if (!boost::filesystem::exists(src)) {
+        error = "File not found: " + src.string();
+        return false;
+    }
+
+    bool should_copy = !boost::filesystem::exists(dst);
+    if (!should_copy) {
+        should_copy = (boost::filesystem::last_write_time(src) >
+                       boost::filesystem::last_write_time(dst));
+    }
+
+    if (should_copy) {
+        boost::filesystem::copy_file(src, dst,
+            boost::filesystem::copy_option::overwrite_if_exists);
+    }
+    return true;
+}
+
 bool MCPClientConfig::ensure_bridge_script_copied(std::string& error)
 {
     try {
-        // Source: app bundle
-        boost::filesystem::path src =
-            boost::filesystem::path(resources_dir()) / "scripts" / "orcamcp-bridge.py";
-
-        // Destination: shared location
         std::string shared_dir_str = get_shared_scripts_dir();
         if (shared_dir_str.empty()) {
             error = "Could not determine home directory";
@@ -253,36 +271,26 @@ bool MCPClientConfig::ensure_bridge_script_copied(std::string& error)
         }
 
         boost::filesystem::path dst_dir = shared_dir_str;
-        boost::filesystem::path dst = dst_dir / "orcamcp-bridge.py";
-
-        // Create directory if needed
         if (!boost::filesystem::exists(dst_dir)) {
             boost::filesystem::create_directories(dst_dir);
         }
 
-        // Check if source exists
-        if (!boost::filesystem::exists(src)) {
-            error = "Bridge script not found in app bundle: " + src.string();
+        boost::filesystem::path src_dir =
+            boost::filesystem::path(resources_dir()) / "scripts";
+
+        // Copy both bridge script and tools schema
+        if (!copy_file_if_newer(src_dir / "orcamcp-bridge.py",
+                                dst_dir / "orcamcp-bridge.py", error))
             return false;
-        }
 
-        // Copy if destination doesn't exist or is older than source
-        bool should_copy = !boost::filesystem::exists(dst);
-        if (!should_copy) {
-            auto src_time = boost::filesystem::last_write_time(src);
-            auto dst_time = boost::filesystem::last_write_time(dst);
-            should_copy = (src_time > dst_time);
-        }
-
-        if (should_copy) {
-            boost::filesystem::copy_file(src, dst,
-                boost::filesystem::copy_option::overwrite_if_exists);
-        }
+        if (!copy_file_if_newer(src_dir / "tools_schema.py",
+                                dst_dir / "tools_schema.py", error))
+            return false;
 
         return true;
     }
     catch (const std::exception& e) {
-        error = "Failed to copy bridge script: " + std::string(e.what());
+        error = "Failed to copy bridge scripts: " + std::string(e.what());
         return false;
     }
 }

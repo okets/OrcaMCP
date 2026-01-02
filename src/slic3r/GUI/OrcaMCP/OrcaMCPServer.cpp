@@ -336,7 +336,7 @@ void OrcaMCPServer::register_builtin_tools()
     // get_server_info - Get comprehensive server documentation
     register_tool({
         "get_server_info",
-        "Get comprehensive documentation about the OrcaSlicer MCP server, available tools, concepts, and workflows",
+        "Get documentation about tools, concepts, and workflows",
         {
             {"type", "object"},
             {"properties", nlohmann::json::object()}
@@ -568,7 +568,8 @@ void OrcaMCPServer::register_builtin_tools()
                     }},
                     {"plates", {
                         {"description", "OrcaSlicer supports multiple build plates in a single project. Each plate can contain different objects and be sliced independently."},
-                        {"indexing", "Plates are 0-indexed in the API (plate_index: 0 is the first plate)"}
+                        {"indexing", "Plates are 0-indexed in the API (plate_index: 0 is the first plate)"},
+                        {"delete_constraint", "Cannot delete the last remaining plate. Objects on deleted plate are moved to another plate."}
                     }},
                     {"coordinate_system", {
                         {"origin", "CORNER origin (0,0) = front-left of bed. NOT center origin!"},
@@ -617,6 +618,7 @@ void OrcaMCPServer::register_builtin_tools()
                     {"information", {
                         {"get_server_info", "This documentation"},
                         {"get_scene_info", "Get current project state: plates, objects, positions"},
+                        {"get_object_info", "Get single object info. Faster than get_scene_info for targeted queries."},
                         {"get_presets", "List all available presets (printer, filament, print)"},
                         {"get_edited_presets", "Get currently active presets with their config values and dirty_options"},
                         {"get_slicing_status", "Check if slicing is in progress"}
@@ -626,8 +628,9 @@ void OrcaMCPServer::register_builtin_tools()
                         {"apply_config", "Modify individual settings (creates dirty values)"},
                         {"clone_preset", "Duplicate an existing preset with a new name"},
                         {"save_preset", "Persist dirty changes to disk"},
-                        {"delete_preset", "Remove user-created presets"},
-                        {"reset_preset", "Discard dirty changes without saving"}
+                        {"delete_preset", "Remove user-created presets. Cannot delete system presets or presets with dependents."},
+                        {"reset_preset", "Discard dirty changes without saving"},
+                        {"get_valid_config_keys", "Discover available setting keys by category"}
                     }},
                     {"model_operations", {
                         {"load_model", "Import STL, OBJ, STEP, 3MF model files"},
@@ -645,16 +648,21 @@ void OrcaMCPServer::register_builtin_tools()
                         {"mirror_object", "Mirror an object across X, Y, or Z axis"},
                         {"clone_object", "Copy an object to current or specified plate. duplicate=false (default) creates instances, duplicate=true creates independent objects. destination_plate specifies where clones go (defaults to current plate)."},
                         {"delete_object", "Remove an object from the scene"},
+                        {"rename_object", "Rename an object for identification"},
                         {"flatten_object", "Auto-orient object to lay flat on best face"},
-                        {"cut_object", "Cut object horizontally at Z height (keep above/below/both)"}
+                        {"cut_object", "Cut object horizontally at Z height (keep above/below/both)"},
+                        {"transform_objects", "Batch transform multiple objects in one call"}
                     }},
                     {"slicing_export", {
                         {"slice_all", "Start slicing (async, poll get_slicing_status)"},
+                        {"get_print_estimate", "Get print time and filament usage after slicing"},
                         {"export_gcode", "Export sliced G-code to file"},
-                        {"export_3mf", "Export project as 3MF file"}
+                        {"export_3mf", "Export project as 3MF file"},
+                        {"save_project", "Save current project"}
                     }},
                     {"visualization", {
-                        {"render_plate_view", "Render plate thumbnail from custom camera angles (use save_to_file=true for file paths instead of base64)"}
+                        {"render_plate_view", "Render plate thumbnail from custom camera angles (use save_to_file=true for file paths instead of base64)"},
+                        {"get_preview_base64", "Convert preview to base64. Only for agents without filesystem access - Claude Code should use Read tool instead."}
                     }},
                     {"per_object_settings", {
                         {"get_object_config", "Get per-object setting overrides for a specific object"},
@@ -667,6 +675,11 @@ void OrcaMCPServer::register_builtin_tools()
                     {"variable_layer_height", {
                         {"apply_adaptive_layer_height", "Apply VLH to object based on geometry. Quality 0.0-1.0 controls layer variation."},
                         {"clear_adaptive_layer_height", "Remove VLH from object, revert to fixed layer height."}
+                    }},
+                    {"plate_management", {
+                        {"add_plate", "Create a new plate"},
+                        {"select_plate", "Switch to a plate by index"},
+                        {"delete_plate", "Delete a plate. Cannot delete last plate. Objects moved to another plate."}
                     }},
                     {"printer_management", {
                         {"get_printers", "List printers: Bambu (local/cloud), OctoPrint/Klipper (current_print_host)"},
@@ -768,25 +781,25 @@ void OrcaMCPServer::register_builtin_tools()
     // get_scene_info - Get current project state
     register_tool({
         "get_scene_info",
-        "Get current project state including plates, model objects, and hash code for change detection. USE THIS FIRST to get object_ids before any transform operations. Use with_model_object_features=false to reduce response size.",
+        "Get current project state: plates, objects, positions. Call first to get object_ids.",
         {
             {"type", "object"},
             {"properties", {
                 {"with_model_object_features", {
                     {"type", "boolean"},
-                    {"description", "Include detailed model features like overhang, bottom area, volume"}
+                    {"description", "Include overhang, volume, etc."}
                 }},
                 {"include_preview", {
                     {"type", "boolean"},
-                    {"description", "Include turntable preview image path for the current plate"}
+                    {"description", "Return turntable preview path"}
                 }},
                 {"preview_views", {
                     {"type", "integer"},
-                    {"description", "Number of preview views: 4 or 8 (default: 4)"}
+                    {"description", "Views: 4 or 8 (default: 4)"}
                 }},
                 {"preview_resolution", {
                     {"type", "integer"},
-                    {"description", "Preview resolution per view in pixels (default: 256)"}
+                    {"description", "Resolution in pixels (default: 256)"}
                 }}
             }}
         },
@@ -853,39 +866,39 @@ void OrcaMCPServer::register_builtin_tools()
     // render_plate_view - Render plate thumbnail
     register_tool({
         "render_plate_view",
-        "Render plate thumbnail from custom camera angles. IMPORTANT: Always use save_to_file=true to get file paths instead of base64 (saves ~5KB per image). Then use Read tool to view the image. Good camera position: [300, -200, 150] target: [155, 155, 30]",
+        "Render plate from custom camera angles. Use save_to_file=true for file paths.",
         {
             {"type", "object"},
             {"properties", {
                 {"plate_index", {
                     {"type", "integer"},
-                    {"description", "Index of the plate to render (0-based)"}
+                    {"description", "Plate index (0-based)"}
                 }},
                 {"save_to_file", {
                     {"type", "boolean"},
-                    {"description", "If true, saves images to /tmp/ and returns file paths instead of base64 (reduces token usage)"},
+                    {"description", "Return file paths instead of base64 (default: false)"},
                     {"default", false}
                 }},
                 {"resolution", {
                     {"type", "integer"},
-                    {"description", "Image resolution in pixels (width=height). Default 512. Use 128 or 256 for faster renders."},
+                    {"description", "Resolution in pixels (default: 512)"},
                     {"default", 512}
                 }},
                 {"views", {
                     {"type", "array"},
-                    {"description", "Array of view configurations"},
+                    {"description", "View configurations"},
                     {"items", {
                         {"type", "object"},
                         {"properties", {
                             {"camera_position", {
                                 {"type", "array"},
                                 {"items", {{"type", "number"}}},
-                                {"description", "Camera position [x, y, z]"}
+                                {"description", "[x, y, z]"}
                             }},
                             {"target", {
                                 {"type", "array"},
                                 {"items", {{"type", "number"}}},
-                                {"description", "Camera target point [x, y, z]"}
+                                {"description", "[x, y, z]"}
                             }}
                         }}
                     }}
@@ -904,15 +917,13 @@ void OrcaMCPServer::register_builtin_tools()
     // get_preview_base64 - Convert preview image to base64 (for remote clients)
     register_tool({
         "get_preview_base64",
-        "Convert a preview image file to base64 data URI. "
-        "Only use this tool if you do NOT have direct filesystem access to read the preview_path. "
-        "Agents with local filesystem access (like Claude Code CLI) should use the Read tool instead.",
+        "Convert preview image to base64. Use only if no filesystem access.",
         {
             {"type", "object"},
             {"properties", {
                 {"path", {
                     {"type", "string"},
-                    {"description", "Path to the preview image file (from preview_path in other tool responses)"}
+                    {"description", "Path to preview image file"}
                 }}
             }},
             {"required", {"path"}}
@@ -934,11 +945,11 @@ void OrcaMCPServer::register_builtin_tools()
                 {"type", {
                     {"type", "string"},
                     {"enum", {"printer", "filament", "print"}},
-                    {"description", "Type of preset to select"}
+                    {"description", "Preset type"}
                 }},
                 {"name", {
                     {"type", "string"},
-                    {"description", "Name of the preset to select"}
+                    {"description", "Preset name"}
                 }}
             }},
             {"required", {"type", "name"}}
@@ -965,27 +976,27 @@ void OrcaMCPServer::register_builtin_tools()
     // apply_config - Apply print settings
     register_tool({
         "apply_config",
-        "Apply print settings. Can batch multiple settings in one call. Settings become 'dirty' (unsaved). Types: 'print' for slicing settings, 'filament' for temperatures, 'printer' for machine settings.",
+        "Apply print settings. Batch multiple in one call. Types: print, filament, printer.",
         {
             {"type", "object"},
             {"properties", {
                 {"settings", {
                     {"type", "array"},
-                    {"description", "Array of settings to apply"},
+                    {"description", "Settings array"},
                     {"items", {
                         {"type", "object"},
                         {"properties", {
                             {"type", {
                                 {"type", "string"},
                                 {"enum", {"print", "filament", "printer"}},
-                                {"description", "Type of setting"}
+                                {"description", "Setting type"}
                             }},
                             {"key", {
                                 {"type", "string"},
-                                {"description", "Setting key name"}
+                                {"description", "Key name"}
                             }},
                             {"value", {
-                                {"description", "Setting value (type depends on the setting)"}
+                                {"description", "Value"}
                             }}
                         }},
                         {"required", {"type", "key", "value"}}
@@ -1018,22 +1029,22 @@ void OrcaMCPServer::register_builtin_tools()
     // clone_preset - Clone/duplicate an existing preset
     register_tool({
         "clone_preset",
-        "Clone an existing preset with a new name. Creates a user preset from any source (including system presets).",
+        "Clone a preset with a new name.",
         {
             {"type", "object"},
             {"properties", {
                 {"type", {
                     {"type", "string"},
                     {"enum", {"printer", "filament", "print"}},
-                    {"description", "Type of preset to clone"}
+                    {"description", "Preset type"}
                 }},
                 {"source_name", {
                     {"type", "string"},
-                    {"description", "Name of the preset to clone"}
+                    {"description", "Source preset name"}
                 }},
                 {"new_name", {
                     {"type", "string"},
-                    {"description", "Name for the new cloned preset"}
+                    {"description", "New preset name"}
                 }}
             }},
             {"required", {"type", "source_name", "new_name"}}
@@ -1073,18 +1084,18 @@ void OrcaMCPServer::register_builtin_tools()
     // save_preset - Save dirty changes to a preset
     register_tool({
         "save_preset",
-        "Save the current dirty changes to a preset. If name is provided, saves as a new preset with that name. Otherwise saves to the current preset (fails for system presets).",
+        "Save dirty changes to preset. Optionally save as new name.",
         {
             {"type", "object"},
             {"properties", {
                 {"type", {
                     {"type", "string"},
                     {"enum", {"printer", "filament", "print"}},
-                    {"description", "Type of preset to save"}
+                    {"description", "Preset type"}
                 }},
                 {"name", {
                     {"type", "string"},
-                    {"description", "Optional: Save as a new preset with this name. If omitted, saves to current preset."}
+                    {"description", "Save as new name. If omitted, saves to current preset."}
                 }}
             }},
             {"required", {"type"}}
@@ -1124,18 +1135,18 @@ void OrcaMCPServer::register_builtin_tools()
     // delete_preset - Delete a user-created preset
     register_tool({
         "delete_preset",
-        "Delete a user-created preset. Cannot delete system/default presets or presets with dependents.",
+        "Delete a user-created preset.",
         {
             {"type", "object"},
             {"properties", {
                 {"type", {
                     {"type", "string"},
                     {"enum", {"printer", "filament", "print"}},
-                    {"description", "Type of preset to delete"}
+                    {"description", "Preset type"}
                 }},
                 {"name", {
                     {"type", "string"},
-                    {"description", "Name of the preset to delete"}
+                    {"description", "Preset name"}
                 }}
             }},
             {"required", {"type", "name"}}
@@ -1173,14 +1184,14 @@ void OrcaMCPServer::register_builtin_tools()
     // reset_preset - Discard dirty changes and revert to saved state
     register_tool({
         "reset_preset",
-        "Discard all unsaved changes to the current preset and revert to the last saved state.",
+        "Discard unsaved preset changes.",
         {
             {"type", "object"},
             {"properties", {
                 {"type", {
                     {"type", "string"},
                     {"enum", {"printer", "filament", "print"}},
-                    {"description", "Type of preset to reset"}
+                    {"description", "Preset type"}
                 }}
             }},
             {"required", {"type"}}
@@ -1225,7 +1236,7 @@ void OrcaMCPServer::register_builtin_tools()
             {"properties", {
                 {"include_preview", {
                     {"type", "boolean"},
-                    {"description", "Include a preview image path to visually verify the new orientations"}
+                    {"description", "Return turntable preview path"}
                 }}
             }}
         },
@@ -1261,7 +1272,7 @@ void OrcaMCPServer::register_builtin_tools()
             {"properties", {
                 {"include_preview", {
                     {"type", "boolean"},
-                    {"description", "Include a preview image path to visually verify the arrangement"}
+                    {"description", "Return turntable preview path"}
                 }}
             }}
         },
@@ -1291,13 +1302,13 @@ void OrcaMCPServer::register_builtin_tools()
     // undo - Undo last operation
     register_tool({
         "undo",
-        "Undo the last operation. Can call multiple times. Use after cut_object or delete_object to recover. Note: History is limited, save project before major changes.",
+        "Undo the last operation.",
         {
             {"type", "object"},
             {"properties", {
                 {"include_preview", {
                     {"type", "boolean"},
-                    {"description", "Include a preview image path to see the state after undo"}
+                    {"description", "Return turntable preview path"}
                 }}
             }}
         },
@@ -1325,7 +1336,7 @@ void OrcaMCPServer::register_builtin_tools()
             {"properties", {
                 {"include_preview", {
                     {"type", "boolean"},
-                    {"description", "Include a preview image path to see the state after redo"}
+                    {"description", "Return turntable preview path"}
                 }}
             }}
         },
@@ -1349,13 +1360,13 @@ void OrcaMCPServer::register_builtin_tools()
     // get_object_config - Get per-object settings
     register_tool({
         "get_object_config",
-        "Get per-object setting overrides for a specific object. Returns only settings that differ from global.",
+        "Get per-object setting overrides.",
         {
             {"type", "object"},
             {"properties", {
                 {"object_id", {
                     {"type", "integer"},
-                    {"description", "Index of the object in the model (0-based)"}
+                    {"description", "Object index (0-based)"}
                 }}
             }},
             {"required", {"object_id"}}
@@ -1391,22 +1402,22 @@ void OrcaMCPServer::register_builtin_tools()
     // set_object_config - Set per-object settings (supports batch)
     register_tool({
         "set_object_config",
-        "Set per-object setting overrides. Supports batch operations via configs array.",
+        "Set per-object setting overrides.",
         {
             {"type", "object"},
             {"properties", {
                 {"object_id", {
                     {"type", "integer"},
-                    {"description", "Index of the object in the model (0-based). Use configs for batch operations."}
+                    {"description", "Object index (0-based)"}
                 }},
                 {"settings", {
                     {"type", "array"},
-                    {"description", "Array of settings to apply (used with object_id)"},
+                    {"description", "Settings array"},
                     {"items", {
                         {"type", "object"},
                         {"properties", {
                             {"key", {{"type", "string"}}},
-                            {"value", {{"type", "string"}, {"description", "Setting value as string"}}}
+                            {"value", {{"type", "string"}, {"description", "Value"}}}
                         }},
                         {"required", {"key", "value"}},
                         {"additionalProperties", false}
@@ -1414,7 +1425,7 @@ void OrcaMCPServer::register_builtin_tools()
                 }},
                 {"configs", {
                     {"type", "array"},
-                    {"description", "Array of per-object configs for batch operations. Each item has object_id and settings."},
+                    {"description", "Batch configs array"},
                     {"items", {
                         {"type", "object"},
                         {"properties", {
@@ -1530,17 +1541,17 @@ void OrcaMCPServer::register_builtin_tools()
     // reset_object_config - Remove per-object overrides
     register_tool({
         "reset_object_config",
-        "Remove per-object setting overrides, reverting to global settings. If keys not specified, removes all overrides.",
+        "Remove per-object setting overrides.",
         {
             {"type", "object"},
             {"properties", {
                 {"object_id", {
                     {"type", "integer"},
-                    {"description", "Index of the object in the model (0-based)"}
+                    {"description", "Object index (0-based)"}
                 }},
                 {"keys", {
                     {"type", "array"},
-                    {"description", "Optional list of setting keys to reset. If empty, resets all overrides."},
+                    {"description", "Keys to reset. If omitted, resets all overrides."},
                     {"items", {{"type", "string"}}}
                 }}
             }},
@@ -1598,17 +1609,17 @@ void OrcaMCPServer::register_builtin_tools()
     // get_valid_config_keys - Get valid configuration keys for settings
     register_tool({
         "get_valid_config_keys",
-        "Get valid configuration keys for per-object settings, print settings, etc. Helps discover available settings.",
+        "Get valid configuration keys.",
         {
             {"type", "object"},
             {"properties", {
                 {"category", {
                     {"type", "string"},
-                    {"description", "Category of keys to return: 'per_object' (default), 'print', 'filament', 'printer', or 'all'"}
+                    {"description", "per_object, print, filament, printer, or all"}
                 }},
                 {"include_descriptions", {
                     {"type", "boolean"},
-                    {"description", "Include descriptions for each key (default: false, reduces response size)"}
+                    {"description", "Include key descriptions"}
                 }}
             }}
         },
@@ -1719,13 +1730,13 @@ void OrcaMCPServer::register_builtin_tools()
     // get_object_layer_ranges - Get layer-range-specific configs
     register_tool({
         "get_object_layer_ranges",
-        "Get layer-range-specific settings for an object. These allow different settings at different Z heights.",
+        "Get layer-range settings for an object.",
         {
             {"type", "object"},
             {"properties", {
                 {"object_id", {
                     {"type", "integer"},
-                    {"description", "Index of the object in the model (0-based)"}
+                    {"description", "Object index (0-based)"}
                 }}
             }},
             {"required", {"object_id"}}
@@ -1769,30 +1780,30 @@ void OrcaMCPServer::register_builtin_tools()
     // set_object_layer_range - Set layer-range-specific settings
     register_tool({
         "set_object_layer_range",
-        "Set settings for a specific Z height range within an object. Creates or updates the range config.",
+        "Set settings for a Z height range.",
         {
             {"type", "object"},
             {"properties", {
                 {"object_id", {
                     {"type", "integer"},
-                    {"description", "Index of the object in the model (0-based)"}
+                    {"description", "Object index (0-based)"}
                 }},
                 {"z_min", {
                     {"type", "number"},
-                    {"description", "Minimum Z height of the range in mm"}
+                    {"description", "Min Z height (mm)"}
                 }},
                 {"z_max", {
                     {"type", "number"},
-                    {"description", "Maximum Z height of the range in mm"}
+                    {"description", "Max Z height (mm)"}
                 }},
                 {"settings", {
                     {"type", "array"},
-                    {"description", "Array of settings to apply to this layer range"},
+                    {"description", "Settings array"},
                     {"items", {
                         {"type", "object"},
                         {"properties", {
-                            {"key", {{"type", "string"}, {"description", "Setting key name"}}},
-                            {"value", {{"type", "string"}, {"description", "Setting value as string"}}}
+                            {"key", {{"type", "string"}, {"description", "Key name"}}},
+                            {"value", {{"type", "string"}, {"description", "Value"}}}
                         }},
                         {"required", {"key", "value"}},
                         {"additionalProperties", false}
@@ -1843,21 +1854,21 @@ void OrcaMCPServer::register_builtin_tools()
     // delete_object_layer_range - Remove layer-range config
     register_tool({
         "delete_object_layer_range",
-        "Remove a layer range config. If z_min and z_max not specified, removes ALL layer ranges.",
+        "Remove layer range config. If z_min/z_max omitted, removes ALL ranges.",
         {
             {"type", "object"},
             {"properties", {
                 {"object_id", {
                     {"type", "integer"},
-                    {"description", "Index of the object in the model (0-based)"}
+                    {"description", "Object index (0-based)"}
                 }},
                 {"z_min", {
                     {"type", "number"},
-                    {"description", "Minimum Z height of the range to delete (optional)"}
+                    {"description", "Min Z height (mm). Omit both to delete all ranges."}
                 }},
                 {"z_max", {
                     {"type", "number"},
-                    {"description", "Maximum Z height of the range to delete (optional)"}
+                    {"description", "Max Z height (mm). Omit both to delete all ranges."}
                 }}
             }},
             {"required", {"object_id"}}
@@ -1908,26 +1919,26 @@ void OrcaMCPServer::register_builtin_tools()
     // apply_adaptive_layer_height - Apply VLH to objects (supports batch)
     register_tool({
         "apply_adaptive_layer_height",
-        "Apply automatic Variable Layer Height to object(s) based on surface geometry. Supports batch operations via object_ids array.",
+        "Apply Variable Layer Height based on geometry.",
         {
             {"type", "object"},
             {"properties", {
                 {"object_id", {
                     {"type", "integer"},
-                    {"description", "Single object index (0-based). Use object_ids for batch operations."}
+                    {"description", "Object index (0-based)"}
                 }},
                 {"object_ids", {
                     {"type", "array"},
                     {"items", {{"type", "integer"}}},
-                    {"description", "Array of object indices to apply VLH to (0-based). Preferred for batch operations."}
+                    {"description", "Object indices for batch"}
                 }},
                 {"quality", {
                     {"type", "number"},
-                    {"description", "Quality factor from 0.0 to 1.0. Lower values (0.0) favor speed with larger layers. Higher values (1.0) favor quality with finer layers on curves. Default: 0.5"}
+                    {"description", "0.0 (speed) to 1.0 (quality). Default: 0.5"}
                 }},
                 {"include_preview", {
                     {"type", "boolean"},
-                    {"description", "Include a preview image path in the response to visually verify the result"}
+                    {"description", "Return turntable preview path"}
                 }}
             }}
         },
@@ -2057,18 +2068,18 @@ void OrcaMCPServer::register_builtin_tools()
     // clear_adaptive_layer_height - Remove VLH from objects (supports batch)
     register_tool({
         "clear_adaptive_layer_height",
-        "Remove Variable Layer Height from object(s), reverting to fixed layer height. Supports batch operations.",
+        "Remove Variable Layer Height, revert to fixed.",
         {
             {"type", "object"},
             {"properties", {
                 {"object_id", {
                     {"type", "integer"},
-                    {"description", "Single object index (0-based). Use object_ids for batch operations."}
+                    {"description", "Object index (0-based)"}
                 }},
                 {"object_ids", {
                     {"type", "array"},
                     {"items", {{"type", "integer"}}},
-                    {"description", "Array of object indices to clear VLH from (0-based)."}
+                    {"description", "Object indices for batch"}
                 }},
                 {"include_preview", {
                     {"type", "boolean"},
@@ -2159,7 +2170,7 @@ void OrcaMCPServer::register_builtin_tools()
     // slice_all - Start slicing
     register_tool({
         "slice_all",
-        "Start slicing all plates. ASYNC: Returns immediately. Poll get_slicing_status every 2-3 seconds until is_slicing=false, then export_gcode.",
+        "Start slicing all plates. Poll get_slicing_status until done.",
         {
             {"type", "object"},
             {"properties", nlohmann::json::object()}
@@ -2189,13 +2200,13 @@ void OrcaMCPServer::register_builtin_tools()
     // export_gcode - Export G-code
     register_tool({
         "export_gcode",
-        "Export G-code to file. If output_path is provided, exports silently without dialog. Requires slicing to be complete.",
+        "Export G-code. Requires slicing complete.",
         {
             {"type", "object"},
             {"properties", {
                 {"output_path", {
                     {"type", "string"},
-                    {"description", "Output file path. If provided, exports silently. If omitted, opens file dialog."}
+                    {"description", "Output path. If omitted, opens file dialog."}
                 }}
             }}
         },
@@ -2269,13 +2280,13 @@ void OrcaMCPServer::register_builtin_tools()
     // export_3mf - Export project as 3MF
     register_tool({
         "export_3mf",
-        "Export project as 3MF file. If output_path is provided, exports silently without dialog.",
+        "Export project as 3MF file.",
         {
             {"type", "object"},
             {"properties", {
                 {"output_path", {
                     {"type", "string"},
-                    {"description", "Output file path. If provided, exports silently. If omitted, opens file dialog."}
+                    {"description", "Output path. If omitted, opens file dialog."}
                 }}
             }}
         },
@@ -2344,13 +2355,13 @@ void OrcaMCPServer::register_builtin_tools()
     // save_project - Save current project
     register_tool({
         "save_project",
-        "Save current project. If project has a filename, saves silently. Otherwise shows save dialog.",
+        "Save current project.",
         {
             {"type", "object"},
             {"properties", {
                 {"save_as", {
                     {"type", "boolean"},
-                    {"description", "If true, always shows save dialog. If false (default), saves to existing filename or shows dialog if new project."}
+                    {"description", "If true, shows save dialog. If false (default), saves silently if file exists."}
                 }}
             }}
         },
@@ -2389,11 +2400,11 @@ void OrcaMCPServer::register_builtin_tools()
             {"properties", {
                 {"file_path", {
                     {"type", "string"},
-                    {"description", "Absolute path to the 3D model file to import"}
+                    {"description", "Path to model file"}
                 }},
                 {"include_preview", {
                     {"type", "boolean"},
-                    {"description", "Include a preview image path to visually verify the loaded model"}
+                    {"description", "Return turntable preview path"}
                 }}
             }},
             {"required", {"file_path"}}
@@ -2466,7 +2477,7 @@ void OrcaMCPServer::register_builtin_tools()
     // get_print_estimate - Get print time and filament estimates after slicing
     register_tool({
         "get_print_estimate",
-        "Get print time estimates and filament usage after slicing completes. Call after slice_all finishes.",
+        "Get print time and filament estimates.",
         {
             {"type", "object"},
             {"properties", nlohmann::json::object()}
@@ -2530,7 +2541,7 @@ void OrcaMCPServer::register_builtin_tools()
     // new_project - Create new project
     register_tool({
         "new_project",
-        "Create a new empty project, clearing all existing objects. Automatically skips save confirmation dialog.",
+        "Create a new empty project.",
         {
             {"type", "object"},
             {"properties", nlohmann::json::object()}
@@ -2563,11 +2574,11 @@ void OrcaMCPServer::register_builtin_tools()
             {"properties", {
                 {"file_path", {
                     {"type", "string"},
-                    {"description", "Absolute path to the 3MF project file"}
+                    {"description", "Path to 3MF file"}
                 }},
                 {"include_preview", {
                     {"type", "boolean"},
-                    {"description", "Include a preview image path to visually verify the loaded project"}
+                    {"description", "Return turntable preview path"}
                 }}
             }},
             {"required", {"file_path"}}
@@ -2619,7 +2630,7 @@ void OrcaMCPServer::register_builtin_tools()
     // add_plate - Create a new plate
     register_tool({
         "add_plate",
-        "Create a new plate. Returns the index of the new plate and context about the operation.",
+        "Create a new plate.",
         {
             {"type", "object"},
             {"properties", nlohmann::json::object()}
@@ -2654,13 +2665,13 @@ void OrcaMCPServer::register_builtin_tools()
     // delete_plate - Delete a plate
     register_tool({
         "delete_plate",
-        "Delete a plate by index. Cannot delete the last remaining plate. Objects on deleted plate are moved to another plate.",
+        "Delete a plate. Cannot delete last plate. Objects moved to another plate.",
         {
             {"type", "object"},
             {"properties", {
                 {"plate_index", {
                     {"type", "integer"},
-                    {"description", "Index of the plate to delete (0-based). If not specified, deletes current plate."}
+                    {"description", "Plate index. If omitted, deletes current plate."}
                 }}
             }}
         },
@@ -2727,13 +2738,13 @@ void OrcaMCPServer::register_builtin_tools()
     // select_plate - Select/switch to a plate
     register_tool({
         "select_plate",
-        "Select a plate by index to make it the active/current plate. Operations like clone_object (without destination_plate) will target the current plate.",
+        "Select a plate as current.",
         {
             {"type", "object"},
             {"properties", {
                 {"plate_index", {
                     {"type", "integer"},
-                    {"description", "Index of the plate to select (0-based)"}
+                    {"description", "Plate index (0-based)"}
                 }}
             }},
             {"required", {"plate_index"}}
@@ -2794,41 +2805,41 @@ void OrcaMCPServer::register_builtin_tools()
     // move_object - Move/translate an object
     register_tool({
         "move_object",
-        "Move an object by offset or to absolute position. Default is relative movement. Unspecified axes are preserved (0 offset for relative, current position for absolute).",
+        "Move object by offset (relative) or to position (relative=false).",
         {
             {"type", "object"},
             {"properties", {
                 {"object_id", {
                     {"type", "integer"},
-                    {"description", "Index of the object in the model (0-based)"}
+                    {"description", "Object index (0-based)"}
                 }},
                 {"x", {
                     {"type", "number"},
-                    {"description", "X offset or position in mm (unspecified = no change)"}
+                    {"description", "X in mm"}
                 }},
                 {"y", {
                     {"type", "number"},
-                    {"description", "Y offset or position in mm (unspecified = no change)"}
+                    {"description", "Y in mm"}
                 }},
                 {"z", {
                     {"type", "number"},
-                    {"description", "Z offset or position in mm (unspecified = no change)"}
+                    {"description", "Z in mm"}
                 }},
                 {"relative", {
                     {"type", "boolean"},
-                    {"description", "If true (default), values are offsets. If false, values are absolute positions."}
+                    {"description", "true (default)=offset, false=absolute position"}
                 }},
                 {"include_preview", {
                     {"type", "boolean"},
-                    {"description", "Include turntable preview image path in response"}
+                    {"description", "Return turntable preview path"}
                 }},
                 {"preview_views", {
                     {"type", "integer"},
-                    {"description", "Number of preview views: 4 or 8 (default: 4)"}
+                    {"description", "Views: 4 or 8 (default: 4)"}
                 }},
                 {"preview_resolution", {
                     {"type", "integer"},
-                    {"description", "Preview resolution per view in pixels (default: 256)"}
+                    {"description", "Resolution in pixels (default: 256)"}
                 }}
             }},
             {"required", {"object_id"}}
@@ -2930,41 +2941,41 @@ void OrcaMCPServer::register_builtin_tools()
     // rotate_object - Rotate an object
     register_tool({
         "rotate_object",
-        "Rotate an object around X, Y, and/or Z axes. Values are in degrees. Note: rotation is applied to mesh geometry, so rotation_degrees field may not reflect cumulative MCP rotations. Verify with bounding_box dimensions.",
+        "Rotate object around X, Y, Z axes (degrees).",
         {
             {"type", "object"},
             {"properties", {
                 {"object_id", {
                     {"type", "integer"},
-                    {"description", "Index of the object in the model (0-based)"}
+                    {"description", "Object index (0-based)"}
                 }},
                 {"x", {
                     {"type", "number"},
-                    {"description", "Rotation around X axis in degrees"}
+                    {"description", "X rotation (degrees)"}
                 }},
                 {"y", {
                     {"type", "number"},
-                    {"description", "Rotation around Y axis in degrees"}
+                    {"description", "Y rotation (degrees)"}
                 }},
                 {"z", {
                     {"type", "number"},
-                    {"description", "Rotation around Z axis in degrees"}
+                    {"description", "Z rotation (degrees)"}
                 }},
                 {"relative", {
                     {"type", "boolean"},
-                    {"description", "If true (default), rotation is added to current. If false, sets absolute rotation."}
+                    {"description", "true=add, false=absolute"}
                 }},
                 {"include_preview", {
                     {"type", "boolean"},
-                    {"description", "Include turntable preview image path in response"}
+                    {"description", "Return turntable preview path"}
                 }},
                 {"preview_views", {
                     {"type", "integer"},
-                    {"description", "Number of preview views: 4 or 8 (default: 4)"}
+                    {"description", "Views: 4 or 8 (default: 4)"}
                 }},
                 {"preview_resolution", {
                     {"type", "integer"},
-                    {"description", "Preview resolution per view in pixels (default: 256)"}
+                    {"description", "Resolution in pixels (default: 256)"}
                 }}
             }},
             {"required", {"object_id"}}
@@ -3046,41 +3057,41 @@ void OrcaMCPServer::register_builtin_tools()
     // scale_object - Scale an object
     register_tool({
         "scale_object",
-        "Scale an object by factors on each axis. Use uniform=true to scale uniformly using x value.",
+        "Scale object by axis factors. uniform=true uses x for all.",
         {
             {"type", "object"},
             {"properties", {
                 {"object_id", {
                     {"type", "integer"},
-                    {"description", "Index of the object in the model (0-based)"}
+                    {"description", "Object index (0-based)"}
                 }},
                 {"x", {
                     {"type", "number"},
-                    {"description", "Scale factor for X axis (1.0 = no change, 2.0 = double size)"}
+                    {"description", "X scale factor"}
                 }},
                 {"y", {
                     {"type", "number"},
-                    {"description", "Scale factor for Y axis"}
+                    {"description", "Y scale factor"}
                 }},
                 {"z", {
                     {"type", "number"},
-                    {"description", "Scale factor for Z axis"}
+                    {"description", "Z scale factor"}
                 }},
                 {"uniform", {
                     {"type", "boolean"},
-                    {"description", "If true, use x value for all axes (uniform scaling)"}
+                    {"description", "If true, use x for all axes (default: false)"}
                 }},
                 {"include_preview", {
                     {"type", "boolean"},
-                    {"description", "Include turntable preview image path in response"}
+                    {"description", "Return turntable preview path"}
                 }},
                 {"preview_views", {
                     {"type", "integer"},
-                    {"description", "Number of preview views: 4 or 8 (default: 4)"}
+                    {"description", "Views: 4 or 8 (default: 4)"}
                 }},
                 {"preview_resolution", {
                     {"type", "integer"},
-                    {"description", "Preview resolution per view in pixels (default: 256)"}
+                    {"description", "Resolution in pixels (default: 256)"}
                 }}
             }},
             {"required", {"object_id"}}
@@ -3160,17 +3171,17 @@ void OrcaMCPServer::register_builtin_tools()
     // transform_objects - Batch transform multiple objects
     register_tool({
         "transform_objects",
-        "Apply transforms to multiple objects in a single operation. More efficient than multiple individual calls.",
+        "Batch transform multiple objects.",
         {
             {"type", "object"},
             {"properties", {
                 {"transforms", {
                     {"type", "array"},
-                    {"description", "Array of transform operations"},
+                    {"description", "Transform operations"},
                     {"items", {
                         {"type", "object"},
                         {"properties", {
-                            {"object_id", {{"type", "integer"}, {"description", "Index of the object (0-based)"}}},
+                            {"object_id", {{"type", "integer"}, {"description", "Object index (0-based)"}}},
                             {"position", {
                                 {"type", "object"},
                                 {"description", "Absolute position {x, y, z} - unspecified axes preserved"},
@@ -3324,24 +3335,24 @@ void OrcaMCPServer::register_builtin_tools()
             {"properties", {
                 {"object_id", {
                     {"type", "integer"},
-                    {"description", "Index of the object in the model (0-based)"}
+                    {"description", "Object index (0-based)"}
                 }},
                 {"axis", {
                     {"type", "string"},
                     {"enum", {"x", "y", "z"}},
-                    {"description", "Axis to mirror across: x, y, or z"}
+                    {"description", "Axis: x, y, or z"}
                 }},
                 {"include_preview", {
                     {"type", "boolean"},
-                    {"description", "Include turntable preview image path in response"}
+                    {"description", "Return turntable preview path"}
                 }},
                 {"preview_views", {
                     {"type", "integer"},
-                    {"description", "Number of preview views: 4 or 8 (default: 4)"}
+                    {"description", "Views: 4 or 8 (default: 4)"}
                 }},
                 {"preview_resolution", {
                     {"type", "integer"},
-                    {"description", "Preview resolution per view in pixels (default: 256)"}
+                    {"description", "Resolution in pixels (default: 256)"}
                 }}
             }},
             {"required", {"object_id", "axis"}}
@@ -3393,29 +3404,29 @@ void OrcaMCPServer::register_builtin_tools()
     // clone_object - Duplicate an object
     register_tool({
         "clone_object",
-        "Create copies of an object. By default creates instances (share transforms). Use duplicate=true for independent objects that can be transformed separately. Use destination_plate to specify where clones go (defaults to current plate).",
+        "Clone object. duplicate=true for independent copies.",
         {
             {"type", "object"},
             {"properties", {
                 {"object_id", {
                     {"type", "integer"},
-                    {"description", "Index of the object to clone (0-based)"}
+                    {"description", "Object index (0-based)"}
                 }},
                 {"count", {
                     {"type", "integer"},
-                    {"description", "Number of copies to create (default: 1)"}
+                    {"description", "Number of copies (default: 1)"}
                 }},
                 {"duplicate", {
                     {"type", "boolean"},
-                    {"description", "If true, creates independent objects with separate object_ids that can be transformed individually. If false (default), creates instances that share transformations - useful for printing multiple identical copies."}
+                    {"description", "true=independent copies, false (default)=linked instances"}
                 }},
                 {"destination_plate", {
                     {"type", "integer"},
-                    {"description", "Plate index where clones will be placed (0-based). If omitted, clones go to the CURRENT plate (not the source object's plate)."}
+                    {"description", "Target plate. If omitted, uses current plate."}
                 }},
                 {"include_preview", {
                     {"type", "boolean"},
-                    {"description", "Include a preview image path to visually verify the cloned objects on the plate"}
+                    {"description", "Return turntable preview path"}
                 }}
             }},
             {"required", {"object_id"}}
@@ -3585,13 +3596,13 @@ void OrcaMCPServer::register_builtin_tools()
     // get_object_info - Get lightweight info about a single object
     register_tool({
         "get_object_info",
-        "Get information about a single object without fetching entire scene. Faster than get_scene_info for targeted queries.",
+        "Get info about a single object.",
         {
             {"type", "object"},
             {"properties", {
                 {"object_id", {
                     {"type", "integer"},
-                    {"description", "Index of the object (0-based)"}
+                    {"description", "Object index (0-based)"}
                 }}
             }},
             {"required", {"object_id"}}
@@ -3670,11 +3681,11 @@ void OrcaMCPServer::register_builtin_tools()
             {"properties", {
                 {"object_id", {
                     {"type", "integer"},
-                    {"description", "Index of the object to rename (0-based)"}
+                    {"description", "Object index (0-based)"}
                 }},
                 {"new_name", {
                     {"type", "string"},
-                    {"description", "New name for the object"}
+                    {"description", "New name"}
                 }}
             }},
             {"required", {"object_id", "new_name"}}
@@ -3715,11 +3726,11 @@ void OrcaMCPServer::register_builtin_tools()
             {"properties", {
                 {"object_id", {
                     {"type", "integer"},
-                    {"description", "Index of the object to delete (0-based)"}
+                    {"description", "Object index (0-based)"}
                 }},
                 {"include_preview", {
                     {"type", "boolean"},
-                    {"description", "Include a preview image path to see what remains after deletion"}
+                    {"description", "Return turntable preview path"}
                 }}
             }},
             {"required", {"object_id"}}
@@ -3762,19 +3773,19 @@ void OrcaMCPServer::register_builtin_tools()
             {"properties", {
                 {"object_id", {
                     {"type", "integer"},
-                    {"description", "Index of the object to flatten (0-based)"}
+                    {"description", "Object index (0-based)"}
                 }},
                 {"include_preview", {
                     {"type", "boolean"},
-                    {"description", "Include turntable preview image path in response"}
+                    {"description", "Return turntable preview path"}
                 }},
                 {"preview_views", {
                     {"type", "integer"},
-                    {"description", "Number of preview views: 4 or 8 (default: 4)"}
+                    {"description", "Views: 4 or 8 (default: 4)"}
                 }},
                 {"preview_resolution", {
                     {"type", "integer"},
-                    {"description", "Preview resolution per view in pixels (default: 256)"}
+                    {"description", "Resolution in pixels (default: 256)"}
                 }}
             }},
             {"required", {"object_id"}}
@@ -3815,7 +3826,7 @@ void OrcaMCPServer::register_builtin_tools()
     // get_printers - Get list of available printers
     register_tool({
         "get_printers",
-        "Get list of available/configured printers with their status. Returns: local_printers (Bambu via SSDP), cloud_printers (Bambu cloud), physical_printers (configured print hosts), and current_print_host (OctoPrint/Klipper/etc. from current printer preset).",
+        "Get available printers and their status.",
         {
             {"type", "object"},
             {"properties", nlohmann::json::object()}
@@ -4001,13 +4012,13 @@ void OrcaMCPServer::register_builtin_tools()
     // select_printer - Select a printer as the active/target printer
     register_tool({
         "select_printer",
-        "Select a printer as the active/target printer for print jobs. Use get_printers first to get available dev_ids.",
+        "Select a printer by dev_id.",
         {
             {"type", "object"},
             {"properties", {
                 {"dev_id", {
                     {"type", "string"},
-                    {"description", "Device ID of the printer to select (from get_printers)"}
+                    {"description", "Device ID"}
                 }}
             }},
             {"required", {"dev_id"}}
@@ -4045,7 +4056,7 @@ void OrcaMCPServer::register_builtin_tools()
     // send_to_printer - Open the send-to-printer dialog
     register_tool({
         "send_to_printer",
-        "Open the send-to-printer dialog to send sliced G-code to a printer. Requires slicing to be complete first. Use slice_all and wait for completion before calling this. Auto-detects printer type: opens OctoPrint/Klipper upload dialog if print_host is configured, otherwise opens Bambu printer dialog.",
+        "Send sliced G-code to printer.",
         {
             {"type", "object"},
             {"properties", {
@@ -4163,26 +4174,26 @@ void OrcaMCPServer::register_builtin_tools()
     // cut_object - Cut an object at a specified Z height
     register_tool({
         "cut_object",
-        "Cut an object horizontally at Z height. CAUTION: Removes original object and creates new one(s). Object IDs will change! Use undo to recover if result is wrong. Render views before cutting to find correct Z height.",
+        "Cut object at Z height. keep: below, above, or both.",
         {
             {"type", "object"},
             {"properties", {
                 {"object_id", {
                     {"type", "integer"},
-                    {"description", "Index of the object to cut (0-based)"}
+                    {"description", "Object index (0-based)"}
                 }},
                 {"z_height", {
                     {"type", "number"},
-                    {"description", "Z height in mm where to cut the object"}
+                    {"description", "Cut height in mm"}
                 }},
                 {"keep", {
                     {"type", "string"},
                     {"enum", nlohmann::json::array({"below", "above", "both"})},
-                    {"description", "Which part to keep: below (default), above, or both"}
+                    {"description", "below (default), above, or both"}
                 }},
                 {"include_preview", {
                     {"type", "boolean"},
-                    {"description", "Include a preview image path to see the cut result"}
+                    {"description", "Return turntable preview path"}
                 }}
             }},
             {"required", nlohmann::json::array({"object_id", "z_height"})}
