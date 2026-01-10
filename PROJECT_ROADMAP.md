@@ -157,6 +157,12 @@ One-click setup for AI agents to connect to OrcaSlicer's MCP server.
 - [x] macOS code signing & notarization (v2.3.2.8) - See [docs/release/macos-code-signing.md](docs/release/macos-code-signing.md)
 - [ ] Windows testing checklist - See [docs/release/windows-testing-checklist.md](docs/release/windows-testing-checklist.md)
 - [ ] Make first official release when stable (v2.3.2.10)
+**Community Infrastructure**
+- [ ] Enable GitHub Issues on the repository
+- [ ] Test auto-assign workflow (comment `/assign-me` on an issue)
+- [ ] Verify issue templates work (bug report, feature request)
+- [ ] Add issue labels (bug, enhancement, documentation, MCP, good first issue)
+
 **Announcement**
 - [ ] Polish README.md for public audience (clear, inviting, contributor-friendly)
 - [ ] Script and prepare demo video showcasing key features
