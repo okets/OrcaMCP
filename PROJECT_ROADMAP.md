@@ -155,8 +155,8 @@ One-click setup for AI agents to connect to OrcaSlicer's MCP server.
 - [x] Verify update check in app detects new release - "This is the newest version" ✓
 - [x] Fix artifact naming: OrcaSlicer → OrcaMCP (v2.3.2.2) - DMG now contains OrcaMCP.app
 - [x] macOS code signing & notarization (v2.3.2.8) - See [docs/release/macos-code-signing.md](docs/release/macos-code-signing.md)
-- [ ] Windows testing checklist - See [docs/release/windows-testing-checklist.md](docs/release/windows-testing-checklist.md)
-- [ ] Make first official release when stable (v2.3.2.10)
+- [x] Windows testing checklist - See [docs/release/windows-testing-checklist.md](docs/release/windows-testing-checklist.md)
+- [ ] Make first official public release (current: v2.3.2.13)
 **Community Infrastructure**
 - [ ] Enable GitHub Issues on the repository
 - [ ] Test auto-assign workflow (comment `/assign-me` on an issue)
