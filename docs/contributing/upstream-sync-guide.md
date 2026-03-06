@@ -166,6 +166,10 @@ Port of PrusaSlicer 2.8.0's improved G-code viewer:
 - **Workflow triggers**: `build_all.yml` didn't trigger on `mcp` branch pushes
   - Fixed by adding `mcp` to the branches list
 - **Document expected conflicts earlier**: Could have prepared resolution strategies in advance
+- **ASK before choosing verification strategy**: Don't assume "safe" approach is wanted
+  - **Fast path**: Tag immediately after merge → release build either works or fails (~2h total)
+  - **Safe path**: Run verification build first → then tag (~3.5h total)
+  - Always ask which path the user prefers
 
 ### Recommendations for Future Syncs
 
