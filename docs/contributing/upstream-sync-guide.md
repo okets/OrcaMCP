@@ -181,6 +181,59 @@ Port of PrusaSlicer 2.8.0's improved G-code viewer:
 
 ---
 
+## Release Process
+
+### Version Bump and Tag
+
+```bash
+# 1. Bump version in version.inc
+# Current: set(SoftFever_VERSION "2.3.2.X")
+# Change to next version
+
+# 2. Commit the version bump
+git add version.inc
+git commit -m "Bump version to 2.3.2.Y"
+
+# 3. Push commit
+git push origin mcp
+
+# 4. Create and push tag (triggers release.yml)
+git tag v2.3.2.Y
+git push origin v2.3.2.Y
+```
+
+### Release Workflow
+
+The `release.yml` workflow:
+1. Triggers on tags matching `v*`
+2. Builds all platforms (Windows, macOS, Linux)
+3. Creates GitHub Release with assets
+4. Takes ~2-3 hours to complete
+
+### Update Mechanism
+
+OrcaMCP checks for updates from our GitHub releases:
+
+```cpp
+// src/libslic3r/AppConfig.cpp:42
+static const std::string VERSION_CHECK_URL =
+    "https://api.github.com/repos/okets/OrcaMCP/releases";
+```
+
+**Important**: Users won't see update prompts until the GitHub Release is **published** (not just tagged). The release workflow must complete and create the release with assets.
+
+### Verifying Release Published
+
+```bash
+# Check if release exists
+gh release view v2.3.2.Y -R okets/OrcaMCP
+
+# List recent releases
+gh release list -R okets/OrcaMCP --limit 5
+```
+
+---
+
 ## Rollback Plan
 
 If the merge causes critical issues:
