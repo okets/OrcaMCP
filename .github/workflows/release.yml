@@ -23,12 +23,30 @@ concurrency:
 jobs:
   # Build for all platforms using existing workflow
   # Uses build_check_cache which handles deps caching + building
-  build_macos:
-    name: Build macOS
+  build_macos_arm64:
+    name: Build macOS (arm64)
     uses: ./.github/workflows/build_check_cache.yml
     with:
       os: macos-14
       arch: arm64
+    secrets: inherit
+
+  build_macos_x86_64:
+    name: Build macOS (x86_64)
+    uses: ./.github/workflows/build_check_cache.yml
+    with:
+      os: macos-13
+      arch: x86_64
+    secrets: inherit
+
+  build_macos_universal:
+    name: Build macOS Universal
+    needs: [build_macos_arm64, build_macos_x86_64]
+    uses: ./.github/workflows/build_orca.yml
+    with:
+      os: macos-14
+      arch: universal
+      macos-combine-only: true
     secrets: inherit
 
   build_linux:
@@ -48,7 +66,7 @@ jobs:
   # Create release with all artifacts
   create_release:
     name: Create Release
-    needs: [build_macos, build_linux, build_windows]
+    needs: [build_macos_universal, build_linux, build_windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
