@@ -67,11 +67,11 @@ Rationale:
 
 ### Phase 3: Merge into MCP Branch
 
-- [ ] `git checkout mcp`
-- [ ] `git merge main`
-- [ ] Resolve conflicts (see Expected Conflicts below)
-- [ ] Test build compiles
-- [ ] `git push origin mcp`
+- [x] `git checkout mcp`
+- [x] `git merge main`
+- [x] Resolve conflicts (see Expected Conflicts below)
+- [ ] Test build compiles (CI running)
+- [x] `git push origin mcp`
 
 ### Phase 4: Verification
 
@@ -154,19 +154,30 @@ Port of PrusaSlicer 2.8.0's improved G-code viewer:
 
 ## Lessons Learned
 
-*To be updated after sync completion*
-
 ### What Worked Well
 
-- (pending)
+- Merge strategy (vs rebase) preserved clean history
+- Conflict resolution was straightforward - mostly "keep both" patterns
+- Having a plan document helped track progress
+- Main branch was already synced, reducing merge complexity
 
 ### What Could Be Improved
 
-- (pending)
+- **Workflow triggers**: `build_all.yml` didn't trigger on `mcp` branch pushes
+  - Fixed by adding `mcp` to the branches list
+- **Document expected conflicts earlier**: Could have prepared resolution strategies in advance
 
 ### Recommendations for Future Syncs
 
-- (pending)
+1. **Sync frequency**: Do smaller, more frequent syncs (monthly) to reduce conflict volume
+2. **Pre-sync checklist**:
+   - Verify `build_all.yml` triggers on your branch
+   - Record HEAD commits for rollback
+   - Check upstream release notes for breaking changes
+3. **Conflict patterns**: MCP files typically need "keep both" resolution:
+   - Our MCP includes + their new includes
+   - Our MCP classes + their new classes
+4. **Test before release**: Always run full CI build before creating release tag
 
 ---
 
