@@ -4,6 +4,7 @@ on:
   push:
     branches:
      - main
+     - mcp
      - release/*
     paths:
      - 'deps/**'
@@ -18,6 +19,7 @@ on:
   pull_request:
     branches:
      - main
+     - mcp
      - release/*
     paths:
      - 'deps/**'
