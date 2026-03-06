@@ -152,8 +152,9 @@ jobs:
             runner: ubuntu-24.04
           - arch: aarch64
             runner: ubuntu-24.04-arm
-    # Don't run scheduled builds on forks:
-    if: ${{ !cancelled() && (github.event_name != 'schedule' || github.repository == 'OrcaSlicer/OrcaSlicer') }}
+    # Disabled: Flatpak not configured for OrcaMCP (uses OrcaSlicer app-id)
+    # Re-enable when Flathub distribution is set up for OrcaMCP
+    if: false
     runs-on: ${{ matrix.variant.runner }}
     env:
       date:
