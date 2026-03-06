@@ -29,6 +29,43 @@ Traditional 3D printing workflow requires manual interaction with slicer softwar
 
 ---
 
+### Platform Build Commands
+
+**Windows:**
+```bash
+cmake --build . --config %build_type% --target ALL_BUILD -- -m
+```
+
+**macOS:**
+```bash
+cmake --build build/arm64 --config RelWithDebInfo --target all --
+```
+
+**Linux:**
+```bash
+cmake --build build/arm64 --config RelWithDebInfo --target all --
+```
+
+### Build System
+- Uses CMake with minimum version 3.13 (maximum 3.31.x on Windows)
+- Primary build directory: `build/`
+- Dependencies are built in `deps/build/`
+- Windows builds use Visual Studio generators
+- macOS builds use Xcode by default, Ninja with -x flag
+- Linux builds use Ninja generator
+
+### Testing
+Tests are located in `tests/` using Catch2 framework:
+- `tests/libslic3r/` - Core library tests
+- `tests/fff_print/` - FFF slicing tests
+- `tests/sla_print/` - SLA tests
+
+```bash
+cd build && ctest --output-on-failure
+```
+
+---
+
 ## Architecture
 
 ```

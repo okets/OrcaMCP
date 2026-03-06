@@ -15,6 +15,7 @@
 #include <string>
 #include <set>
 #include <memory>
+#include <utility>
 
 #define LOCALHOST_PORT      13618
 #define LOCALHOST_URL       "http://localhost:"
@@ -121,8 +122,19 @@ public:
         void write_response(std::stringstream& ssOut) override;
     };
 
+    class ResponseHtml : public Response
+    {
+        const std::string html;
+
+    public:
+        explicit ResponseHtml(std::string html) : html(std::move(html)) {}
+        ~ResponseHtml() override = default;
+        void write_response(std::stringstream& ssOut) override;
+    };
+
     // Request handler type that includes method, URL, and body
     using RequestHandlerFn = std::function<std::shared_ptr<Response>(const std::string& method, const std::string& url, const std::string& body)>;
+
 
     HttpServer(boost::asio::ip::port_type port = LOCALHOST_PORT);
 
@@ -132,6 +144,8 @@ public:
     bool is_started() { return start_http_server; }
     void start();
     void stop();
+    void set_port(boost::asio::ip::port_type new_port) { port = new_port; }
+    boost::asio::ip::port_type get_port() const { return port; }
 
     // Set request handler with full signature (method, url, body)
     void set_request_handler(const RequestHandlerFn& request_handler);
