@@ -4271,6 +4271,76 @@ void OrcaMCPServer::register_builtin_tools()
         }
     });
 
+    // ==================== G-CODE VIEW TYPE ====================
+
+    // set_gcode_view_type - Set the G-code preview visualization mode
+    register_tool({
+        "set_gcode_view_type",
+        "Set G-code preview visualization mode. Requires sliced G-code. "
+        "Available types: feature_type, speed, actual_speed, fan_speed, temperature, "
+        "flow, actual_flow, layer_height, line_width, layer_time, layer_time_log, "
+        "pressure_advance, tool, filament",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"view_type", {
+                    {"type", "string"},
+                    {"enum", nlohmann::json::array({
+                        "feature_type", "speed", "actual_speed", "fan_speed",
+                        "temperature", "flow", "actual_flow", "layer_height",
+                        "line_width", "layer_time", "layer_time_log",
+                        "pressure_advance", "tool", "filament"
+                    })},
+                    {"description", "Visualization mode for G-code preview"}
+                }}
+            }},
+            {"required", nlohmann::json::array({"view_type"})}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            std::string view_type_str = params["view_type"];
+            return run_on_main_thread([view_type_str]() {
+                Plater* plater = wxGetApp().plater();
+                GLCanvas3D* canvas = plater->get_preview_canvas3D();
+                if (!canvas)
+                    throw std::runtime_error("Preview canvas not available");
+
+                GCodeViewer& viewer = canvas->get_gcode_viewer();
+
+                // Map string to EViewType
+                static const std::map<std::string, libvgcode::EViewType> type_map = {
+                    {"feature_type",     libvgcode::EViewType::FeatureType},
+                    {"speed",            libvgcode::EViewType::Speed},
+                    {"actual_speed",     libvgcode::EViewType::ActualSpeed},
+                    {"fan_speed",        libvgcode::EViewType::FanSpeed},
+                    {"temperature",      libvgcode::EViewType::Temperature},
+                    {"flow",             libvgcode::EViewType::VolumetricFlowRate},
+                    {"actual_flow",      libvgcode::EViewType::ActualVolumetricFlowRate},
+                    {"layer_height",     libvgcode::EViewType::Height},
+                    {"line_width",       libvgcode::EViewType::Width},
+                    {"layer_time",       libvgcode::EViewType::LayerTimeLinear},
+                    {"layer_time_log",   libvgcode::EViewType::LayerTimeLogarithmic},
+                    {"pressure_advance", libvgcode::EViewType::PressureAdvance},
+                    {"tool",             libvgcode::EViewType::Tool},
+                    {"filament",         libvgcode::EViewType::ColorPrint},
+                };
+
+                auto it = type_map.find(view_type_str);
+                if (it == type_map.end())
+                    throw std::runtime_error("Unknown view type: " + view_type_str);
+
+                viewer.set_view_type(it->second);
+                canvas->set_as_dirty();
+                canvas->request_extra_frame();
+
+                return nlohmann::json{
+                    {"status", "success"},
+                    {"view_type", view_type_str},
+                    {"active_warnings", get_active_warnings_json(plater)}
+                };
+            });
+        }
+    });
+
     BOOST_LOG_TRIVIAL(info) << "OrcaMCPServer: Registered " << s_tools.size() << " tools";
 }
 
