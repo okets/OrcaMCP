@@ -3764,6 +3764,60 @@ void OrcaMCPServer::register_builtin_tools()
         }
     });
 
+    // set_object_printable - Toggle whether an object is included when slicing
+    register_tool({
+        "set_object_printable",
+        "Mark an object printable (included when slicing) or unprintable (skipped). "
+        "Useful for excluding specific objects from a print without removing them from the scene.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"object_id", {
+                    {"type", "integer"},
+                    {"description", "Object index (0-based)"}
+                }},
+                {"printable", {
+                    {"type", "boolean"},
+                    {"description", "true to include in slicing, false to skip"}
+                }}
+            }},
+            {"required", {"object_id", "printable"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            int object_id = params["object_id"];
+            bool printable = params["printable"];
+            return run_on_main_thread([object_id, printable]() {
+                Plater* plater = wxGetApp().plater();
+                Model& model = plater->model();
+
+                if (object_id < 0 || object_id >= static_cast<int>(model.objects.size())) {
+                    throw std::runtime_error("Invalid object_id: " + std::to_string(object_id));
+                }
+
+                ModelObject* object = model.objects[object_id];
+                std::string snapshot_text = (boost::format("%1% \"%2%\"") %
+                    (printable ? "Set Object Printable" : "Set Object Unprintable") %
+                    object->name).str();
+                plater->take_snapshot(snapshot_text);
+
+                for (auto* inst : object->instances)
+                    inst->printable = printable;
+
+                wxGetApp().obj_list()->update_printable_state(object_id, 0);
+                wxGetApp().plater()->canvas3D()->update_instance_printable_state_for_object(static_cast<size_t>(object_id));
+                plater->update();
+
+                return nlohmann::json{
+                    {"status", "success"},
+                    {"object_id", object_id},
+                    {"object_name", object->name},
+                    {"printable", printable},
+                    {"active_warnings", get_active_warnings_json(plater)}
+                };
+            });
+        }
+    });
+
     // flatten_object - Lay object flat on its best face
     register_tool({
         "flatten_object",
@@ -4279,7 +4333,7 @@ void OrcaMCPServer::register_builtin_tools()
         "Set G-code preview visualization mode. Requires sliced G-code. "
         "Available types: feature_type, speed, actual_speed, fan_speed, temperature, "
         "flow, actual_flow, layer_height, line_width, layer_time, layer_time_log, "
-        "pressure_advance, tool, filament",
+        "pressure_advance, acceleration, jerk, tool, filament",
         {
             {"type", "object"},
             {"properties", {
@@ -4289,7 +4343,8 @@ void OrcaMCPServer::register_builtin_tools()
                         "feature_type", "speed", "actual_speed", "fan_speed",
                         "temperature", "flow", "actual_flow", "layer_height",
                         "line_width", "layer_time", "layer_time_log",
-                        "pressure_advance", "tool", "filament"
+                        "pressure_advance", "acceleration", "jerk",
+                        "tool", "filament"
                     })},
                     {"description", "Visualization mode for G-code preview"}
                 }}
@@ -4320,6 +4375,8 @@ void OrcaMCPServer::register_builtin_tools()
                     {"layer_time",       libvgcode::EViewType::LayerTimeLinear},
                     {"layer_time_log",   libvgcode::EViewType::LayerTimeLogarithmic},
                     {"pressure_advance", libvgcode::EViewType::PressureAdvance},
+                    {"acceleration",     libvgcode::EViewType::Acceleration},
+                    {"jerk",             libvgcode::EViewType::Jerk},
                     {"tool",             libvgcode::EViewType::Tool},
                     {"filament",         libvgcode::EViewType::ColorPrint},
                 };
