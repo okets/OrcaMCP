@@ -362,8 +362,11 @@ jobs:
           retention-days: 5
           if-no-files-found: error
 
+      # Upstream regression test: clones OrcaSlicer/orca-test-repo and runs against
+      # build/package/bin/orca-slicer, which our build does not produce (we use -istr,
+      # not -istrlL). Skip on okets/OrcaMCP — this is upstream's CI test, not ours.
       - name: Run external slicer regression tests
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && github.repository == 'OrcaSlicer/OrcaSlicer'
         timeout-minutes: 20
         shell: bash
         run: |
