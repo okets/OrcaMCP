@@ -52,3 +52,5 @@ build_openssl.ps1
 build_wrapper.ps1
 nul
 internal_docs/
+*.flatpak
+/flatpak-repo/

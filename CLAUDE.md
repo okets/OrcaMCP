@@ -194,6 +194,40 @@ cp -R build/arm64/src/Release/OrcaSlicer.app /Applications/
 
 **CRITICAL: Always use `release.yml`, never `build_all.yml` for releases!**
 
+### The One Rule
+
+**To release: push a `v*` tag whose value exactly matches `SoftFever_VERSION` in `version.inc`.**
+
+That's it. Do not click "Run workflow" on `build_all.yml`, `build_orca.yml`, or any sub-workflow. Tag-push triggers `release.yml` automatically, which calls the build pipeline and publishes a GitHub Release.
+
+### Why version.inc and the tag MUST match
+
+`release.yml` downloads artifacts by exact name (see `release.yml:91-107`):
+
+- `OrcaMCP_Mac_universal_V<version>`
+- `OrcaMCP_Linux_ubuntu_2404_V<version>`
+- `OrcaMCP_Windows_V<version>`
+
+The `<version>` portion is `tag` minus the `v` prefix. The build job names those artifacts by reading `SoftFever_VERSION` from `version.inc` (see `build_orca.yml:52`). If `version.inc` ≠ tag, the download step silently misses, and the release job fails after a ~1-hour build. This is what caused the failed `v2.3.2.14` and `v2.3.2.13` runs.
+
+### Workflow Architecture
+
+```
+release.yml  (tag push v*, or manual)
+  ├─ build_check_cache.yml × 4 (macOS arm64, macOS x86_64, Linux, Windows)
+  │    └─ build_deps.yml         (only if deps cache miss)
+  │         └─ build_orca.yml    (the actual app build, names artifacts from version.inc)
+  ├─ build_orca.yml              (macOS Universal: combines arm64 + x86_64)
+  └─ create_release job          (downloads named artifacts, publishes Release)
+
+build_all.yml  (CI on push/PR/cron — NEVER for releases)
+  └─ same build_check_cache.yml chain, but no Release publish
+```
+
+Active workflows you should never invoke for a release:
+- `build_all.yml` — CI nightly + per-push builds
+- `build_orca.yml`, `build_check_cache.yml`, `build_deps.yml` — `workflow_call` only, not direct dispatch
+
 ### Creating a New Release
 
 1. **Bump version** in `version.inc`:
@@ -209,9 +243,9 @@ cp -R build/arm64/src/Release/OrcaSlicer.app /Applications/
    git push origin mcp
    ```
 
-3. **Create and push a tag**:
+3. **Create and push a tag** — value MUST match `SoftFever_VERSION` exactly, prefixed with `v`:
    ```bash
-   git tag v2.3.2.11
+   git tag v2.3.2.11   # ← must match version.inc
    git push origin v2.3.2.11
    ```
    This automatically triggers `release.yml` which builds AND creates a GitHub Release.
@@ -518,4 +552,3 @@ git push origin mcp --force-with-lease
 ## Future Enhancements
 
 Post-release features will be driven by user feedback. See GitHub Issues for current requests.
-
