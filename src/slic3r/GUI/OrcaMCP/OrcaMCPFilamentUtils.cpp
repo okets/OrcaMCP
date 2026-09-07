@@ -14,7 +14,6 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
-#include <map>
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
@@ -264,7 +263,15 @@ std::vector<ColorDecomposePhysicalFilament> physical_filaments_for_recipe()
     return out;
 }
 
-MixColorPrediction predicted_mix_color(const std::vector<std::string>& hexes, const std::vector<int>& ratios)
+std::string gui_mix_color(const std::vector<std::string>& hexes, const std::vector<int>& ratios)
+{
+    // Deliberately never consults the measured-color table: this must match exactly what
+    // Sidebar::apply_mixed_filament will render the new slot as (Plater.cpp's
+    // blend_mixed_color -> FilamentMixer::blend_color_multi).
+    return blend_color_multi(hexes, ratios);
+}
+
+MixColorPrediction palette_mix_color(const std::vector<std::string>& hexes, const std::vector<int>& ratios)
 {
     const std::string measured = lookup_measured_blend_color(hexes, ratios);
     if (!measured.empty())
@@ -303,20 +310,31 @@ double hue_degrees(const std::string& hex)
     return h < 0.0 ? h + 360.0 : h;
 }
 
-// Same-type grouping rule as MixedFilamentDialog::rebuild_recommendation_items: only
-// same-type combos are recommended, and support filaments (type ending "-S") are excluded.
-std::map<std::string, std::vector<ColorDecomposePhysicalFilament>> group_by_type(
+// Mirrors ColorDecomposeRecipe.cpp's file-static material_matches() exactly (not exported --
+// the controller ruling allows exactly one new export from that file, color_decompose_delta_e).
+// Treats "PLA" and "PLA Basic" (either direction) as the same material.
+bool same_material_type(const std::string& a, const std::string& b)
+{
+    if (a.empty() || b.empty())
+        return false;
+    return a == b || a == b + " Basic" || b == a + " Basic";
+}
+
+// Support filaments (type ending "-S") are never recommended, matching
+// MixedFilamentDialog::rebuild_recommendation_items; material_type, when given, filters with
+// the same fuzzy same_material_type() rule used for "same-type" pairing below.
+std::vector<ColorDecomposePhysicalFilament> filter_recipe_candidates(
     const std::vector<ColorDecomposePhysicalFilament>& filaments, const std::string& material_type)
 {
-    std::map<std::string, std::vector<ColorDecomposePhysicalFilament>> groups;
+    std::vector<ColorDecomposePhysicalFilament> out;
     for (const auto& f : filaments) {
         if (f.type.size() >= 2 && f.type.compare(f.type.size() - 2, 2, "-S") == 0)
             continue;
-        if (!material_type.empty() && f.type != material_type)
+        if (!material_type.empty() && !same_material_type(f.type, material_type))
             continue;
-        groups[f.type].push_back(f);
+        out.push_back(f);
     }
-    return groups;
+    return out;
 }
 
 struct PaletteCandidate {
@@ -339,7 +357,7 @@ void add_candidate_if_novel(std::vector<PaletteCandidate>& accepted,
         hexes.push_back(it != physicals.end() ? it->color_hex : std::string("#808080"));
     }
 
-    const MixColorPrediction prediction = predicted_mix_color(hexes, ratios);
+    const MixColorPrediction prediction = palette_mix_color(hexes, ratios);
     constexpr double kMinDeltaE = 5.0;
 
     for (const auto& f : physicals)
@@ -357,30 +375,36 @@ void add_candidate_if_novel(std::vector<PaletteCandidate>& accepted,
 nlohmann::json enumerate_mix_palette(int max_count, int max_components, const std::string& material_type)
 {
     const auto physicals = physical_filaments_for_recipe();
-    const auto groups = group_by_type(physicals, material_type);
+    const auto candidates = filter_recipe_candidates(physicals, material_type);
 
     std::vector<PaletteCandidate> accepted;
     static const std::vector<std::vector<int>> kPairRatios  = {{70, 30}, {50, 50}, {30, 70}};
 
-    for (const auto& [type, group] : groups) {
-        for (size_t i = 0; i < group.size(); ++i) {
-            for (size_t j = i + 1; j < group.size(); ++j) {
-                for (const auto& ratios : kPairRatios)
-                    add_candidate_if_novel(accepted, physicals,
-                        {group[i].filament_index, group[j].filament_index}, ratios);
+    // Same-type pairing uses the fuzzy same_material_type() rule (not an exact-string group
+    // key), so e.g. "PLA" and "PLA Basic" slots can still be paired, matching
+    // ColorDecomposeRecipe's recommend_from_physical_filaments.
+    for (size_t i = 0; i < candidates.size(); ++i) {
+        for (size_t j = i + 1; j < candidates.size(); ++j) {
+            if (!same_material_type(candidates[i].type, candidates[j].type))
+                continue;
+            for (const auto& ratios : kPairRatios)
+                add_candidate_if_novel(accepted, physicals,
+                    {candidates[i].filament_index, candidates[j].filament_index}, ratios);
 
-                if (max_components < 3)
+            if (max_components < 3)
+                continue;
+            for (size_t k = j + 1; k < candidates.size(); ++k) {
+                if (!same_material_type(candidates[i].type, candidates[k].type) ||
+                    !same_material_type(candidates[j].type, candidates[k].type))
                     continue;
-                for (size_t k = j + 1; k < group.size(); ++k) {
-                    const unsigned int idx[3] = {group[i].filament_index, group[j].filament_index, group[k].filament_index};
-                    // Each component takes the dominant (50%) role in turn, the other two
-                    // splitting 25/25 -- same rotation as the GUI's triple recommendations.
-                    for (int dominant = 0; dominant < 3; ++dominant) {
-                        std::vector<unsigned int> components = {
-                            idx[(dominant + 1) % 3], idx[(dominant + 2) % 3], idx[dominant]
-                        };
-                        add_candidate_if_novel(accepted, physicals, std::move(components), {25, 25, 50});
-                    }
+                const unsigned int idx[3] = {candidates[i].filament_index, candidates[j].filament_index, candidates[k].filament_index};
+                // Each component takes the dominant (50%) role in turn, the other two
+                // splitting 25/25 -- same rotation as the GUI's triple recommendations.
+                for (int dominant = 0; dominant < 3; ++dominant) {
+                    std::vector<unsigned int> components = {
+                        idx[(dominant + 1) % 3], idx[(dominant + 2) % 3], idx[dominant]
+                    };
+                    add_candidate_if_novel(accepted, physicals, std::move(components), {25, 25, 50});
                 }
             }
         }

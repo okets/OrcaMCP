@@ -50,16 +50,22 @@ nlohmann::json describe_toolchanger_config();
 // Main thread only.
 std::vector<ColorDecomposePhysicalFilament> physical_filaments_for_recipe();
 
-// Predicted blend color for a set of component hex colors mixed at the given percent
-// ratios (same order, sum == 100). Prefers a measured/interpolated color from the standard
-// recipe table (lookup_measured_blend_color); falls back to the pigment-mixing model
-// (FilamentMixer::blend_color_multi) when no measured entry exists -- the same call the
-// sidebar itself uses to color a mixed slot (Plater.cpp's blend_mixed_color).
+// Predicted color for a set of component hex colors mixed at the given percent ratios (same
+// order, sum == 100), computed EXACTLY the way Sidebar::apply_mixed_filament colors a new
+// mixed slot (Plater.cpp's blend_mixed_color -> FilamentMixer::blend_color_multi, no measured
+// -table lookup). Used by suggest_color_mix so its reported predicted_color always matches
+// the slot that create: true actually produces -- deliberately never the measured table.
+std::string gui_mix_color(const std::vector<std::string>& hexes, const std::vector<int>& ratios);
+
+// Predicted color for palette enumeration only: prefers a measured/interpolated color from the
+// standard recipe table (lookup_measured_blend_color); falls back to the same pigment-mixing
+// model (blend_color_multi) when no measured entry exists. NOT used by suggest_color_mix --
+// a measured-table color can differ from what a newly created slot would actually render as.
 struct MixColorPrediction {
     std::string hex;
     bool        measured{false};
 };
-MixColorPrediction predicted_mix_color(const std::vector<std::string>& hexes, const std::vector<int>& ratios);
+MixColorPrediction palette_mix_color(const std::vector<std::string>& hexes, const std::vector<int>& ratios);
 
 // CIE76 perceptual distance between two "#RRGGBB" colors. Wraps
 // color_decompose_delta_e(rgb_to_lab(...)) so callers here never touch RGB structs or Lab
@@ -68,12 +74,14 @@ double color_delta_e_hex(const std::string& hex_a, const std::string& hex_b);
 
 // Enumerates an achievable color palette: every same-type pair (and, when max_components == 3,
 // triple) of physical filaments at fixed ratio presets (pairs: 70/30, 50/50, 30/70; triples:
-// 50/25/25 with each component taking the dominant 50% role in turn -- the same grouping and
-// triple-rotation rule as MixedFilamentDialog::rebuild_recommendation_items, minus its widgets).
-// Candidates within delta_e < 5 of a physical filament or an already-accepted candidate are
-// dropped, the rest are sorted by hue and truncated to max_count. Returns a JSON array of
-// {"components": [1-based...], "ratios": [...], "predicted_color": "#RRGGBB", "measured": bool}.
-// Main thread only.
+// 50/25/25 with each component taking the dominant 50% role in turn -- the same triple-rotation
+// rule as MixedFilamentDialog::rebuild_recommendation_items, minus its widgets). "Same-type" is
+// the fuzzy match ColorDecomposeRecipe's recommend_from_physical_filaments uses internally (e.g.
+// "PLA" matches "PLA Basic"), not exact string equality, and material_type (when given) filters
+// candidates with the same rule. Candidates within delta_e < 5 of a physical filament or an
+// already-accepted candidate are dropped, the rest are sorted by hue and truncated to max_count.
+// Returns a JSON array of {"components": [1-based...], "ratios": [...],
+// "predicted_color": "#RRGGBB", "measured": bool}. Main thread only.
 nlohmann::json enumerate_mix_palette(int max_count, int max_components, const std::string& material_type);
 
 }}} // namespace Slic3r::GUI::OrcaMCP

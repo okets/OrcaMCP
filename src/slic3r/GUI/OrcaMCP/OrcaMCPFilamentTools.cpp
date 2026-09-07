@@ -294,8 +294,12 @@ void OrcaMCPServer::register_filament_tools()
                     components.push_back(c.filament_index);
                 }
 
-                const MixColorPrediction prediction = predicted_mix_color(hexes, ratios);
-                const double delta_e = color_delta_e_hex(target_color, prediction.hex);
+                // gui_mix_color (never the measured table) so predicted_color always matches the
+                // color Sidebar::apply_mixed_filament will actually give the slot below when
+                // create: true. This tool never consults the measured table, so "measured" is
+                // always reported false here (get_color_palette is the one that can be true).
+                const std::string predicted_color = gui_mix_color(hexes, ratios);
+                const double delta_e = color_delta_e_hex(target_color, predicted_color);
 
                 nlohmann::json out = {
                     {"status", "success"},
@@ -303,8 +307,8 @@ void OrcaMCPServer::register_filament_tools()
                     {"recipe", {
                         {"components", components},
                         {"ratios", ratios},
-                        {"predicted_color", prediction.hex},
-                        {"measured", prediction.measured}
+                        {"predicted_color", predicted_color},
+                        {"measured", false}
                     }},
                     {"delta_e", delta_e},
                     {"slot", nullptr}
