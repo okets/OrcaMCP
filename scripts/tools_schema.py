@@ -62,6 +62,14 @@ FULL_TOOLS_LIST = [{'description': 'Create a new plate.',
                   'required': [],
                   'type': 'object'},
   'name': 'arrange_objects'},
+ {'description': 'Automatically recalculate flush-volume matrices for every '
+                 'physical filament and extruder from filament color/type '
+                 'compatibility.',
+  'inputSchema': {'additionalProperties': False,
+                  'properties': {},
+                  'required': [],
+                  'type': 'object'},
+  'name': 'auto_calc_flush_volumes'},
  {'description': 'Automatically orient all objects for optimal printing',
   'inputSchema': {'additionalProperties': False,
                   'properties': {'include_preview': {'description': 'Return '
@@ -274,6 +282,14 @@ FULL_TOOLS_LIST = [{'description': 'Create a new plate.',
                   'required': [],
                   'type': 'object'},
   'name': 'get_filaments'},
+ {'description': 'Get the per-extruder flush-volume matrices (mL to purge '
+                 'switching from filament X to Y) and the flush multiplier '
+                 'used to scale them.',
+  'inputSchema': {'additionalProperties': False,
+                  'properties': {},
+                  'required': [],
+                  'type': 'object'},
+  'name': 'get_flush_volumes'},
  {'description': 'Get per-object setting overrides.',
   'inputSchema': {'additionalProperties': False,
                   'properties': {'object_id': {'description': 'Object index '
@@ -363,6 +379,14 @@ FULL_TOOLS_LIST = [{'description': 'Create a new plate.',
                   'required': [],
                   'type': 'object'},
   'name': 'get_slicing_status'},
+ {'description': 'Get toolchanger / multi-extruder settings (retraction on '
+                 'toolchange, prime tower, filament map, ...) from the printer '
+                 'preset, print preset, and project config.',
+  'inputSchema': {'additionalProperties': False,
+                  'properties': {},
+                  'required': [],
+                  'type': 'object'},
+  'name': 'get_toolchanger_config'},
  {'description': 'Get valid configuration keys.',
   'inputSchema': {'additionalProperties': False,
                   'properties': {'category': {'description': 'per_object, '
@@ -678,6 +702,30 @@ FULL_TOOLS_LIST = [{'description': 'Create a new plate.',
                   'required': [],
                   'type': 'object'},
   'name': 'send_to_printer'},
+ {'description': "Overwrite one extruder's full flush-volume matrix (NxN, N = "
+                 "physical filament count) and, optionally, that extruder's "
+                 'flush multiplier.',
+  'inputSchema': {'additionalProperties': False,
+                  'properties': {'extruder': {'description': '0-based '
+                                                             'extruder, '
+                                                             'default 0',
+                                              'type': 'integer'},
+                                 'flush_multiplier': {'description': 'Optional '
+                                                                     'scale '
+                                                                     'factor '
+                                                                     'for this '
+                                                                     'extruder',
+                                                      'type': 'number'},
+                                 'matrix': {'description': 'NxN matrix, row = '
+                                                           'from-filament, '
+                                                           'column = '
+                                                           'to-filament, mL',
+                                            'items': {'items': {'type': 'number'},
+                                                      'type': 'array'},
+                                            'type': 'array'}},
+                  'required': ['matrix'],
+                  'type': 'object'},
+  'name': 'set_flush_volumes'},
  {'description': 'Set G-code preview visualization mode. Requires sliced '
                  'G-code. Available types: feature_type, speed, actual_speed, '
                  'fan_speed, temperature, flow, actual_flow, layer_height, '

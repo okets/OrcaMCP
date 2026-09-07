@@ -1,12 +1,16 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPFilamentUtils.cpp
 #include "OrcaMCPFilamentUtils.hpp"
+#include "OrcaMCPConfigKeys.hpp"
+#include "OrcaMCPPresetConfigUtils.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/GUI_ObjectList.hpp"
 #include "slic3r/GUI/I18N.hpp"
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/FilamentMixer.hpp"
 #include "libslic3r/Model.hpp"
+#include <cmath>
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
@@ -143,6 +147,81 @@ bool set_object_filament(int object_id, int volume_id, int slot, std::string& er
     wxGetApp().obj_list()->update_filament_colors();
     plater->update();
     return true;
+}
+
+nlohmann::json describe_flush_volumes()
+{
+    PresetBundle* pb = wxGetApp().preset_bundle;
+    const size_t extruders = size_t(pb->get_printer_extruder_count());
+    const size_t n = pb->num_physical_filaments();
+    const auto* mat = pb->project_config.option<ConfigOptionFloats>("flush_volumes_matrix");
+    nlohmann::json matrices = nlohmann::json::array();
+    for (size_t e = 0; e < extruders; ++e) {
+        std::vector<double> block = mat ? get_flush_volumes_matrix(mat->values, e, extruders) : std::vector<double>();
+        const size_t side = size_t(std::sqrt(double(block.size())) + 0.001);
+        nlohmann::json rows = nlohmann::json::array();
+        for (size_t r = 0; r < side; ++r)
+            rows.push_back(std::vector<double>(block.begin() + r * side, block.begin() + (r + 1) * side));
+        matrices.push_back({{"extruder", int(e)}, {"matrix", rows}});
+    }
+    const auto* mult = pb->project_config.option<ConfigOptionFloats>("flush_multiplier");
+    return {{"extruder_count", int(extruders)}, {"filament_count", int(n)},
+            {"flush_multiplier", mult ? nlohmann::json(mult->values) : nlohmann::json::array()},
+            {"matrices", matrices}};
+}
+
+bool set_flush_volumes(const nlohmann::json& matrix, int extruder, std::string& error)
+{
+    PresetBundle* pb = wxGetApp().preset_bundle;
+    const size_t extruders = size_t(pb->get_printer_extruder_count());
+    if (extruder < 0 || size_t(extruder) >= extruders) { error = "extruder out of range"; return false; }
+    auto* mat = pb->project_config.option<ConfigOptionFloats>("flush_volumes_matrix", true);
+    if (!mat || extruders == 0 || mat->values.size() % extruders != 0) { error = "flush_volumes_matrix is not configured"; return false; }
+    const size_t side = size_t(std::sqrt(double(mat->values.size() / extruders)) + 0.001);
+    if (!matrix.is_array() || matrix.size() != side) { error = "matrix must be " + std::to_string(side) + "x" + std::to_string(side); return false; }
+    std::vector<double> block;
+    for (const auto& row : matrix) {
+        if (!row.is_array() || row.size() != side) { error = "matrix rows must have " + std::to_string(side) + " entries"; return false; }
+        for (const auto& v : row) {
+            if (!v.is_number()) { error = "matrix entries must be numbers"; return false; }
+            block.push_back(v.get<double>());
+        }
+    }
+    set_flush_volumes_matrix(mat->values, block, size_t(extruder), extruders);
+    OrcaMCPPresetConfigUtils::RefreshAfterProjectConfigChange();
+    return true;
+}
+
+void auto_calc_flush_volumes()
+{
+    // filament_idx < 0 and extruder_id < 0 (the defaults) already mean "every filament, every
+    // extruder" inside Sidebar::auto_calc_flushing_volumes -- no need to loop here ourselves.
+    // Mixed/virtual filament slots are skipped internally (auto_calc_flushing_volumes_internal).
+    wxGetApp().sidebar().auto_calc_flushing_volumes();
+    OrcaMCPPresetConfigUtils::RefreshAfterProjectConfigChange();
+}
+
+nlohmann::json describe_toolchanger_config()
+{
+    PresetBundle* pb = wxGetApp().preset_bundle;
+    const DynamicPrintConfig& printer_cfg = pb->printers.get_edited_preset().config;
+    const DynamicPrintConfig& print_cfg   = pb->prints.get_edited_preset().config;
+    const DynamicPrintConfig& project_cfg = pb->project_config;
+
+    auto emit = [](const DynamicPrintConfig& cfg, const std::set<std::string>& keys) {
+        nlohmann::json out = nlohmann::json::object();
+        for (const auto& key : keys) {
+            if (cfg.has(key)) out[key] = cfg.opt_serialize(key);
+        }
+        return out;
+    };
+
+    return {
+        {"printer", emit(printer_cfg, toolchanger_keys)},
+        {"print", emit(print_cfg, toolchanger_keys)},
+        {"project", emit(project_cfg, project_keys)},
+        {"extruder_count", int(pb->get_printer_extruder_count())}
+    };
 }
 
 }}} // namespace Slic3r::GUI::OrcaMCP

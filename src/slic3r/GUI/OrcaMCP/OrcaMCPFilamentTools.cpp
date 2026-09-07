@@ -4,6 +4,8 @@
 #include "OrcaMCPFilamentUtils.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Plater.hpp"
+#include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/PrintConfig.hpp"
 
 #include <algorithm>
 
@@ -17,6 +19,17 @@ nlohmann::json with_filaments(nlohmann::json result)
     result["filaments"] = describe_filaments()["filaments"];
     result["active_warnings"] = get_active_warnings_json(wxGetApp().plater());
     return result;
+}
+
+// Overwrites one extruder's flush multiplier. Kept separate from set_flush_volumes() (which
+// only owns the matrix) since the multiplier is an independent, optional part of the request.
+bool apply_flush_multiplier(int extruder, double value, std::string& error)
+{
+    auto* mult = wxGetApp().preset_bundle->project_config.option<Slic3r::ConfigOptionFloats>("flush_multiplier", true);
+    if (!mult || mult->values.empty()) { error = "flush_multiplier is not configured"; return false; }
+    if (size_t(extruder) >= mult->values.size()) { error = "extruder out of range for flush_multiplier"; return false; }
+    mult->values[size_t(extruder)] = value;
+    return true;
 }
 
 } // namespace
@@ -148,6 +161,88 @@ void OrcaMCPServer::register_filament_tools()
 
                 nlohmann::json r = {{"status", "success"}, {"object_id", object_id}, {"filament", filament}};
                 r["volume_id"] = volume_id < 0 ? nlohmann::json(nullptr) : nlohmann::json(volume_id);
+                r["active_warnings"] = get_active_warnings_json(wxGetApp().plater());
+                return r;
+            });
+        }
+    });
+
+    register_tool({
+        "get_flush_volumes",
+        "Get the per-extruder flush-volume matrices (mL to purge switching from filament X to Y) "
+        "and the flush multiplier used to scale them.",
+        {{"type", "object"}, {"properties", nlohmann::json::object()}},
+        [](const nlohmann::json&) -> nlohmann::json {
+            return run_on_main_thread([]() -> nlohmann::json {
+                nlohmann::json r = describe_flush_volumes();
+                r["status"] = "success";
+                r["active_warnings"] = get_active_warnings_json(wxGetApp().plater());
+                return r;
+            });
+        }
+    });
+
+    register_tool({
+        "set_flush_volumes",
+        "Overwrite one extruder's full flush-volume matrix (NxN, N = physical filament count) "
+        "and, optionally, that extruder's flush multiplier.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"matrix", {
+                    {"type", "array"},
+                    {"items", {{"type", "array"}, {"items", {{"type", "number"}}}}},
+                    {"description", "NxN matrix, row = from-filament, column = to-filament, mL"}
+                }},
+                {"extruder", {{"type", "integer"}, {"description", "0-based extruder, default 0"}}},
+                {"flush_multiplier", {{"type", "number"}, {"description", "Optional scale factor for this extruder"}}}
+            }},
+            {"required", {"matrix"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            const nlohmann::json matrix = params.at("matrix");
+            const int extruder = params.value("extruder", 0);
+            const bool has_multiplier = params.contains("flush_multiplier");
+            const double multiplier = has_multiplier ? params["flush_multiplier"].get<double>() : 0.0;
+
+            return run_on_main_thread([matrix, extruder, has_multiplier, multiplier]() -> nlohmann::json {
+                std::string error;
+                if (!set_flush_volumes(matrix, extruder, error))
+                    return nlohmann::json{{"status", "error"}, {"message", error}};
+                if (has_multiplier && !apply_flush_multiplier(extruder, multiplier, error))
+                    return nlohmann::json{{"status", "error"}, {"message", error}};
+
+                nlohmann::json r = {{"status", "success"}};
+                r["active_warnings"] = get_active_warnings_json(wxGetApp().plater());
+                return r;
+            });
+        }
+    });
+
+    register_tool({
+        "auto_calc_flush_volumes",
+        "Automatically recalculate flush-volume matrices for every physical filament and "
+        "extruder from filament color/type compatibility.",
+        {{"type", "object"}, {"properties", nlohmann::json::object()}},
+        [](const nlohmann::json&) -> nlohmann::json {
+            return run_on_main_thread([]() -> nlohmann::json {
+                auto_calc_flush_volumes();
+                nlohmann::json r = {{"status", "success"}};
+                r["active_warnings"] = get_active_warnings_json(wxGetApp().plater());
+                return r;
+            });
+        }
+    });
+
+    register_tool({
+        "get_toolchanger_config",
+        "Get toolchanger / multi-extruder settings (retraction on toolchange, prime tower, "
+        "filament map, ...) from the printer preset, print preset, and project config.",
+        {{"type", "object"}, {"properties", nlohmann::json::object()}},
+        [](const nlohmann::json&) -> nlohmann::json {
+            return run_on_main_thread([]() -> nlohmann::json {
+                nlohmann::json r = describe_toolchanger_config();
+                r["status"] = "success";
                 r["active_warnings"] = get_active_warnings_json(wxGetApp().plater());
                 return r;
             });

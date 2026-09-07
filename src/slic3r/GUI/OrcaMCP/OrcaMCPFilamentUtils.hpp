@@ -23,4 +23,22 @@ int slot_to_config_index(int slot, std::string& error);
 // Main thread only.
 bool set_object_filament(int object_id, int volume_id /* -1 = object */, int slot, std::string& error);
 
+// Snapshot of the per-extruder flush-volume matrices and the flush multiplier. Main thread only.
+nlohmann::json describe_flush_volumes();
+
+// Overwrites the full NxN flush-volume matrix for one extruder (0-based, default 0) and,
+// optionally, that extruder's flush multiplier. Returns false and fills `error` on bad input
+// (extruder out of range, matrix not NxN). Main thread only.
+bool set_flush_volumes(const nlohmann::json& matrix, int extruder, std::string& error);
+
+// Recalculates every filament's flush-volume row/column for every extruder automatically
+// (Sidebar::auto_calc_flushing_volumes with its "all" defaults; skips mixed/virtual slots
+// itself). Main thread only.
+void auto_calc_flush_volumes();
+
+// Current values of every toolchanger_keys/project_keys config key (OrcaMCPConfigKeys.hpp),
+// grouped by {"printer": {...}, "print": {...}, "project": {...}}, each serialized with
+// opt_serialize, plus the printer's extruder_count. Main thread only.
+nlohmann::json describe_toolchanger_config();
+
 }}} // namespace Slic3r::GUI::OrcaMCP
