@@ -2,6 +2,7 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <nlohmann/json.hpp>
 
@@ -17,6 +18,9 @@ namespace OrcaMCP {
 // printers.get_edited_preset().config and saves it as a user printer preset, and
 // Plater::send_gcode_legacy sends to whatever the edited preset points at. "Physical printer" in the
 // MCP tools therefore means "a printer preset that has a print_host".
+
+// Any thread. The config's host_type as the option's own enum name ("flashforge", "crealityprint", ...).
+std::string print_host_type_name(const DynamicPrintConfig& config);
 
 // Main thread. The config OrcaSlicer would send to: the edited printer preset.
 // False + `error` when it has no print host.
@@ -40,12 +44,13 @@ nlohmann::json select_print_host_preset(const std::string& name);
 
 // Main thread, caller holds a McpDialogSuppressionGuard. Writes the print host settings into the
 // edited printer preset and saves it as the user preset `name`, the way PhysicalPrinterDialog does.
-// Returns an empty string on success, otherwise the error message.
-std::string save_print_host_preset(const std::string& name,
-                                   const std::string& host,
-                                   const std::string& host_type,
-                                   const std::string& serial_number,
-                                   const std::string& api_key,
-                                   const std::string& printer_preset);
+// `serial_number`/`api_key` are left untouched when not supplied. Returns an empty string on success,
+// otherwise the error message.
+std::string save_print_host_preset(const std::string&                name,
+                                   const std::string&                host,
+                                   const std::string&                host_type,
+                                   const std::optional<std::string>& serial_number,
+                                   const std::optional<std::string>& api_key,
+                                   const std::string&                printer_preset);
 
 }}} // namespace Slic3r::GUI::OrcaMCP

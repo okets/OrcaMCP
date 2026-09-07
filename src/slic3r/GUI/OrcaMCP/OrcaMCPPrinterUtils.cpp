@@ -20,11 +20,6 @@ std::string config_string(const DynamicPrintConfig& config, const std::string& k
     return config.has(key) ? config.opt_string(key) : std::string();
 }
 
-std::string serialized_host_type(const DynamicPrintConfig& config)
-{
-    return config.has("host_type") ? config.opt_serialize("host_type") : std::string();
-}
-
 const DynamicPrintConfig& edited_printer_config()
 {
     return wxGetApp().preset_bundle->printers.get_edited_preset().config;
@@ -42,6 +37,56 @@ nlohmann::json temperature_json(double current, double target)
     return {{"current", current}, {"target", target}};
 }
 
+// The credentials a host type actually uses, so has_credentials is not Flashforge-only.
+bool has_print_host_credentials(const DynamicPrintConfig& config)
+{
+    if (print_host_type_name(config) == "flashforge")
+        return !config_string(config, "flashforge_serial_number").empty() &&
+               !config_string(config, "printhost_apikey").empty();
+    if (config.has("printhost_authorization_type") && config.opt_serialize("printhost_authorization_type") == "user")
+        return !config_string(config, "printhost_user").empty() && !config_string(config, "printhost_password").empty();
+    return !config_string(config, "printhost_apikey").empty();
+}
+
+// SavePresetDialog::Item::update's name rules. Tab::save_preset(from_input=true) bypasses that dialog's
+// validation and save_current_preset then returns silently, so we must reject the same names it does.
+std::string invalid_preset_name_reason(const PrinterPresetCollection& printers, const std::string& name)
+{
+    static const std::string illegal_characters = "<>[]:/\\|?*\"";
+
+    if (name.empty())
+        return "Preset name must not be empty";
+    if (name.find_first_of(illegal_characters) != std::string::npos)
+        return "Preset name '" + name + "' contains illegal characters: " + illegal_characters;
+    if (name.find(PresetCollection::get_suffix_modified()) != std::string::npos)
+        return "Preset name '" + name + "' must not contain '" + PresetCollection::get_suffix_modified() + "'";
+    if (name.front() == ' ' || name.back() == ' ')
+        return "Preset name '" + name + "' must not start or end with a space";
+    if (name == "Default Setting" || name == "Default Printer" || name == PresetBundle::ORCA_DEFAULT_FILAMENT_PLACEHOLDER)
+        return "Preset name '" + name + "' is reserved";
+    if (printers.get_preset_name_by_alias(name) != name)
+        return "Preset name '" + name + "' is a preset alias";
+
+    const Preset* existing = printers.find_preset(name, false);
+    if (existing != nullptr && !existing->can_overwrite())
+        return "Cannot overwrite the system preset '" + name + "'";
+    return {};
+}
+
+// Selecting a preset discards unsaved edits in every collection, so refuse to switch while any is dirty.
+std::string dirty_preset_collections()
+{
+    const PresetBundle* bundle = wxGetApp().preset_bundle;
+    const std::vector<std::pair<std::string, const PresetCollection*>> collections = {
+        {"print", &bundle->prints}, {"filament", &bundle->filaments}, {"printer", &bundle->printers}};
+
+    std::vector<std::string> dirty;
+    for (const auto& [label, presets] : collections)
+        if (presets->current_is_dirty())
+            dirty.push_back(label);
+    return boost::algorithm::join(dirty, ", ");
+}
+
 // The response shared by add_physical_printer and select_printer: whatever the edited preset now is.
 nlohmann::json print_host_response(const std::string& name)
 {
@@ -49,11 +94,16 @@ nlohmann::json print_host_response(const std::string& name)
     return {{"status", "success"},
             {"physical_printer", name},
             {"printer_preset", name},
-            {"host_type", serialized_host_type(config)},
+            {"host_type", print_host_type_name(config)},
             {"print_host", config_string(config, "print_host")}};
 }
 
 } // namespace
+
+std::string print_host_type_name(const DynamicPrintConfig& config)
+{
+    return config.has("host_type") ? config.opt_serialize("host_type") : std::string();
+}
 
 bool resolve_print_host_config(DynamicPrintConfig& out, std::string& host_type_name, std::string& error)
 {
@@ -69,7 +119,7 @@ bool resolve_print_host_config(DynamicPrintConfig& out, std::string& host_type_n
         error = "No print host configured. Use add_physical_printer first.";
         return false;
     }
-    host_type_name = serialized_host_type(out);
+    host_type_name = print_host_type_name(out);
     return true;
 }
 
@@ -131,9 +181,8 @@ nlohmann::json print_host_presets_json()
         presets.push_back({
             {"name", preset.name},
             {"print_host", host},
-            {"host_type", serialized_host_type(config)},
-            {"has_credentials", !config_string(config, "flashforge_serial_number").empty() &&
-                                    !config_string(config, "printhost_apikey").empty()},
+            {"host_type", print_host_type_name(config)},
+            {"has_credentials", has_print_host_credentials(config)},
             {"is_selected", preset.name == selected_name}
         });
     }
@@ -167,34 +216,46 @@ nlohmann::json select_print_host_preset(const std::string& name)
     return print_host_response(name);
 }
 
-std::string save_print_host_preset(const std::string& name,
-                                   const std::string& host,
-                                   const std::string& host_type,
-                                   const std::string& serial_number,
-                                   const std::string& api_key,
-                                   const std::string& printer_preset)
+std::string save_print_host_preset(const std::string&                name,
+                                   const std::string&                host,
+                                   const std::string&                host_type,
+                                   const std::optional<std::string>& serial_number,
+                                   const std::optional<std::string>& api_key,
+                                   const std::string&                printer_preset)
 {
     PrinterPresetCollection& printers = wxGetApp().preset_bundle->printers;
+
+    const std::string name_error = invalid_preset_name_reason(printers, name);
+    if (!name_error.empty())
+        return name_error;
 
     const std::string base_name = printer_preset.empty() ? printers.get_edited_preset().name : printer_preset;
     if (printers.find_preset(base_name, false) == nullptr)
         return "No printer preset named '" + base_name + "'";
-    if (printers.get_edited_preset().name != base_name)
+    if (printers.get_edited_preset().name != base_name) {
+        const std::string dirty = dirty_preset_collections();
+        if (!dirty.empty())
+            return "Unsaved preset changes in: " + dirty +
+                   ". Save or reset them first (save_preset / reset_preset).";
         OrcaMCPPresetConfigUtils::SelectPreset("printer", base_name);
+        if (printers.get_edited_preset().name != base_name)
+            return "Failed to select printer preset '" + base_name + "'";
+    }
 
     // Same settings PhysicalPrinterDialog writes into the edited printer config, through the shared
-    // validation path.
-    const nlohmann::json item = {
-        {"type", "printer"},
-        {"settings", {
-            {"print_host", host},
-            {"host_type", host_type},
-            {"flashforge_serial_number", serial_number},
-            {"printhost_apikey", api_key},
-            {"printhost_authorization_type", "key"}
-        }}
+    // validation path. Credentials are written only when supplied, so updating the host of an existing
+    // printer does not blank them.
+    nlohmann::json settings = {
+        {"print_host", host},
+        {"host_type", host_type},
+        {"printhost_authorization_type", "key"}
     };
-    const ApplyConfigResult applied = OrcaMCPPresetConfigUtils::ApplyConfig(item);
+    if (serial_number.has_value())
+        settings["flashforge_serial_number"] = *serial_number;
+    if (api_key.has_value())
+        settings["printhost_apikey"] = *api_key;
+
+    const ApplyConfigResult applied = OrcaMCPPresetConfigUtils::ApplyConfig({{"type", "printer"}, {"settings", settings}});
     if (!applied.error.empty())
         return applied.error;
     if (!applied.invalid.empty())
@@ -207,7 +268,9 @@ std::string save_print_host_preset(const std::string& name,
         return "Printer settings tab not available";
     tab->save_preset("", false, false, true, name);
 
-    if (printers.get_edited_preset().name != name)
+    // save_current_preset returns silently when it refuses, so check the stored preset, not just the name.
+    const Preset* saved = printers.find_preset(name, false);
+    if (saved == nullptr || saved->is_system || config_string(saved->config, "print_host") != host)
         return "Saving printer preset '" + name + "' did not take effect";
     return {};
 }

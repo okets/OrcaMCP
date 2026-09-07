@@ -13,6 +13,7 @@
 #include "libslic3r/PrintConfig.hpp"
 
 #include <algorithm>
+#include <optional>
 #include <boost/algorithm/string/join.hpp>
 
 using namespace Slic3r::GUI;
@@ -28,6 +29,14 @@ const std::vector<std::string> kSupportedHostTypes = {
 nlohmann::json error_response(const std::string& message)
 {
     return {{"status", "error"}, {"message", message}};
+}
+
+// Absent when the caller did not send the key, so it can be told apart from an explicit "".
+std::optional<std::string> optional_string(const nlohmann::json& params, const std::string& key)
+{
+    if (!params.contains(key) || !params.at(key).is_string())
+        return std::nullopt;
+    return params.at(key).get<std::string>();
 }
 
 } // namespace
@@ -138,37 +147,15 @@ void OrcaMCPServer::register_printer_tools()
                     if (printer_config.has("print_host")) {
                         std::string print_host = printer_config.opt_string("print_host");
                         if (!print_host.empty()) {
-                            nlohmann::json current_host = {
+                            // Same spelling as physical_printers[].host_type, so it round-trips into
+                            // add_physical_printer.
+                            result["current_print_host"] = {
                                 {"name", current_printer.name},
                                 {"type", "printer_preset_host"},
                                 {"print_host", print_host},
+                                {"host_type", print_host_type_name(printer_config)},
                                 {"is_current", true}
                             };
-
-                            if (printer_config.has("host_type")) {
-                                auto* opt = printer_config.option<ConfigOptionEnum<PrintHostType>>("host_type");
-                                if (opt) {
-                                    switch (opt->value) {
-                                        case htPrusaLink: current_host["host_type"] = "prusalink"; break;
-                                        case htPrusaConnect: current_host["host_type"] = "prusaconnect"; break;
-                                        case htOctoPrint: current_host["host_type"] = "octoprint"; break;
-                                        case htDuet: current_host["host_type"] = "duet"; break;
-                                        case htFlashAir: current_host["host_type"] = "flashair"; break;
-                                        case htAstroBox: current_host["host_type"] = "astrobox"; break;
-                                        case htRepetier: current_host["host_type"] = "repetier"; break;
-                                        case htMKS: current_host["host_type"] = "mks"; break;
-                                        case htESP3D: current_host["host_type"] = "esp3d"; break;
-                                        case htCrealityPrint: current_host["host_type"] = "creality"; break;
-                                        case htObico: current_host["host_type"] = "obico"; break;
-                                        case htFlashforge: current_host["host_type"] = "flashforge"; break;
-                                        case htSimplyPrint: current_host["host_type"] = "simplyprint"; break;
-                                        case htElegooLink: current_host["host_type"] = "elegoo"; break;
-                                        default: current_host["host_type"] = "unknown"; break;
-                                    }
-                                }
-                            }
-
-                            result["current_print_host"] = current_host;
                         }
                     }
                 }
@@ -271,21 +258,8 @@ void OrcaMCPServer::register_printer_tools()
                         print_host = printer_config.opt_string("print_host");
                         has_print_host = !print_host.empty();
                     }
-                    if (has_print_host && printer_config.has("host_type")) {
-                        auto* opt = printer_config.option<ConfigOptionEnum<PrintHostType>>("host_type");
-                        if (opt) {
-                            switch (opt->value) {
-                                case htOctoPrint: host_type_str = "octoprint"; break;
-                                case htPrusaLink: host_type_str = "prusalink"; break;
-                                case htPrusaConnect: host_type_str = "prusaconnect"; break;
-                                case htDuet: host_type_str = "duet"; break;
-                                case htRepetier: host_type_str = "repetier"; break;
-                                case htMKS: host_type_str = "mks"; break;
-                                case htObico: host_type_str = "obico"; break;
-                                default: host_type_str = "other"; break;
-                            }
-                        }
-                    }
+                    if (has_print_host && !print_host_type_name(printer_config).empty())
+                        host_type_str = print_host_type_name(printer_config);
                 }
 
                 // Suppress any dialogs during send operation
@@ -399,15 +373,17 @@ void OrcaMCPServer::register_printer_tools()
                 }},
                 {"serial_number", {
                     {"type", "string"},
-                    {"description", "Flashforge serial number (from discover_printers)"}
+                    {"description", "Flashforge serial number (from discover_printers). Omit to keep the stored one."}
                 }},
                 {"api_key", {
                     {"type", "string"},
-                    {"description", "API key, or the Flashforge LAN check code"}
+                    {"description", "API key, or the Flashforge LAN check code. Omit to keep the stored one."}
                 }},
                 {"printer_preset", {
                     {"type", "string"},
-                    {"description", "Printer preset to base it on (default: the edited printer preset)"}
+                    {"description", "Printer preset to base it on (default: the edited printer preset). "
+                                    "Settings you do not pass are taken from that preset, so naming a "
+                                    "different one replaces the stored credentials of an existing printer."}
                 }}
             }},
             {"required", {"name", "host", "host_type"}}
@@ -416,9 +392,10 @@ void OrcaMCPServer::register_printer_tools()
             const std::string name           = params.value("name", std::string());
             const std::string host           = params.value("host", std::string());
             const std::string host_type      = params.value("host_type", std::string());
-            const std::string serial_number  = params.value("serial_number", std::string());
-            const std::string api_key        = params.value("api_key", std::string());
             const std::string printer_preset = params.value("printer_preset", std::string());
+            // Omitted credentials keep whatever the preset already stores.
+            const std::optional<std::string> serial_number = optional_string(params, "serial_number");
+            const std::optional<std::string> api_key       = optional_string(params, "api_key");
 
             if (name.empty() || host.empty() || host_type.empty())
                 return error_response("name, host and host_type are required");

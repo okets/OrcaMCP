@@ -7,7 +7,9 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
   'inputSchema': {'additionalProperties': False,
                   'properties': {'api_key': {'description': 'API key, or the '
                                                             'Flashforge LAN '
-                                                            'check code',
+                                                            'check code. Omit '
+                                                            'to keep the '
+                                                            'stored one.',
                                              'type': 'string'},
                                  'host': {'description': 'IP address or '
                                                          'hostname of the '
@@ -34,13 +36,31 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                                                                    '(default: '
                                                                    'the edited '
                                                                    'printer '
-                                                                   'preset)',
+                                                                   'preset). '
+                                                                   'Settings '
+                                                                   'you do not '
+                                                                   'pass are '
+                                                                   'taken from '
+                                                                   'that '
+                                                                   'preset, so '
+                                                                   'naming a '
+                                                                   'different '
+                                                                   'one '
+                                                                   'replaces '
+                                                                   'the stored '
+                                                                   'credentials '
+                                                                   'of an '
+                                                                   'existing '
+                                                                   'printer.',
                                                     'type': 'string'},
                                  'serial_number': {'description': 'Flashforge '
                                                                   'serial '
                                                                   'number '
                                                                   '(from '
-                                                                  'discover_printers)',
+                                                                  'discover_printers). '
+                                                                  'Omit to '
+                                                                  'keep the '
+                                                                  'stored one.',
                                                    'type': 'string'}},
                   'required': ['name', 'host', 'host_type'],
                   'type': 'object'},
