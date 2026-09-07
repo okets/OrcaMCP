@@ -20,6 +20,8 @@
 #include "libslic3r/AppConfig.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/ClipperUtils.hpp"
+#include "libslic3r/GCode/WipeTower.hpp"
+#include "libslic3r/GCode/WipeTowerEstimate.hpp"
 #include "libslic3r/Tesselate.hpp"
 #include "libslic3r/PrintConfig.hpp"
 
@@ -919,6 +921,21 @@ int GLVolumeCollection::load_wipe_tower_preview(
     GUI::PartPlateList& ppl = GUI::wxGetApp().plater()->get_partplate_list();
     std::vector<int> plate_extruders = ppl.get_plate(plate_idx)->get_extruders(true);
     TriangleMesh wipe_tower_shell = make_cube(width, depth, height);
+    // The brim is part of the printed footprint: draw it and fold it into the shell so the
+    // outside-bed shader and the drag clamp react to the true first-layer extent.
+    const bool   show_brim   = brim_width > 0.f;
+    const float  brim_height = 0.2f; // one first layer, visual only
+    TriangleMesh brim_slab;
+    if (show_brim) {
+        // The brim follows the real first-layer outline: a Type2 cone-wall tower's base bulges
+        // past the body box. The wall type and angle are print settings, the planner a printer one.
+        const DynamicPrintConfig &print_cfg   = GUI::wxGetApp().preset_bundle->prints.get_edited_preset().config;
+        const DynamicPrintConfig &printer_cfg = GUI::wxGetApp().preset_bundle->printers.get_edited_preset().config;
+        const Polygon  outline      = estimate_wipe_tower_first_layer_outline(print_cfg, resolve_wipe_tower_type(printer_cfg), width, depth, height);
+        const Polygons brim_outline = offset(outline, scaled(brim_width));
+        brim_slab                   = WipeTower::its_make_rib_brim(brim_outline.empty() ? outline : brim_outline.front(), brim_height);
+        wipe_tower_shell.merge(brim_slab);
+    }
     for (int extruder_id : plate_extruders) {
         if (extruder_id <= extruder_colors.size())
             colors.push_back(extruder_colors[extruder_id - 1]);
