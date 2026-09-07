@@ -143,6 +143,106 @@ Port of PrusaSlicer 2.8.0's improved G-code viewer:
 
 ---
 
+## Current Sync: September 2026
+
+### Overview
+
+| Metric | Value |
+|--------|-------|
+| Sync Date | 2026-09-07 |
+| Upstream Head | `37e1582c4c` ("redesign filament_id (#15513)") |
+| Upstream Version | 2.5.0-dev |
+| Upstream Commits Behind | 1501 |
+| Pre-merge `mcp` HEAD | `07d05f590bd5c629f72d7472aa8e74a51886aa13` |
+| Pre-merge `main` HEAD | `a3f229f4061718581c8faf8577e55683757d6581` |
+| New OrcaMCP Version | 2.5.0.1-dev |
+
+### Why This Sync
+
+- Upstream added the **color mixing** feature and the **Flashforge Creator 5 / 5 Pro** printer
+  profiles that later OrcaMCP work builds on.
+- 1501 commits of upstream fixes, including the new Python plugin host, `wxInspector`,
+  bundled FFMPEG, and wxWidgets 3.3.2.
+
+### Procedure Used
+
+```bash
+git checkout main && git merge --ff-only upstream/main && git push origin main
+git checkout -b sync-upstream-2.5 mcp
+git merge --no-ff main          # 10 conflicts
+```
+
+Because `main` was fast-forwarded first, `git diff main mcp -- <file>` no longer shows the
+fork's own hunks. Use the merge-base instead:
+
+```bash
+git diff a3f229f406 07d05f590b -- <file>   # merge-base -> pre-merge mcp
+```
+
+### Conflicts and Resolutions (10 files)
+
+| File | Resolution |
+|------|------------|
+| `.github/ISSUE_TEMPLATE/bug_report.yml` | `--ours` (kept the fork's issue template) |
+| `README.md` | `--ours` (kept the OrcaMCP README) |
+| `.github/workflows/build_orca.yml` | `--theirs` (upstream's multi-arch workflow; fork rebranding re-applied in a later task — release CI is knowingly broken until then) |
+| `build_release_vs.bat` | `--theirs`, then re-applied the fork's `vswhere` PATH hunk after `set _START_TIME=%TIME%` |
+| `resources/web/data/text.js` | `--theirs`, then re-inserted the fork's `t127`/`t128` ("Connect AI" / "Setup MCP agents") strings into all 15 language blocks |
+| `version.inc` | Upstream's file with `SLIC3R_APP_NAME`/`SLIC3R_APP_KEY` = `OrcaMCP` (auto-merged) and `SoftFever_VERSION` set to `2.5.0.1-dev`; upstream's `SLIC3R_VERSION "02.08.01.55"` kept |
+| `CMakeLists.txt` | Two CPack hunks. Kept upstream's new Windows arch-suffix block (`if (WIN32) ... string(APPEND CPACK_PACKAGE_FILE_NAME "_arm64"/"_x64")`) but with the OrcaMCP installer base name, summary and homepage URL; kept the fork's `CPACK_NSIS_INSTALLED_ICON_NAME` + `CPACK_NSIS_EXTRA_INSTALL_COMMANDS` desktop-shortcut block (upstream dropped the shortcut). The `file(COPY ... orcamcp-bridge.py ... tools_schema.py)` block auto-merged. |
+| `src/CMakeLists.txt` | Two hunks. `OrcaSlicer_app_gui`: took upstream's new multi-property `set_target_properties` (adds `WIN32_EXECUTABLE`) with `OUTPUT_NAME "orca-mcp"`. Windows install: kept **both** upstream's `install(DIRECTORY "${CMAKE_PREFIX_PATH}/libpython/" ...)` and the fork's `install(DIRECTORY .../scripts/ ...)`. All other fork hunks (`orca-mcp` names, `ln -sf`, `MACOSX_BUNDLE_BUNDLE_NAME "OrcaMCP"`, the non-Windows scripts install) auto-merged. |
+| `src/slic3r/GUI/GUI_App.cpp` | All four MCP hunks (OrcaMCP includes, `start_http_server()` + `ensure_bridge_script_copied()` in `post_init()`, `homepage_connectai` web command, `/mcp` routing in `start_http_server`) auto-merged. The single conflict was cosmetic: the splash text. Kept the fork's wording with upstream's new second argument — `scrn->SetText(_L("Loading configuration (this may take a couple of minutes)") + dots, 5);` |
+| `src/slic3r/GUI/Preferences.hpp` | Kept the fork's `create_mcp_clients_page()` / `refresh_mcp_client_buttons()` declarations and dropped `create_shortcuts_page()`, which upstream removed (no definition remains anywhere in `src/`). All other fork members (`Widgets/Button.hpp`, the new constructor, `m_initial_tab`, `m_highlight_option`, `MCPClientUIElements`, `m_mcp_client_ui`) auto-merged. |
+
+### Compile Fixes
+
+**None were needed.** Every fork hunk in the auto-merged risk files
+(`HttpServer.{hpp,cpp}`, `Plater.{hpp,cpp}`, `NotificationManager.{hpp,cpp}`,
+`MsgDialog.cpp`, `GUI.{hpp,cpp}`, `Preferences.cpp`, `src/slic3r/CMakeLists.txt`) survived
+the merge intact and compiled against upstream 2.5.0-dev without modification.
+`src/slic3r/GUI/OrcaMCP/` was not touched.
+
+### Build Environment Fixes (not source changes)
+
+Two stale-state problems in the local `deps/` build tree, unrelated to the merge:
+
+1. `deps/build/arm64/CMakeCache.txt` (and `build/arm64/CMakeCache.txt`) cached
+   `GIT_EXECUTABLE=/opt/homebrew/bin/git`, which no longer exists, so `find_package(Git)`
+   reported an empty version and `ExternalProject_Add` refused `--recursive`. Repointed the
+   cache entries at `/usr/bin/git`.
+2. Upstream added `deps/PNG/0002-clang19-macos.patch`, so the PNG patch step re-ran over an
+   already-patched source tree and failed. Fixed by deleting
+   `deps/build/arm64/dep_PNG-prefix/` to force a clean re-extract.
+
+Watch for (2) on any dep whose patch set changes: `OCCT`, `OpenCV`, `OpenEXR`, `TBB` and
+`PNG` all have `PATCH_COMMAND` steps.
+
+### Build
+
+Deps had to be rebuilt (`git diff --stat a3f229f406 upstream/main -- deps/` shows 27 files
+changed, including new `python3`, `wxInspector`, `FFMPEG`, `Assimp` and `Eigen` projects).
+
+```bash
+./build_release_macos.sh -d -x -j 12   # deps
+./build_release_macos.sh -s -x -j 12   # slicer: 767/767 targets, 0 failures, 8m31s
+```
+
+Result: `build/arm64/OrcaSlicer/OrcaSlicer.app`, `CFBundleName = OrcaMCP`,
+`CFBundleShortVersionString = 2.5.0.1-dev`, with `Contents/Resources/scripts/`
+containing `orcamcp-bridge.py` and `tools_schema.py`.
+
+### Verification
+
+- `get_server_info` — MCP server responds on `http://localhost:13618/mcp`.
+- `get_scene_info` — returns the default plate, `active_warnings.count = 0`.
+- Flashforge Creator 5 profiles are bundled: `Flashforge Creator 5 Pro 0.4 nozzle` (and the
+  0.6/0.8 variants, plus the non-Pro models) are present in
+  `Contents/Resources/profiles/Flashforge.json`. They do **not** appear in `get_presets`
+  because that tool lists only presets for vendors installed in the user's configuration;
+  Flashforge has to be added through the printer wizard first.
+
+---
+
 ## Post-Sync Tasks
 
 - [ ] Update CLAUDE.md if any MCP patterns changed
