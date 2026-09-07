@@ -94,6 +94,8 @@ inline constexpr int kSidebarContextMenuFilamentId = -2;
 #define EVT_PUBLISHING_START        1
 #define EVT_PUBLISHING_STOP         2
 
+// OrcaMCP: needs to reference this event (defined in Plater.cpp) from OrcaMCPPresetConfigUtils.cpp.
+wxDECLARE_EVENT(EVT_SCHEDULE_BACKGROUND_PROCESS, SimpleEvent);
 //BBS: add EVT_SLICING_UPDATE declare here
 wxDECLARE_EVENT(EVT_SLICING_UPDATE, Slic3r::SlicingStatusEvent);
 wxDECLARE_EVENT(EVT_PUBLISH,        wxCommandEvent);

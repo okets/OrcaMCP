@@ -923,7 +923,7 @@ void OrcaMCPServer::register_builtin_tools()
     // apply_config - Apply print settings
     register_tool({
         "apply_config",
-        "Apply print settings. Batch multiple in one call. Types: print, filament, printer.",
+        "Apply print settings. Batch multiple in one call. Types: print | filament | printer | project.",
         {
             {"type", "object"},
             {"properties", {
@@ -935,7 +935,7 @@ void OrcaMCPServer::register_builtin_tools()
                         {"properties", {
                             {"type", {
                                 {"type", "string"},
-                                {"enum", {"print", "filament", "printer"}},
+                                {"enum", {"print", "filament", "printer", "project"}},
                                 {"description", "Setting type"}
                             }},
                             {"key", {
@@ -955,16 +955,52 @@ void OrcaMCPServer::register_builtin_tools()
         [](const nlohmann::json& params) -> nlohmann::json {
             nlohmann::json settings = params["settings"];
             return run_on_main_thread([settings]() {
-                // Suppress any dialogs during config application
-                set_mcp_dialog_suppression(true);
+                McpDialogSuppressionGuard suppression_guard;
+
+                // The wire format is a flat list of {type, key, value} items (existing, published
+                // contract). OrcaMCPPresetConfigUtils::ApplyConfig operates on a batch of settings
+                // per type ({"type":..., "settings": {key: value, ...}}), so group by type here,
+                // preserving each type's first-seen order.
+                std::vector<std::string> type_order;
+                std::map<std::string, nlohmann::json> grouped_settings;
                 for (const auto& item : settings) {
-                    OrcaMCPPresetConfigUtils::ApplyConfig(item);
+                    const std::string type = item.value("type", "");
+                    if (grouped_settings.find(type) == grouped_settings.end()) {
+                        grouped_settings[type] = nlohmann::json::object();
+                        type_order.push_back(type);
+                    }
+                    grouped_settings[type][item.value("key", "")] = item.at("value");
+                }
+
+                nlohmann::json applied_keys = nlohmann::json::array();
+                nlohmann::json invalid_keys = nlohmann::json::array();
+                bool has_error = false;
+                bool has_invalid = false;
+
+                for (const auto& type : type_order) {
+                    nlohmann::json config_item = {{"type", type}, {"settings", grouped_settings[type]}};
+                    ApplyConfigResult result = OrcaMCPPresetConfigUtils::ApplyConfig(config_item);
+                    if (!result.error.empty()) {
+                        has_error = true;
+                    }
+                    if (!result.invalid.empty()) {
+                        has_invalid = true;
+                    }
+                    for (const auto& key : result.applied) applied_keys.push_back(key);
+                    for (const auto& key : result.invalid) invalid_keys.push_back(key);
                 }
                 OrcaMCPPresetConfigUtils::UpdatePresetTabs();
-                auto info_messages = get_mcp_suppressed_messages();
-                set_mcp_dialog_suppression(false);
 
-                nlohmann::json response = {{"status", "success"}, {"applied_count", settings.size()}};
+                std::string status = has_error ? "error" : (has_invalid ? "partial" : "success");
+
+                Plater* plater = wxGetApp().plater();
+                nlohmann::json response = {
+                    {"status", status},
+                    {"applied_keys", applied_keys},
+                    {"invalid_keys", invalid_keys},
+                    {"active_warnings", get_active_warnings_json(plater)}
+                };
+                auto info_messages = suppression_guard.messages();
                 if (!info_messages.empty()) {
                     response["info_messages"] = info_messages;
                 }
@@ -1562,7 +1598,7 @@ void OrcaMCPServer::register_builtin_tools()
             {"properties", {
                 {"category", {
                     {"type", "string"},
-                    {"description", "per_object, print, filament, printer, or all"}
+                    {"description", "per_object, print, filament, printer, toolchanger, project, or all"}
                 }},
                 {"include_descriptions", {
                     {"type", "boolean"},
@@ -1597,6 +1633,27 @@ void OrcaMCPServer::register_builtin_tools()
                     "solid_infill_filament", "support_filament", "support_interface_filament"
                 };
 
+                // Toolchanger / multi-extruder settings, spanning printer preset + print preset keys.
+                static const std::set<std::string> toolchanger_keys = {
+                    "nozzle_diameter", "extruder_offset", "extruder_colour", "extruder_type",
+                    "retract_length_toolchange", "retract_restart_extra_toolchange", "machine_tool_change_time",
+                    "change_filament_gcode", "single_extruder_multi_material", "manual_filament_change",
+                    "physical_extruder_map", "master_extruder_id", "printer_extruder_id",
+                    "purge_in_prime_tower", "wipe_tower_type", "enable_filament_ramming",
+                    "enable_prime_tower", "prime_tower_width", "prime_volume", "wipe_tower_filament", "toolchange_ordering",
+                    "prime_tower_brim_width", "prime_tower_skip_points", "wipe_tower_no_sparse_layers",
+                    "enable_mixed_color_sublayer", "filament_toolchange_delay", "filament_prime_volume", "filament_change_length"
+                };
+
+                // Keys that live in preset_bundle->project_config rather than a preset Tab.
+                static const std::set<std::string> project_keys = {
+                    "filament_colour", "filament_map", "filament_map_mode", "filament_nozzle_map", "filament_volume_map",
+                    "flush_volumes_matrix", "flush_volumes_vector", "flush_multiplier", "flush_multiplier_fast", "prime_volume_mode",
+                    "wipe_tower_x", "wipe_tower_y",
+                    "filament_is_mixed", "filament_mixed_components", "filament_mixed_sublayer_ratios",
+                    "filament_mixed_gradient", "filament_mixed_gradient_range", "filament_mixed_gradient_curve", "filament_mixed_gradient_per_part"
+                };
+
                 nlohmann::json keys_array = nlohmann::json::array();
 
                 for (const auto& [key, opt_def] : def.options) {
@@ -1619,6 +1676,10 @@ void OrcaMCPServer::register_builtin_tools()
                                      key.find("retract") != std::string::npos ||
                                      key.find("gcode") != std::string::npos ||
                                      key.find("nozzle") != std::string::npos;
+                    } else if (category == "toolchanger") {
+                        include_key = toolchanger_keys.count(key) > 0;
+                    } else if (category == "project") {
+                        include_key = project_keys.count(key) > 0;
                     }
 
                     if (include_key) {
@@ -1652,7 +1713,7 @@ void OrcaMCPServer::register_builtin_tools()
                         }
 
                         // Add enum values if applicable
-                        if (opt_def.type == coEnum && !opt_def.enum_keys_map) {
+                        if (opt_def.type == coEnum && opt_def.enum_keys_map) {
                             nlohmann::json enum_values = nlohmann::json::array();
                             for (const auto& ev : opt_def.enum_values) {
                                 enum_values.push_back(ev);

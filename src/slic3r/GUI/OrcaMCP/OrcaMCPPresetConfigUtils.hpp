@@ -2,9 +2,20 @@
 #define slic3r_GUI_OrcaMCPPresetConfigUtils_hpp_
 
 #include <nlohmann/json.hpp>
+#include <string>
+#include <vector>
 #include "libslic3r/Preset.hpp"
 
 namespace Slic3r { namespace GUI {
+
+// Result of applying a batch of settings for one {type, settings} item.
+// `error` is non-empty only for a structural failure (unknown type / no tab);
+// per-key failures are reported via `invalid` instead of aborting the whole item.
+struct ApplyConfigResult {
+    std::vector<std::string> applied;
+    std::vector<std::string> invalid;
+    std::string error;
+};
 
 class OrcaMCPPresetConfigUtils {
 public:
@@ -16,7 +27,11 @@ public:
     static nlohmann::json GetEditedPresetJson(Preset::Type type);
     static void DiscardCurrentPresetChanges();
     static void UpdatePresetTabs();
-    static void ApplyConfig(const nlohmann::json& item);
+    // item = {"type": "print"|"filament"|"printer"|"project", "settings": {key: value, ...}}
+    static ApplyConfigResult ApplyConfig(const nlohmann::json& item);
+    // Refreshes derived UI/state after a direct write to preset_bundle->project_config
+    // (filament colors, dynamic/mixed filament lists, project-dirty flag, background process).
+    static void RefreshAfterProjectConfigChange();
     static void SelectPreset(const std::string& type, const std::string& presetName);
 
     // Preset management tools

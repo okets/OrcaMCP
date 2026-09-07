@@ -4,6 +4,7 @@
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/PresetComboBoxes.hpp"
 #include "slic3r/GUI/Jobs/OrientJob.hpp"
+#include "libslic3r/PrintConfig.hpp"
 
 namespace Slic3r { namespace GUI {
 
@@ -127,37 +128,64 @@ void OrcaMCPPresetConfigUtils::UpdatePresetTabs() {
     }
 }
 
-void OrcaMCPPresetConfigUtils::ApplyConfig(const nlohmann::json& item) {
-    std::string type = item.value("type", "");
-    Preset::Type preset_type;
-    if (type == "print") {
-        preset_type = Preset::Type::TYPE_PRINT;
-    } else if (type == "filament") {
-        preset_type = Preset::Type::TYPE_FILAMENT;
-    } else if (type == "printer") {
-        preset_type = Preset::Type::TYPE_PRINTER;
+ApplyConfigResult OrcaMCPPresetConfigUtils::ApplyConfig(const nlohmann::json& item) {
+    ApplyConfigResult result;
+    const std::string type = item.value("type", "");
+    DynamicPrintConfig* config = nullptr;
+
+    if (type == "project") {
+        config = &wxGetApp().preset_bundle->project_config;
     } else {
-        std::string error_message = "ApplyConfig: invalid type parameter: " + type;
-        BOOST_LOG_TRIVIAL(error) << error_message;
-        return;
-    }
-
-    Tab* tab = wxGetApp().get_tab(preset_type);
-    if (tab != nullptr) {
+        Preset::Type preset_type;
         try {
-            DynamicPrintConfig* config = tab->get_config();
-            if (!config) return;
-
-            ConfigSubstitutionContext context(ForwardCompatibilitySubstitutionRule::Enable);
-            const std::string value_str = item["value"].is_string() ? // Can't blindly dump json object to string, otherwise the original string will become "\"value\""
-                item["value"].get<std::string>() : item["value"].dump();
-            config->set_deserialize(item.value("key", ""), value_str, context);
-        } catch (const std::exception& e) {
-            std::string error_message = "ApplyConfig: '" + item.value("key", "") + ":" + item["value"].dump() + "' failed: " + e.what();
-            BOOST_LOG_TRIVIAL(error) << error_message;
-            return;
+            preset_type = GetPresetTypeFromString(type);
+        } catch (const std::exception&) {
+            result.error = "Unknown preset type: " + type;
+            return result;
+        }
+        Tab* tab = wxGetApp().get_tab(preset_type);
+        if (!tab) {
+            result.error = "No tab for preset type: " + type;
+            return result;
+        }
+        config = tab->get_config();
+        if (!config) {
+            result.error = "No config available for preset type: " + type;
+            return result;
         }
     }
+
+    ConfigSubstitutionContext context(ForwardCompatibilitySubstitutionRule::Enable);
+    for (auto& [key, value] : item.at("settings").items()) {
+        // Can't blindly dump json object to string, otherwise the original string will become "\"value\""
+        const std::string value_str = value.is_string() ? value.get<std::string>() : value.dump();
+        if (print_config_def.get(key) == nullptr) {
+            result.invalid.push_back(key);
+            continue;
+        }
+        try {
+            config->set_deserialize(key, value_str, context);
+            result.applied.push_back(key);
+        } catch (const std::exception& e) {
+            BOOST_LOG_TRIVIAL(error) << "ApplyConfig: '" << key << ":" << value_str << "' failed: " << e.what();
+            result.invalid.push_back(key);
+        }
+    }
+
+    if (type == "project") {
+        RefreshAfterProjectConfigChange();
+    }
+
+    return result;
+}
+
+void OrcaMCPPresetConfigUtils::RefreshAfterProjectConfigChange() {
+    Plater* plater = wxGetApp().plater();
+    plater->update_filament_colors_in_full_config();
+    wxGetApp().sidebar().update_dynamic_filament_list();
+    wxGetApp().sidebar().update_mixed_filament_list();
+    plater->update_project_dirty_from_presets();
+    wxPostEvent(&wxGetApp().sidebar(), SimpleEvent(EVT_SCHEDULE_BACKGROUND_PROCESS, &wxGetApp().sidebar()));
 }
 
 void OrcaMCPPresetConfigUtils::SelectPreset(const std::string& type, const std::string& presetName) {
