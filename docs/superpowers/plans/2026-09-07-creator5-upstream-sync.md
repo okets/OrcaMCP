@@ -1501,6 +1501,25 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ---
 
+### Task 2.7b: Bug sweep of findings deferred during Stages 1–2
+
+User rule (2026-09-08): every bug found is fixed, together with related occurrences of the same pattern. This task closes the items reviews parked earlier. Each fix: grep for the same pattern across `src/slic3r/GUI/OrcaMCP/` and `src/slic3r/Utils/Flashforge*.cpp`, fix all occurrences, add or extend a test where one exists, verify live where it is an MCP behaviour.
+
+**Files:** as listed per item.
+
+- [ ] **Item A — HTTP server answers before the GUI is initialised** (`src/slic3r/GUI/OrcaMCP/OrcaMCPServer.cpp` `handle_request`): a `tools/call` arriving before `wxGetApp().plater()` / `preset_bundle` exist threw `type_error` and once took the process down. Add a readiness check at the top of `handle_request` (plater and preset bundle non-null, and app initialisation finished — find the flag `GUI_App` sets after `post_init`, e.g. `m_post_initialized`/`is_editor()` + plater) returning JSON-RPC error `-32001 "OrcaMCP is starting up"`; and wrap each tool invocation in a `try { } catch (const std::exception&)` that returns `-32603` with the message so no exception escapes to the HTTP thread. Verify: relaunch and hammer `get_scene_info` immediately; first responses are the startup error, never a crash.
+- [ ] **Item B — `get_print_estimate` reports `in_progress` after slicing finished** (`OrcaMCPServer.cpp`, tools `get_slicing_status` and `get_print_estimate`): compare the state check with upstream 2.5's `Plater::is_background_process_slicing()` / `priv::background_process.running()` / `is_preview_shown()` and the plate's `is_slice_result_valid()`. Use the plate-level result validity as the source of truth for "done"; report `state: idle|slicing|done`. Verify live: slice, poll status to done, `get_print_estimate` returns numbers.
+- [ ] **Item C — `apply_config` last-write-wins on duplicate type+key in one batch** (`OrcaMCPPresetConfigUtils.cpp` / `OrcaMCPServer.cpp`): detect duplicates and report them in a `duplicate_keys` array (last value applied, documented). Same for `set_object_config` batches if the same shape exists.
+- [ ] **Item D — `list_gcode_files` and `fetch_material_slots` can throw on a non-object array element** (`src/slic3r/Utils/Flashforge.cpp`): guard `f.is_object()` / `is_string()` before `.value()`; add a Catch2 case with a malformed `gcodeList` to `test_flashforge_api.cpp` (move the parsing into `FlashforgeApi::parse_gcode_list` if not already there so it is testable). Related occurrence: the `slotInfos` loop.
+- [ ] **Item E — credential-guard block repeated across `Flashforge` methods**: extract `bool require_local_api_credentials(wxString& msg) const` and use it in every method (behaviour identical).
+- [ ] **Item F — `try_parse_json_int` copy in FlashforgeApi lacks `boost::trim`**: either add the trim or, better, make `Flashforge.cpp` call the FlashforgeApi version so only one copy exists.
+- [ ] **Item G — `set_object_filament` treats any negative `volume_id` as "whole object"**: reject values other than -1/absent with an error. Related occurrence: the same pattern in `set_object_printable`/`set_object_config` if present.
+- [ ] **Item H — `get_presets` returns ~1.9 MB**: add optional `type` (`printer|filament|print`) and `vendor` filters plus a `summary` boolean (names only) so MCP clients can page; default behaviour unchanged. Document in reference.md.
+- [ ] **Item I — hex colour inputs accept trailing garbage** (`suggest_color_mix.target_color`): validate `^#[0-9A-Fa-f]{6}$` in the tool before calling the upstream parser; related occurrence: `filament_colour` writes via `apply_config` project type are validated by upstream already (confirm, no change if so).
+- [ ] **Step: build, run `[flashforge]` tests, regen schema, pytest, live checks per item, commit per item** with messages `fix: <item>`, each ending with the Co-Authored-By trailer.
+
+---
+
 ### Task 2.8: Stage 2 wrap-up
 
 - [ ] **Step 1: Regenerate the schema, run all tests**
