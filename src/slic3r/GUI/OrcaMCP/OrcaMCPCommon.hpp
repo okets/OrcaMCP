@@ -7,10 +7,10 @@
 #include <nlohmann/json.hpp>
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
-#include "slic3r/GUI/Plater.hpp"
-#include "slic3r/GUI/NotificationManager.hpp"
 
-namespace Slic3r { namespace GUI { namespace OrcaMCP {
+namespace Slic3r { namespace GUI {
+class Plater;
+namespace OrcaMCP {
 
 // Runs `func` on the wx main thread and blocks the calling HTTP worker until it returns.
 // `func` must return nlohmann::json. Exceptions propagate to the caller.

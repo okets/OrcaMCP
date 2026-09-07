@@ -1,5 +1,7 @@
 #include "OrcaMCPCommon.hpp"
 #include "OrcaMCPPlateUtils.hpp"
+#include "slic3r/GUI/Plater.hpp"
+#include "slic3r/GUI/NotificationManager.hpp"
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
