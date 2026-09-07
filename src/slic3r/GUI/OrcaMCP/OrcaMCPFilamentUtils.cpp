@@ -98,10 +98,9 @@ bool mixed_result_from_params(const nlohmann::json& params, MixedFilamentResult&
     out.gradient_direction = params.value("gradient_direction", std::string("a_to_b")) == "b_to_a" ? 1 : 0;
     out.per_part_gradient  = params.value("per_part_gradient", false);
 
-    if (out.gradient_enabled && out.components.size() != 2) {
-        error = "gradient requires exactly two components";
-        return false;
-    }
+    // Domain rules (component range/physical-only, gradient needing exactly two
+    // components, minimum printer filament count, ...) are enforced by
+    // Sidebar::apply_mixed_filament -- keep it the single source of truth for those.
     return true;
 }
 
@@ -123,18 +122,23 @@ bool set_object_filament(int object_id, int volume_id, int slot, std::string& er
     if (slot_to_config_index(slot, error) < 0) return false;
 
     ModelObject* obj = model.objects[object_id];
-    plater->take_snapshot(_u8L("Change Filaments"));
-    if (volume_id < 0) {
-        obj->config.set("extruder", slot);
-    } else {
+    ModelVolume* vol = nullptr;
+    if (volume_id >= 0) {
         if (volume_id >= int(obj->volumes.size())) { error = "Invalid volume_id"; return false; }
-        ModelVolume* vol = obj->volumes[volume_id];
+        vol = obj->volumes[volume_id];
         if (!vol->is_model_part() && !vol->is_modifier()) {
             error = "Only model parts and modifiers accept a filament";
             return false;
         }
-        vol->config.set("extruder", slot);
     }
+
+    // Everything is validated -- only now do we touch the undo stack.
+    plater->take_snapshot(_u8L("Change Filaments"));
+    if (vol)
+        vol->config.set("extruder", slot);
+    else
+        obj->config.set("extruder", slot);
+
     wxGetApp().obj_list()->changed_object(object_id);
     wxGetApp().obj_list()->update_filament_colors();
     plater->update();
