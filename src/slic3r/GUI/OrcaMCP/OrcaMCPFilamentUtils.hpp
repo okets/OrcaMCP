@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include "slic3r/GUI/MixedFilamentDialog.hpp"   // MixedFilamentResult
+#include "libslic3r/ColorDecomposeRecipe.hpp"   // ColorDecomposePhysicalFilament
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
@@ -43,5 +44,36 @@ void auto_calc_flush_volumes();
 // grouped by {"printer": {...}, "print": {...}, "project": {...}}, each serialized with
 // opt_serialize, plus the printer's extruder_count. Main thread only.
 nlohmann::json describe_toolchanger_config();
+
+// Physical (non-mixed) filament slots as ColorDecomposeRecipe input: color, name, type,
+// and 1-based slot index (matching the "slot" numbering used elsewhere, e.g. describe_filaments).
+// Main thread only.
+std::vector<ColorDecomposePhysicalFilament> physical_filaments_for_recipe();
+
+// Predicted blend color for a set of component hex colors mixed at the given percent
+// ratios (same order, sum == 100). Prefers a measured/interpolated color from the standard
+// recipe table (lookup_measured_blend_color); falls back to the pigment-mixing model
+// (FilamentMixer::blend_color_multi) when no measured entry exists -- the same call the
+// sidebar itself uses to color a mixed slot (Plater.cpp's blend_mixed_color).
+struct MixColorPrediction {
+    std::string hex;
+    bool        measured{false};
+};
+MixColorPrediction predicted_mix_color(const std::vector<std::string>& hexes, const std::vector<int>& ratios);
+
+// CIE76 perceptual distance between two "#RRGGBB" colors. Wraps
+// color_decompose_delta_e(rgb_to_lab(...)) so callers here never touch RGB structs or Lab
+// math directly. Returns a very large value (colors incomparable) if either hex is invalid.
+double color_delta_e_hex(const std::string& hex_a, const std::string& hex_b);
+
+// Enumerates an achievable color palette: every same-type pair (and, when max_components == 3,
+// triple) of physical filaments at fixed ratio presets (pairs: 70/30, 50/50, 30/70; triples:
+// 50/25/25 with each component taking the dominant 50% role in turn -- the same grouping and
+// triple-rotation rule as MixedFilamentDialog::rebuild_recommendation_items, minus its widgets).
+// Candidates within delta_e < 5 of a physical filament or an already-accepted candidate are
+// dropped, the rest are sorted by hue and truncated to max_count. Returns a JSON array of
+// {"components": [1-based...], "ratios": [...], "predicted_color": "#RRGGBB", "measured": bool}.
+// Main thread only.
+nlohmann::json enumerate_mix_palette(int max_count, int max_components, const std::string& material_type);
 
 }}} // namespace Slic3r::GUI::OrcaMCP

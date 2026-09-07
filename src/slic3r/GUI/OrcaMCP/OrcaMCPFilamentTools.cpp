@@ -4,6 +4,7 @@
 #include "OrcaMCPFilamentUtils.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Plater.hpp"
+#include "libslic3r/ColorDecomposeRecipe.hpp"
 
 #include <algorithm>
 #include <optional>
@@ -230,6 +231,132 @@ void OrcaMCPServer::register_filament_tools()
             return run_on_main_thread([]() -> nlohmann::json {
                 nlohmann::json r = describe_toolchanger_config();
                 r["status"] = "success";
+                r["active_warnings"] = get_active_warnings_json(wxGetApp().plater());
+                return r;
+            });
+        }
+    });
+
+    register_tool({
+        "suggest_color_mix",
+        "Suggest the closest achievable 2-3 component filament mix for a target color, from "
+        "the printer's loaded physical filaments. Optionally create the mixed slot.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"target_color", {{"type", "string"}, {"description", "Target color, \"#RRGGBB\""}}},
+                {"material_type", {
+                    {"type", "string"},
+                    {"description", "Restrict components to this filament type (e.g. \"PLA\"). Default: type of filament slot 1."}
+                }},
+                {"create", {
+                    {"type", "boolean"},
+                    {"description", "When true, create the mixed slot via apply_mixed_filament. Default false."}
+                }}
+            }},
+            {"required", {"target_color"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            const std::string target_color = params.at("target_color").get<std::string>();
+            const std::string material_type = params.value("material_type", std::string());
+            const bool create = params.value("create", false);
+
+            return run_on_main_thread([target_color, material_type, create]() -> nlohmann::json {
+                ColorDecomposeRgb target;
+                if (!color_decompose_hex_to_rgb(target_color, target))
+                    return nlohmann::json{{"status", "error"}, {"message", "target_color must be \"#RRGGBB\""}};
+
+                const auto physicals = physical_filaments_for_recipe();
+                if (physicals.size() < 2)
+                    return nlohmann::json{{"status", "error"}, {"message", "need at least two physical filament slots"}};
+
+                std::string effective_material_type = material_type;
+                if (effective_material_type.empty())
+                    effective_material_type = physicals.front().type; // default = type of filament slot 1
+
+                const ColorDecomposeRecipeResult result =
+                    recommend_from_physical_filaments(target, physicals, effective_material_type);
+                if (!result.valid)
+                    return nlohmann::json{{"status", "error"}, {"message", "no mixable recipe found for target_color"}};
+                if (result.components.size() < 2) {
+                    const auto& c = result.components.front();
+                    return nlohmann::json{{"status", "error"}, {"message",
+                        "target_color already matches physical filament " + std::to_string(c.filament_index) +
+                        " (" + c.color_hex + "); no mix needed"}};
+                }
+
+                std::vector<std::string> hexes;
+                std::vector<int> ratios;
+                std::vector<unsigned int> components;
+                for (const auto& c : result.components) {
+                    hexes.push_back(c.color_hex);
+                    ratios.push_back(c.ratio);
+                    components.push_back(c.filament_index);
+                }
+
+                const MixColorPrediction prediction = predicted_mix_color(hexes, ratios);
+                const double delta_e = color_delta_e_hex(target_color, prediction.hex);
+
+                nlohmann::json out = {
+                    {"status", "success"},
+                    {"target_color", target_color},
+                    {"recipe", {
+                        {"components", components},
+                        {"ratios", ratios},
+                        {"predicted_color", prediction.hex},
+                        {"measured", prediction.measured}
+                    }},
+                    {"delta_e", delta_e},
+                    {"slot", nullptr}
+                };
+
+                if (create) {
+                    // Route through the same params-shaped entry point set_mixed_filament uses,
+                    // rather than hand-building a MixedFilamentResult, so there is one place
+                    // (mixed_result_from_params) that turns {components, ratios} into a request.
+                    const nlohmann::json synthetic_params = {{"components", components}, {"ratios", ratios}};
+                    MixedFilamentResult req;
+                    std::string error;
+                    if (!mixed_result_from_params(synthetic_params, req, error))
+                        return nlohmann::json{{"status", "error"}, {"message", error}};
+                    const int idx = wxGetApp().sidebar().apply_mixed_filament(req, -1, error);
+                    if (idx < 0)
+                        return nlohmann::json{{"status", "error"}, {"message", error}};
+                    out["slot"] = idx + 1;
+                    out["active_warnings"] = get_active_warnings_json(wxGetApp().plater());
+                }
+                return out;
+            });
+        }
+    });
+
+    register_tool({
+        "get_color_palette",
+        "Enumerate an achievable palette of filament mixes (pairs, and optionally triples) from "
+        "the printer's loaded physical filaments -- a shortlist to choose from before painting.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"max_count", {{"type", "integer"}, {"description", "Max entries to return, default 12, cap 48"}}},
+                {"max_components", {
+                    {"type", "integer"},
+                    {"enum", {2, 3}},
+                    {"description", "2 for pairs only, 3 to also include triples. Default 2."}
+                }},
+                {"material_type", {{"type", "string"}, {"description", "Restrict to this filament type (e.g. \"PLA\")"}}}
+            }}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            int max_count = params.value("max_count", 12);
+            max_count = std::clamp(max_count, 1, 48);
+            const int max_components = params.value("max_components", 2) >= 3 ? 3 : 2;
+            const std::string material_type = params.value("material_type", std::string());
+
+            return run_on_main_thread([max_count, max_components, material_type]() -> nlohmann::json {
+                nlohmann::json r = {
+                    {"status", "success"},
+                    {"palette", enumerate_mix_palette(max_count, max_components, material_type)}
+                };
                 r["active_warnings"] = get_active_warnings_json(wxGetApp().plater());
                 return r;
             });

@@ -245,6 +245,11 @@ bool color_decompose_hex_to_rgb(const std::string& hex, ColorDecomposeRgb& out)
     return true;
 }
 
+double color_decompose_delta_e(const ColorDecomposeRgb& a, const ColorDecomposeRgb& b)
+{
+    return delta_e76(rgb_to_lab(a), rgb_to_lab(b));
+}
+
 ColorDecomposeRecipeResult recommend_from_physical_filaments(
     const ColorDecomposeRgb& target,
     const std::vector<ColorDecomposePhysicalFilament>& physical_filaments,

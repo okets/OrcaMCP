@@ -269,6 +269,32 @@ FULL_TOOLS_LIST = [{'description': 'Create a new plate.',
                   'required': ['object_id'],
                   'type': 'object'},
   'name': 'flatten_object'},
+ {'description': 'Enumerate an achievable palette of filament mixes (pairs, '
+                 "and optionally triples) from the printer's loaded physical "
+                 'filaments -- a shortlist to choose from before painting.',
+  'inputSchema': {'additionalProperties': False,
+                  'properties': {'material_type': {'description': 'Restrict to '
+                                                                  'this '
+                                                                  'filament '
+                                                                  'type (e.g. '
+                                                                  '"PLA")',
+                                                   'type': 'string'},
+                                 'max_components': {'description': '2 for '
+                                                                   'pairs '
+                                                                   'only, 3 to '
+                                                                   'also '
+                                                                   'include '
+                                                                   'triples. '
+                                                                   'Default 2.',
+                                                    'enum': [2, 3],
+                                                    'type': 'integer'},
+                                 'max_count': {'description': 'Max entries to '
+                                                              'return, default '
+                                                              '12, cap 48',
+                                               'type': 'integer'}},
+                  'required': [],
+                  'type': 'object'},
+  'name': 'get_color_palette'},
  {'description': 'Get currently edited presets with dirty (modified) options',
   'inputSchema': {'additionalProperties': False,
                   'properties': {},
@@ -876,6 +902,33 @@ FULL_TOOLS_LIST = [{'description': 'Create a new plate.',
                   'required': [],
                   'type': 'object'},
   'name': 'slice_all'},
+ {'description': 'Suggest the closest achievable 2-3 component filament mix '
+                 "for a target color, from the printer's loaded physical "
+                 'filaments. Optionally create the mixed slot.',
+  'inputSchema': {'additionalProperties': False,
+                  'properties': {'create': {'description': 'When true, create '
+                                                           'the mixed slot via '
+                                                           'apply_mixed_filament. '
+                                                           'Default false.',
+                                            'type': 'boolean'},
+                                 'material_type': {'description': 'Restrict '
+                                                                  'components '
+                                                                  'to this '
+                                                                  'filament '
+                                                                  'type (e.g. '
+                                                                  '"PLA"). '
+                                                                  'Default: '
+                                                                  'type of '
+                                                                  'filament '
+                                                                  'slot 1.',
+                                                   'type': 'string'},
+                                 'target_color': {'description': 'Target '
+                                                                 'color, '
+                                                                 '"#RRGGBB"',
+                                                  'type': 'string'}},
+                  'required': ['target_color'],
+                  'type': 'object'},
+  'name': 'suggest_color_mix'},
  {'description': 'Batch transform multiple objects.',
   'inputSchema': {'additionalProperties': False,
                   'properties': {'transforms': {'description': 'Transform '

@@ -9,8 +9,12 @@
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/FilamentMixer.hpp"
+#include "libslic3r/ColorDecomposeRecipe.hpp"
 #include "libslic3r/Model.hpp"
+#include <algorithm>
 #include <cmath>
+#include <limits>
+#include <map>
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
@@ -235,6 +239,169 @@ nlohmann::json describe_toolchanger_config()
         {"project", emit(project_cfg, project_keys)},
         {"extruder_count", int(pb->get_printer_extruder_count())}
     };
+}
+
+std::vector<ColorDecomposePhysicalFilament> physical_filaments_for_recipe()
+{
+    PresetBundle* pb = wxGetApp().preset_bundle;
+    const DynamicPrintConfig& proj = pb->project_config;
+    // get_filament_type() is non-const and needs an lvalue -- hold a local copy.
+    DynamicPrintConfig full = pb->full_config();
+
+    std::vector<ColorDecomposePhysicalFilament> out;
+    // physical_filament_config_indices() gives the actual (possibly non-contiguous) config
+    // indices of non-mixed slots -- num_physical_filaments() is only a count, not a bound.
+    for (size_t idx : pb->physical_filament_config_indices()) {
+        std::string displayed_type;
+        ColorDecomposePhysicalFilament f;
+        f.color_hex = opt_str_at(proj, "filament_colour", idx);
+        f.name = idx < pb->filament_presets.size() ? pb->filament_presets[idx] : std::string();
+        f.type = full.get_filament_type(displayed_type, int(idx));
+        f.is_mixed = false;
+        f.filament_index = static_cast<unsigned int>(idx + 1); // 1-based slot
+        out.push_back(std::move(f));
+    }
+    return out;
+}
+
+MixColorPrediction predicted_mix_color(const std::vector<std::string>& hexes, const std::vector<int>& ratios)
+{
+    const std::string measured = lookup_measured_blend_color(hexes, ratios);
+    if (!measured.empty())
+        return {measured, true};
+    return {blend_color_multi(hexes, ratios), false};
+}
+
+double color_delta_e_hex(const std::string& hex_a, const std::string& hex_b)
+{
+    ColorDecomposeRgb a, b;
+    if (!color_decompose_hex_to_rgb(hex_a, a) || !color_decompose_hex_to_rgb(hex_b, b))
+        return std::numeric_limits<double>::max();
+    return color_decompose_delta_e(a, b);
+}
+
+namespace {
+
+// Hue angle in degrees [0, 360) from an "#RRGGBB" string; 0 (red) for unparsable/gray input.
+// Used only to order the palette -- matching MixedFilamentDialog's visual grouping is not a
+// goal, so a plain HSV hue (no Lab) is enough.
+double hue_degrees(const std::string& hex)
+{
+    ColorDecomposeRgb rgb;
+    if (!color_decompose_hex_to_rgb(hex, rgb))
+        return 0.0;
+    const double r = rgb.r / 255.0, g = rgb.g / 255.0, b = rgb.b / 255.0;
+    const double max_c = std::max({r, g, b}), min_c = std::min({r, g, b});
+    const double delta = max_c - min_c;
+    if (delta < 1e-9)
+        return 0.0;
+    double h;
+    if (max_c == r)      h = std::fmod((g - b) / delta, 6.0);
+    else if (max_c == g) h = (b - r) / delta + 2.0;
+    else                 h = (r - g) / delta + 4.0;
+    h *= 60.0;
+    return h < 0.0 ? h + 360.0 : h;
+}
+
+// Same-type grouping rule as MixedFilamentDialog::rebuild_recommendation_items: only
+// same-type combos are recommended, and support filaments (type ending "-S") are excluded.
+std::map<std::string, std::vector<ColorDecomposePhysicalFilament>> group_by_type(
+    const std::vector<ColorDecomposePhysicalFilament>& filaments, const std::string& material_type)
+{
+    std::map<std::string, std::vector<ColorDecomposePhysicalFilament>> groups;
+    for (const auto& f : filaments) {
+        if (f.type.size() >= 2 && f.type.compare(f.type.size() - 2, 2, "-S") == 0)
+            continue;
+        if (!material_type.empty() && f.type != material_type)
+            continue;
+        groups[f.type].push_back(f);
+    }
+    return groups;
+}
+
+struct PaletteCandidate {
+    std::vector<unsigned int> components;
+    std::vector<int>          ratios;
+    std::string               predicted_color;
+    bool                       measured{false};
+};
+
+void add_candidate_if_novel(std::vector<PaletteCandidate>& accepted,
+                            const std::vector<ColorDecomposePhysicalFilament>& physicals,
+                            std::vector<unsigned int> components,
+                            std::vector<int> ratios)
+{
+    std::vector<std::string> hexes;
+    hexes.reserve(components.size());
+    for (unsigned int idx : components) {
+        auto it = std::find_if(physicals.begin(), physicals.end(),
+            [idx](const ColorDecomposePhysicalFilament& f) { return f.filament_index == idx; });
+        hexes.push_back(it != physicals.end() ? it->color_hex : std::string("#808080"));
+    }
+
+    const MixColorPrediction prediction = predicted_mix_color(hexes, ratios);
+    constexpr double kMinDeltaE = 5.0;
+
+    for (const auto& f : physicals)
+        if (color_delta_e_hex(prediction.hex, f.color_hex) < kMinDeltaE)
+            return;
+    for (const auto& c : accepted)
+        if (color_delta_e_hex(prediction.hex, c.predicted_color) < kMinDeltaE)
+            return;
+
+    accepted.push_back({std::move(components), std::move(ratios), prediction.hex, prediction.measured});
+}
+
+} // namespace
+
+nlohmann::json enumerate_mix_palette(int max_count, int max_components, const std::string& material_type)
+{
+    const auto physicals = physical_filaments_for_recipe();
+    const auto groups = group_by_type(physicals, material_type);
+
+    std::vector<PaletteCandidate> accepted;
+    static const std::vector<std::vector<int>> kPairRatios  = {{70, 30}, {50, 50}, {30, 70}};
+
+    for (const auto& [type, group] : groups) {
+        for (size_t i = 0; i < group.size(); ++i) {
+            for (size_t j = i + 1; j < group.size(); ++j) {
+                for (const auto& ratios : kPairRatios)
+                    add_candidate_if_novel(accepted, physicals,
+                        {group[i].filament_index, group[j].filament_index}, ratios);
+
+                if (max_components < 3)
+                    continue;
+                for (size_t k = j + 1; k < group.size(); ++k) {
+                    const unsigned int idx[3] = {group[i].filament_index, group[j].filament_index, group[k].filament_index};
+                    // Each component takes the dominant (50%) role in turn, the other two
+                    // splitting 25/25 -- same rotation as the GUI's triple recommendations.
+                    for (int dominant = 0; dominant < 3; ++dominant) {
+                        std::vector<unsigned int> components = {
+                            idx[(dominant + 1) % 3], idx[(dominant + 2) % 3], idx[dominant]
+                        };
+                        add_candidate_if_novel(accepted, physicals, std::move(components), {25, 25, 50});
+                    }
+                }
+            }
+        }
+    }
+
+    std::sort(accepted.begin(), accepted.end(), [](const PaletteCandidate& a, const PaletteCandidate& b) {
+        return hue_degrees(a.predicted_color) < hue_degrees(b.predicted_color);
+    });
+    if (int(accepted.size()) > max_count)
+        accepted.resize(size_t(max_count));
+
+    nlohmann::json palette = nlohmann::json::array();
+    for (const auto& c : accepted) {
+        palette.push_back({
+            {"components", c.components},
+            {"ratios", c.ratios},
+            {"predicted_color", c.predicted_color},
+            {"measured", c.measured}
+        });
+    }
+    return palette;
 }
 
 }}} // namespace Slic3r::GUI::OrcaMCP

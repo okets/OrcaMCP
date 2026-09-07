@@ -43,6 +43,10 @@ struct ColorDecomposeRecipeResult {
 std::string color_decompose_rgb_to_hex(const ColorDecomposeRgb& rgb);
 bool color_decompose_hex_to_rgb(const std::string& hex, ColorDecomposeRgb& out);
 
+// CIE76 perceptual distance (Lab space) between two sRGB colors. ~2.3 is a "just
+// noticeable difference"; used by OrcaMCP to score/dedupe mix recommendations.
+double color_decompose_delta_e(const ColorDecomposeRgb& a, const ColorDecomposeRgb& b);
+
 ColorDecomposeRecipeResult recommend_from_physical_filaments(
     const ColorDecomposeRgb& target,
     const std::vector<ColorDecomposePhysicalFilament>& physical_filaments,
