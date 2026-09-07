@@ -949,6 +949,38 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ---
 
+### Task 1.7b: Color recipe tools (suggest a mix for a target color, enumerate a palette)
+
+Upstream already ships the engine: `src/libslic3r/ColorDecomposeRecipe.hpp` (`recommend_from_physical_filaments(target_rgb, physical_filaments, preferred_material_type)` → `ColorDecomposeRecipeResult{valid, matched_color_hex, components[{color_hex, ratio, filament_index}]}`, `lookup_measured_blend_color(hexes, ratios)`, `color_decompose_hex_to_rgb`) and `src/libslic3r/FilamentMixer.hpp` (`blend_color(hex_a, hex_b, ratio_b)`, `blend_color_multi(hexes, ratios)`). The GUI's "Mixing Recommendations" grid in `MixedFilamentDialog::rebuild_recommendation_items()` enumerates same-type pairs/triples; reuse its enumeration rules, not its widgets.
+
+**Files:**
+- Modify: `src/slic3r/GUI/OrcaMCP/OrcaMCPFilamentUtils.hpp/.cpp` (add `physical_filaments_for_recipe()`, `predicted_mix_color(components, ratios)`, `enumerate_mix_palette(max_count, max_components)`)
+- Modify: `src/slic3r/GUI/OrcaMCP/OrcaMCPFilamentTools.cpp` (register two tools)
+
+**Interfaces:**
+- Consumes: Task 1.6 `describe_filaments()`, `mixed_result_from_params()`, `Sidebar::apply_mixed_filament`.
+- Produces tools:
+
+`suggest_color_mix` params: `target_color` (hex `#RRGGBB`), optional `material_type` (e.g. `PLA`; default = type of filament 1), optional `create` (bool, default false) →
+```json
+{"status":"success","target_color":"#8040C0","recipe":{"components":[1,2],"ratios":[60,40],"predicted_color":"#7E3FBE","measured":false},
+ "delta_e":3.2,"slot":null}
+```
+`delta_e` = CIE76 distance in Lab between target and predicted (compute in utils using the same rgb→Lab conversion; expose a small helper). With `create: true`, the recipe is applied through `apply_mixed_filament` and `slot` is the new 1-based slot. `status: "error"` with a message when no same-type pair exists or the recipe is invalid.
+
+`get_color_palette` params: optional `max_count` (default 12, cap 48), optional `max_components` (2 or 3, default 2), optional `material_type` →
+```json
+{"status":"success","palette":[{"components":[1,3],"ratios":[70,30],"predicted_color":"#C86A3C","measured":true}, ...]}
+```
+Enumerate every same-type pair (and triple when `max_components == 3`) of physical filaments at ratios {70/30, 50/50, 30/70} (triples: one dominant at 50/25/25 per component), predict each color with `lookup_measured_blend_color` first and `blend_color(_multi)` as fallback, drop candidates within delta_e < 5 of a physical filament or of an earlier candidate, sort by hue, truncate to `max_count`. This is the "10-12 mixes to choose from" list an agent can show a user before painting.
+
+- [ ] **Step 1: Implement the three utils** (pure, main-thread only for reading the preset bundle), with the Lab helper factored so both tools share it.
+- [ ] **Step 2: Register the two tools** following the Task 1.6 pattern; `suggest_color_mix` with `create: true` reuses `mixed_result_from_params` + `apply_mixed_filament`.
+- [ ] **Step 3: Build, regenerate schema, verify live** on the Creator 5 Pro profile with four PLA slots loaded (magenta, blue, yellow, grey as read from the printer's material station): `suggest_color_mix {"target_color":"#800080"}` → components include the magenta and blue slots, delta_e reported; `get_color_palette {}` → between 6 and 12 distinct entries with predicted colors; `suggest_color_mix {"target_color":"#40FF40","create":true}` → a new slot appears in `get_filaments`.
+- [ ] **Step 4: Commit** `OrcaMCP: suggest_color_mix and get_color_palette tools`.
+
+---
+
 ### Task 1.8: Four-tool end-to-end slice check and Stage 1 wrap-up
 
 - [ ] **Step 1: Run the multi-material workflow entirely through MCP**
