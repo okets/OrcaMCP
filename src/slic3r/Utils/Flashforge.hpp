@@ -1,12 +1,15 @@
 #ifndef slic3r_FlashForge_hpp_
 #define slic3r_FlashForge_hpp_
 
+#include <optional>
 #include <vector>
 #include <string>
 #include <wx/string.h>
+#include <nlohmann/json_fwd.hpp>
 #include "PrintHost.hpp"
 #include "SerialMessage.hpp"
 #include "SerialMessageType.hpp"
+#include "FlashforgeApi.hpp"
 #include "../../libslic3r/PrintConfig.hpp"
 
 namespace Slic3r {
@@ -46,6 +49,18 @@ public:
     std::string                get_host() const override { return m_host; }
     bool                       fetch_material_slots(std::vector<FlashforgeMaterialSlot>& slots, bool* supports_material_station, wxString& msg) const;
     static bool                discover_printers(std::vector<FlashforgeDiscoveredPrinter>& printers, wxString& msg, int timeout_ms = 10000, int idle_timeout_ms = 1500, int max_retries = 3);
+
+    // Local API status and control. All are safe to call off the main thread; all return false and fill `msg` on failure.
+    bool has_local_api_credentials() const { return !m_serial_number.empty() && !m_check_code.empty(); }
+    bool fetch_status(FlashforgeApi::PrinterStatus& out, wxString& msg) const;
+    bool send_control(const std::string& cmd, const nlohmann::json& args, wxString& msg) const;
+    bool pause_job(wxString& msg) const;
+    bool resume_job(wxString& msg) const;
+    bool cancel_job(wxString& msg) const;
+    bool set_light(bool on, wxString& msg) const;
+    bool set_temperatures(std::optional<double> bed, std::optional<double> chamber, const std::vector<std::optional<double>>& nozzles, wxString& msg) const;
+    bool list_gcode_files(std::vector<std::string>& files, wxString& msg) const;
+    bool print_gcode_file(const std::string& file_name, bool leveling, const nlohmann::json& material_mappings, wxString& msg) const;
 
 private:
     std::string m_host;

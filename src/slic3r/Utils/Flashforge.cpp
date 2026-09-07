@@ -36,6 +36,7 @@
 #include "TCPConsole.hpp"
 #include "SerialMessage.hpp"
 #include "SerialMessageType.hpp"
+#include "FlashforgeApi.hpp"
 
 namespace fs = boost::filesystem;
 namespace pt = boost::property_tree;
@@ -328,7 +329,7 @@ bool Flashforge::discover_printers(std::vector<FlashforgeDiscoveredPrinter>& pri
 
 bool Flashforge::test(wxString& msg) const
 {
-    if (!m_serial_number.empty() && !m_check_code.empty())
+    if (has_local_api_credentials())
         return test_local_api(msg);
 
     BOOST_LOG_TRIVIAL(debug) << boost::format("[Flashforge Serial] testing connection");
@@ -347,14 +348,14 @@ bool Flashforge::test(wxString& msg) const
 
 wxString Flashforge::get_test_ok_msg() const
 {
-    if (!m_serial_number.empty() && !m_check_code.empty())
+    if (has_local_api_credentials())
         return _(L("Connected to Flashforge local API successfully."));
     return _(L("Serial connection to Flashforge is working correctly."));
 }
 
 wxString Flashforge::get_test_failed_msg(wxString& msg) const
 {
-    const std::string prefix = (!m_serial_number.empty() && !m_check_code.empty()) ?
+    const std::string prefix = has_local_api_credentials() ?
         _utf8(L("Could not connect to Flashforge local API")) :
         _utf8(L("Could not connect to Flashforge via serial"));
     return GUI::from_u8((boost::format("%s: %s") % prefix % std::string(msg.ToUTF8())).str());
@@ -409,7 +410,7 @@ bool Flashforge::start_print(wxString& msg, const std::string& filename) const
 
 bool Flashforge::upload(PrintHostUpload upload_data, ProgressFn progress_fn, ErrorFn error_fn, InfoFn info_fn) const
 {
-    if (!m_serial_number.empty() && !m_check_code.empty())
+    if (has_local_api_credentials())
         return upload_local_api(std::move(upload_data), std::move(progress_fn), std::move(error_fn));
 
     bool res = true;
@@ -501,7 +502,7 @@ bool Flashforge::fetch_material_slots(std::vector<FlashforgeMaterialSlot>& slots
 {
     slots.clear();
 
-    if (m_serial_number.empty() || m_check_code.empty()) {
+    if (!has_local_api_credentials()) {
         msg = _(L("Flashforge local API requires both serial number and access code."));
         return false;
     }
@@ -552,6 +553,92 @@ bool Flashforge::fetch_material_slots(std::vector<FlashforgeMaterialSlot>& slots
     }
 
     return true;
+}
+
+bool Flashforge::fetch_status(FlashforgeApi::PrinterStatus& out, wxString& msg) const
+{
+    if (!has_local_api_credentials()) {
+        msg = _(L("Flashforge local API requires both serial number and access code."));
+        return false;
+    }
+
+    std::string body;
+    if (!request_local_api_json("detail", FlashforgeApi::make_credentials_payload(m_serial_number, m_check_code).dump(), body, msg))
+        return false;
+
+    std::string err;
+    if (!FlashforgeApi::parse_detail(body, out, err)) {
+        msg = GUI::from_u8(err);
+        return false;
+    }
+
+    return true;
+}
+
+bool Flashforge::send_control(const std::string& cmd, const nlohmann::json& args, wxString& msg) const
+{
+    if (!has_local_api_credentials()) {
+        msg = _(L("Flashforge local API requires both serial number and access code."));
+        return false;
+    }
+
+    std::string body;
+    return request_local_api_json("control", FlashforgeApi::make_control_payload(m_serial_number, m_check_code, cmd, args).dump(), body, msg);
+}
+
+bool Flashforge::pause_job(wxString& msg) const  { return send_control("jobCtl_cmd", {{"jobID", ""}, {"action", "pause"}}, msg); }
+bool Flashforge::resume_job(wxString& msg) const { return send_control("jobCtl_cmd", {{"jobID", ""}, {"action", "continue"}}, msg); }
+bool Flashforge::cancel_job(wxString& msg) const { return send_control("jobCtl_cmd", {{"jobID", ""}, {"action", "cancel"}}, msg); }
+bool Flashforge::set_light(bool on, wxString& msg) const { return send_control("lightControl_cmd", {{"status", on ? "open" : "close"}}, msg); }
+
+bool Flashforge::set_temperatures(std::optional<double> bed, std::optional<double> chamber, const std::vector<std::optional<double>>& nozzles, wxString& msg) const
+{
+    return send_control("temperatureCtl_cmd", FlashforgeApi::make_temperature_args(bed, chamber, nozzles), msg);
+}
+
+bool Flashforge::list_gcode_files(std::vector<std::string>& files, wxString& msg) const
+{
+    files.clear();
+
+    if (!has_local_api_credentials()) {
+        msg = _(L("Flashforge local API requires both serial number and access code."));
+        return false;
+    }
+
+    std::string body;
+    if (!request_local_api_json("gcodeList", FlashforgeApi::make_credentials_payload(m_serial_number, m_check_code).dump(), body, msg))
+        return false;
+
+    const auto j = json::parse(body, nullptr, false, true);
+    if (j.is_discarded()) {
+        msg = _(L("Flashforge returned an invalid JSON response."));
+        return false;
+    }
+
+    // Observed shape: {"code":0,"gcodeList":[{"gcodeFileName":"a.gcode", ...}, ...]}. A plain array of
+    // strings and a top-level `gcodeListDetail` fallback are also accepted since the exact response
+    // shape returned by different firmware versions is not fully documented.
+    for (const auto& f : j.value("gcodeList", json::array()))
+        files.push_back(f.is_string() ? f.get<std::string>() : f.value("gcodeFileName", std::string()));
+
+    if (files.empty()) {
+        for (const auto& f : j.value("gcodeListDetail", json::array()))
+            if (f.is_object())
+                files.push_back(f.value("gcodeFileName", std::string()));
+    }
+
+    return true;
+}
+
+bool Flashforge::print_gcode_file(const std::string& file_name, bool leveling, const nlohmann::json& material_mappings, wxString& msg) const
+{
+    if (!has_local_api_credentials()) {
+        msg = _(L("Flashforge local API requires both serial number and access code."));
+        return false;
+    }
+
+    std::string body;
+    return request_local_api_json("printGcode", FlashforgeApi::make_print_gcode_payload(m_serial_number, m_check_code, file_name, leveling, material_mappings).dump(), body, msg);
 }
 
 bool Flashforge::upload_local_api(PrintHostUpload upload_data, ProgressFn progress_fn, ErrorFn error_fn) const
@@ -623,6 +710,7 @@ bool Flashforge::request_local_api_json(const std::string& path, const std::stri
     auto http = Http::post(make_http_url(path));
     http.header("Content-Type", "application/json")
         .set_post_body(body)
+        .timeout_max(15)
         .on_complete([&](std::string body_text, unsigned) {
             response_body = std::move(body_text);
             if (!validate_local_api_response(response_body, error_msg))
