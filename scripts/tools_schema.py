@@ -156,6 +156,13 @@ FULL_TOOLS_LIST = [{'description': 'Create a new plate.',
                   'required': ['object_id', 'z_height'],
                   'type': 'object'},
   'name': 'cut_object'},
+ {'description': 'Delete a mixed (virtual) filament slot.',
+  'inputSchema': {'additionalProperties': False,
+                  'properties': {'slot': {'description': 'Mixed slot, 1-based',
+                                          'type': 'integer'}},
+                  'required': ['slot'],
+                  'type': 'object'},
+  'name': 'delete_mixed_filament'},
  {'description': 'Remove an object from the scene',
   'inputSchema': {'additionalProperties': False,
                   'properties': {'include_preview': {'description': 'Return '
@@ -260,6 +267,13 @@ FULL_TOOLS_LIST = [{'description': 'Create a new plate.',
                   'required': [],
                   'type': 'object'},
   'name': 'get_edited_presets'},
+ {'description': 'List all filament slots (physical and mixed/virtual), '
+                 'extruder count, and filament-to-extruder map.',
+  'inputSchema': {'additionalProperties': False,
+                  'properties': {},
+                  'required': [],
+                  'type': 'object'},
+  'name': 'get_filaments'},
  {'description': 'Get per-object setting overrides.',
   'inputSchema': {'additionalProperties': False,
                   'properties': {'object_id': {'description': 'Object index '
@@ -693,6 +707,35 @@ FULL_TOOLS_LIST = [{'description': 'Create a new plate.',
                   'required': ['view_type'],
                   'type': 'object'},
   'name': 'set_gcode_view_type'},
+ {'description': 'Create or edit a mixed (virtual) filament slot that '
+                 'alternates two or three physical filaments by layer ratio. '
+                 'Requires a multi-filament printer profile.',
+  'inputSchema': {'additionalProperties': False,
+                  'properties': {'components': {'description': '2-3 physical '
+                                                               'filament '
+                                                               'slots, 1-based',
+                                                'items': {'type': 'integer'},
+                                                'type': 'array'},
+                                 'gradient': {'description': 'Z gradient '
+                                                             'between the two '
+                                                             'components',
+                                              'type': 'boolean'},
+                                 'gradient_direction': {'enum': ['a_to_b',
+                                                                 'b_to_a'],
+                                                        'type': 'string'},
+                                 'per_part_gradient': {'type': 'boolean'},
+                                 'ratios': {'description': 'Percent per '
+                                                           'component, must '
+                                                           'sum to 100',
+                                            'items': {'type': 'integer'},
+                                            'type': 'array'},
+                                 'slot': {'description': 'Existing mixed slot '
+                                                         'to edit (1-based). '
+                                                         'Omit to create.',
+                                          'type': 'integer'}},
+                  'required': ['components', 'ratios'],
+                  'type': 'object'},
+  'name': 'set_mixed_filament'},
  {'description': 'Set per-object setting overrides.',
   'inputSchema': {'additionalProperties': False,
                   'properties': {'configs': {'description': 'Batch configs '
@@ -725,6 +768,22 @@ FULL_TOOLS_LIST = [{'description': 'Create a new plate.',
                   'required': [],
                   'type': 'object'},
   'name': 'set_object_config'},
+ {'description': 'Assign a filament slot (physical or mixed) to an object, or '
+                 'to one part/modifier of it.',
+  'inputSchema': {'additionalProperties': False,
+                  'properties': {'filament': {'description': 'Filament slot, '
+                                                             '1-based',
+                                              'type': 'integer'},
+                                 'object_id': {'type': 'integer'},
+                                 'volume_id': {'description': 'Part index '
+                                                              'within the '
+                                                              'object; omit '
+                                                              'for the whole '
+                                                              'object',
+                                               'type': 'integer'}},
+                  'required': ['object_id', 'filament'],
+                  'type': 'object'},
+  'name': 'set_object_filament'},
  {'description': 'Set settings for a Z height range.',
   'inputSchema': {'additionalProperties': False,
                   'properties': {'object_id': {'description': 'Object index '

@@ -61,6 +61,8 @@ private:
 
     // Register all built-in tools
     static void register_builtin_tools();
+    // Filament and mixed-filament tools (OrcaMCPFilamentTools.cpp)
+    static void register_filament_tools();
 };
 
 }} // namespace Slic3r::GUI
