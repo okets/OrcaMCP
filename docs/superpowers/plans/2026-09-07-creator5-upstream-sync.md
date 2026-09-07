@@ -1285,6 +1285,8 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ### Task 2.4: Printer resolution utils and physical-printer management tools
 
+> **Ruling (2026-09-08):** OrcaSlicer 2.5 stores print-host settings in the *edited printer preset* (`PhysicalPrinterDialog` edits `printers.get_edited_preset().config`, `OnOK` saves a user printer preset; `Plater::send_gcode_legacy` reads the edited preset). `PhysicalPrinterCollection` is vestigial. Therefore: `resolve_print_host_config` = edited printer preset config; `add_physical_printer` writes the host keys into the edited preset and saves it as a user printer preset named `name` (via `Tab::save_preset`); `select_printer {physical_printer}` selects that preset; `get_printers.physical_printers` lists printer presets with a non-empty `print_host`. Ignore the `PhysicalPrinterCollection` calls sketched below.
+
 **Files:**
 - Create: `src/slic3r/GUI/OrcaMCP/OrcaMCPPrinterUtils.hpp`, `.cpp`
 - Create: `src/slic3r/GUI/OrcaMCP/OrcaMCPPrinterTools.cpp`
