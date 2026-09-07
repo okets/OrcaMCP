@@ -1,9 +1,9 @@
 {
 	"type": "filament",
 	"name": "Prusament PLA @XL 5T",
-	"inherits": "fdm_filament_pla",
+	"inherits": "Prusament PLA @base",
 	"from": "system",
-	"setting_id": "GFSA04",
+	"setting_id": "3xyT73BMaAvbb1Ej",
 	"instantiation": "true",
 	"nozzle_temperature_intial_layer": "215",
 	"nozzle_temperature": "215",

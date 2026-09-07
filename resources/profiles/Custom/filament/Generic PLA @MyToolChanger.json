@@ -4,8 +4,7 @@
 	"renamed_from": "My Generic PLA @MyToolChanger",
 	"inherits": "Generic PLA @System",
 	"from": "system",
-	"setting_id": "GFL99_MTC_0",
-	"filament_id": "GFL99",
+	"setting_id": "WbAYFZdqFwEZnNAX",
 	"instantiation": "true",
 	"filament_cooling_final_speed": [
 		"3.5"
@@ -24,12 +23,6 @@
 	],
 	"filament_loading_speed_start": [
 		"50"
-	],
-	"filament_multitool_ramming": [
-		"1"
-	],
-	"filament_multitool_ramming_flow": [
-		"40"
 	],
 	"filament_stamping_distance": [
 		"45"

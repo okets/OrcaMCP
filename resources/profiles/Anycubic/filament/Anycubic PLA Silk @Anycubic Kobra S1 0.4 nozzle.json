@@ -3,11 +3,14 @@
 	"name": "Anycubic PLA Silk @Anycubic Kobra S1 0.4 nozzle",
 	"inherits": "fdm_filament_pla",
 	"from": "system",
-	"setting_id": "GFSA04",
-	"filament_id": "GFL99",
+	"setting_id": "wnt68LydXcNxhGhN",
+	"filament_id": "OFFwJWea",
 	"instantiation": "true",
 	"filament_settings_id": [
 		"Anycubic PLA Silk @Anycubic Kobra S1 0.4 nozzle"
+	],
+	"filament_vendor": [
+		"Anycubic"
 	],
 	"filament_flow_ratio": [
 		"0.96"

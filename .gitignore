@@ -1,7 +1,9 @@
 Build
 Build.bat
 /build*/
+/out/
 CMakeLists.txt.user
+CMakeUserPresets.json
 **/CMakeLists.txt.autosave
 deps/build*
 MYMETA.json
@@ -54,3 +56,8 @@ nul
 internal_docs/
 *.flatpak
 /flatpak-repo/
+# Python bytecode
+__pycache__/
+*.pyc
+*.opc
+/.test/

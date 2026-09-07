@@ -128,7 +128,7 @@ wxBoxSizer *TipsDialog::create_item_checkbox(wxString title, wxWindow *parent, w
     m_show_again = wxGetApp().app_config->has(param);
     checkbox->SetValue(m_show_again);
 
-    checkbox->Bind(wxEVT_TOGGLEBUTTON, [this, checkbox, param](wxCommandEvent &e) {
+    checkbox->Bind(wxEVT_TOGGLEBUTTON, [this, param](wxCommandEvent &e) {
         m_show_again = m_show_again ? false : true;
         e.Skip();
     });
@@ -279,9 +279,9 @@ ParamsPanel::ParamsPanel( wxWindow* parent, wxWindowID id, const wxPoint& pos, c
         });
         m_mode_icon->SetToolTip(_L("Cycle settings visibility"));
         m_mode_view = new ModeSwitchButton(m_top_panel);
-        m_mode_view->SetSelection(mode_to_selection(wxGetApp().get_saved_mode()));
-        if (wxGetApp().get_mode() == comDevelop)
-            m_mode_view->Enable(false);
+        bool isDevMode = wxGetApp().get_mode() == comDevelop;
+        m_mode_view->SetSelection(mode_to_selection(isDevMode ? comExpert : wxGetApp().get_saved_mode()));
+        m_mode_view->SetDevMode(isDevMode);
 
         // BBS: new layout
         //m_search_btn = new ScalableButton(m_top_panel, wxID_ANY, "search", wxEmptyString, wxDefaultSize, wxDefaultPosition, wxBU_EXACTFIT | wxNO_BORDER, true);
@@ -290,11 +290,11 @@ ParamsPanel::ParamsPanel( wxWindow* parent, wxWindowID id, const wxPoint& pos, c
 
         m_compare_btn = new ScalableButton(m_top_panel, wxID_ANY, "compare", wxEmptyString, wxDefaultSize, wxDefaultPosition, wxBU_EXACTFIT | wxNO_BORDER, true);
         m_compare_btn->SetToolTip(_L("Compare presets"));
-        m_compare_btn->Bind(wxEVT_BUTTON, ([this](wxCommandEvent e) { wxGetApp().mainframe->diff_dialog.show(); }));
+        m_compare_btn->Bind(wxEVT_BUTTON, ([](wxCommandEvent e) { wxGetApp().mainframe->diff_dialog.show(); }));
 
         m_setting_btn = new ScalableButton(m_top_panel, wxID_ANY, "table", wxEmptyString, wxDefaultSize, wxDefaultPosition, wxBU_EXACTFIT | wxNO_BORDER, true);
         m_setting_btn->SetToolTip(_L("View all object's settings"));
-        m_setting_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent &) { wxGetApp().plater()->PopupObjectTable(-1, -1, {0, 0}); });
+        m_setting_btn->Bind(wxEVT_BUTTON, [](wxCommandEvent &) { wxGetApp().plater()->PopupObjectTable(-1, -1, {0, 0}); });
 
         m_highlighter.set_timer_owner(this, 0);
         this->Bind(wxEVT_TIMER, [this](wxTimerEvent &)
@@ -648,18 +648,27 @@ void ParamsPanel::update_mode()
         if (mode_view == nullptr)
             return;
 
-        mode_view->SetSelection(mode_to_selection(Slic3r::GUI::wxGetApp().get_saved_mode()));
         if (app_mode == comDevelop) {
-            mode_view->Enable(false);
+            mode_view->SetSelection(mode_to_selection(comExpert));
+            mode_view->SetDevMode(true);
             return;
         }
 
-        if (!mode_view->IsEnabled())
-            mode_view->Enable();
+        mode_view->SetSelection(mode_to_selection(Slic3r::GUI::wxGetApp().get_saved_mode()));
+        if (mode_view->GetDevMode())
+            mode_view->SetDevMode(false);
     };
 
     sync_mode_view(m_mode_view);
     sync_mode_view(m_current_tab ? dynamic_cast<Tab*>(m_current_tab)->m_mode_view : nullptr);
+
+    auto sync_mode_icon = [&](ScalableButton* mode_icon) {
+        if (mode_icon == nullptr)
+            return;
+        mode_icon->Show(app_mode != comDevelop);
+    };
+    sync_mode_icon(m_mode_icon);
+    sync_mode_icon(m_current_tab ? dynamic_cast<Tab*>(m_current_tab)->m_mode_icon : nullptr);
 }
 
 void ParamsPanel::msw_rescale()
