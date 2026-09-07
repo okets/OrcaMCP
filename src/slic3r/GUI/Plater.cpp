@@ -14848,6 +14848,14 @@ void Plater::priv::apply_textured_mesh_import_result(Slic3r::Model& loaded_model
         } else {
             BOOST_LOG_TRIVIAL(warning) << "handle_textured_mesh_import: could not create pending mixed filament dialog="
                                        << mixed.dialog_index << ": " << mixed_error;
+            // The slot is not created, so every texture region mapped to it falls back to
+            // "unpainted" below - say so, otherwise the import looks like it just worked.
+            if (notification_manager)
+                notification_manager->push_notification(
+                    NotificationType::CustomNotification,
+                    NotificationManager::NotificationLevel::ErrorNotificationLevel,
+                    _u8L("Textured import: mixed filament not created") + ": " + mixed_error + ". " +
+                    _u8L("The affected regions were left unpainted."));
         }
     }
 
