@@ -80,6 +80,7 @@ struct Camera;
 class GLToolbar;
 class PlaterPresetComboBox;
 class PartPlateList;
+struct MixedFilamentResult;
 class SyncNozzleAndAmsDialog;
 class FinishSyncAmsDialog;
 using t_optgroups = std::vector <std::shared_ptr<ConfigOptionsGroup>>;
@@ -273,6 +274,17 @@ public:
     // Mixed-color filament sidebar section
     void add_mixed_filament();
     void edit_mixed_filament(size_t idx);
+    // Dialog-free core of add/edit_mixed_filament, also used by the MCP server.
+    // edit_cfg_idx < 0 creates a new mixed slot, otherwise it is the 0-based filament config
+    // index of the mixed slot to overwrite. Returns that slot's config index, or -1 with
+    // `error` set to the reason the result was rejected.
+    int  apply_mixed_filament(const MixedFilamentResult& result, int edit_cfg_idx, std::string& error);
+    // Same, with the physical filament colours the 1-based components index into supplied by
+    // the caller (as collect_physical_filament_info() returns them).
+    int  apply_mixed_filament(const MixedFilamentResult& result,
+                              int edit_cfg_idx,
+                              const std::vector<std::string>& physical_colors,
+                              std::string& error);
     void delete_mixed_filament_at(size_t idx);
     void decompose_filament_color(int filament_idx);
     void recalc_filament_scroll_sizes();
