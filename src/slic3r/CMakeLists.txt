@@ -403,6 +403,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/OG_CustomCtrl.hpp
     GUI/OpenGLManager.cpp
     GUI/OpenGLManager.hpp
+    GUI/OrcaMCP/OrcaMCPCommon.hpp
+    GUI/OrcaMCP/OrcaMCPCommon.cpp
     GUI/OrcaMCP/OrcaMCPServer.hpp
     GUI/OrcaMCP/OrcaMCPServer.cpp
     GUI/OrcaMCP/OrcaMCPPlateUtils.hpp
