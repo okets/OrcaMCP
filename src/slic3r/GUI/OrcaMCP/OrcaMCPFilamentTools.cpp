@@ -4,10 +4,9 @@
 #include "OrcaMCPFilamentUtils.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Plater.hpp"
-#include "libslic3r/PresetBundle.hpp"
-#include "libslic3r/PrintConfig.hpp"
 
 #include <algorithm>
+#include <optional>
 
 using namespace Slic3r::GUI;
 using namespace Slic3r::GUI::OrcaMCP;
@@ -19,17 +18,6 @@ nlohmann::json with_filaments(nlohmann::json result)
     result["filaments"] = describe_filaments()["filaments"];
     result["active_warnings"] = get_active_warnings_json(wxGetApp().plater());
     return result;
-}
-
-// Overwrites one extruder's flush multiplier. Kept separate from set_flush_volumes() (which
-// only owns the matrix) since the multiplier is an independent, optional part of the request.
-bool apply_flush_multiplier(int extruder, double value, std::string& error)
-{
-    auto* mult = wxGetApp().preset_bundle->project_config.option<Slic3r::ConfigOptionFloats>("flush_multiplier", true);
-    if (!mult || mult->values.empty()) { error = "flush_multiplier is not configured"; return false; }
-    if (size_t(extruder) >= mult->values.size()) { error = "extruder out of range for flush_multiplier"; return false; }
-    mult->values[size_t(extruder)] = value;
-    return true;
 }
 
 } // namespace
@@ -202,14 +190,13 @@ void OrcaMCPServer::register_filament_tools()
         [](const nlohmann::json& params) -> nlohmann::json {
             const nlohmann::json matrix = params.at("matrix");
             const int extruder = params.value("extruder", 0);
-            const bool has_multiplier = params.contains("flush_multiplier");
-            const double multiplier = has_multiplier ? params["flush_multiplier"].get<double>() : 0.0;
+            const std::optional<double> flush_multiplier = params.contains("flush_multiplier")
+                ? std::optional<double>(params["flush_multiplier"].get<double>())
+                : std::nullopt;
 
-            return run_on_main_thread([matrix, extruder, has_multiplier, multiplier]() -> nlohmann::json {
+            return run_on_main_thread([matrix, extruder, flush_multiplier]() -> nlohmann::json {
                 std::string error;
-                if (!set_flush_volumes(matrix, extruder, error))
-                    return nlohmann::json{{"status", "error"}, {"message", error}};
-                if (has_multiplier && !apply_flush_multiplier(extruder, multiplier, error))
+                if (!set_flush_volumes(matrix, extruder, flush_multiplier, error))
                     return nlohmann::json{{"status", "error"}, {"message", error}};
 
                 nlohmann::json r = {{"status", "success"}};

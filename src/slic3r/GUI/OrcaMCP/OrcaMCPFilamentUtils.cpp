@@ -170,7 +170,7 @@ nlohmann::json describe_flush_volumes()
             {"matrices", matrices}};
 }
 
-bool set_flush_volumes(const nlohmann::json& matrix, int extruder, std::string& error)
+bool set_flush_volumes(const nlohmann::json& matrix, int extruder, std::optional<double> flush_multiplier, std::string& error)
 {
     PresetBundle* pb = wxGetApp().preset_bundle;
     const size_t extruders = size_t(pb->get_printer_extruder_count());
@@ -187,7 +187,20 @@ bool set_flush_volumes(const nlohmann::json& matrix, int extruder, std::string& 
             block.push_back(v.get<double>());
         }
     }
+
+    // Validate the (optional) multiplier write too, before mutating anything, so a bad
+    // multiplier never leaves the matrix half-written.
+    ConfigOptionFloats* mult = nullptr;
+    if (flush_multiplier.has_value()) {
+        mult = pb->project_config.option<ConfigOptionFloats>("flush_multiplier", true);
+        if (!mult || mult->values.empty()) { error = "flush_multiplier is not configured"; return false; }
+        if (size_t(extruder) >= mult->values.size()) { error = "extruder out of range for flush_multiplier"; return false; }
+    }
+
     set_flush_volumes_matrix(mat->values, block, size_t(extruder), extruders);
+    if (mult) mult->values[size_t(extruder)] = *flush_multiplier;
+
+    // Single refresh at the end, after both writes -- not after the matrix alone.
     OrcaMCPPresetConfigUtils::RefreshAfterProjectConfigChange();
     return true;
 }

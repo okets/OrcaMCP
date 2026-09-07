@@ -1,6 +1,7 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPFilamentUtils.hpp
 #pragma once
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <string>
 #include <vector>
 #include "slic3r/GUI/MixedFilamentDialog.hpp"   // MixedFilamentResult
@@ -27,9 +28,11 @@ bool set_object_filament(int object_id, int volume_id /* -1 = object */, int slo
 nlohmann::json describe_flush_volumes();
 
 // Overwrites the full NxN flush-volume matrix for one extruder (0-based, default 0) and,
-// optionally, that extruder's flush multiplier. Returns false and fills `error` on bad input
-// (extruder out of range, matrix not NxN). Main thread only.
-bool set_flush_volumes(const nlohmann::json& matrix, int extruder, std::string& error);
+// if `flush_multiplier` is set, that extruder's flush multiplier. Both inputs are validated
+// before anything is written (extruder out of range, matrix not NxN, multiplier extruder out
+// of range), and RefreshAfterProjectConfigChange() is called exactly once at the end, after
+// both writes. Returns false and fills `error` on bad input. Main thread only.
+bool set_flush_volumes(const nlohmann::json& matrix, int extruder, std::optional<double> flush_multiplier, std::string& error);
 
 // Recalculates every filament's flush-volume row/column for every extruder automatically
 // (Sidebar::auto_calc_flushing_volumes with its "all" defaults; skips mixed/virtual slots
