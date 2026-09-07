@@ -1,72 +1,40 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPPrinterUtils.cpp
 #include "OrcaMCPPrinterUtils.hpp"
 #include "OrcaMCPCommon.hpp"
+#include "OrcaMCPPresetConfigUtils.hpp"
 
-#include "libslic3r/AppConfig.hpp"
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/PresetBundle.hpp"
-#include "libslic3r/Utils.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
-#include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/Tab.hpp"
 #include "slic3r/Utils/PrintHost.hpp"
 
-#include <boost/filesystem.hpp>
-#include <boost/log/trivial.hpp>
+#include <boost/algorithm/string/join.hpp>
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
 namespace {
 
-// Orca neither exports the physical printer selection (PresetBundle::export_selections has the line
-// commented out) nor keeps a value written into its own [presets] section across a shutdown, so the MCP
-// tools remember the selection in a section of their own.
-constexpr const char* kSelectionSection = "orcamcp";
-constexpr const char* kSelectionKey     = "physical_printer";
-
-// Where PhysicalPrinterCollection::load_printers/save_printer keep the printer files.
-constexpr const char* kPrintersSubdir = "physical_printer";
-
-void remember_selection()
+std::string config_string(const DynamicPrintConfig& config, const std::string& key)
 {
-    PhysicalPrinterCollection& printers = wxGetApp().preset_bundle->physical_printers;
-    wxGetApp().app_config->set(kSelectionSection, kSelectionKey,
-                               printers.has_selection() ? printers.get_selected_full_printer_name() : std::string());
-    wxGetApp().app_config->save();
+    return config.has(key) ? config.opt_string(key) : std::string();
 }
 
-// Re-select the printer remembered by a previous session, but only when its preset is the one already
-// selected in the printer tab, so that restoring never changes the user's visible printer profile.
-void restore_selection()
+std::string serialized_host_type(const DynamicPrintConfig& config)
 {
-    PresetBundle*              bundle   = wxGetApp().preset_bundle;
-    PhysicalPrinterCollection& printers = bundle->physical_printers;
-    if (printers.has_selection())
-        return;
-
-    const std::string full_name = wxGetApp().app_config->get(kSelectionSection, kSelectionKey);
-    if (full_name.empty())
-        return;
-
-    const PhysicalPrinter* printer = printers.find_printer(PhysicalPrinter::get_short_name(full_name));
-    if (printer == nullptr)
-        return;
-
-    const std::string& edited_preset = bundle->printers.get_edited_preset().name;
-    if (printer->get_preset_names().count(edited_preset) == 0)
-        return;
-
-    printers.select_printer(printer->name, edited_preset);
+    return config.has("host_type") ? config.opt_serialize("host_type") : std::string();
 }
 
-std::string config_string(const DynamicPrintConfig* config, const std::string& key)
+const DynamicPrintConfig& edited_printer_config()
 {
-    return (config != nullptr && config->has(key)) ? config->opt_string(key) : std::string();
+    return wxGetApp().preset_bundle->printers.get_edited_preset().config;
 }
 
-std::string serialized_host_type(const DynamicPrintConfig* config)
+// The preset's effective config: the selected preset may carry unsaved print host edits.
+const DynamicPrintConfig& live_printer_config(const Preset& preset)
 {
-    return (config != nullptr && config->has("host_type")) ? config->opt_serialize("host_type") : std::string();
+    const PrinterPresetCollection& printers = wxGetApp().preset_bundle->printers;
+    return preset.name == printers.get_edited_preset().name ? edited_printer_config() : preset.config;
 }
 
 nlohmann::json temperature_json(double current, double target)
@@ -74,53 +42,34 @@ nlohmann::json temperature_json(double current, double target)
     return {{"current", current}, {"target", target}};
 }
 
-} // namespace
-
-void ensure_physical_printers_loaded()
+// The response shared by add_physical_printer and select_printer: whatever the edited preset now is.
+nlohmann::json print_host_response(const std::string& name)
 {
-    static bool s_loaded = false;
-    if (s_loaded)
-        return;
-
-    PresetBundle* bundle = wxGetApp().preset_bundle;
-    if (bundle == nullptr)
-        return;
-    s_loaded = true;
-
-    PresetsConfigSubstitutions substitutions;
-    try {
-        // ConfigBase::save_to_json fails silently when the directory is missing, so create it up front.
-        boost::filesystem::create_directories(boost::filesystem::path(data_dir()) / kPrintersSubdir);
-        bundle->physical_printers.load_printers(data_dir(), kPrintersSubdir, substitutions,
-                                                ForwardCompatibilitySubstitutionRule::EnableSilent);
-    } catch (const std::exception& e) {
-        BOOST_LOG_TRIVIAL(error) << "OrcaMCP: failed to load physical printers: " << e.what();
-    }
-    restore_selection();
+    const DynamicPrintConfig& config = edited_printer_config();
+    return {{"status", "success"},
+            {"physical_printer", name},
+            {"printer_preset", name},
+            {"host_type", serialized_host_type(config)},
+            {"print_host", config_string(config, "print_host")}};
 }
+
+} // namespace
 
 bool resolve_print_host_config(DynamicPrintConfig& out, std::string& host_type_name, std::string& error)
 {
-    ensure_physical_printers_loaded();
-
     PresetBundle* bundle = wxGetApp().preset_bundle;
     if (bundle == nullptr) {
         error = "Preset bundle not available";
         return false;
     }
 
-    // Start from the full printer preset so that options outside PhysicalPrinter::printer_options()
-    // (gcode_flavor, printer_technology, ...) are present, then let the physical printer override the
-    // print host settings.
+    // Exactly what Plater::send_gcode_legacy uses.
     out = bundle->printers.get_edited_preset().config;
-    if (const DynamicPrintConfig* physical = bundle->physical_printers.get_selected_printer_config())
-        out.apply_only(*physical, PhysicalPrinter::printer_options(), true);
-
-    if (config_string(&out, "print_host").empty()) {
+    if (config_string(out, "print_host").empty()) {
         error = "No print host configured. Use add_physical_printer first.";
         return false;
     }
-    host_type_name = serialized_host_type(&out);
+    host_type_name = serialized_host_type(out);
     return true;
 }
 
@@ -167,88 +116,99 @@ nlohmann::json status_to_json(const FlashforgeApi::PrinterStatus& s)
     };
 }
 
-nlohmann::json select_physical_printer(const std::string& name)
+nlohmann::json print_host_presets_json()
 {
-    ensure_physical_printers_loaded();
+    const PrinterPresetCollection& printers      = wxGetApp().preset_bundle->printers;
+    const std::string&             selected_name = printers.get_edited_preset().name;
 
-    PresetBundle*              bundle   = wxGetApp().preset_bundle;
-    PhysicalPrinterCollection& printers = bundle->physical_printers;
+    nlohmann::json presets = nlohmann::json::array();
+    for (const Preset& preset : printers) {
+        const DynamicPrintConfig& config = live_printer_config(preset);
+        const std::string         host   = config_string(config, "print_host");
+        if (host.empty())
+            continue;
 
-    // Mirrors PresetComboBox::selection_is_changed_according_to_physical_printers().
-    std::string old_full_name;
-    std::string old_preset_name;
-    if (printers.has_selection()) {
-        old_full_name   = printers.get_selected_full_printer_name();
-        old_preset_name = printers.get_selected_printer_preset_name();
-    } else {
-        old_preset_name = bundle->printers.get_edited_preset().name;
-    }
-
-    // select_printer() unselects when the name is unknown, so check before touching the selection.
-    if (printers.find_printer(PhysicalPrinter::get_short_name(name)) == nullptr)
-        return {{"status", "error"},
-                {"message", "No physical printer named '" + name + "'. Use get_printers to list them."}};
-    printers.select_printer(name);
-
-    const std::string preset_name = printers.get_selected_printer_preset_name();
-
-    McpDialogSuppressionGuard suppression;
-    Tab* tab = wxGetApp().get_tab(Preset::TYPE_PRINTER);
-    if (old_preset_name == preset_name) {
-        if (tab != nullptr)
-            tab->update_preset_choice();
-        wxGetApp().sidebar().update_presets(Preset::TYPE_PRINTER);
-        bundle->export_selections(*wxGetApp().app_config);
-    } else if (tab != nullptr) {
-        tab->select_preset(preset_name, false, old_full_name);
-    }
-
-    if (!printers.has_selection())
-        return {{"status", "error"},
-                {"message", "Selecting physical printer '" + name + "' was reverted while switching printer preset '" +
-                                preset_name + "'"}};
-
-    remember_selection();
-
-    const DynamicPrintConfig* config = printers.get_selected_printer_config();
-    return {{"status", "success"},
-            {"physical_printer", printers.get_selected_printer_name()},
-            {"printer_preset", preset_name},
+        presets.push_back({
+            {"name", preset.name},
+            {"print_host", host},
             {"host_type", serialized_host_type(config)},
-            {"print_host", config_string(config, "print_host")}};
+            {"has_credentials", !config_string(config, "flashforge_serial_number").empty() &&
+                                    !config_string(config, "printhost_apikey").empty()},
+            {"is_selected", preset.name == selected_name}
+        });
+    }
+    return presets;
 }
 
-std::string upsert_physical_printer(const std::string& name,
-                                    const std::string& host,
-                                    const std::string& host_type,
-                                    const std::string& serial_number,
-                                    const std::string& api_key,
-                                    const std::string& printer_preset)
+nlohmann::json selected_print_host_preset_json()
 {
-    ensure_physical_printers_loaded();
+    const PrinterPresetCollection& printers = wxGetApp().preset_bundle->printers;
+    if (config_string(edited_printer_config(), "print_host").empty())
+        return nullptr;
+    return printers.get_edited_preset().name;
+}
 
-    PresetBundle* bundle = wxGetApp().preset_bundle;
-    if (bundle == nullptr)
-        return "Preset bundle not available";
+nlohmann::json select_print_host_preset(const std::string& name)
+{
+    PrinterPresetCollection& printers = wxGetApp().preset_bundle->printers;
 
-    const t_config_enum_values& host_types = ConfigOptionEnum<PrintHostType>::get_enum_values();
-    const auto                  host_type_it = host_types.find(host_type);
-    if (host_type_it == host_types.end())
-        return "Unknown host_type '" + host_type + "'";
-
-    const std::string preset_name = printer_preset.empty() ? bundle->printers.get_edited_preset().name : printer_preset;
-    const Preset*     preset      = bundle->printers.find_preset(preset_name, false);
+    const Preset* preset = printers.find_preset(name, false);
     if (preset == nullptr)
-        return "No printer preset named '" + preset_name + "'";
+        return {{"status", "error"}, {"message", "No printer preset named '" + name + "'"}};
+    if (config_string(live_printer_config(*preset), "print_host").empty())
+        return {{"status", "error"}, {"message", "Preset " + name + " has no print host configured"}};
 
-    PhysicalPrinter printer(name, bundle->physical_printers.default_config(), *preset);
-    printer.config.set_key_value("print_host", new ConfigOptionString(host));
-    printer.config.set_key_value("host_type", new ConfigOptionEnum<PrintHostType>(static_cast<PrintHostType>(host_type_it->second)));
-    printer.config.set_key_value("printhost_apikey", new ConfigOptionString(api_key));
-    printer.config.set_key_value("flashforge_serial_number", new ConfigOptionString(serial_number));
-    printer.config.set_key_value("printhost_authorization_type", new ConfigOptionEnum<AuthorizationType>(atKeyPassword));
+    if (printers.get_edited_preset().name != name) {
+        OrcaMCPPresetConfigUtils::SelectPreset("printer", name);
+        if (printers.get_edited_preset().name != name)
+            return {{"status", "error"}, {"message", "Failed to select printer preset '" + name + "'"}};
+    }
 
-    bundle->physical_printers.save_printer(printer);
+    return print_host_response(name);
+}
+
+std::string save_print_host_preset(const std::string& name,
+                                   const std::string& host,
+                                   const std::string& host_type,
+                                   const std::string& serial_number,
+                                   const std::string& api_key,
+                                   const std::string& printer_preset)
+{
+    PrinterPresetCollection& printers = wxGetApp().preset_bundle->printers;
+
+    const std::string base_name = printer_preset.empty() ? printers.get_edited_preset().name : printer_preset;
+    if (printers.find_preset(base_name, false) == nullptr)
+        return "No printer preset named '" + base_name + "'";
+    if (printers.get_edited_preset().name != base_name)
+        OrcaMCPPresetConfigUtils::SelectPreset("printer", base_name);
+
+    // Same settings PhysicalPrinterDialog writes into the edited printer config, through the shared
+    // validation path.
+    const nlohmann::json item = {
+        {"type", "printer"},
+        {"settings", {
+            {"print_host", host},
+            {"host_type", host_type},
+            {"flashforge_serial_number", serial_number},
+            {"printhost_apikey", api_key},
+            {"printhost_authorization_type", "key"}
+        }}
+    };
+    const ApplyConfigResult applied = OrcaMCPPresetConfigUtils::ApplyConfig(item);
+    if (!applied.error.empty())
+        return applied.error;
+    if (!applied.invalid.empty())
+        return "Failed to apply print host settings: " + boost::algorithm::join(applied.invalid, ", ");
+    OrcaMCPPresetConfigUtils::UpdatePresetTabs();
+
+    // PhysicalPrinterDialog::OnOK: save the edited printer preset under the entered name.
+    Tab* tab = wxGetApp().get_tab(Preset::TYPE_PRINTER);
+    if (tab == nullptr)
+        return "Printer settings tab not available";
+    tab->save_preset("", false, false, true, name);
+
+    if (printers.get_edited_preset().name != name)
+        return "Saving printer preset '" + name + "' did not take effect";
     return {};
 }
 

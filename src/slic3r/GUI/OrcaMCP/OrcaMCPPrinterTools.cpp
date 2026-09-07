@@ -123,59 +123,14 @@ void OrcaMCPServer::register_printer_tools()
                     };
                 }
 
-                // Get physical printers (OctoPrint, Klipper, Duet, etc.)
+                // "Physical printers" are the printer presets that carry a print host: that is where
+                // PhysicalPrinterDialog writes it and where Plater::send_gcode_legacy reads it from.
                 result["physical_printers"] = nlohmann::json::array();
                 result["selected_physical_printer"] = nullptr;
                 PresetBundle* preset_bundle = wxGetApp().preset_bundle;
                 if (preset_bundle) {
-                    ensure_physical_printers_loaded();
-                    // First check the PhysicalPrinterCollection
-                    const auto& physical_printers = preset_bundle->physical_printers;
-                    if (physical_printers.has_selection())
-                        result["selected_physical_printer"] = physical_printers.get_selected_printer_name();
-                    for (const auto& printer : physical_printers) {
-                        nlohmann::json printer_info = {
-                            {"name", printer.name},
-                            {"type", "physical_printer"}
-                        };
-
-                        // Get print host info from config
-                        if (printer.config.has("print_host")) {
-                            printer_info["print_host"] = printer.config.opt_string("print_host");
-                        }
-                        if (printer.config.has("host_type")) {
-                            auto* opt = printer.config.option<ConfigOptionEnum<PrintHostType>>("host_type");
-                            if (opt) {
-                                // Map host type enum to string
-                                switch (opt->value) {
-                                    case htPrusaLink: printer_info["host_type"] = "prusalink"; break;
-                                    case htPrusaConnect: printer_info["host_type"] = "prusaconnect"; break;
-                                    case htOctoPrint: printer_info["host_type"] = "octoprint"; break;
-                                    case htDuet: printer_info["host_type"] = "duet"; break;
-                                    case htFlashAir: printer_info["host_type"] = "flashair"; break;
-                                    case htAstroBox: printer_info["host_type"] = "astrobox"; break;
-                                    case htRepetier: printer_info["host_type"] = "repetier"; break;
-                                    case htMKS: printer_info["host_type"] = "mks"; break;
-                                    case htESP3D: printer_info["host_type"] = "esp3d"; break;
-                                    case htCrealityPrint: printer_info["host_type"] = "creality"; break;
-                                    case htObico: printer_info["host_type"] = "obico"; break;
-                                    case htFlashforge: printer_info["host_type"] = "flashforge"; break;
-                                    case htSimplyPrint: printer_info["host_type"] = "simplyprint"; break;
-                                    case htElegooLink: printer_info["host_type"] = "elegoo"; break;
-                                    default: printer_info["host_type"] = "unknown"; break;
-                                }
-                            }
-                        }
-
-                        // Get associated preset names
-                        nlohmann::json presets = nlohmann::json::array();
-                        for (const auto& preset_name : printer.get_preset_names()) {
-                            presets.push_back(preset_name);
-                        }
-                        printer_info["preset_names"] = presets;
-
-                        result["physical_printers"].push_back(printer_info);
-                    }
+                    result["physical_printers"] = print_host_presets_json();
+                    result["selected_physical_printer"] = selected_print_host_preset_json();
 
                     // Also check current printer preset for embedded print host config
                     const Preset& current_printer = preset_bundle->printers.get_edited_preset();
@@ -227,7 +182,7 @@ void OrcaMCPServer::register_printer_tools()
     // select_printer - Select a Bambu device by dev_id, or a physical printer (print host) by name
     register_tool({
         "select_printer",
-        "Select a printer: a Bambu device by dev_id, or a physical printer (print host) by name.",
+        "Select a printer: a Bambu device by dev_id, or a printer preset with a print host by name.",
         {
             {"type", "object"},
             {"properties", {
@@ -237,7 +192,7 @@ void OrcaMCPServer::register_printer_tools()
                 }},
                 {"physical_printer", {
                     {"type", "string"},
-                    {"description", "Physical printer name as listed by get_printers"}
+                    {"description", "Printer preset with a print host, as listed by get_printers"}
                 }}
             }}
         },
@@ -248,7 +203,10 @@ void OrcaMCPServer::register_printer_tools()
                 return error_response("Provide exactly one of dev_id (Bambu device) or physical_printer");
 
             if (!physical_printer.empty())
-                return run_on_main_thread([physical_printer]() { return select_physical_printer(physical_printer); });
+                return run_on_main_thread([physical_printer]() -> nlohmann::json {
+                    McpDialogSuppressionGuard suppression;
+                    return select_print_host_preset(physical_printer);
+                });
 
             return run_on_main_thread([dev_id]() -> nlohmann::json {
                 DeviceManager* device_mgr = wxGetApp().getDeviceManager();
@@ -422,13 +380,13 @@ void OrcaMCPServer::register_printer_tools()
     // add_physical_printer - Create or overwrite a physical printer and select it
     register_tool({
         "add_physical_printer",
-        "Create or overwrite a physical printer (print host) and select it.",
+        "Configure a print host on the current printer preset and save it as a user preset with this name.",
         {
             {"type", "object"},
             {"properties", {
                 {"name", {
                     {"type", "string"},
-                    {"description", "Physical printer name, e.g. \"C5P\""}
+                    {"description", "Name to save the printer preset under, e.g. \"C5P\""}
                 }},
                 {"host", {
                     {"type", "string"},
@@ -449,7 +407,7 @@ void OrcaMCPServer::register_printer_tools()
                 }},
                 {"printer_preset", {
                     {"type", "string"},
-                    {"description", "Printer preset to associate (default: the edited printer preset)"}
+                    {"description", "Printer preset to base it on (default: the edited printer preset)"}
                 }}
             }},
             {"required", {"name", "host", "host_type"}}
@@ -469,10 +427,11 @@ void OrcaMCPServer::register_printer_tools()
                                       boost::algorithm::join(kSupportedHostTypes, ", "));
 
             return run_on_main_thread([name, host, host_type, serial_number, api_key, printer_preset]() -> nlohmann::json {
-                const std::string error = upsert_physical_printer(name, host, host_type, serial_number, api_key, printer_preset);
+                McpDialogSuppressionGuard suppression;
+                const std::string error = save_print_host_preset(name, host, host_type, serial_number, api_key, printer_preset);
                 if (!error.empty())
                     return error_response(error);
-                return select_physical_printer(name);
+                return select_print_host_preset(name);
             });
         }
     });

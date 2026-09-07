@@ -475,13 +475,24 @@ void OrcaMCPServer::register_builtin_tools()
                     }},
                     {"get_printers", {
                         {"example", "{}"},
-                        {"response_fields", "local_printers, cloud_printers, physical_printers, current_print_host, total_count"},
+                        {"response_fields", "local_printers, cloud_printers, physical_printers, selected_physical_printer, current_print_host, total_count"},
                         {"when_to_use", "Check what printers are available before sending"},
-                        {"tip", "current_print_host shows OctoPrint/Klipper configured in printer preset"}
+                        {"tip", "physical_printers lists the printer presets that carry a print host; selected_physical_printer is the active one"}
                     }},
                     {"select_printer", {
-                        {"example", R"({"dev_id": "00M00A2B0123456"})"},
-                        {"when_to_use", "Select Bambu printer by device ID (not needed for OctoPrint/Klipper)"}
+                        {"bambu_device", R"({"dev_id": "00M00A2B0123456"})"},
+                        {"print_host", R"({"physical_printer": "C5P"})"},
+                        {"when_to_use", "Select a Bambu printer by device ID, or a printer preset with a print host by name"}
+                    }},
+                    {"discover_printers", {
+                        {"example", R"({"timeout_ms": 5000})"},
+                        {"when_to_use", "Find Flashforge printers on the LAN before add_physical_printer"},
+                        {"response_fields", "printers[] with name, serial_number, ip_address"}
+                    }},
+                    {"add_physical_printer", {
+                        {"example", R"({"name": "C5P", "host": "192.168.1.50", "host_type": "flashforge", "serial_number": "SN", "api_key": "check code"})"},
+                        {"when_to_use", "Configure a print host and save it as a user printer preset"},
+                        {"tip", "printer_preset selects the preset to base it on; defaults to the edited printer preset"}
                     }},
                     {"clone_object", {
                         {"to_current_plate", R"({"object_id": 0, "count": 2, "duplicate": true})"},
@@ -630,8 +641,10 @@ void OrcaMCPServer::register_builtin_tools()
                         {"delete_plate", "Delete a plate. Cannot delete last plate. Objects moved to another plate."}
                     }},
                     {"printer_management", {
-                        {"get_printers", "List printers: Bambu (local/cloud), OctoPrint/Klipper (current_print_host)"},
-                        {"select_printer", "Select Bambu printer by dev_id"},
+                        {"get_printers", "List printers: Bambu (local/cloud) and printer presets with a print host"},
+                        {"select_printer", "Select a Bambu printer by dev_id, or a print-host preset by physical_printer"},
+                        {"discover_printers", "Find Flashforge printers on the local network"},
+                        {"add_physical_printer", "Save a print host into a printer preset and select it"},
                         {"send_to_printer", "Send G-code: auto-detects OctoPrint/Klipper vs Bambu dialog"}
                     }}
                 }},
