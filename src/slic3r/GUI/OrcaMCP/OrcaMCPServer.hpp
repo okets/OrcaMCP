@@ -63,6 +63,8 @@ private:
     static void register_builtin_tools();
     // Filament and mixed-filament tools (OrcaMCPFilamentTools.cpp)
     static void register_filament_tools();
+    // Printer and physical-printer tools (OrcaMCPPrinterTools.cpp)
+    static void register_printer_tools();
 };
 
 }} // namespace Slic3r::GUI
