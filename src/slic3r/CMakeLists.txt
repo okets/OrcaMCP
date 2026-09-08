@@ -454,6 +454,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/PrinterWebViewHandler.cpp
     GUI/PrinterWebViewHandler.hpp
     GUI/PrinterWebView.hpp
+    GUI/FlashforgeConsoleHandler.cpp
+    GUI/FlashforgeConsoleHandler.hpp
     GUI/PrintHostDialogs.cpp
     GUI/PrintHostDialogs.hpp
     GUI/PrintOptionsDialog.cpp

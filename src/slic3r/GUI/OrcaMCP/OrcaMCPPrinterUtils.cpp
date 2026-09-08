@@ -239,6 +239,10 @@ nlohmann::json status_to_json(const FlashforgeApi::PrinterStatus& s)
         {"name", s.name},
         {"model", s.model},
         {"firmware", s.firmware},
+        // The product id decides which machine this is (40 Creator 5, 41 Creator 5 Pro) and therefore
+        // which capabilities exist at all; `ip` is what the printer says its own address is.
+        {"pid", s.pid},
+        {"ip", s.ip},
         {"camera_stream_url", s.camera_stream_url},
         {"material_station", {{"present", s.has_material_station}, {"slots", material_slots_json(s.slots)}}},
         {"raw", s.raw}

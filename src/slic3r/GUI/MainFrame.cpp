@@ -29,6 +29,7 @@
 #include "3DScene.hpp"
 #include "ParamsDialog.hpp"
 #include "PrintHostDialogs.hpp"
+#include "FlashforgeConsoleHandler.hpp"
 #include "wxExtensions.hpp"
 #include "GUI_ObjectList.hpp"
 #include "Mouse3DController.hpp"
@@ -1358,11 +1359,47 @@ void MainFrame::init_tabpanel() {
     }
 }
 
+bool MainFrame::printer_uses_flashforge_console()
+{
+    PresetBundle* bundle = wxGetApp().preset_bundle;
+    if (bundle == nullptr)
+        return false;
+
+    const DynamicPrintConfig& cfg       = bundle->printers.get_edited_preset().config;
+    const auto*               host_type = cfg.option<ConfigOptionEnum<PrintHostType>>("host_type");
+    return host_type != nullptr && host_type->value == htFlashforge && !cfg.opt_string("print_host").empty();
+}
+
+PrinterWebView* MainFrame::flashforge_view()
+{
+    const bool created = m_flashforge_view == nullptr;
+    if (created)
+        m_flashforge_view = new PrinterWebView(m_tabpanel, flashforge_console_url());
+
+    // load_url rebuilds the page's script-message handler, and with it the status poller, so it is
+    // how the console changes printer - and why it must not run on every unrelated preset touch.
+    PresetBundle*     bundle = wxGetApp().preset_bundle;
+    const std::string target = bundle == nullptr ? std::string()
+                                                 : bundle->printers.get_edited_preset().name + "\n" +
+                                                       bundle->printers.get_edited_preset().config.opt_string("print_host");
+    if (!created && target != m_flashforge_target) {
+        // A different printer: reloading the page is what rebuilds its handler, and with it the poller.
+        wxString url = flashforge_console_url();
+        m_flashforge_view->load_url(url);
+    }
+    m_flashforge_target = target;
+    return m_flashforge_view;
+}
+
 // SoftFever
 void MainFrame::show_device(bool should_use_native) {
     auto idx = -1;
 
     const bool use_printer_agents = wxGetApp().app_config->get_bool("use_printer_agents");
+    // MonitorPanel is Bambu's instrument: its branding, its RTSP camera player, no vocabulary for a
+    // four-slot material station. A Flashforge printer gets our own console page in that slot
+    // instead; every other printer keeps MonitorPanel exactly as before.
+    const bool use_flashforge_console = printer_uses_flashforge_console();
 
     // The web Device page is the extra tab printer-agents mode shows alongside the native one.
     // Printers that drive the native Bambu device tab have nothing to put in it, so they don't
@@ -1379,18 +1416,33 @@ void MainFrame::show_device(bool should_use_native) {
     }
 
     if (use_printer_agents) {
-        if (!m_monitor) {
-            m_monitor = new MonitorPanel(m_tabpanel, wxID_ANY, wxDefaultPosition, wxDefaultSize);
-            m_monitor->SetBackgroundColour(*wxWHITE);
+        wxWindow* device_page = nullptr;
+        if (use_flashforge_console) {
+            device_page = flashforge_view();
+        } else {
+            if (!m_monitor) {
+                m_monitor = new MonitorPanel(m_tabpanel, wxID_ANY, wxDefaultPosition, wxDefaultSize);
+                m_monitor->SetBackgroundColour(*wxWHITE);
+            }
+            device_page = m_monitor;
         }
 
-        if (m_tabpanel->FindPage(m_monitor) == wxNOT_FOUND) {
+        // Whichever of the two the current printer does not use must come off the tab bar, or
+        // switching between a Bambu and a Flashforge printer leaves two Device tabs behind.
+        wxWindow* stale_page = use_flashforge_console ? static_cast<wxWindow*>(m_monitor)
+                                                      : static_cast<wxWindow*>(m_flashforge_view);
+        if (stale_page != nullptr && (idx = m_tabpanel->FindPage(stale_page)) != wxNOT_FOUND) {
+            stale_page->Show(false);
+            m_tabpanel->RemovePage(idx);
+        }
+
+        if (m_tabpanel->FindPage(device_page) == wxNOT_FOUND) {
             if ((idx = m_tabpanel->FindPage(m_printer_view)) != wxNOT_FOUND) {
                 m_printer_view->Show(false);
                 m_tabpanel->RemovePage(idx);
             }
-            m_monitor->Show(false);
-            m_tabpanel->InsertPage(m_tabpanel->PositionAfter({TAB_ID_PREVIEW}), TAB_ID_MONITOR, m_monitor,
+            device_page->Show(false);
+            m_tabpanel->InsertPage(m_tabpanel->PositionAfter({TAB_ID_PREVIEW}), TAB_ID_MONITOR, device_page,
                                    _L("Device"), "tab_monitor_active");
         }
 
@@ -1459,6 +1511,10 @@ void MainFrame::show_device(bool should_use_native) {
             m_printer_view->Show(false);
             m_tabpanel->RemovePage(idx);
         }
+        if (m_flashforge_view != nullptr && (idx = m_tabpanel->FindPage(m_flashforge_view)) != wxNOT_FOUND) {
+            m_flashforge_view->Show(false);
+            m_tabpanel->RemovePage(idx);
+        }
 
         // Create/insert monitor page
         if (!m_monitor) {
@@ -1494,9 +1550,17 @@ void MainFrame::show_device(bool should_use_native) {
 #endif // _MSW_DARK_MODE
 
     } else {
-        if (m_tabpanel->FindPage(m_printer_view) != wxNOT_FOUND) {
+        wxWindow* device_page = use_flashforge_console ? static_cast<wxWindow*>(flashforge_view())
+                                                       : static_cast<wxWindow*>(m_printer_view);
+        if (device_page != nullptr && m_tabpanel->FindPage(device_page) != wxNOT_FOUND) {
             fit_tab_labels(); // ORCA on printer change - same button layout
             return;
+        }
+        wxWindow* stale_page = use_flashforge_console ? static_cast<wxWindow*>(m_printer_view)
+                                                      : static_cast<wxWindow*>(m_flashforge_view);
+        if (stale_page != nullptr && (idx = m_tabpanel->FindPage(stale_page)) != wxNOT_FOUND) {
+            stale_page->Show(false);
+            m_tabpanel->RemovePage(idx);
         }
         if ((idx = m_tabpanel->FindPage(m_calibration)) != wxNOT_FOUND) {
             m_calibration->Show(false);
@@ -1510,7 +1574,7 @@ void MainFrame::show_device(bool should_use_native) {
             m_monitor->Show(false);
             m_tabpanel->RemovePage(idx);
         }
-        if (m_printer_view == nullptr) {
+        if (!use_flashforge_console && m_printer_view == nullptr) {
             m_printer_view = new PrinterWebView(m_tabpanel);
             Bind(EVT_LOAD_PRINTER_URL, [this](LoadPrinterViewEvent& evt) {
                 wxString url = evt.GetString();
@@ -1518,9 +1582,10 @@ void MainFrame::show_device(bool should_use_native) {
                 // select_tab(MainFrame::tpMonitor);
                 m_printer_view->load_url(url, key);
             });
+            device_page = m_printer_view;
         }
-        m_printer_view->Show(false);
-        m_tabpanel->InsertPage(m_tabpanel->PositionAfter({TAB_ID_PREVIEW}), TAB_ID_MONITOR, m_printer_view,
+        device_page->Show(false);
+        m_tabpanel->InsertPage(m_tabpanel->PositionAfter({TAB_ID_PREVIEW}), TAB_ID_MONITOR, device_page,
                                _L("Device"), "tab_monitor_active");
     }
     fit_tab_labels(); // ORCA on printer change

@@ -1,5 +1,7 @@
 #include "PrinterWebViewHandler.hpp"
 
+#include "FlashforgeConsoleHandler.hpp"
+
 #include "I18N.hpp"
 #include "PrinterWebView.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
@@ -314,6 +316,10 @@ std::unique_ptr<PrinterWebViewHandler> create_printer_webview_handler(PrinterWeb
     {
         case PrintHostType::htElegooLink:
             return std::make_unique<ElegooPrinterWebViewHandler>(owner);
+        case PrintHostType::htFlashforge:
+            // Serves the bundled console page in the Device tab. The camera view uses the same
+            // handler and simply never posts a message, so it never starts a poller.
+            return make_flashforge_console_handler(owner);
         default:
             return nullptr;
     }

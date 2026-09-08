@@ -356,6 +356,11 @@ public:
     void        load_printer_url(wxString url, wxString apikey = "");
     void        load_printer_url();
     bool        is_printer_view() const;
+    /// True when the selected printer preset is a Flashforge print host, which shows the bundled
+    /// console page on the Device tab.
+    static bool printer_uses_flashforge_console();
+    /// The console view, created on first use and reloaded when it changes printer.
+    PrinterWebView* flashforge_view();
     void        refresh_plugin_tips();
     void RunScript(wxString js);
 
@@ -390,6 +395,11 @@ public:
     CalibrationPanel*     m_calibration{ nullptr };
     WebViewPanel*         m_webview { nullptr };
     PrinterWebView*       m_printer_view{nullptr};
+    // The Device tab for a Flashforge printer: our own console page instead of MonitorPanel,
+    // which speaks Bambu's vocabulary and has nothing to say about a four-slot material station.
+    PrinterWebView*       m_flashforge_view{nullptr};
+    // Which printer the console is currently pointed at, so it is only reloaded when that changes.
+    std::string           m_flashforge_target;
     PluginPages           m_plugin_pages;
     wxLogWindow*          m_log_window { nullptr };
     // BBS

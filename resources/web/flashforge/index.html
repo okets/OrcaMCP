@@ -1,0 +1,964 @@
+<meta charset="utf-8">
+<title>Creator 5 Console</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+<style>
+/* ── Tokens ─────────────────────────────────────────────────────────────
+   Dark is this design's home: an instrument panel in slate ink and brass.
+   Light is a full, deliberate counterpart, not an inversion.            */
+:root{
+  --ground:#0B0E13; --ground-2:#0F141B; --panel:#141A22; --panel-2:#19212B;
+  --edge:#263041; --edge-soft:#1D2531;
+  --text:#E9EDF3; --text-2:#B4BECC; --muted:#7F8A9B;
+  --brass:#D9A441; --brass-2:#F0C673; --brass-dim:#7A5C24;
+  --good:#4FB286; --warn:#E0A458; --crit:#D9534F;
+  --shadow:0 1px 0 rgba(255,255,255,.03), 0 12px 32px -18px rgba(0,0,0,.9);
+  --glass:rgba(233,237,243,.04);
+  color-scheme:dark;
+}
+@media (prefers-color-scheme: light){
+  :root:not([data-theme="dark"]){
+    --ground:#E9ECF1; --ground-2:#F3F5F8; --panel:#FFFFFF; --panel-2:#F5F7FA;
+    --edge:#CBD3DE; --edge-soft:#DFE5EC;
+    --text:#101620; --text-2:#3B4756; --muted:#616E80;
+    --brass:#8A6216; --brass-2:#A87A21; --brass-dim:#D9C79B;
+    --good:#2E7D5B; --warn:#9A6516; --crit:#B03A36;
+    --shadow:0 1px 0 rgba(255,255,255,.7), 0 12px 28px -20px rgba(16,22,32,.45);
+    --glass:rgba(16,22,32,.035);
+    color-scheme:light;
+  }
+}
+:root[data-theme="light"]{
+  --ground:#E9ECF1; --ground-2:#F3F5F8; --panel:#FFFFFF; --panel-2:#F5F7FA;
+  --edge:#CBD3DE; --edge-soft:#DFE5EC;
+  --text:#101620; --text-2:#3B4756; --muted:#616E80;
+  --brass:#8A6216; --brass-2:#A87A21; --brass-dim:#D9C79B;
+  --good:#2E7D5B; --warn:#9A6516; --crit:#B03A36;
+  --shadow:0 1px 0 rgba(255,255,255,.7), 0 12px 28px -20px rgba(16,22,32,.45);
+  --glass:rgba(16,22,32,.035);
+  color-scheme:light;
+}
+
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{height:100%}
+body{
+  margin:0;
+  background:radial-gradient(1200px 620px at 78% -8%, rgba(217,164,65,.07), transparent 62%), var(--ground);
+  color:var(--text);
+  font-family:"IBM Plex Sans","Helvetica Neue",Arial,sans-serif;
+  font-size:14px; line-height:1.5; -webkit-font-smoothing:antialiased;
+}
+.mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums}
+.shell{max-width:1280px;margin:0 auto;padding:22px 22px 40px;display:flex;flex-direction:column;gap:16px}
+
+/* ── Header ─────────────────────────────────────────────────────────── */
+.topbar{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.mark{display:flex;align-items:center;gap:12px;min-width:0}
+.mark svg{flex:none}
+.mark h1{font-family:"Bricolage Grotesque","Helvetica Neue",Arial,sans-serif;font-optical-sizing:auto;
+  font-weight:700;font-size:21px;letter-spacing:-.015em;margin:0;line-height:1.1;text-wrap:balance}
+.mark .sub{color:var(--muted);font-size:12px;letter-spacing:.02em;margin-top:2px}
+.spacer{flex:1 1 auto}
+.pill{display:inline-flex;align-items:center;gap:8px;height:30px;padding:0 12px;border:1px solid var(--edge);
+  border-radius:999px;background:var(--panel);font-size:12px;font-weight:500;letter-spacing:.04em;text-transform:uppercase}
+.pill .dot{width:7px;height:7px;border-radius:50%;background:var(--good);box-shadow:0 0 0 3px color-mix(in srgb,var(--good) 22%,transparent)}
+.pill[data-state="printing"]{border-color:color-mix(in srgb,var(--brass) 55%,var(--edge));color:var(--brass-2)}
+.pill[data-state="printing"] .dot{background:var(--brass);box-shadow:0 0 0 3px color-mix(in srgb,var(--brass) 22%,transparent);animation:breathe 2.6s ease-in-out infinite}
+.chip{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:6px;background:var(--glass);
+  border:1px dashed var(--edge);color:var(--muted);font-size:11px;letter-spacing:.05em;text-transform:uppercase}
+.iconbtn{height:30px;width:30px;display:grid;place-items:center;border-radius:8px;cursor:pointer;
+  background:var(--panel);border:1px solid var(--edge);color:var(--text-2)}
+.iconbtn:hover{border-color:var(--brass);color:var(--brass-2)}
+.iconbtn:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
+
+.eyebrow{display:flex;align-items:center;gap:10px;margin:0 0 10px;font-size:11px;font-weight:600;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.eyebrow::after{content:"";flex:1;height:1px;background:var(--edge-soft)}
+.card{background:var(--panel);border:1px solid var(--edge);border-radius:14px;box-shadow:var(--shadow)}
+
+/* ── Tool rail (the hero) ───────────────────────────────────────────── */
+.toolrail{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.tool{position:relative;overflow:hidden;padding:14px 14px 12px;border-radius:14px;
+  background:linear-gradient(180deg,var(--panel-2),var(--panel));border:1px solid var(--edge);box-shadow:var(--shadow);
+  display:flex;flex-direction:column;gap:12px;transform:translateY(10px);opacity:0;
+  animation:rise .5s cubic-bezier(.2,.7,.3,1) forwards}
+.tool:nth-child(1){animation-delay:.02s} .tool:nth-child(2){animation-delay:.09s}
+.tool:nth-child(3){animation-delay:.16s} .tool:nth-child(4){animation-delay:.23s}
+.tool .fiber{position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--fil,var(--edge))}
+.tool[data-state="active"]{border-color:color-mix(in srgb,var(--fil) 45%,var(--edge))}
+.tool[data-state="active"]::after{content:"";position:absolute;inset:-1px;border-radius:14px;pointer-events:none;
+  background:radial-gradient(140px 60px at 12% 0%, color-mix(in srgb,var(--fil) 16%,transparent), transparent 70%)}
+.tool[data-state="idle"]{opacity:.72}
+.tool-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.tool-id{display:flex;align-items:baseline;gap:7px}
+.tool-id b{font-family:"Bricolage Grotesque",sans-serif;font-weight:700;font-size:15px;letter-spacing:-.01em}
+.tool-id span{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.badge{font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;padding:3px 7px;border-radius:5px;
+  border:1px solid var(--edge);color:var(--muted);background:var(--glass);white-space:nowrap}
+.badge[data-kind="active"]{border-color:color-mix(in srgb,var(--fil) 60%,transparent);color:var(--text);
+  background:color-mix(in srgb,var(--fil) 16%,transparent)}
+.badge[data-kind="standby"]{border-color:var(--brass-dim);color:var(--brass-2)}
+.tool-body{display:flex;align-items:center;gap:12px}
+.spool{flex:none}
+.tool-fil{min-width:0;display:flex;flex-direction:column;gap:3px}
+.tool-fil .name{font-weight:600;font-size:13px;letter-spacing:-.005em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tool-fil .meta{color:var(--muted);font-size:11px}
+.tool-temp{display:flex;align-items:baseline;gap:6px;margin-top:auto}
+.tool-temp .now{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;font-size:26px;font-weight:500;letter-spacing:-.02em}
+.tool-temp .tgt{color:var(--muted);font-size:12px}
+.heat{height:4px;border-radius:3px;background:var(--edge-soft);overflow:hidden}
+.heat i{display:block;height:100%;border-radius:3px;background:linear-gradient(90deg,var(--brass-dim),var(--brass));transition:width .8s ease}
+.tool[data-state="idle"] .heat i{background:var(--edge)}
+
+/* ── Instrument row ─────────────────────────────────────────────────── */
+.instruments{display:grid;grid-template-columns:minmax(250px,1fr) minmax(340px,1.5fr) minmax(230px,.92fr);gap:16px;align-items:stretch}
+.panelbody{padding:16px}
+.machine{display:flex;flex-direction:column;gap:12px}
+.machine .shot{
+  position:relative;border-radius:11px;background:
+    radial-gradient(80% 62% at 50% 96%, color-mix(in srgb,var(--brass) 12%,transparent), transparent 70%),
+    var(--ground-2);
+  border:1px solid var(--edge-soft);padding:10px 6px 6px;display:grid;place-items:center;
+}
+.machine .shot img{display:block;width:100%;max-width:230px;height:auto;filter:drop-shadow(0 14px 18px rgba(0,0,0,.35))}
+:root[data-theme="light"] .machine .shot img{filter:drop-shadow(0 12px 16px rgba(16,22,32,.18))}
+.machine .caps{display:flex;flex-wrap:wrap;gap:6px}
+.specs{display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;border-top:1px solid var(--edge-soft);padding-top:12px}
+.spec{display:flex;flex-direction:column;gap:2px;min-width:0}
+.spec dt{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.spec dd{margin:0;font-size:12.5px;font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* Camera */
+.camera{display:flex;flex-direction:column;overflow:hidden}
+.viewport{position:relative;aspect-ratio:16/10;background:linear-gradient(180deg,#0a0d12,#12171f);overflow:hidden;border-bottom:1px solid var(--edge)}
+.viewport .scene{position:absolute;inset:0}
+.viewport .vignette{position:absolute;inset:0;background:radial-gradient(120% 90% at 50% 40%,transparent 40%,rgba(0,0,0,.55));pointer-events:none}
+.live{position:absolute;left:12px;top:12px;display:inline-flex;align-items:center;gap:7px;padding:5px 9px;border-radius:6px;
+  background:rgba(8,11,15,.62);backdrop-filter:blur(6px);border:1px solid rgba(233,237,243,.14);color:#E9EDF3;
+  font-size:10.5px;letter-spacing:.12em;text-transform:uppercase}
+.live .dot{width:6px;height:6px;border-radius:50%;background:#E5484D;animation:breathe 1.8s ease-in-out infinite}
+.shotline{position:absolute;right:12px;top:12px;padding:5px 9px;border-radius:6px;background:rgba(8,11,15,.62);
+  backdrop-filter:blur(6px);border:1px solid rgba(233,237,243,.14);color:#C8D0DC;font-size:11px;
+  font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums}
+.camfoot{display:flex;align-items:center;gap:10px;padding:10px 14px;flex-wrap:wrap}
+.camfoot .file{font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1}
+
+/* Environment */
+.env{display:flex;flex-direction:column}
+.row{display:grid;grid-template-columns:1fr auto;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid var(--edge-soft)}
+.row:last-child{border-bottom:0}
+.row .k{display:flex;align-items:center;gap:9px;color:var(--text-2);font-size:12.5px;min-width:0}
+.row .k svg{flex:none;color:var(--muted)}
+.row .v{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;font-size:13px;white-space:nowrap}
+.row .v small{color:var(--muted);font-size:11px}
+.state-good{color:var(--good)} .state-warn{color:var(--warn)} .state-crit{color:var(--crit)}
+.bar{height:4px;width:60px;border-radius:3px;background:var(--edge-soft);overflow:hidden;display:inline-block;vertical-align:middle;margin-right:8px}
+.bar i{display:block;height:100%;background:var(--brass);border-radius:3px;transition:width .8s ease}
+
+/* ── Job ────────────────────────────────────────────────────────────── */
+.job{padding:16px 18px 18px;display:flex;flex-direction:column;gap:14px}
+.job-head{display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap}
+.job-title{display:flex;flex-direction:column;gap:3px;min-width:0;flex:1}
+.job-title .n{font-family:"Bricolage Grotesque",sans-serif;font-weight:600;font-size:17px;letter-spacing:-.012em;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.job-title .s{color:var(--muted);font-size:12px}
+.job-pct{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;font-size:34px;font-weight:500;
+  letter-spacing:-.03em;line-height:1;color:var(--brass-2)}
+.job-pct sub{font-size:14px;color:var(--muted);vertical-align:baseline;margin-left:2px}
+.ribbon{display:flex;gap:2px;align-items:flex-end;height:44px}
+.ribbon i{flex:1;border-radius:1.5px;background:var(--edge-soft);transition:background .4s ease}
+.ribbon i[data-done="1"]{background:var(--c)}
+.job-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:10px 18px;border-top:1px solid var(--edge-soft);padding-top:12px}
+.stat{display:flex;flex-direction:column;gap:2px}
+.stat dt{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stat dd{margin:0;font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;font-size:15px}
+
+/* ── Controls + files ───────────────────────────────────────────────── */
+.files ul{list-style:none;margin:0;padding:0;max-height:300px;overflow-y:auto}
+.files li{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--edge-soft)}
+.files li:last-child{border-bottom:0}
+.mini{height:28px;padding:0 11px;border-radius:7px;border:1px solid var(--edge);background:var(--panel-2);color:var(--text-2);font:inherit;font-size:12px;cursor:pointer}
+.mini:hover{border-color:var(--brass);color:var(--brass-2)}
+.mini:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
+
+footer.foot{display:flex;gap:14px;flex-wrap:wrap;align-items:center;color:var(--muted);font-size:11.5px;padding-top:2px}
+footer.foot .sep{width:1px;height:12px;background:var(--edge)}
+
+/* ── Editable temperature target ────────────────────────────────────
+   temperatureCtl_cmd takes a 4-slot nozzle array plus bed and chamber,
+   with -200 meaning "leave this one alone" — so any target here can be
+   set on its own.                                                     */
+.tset{display:inline-flex;align-items:center;gap:4px;font:inherit;font-family:"IBM Plex Mono",monospace;
+  font-variant-numeric:tabular-nums;font-size:12px;color:var(--text-2);background:var(--glass);
+  border:1px solid var(--edge);padding:1px 5px 1px 6px;cursor:text;border-radius:6px;vertical-align:baseline}
+.tset .pencil{flex:none;opacity:.75;color:var(--muted)}
+.tset:hover{color:var(--brass-2);border-color:var(--brass);background:color-mix(in srgb,var(--brass) 10%,transparent)}
+.tset:hover .pencil{opacity:1;color:var(--brass-2)}
+.tset:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
+
+/* ── Control bar (lives under the camera, so it needs no scrolling) ── */
+.controlbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 14px;border-top:1px solid var(--edge-soft)}
+.cb-group{display:flex;align-items:center;gap:6px}
+.cb-div{width:1px;height:22px;background:var(--edge-soft)}
+.cb-label{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.toggle{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px;border-radius:8px;cursor:pointer;
+  background:var(--ground-2);border:1px solid var(--edge);color:var(--muted);font:inherit;font-size:12px}
+.toggle svg{flex:none}
+.toggle[aria-pressed="true"]{border-color:color-mix(in srgb,var(--brass) 60%,var(--edge));color:var(--brass-2);
+  background:color-mix(in srgb,var(--brass) 12%,transparent)}
+.toggle:hover{color:var(--text)}
+.toggle:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
+.tbtn{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 12px;border-radius:8px;cursor:pointer;
+  background:var(--panel-2);border:1px solid var(--edge);color:var(--text);font:inherit;font-size:12.5px;font-weight:500}
+.tbtn:hover{border-color:var(--brass);color:var(--brass-2)}
+.tbtn[data-tone="stop"]:hover{border-color:var(--crit);color:var(--crit)}
+.tbtn:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
+.seg{display:inline-flex;background:var(--ground-2);border:1px solid var(--edge);border-radius:8px;padding:2px;gap:2px}
+.seg button{border:0;background:transparent;color:var(--muted);font:inherit;font-size:11.5px;padding:4px 9px;border-radius:6px;
+  cursor:pointer;font-family:"IBM Plex Mono",monospace}
+.seg button[aria-pressed="true"]{background:var(--panel);color:var(--brass-2)}
+.stepper{display:inline-flex;align-items:center;gap:8px;background:var(--ground-2);border:1px solid var(--edge);border-radius:8px;padding:3px 4px}
+.stepper button{width:24px;height:22px;border:0;border-radius:5px;background:transparent;color:var(--text-2);cursor:pointer;font-size:15px;line-height:1}
+.stepper .val{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;font-size:12.5px;min-width:56px;text-align:center}
+
+/* ── Slot actions on each tool card ─────────────────────────────────── */
+.slotact{display:flex;align-items:center;gap:6px;margin-top:2px}
+.slotbtn{flex:1;height:26px;border-radius:7px;border:1px solid var(--edge);background:var(--ground-2);color:var(--muted);
+  font:inherit;font-size:11px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:5px}
+.slotbtn:hover{border-color:color-mix(in srgb,var(--fil) 55%,var(--edge));color:var(--text)}
+.slotbtn:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
+.loadprog{display:flex;flex-direction:column;gap:5px;padding:7px 8px;border-radius:8px;
+  background:color-mix(in srgb,var(--brass) 9%,transparent);border:1px solid var(--brass-dim)}
+.loadprog .lp-head{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11px;color:var(--brass-2)}
+.lp-steps{display:flex;gap:3px}
+.lp-steps i{flex:1;height:3px;border-radius:2px;background:var(--edge-soft)}
+.lp-steps i[data-on="1"]{background:var(--brass)}
+
+/* ── Live-data states the sample never had to show ───────────────────
+   A real machine is idle far more often than it prints, and a material
+   station is usually part empty. Those states get the same care as the
+   busy ones: nothing here is a placeholder for missing design.       */
+.tool[data-state="empty"]{opacity:.66;border-style:dashed}
+.tool[data-state="empty"] .fiber{background:var(--edge)}
+.tool[data-state="empty"] .heat i{background:var(--edge)}
+.tool[data-state="loading"]{border-color:var(--brass-dim)}
+.pill[data-state="paused"]{border-color:color-mix(in srgb,var(--warn) 55%,var(--edge));color:var(--warn)}
+.pill[data-state="paused"] .dot{background:var(--warn);box-shadow:0 0 0 3px color-mix(in srgb,var(--warn) 22%,transparent)}
+.pill[data-state="offline"]{border-color:color-mix(in srgb,var(--crit) 55%,var(--edge));color:var(--crit)}
+.pill[data-state="offline"] .dot{background:var(--crit);box-shadow:0 0 0 3px color-mix(in srgb,var(--crit) 22%,transparent)}
+.pill[data-state="idle"] .dot{background:var(--muted);box-shadow:0 0 0 3px color-mix(in srgb,var(--muted) 22%,transparent)}
+.stationstrip{margin:0 0 12px}
+.idle-big{font-family:"Bricolage Grotesque","Helvetica Neue",Arial,sans-serif;font-weight:600;font-size:19px;
+  letter-spacing:-.012em;line-height:1.2}
+.nodata{padding:14px;color:var(--muted);font-size:12.5px}
+.banner{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border-radius:11px;
+  border:1px solid color-mix(in srgb,var(--crit) 45%,var(--edge));background:color-mix(in srgb,var(--crit) 8%,transparent);
+  color:var(--text-2);font-size:12.5px}
+.banner b{color:var(--crit);font-weight:600}
+.viewport img.cam{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;background:#0a0d12}
+.camoff{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:18px;
+  color:#8A94A4;font-size:12px;line-height:1.6}
+/* Every control on this page is inert until the controls increment lands;
+   the affordance stays visible so the layout is the finished one.      */
+button:disabled,.tset:disabled{opacity:.45;cursor:not-allowed}
+button:disabled:hover,.tset:disabled:hover{border-color:var(--edge);color:inherit;background:var(--ground-2)}
+.tset:disabled:hover{background:var(--glass)}
+.slotbtn:disabled:hover{border-color:var(--edge);color:var(--muted)}
+/* The entry animation belongs to the first paint, not to every poll. */
+body[data-ready="1"] .tool{animation:none;opacity:1;transform:none}
+body[data-ready="1"] .tool[data-state="idle"]{opacity:.72}
+body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
+
+@keyframes rise{to{transform:translateY(0);opacity:1}}
+@keyframes breathe{0%,100%{opacity:1}50%{opacity:.35}}
+@media (prefers-reduced-motion: reduce){
+  *{animation-duration:.001s!important;animation-iteration-count:1!important;transition-duration:.001s!important}
+  .tool{opacity:1;transform:none}
+}
+@media (max-width:1080px){
+  .instruments{grid-template-columns:1fr 1fr}
+  .instruments .camera{grid-column:1/-1;order:-1}
+}
+@media (max-width:720px){
+  .toolrail{grid-template-columns:1fr 1fr}
+  .instruments{grid-template-columns:1fr}
+  .shell{padding:16px 14px 32px}
+}
+</style>
+
+<div class="shell">
+
+  <header class="topbar">
+    <div class="mark">
+      <svg width="34" height="34" viewBox="0 0 34 34" fill="none" aria-hidden="true">
+        <rect x="1.2" y="1.2" width="31.6" height="31.6" rx="8" stroke="var(--edge)" stroke-width="1.4" fill="var(--panel)"/>
+        <path d="M9 22.5V13a1.6 1.6 0 0 1 1.6-1.6h12.8A1.6 1.6 0 0 1 25 13v9.5" stroke="var(--brass)" stroke-width="1.6" stroke-linecap="round"/>
+        <rect x="12.4" y="17.6" width="9.2" height="7.4" rx="1.4" fill="var(--brass)" opacity=".16" stroke="var(--brass)" stroke-width="1.2"/>
+        <circle cx="13.6" cy="14.6" r="1.05" fill="var(--brass)"/><circle cx="16.8" cy="14.6" r="1.05" fill="var(--brass)" opacity=".62"/>
+        <circle cx="20" cy="14.6" r="1.05" fill="var(--brass)" opacity=".42"/><circle cx="23.2" cy="14.6" r="1.05" fill="var(--brass)" opacity=".26"/>
+      </svg>
+      <div>
+        <h1 id="deviceName">Flashforge printer</h1>
+        <div class="sub mono" id="deviceSub">Connecting…</div>
+      </div>
+    </div>
+    <div class="spacer"></div>
+    <span class="chip" id="sampleChip" hidden title="This file was opened outside OrcaSlicer, so the figures are a realistic sample rather than your printer.">Sample data</span>
+    <span class="pill" id="statePill" data-state="idle"><span class="dot"></span>Connecting</span>
+    <button class="iconbtn" id="themeBtn" type="button" title="Switch theme" aria-label="Switch theme">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M8 1.5v13M8 1.5a6.5 6.5 0 0 0 0 13" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+        <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.3"/>
+      </svg>
+    </button>
+  </header>
+
+  <div id="banner"></div>
+
+  <section aria-labelledby="toolsHead">
+    <h2 class="eyebrow" id="toolsHead">Toolheads &amp; loaded filament</h2>
+    <div id="stationStrip"></div>
+    <div class="toolrail" id="toolrail"></div>
+  </section>
+
+  <section class="instruments">
+    <div class="card panelbody machine">
+      <h2 class="eyebrow" style="margin:0">Machine</h2>
+      <div class="shot"><img id="machineShot" alt="" width="230" height="230"></div>
+      <div class="caps" id="machineCaps"></div>
+      <dl class="specs" id="machineSpecs"></dl>
+    </div>
+
+    <div class="card camera">
+      <div class="viewport">
+        <div class="scene" id="camScene"></div>
+        <div class="vignette"></div>
+        <span class="live" id="camLive" hidden><span class="dot"></span>Live</span>
+        <span class="shotline" id="camClock" hidden></span>
+      </div>
+      <div class="camfoot">
+        <span class="file" id="camFile"></span>
+        <span class="badge" data-kind="standby" id="camBadge" hidden></span>
+        <button class="mini" type="button" disabled>Time-lapse</button>
+      </div>
+      <div class="controlbar" id="controlbar"></div>
+    </div>
+
+    <div class="card env">
+      <h2 class="eyebrow" style="margin:14px 14px 6px">Environment</h2>
+      <div id="envRows"></div>
+    </div>
+  </section>
+
+  <section class="card job" id="jobCard" aria-labelledby="jobHead"></section>
+
+  <section class="card files">
+    <h2 class="eyebrow" style="margin:14px 14px 6px">On the printer</h2>
+    <div id="fileList"></div>
+  </section>
+
+  <footer class="foot" id="foot"></footer>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ══ Bridge ═══════════════════════════════════════════════════════════
+     This page and OrcaSlicer talk over the wxWebView script-message
+     channel, not HTTP: the page posts {id, method, params} through
+     window.wx.postMessage, and C++ answers by evaluating
+       window.orcaFlashforge.receive({id, method, ok, result})
+     back into this document. id 0 marks an unsolicited push, so the
+     poller and a direct answer arrive through the same door.
+
+     With no bridge — this file opened in a browser for design work —
+     SAMPLE below stands in and the "Sample data" chip appears.        */
+
+  var pending = {}, seq = 0;
+
+  function makeBridge(){
+    window.orcaFlashforge = { receive: receive };
+    return { call: function(method, params){
+      var id = ++seq;
+      return new Promise(function(resolve, reject){
+        pending[id] = { resolve: resolve, reject: reject };
+        window.wx.postMessage(JSON.stringify({ id: id, method: method, params: params || {} }));
+      });
+    }};
+  }
+
+  function receive(msg){
+    if (!msg || typeof msg !== "object") return;
+    var p = pending[msg.id];
+    if (p){
+      delete pending[msg.id];
+      if (msg.ok) p.resolve(msg.result); else p.reject(new Error(msg.error || "failed"));
+    }
+    if (msg.method === "status")
+      onStatus(msg.ok ? msg.result : { connected:false, error: msg.error || "No answer from OrcaSlicer" });
+  }
+
+  var bridge = (window.wx && typeof window.wx.postMessage === "function") ? makeBridge() : null;
+
+  /* ══ Sample state ═════════════════════════════════════════════════════
+     The exact shape the bridge delivers, so there is one render path.
+     `raw` mirrors the printer's own /detail object field for field.   */
+  var SAMPLE = {
+    connected:true, sample:true, preset:"C5P", host:"10.0.0.10", poll_ms:2000,
+    printer:{
+      state:"printing", print_file:"lattice-planter-4c.gcode.3mf",
+      progress:0.349, duration_s:8324, remaining_s:14520,
+      light_on:true, door:"close", error_code:"",
+      name:"Creator 5 Pro", model:"Creator 5 Pro", firmware:"1.9.9", ip:"10.0.0.10", pid:41,
+      camera_stream_url:"",
+      temperatures:{
+        bed:{current:60.2,target:60}, chamber:{current:41.0,target:45},
+        nozzles:[{tool:0,current:245,target:245},{tool:1,current:240,target:240},
+                 {tool:2,current:240,target:240},{tool:3,current:34,target:0}]
+      },
+      material_station:{present:true, slots:[
+        {slot_id:1,has_filament:true,material:"PLA Silk",color:"#F435F6"},
+        {slot_id:2,has_filament:true,material:"PLA Basic",color:"#4CAAF8"},
+        {slot_id:3,has_filament:true,material:"PLA Basic",color:"#FFF245"},
+        {slot_id:4,has_filament:true,material:"PLA Matte",color:"#BEBEBE"}]},
+      raw:{
+        nozzleCnt:4, nozzleModel:"0.4mm;0.4mm;0.4mm;0.4mm", measure:"256X256X256",
+        location:"Studio", camera:1, coolingFanSpeed:78, chamberFanSpeed:40,
+        internalFanStatus:"open", externalFanStatus:"close",
+        remainingDiskSpace:4.96, tvoc:0.12,
+        cumulativePrintTime:19122, cumulativeFilament:4820.5,
+        printLayer:412, targetPrintLayer:1180, printSpeedAdjust:100, zAxisCompensation:0.02,
+        matlStationInfo:{ slotCnt:4, currentSlot:1, currentLoadSlot:4, stateAction:1, stateStep:3,
+          slotInfos:[{slotId:1,hasFilament:true,materialName:"PLA Silk",materialColor:"#F435F6"},
+                     {slotId:2,hasFilament:true,materialName:"PLA Basic",materialColor:"#4CAAF8"},
+                     {slotId:3,hasFilament:true,materialName:"PLA Basic",materialColor:"#FFF245"},
+                     {slotId:4,hasFilament:true,materialName:"PLA Matte",materialColor:"#BEBEBE"}] }
+      }
+    }
+  };
+
+  /* ══ Small helpers ════════════════════════════════════════════════════ */
+  function el(id){ return document.getElementById(id); }
+  function setHTML(node, html){ if (node && node.__h !== html){ node.__h = html; node.innerHTML = html; } }
+  function setText(node, text){ if (node && node.textContent !== text) node.textContent = text; }
+  function show(node, on){ if (node) node.hidden = !on; }
+  function esc(s){
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){
+      return { "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c];
+    });
+  }
+  function num(v, d){ return (typeof v === "number" && isFinite(v)) ? v : (d === undefined ? 0 : d); }
+  function t1(v){ return num(v).toFixed(1); }
+  function pick(o, k, d){ return (o && o[k] !== undefined && o[k] !== null) ? o[k] : d; }
+  function isHex(c){ return typeof c === "string" && /^#?[0-9A-Fa-f]{6}$/.test(c); }
+  function hex(c){ return isHex(c) ? (c.charAt(0) === "#" ? c : "#" + c) : ""; }
+  function pad2(n){ return (n < 10 ? "0" : "") + n; }
+  function clock(sec){
+    sec = Math.max(0, Math.round(num(sec)));
+    return pad2(Math.floor(sec/3600)) + ":" + pad2(Math.floor(sec%3600/60)) + ":" + pad2(sec%60);
+  }
+  function dur(sec){
+    sec = Math.max(0, Math.round(num(sec)));
+    var h = Math.floor(sec/3600), m = Math.floor(sec%3600/60);
+    return h ? (h + " h " + pad2(m) + " m") : (m + " m");
+  }
+  function durMinutes(min){
+    min = Math.max(0, Math.round(num(min)));
+    var h = Math.floor(min/60);
+    return h ? (h.toLocaleString() + " h " + pad2(min%60) + " m") : (min + " m");
+  }
+  function eta(remaining){
+    if (!(num(remaining) > 0)) return "—";
+    var d = new Date(Date.now() + num(remaining)*1000);
+    return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
+  }
+  function ratio(now, target){ return num(target) > 0 ? Math.max(0, Math.min(1, num(now)/num(target))) : 0; }
+
+  /* ══ Vocabulary the printer speaks ═══════════════════════════════════
+     stateStep / stateAction come straight from matlStationInfo; the
+     step names are the vendor's own (heating, push, purge, cut, retract,
+     complete) and stateAction 1/2 are the only two that mean filament is
+     actually moving.                                                    */
+  var STEPS   = ["Heating","Pushing filament","Purging old filament","Cutting filament","Retracting filament","Complete"];
+  var ACTIONS = { 1:"Loading", 2:"Unloading" };
+  var STATES  = {
+    printing:["printing","Printing"], heating:["printing","Heating"], busy:["printing","Busy"],
+    paused:["paused","Paused"], ready:["idle","Ready"], completed:["idle","Completed"],
+    cancelled:["idle","Cancelled"], error:["offline","Error"], unknown:["idle","Unknown"]
+  };
+
+  /* ══ Fragments ════════════════════════════════════════════════════════ */
+  var PENCIL = '<svg class="pencil" width="10" height="10" viewBox="0 0 16 16" fill="none" aria-hidden="true">'+
+    '<path d="M10.8 2.7 13.3 5.2 5.7 12.8 2.7 13.3 3.2 10.3 10.8 2.7Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>'+
+    '<path d="M9.5 4 12 6.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
+  var SOON = "Controls arrive in the next increment; this page is read-only for now.";
+
+  /* A target the user cannot type into yet, but can see. */
+  function tset(v, label){
+    return '<button class="tset" type="button" disabled title="'+esc(SOON)+'" aria-label="'+esc(label)+', currently '+
+      (num(v) ? num(v)+" degrees" : "off")+'"><span class="tval">'+Math.round(num(v))+'</span>'+PENCIL+'</button>';
+  }
+
+  function slotActions(){
+    return '<div class="slotact">'+
+      '<button class="slotbtn" type="button" disabled title="'+esc(SOON)+'">'+PENCIL+'Edit slot</button>'+
+      '<button class="slotbtn" type="button" disabled title="'+esc(SOON)+'">'+
+        '<svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true">'+
+        '<circle cx="8" cy="8" r="5.6" stroke="currentColor" stroke-width="1.3"/>'+
+        '<path d="M8 7.2v3.4M8 5.2v.9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>'+
+        'Details</button></div>';
+  }
+
+  /* The strip only exists while filament is genuinely moving; it is built
+     from stateAction/stateStep, never from a constant. */
+  function loadStrip(action, step, where){
+    var label = ACTIONS[action] || "Filament move";
+    var s     = Math.max(0, Math.min(STEPS.length, Math.round(num(step))));
+    var name  = s > 0 ? STEPS[s-1] : "Starting";
+    var ticks = STEPS.map(function(_, i){ return '<i data-on="'+(i < s ? 1 : 0)+'"></i>'; }).join("");
+    return '<div class="loadprog"><div class="lp-head"><span>'+esc(label)+(where ? " · " + esc(where) : "")+
+      ' · '+esc(name)+'</span><span class="mono">'+s+'/'+STEPS.length+'</span></div>'+
+      '<div class="lp-steps">'+ticks+'</div></div>';
+  }
+
+  function spoolSVG(n, color, loaded){
+    var r = 15.5, ring;
+    if (loaded && color)
+      ring = '<circle cx="22" cy="22" r="'+r+'" fill="none" stroke="'+color+'" stroke-width="7" opacity=".92"/>';
+    else if (loaded)
+      /* Loaded, but the printer has no colour for this slot yet: hatched,
+         never a made-up colour. */
+      ring = '<defs><pattern id="hatch'+n+'" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">'+
+             '<rect width="6" height="6" fill="var(--edge-soft)"/><rect width="3" height="6" fill="var(--muted)" opacity=".6"/></pattern></defs>'+
+             '<circle cx="22" cy="22" r="'+r+'" fill="none" stroke="url(#hatch'+n+')" stroke-width="7"/>';
+    else
+      ring = '<circle cx="22" cy="22" r="'+r+'" fill="none" stroke="var(--edge)" stroke-width="2" stroke-dasharray="3 5"/>';
+    return '<svg class="spool" width="46" height="46" viewBox="0 0 44 44" aria-hidden="true">'+
+      '<circle cx="22" cy="22" r="19.5" fill="none" stroke="var(--edge-soft)" stroke-width="2"/>'+ ring +
+      '<circle cx="22" cy="22" r="7.6" fill="var(--panel)" stroke="var(--edge)" stroke-width="1.4"/>'+
+      '<circle cx="22" cy="22" r="2.4" fill="var(--edge)"/></svg>';
+  }
+
+  var ICON = {
+    bed:'<path d="M3 11.5h10M4.5 9h7M6 6.5h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>',
+    chamber:'<rect x="2.6" y="2.6" width="10.8" height="10.8" rx="2" stroke="currentColor" stroke-width="1.3"/><path d="M8 5.5v5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>',
+    fan:'<circle cx="8" cy="8" r="1.5" fill="currentColor"/><path d="M8 6.5C8 4 6.5 2.5 5 3.4 3.6 4.2 4.6 6 8 6.5ZM9.5 8c2.5 0 4-1.5 3.1-3-.8-1.4-2.6-.4-3.1 3ZM8 9.5c0 2.5 1.5 4 3 3.1 1.4-.8.4-2.6-3-3.1ZM6.5 8C4 8 2.5 9.5 3.4 11c.8 1.4 2.6.4 3.1-3Z" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/>',
+    filter:'<path d="M2.5 6h11M2.5 10h11" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M5 3.5v9M11 3.5v9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" opacity=".5"/>',
+    door:'<rect x="3.4" y="2.6" width="9.2" height="10.8" rx="1.4" stroke="currentColor" stroke-width="1.3"/><circle cx="10.4" cy="8" r=".9" fill="currentColor"/>',
+    air:'<path d="M8 2.6c2 2.6 3.6 4.3 3.6 6.3A3.6 3.6 0 0 1 8 12.5 3.6 3.6 0 0 1 4.4 8.9c0-2 1.6-3.7 3.6-6.3Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>',
+    disk:'<ellipse cx="8" cy="4.4" rx="4.8" ry="1.9" stroke="currentColor" stroke-width="1.3"/><path d="M3.2 4.4v7.2c0 1 2.1 1.9 4.8 1.9s4.8-.9 4.8-1.9V4.4" stroke="currentColor" stroke-width="1.3"/>',
+    bulb:'<path d="M8 1.8a4.4 4.4 0 0 0-2.6 7.9c.5.4.8 1 .8 1.6v.4h3.6v-.4c0-.6.3-1.2.8-1.6A4.4 4.4 0 0 0 8 1.8Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M6.6 13.6h2.8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>'
+  };
+  function row(icon, label, value){
+    return '<div class="row"><span class="k"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">'+
+      ICON[icon]+'</svg>'+esc(label)+'</span><span class="v">'+value+'</span></div>';
+  }
+
+  var CBI = {
+    light:ICON.bulb,
+    recirc:'<path d="M3.2 8a4.8 4.8 0 0 1 8.2-3.4M12.8 8a4.8 4.8 0 0 1-8.2 3.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M11.4 2.2v2.6H8.8M4.6 13.8v-2.6h2.6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>',
+    exhaust:'<path d="M8 12.8V3.6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M4.8 6.6 8 3.2l3.2 3.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M3.4 13.4h9.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>'
+  };
+  function toggle(icon, label, on){
+    return '<button class="toggle" type="button" disabled title="'+esc(SOON)+'" aria-pressed="'+(on?"true":"false")+'">'+
+      '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">'+CBI[icon]+'</svg>'+esc(label)+'</button>';
+  }
+
+  /* ══ Renderers — one section each ════════════════════════════════════ */
+
+  function renderIdentity(s, p){
+    var model = pick(p, "name", "") || pick(p, "model", "") || "Flashforge printer";
+    setText(el("deviceName"), model);
+    var bits = [];
+    if (s.preset) bits.push(s.preset);
+    if (p.ip || s.host) bits.push(p.ip || s.host);
+    if (p.firmware) bits.push("firmware " + p.firmware);
+    setText(el("deviceSub"), bits.join(" · ") || "Not connected");
+
+    var st = STATES[String(p.state || "unknown").toLowerCase()] || STATES.unknown;
+    var pill = el("statePill");
+    if (!s.connected) st = s.connecting ? ["idle", "Connecting"] : ["offline", "Offline"];
+    if (pill.getAttribute("data-state") !== st[0]) pill.setAttribute("data-state", st[0]);
+    setHTML(pill, '<span class="dot"></span>' + esc(st[1]));
+    show(el("sampleChip"), !!s.sample);
+  }
+
+  function renderBanner(s){
+    setHTML(el("banner"), (s.connected || s.connecting) ? "" :
+      '<div class="banner"><b>Printer not reachable.</b>&nbsp;'+
+      esc(s.error || "No answer from the printer's local API.")+
+      ' OrcaSlicer keeps trying; the page fills in as soon as the printer answers.</div>');
+  }
+
+  function renderMachine(p, raw, pro){
+    var shot = el("machineShot");
+    var src  = num(p.pid) === 40 ? "printer-c5.png" : (num(p.pid) === 41 ? "printer-c5pro.png" : "");
+    if (src && shot.getAttribute("src") !== src){
+      shot.setAttribute("src", src);
+      shot.alt = (p.name || "Flashforge printer") + ", four-toolhead 3D printer";
+    }
+    shot.style.display = src ? "" : "none";
+
+    var nozzles = num(raw.nozzleCnt, (p.temperatures && p.temperatures.nozzles || []).length);
+    var caps = [];
+    if (nozzles) caps.push('<span class="badge">'+nozzles+' toolheads</span>');
+    if (pick(p, "material_station", {}).present) caps.push('<span class="badge">Material station</span>');
+    caps.push(pro ? '<span class="badge" data-kind="standby">Heated chamber</span>'
+                  : '<span class="badge">Open frame</span>');
+    if (pro) caps.push('<span class="badge" data-kind="standby">Air filtration</span>');
+    if (num(raw.camera)) caps.push('<span class="badge">Camera</span>');
+    setHTML(el("machineCaps"), caps.join(""));
+
+    var specs = [];
+    if (raw.measure) specs.push(["Build volume", String(raw.measure).replace(/[xX]/g, " × ") + " mm"]);
+    if (nozzles && raw.nozzleModel){
+      var kinds = String(raw.nozzleModel).split(";").filter(Boolean)
+                    .map(function(k){ return k.replace(/([0-9.])(mm)$/i, "$1 mm"); });
+      var same  = kinds.length && kinds.every(function(k){ return k === kinds[0]; });
+      specs.push(["Nozzles", same ? (nozzles + " × " + kinds[0]) : kinds.join(", ")]);
+    }
+    specs.push([pro ? "Chamber" : "Enclosure", pro ? "Heated" : "None"]);
+    if (raw.location) specs.push(["Location", String(raw.location)]);
+    if (raw.cumulativePrintTime !== undefined) specs.push(["Lifetime", durMinutes(raw.cumulativePrintTime)]);
+    if (raw.cumulativeFilament !== undefined) specs.push(["Filament used", num(raw.cumulativeFilament).toFixed(1) + " m"]);
+    setHTML(el("machineSpecs"), specs.map(function(r){
+      return '<div class="spec"><dt>'+esc(r[0])+'</dt><dd>'+esc(r[1])+'</dd></div>';
+    }).join(""));
+  }
+
+  /* On a toolchanger, material slot N is toolhead N — so the spool and the
+     nozzle belong on one card, not in two separate panels. */
+  function slotsById(p){
+    var byId = {};
+    ((pick(p, "material_station", {}).slots) || []).forEach(function(s){ byId[num(s.slot_id)] = s; });
+    return byId;
+  }
+
+  function renderTools(p, raw, ms, printing){
+    var slots   = (pick(p, "material_station", {}).slots) || [];
+    var byId    = slotsById(p);
+    var nozzles = (p.temperatures && p.temperatures.nozzles) || [];
+    var count   = Math.max(num(raw.nozzleCnt), num(ms.slotCnt), slots.length, nozzles.length);
+    if (!count){
+      setHTML(el("stationStrip"), "");
+      setHTML(el("toolrail"), '<div class="card nodata">Waiting for the printer to report its toolheads…</div>');
+      return;
+    }
+
+    var action  = num(ms.stateAction);
+    var moving  = action === 1 || action === 2;
+    var step    = num(ms.stateStep);
+    var moveOn  = num(ms.currentLoadSlot) || num(ms.currentSlot) || 0;
+    var feeding = num(ms.currentLoadSlot);
+    var current = num(ms.currentSlot);
+
+    /* A move with no slot named still has to be visible somewhere. */
+    setHTML(el("stationStrip"),
+      (moving && !moveOn) ? '<div class="stationstrip">'+loadStrip(action, step, "material station")+'</div>' : "");
+
+    var html = "";
+    for (var i = 0; i < count; i++){
+      var n    = i + 1;
+      var id   = n;
+      var slot = byId[id] || { slot_id:id, has_filament:false, material:"", color:"" };
+      var nz   = nozzles[i] || { current:0, target:0 };
+      var col  = hex(slot.color);
+      var on   = !!slot.has_filament;
+      var busy = moving && moveOn === id;
+
+      var state, badge, kind;
+      if (busy)                        { state = "loading"; badge = ACTIONS[action]; kind = "standby"; }
+      else if (printing && current===id){ state = "active";  badge = "Printing";      kind = "active";  }
+      else if (feeding === id)         { state = "active";  badge = "Feeding";       kind = "standby"; }
+      else if (num(nz.target) > 0)     { state = "idle";    badge = "Standby";       kind = "standby"; }
+      else if (!on)                    { state = "empty";   badge = "Empty";         kind = "idle";    }
+      else                             { state = "idle";    badge = "Idle";          kind = "idle";    }
+
+      var name = on ? (slot.material || "Filament loaded") : "Empty";
+      var meta = on ? (col ? col.toUpperCase() : "Colour not set") : "No spool in this slot";
+      var tip  = (on && !col)
+        ? "The printer has not reported a material or colour for this slot yet. Edit slot will set it."
+        : "";
+
+      html += '<article class="tool" data-state="'+state+'" style="--fil:'+(col || "var(--muted)")+'">'+
+        '<span class="fiber"></span>'+
+        '<div class="tool-head"><span class="tool-id"><b>Tool '+n+'</b><span>slot '+id+'</span></span>'+
+          '<span class="badge" data-kind="'+kind+'">'+esc(badge)+'</span></div>'+
+        '<div class="tool-body">'+spoolSVG(n, col, on)+
+          '<span class="tool-fil"><span class="name">'+esc(name)+'</span>'+
+          '<span class="meta mono"'+(tip ? ' title="'+esc(tip)+'"' : '')+'>'+esc(meta)+'</span></span></div>'+
+        '<div class="tool-temp"><span class="now">'+t1(nz.current)+'</span>'+
+          '<span class="tgt mono">°C / </span>'+tset(nz.target, "Tool "+n+" target")+
+          '<span class="tgt mono">°C</span></div>'+
+        '<span class="heat"><i style="width:'+Math.round(ratio(nz.current, nz.target)*100)+'%"></i></span>'+
+        (busy ? loadStrip(action, step) : slotActions())+
+        '</article>';
+    }
+    setHTML(el("toolrail"), html);
+  }
+
+  /* Chamber, filtration and air quality only exist on the Pro (pid 41). */
+  function renderEnvironment(p, raw, pro){
+    var t   = p.temperatures || {};
+    var bed = t.bed || {}, ch = t.chamber || {};
+    var fans = [];
+    if (String(raw.internalFanStatus) === "open") fans.push("Internal");
+    if (String(raw.externalFanStatus) === "open") fans.push("External");
+    var door  = String(p.door || "").toLowerCase();
+    var doorV = door === "open" ? '<span class="state-warn">Open</span>'
+              : door ? '<span class="state-good">Closed</span>' : "—";
+
+    var html =
+      row("bed","Bed",'<span class="bar"><i style="width:'+Math.round(ratio(bed.current,bed.target)*100)+'%"></i></span>'+
+          '<b>'+t1(bed.current)+'</b> <small>/ </small>'+tset(bed.target,"Bed target")+'<small> °C</small>') +
+      (pro ? row("chamber","Chamber",'<span class="bar"><i style="width:'+Math.round(ratio(ch.current,ch.target)*100)+'%"></i></span>'+
+          '<b>'+t1(ch.current)+'</b> <small>/ </small>'+tset(ch.target,"Chamber target")+'<small> °C</small>') : "") +
+      row("fan","Part cooling", Math.round(num(raw.coolingFanSpeed)) + ' <small>%</small>') +
+      (pro ? row("filter","Filtration", fans.length
+          ? '<span class="state-good">'+fans.join(" + ")+'</span>'
+          : '<span>Off</span>') : "") +
+      row("bulb","Light", p.light_on ? '<span class="state-good">On</span>' : '<span>Off</span>') +
+      row("door","Door", doorV) +
+      (pro ? row("air","Air quality", num(raw.tvoc).toFixed(2) + ' <small>TVOC</small>') : "") +
+      row("disk","Storage", num(raw.remainingDiskSpace).toFixed(2) + ' <small>GB free</small>');
+    setHTML(el("envRows"), html);
+  }
+
+  /* The MJPEG stream is an ordinary <img>; it is created once and only its
+     src is touched, so a re-render never restarts the stream. */
+  var camSrc = null;
+  function renderCamera(s, p, raw, pro, printing){
+    var url   = s.connected ? (p.camera_stream_url || "") : "";
+    var scene = el("camScene");
+    if (url !== camSrc){
+      camSrc = url;
+      if (url){
+        scene.innerHTML = '<img class="cam" alt="Live camera view of the build plate">';
+        var img = scene.firstChild;
+        show(el("camLive"), true);
+        img.onerror = function(){
+          show(el("camLive"), false);
+          scene.innerHTML = '<div class="camoff">Camera stream unavailable.<br>' +
+            'The printer serves it at ' + esc(url) + '.</div>';
+        };
+        img.src = url;
+      } else {
+        show(el("camLive"), false);
+        scene.innerHTML = '<div class="camoff">' +
+          (s.connected ? "This printer reports no camera stream." : "Waiting for the printer…") + '</div>';
+      }
+    }
+
+    setText(el("camFile"), printing ? (p.print_file || "Printing") : (p.name || ""));
+    var badge = el("camBadge");
+    show(badge, pro && s.connected);
+    if (pro && s.connected) setText(badge, "Chamber " + t1((((p.temperatures)||{}).chamber||{}).current) + " °C");
+    show(el("camClock"), printing);
+    if (printing) setText(el("camClock"), clock(p.duration_s));
+  }
+
+  /* Every control below maps to a command this firmware accepts
+     (lightControl_cmd, circulateCtl_cmd, printerCtl_cmd, jobCtl_cmd);
+     none of them is wired yet, so all of them are disabled. */
+  function renderControls(p, raw, pro){
+    var speed = Math.round(num(raw.printSpeedAdjust));
+    setHTML(el("controlbar"),
+      '<div class="cb-group">'+
+        toggle("light","Light", !!p.light_on)+
+        (pro ? toggle("recirc","Recirculate", String(raw.internalFanStatus) === "open") : "")+
+        (pro ? toggle("exhaust","Exhaust", String(raw.externalFanStatus) === "open") : "")+
+      '</div>'+
+      '<span class="cb-div"></span>'+
+      '<div class="cb-group"><span class="cb-label">Speed</span>'+
+        '<span class="seg" role="group" aria-label="Print speed">'+
+        [50,100,125,166].map(function(v){
+          return '<button type="button" disabled title="'+esc(SOON)+'" aria-pressed="'+(v === speed)+'">'+v+'%</button>';
+        }).join("")+
+        '</span></div>'+
+      '<span class="cb-div"></span>'+
+      '<div class="cb-group"><span class="cb-label">Z</span>'+
+        '<span class="stepper"><button type="button" disabled title="'+esc(SOON)+'" aria-label="Lower nozzle">−</button>'+
+        '<span class="val">'+(num(raw.zAxisCompensation) >= 0 ? "+" : "−")+
+          Math.abs(num(raw.zAxisCompensation)).toFixed(3)+' mm</span>'+
+        '<button type="button" disabled title="'+esc(SOON)+'" aria-label="Raise nozzle">+</button></span></div>'+
+      '<span class="cb-div"></span>'+
+      '<div class="cb-group"><button class="tbtn" type="button" disabled title="'+esc(SOON)+'">'+
+        '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">'+
+        '<path d="M8 2v12M3 5l10 6M13 5 3 11" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>'+
+        'Cool down</button></div>'+
+      '<span class="spacer" style="flex:1"></span>'+
+      '<div class="cb-group">'+
+        '<button class="tbtn" type="button" disabled title="'+esc(SOON)+'">'+
+          '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">'+
+          '<rect x="4" y="3" width="3" height="10" rx="1" fill="currentColor"/>'+
+          '<rect x="9" y="3" width="3" height="10" rx="1" fill="currentColor"/></svg>Pause</button>'+
+        '<button class="tbtn" data-tone="stop" type="button" disabled title="'+esc(SOON)+'">'+
+          '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">'+
+          '<rect x="3.5" y="3.5" width="9" height="9" rx="1.6" fill="currentColor"/></svg>Stop</button>'+
+      '</div>');
+  }
+
+  function stat(label, value){ return '<div class="stat"><dt>'+esc(label)+'</dt><dd>'+esc(value)+'</dd></div>'; }
+
+  function renderJob(s, p, raw, ms, printing){
+    if (!s.connected){
+      setHTML(el("jobCard"), '<h2 class="eyebrow" style="margin:0" id="jobHead">Current job</h2>'+
+        '<div class="idle-big">'+(s.connecting ? "Connecting…" : "Unknown")+'</div>'+
+        '<div class="job-title"><span class="s">'+
+        (s.connecting ? "Reading the printer's status." : "No answer from the printer, so there is nothing to report.")+
+        '</span></div>');
+      return;
+    }
+
+    var slots = (pick(p, "material_station", {}).slots) || [];
+
+    if (!printing){
+      var st     = STATES[String(p.state || "unknown").toLowerCase()] || STATES.unknown;
+      var loaded = slots.filter(function(x){ return x.has_filament; }).length;
+      var stats    = stat("Status", st[1]);
+      if (raw.cumulativePrintTime !== undefined) stats += stat("Lifetime printing", durMinutes(raw.cumulativePrintTime));
+      if (raw.cumulativeFilament !== undefined)  stats += stat("Filament used", num(raw.cumulativeFilament).toFixed(1) + " m");
+      if (slots.length) stats += stat("Material station", loaded + " of " + slots.length + " loaded");
+      if (p.error_code) stats += stat("Error code", p.error_code);
+
+      setHTML(el("jobCard"),
+        '<h2 class="eyebrow" style="margin:0" id="jobHead">Current job</h2>'+
+        '<div class="job-head"><div class="job-title">'+
+          '<span class="idle-big">'+esc(st[1] === "Ready" ? "Idle — ready to print" : st[1])+'</span>'+
+          '<span class="s">Nothing is printing. Slice a plate and send it from the Prepare tab.</span>'+
+        '</div></div>'+
+        '<dl class="job-stats">'+stats+'</dl>');
+      return;
+    }
+
+    var pct    = Math.max(0, Math.min(100, num(p.progress) * 100));
+    var layer  = num(raw.printLayer), total = num(raw.targetPrintLayer);
+    var active = slotsById(p)[num(ms.currentSlot)] || {};
+    var tint   = hex(active.color) || "var(--brass)";
+
+    /* A progress ribbon, not a per-layer tool map: the API reports the layer
+       count, not which tool laid which band, so nothing here is invented. */
+    var bands = 96, done = Math.round(bands * pct / 100), ribbon = "";
+    for (var i = 0; i < bands; i++)
+      ribbon += '<i style="--c:'+tint+';height:'+(26 + ((i*37) % 17))+'px" data-done="'+(i < done ? 1 : 0)+'"></i>';
+
+    var sub = [];
+    if (total) sub.push("Layer " + layer.toLocaleString() + " of " + total.toLocaleString());
+    if (num(raw.printSpeedAdjust)) sub.push(Math.round(num(raw.printSpeedAdjust)) + " % speed");
+
+    setHTML(el("jobCard"),
+      '<div class="job-head"><div class="job-title">'+
+        '<h2 class="eyebrow" style="margin:0 0 4px" id="jobHead">Current job</h2>'+
+        '<span class="n">'+esc(p.print_file || "Untitled job")+'</span>'+
+        '<span class="s">'+esc(sub.join(" · "))+'</span></div>'+
+        '<div class="job-pct mono">'+pct.toFixed(1)+'<sub>%</sub></div></div>'+
+      '<div class="ribbon" role="img" aria-label="Progress ribbon: '+pct.toFixed(0)+' per cent complete">'+ribbon+'</div>'+
+      '<dl class="job-stats">'+
+        stat("Elapsed", dur(p.duration_s))+
+        stat("Remaining", dur(p.remaining_s))+
+        stat("Finishes", eta(p.remaining_s))+
+        (total ? stat("Layer", layer.toLocaleString() + " / " + total.toLocaleString()) : "")+
+        stat("Bed", t1((((p.temperatures)||{}).bed||{}).current) + " °C")+
+        (p.error_code ? stat("Error code", p.error_code) : "")+
+      '</dl>');
+  }
+
+  function renderFiles(){
+    setHTML(el("fileList"),
+      '<div class="nodata">Browsing and printing the files stored on the printer arrives with the controls, '+
+      'in the next increment.</div>');
+  }
+
+  function renderFoot(s){
+    var poll = num(s.poll_ms, 2000) / 1000;
+    var where = s.sample ? "Sample data — no printer connected"
+              : s.connected ? "Connected to " + (s.host || "the printer")
+              : s.connecting ? "Connecting to " + (s.host || "the printer") + "…"
+              : "Reconnecting…";
+    setHTML(el("foot"),
+      '<span>OrcaMCP · Flashforge console</span><span class="sep"></span>'+
+      '<span class="mono">Polling the local API every '+poll+' s</span><span class="sep"></span>'+
+      '<span>'+esc(where)+'</span><span class="sep"></span>'+
+      '<span>Read-only — controls arrive in the next increment</span>');
+  }
+
+  /* ══ Theme ════════════════════════════════════════════════════════════
+     Follows OrcaSlicer until the user overrides it here.               */
+  var themeLocked = false;
+  function applyTheme(s){
+    if (themeLocked || typeof s.app_dark !== "boolean") return;
+    document.documentElement.setAttribute("data-theme", s.app_dark ? "dark" : "light");
+  }
+  el("themeBtn").addEventListener("click", function(){
+    themeLocked = true;
+    var cur  = document.documentElement.getAttribute("data-theme");
+    var dark = cur ? cur === "dark" : !window.matchMedia("(prefers-color-scheme: light)").matches;
+    document.documentElement.setAttribute("data-theme", dark ? "light" : "dark");
+  });
+
+  /* ══ One render pass ══════════════════════════════════════════════════ */
+  function render(s){
+    var p   = s.printer || {};
+    var raw = p.raw || {};
+    var ms  = raw.matlStationInfo || {};
+    var pro = num(p.pid) === 41;
+    var state = String(p.state || "").toLowerCase();
+    var printing = s.connected && (state === "printing" || state === "paused" ||
+                                   (state === "heating" && !!p.print_file));
+
+    applyTheme(s);
+    renderIdentity(s, p);
+    renderBanner(s);
+    renderMachine(p, raw, pro);
+    renderTools(p, raw, ms, printing);
+    renderEnvironment(p, raw, pro);
+    renderCamera(s, p, raw, pro, printing);
+    renderControls(p, raw, pro);
+    renderJob(s, p, raw, ms, printing);
+    renderFiles();
+    renderFoot(s);
+    if (s.printer) document.body.setAttribute("data-ready", "1");
+  }
+
+  function onStatus(s){ render(s || { connected:false, error:"Empty status" }); }
+
+  /* ══ Start ════════════════════════════════════════════════════════════
+     window.wx is installed by the host just after the web view is created,
+     which can land a moment after this document starts running. So a
+     missing bridge is treated as "not yet" for a couple of seconds before
+     it is taken to mean "opened in a browser".                          */
+  function start(){
+    render({ connected:false, connecting:true });
+    bridge.call("status").then(onStatus, function(e){
+      onStatus({ connected:false, error:String((e && e.message) || e) });
+    });
+  }
+
+  /* OrcaSlicer stamps its own user agent on every web view it creates, so the
+     page can tell "the host is still wiring up the bridge" from "this file was
+     opened in a browser" - and never shows sample figures inside the app. */
+  var inApp = /BBL-Slicer/.test(navigator.userAgent);
+
+  if (bridge){
+    start();
+  } else {
+    render({ connected:false, connecting:true });
+    var waited = 0;
+    var wait = setInterval(function(){
+      if (window.wx && typeof window.wx.postMessage === "function"){
+        clearInterval(wait);
+        bridge = makeBridge();
+        start();
+        return;
+      }
+      waited += 250;
+      if (!inApp && waited >= 1500){
+        clearInterval(wait);
+        render(SAMPLE);
+      }
+    }, 250);
+  }
+})();
+</script>
