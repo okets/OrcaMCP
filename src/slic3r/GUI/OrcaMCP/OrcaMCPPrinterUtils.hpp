@@ -52,6 +52,19 @@ bool validate_material_mappings(const nlohmann::json&                           
                                 std::string&                                    error,
                                 std::vector<int>&                               unmapped_tools);
 
+// Main thread. The current plate's per-tool filament types/colours for material-mapping, mirroring how
+// Plater::send_gcode_legacy builds `project_filaments` (Plater.cpp ~19297-19311): a
+// PartPlateList::store_to_3mf_structure snapshot (which runs PlateData::parse_filament_info on the
+// plate's live slice result) is the primary source, falling back to PartPlate::get_slice_filaments_info
+// (only ever populated by reloading a previously-sliced 3MF) if that snapshot is empty.
+// `PartPlate::slice_filaments_info` is never populated by slice_all alone, so neither source being
+// non-empty means the plate has not actually been sliced -- as opposed to a plate that was sliced but
+// genuinely uses no filaments, an edge case that in practice does not happen. Returns an empty array
+// either way; `error` is set to "Plate is not sliced; run slice_all first" only in the former case, and
+// left empty otherwise (including "no plate"/"nothing on it" cases some callers may treat as fine).
+// Shared by print_printer_file and (task 2.6) send_to_printer.
+nlohmann::json gather_project_filaments(std::string& error);
+
 // Main thread. Every printer preset carrying a non-empty print_host.
 nlohmann::json print_host_presets_json();
 

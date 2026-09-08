@@ -5,7 +5,6 @@
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Plater.hpp"
-#include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/GUI/PrintHostDialogs.hpp"
 #include "slic3r/GUI/DeviceManager.hpp"
 #include "slic3r/GUI/DeviceCore/DevManager.h"
@@ -15,7 +14,6 @@
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/PrintConfig.hpp"
-#include "libslic3r/ProjectTask.hpp"
 
 #include <algorithm>
 #include <optional>
@@ -101,44 +99,6 @@ bool resolve_flashforge(std::unique_ptr<Slic3r::PrintHost>& host, Slic3r::Flashf
         return false;
     }
     return true;
-}
-
-// Main thread: the current plate's per-tool filament types and colours, the way
-// Plater::send_gcode_legacy builds `project_filaments` for the Flashforge send dialog.
-nlohmann::json gather_project_filaments()
-{
-    return run_on_main_thread([]() -> nlohmann::json {
-        nlohmann::json      result = nlohmann::json::array();
-        Plater*             plater = wxGetApp().plater();
-        PresetBundle*       bundle = wxGetApp().preset_bundle;
-        if (!plater || !bundle)
-            return result;
-
-        PartPlate* plate = plater->get_partplate_list().get_curr_plate();
-        if (!plate)
-            return result;
-
-        DynamicPrintConfig cfg = bundle->full_config();
-        for (const Slic3r::FilamentInfo& filament : plate->get_slice_filaments_info()) {
-            if (filament.id < 0)
-                continue;
-
-            std::string display_type, type;
-            try {
-                type = cfg.get_filament_type(display_type, filament.id);
-            } catch (...) {
-            }
-            if (type.empty())
-                type = display_type;
-            if (type.empty())
-                type = "Unknown";
-
-            result.push_back({{"tool_id", filament.id},
-                              {"type", type},
-                              {"color", filament.color.empty() ? "#FFFFFF" : filament.color}});
-        }
-        return result;
-    });
 }
 
 // Builds the {toolId, slotId, materialName, toolMaterialColor, slotMaterialColor} entries the Flashforge
@@ -673,7 +633,9 @@ void OrcaMCPServer::register_printer_tools()
         },
         [](const nlohmann::json& params) -> nlohmann::json {
             static const std::vector<std::string> kActions = {"pause", "resume", "cancel", "light_on", "light_off", "set_temperature"};
-            const std::string action = params.value("action", std::string());
+            if (!params.contains("action") || !params.at("action").is_string())
+                return error_response("action must be a string");
+            const std::string action = params.at("action").get<std::string>();
             if (std::find(kActions.begin(), kActions.end(), action) == kActions.end())
                 return error_response("Unknown action '" + action + "'. Supported: " + boost::algorithm::join(kActions, ", "));
 
@@ -789,12 +751,20 @@ void OrcaMCPServer::register_printer_tools()
             {"required", {"file_name"}}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
-            const std::string file_name = params.value("file_name", std::string());
+            if (!params.contains("file_name") || !params.at("file_name").is_string())
+                return error_response("file_name must be a string");
+            const std::string file_name = params.at("file_name").get<std::string>();
             if (file_name.empty())
                 return error_response("file_name is required");
 
-            const bool           leveling = params.value("leveling_before_print", false);
-            const bool           auto_map = params.value("auto_map", true);
+            if (params.contains("leveling_before_print") && !params.at("leveling_before_print").is_boolean())
+                return error_response("leveling_before_print must be a boolean");
+            const bool leveling = params.value("leveling_before_print", false);
+
+            if (params.contains("auto_map") && !params.at("auto_map").is_boolean())
+                return error_response("auto_map must be a boolean");
+            const bool auto_map = params.value("auto_map", true);
+
             const nlohmann::json requested_mappings = params.value("material_mappings", nlohmann::json::array());
             if (!requested_mappings.is_array())
                 return error_response("material_mappings must be an array");
@@ -814,7 +784,12 @@ void OrcaMCPServer::register_printer_tools()
 
                 // The project's own tool count/types, needed both to auto-map and to check an explicit
                 // mapping's tool_id is one of this project's actual tools.
-                const nlohmann::json project_filaments = gather_project_filaments();
+                std::string filaments_error;
+                const nlohmann::json project_filaments = run_on_main_thread([&]() -> nlohmann::json {
+                    return gather_project_filaments(filaments_error);
+                });
+                if (!filaments_error.empty())
+                    return error_response(filaments_error);
 
                 if (!requested_mappings.empty()) {
                     std::string build_error;

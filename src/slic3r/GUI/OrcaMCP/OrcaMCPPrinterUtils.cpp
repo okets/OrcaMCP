@@ -3,9 +3,13 @@
 #include "OrcaMCPCommon.hpp"
 #include "OrcaMCPPresetConfigUtils.hpp"
 
+#include "libslic3r/Format/bbs_3mf.hpp"
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/ProjectTask.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
+#include "slic3r/GUI/PartPlate.hpp"
+#include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/Tab.hpp"
 #include "slic3r/Utils/PrintHost.hpp"
 
@@ -216,6 +220,78 @@ bool validate_material_mappings(const nlohmann::json&                           
     }
 
     return true;
+}
+
+nlohmann::json gather_project_filaments(std::string& error)
+{
+    nlohmann::json result = nlohmann::json::array();
+
+    Plater*       plater = wxGetApp().plater();
+    PresetBundle* bundle = wxGetApp().preset_bundle;
+    if (plater == nullptr || bundle == nullptr) {
+        error = "Plater not available";
+        return result;
+    }
+
+    PartPlateList& plate_list = plater->get_partplate_list();
+    const int      plate_idx  = plate_list.get_curr_plate_index();
+    PartPlate*     plate      = plate_list.get_curr_plate();
+    if (plate == nullptr) {
+        error = "No current plate";
+        return result;
+    }
+
+    // Plater::send_gcode_legacy's own source of truth: a store_to_3mf_structure snapshot runs
+    // PlateData::parse_filament_info on the plate's live slice result, which is what actually has data
+    // for a plate sliced in this session. PartPlate::slice_filaments_info (the plain member) is only
+    // ever populated by reloading a previously-sliced 3MF, so it is checked second, as a fallback.
+    std::vector<FilamentInfo> project_filaments;
+    PlateDataPtrs             plate_data_list;
+    plate_list.store_to_3mf_structure(plate_data_list, true, plate_idx);
+    PlateData* selected_plate_data =
+        (plate_idx >= 0 && plate_idx < static_cast<int>(plate_data_list.size())) ? plate_data_list[plate_idx] : nullptr;
+    if (selected_plate_data == nullptr && !plate_data_list.empty())
+        selected_plate_data = plate_data_list.front();
+    if (selected_plate_data != nullptr)
+        project_filaments = selected_plate_data->slice_filaments_info;
+    release_PlateData_list(plate_data_list);
+
+    if (project_filaments.empty())
+        project_filaments = plate->get_slice_filaments_info();
+
+    if (project_filaments.empty()) {
+        // Both sources come up empty for an unsliced plate; a plate that has actually been sliced does
+        // carry at least one filament in practice, so treat this as "not sliced" rather than "0 tools".
+        if (!plate->is_slice_result_valid())
+            error = "Plate is not sliced; run slice_all first";
+        return result;
+    }
+
+    // Same enrichment as Plater::send_gcode_legacy's enrich_project_filaments: type/colour always come
+    // from the *current* config, not whatever (possibly stale) values FilamentInfo itself carries.
+    DynamicPrintConfig cfg            = bundle->full_config();
+    const auto*        filament_color = dynamic_cast<const ConfigOptionStrings*>(cfg.option("filament_colour"));
+    for (const FilamentInfo& filament : project_filaments) {
+        if (filament.id < 0)
+            continue;
+
+        std::string display_type, type;
+        try {
+            type = cfg.get_filament_type(display_type, filament.id);
+        } catch (...) {
+        }
+        if (type.empty())
+            type = display_type;
+        if (type.empty())
+            type = "Unknown";
+
+        std::string color = filament_color != nullptr ? filament_color->get_at(static_cast<size_t>(filament.id)) : std::string();
+        if (color.empty())
+            color = "#FFFFFF";
+
+        result.push_back({{"tool_id", filament.id}, {"type", type}, {"color", color}});
+    }
+    return result;
 }
 
 nlohmann::json print_host_presets_json()
