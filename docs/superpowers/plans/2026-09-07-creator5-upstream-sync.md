@@ -1521,6 +1521,9 @@ User rule (2026-09-08): every bug found is fixed, together with related occurren
 
 - [ ] **Item L — `load_project` can hang the app** (observed 2026-09-08 during Task 2.5 verification: `load_project` of a just-exported 3MF hung at 0% CPU until force-quit): reproduce with `export_3mf` → `new_project` → `load_project` of that file; check for a modal not covered by `McpDialogSuppressionGuard` (e.g. the "project modified / save changes" prompt or the 3MF version/`load geometry only` dialog) and for `load_project` being called while the background process is running. Fix the suppression gap and/or wait for the background process; add the regression sequence to the Stage 2 wrap-up checks.
 
+- [ ] **Item M — raw `set_mcp_dialog_suppression(true/false)` pairs leak the flag on exceptions** (~a dozen handlers in OrcaMCPServer.cpp and the tool files): replace every manual pair with `McpDialogSuppressionGuard` (Task 1.2) so an exception between the calls cannot leave suppression enabled globally. Related occurrence: any new handler added in Stage 2. Verify with `grep -n "set_mcp_dialog_suppression(" src/slic3r/GUI/OrcaMCP/` → only the guard's own two calls remain.
+- [ ] **Item N — no MCP way to name an unsaved project**: after Item L, `save_project` without a path returns `cancelled` instead of opening a dialog. Add a required-or-derived `output_path` behaviour: if the project has no path and none is given, return an error telling the caller to pass `output_path`; document in reference.md.
+
 - [ ] **Step: build, run `[flashforge]` tests, regen schema, pytest, live checks per item, commit per item** with messages `fix: <item>`, each ending with the Co-Authored-By trailer.
 
 ---
