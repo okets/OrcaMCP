@@ -6,6 +6,7 @@
 #include "QidiPrinterAgent.hpp"
 #include "SnapmakerPrinterAgent.hpp"
 #include "MoonrakerPrinterAgent.hpp"
+#include "FlashforgePrinterAgent.hpp"
 #include "slic3r/plugin/PluginManager.hpp"
 #include "slic3r/plugin/pluginTypes/printerAgent/PrinterAgentPluginCapability.hpp"
 #include "CrealityPrintAgent.hpp"
@@ -175,6 +176,7 @@ void NetworkAgentFactory::register_all_agents()
                                             // CrealityPrintAgent extends Moonraker behaviour
                                             // for K-series boards with CFS support.
     register_agent<MoonrakerPrinterAgent>();
+    register_agent<FlashforgePrinterAgent>();
 
     // Keep BBL as a built-in option. Python printer-agent plugins with the
     // same AgentInfo ID are listed separately under the plugin registry key.

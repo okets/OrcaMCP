@@ -25,6 +25,12 @@ struct PrinterStatus {
 // Returns false with `error` set if the body is not a successful API response.
 bool parse_detail(const std::string& body, PrinterStatus& out, std::string& error);
 
+// Re-shapes a PrinterStatus into the Bambu-flavoured `push_status` message that MachineObject
+// (and therefore the Device tab) already knows how to parse. Pure and side-effect free: the
+// caller stamps `t_utc` and dispatches. Optional fields are omitted rather than zero-filled so
+// the UI keeps its last known value instead of flashing a fabricated one.
+nlohmann::json flashforge_status_to_bambu_payload(const PrinterStatus& status);
+
 nlohmann::json make_credentials_payload(const std::string& serial, const std::string& check_code);
 nlohmann::json make_control_payload(const std::string& serial, const std::string& check_code, const std::string& cmd, const nlohmann::json& args);
 nlohmann::json make_temperature_args(std::optional<double> bed, std::optional<double> chamber, const std::vector<std::optional<double>>& nozzles); // -200 for absent

@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cmath>
+#include <stdexcept>
+#include <string>
 
 namespace Slic3r { namespace FlashforgeApi {
 
@@ -92,6 +95,68 @@ std::string to_lower(std::string s)
 {
     std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return s;
+}
+
+// Flashforge's normalized state -> the gcode_state vocabulary MachineObject expects.
+std::string map_state_to_gcode_state(const std::string& state)
+{
+    const std::string s = to_lower(state);
+    if (s == "printing")
+        return "RUNNING";
+    if (s == "paused")
+        return "PAUSE";
+    if (s == "completed")
+        return "FINISH";
+    if (s == "error")
+        return "FAILED";
+    return "IDLE"; // ready | busy | heating | cancelled | unknown
+}
+
+// Bambu's numeric stage, shown next to the state on the Device tab.
+int map_state_to_print_stage(const std::string& state)
+{
+    const std::string s = to_lower(state);
+    if (s == "printing")
+        return 1;
+    if (s == "paused")
+        return 2;
+    if (s == "completed")
+        return 3;
+    if (s == "error")
+        return 4;
+    return 0;
+}
+
+// A 0..1 fraction as whole percent. Truncating (with an epsilon that absorbs binary
+// representation error, so 0.29 is 29 and not 28) keeps a print at 99% until it really ends.
+int scale_progress_to_percent(double progress)
+{
+    if (!(progress > 0.0))
+        return 0; // also catches NaN
+    return std::min(100, static_cast<int>(progress * 100.0 + 1e-6));
+}
+
+// The tool the UI should show: the first one actually being heated, else tool 0.
+size_t active_nozzle_index(const std::vector<NozzleTemp>& nozzles)
+{
+    for (size_t i = 0; i < nozzles.size(); ++i) {
+        if (nozzles[i].target > 0)
+            return i;
+    }
+    return 0;
+}
+
+// Only a purely numeric code can be forwarded; see the call site for why.
+int parse_error_code(const std::string& error_code)
+{
+    if (error_code.empty() || !std::all_of(error_code.begin(), error_code.end(),
+                                           [](unsigned char c) { return std::isdigit(c) != 0; }))
+        return 0;
+    try {
+        return std::stoi(error_code);
+    } catch (const std::exception&) {
+        return 0; // out of int range
+    }
 }
 
 void fill_nozzles(const nlohmann::json& detail, PrinterStatus& out)
@@ -205,6 +270,53 @@ bool parse_detail(const std::string& body, PrinterStatus& out, std::string& erro
     out = std::move(result);
     error.clear();
     return true;
+}
+
+nlohmann::json flashforge_status_to_bambu_payload(const PrinterStatus& status)
+{
+    nlohmann::json print;
+    print["command"]            = "push_status";
+    print["msg"]                = 0; // 0 = full status push (not a diff)
+    print["support_mqtt_alive"] = true;
+
+    print["gcode_state"]    = map_state_to_gcode_state(status.state);
+    print["mc_print_stage"] = map_state_to_print_stage(status.state);
+
+    // The UI reads these as Bambu HMS codes, so only a numeric Flashforge code can be
+    // forwarded; anything else (or none) stays at 0 to avoid a bogus error dialog.
+    print["mc_print_error_code"] = 0;
+    print["print_error"]         = parse_error_code(status.error_code);
+
+    print["bed_temper"]        = status.bed_temp;
+    print["bed_target_temper"] = status.bed_target;
+    print["chamber_temper"]    = status.chamber_temp;
+
+    if (!status.nozzles.empty()) {
+        const NozzleTemp& active = status.nozzles[active_nozzle_index(status.nozzles)];
+        print["nozzle_temper"]        = active.current;
+        print["nozzle_target_temper"] = active.target;
+
+        nlohmann::json extruders = nlohmann::json::array();
+        for (const NozzleTemp& nozzle : status.nozzles)
+            extruders.push_back(nlohmann::json{{"temp", nozzle.current}, {"target", nozzle.target}});
+        print["extruder"] = std::move(extruders);
+    }
+
+    print["mc_percent"]        = scale_progress_to_percent(status.progress);
+    print["mc_remaining_time"] = static_cast<int>(std::max<long>(0, status.remaining_s) / 60);
+
+    if (!status.print_file.empty()) {
+        print["subtask_name"] = status.print_file;
+        print["gcode_file"]   = status.print_file;
+    }
+
+    print["lights_report"] = nlohmann::json::array({
+        nlohmann::json{{"node", "chamber_light"}, {"mode", status.light_on ? "on" : "off"}}});
+
+    if (!status.camera_stream_url.empty())
+        print["ipcam"] = nlohmann::json{{"rtsp_url", status.camera_stream_url}};
+
+    return nlohmann::json{{"print", std::move(print)}};
 }
 
 nlohmann::json make_credentials_payload(const std::string& serial, const std::string& check_code)

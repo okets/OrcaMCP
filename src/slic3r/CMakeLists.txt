@@ -721,6 +721,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/Flashforge.hpp
     Utils/FlashforgeApi.cpp
     Utils/FlashforgeApi.hpp
+    Utils/FlashforgePrinterAgent.cpp
+    Utils/FlashforgePrinterAgent.hpp
     Utils/FontConfigHelp.cpp
     Utils/FontConfigHelp.hpp
     Utils/HexFile.cpp
