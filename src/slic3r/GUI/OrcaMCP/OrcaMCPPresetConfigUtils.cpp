@@ -3,8 +3,10 @@
 #include "slic3r/GUI/Tab.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/PresetComboBoxes.hpp"
+#include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/GUI/Jobs/OrientJob.hpp"
 #include "libslic3r/PrintConfig.hpp"
+#include "libslic3r/PresetBundle.hpp"
 
 namespace Slic3r { namespace GUI {
 
@@ -197,6 +199,65 @@ void OrcaMCPPresetConfigUtils::SelectPreset(const std::string& type, const std::
     if (tab != nullptr) {
         tab->select_preset(presetName, false, std::string(), false);
     }
+}
+
+bool OrcaMCPPresetConfigUtils::SelectFilamentSlotPreset(int slot, const std::string& presetName, std::string& error)
+{
+    PresetBundle* bundle = wxGetApp().preset_bundle;
+    const int slot_count = int(bundle->filament_presets.size());
+    if (slot < 1 || slot > slot_count) {
+        error = "slot " + std::to_string(slot) + " out of range 1.." + std::to_string(slot_count);
+        return false;
+    }
+    // Looking the name up in the filaments collection is what makes it "a filament preset";
+    // a print/printer preset name simply is not found here.
+    const Preset* preset = bundle->filaments.find_preset(presetName, false);
+    if (preset == nullptr) {
+        error = "Filament preset '" + presetName + "' not found";
+        return false;
+    }
+    if (!preset->is_compatible) {
+        error = "Filament preset '" + presetName + "' is not compatible with the selected printer '" +
+                bundle->printers.get_selected_preset_name() + "'";
+        return false;
+    }
+
+    // Everything below mirrors the TYPE_FILAMENT branch of Plater::priv::on_select_preset(),
+    // i.e. what picking the preset in the sidebar's filament combo does. Deliberately not the
+    // filament tab: the tab edits whichever single slot it happens to be on.
+    const size_t idx = size_t(slot - 1);
+    Plater*  plater  = wxGetApp().plater();
+    Sidebar& sidebar = wxGetApp().sidebar();
+
+    bundle->set_filament_preset(idx, presetName);
+    plater->update_project_dirty_from_presets();
+    bundle->export_selections(*wxGetApp().app_config);
+    sidebar.update_dynamic_filament_list();
+    plater->on_filament_change(idx);
+
+    auto& combos = sidebar.combos_filament();
+    if (idx < combos.size())
+        combos[idx]->update();
+
+    // A single-filament printer takes PresetBundle::full_fff_config()'s num_filaments <= 1
+    // branch, which reads the filament tab's edited preset rather than filament_presets[0], so
+    // there the tab has to follow the slot -- exactly what on_select_preset does when the
+    // sidebar is not multi-filament.
+    if (!sidebar.is_multifilament()) {
+        if (Tab* tab = wxGetApp().get_tab(Preset::Type::TYPE_FILAMENT))
+            tab->select_preset(presetName, false, std::string(), false);
+    }
+
+    // Pushes the new filament config into the plater and reschedules the background process.
+    plater->on_config_change(bundle->full_config());
+
+    if (wxGetApp().app_config->get("auto_calculate_flush") == "all")
+        sidebar.auto_calc_flushing_volumes(int(idx));
+
+    for (PartPlate* plate : plater->get_partplate_list().get_plate_list())
+        plate->update_slice_result_valid_state(false);
+
+    return true;
 }
 
 Preset::Type OrcaMCPPresetConfigUtils::GetPresetTypeFromString(const std::string& type) {

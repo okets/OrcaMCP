@@ -3,6 +3,7 @@
 #include "OrcaMCPPresetConfigUtils.hpp"
 #include "OrcaMCPPlateUtils.hpp"
 #include "OrcaMCPConfigKeys.hpp"
+#include "OrcaMCPFilamentUtils.hpp"
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Plater.hpp"
@@ -20,11 +21,48 @@
 #include "libslic3r/Print.hpp"
 
 #include <boost/log/trivial.hpp>
+#include <cmath>
 #include <future>
 
 namespace Slic3r { namespace GUI {
 
 using namespace Slic3r::GUI::OrcaMCP;
+
+namespace {
+
+// MCP clients do not all deliver numbers the same way: a client whose cached tool schema
+// predates a new parameter tends to send it as a string ("1"), and some send every number as a
+// float (1.0). Accept any JSON value that is exactly an integer, reject everything else.
+bool parse_integer_param(const nlohmann::json& value, int& out)
+{
+    if (value.is_number_integer()) {
+        out = value.get<int>();
+        return true;
+    }
+    if (value.is_number_float()) {
+        const double d = value.get<double>();
+        if (d != std::floor(d) || std::abs(d) > 1e9)
+            return false;
+        out = int(d);
+        return true;
+    }
+    if (value.is_string()) {
+        const std::string str = value.get<std::string>();
+        try {
+            size_t pos = 0;
+            const int parsed = std::stoi(str, &pos);
+            if (pos != str.size())
+                return false;
+            out = parsed;
+            return true;
+        } catch (const std::exception&) {
+            return false;
+        }
+    }
+    return false;
+}
+
+} // namespace
 
 // Static member initialization
 std::map<std::string, OrcaMCPServer::ToolDefinition> OrcaMCPServer::s_tools;
@@ -583,7 +621,7 @@ void OrcaMCPServer::register_builtin_tools()
                         {"get_slicing_status", "Check if slicing is in progress"}
                     }},
                     {"configuration", {
-                        {"select_preset", "Switch to a different preset by name"},
+                        {"select_preset", "Switch to a different preset by name. type=filament + slot (1-based) sets one filament slot."},
                         {"apply_config", "Modify individual settings (creates dirty values)"},
                         {"clone_preset", "Duplicate an existing preset with a new name"},
                         {"save_preset", "Persist dirty changes to disk"},
@@ -899,7 +937,9 @@ void OrcaMCPServer::register_builtin_tools()
     // select_preset - Select a preset
     register_tool({
         "select_preset",
-        "Select a printer, filament, or print preset by name",
+        "Select a printer, filament, or print preset by name. With type 'filament', pass slot "
+        "(1-based) to set just that filament slot, like the sidebar filament combo; without slot "
+        "the filament tab switches whichever slot it is on and dirty preset changes are discarded.",
         {
             {"type", "object"},
             {"properties", {
@@ -911,6 +951,10 @@ void OrcaMCPServer::register_builtin_tools()
                 {"name", {
                     {"type", "string"},
                     {"description", "Preset name"}
+                }},
+                {"slot", {
+                    {"type", "integer"},
+                    {"description", "Filament slot to set, 1-based. Only valid with type 'filament'."}
                 }}
             }},
             {"required", {"type", "name"}}
@@ -918,13 +962,36 @@ void OrcaMCPServer::register_builtin_tools()
         [](const nlohmann::json& params) -> nlohmann::json {
             std::string type = params["type"];
             std::string name = params["name"];
-            return run_on_main_thread([type, name]() {
+            int  slot     = 0;
+            bool has_slot = params.contains("slot") && !params["slot"].is_null();
+            if (has_slot) {
+                if (!parse_integer_param(params["slot"], slot)) {
+                    return nlohmann::json{{"status", "error"},
+                                          {"message", "slot must be an integer (1-based filament slot), got: " +
+                                                          params["slot"].dump()}};
+                }
+                if (type != "filament") {
+                    return nlohmann::json{{"status", "error"},
+                                          {"message", "slot is only valid with type 'filament'"}};
+                }
+            }
+
+            return run_on_main_thread([type, name, slot, has_slot]() -> nlohmann::json {
                 // Suppress any dialogs during preset selection
                 McpDialogSuppressionGuard suppression_guard;
-                OrcaMCPPresetConfigUtils::SelectPreset(type, name);
-                auto info_messages = suppression_guard.messages();
-
                 nlohmann::json response = {{"status", "success"}};
+                if (has_slot) {
+                    std::string error;
+                    if (!OrcaMCPPresetConfigUtils::SelectFilamentSlotPreset(slot, name, error)) {
+                        return nlohmann::json{{"status", "error"}, {"message", error}};
+                    }
+                    response["slot"] = slot;
+                    response["filaments"] = describe_filaments()["filaments"];
+                } else {
+                    OrcaMCPPresetConfigUtils::SelectPreset(type, name);
+                }
+
+                auto info_messages = suppression_guard.messages();
                 if (!info_messages.empty()) {
                     response["info_messages"] = info_messages;
                 }

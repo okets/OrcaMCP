@@ -33,6 +33,12 @@ public:
     // (filament colors, dynamic/mixed filament lists, project-dirty flag, background process).
     static void RefreshAfterProjectConfigChange();
     static void SelectPreset(const std::string& type, const std::string& presetName);
+    // Sets one filament slot (1-based) to `presetName`, mirroring the sidebar filament combo
+    // (Plater::priv::on_select_preset's TYPE_FILAMENT branch) instead of the filament tab, so a
+    // multi-filament printer can have each slot targeted individually. Validates the slot range
+    // and that the preset exists as a filament preset compatible with the selected printer;
+    // returns false with `error` set and nothing changed otherwise. Main thread only.
+    static bool SelectFilamentSlotPreset(int slot, const std::string& presetName, std::string& error);
 
     // Preset management tools
     static void ClonePreset(const std::string& type, const std::string& sourceName, const std::string& newName);

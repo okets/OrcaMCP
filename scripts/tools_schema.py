@@ -894,10 +894,19 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                   'required': ['plate_index'],
                   'type': 'object'},
   'name': 'select_plate'},
- {'description': 'Select a printer, filament, or print preset by name',
+ {'description': 'Select a printer, filament, or print preset by name. With '
+                 "type 'filament', pass slot (1-based) to set just that "
+                 'filament slot, like the sidebar filament combo; without slot '
+                 'the filament tab switches whichever slot it is on and dirty '
+                 'preset changes are discarded.',
   'inputSchema': {'additionalProperties': False,
                   'properties': {'name': {'description': 'Preset name',
                                           'type': 'string'},
+                                 'slot': {'description': 'Filament slot to '
+                                                         'set, 1-based. Only '
+                                                         'valid with type '
+                                                         "'filament'.",
+                                          'type': 'integer'},
                                  'type': {'description': 'Preset type',
                                           'enum': ['printer',
                                                    'filament',
