@@ -50,6 +50,15 @@ std::string to_std(const wxString& s)
     return std::string(s.ToUTF8().data());
 }
 
+// The Flashforge local-API-credentials message, shared so it exists in exactly one place: resolve_flashforge
+// (used by printer_control/list_printer_files/print_printer_file) and get_printer_status (which cannot use
+// resolve_flashforge because it also has to handle non-Flashforge hosts) both return this.
+nlohmann::json flashforge_credentials_error()
+{
+    return error_response("Flashforge local API requires both a serial number and an access code. "
+                          "Use add_physical_printer to set them.");
+}
+
 // Resolves the print host the same way Plater::send_gcode_legacy does (main thread, fast), then builds
 // the concrete PrintHost off the main thread so no network I/O ever blocks the GUI.
 bool resolve_print_host(std::unique_ptr<Slic3r::PrintHost>& host, DynamicPrintConfig& cfg, std::string& host_type, nlohmann::json& error_out)
@@ -88,8 +97,7 @@ bool resolve_flashforge(std::unique_ptr<Slic3r::PrintHost>& host, Slic3r::Flashf
         return false;
     }
     if (!ff->has_local_api_credentials()) {
-        error_out = error_response("Flashforge local API requires both a serial number and an access code. "
-                                    "Use add_physical_printer to set them.");
+        error_out = flashforge_credentials_error();
         return false;
     }
     return true;
@@ -166,25 +174,34 @@ nlohmann::json auto_material_mappings(const nlohmann::json& project_filaments, c
 }
 
 // Builds the same payload shape from caller-supplied {tool_id, slot_id} pairs, filling in the slot's
-// reported material/colour so the printer sees a payload consistent with the auto-mapped one.
-nlohmann::json explicit_material_mappings(const nlohmann::json& requested, const std::vector<Slic3r::FlashforgeApi::MaterialSlot>& slots)
+// reported material/colour so the printer sees a payload consistent with the auto-mapped one. Only
+// checks the *shape* of each entry (both fields present and integers) -- validate_material_mappings is
+// the single place that checks the slot actually exists/is loaded and every project tool got mapped.
+bool build_explicit_material_mappings(const nlohmann::json&                                    requested,
+                                      const std::vector<Slic3r::FlashforgeApi::MaterialSlot>& slots,
+                                      nlohmann::json&                                          mappings_out,
+                                      std::string&                                             error)
 {
-    nlohmann::json mappings = nlohmann::json::array();
+    mappings_out = nlohmann::json::array();
     for (const auto& entry : requested) {
-        if (!entry.is_object() || !entry.contains("tool_id") || !entry.contains("slot_id"))
-            continue;
-        const int slot_id = entry.at("slot_id").get<int>();
+        if (!entry.is_object() || !entry.contains("tool_id") || !entry.contains("slot_id") ||
+            !entry.at("tool_id").is_number_integer() || !entry.at("slot_id").is_number_integer()) {
+            error = "Each material_mappings entry requires integer 'tool_id' and 'slot_id'";
+            return false;
+        }
 
+        const int  tool_id = entry.at("tool_id").get<int>();
+        const int  slot_id = entry.at("slot_id").get<int>();
         const auto slot_it = std::find_if(slots.begin(), slots.end(),
                                           [&](const Slic3r::FlashforgeApi::MaterialSlot& s) { return s.slot_id == slot_id; });
 
-        mappings.push_back({{"toolId", entry.at("tool_id").get<int>()},
-                            {"slotId", slot_id},
-                            {"materialName", slot_it != slots.end() ? slot_it->material_name : std::string()},
-                            {"toolMaterialColor", std::string()},
-                            {"slotMaterialColor", slot_it != slots.end() ? slot_it->material_color : std::string()}});
+        mappings_out.push_back({{"toolId", tool_id},
+                                {"slotId", slot_id},
+                                {"materialName", slot_it != slots.end() ? slot_it->material_name : std::string()},
+                                {"toolMaterialColor", std::string()},
+                                {"slotMaterialColor", slot_it != slots.end() ? slot_it->material_color : std::string()}});
     }
-    return mappings;
+    return true;
 }
 
 // The tool_id/slot_id pairs actually sent, for the tool's response (mirrors the request schema rather
@@ -603,8 +620,7 @@ void OrcaMCPServer::register_printer_tools()
             }
 
             if (!ff->has_local_api_credentials())
-                return error_response("Flashforge local API requires both a serial number and an access code. "
-                                      "Use add_physical_printer to set them.");
+                return flashforge_credentials_error();
 
             Slic3r::FlashforgeApi::PrinterStatus status;
             wxString                     msg;
@@ -673,6 +689,10 @@ void OrcaMCPServer::register_printer_tools()
                     for (const auto& entry : params.at("nozzles")) {
                         if (!entry.is_object() || !entry.contains("tool") || !entry.contains("temp"))
                             return error_response("Each entry in nozzles requires 'tool' and 'temp'");
+                        if (!entry.at("tool").is_number_integer())
+                            return error_response("nozzles[].tool must be an integer");
+                        if (!entry.at("temp").is_number())
+                            return error_response("nozzles[].temp must be a number");
                         const int tool = entry.at("tool").get<int>();
                         if (tool < 0 || tool > 3)
                             return error_response("nozzles[].tool must be between 0 and 3");
@@ -788,13 +808,36 @@ void OrcaMCPServer::register_printer_tools()
             nlohmann::json mappings_payload = nlohmann::json::array();
             if (!requested_mappings.empty() || auto_map) {
                 Slic3r::FlashforgeApi::PrinterStatus status;
-                wxString                     msg;
+                wxString                             msg;
                 if (!ff->fetch_status(status, msg))
                     return error_response(msg.empty() ? "Failed to read material station status" : to_std(msg));
 
-                mappings_payload = !requested_mappings.empty()
-                                       ? explicit_material_mappings(requested_mappings, status.slots)
-                                       : auto_material_mappings(gather_project_filaments(), status.slots);
+                // The project's own tool count/types, needed both to auto-map and to check an explicit
+                // mapping's tool_id is one of this project's actual tools.
+                const nlohmann::json project_filaments = gather_project_filaments();
+
+                if (!requested_mappings.empty()) {
+                    std::string build_error;
+                    if (!build_explicit_material_mappings(requested_mappings, status.slots, mappings_payload, build_error))
+                        return error_response(build_error);
+                } else {
+                    mappings_payload = auto_material_mappings(project_filaments, status.slots);
+                }
+
+                // Single gate, shared with (task 2.6) send_to_printer: every mapping's slot must exist
+                // and be loaded, and every project tool must end up mapped -- a partial mapping (auto or
+                // explicit) never reaches the printer.
+                std::string      validation_error;
+                std::vector<int> unmapped_tools;
+                if (!validate_material_mappings(mappings_payload, status.slots, project_filaments.size(),
+                                                validation_error, unmapped_tools)) {
+                    nlohmann::json err = error_response(validation_error);
+                    if (!unmapped_tools.empty()) {
+                        err["unmapped_tools"] = unmapped_tools;
+                        err["slots"]          = material_slots_json(status.slots);
+                    }
+                    return err;
+                }
             }
 
             wxString msg;

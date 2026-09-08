@@ -4,6 +4,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 #include <nlohmann/json.hpp>
 
 #include "libslic3r/PrintConfig.hpp"
@@ -31,6 +32,25 @@ std::unique_ptr<PrintHost> make_print_host(const DynamicPrintConfig& cfg);
 
 // Any thread. Serializes a printer status into the `printer` object of get_printer_status.
 nlohmann::json status_to_json(const FlashforgeApi::PrinterStatus& s);
+
+// Any thread. The material_station.slots shape shared between status_to_json and a material-mapping
+// validation error's "slots" field.
+nlohmann::json material_slots_json(const std::vector<FlashforgeApi::MaterialSlot>& slots);
+
+// Any thread; pure data, no I/O. Validates a built {toolId, slotId, ...} mapping payload (see
+// OrcaMCPPrinterTools.cpp's auto_material_mappings / build_explicit_material_mappings) against the
+// printer's material station and the project's tool count. Fails when a mapping's slot_id does not name
+// a slot that is present and loaded on the printer, a mapping's toolId is outside [0, tool_count), or any
+// tool in that range has no mapping at all -- the same "every project material must be assigned to a
+// loaded slot" rule FlashforgePrintHostSendDialog::validate_before_close enforces before enabling Send.
+// On failure `error` explains why; `unmapped_tools` additionally lists the specific tool ids left
+// unmapped (only for that failure mode; empty otherwise). Shared by print_printer_file and (task 2.6)
+// send_to_printer so the rule exists in exactly one place.
+bool validate_material_mappings(const nlohmann::json&                           mappings,
+                                const std::vector<FlashforgeApi::MaterialSlot>& slots,
+                                size_t                                          tool_count,
+                                std::string&                                    error,
+                                std::vector<int>&                               unmapped_tools);
 
 // Main thread. Every printer preset carrying a non-empty print_host.
 nlohmann::json print_host_presets_json();

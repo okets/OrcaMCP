@@ -9,6 +9,7 @@
 #include "slic3r/GUI/Tab.hpp"
 #include "slic3r/Utils/PrintHost.hpp"
 
+#include <algorithm>
 #include <boost/algorithm/string/join.hpp>
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
@@ -136,13 +137,6 @@ nlohmann::json status_to_json(const FlashforgeApi::PrinterStatus& s)
                            {"current", s.nozzles[i].current},
                            {"target", s.nozzles[i].target}});
 
-    nlohmann::json slots = nlohmann::json::array();
-    for (const FlashforgeApi::MaterialSlot& slot : s.slots)
-        slots.push_back({{"slot_id", slot.slot_id},
-                         {"has_filament", slot.has_filament},
-                         {"material", slot.material_name},
-                         {"color", slot.material_color}});
-
     return {
         {"state", s.state},
         {"print_file", s.print_file},
@@ -161,9 +155,67 @@ nlohmann::json status_to_json(const FlashforgeApi::PrinterStatus& s)
         {"model", s.model},
         {"firmware", s.firmware},
         {"camera_stream_url", s.camera_stream_url},
-        {"material_station", {{"present", s.has_material_station}, {"slots", slots}}},
+        {"material_station", {{"present", s.has_material_station}, {"slots", material_slots_json(s.slots)}}},
         {"raw", s.raw}
     };
+}
+
+nlohmann::json material_slots_json(const std::vector<FlashforgeApi::MaterialSlot>& slots)
+{
+    nlohmann::json slots_json = nlohmann::json::array();
+    for (const FlashforgeApi::MaterialSlot& slot : slots)
+        slots_json.push_back({{"slot_id", slot.slot_id},
+                              {"has_filament", slot.has_filament},
+                              {"material", slot.material_name},
+                              {"color", slot.material_color}});
+    return slots_json;
+}
+
+bool validate_material_mappings(const nlohmann::json&                           mappings,
+                                const std::vector<FlashforgeApi::MaterialSlot>& slots,
+                                size_t                                          tool_count,
+                                std::string&                                    error,
+                                std::vector<int>&                               unmapped_tools)
+{
+    unmapped_tools.clear();
+    std::vector<bool> tool_mapped(tool_count, false);
+
+    for (const auto& mapping : mappings) {
+        // Slot validity first: a caller-supplied slot_id that does not exist (or is not currently
+        // loaded) on the printer must never reach print_gcode_file, regardless of the tool_id it names.
+        const int  slot_id = mapping.value("slotId", -1);
+        const auto slot_it = std::find_if(slots.begin(), slots.end(),
+                                          [&](const FlashforgeApi::MaterialSlot& s) { return s.slot_id == slot_id; });
+        if (slot_it == slots.end() || !slot_it->has_filament) {
+            error = "Slot " + std::to_string(slot_id) + " is not present/loaded on the printer";
+            return false;
+        }
+
+        const int tool_id = mapping.value("toolId", -1);
+        if (tool_id < 0 || static_cast<size_t>(tool_id) >= tool_count) {
+            error = "Mapping references tool " + std::to_string(tool_id) + ", which is outside the project's " +
+                    std::to_string(tool_count) + " filament(s)";
+            return false;
+        }
+
+        tool_mapped[tool_id] = true;
+    }
+
+    for (size_t i = 0; i < tool_count; ++i)
+        if (!tool_mapped[i])
+            unmapped_tools.push_back(static_cast<int>(i));
+
+    if (!unmapped_tools.empty()) {
+        std::string tool_list = "[";
+        for (size_t i = 0; i < unmapped_tools.size(); ++i)
+            tool_list += (i == 0 ? "" : ",") + std::to_string(unmapped_tools[i]);
+        tool_list += "]";
+        error = "Could not map tools " + tool_list +
+                " to material station slots by material type; pass material_mappings explicitly";
+        return false;
+    }
+
+    return true;
 }
 
 nlohmann::json print_host_presets_json()
