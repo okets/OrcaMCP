@@ -8,10 +8,17 @@
 #include "slic3r/GUI/DeviceCore/DevManager.h"
 #include "slic3r/GUI/DeviceCore/DevStorage.h"
 #include "slic3r/GUI/DeviceCore/DevFirmware.h"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPPrinterUtils.hpp"
+#include "PrintHost.hpp"
+#include "Http.hpp"
+
+#include <boost/algorithm/string/predicate.hpp>
+#include <boost/filesystem.hpp>
 
 #include <boost/log/trivial.hpp>
 
 #include <chrono>
+#include <future>
 #include <utility>
 
 namespace Slic3r {
@@ -285,19 +292,185 @@ int FlashforgePrinterAgent::start_send_gcode_to_sdcard(PrintParams      params,
                                                        WasCancelledFn   cancel_fn,
                                                        OnWaitFn         wait_fn)
 {
-    (void) params;
-    (void) update_fn;
-    (void) cancel_fn;
     (void) wait_fn;
-    return ORCA_NETWORK_ERR_CMD_NOT_SUPPORTED;
+
+    // PrintJob calls this once with a throwaway file purely to prove the LAN credentials work
+    // (PrintJob.cpp:224-231) before it sends the real job. Uploading that file would leave a junk
+    // entry in the printer's file list, so the probe is answered with a status read instead - the
+    // same round trip, the same credentials, no side effect.
+    if (params.project_name == "verify_job") {
+        return run_host_command(
+            [](const Flashforge& host, wxString& msg) {
+                FlashforgeApi::PrinterStatus status;
+                return host.fetch_status(status, msg);
+            },
+            "credential check");
+    }
+
+    const std::string gcode_path = resolve_gcode_path(params);
+    if (gcode_path.empty()) {
+        BOOST_LOG_TRIVIAL(error) << "FlashforgePrinterAgent: no G-code to upload for '" << params.filename << "'";
+        return BAMBU_NETWORK_ERR_FILE_NOT_EXIST;
+    }
+    return upload_gcode(params, gcode_path, /*start_print=*/false, std::move(update_fn), std::move(cancel_fn));
 }
 
 int FlashforgePrinterAgent::start_local_print(PrintParams params, OnUpdateStatusFn update_fn, WasCancelledFn cancel_fn)
 {
-    (void) params;
-    (void) update_fn;
-    (void) cancel_fn;
-    return ORCA_NETWORK_ERR_CMD_NOT_SUPPORTED;
+    const std::string gcode_path = resolve_gcode_path(params);
+    if (gcode_path.empty()) {
+        BOOST_LOG_TRIVIAL(error) << "FlashforgePrinterAgent: no G-code to print for '" << params.filename << "'";
+        return BAMBU_NETWORK_ERR_FILE_NOT_EXIST;
+    }
+    return upload_gcode(params, gcode_path, /*start_print=*/true, std::move(update_fn), std::move(cancel_fn));
+}
+
+std::string FlashforgePrinterAgent::resolve_gcode_path(const PrintParams& params)
+{
+    namespace fs = boost::filesystem;
+    const auto usable = [](const fs::path& path) {
+        boost::system::error_code ec;
+        return !path.empty() && fs::is_regular_file(path, ec);
+    };
+
+    // A print started from the printer's own file list already names a file.
+    if (usable(params.dst_file))
+        return params.dst_file;
+
+    // Otherwise PrintJob hands over `_3mf_path`, which is the plate's temporary G-code path with the
+    // extension swapped (Plater::send_gcode, Plater.cpp:19519). Flashforge printers read G-code, not
+    // Orca's 3MF, so the sibling the slicer actually wrote is what goes up.
+    const fs::path source(params.filename);
+    if (boost::iequals(source.extension().string(), ".3mf")) {
+        fs::path gcode = source;
+        gcode.replace_extension(".gcode");
+        return usable(gcode) ? gcode.string() : std::string();
+    }
+    return usable(source) ? source.string() : std::string();
+}
+
+bool FlashforgePrinterAgent::run_on_gui_thread(const std::function<void()>& fn) const
+{
+    QueueOnMainFn queue_fn;
+    {
+        std::lock_guard<std::recursive_mutex> lock(m_state_mutex);
+        queue_fn = m_queue_on_main_fn;
+    }
+    if (!queue_fn)
+        return false;
+    if (wxIsMainThread()) {
+        fn();
+        return true;
+    }
+
+    auto done = std::make_shared<std::promise<void>>();
+    auto ready = done->get_future();
+    queue_fn([fn, done]() {
+        fn();
+        done->set_value();
+    });
+    // Bounded so a busy or shutting-down GUI thread cannot wedge the print job for ever.
+    return ready.wait_for(std::chrono::seconds(10)) == std::future_status::ready;
+}
+
+std::map<std::string, std::string> FlashforgePrinterAgent::build_upload_extended_info(const Flashforge&  host,
+                                                                                      const PrintParams& params) const
+{
+    // The same keys FlashforgePrintHostSendDialog::extendedInfo() produces (PrintHostDialogs.cpp:877)
+    // and the MCP send_to_printer tool builds, so all three upload paths speak one dialect.
+    std::map<std::string, std::string> info = {{"levelingBeforePrint", params.task_bed_leveling ? "1" : "0"},
+                                               {"timeLapseVideo", params.task_record_timelapse ? "1" : "0"},
+                                               {"useMatlStation", "0"},
+                                               {"gcodeToolCnt", "0"},
+                                               {"materialMappings", "[]"}};
+
+    FlashforgeApi::PrinterStatus status;
+    wxString                     msg;
+    if (!host.fetch_status(status, msg) || !status.has_material_station)
+        return info;
+
+    // With a material station the printer needs to be told which slot feeds which tool, or it has
+    // nothing to load. The project's filaments only exist on the GUI thread.
+    nlohmann::json project_filaments = nlohmann::json::array();
+    std::string    filament_error;
+    if (!run_on_gui_thread([&]() { project_filaments = GUI::OrcaMCP::gather_project_filaments(filament_error); })) {
+        BOOST_LOG_TRIVIAL(warning) << "FlashforgePrinterAgent: could not read the plate's filaments; "
+                                      "uploading without material mapping";
+        return info;
+    }
+
+    nlohmann::json mappings   = nlohmann::json::array();
+    nlohmann::json map_error;
+    if (!GUI::OrcaMCP::resolve_material_mappings(nlohmann::json::array(), status.slots, project_filaments, mappings,
+                                                 map_error)) {
+        // Not fatal: the printer refuses an impossible mapping far more clearly than we can guess one.
+        BOOST_LOG_TRIVIAL(warning) << "FlashforgePrinterAgent: material auto-mapping failed ("
+                                   << map_error.value("message", std::string("unknown")) << "); uploading unmapped";
+        return info;
+    }
+
+    info["useMatlStation"]   = "1";
+    info["gcodeToolCnt"]     = std::to_string(mappings.size());
+    info["materialMappings"] = mappings.dump();
+    return info;
+}
+
+int FlashforgePrinterAgent::upload_gcode(const PrintParams& params,
+                                         const std::string& gcode_path,
+                                         bool               start_print,
+                                         OnUpdateStatusFn   update_fn,
+                                         WasCancelledFn     cancel_fn)
+{
+    const std::shared_ptr<Flashforge> host = get_host();
+    if (!host) {
+        BOOST_LOG_TRIVIAL(warning) << "FlashforgePrinterAgent: upload with no connected printer";
+        return BAMBU_NETWORK_ERR_INVALID_HANDLE;
+    }
+
+    if (update_fn)
+        update_fn(PrintingStageCreate, 0, "Preparing...");
+    if (cancel_fn && cancel_fn())
+        return BAMBU_NETWORK_ERR_CANCELED;
+
+    PrintHostUpload upload;
+    upload.source_path = boost::filesystem::path(gcode_path);
+    // The job's own name, so the printer's file list is readable; Flashforge sanitizes it further.
+    std::string upload_name = params.project_name.empty() ? params.task_name : params.project_name;
+    if (upload_name.empty())
+        upload_name = upload.source_path.filename().string();
+    if (!boost::iends_with(upload_name, ".gcode"))
+        upload_name += ".gcode";
+    upload.upload_path   = boost::filesystem::path(upload_name);
+    upload.post_action   = start_print ? PrintHostPostUploadAction::StartPrint : PrintHostPostUploadAction::None;
+    upload.extended_info = build_upload_extended_info(*host, params);
+
+    if (update_fn)
+        update_fn(PrintingStageUpload, 0, "Uploading G-code...");
+
+    wxString   error_msg;
+    const bool ok = host->upload(
+        std::move(upload),
+        [&](Http::Progress progress, bool& cancel) {
+            if (cancel_fn && cancel_fn()) {
+                cancel = true;
+                return;
+            }
+            if (update_fn && progress.ultotal > 0)
+                update_fn(PrintingStageUpload, static_cast<int>(progress.ulnow * 100 / progress.ultotal), "Uploading G-code...");
+        },
+        [&](wxString error) { error_msg = std::move(error); },
+        [](wxString, wxString) {});
+
+    if (cancel_fn && cancel_fn())
+        return BAMBU_NETWORK_ERR_CANCELED;
+    if (!ok) {
+        BOOST_LOG_TRIVIAL(error) << "FlashforgePrinterAgent: upload failed: " << error_msg.ToUTF8().data();
+        return start_print ? BAMBU_NETWORK_ERR_PRINT_LP_UPLOAD_FTP_FAILED : BAMBU_NETWORK_ERR_PRINT_SG_UPLOAD_FTP_FAILED;
+    }
+
+    if (update_fn)
+        update_fn(PrintingStageFinished, 100, start_print ? "Print started" : "File uploaded");
+    return BAMBU_NETWORK_SUCCESS;
 }
 
 int FlashforgePrinterAgent::start_sdcard_print(PrintParams params, OnUpdateStatusFn update_fn, WasCancelledFn cancel_fn)

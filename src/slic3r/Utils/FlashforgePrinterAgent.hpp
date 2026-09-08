@@ -7,6 +7,8 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -79,8 +81,8 @@ public:
     std::string get_user_selected_machine() override;
     int         set_user_selected_machine(std::string dev_id) override;
 
-    // Print Job Operations - Flashforge uploads go through the print host (PrintHostSendDialog),
-    // so the agent-side job API has no translation.
+    // Print Job Operations. The LAN paths (start_local_print / start_send_gcode_to_sdcard) upload
+    // through the Flashforge local API; the cloud/record paths have no Flashforge equivalent.
     int start_print(PrintParams params, OnUpdateStatusFn update_fn, WasCancelledFn cancel_fn, OnWaitFn wait_fn) override;
     int start_local_print_with_record(PrintParams params, OnUpdateStatusFn update_fn, WasCancelledFn cancel_fn, OnWaitFn wait_fn) override;
     int start_send_gcode_to_sdcard(PrintParams params, OnUpdateStatusFn update_fn, WasCancelledFn cancel_fn, OnWaitFn wait_fn) override;
@@ -105,6 +107,26 @@ private:
     int send_version_info(const std::string& dev_id);
     int send_access_code(const std::string& dev_id);
     int run_host_command(const std::function<bool(const Flashforge&, wxString&)>& command, const char* what);
+
+    // Print jobs (PrintJob's worker thread).
+    /// The G-code the print job actually wants uploaded. PrintJob hands us `_3mf_path` (a 3MF with
+    /// the G-code inside, which a Flashforge printer cannot read); the plain G-code the slicer wrote
+    /// sits next to it under the same stem. Empty when nothing usable exists on disk.
+    static std::string resolve_gcode_path(const PrintParams& params);
+    /// Uploads `gcode_path` under `params`' job name, optionally starting the print. Blocking.
+    int  upload_gcode(const PrintParams& params,
+                      const std::string& gcode_path,
+                      bool               start_print,
+                      OnUpdateStatusFn   update_fn,
+                      WasCancelledFn     cancel_fn);
+    /// The Flashforge `extended_info` map for an upload, including material-station mapping when the
+    /// printer has one. Blocking: reads printer status and hops to the GUI thread for the plate's
+    /// filaments.
+    std::map<std::string, std::string> build_upload_extended_info(const Flashforge&  host,
+                                                                  const PrintParams& params) const;
+    /// Runs `fn` on the GUI thread and waits for it (bounded). False when no marshaller is
+    /// registered or the GUI did not answer in time.
+    bool run_on_gui_thread(const std::function<void()>& fn) const;
 
     // Polling (worker thread).
     void start_polling(const std::string& dev_id);
