@@ -36,7 +36,10 @@ class PrinterWebViewHandler;
 
 class PrinterWebView : public wxPanel {
 public:
-    PrinterWebView(wxWindow *parent);
+    /// `initial_url` loads with the web view itself. A page handed to LoadURL instead races the
+    /// about:blank the view starts on, so anything that must be showing from the first paint
+    /// (a bundled local page) belongs here.
+    explicit PrinterWebView(wxWindow *parent, const wxString& initial_url = wxString());
     virtual ~PrinterWebView();
 
     void load_url(wxString& url, wxString apikey = "");

@@ -98,7 +98,7 @@ static void inject_vue_resize_workaround(wxWebView *webView)
 }
 #endif
 
-PrinterWebView::PrinterWebView(wxWindow *parent)
+PrinterWebView::PrinterWebView(wxWindow *parent, const wxString& initial_url)
         : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize)
     , m_browser(nullptr)
     , m_zoomFactor(100)
@@ -111,10 +111,17 @@ PrinterWebView::PrinterWebView(wxWindow *parent)
     wxBoxSizer* topsizer = new wxBoxSizer(wxVERTICAL);
 
       // Create the webview
-    m_browser = WebView::CreateWebView(this, "");
+    m_browser = WebView::CreateWebView(this, initial_url);
     if (m_browser == nullptr) {
         wxLogError("Could not init m_browser");
         return;
+    }
+
+    // CreateWebView has already started loading initial_url, so the page needs its real handler now
+    // rather than at the load_url that would otherwise install it.
+    if (!initial_url.empty()) {
+        if (auto handler = create_printer_webview_handler(*this))
+            m_handler = std::move(handler);
     }
 
 #ifdef __linux__
@@ -296,8 +303,11 @@ void PrinterWebView::OnLoaded(wxWebViewEvent& evt)
 {
     if (evt.GetURL().IsEmpty())
         return;
-    //ORCA: url loaded successfully, safe to clear
-    m_url_deferred.clear();
+    //ORCA: url loaded successfully, safe to clear.
+    // Not for about:blank though: that is the page every web view starts on, and it finishes after
+    // a load_url made while the panel was hidden - which would drop a URL nobody has shown yet.
+    if (evt.GetURL() != "about:blank")
+        m_url_deferred.clear();
     SendAPIKey();
   
     if (m_handler != nullptr) {
