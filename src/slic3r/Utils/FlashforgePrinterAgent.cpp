@@ -367,6 +367,12 @@ int FlashforgePrinterAgent::handle_request(const std::string& dev_id, const std:
         return BAMBU_NETWORK_ERR_INVALID_RESULT;
     }
 
+    // "pushall" asks the printer to re-send its full state. The poll loop already pushes the
+    // full state on every tick, so acknowledging is honest - and keeps MachineObject from
+    // logging a publish failure on every reconnect.
+    if (json.contains("pushing") && json["pushing"].is_object())
+        return BAMBU_NETWORK_SUCCESS;
+
     if (json.contains("print") && json["print"].is_object())
         return handle_print_command(dev_id, json["print"]);
     if (json.contains("system") && json["system"].is_object())
