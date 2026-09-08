@@ -965,7 +965,16 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                                                                           'false). '
                                                                           'Direct '
                                                                           'sends '
-                                                                          'only.',
+                                                                          'to '
+                                                                          'a '
+                                                                          'Flashforge '
+                                                                          'host '
+                                                                          'with '
+                                                                          'local-API '
+                                                                          'credentials '
+                                                                          'only; '
+                                                                          'ignored '
+                                                                          'otherwise.',
                                                            'type': 'boolean'},
                                  'material_mappings': {'description': 'Explicit '
                                                                       'tool-to-slot '
@@ -981,7 +990,15 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                                                                       'automatically. '
                                                                       'Direct '
                                                                       'sends '
-                                                                      'only.',
+                                                                      'to a '
+                                                                      'Flashforge '
+                                                                      'host '
+                                                                      'with '
+                                                                      'local-API '
+                                                                      'credentials '
+                                                                      'only; '
+                                                                      'ignored '
+                                                                      'otherwise.',
                                                        'items': {'properties': {'slot_id': {'description': 'Material '
                                                                                                            'station '
                                                                                                            'slot '
@@ -1013,13 +1030,20 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                                                                          'true '
                                                                          'when '
                                                                          'the '
-                                                                         'Flashforge '
                                                                          'printer '
                                                                          'reports '
                                                                          'one). '
                                                                          'Direct '
                                                                          'sends '
-                                                                         'only.',
+                                                                         'to a '
+                                                                         'Flashforge '
+                                                                         'host '
+                                                                         'with '
+                                                                         'local-API '
+                                                                         'credentials '
+                                                                         'only; '
+                                                                         'ignored '
+                                                                         'otherwise.',
                                                           'type': 'boolean'}},
                   'required': [],
                   'type': 'object'},

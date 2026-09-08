@@ -93,6 +93,14 @@ std::string dirty_preset_collections()
     return boost::algorithm::join(dirty, ", ");
 }
 
+// A project filament's tool id, or -1 when the entry does not carry a usable one. The single reader of
+// the field: resolve_material_mappings rejects a -1 before anything is built from it.
+int filament_tool_id(const nlohmann::json& filament)
+{
+    const auto it = filament.find("tool_id");
+    return it != filament.end() && it->is_number_integer() ? it->get<int>() : -1;
+}
+
 // Builds the {toolId, slotId, materialName, toolMaterialColor, slotMaterialColor} entries the Flashforge
 // local API expects, matching each project tool to the first free material-station slot of the same
 // normalized material family (same rule as FlashforgePrintHostSendDialog::auto_assign_mappings, minus
@@ -114,7 +122,7 @@ nlohmann::json auto_material_mappings(const nlohmann::json& project_filaments, c
                 continue;
 
             slot_used[i] = true;
-            mappings.push_back({{"toolId", filament.value("tool_id", 0)},
+            mappings.push_back({{"toolId", filament_tool_id(filament)},
                                 {"slotId", slots[i].slot_id},
                                 {"materialName", slots[i].material_name},
                                 {"toolMaterialColor", filament.value("color", std::string())},
@@ -300,6 +308,18 @@ bool resolve_material_mappings(const nlohmann::json&                           r
 {
     mappings_out = nlohmann::json::array();
 
+    // Only the tools the sliced plate actually uses; their ids need not be contiguous (an object
+    // printed with filament 2 alone yields the single tool id 1).
+    std::vector<int> project_tool_ids;
+    for (const auto& filament : project_filaments) {
+        const int tool_id = filament_tool_id(filament);
+        if (tool_id < 0) {
+            error_out = {{"status", "error"}, {"message", "A project filament has no tool_id; cannot map materials"}};
+            return false;
+        }
+        project_tool_ids.push_back(tool_id);
+    }
+
     if (!requested.empty()) {
         std::string build_error;
         if (!build_explicit_material_mappings(requested, slots, mappings_out, build_error)) {
@@ -312,12 +332,6 @@ bool resolve_material_mappings(const nlohmann::json&                           r
 
     // Single gate for both tools: every mapping's slot must exist and be loaded, and every project
     // tool must end up mapped -- a partial mapping (auto or explicit) never reaches the printer.
-    // Only the tools the sliced plate actually uses; their ids need not be contiguous (an object
-    // printed with filament 2 alone yields the single tool id 1).
-    std::vector<int> project_tool_ids;
-    for (const auto& filament : project_filaments)
-        project_tool_ids.push_back(filament.value("tool_id", -1));
-
     std::string      validation_error;
     std::vector<int> unmapped_tools;
     if (!validate_material_mappings(mappings_out, slots, project_tool_ids, validation_error, unmapped_tools)) {

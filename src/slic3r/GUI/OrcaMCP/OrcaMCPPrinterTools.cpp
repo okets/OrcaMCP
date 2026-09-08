@@ -5,7 +5,6 @@
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Plater.hpp"
-#include "slic3r/GUI/PrintHostDialogs.hpp"
 #include "slic3r/GUI/DeviceManager.hpp"
 #include "slic3r/GUI/DeviceCore/DevManager.h"
 #include "slic3r/Utils/Flashforge.hpp"
@@ -136,7 +135,7 @@ nlohmann::json open_send_dialog(bool all_plates)
         nlohmann::json result;
         if (has_print_host) {
             // Use legacy send for OctoPrint/Klipper/etc. printers
-            int plate_idx = all_plates ? -1 : plater->get_partplate_list().get_curr_plate_index();
+            int plate_idx = all_plates ? PLATE_ALL_IDX : plater->get_partplate_list().get_curr_plate_index();
             wxGetApp().CallAfter([plate_idx]() {
                 if (Plater* p = wxGetApp().plater())
                     p->send_gcode_legacy(plate_idx);
@@ -374,17 +373,20 @@ void OrcaMCPServer::register_printer_tools()
                 }},
                 {"leveling_before_print", {
                     {"type", "boolean"},
-                    {"description", "Run bed leveling before printing (default false). Direct sends only."}
+                    {"description", "Run bed leveling before printing (default false). Direct sends to a "
+                                    "Flashforge host with local-API credentials only; ignored otherwise."}
                 }},
                 {"use_material_station", {
                     {"type", "boolean"},
-                    {"description", "Print from the material station (default: true when the Flashforge printer "
-                                    "reports one). Direct sends only."}
+                    {"description", "Print from the material station (default: true when the printer reports "
+                                    "one). Direct sends to a Flashforge host with local-API credentials only; "
+                                    "ignored otherwise."}
                 }},
                 {"material_mappings", {
                     {"type", "array"},
                     {"description", "Explicit tool-to-slot mapping. Omit to map the project's filaments onto "
-                                    "matching loaded slots automatically. Direct sends only."},
+                                    "matching loaded slots automatically. Direct sends to a Flashforge host "
+                                    "with local-API credentials only; ignored otherwise."},
                     {"items", {
                         {"type", "object"},
                         {"properties", {
@@ -456,8 +458,10 @@ void OrcaMCPServer::register_printer_tools()
                 if (!resolve_print_host_config(cfg, host_type, prep_error))
                     return nlohmann::json::object();
 
-                project_filaments = gather_project_filaments(prep_error);
-                info_messages     = suppression.messages();
+                // Material mapping is a Flashforge-only concern, and so is this snapshot.
+                if (host_type == "flashforge")
+                    project_filaments = gather_project_filaments(prep_error);
+                info_messages = suppression.messages();
                 return nlohmann::json::object();
             });
             if (!prep_error.empty())
@@ -467,6 +471,10 @@ void OrcaMCPServer::register_printer_tools()
             std::unique_ptr<Slic3r::PrintHost> host = make_print_host(cfg);
             if (!host)
                 return error_response("Failed to create a print host for type '" + host_type + "'");
+
+            if (start_print && !host->get_post_upload_actions().has(Slic3r::PrintHostPostUploadAction::StartPrint))
+                return error_response("Print host type '" + host_type +
+                                      "' does not support starting a print after upload; pass start_print=false");
 
             std::map<std::string, std::string> extended_info;
             nlohmann::json                     mappings_payload = nlohmann::json::array();
