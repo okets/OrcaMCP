@@ -324,8 +324,8 @@ nlohmann::json flashforge_status_to_bambu_payload(const PrinterStatus& status)
     // (DeviceManager.cpp:3849-3852) and arms MediaPlayCtrl's BambuSource player with
     // "bambu:///rtsp___<user>:<code>@<ip>/streaming/live/1" (MediaPlayCtrl.cpp:280-284). Flashforge
     // serves an HTTP MJPEG stream, not RTSP, so that player has nothing to open - it aborted the app
-    // when the Play button was pressed. The camera reaches the user through the Device (Web) tab
-    // instead; see Flashforge::get_print_host_webui.
+    // when the Play button was pressed. The camera reaches the user through the Flashforge console
+    // page, which puts the stream in an <img>; see resources/web/flashforge/index.html.
 
     return nlohmann::json{{"print", std::move(print)}};
 }

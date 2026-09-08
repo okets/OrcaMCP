@@ -1386,6 +1386,10 @@ PrinterWebView* MainFrame::flashforge_view()
         // A different printer: reloading the page is what rebuilds its handler, and with it the poller.
         wxString url = flashforge_console_url();
         m_flashforge_view->load_url(url);
+    } else if (!created) {
+        // Back on the tab bar (or never left): undo a suspend from a previous printer change, so
+        // polling resumes straight away rather than when the page's watchdog next notices.
+        m_flashforge_view->resume();
     }
     m_flashforge_target = target;
     return m_flashforge_view;

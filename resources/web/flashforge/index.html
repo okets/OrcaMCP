@@ -421,6 +421,18 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
 
   function receive(msg){
     if (!msg || typeof msg !== "object") return;
+
+    /* The host parks this page when its printer stops being the selected one.
+       Asking again would restart exactly the polling it just stopped, so the
+       page goes quiet until it is told otherwise. */
+    if (msg.method === "suspended"){ suspended = true;  return; }
+    if (msg.method === "resumed"){
+      suspended    = false;
+      lastStatusAt = Date.now();
+      askNow();
+      return;
+    }
+
     var p = pending[msg.id];
     if (p){
       delete pending[msg.id];
@@ -1029,7 +1041,15 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
      deselected, or it never started because the preset had no host yet. One
      `status` restarts it, so the page asks again whenever the pushes go quiet
      for three cadences. Recovery never needs a restart of anything.      */
-  var lastStatusAt = Date.now(), lastPollMs = 5000;
+  var lastStatusAt = Date.now(), lastPollMs = 5000, suspended = false;
+  /* The Page Visibility API only gets to silence the watchdog once it has said
+     "visible" at least once - an embedded web view that reports hidden for ever
+     must not be able to leave the page with stale data nobody refreshes. */
+  var everVisible = (typeof document.hidden === "boolean") ? !document.hidden : true;
+
+  function askNow(){
+    if (bridge && !suspended) bridge.call("status").then(onStatus, function(){ /* the next tick tries again */ });
+  }
 
   function onStatus(s){
     lastStatusAt = Date.now();
@@ -1038,10 +1058,18 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
   }
 
   setInterval(function(){
-    if (!bridge) return;
+    // Parked, or nobody is looking: the host pushes when it has something to say,
+    // and a page that keeps asking anyway is a page that undoes its own suspend.
+    if (!bridge || suspended || (everVisible && document.hidden)) return;
     if (Date.now() - lastStatusAt > Math.max(8000, lastPollMs * 3))
-      bridge.call("status").then(onStatus, function(){ /* the next tick tries again */ });
+      askNow();
   }, 2000);
+
+  document.addEventListener("visibilitychange", function(){
+    if (document.hidden) return;
+    everVisible = true;
+    askNow();
+  });
 
   /* ══ Start ════════════════════════════════════════════════════════════
      window.wx is installed by the host just after the web view is created,

@@ -53,6 +53,8 @@ public:
     void update_mode();
     /// Called when the page is taken off the tab bar, so its handler can stop background work.
     void suspend();
+    /// Called when the page is on the tab bar, so its handler can resume.
+    void resume();
 
     bool Show(bool show = true) override;
 

@@ -40,6 +40,10 @@ void PrinterWebViewHandler::on_suspended()
 {
 }
 
+void PrinterWebViewHandler::on_shown()
+{
+}
+
 PrinterWebView& PrinterWebViewHandler::owner() const
 {
     return m_owner;
@@ -321,8 +325,9 @@ std::unique_ptr<PrinterWebViewHandler> create_printer_webview_handler(PrinterWeb
         case PrintHostType::htElegooLink:
             return std::make_unique<ElegooPrinterWebViewHandler>(owner);
         case PrintHostType::htFlashforge:
-            // Serves the bundled console page in the Device tab. The camera view uses the same
-            // handler and simply never posts a message, so it never starts a poller.
+            // Serves the bundled console page in the Device tab. Every PrinterWebView built while a
+            // Flashforge printer is selected gets one, but only the page that actually asks for
+            // `status` ever starts a poller.
             return make_flashforge_console_handler(owner);
         default:
             return nullptr;

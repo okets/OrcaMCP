@@ -218,6 +218,12 @@ void PrinterWebView::suspend()
         m_handler->on_suspended();
 }
 
+void PrinterWebView::resume()
+{
+    if (m_handler != nullptr)
+        m_handler->on_shown();
+}
+
 void PrinterWebView::update_mode()
 {
     m_browser->EnableAccessToDevTools(wxGetApp().app_config->get_bool("developer_mode"));

@@ -193,7 +193,10 @@ public:
         const std::string method = request.value("method", std::string());
 
         if (method == "status") {
-            start_polling();
+            // A suspended page is answered, but never gets to start anything: it is parked, and its
+            // own watchdog asking again must not be able to revive a printer the user deselected.
+            if (!m_suspended)
+                start_polling();
             answer(id, last_status());
             return;
         }
@@ -202,9 +205,28 @@ public:
     }
 
     /// The page has left the tab bar. Polling a printer nobody has selected any more, for the life
-    /// of the app, is not something a hidden page gets to do; the page's own watchdog re-issues
-    /// `status` when the pushes go quiet, which starts a fresh session.
-    void on_suspended() override { suspend(); }
+    /// of the app, is not something a parked page gets to do - and since the page runs a watchdog
+    /// that re-asks whenever the pushes go quiet, stopping the session is not enough on its own:
+    /// the handler stays shut until on_shown(), and tells the page so it stops asking at all.
+    void on_suspended() override
+    {
+        if (m_suspended)
+            return;
+        m_suspended = true;
+        suspend();
+        notify_page("suspended");
+    }
+
+    /// The page is on the tab bar again (or still is). Polling resumes at once rather than waiting
+    /// for the watchdog to notice.
+    void on_shown() override
+    {
+        if (!m_suspended)
+            return;
+        m_suspended = false;
+        notify_page("resumed");
+        start_polling();
+    }
 
 private:
     // ── Delivery (GUI thread) ────────────────────────────────────────────────────────────────
@@ -214,6 +236,12 @@ private:
     {
         result["app_dark"] = wxGetApp().dark_mode();
         run_in_page(json{{"id", id}, {"method", "status"}, {"ok", true}, {"result", std::move(result)}});
+    }
+
+    /// A one-way note to the page: no id, nothing to resolve, just a change of state.
+    void notify_page(const char* method)
+    {
+        run_in_page(json{{"id", 0}, {"method", method}, {"ok", true}});
     }
 
     void answer_error(int id, const std::string& method, const std::string& error)
@@ -238,7 +266,7 @@ private:
     /// needing the app restarted.
     void start_polling()
     {
-        if (m_session && m_session->running.load())
+        if (m_suspended || (m_session && m_session->running.load()))
             return;
 
         DynamicPrintConfig config;
@@ -349,6 +377,9 @@ private:
         });
     }
 
+    /// True between on_suspended() and on_shown(). While set, nothing starts a session - not a
+    /// `status` request, not start_polling() called from anywhere else.
+    bool                         m_suspended = false;
     std::shared_ptr<PollSession> m_session;
     /// What last_status() answers with while there is no session: the reason the last one stopped,
     /// or why one could not start.
