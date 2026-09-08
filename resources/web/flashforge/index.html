@@ -443,9 +443,14 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
        Asking again would restart exactly the polling it just stopped, so the
        page goes quiet until it is told otherwise. */
     if (msg.method === "suspended"){
-      /* Parked: no poll is coming, so nothing would ever confirm a pending control. */
+      /* Parked: no poll is coming, so nothing would ever confirm a pending control - and a reply
+         still in flight must not settle one either, on a page that has stopped showing this
+         printer. Both sides of the conversation are dropped. */
       suspended = true;
       waiting   = {};
+      for (var id in pending)
+        if (pending.hasOwnProperty(id)) pending[id].reject(new Error("The console was parked."));
+      pending = {};
       disarmStop();
       repaint();
       return;
@@ -508,6 +513,12 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
   /* ══ Small helpers ════════════════════════════════════════════════════ */
   function el(id){ return document.getElementById(id); }
   function setHTML(node, html){ if (node && node.__h !== html){ node.__h = html; node.innerHTML = html; } }
+  /* Markup that contains a temperature chip. Rebuilding it while one of those chips is an open
+     editor would strand what the user is typing, so the rebuild waits for the next poll - by
+     which time the editor has almost certainly closed. */
+  function setStructure(node, html){
+    if (node && node.__h !== html && !document.querySelector(".tset-edit")) setHTML(node, html);
+  }
   function setText(node, text){ if (node && node.textContent !== text) node.textContent = text; }
   function show(node, on){ if (node) node.hidden = !on; }
   /* Anything that changes every poll is a [data-live] hole in otherwise static
@@ -759,17 +770,64 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     return byId;
   }
 
-  function renderTools(p, raw, ms, printing){
+  function renderTools(p, raw, ms){
     var slots   = (pick(p, "material_station", {}).slots) || [];
     var byId    = slotsById(p);
     var nozzles = (p.temperatures && p.temperatures.nozzles) || [];
     var count   = Math.max(num(raw.nozzleCnt), num(ms.slotCnt), slots.length, nozzles.length);
     if (!count){
-      setHTML(el("stationStrip"), "");
-      setHTML(el("toolrail"), '<div class="card nodata">Waiting for the printer to report its toolheads…</div>');
+      /* Nothing reported yet - but a connection blip must not throw away the cards it already
+         drew, so this only fires before the first snapshot arrives. */
+      if (!document.querySelector("[data-tool]")){
+        setHTML(el("stationStrip"), "");
+        setStructure(el("toolrail"), '<div class="card nodata">Waiting for the printer to report its toolheads…</div>');
+      }
       return;
     }
 
+    var html = "";
+    for (var i = 0; i < count; i++){
+      var n    = i + 1;
+      var slot = byId[n] || { slot_id:n, has_filament:false, material:"", color:"" };
+      var col  = hex(slot.color);
+      var on   = !!slot.has_filament;
+
+      var name = on ? (slot.material || "Filament loaded") : "Empty";
+      var meta = on ? (col ? col.toUpperCase() : "Colour not set") : "No spool in this slot";
+      var tip  = (on && !col)
+        ? "The printer has not reported a material or colour for this slot yet. Edit slot will set it."
+        : "";
+
+      /* Structure only: what changes from poll to poll - the card's state, its badge and the
+         load strip - is written in place by applyToolCards(), so a card is rebuilt only when the
+         spool in it genuinely changes. A rail rebuilt every second would strand an open
+         temperature editor and tear a card out from under the pointer about to click it. */
+      html += '<article class="tool" data-tool="'+n+'" data-state="idle" style="--fil:'+(col || "var(--muted)")+'">'+
+        '<span class="fiber"></span>'+
+        '<div class="tool-head"><span class="tool-id"><b>Tool '+n+'</b><span>slot '+n+'</span></span>'+
+          '<span class="badge" data-live-badge="'+n+'"></span></div>'+
+        '<div class="tool-body">'+spoolSVG(n, col, on)+
+          '<span class="tool-fil"><span class="name">'+esc(name)+'</span>'+
+          '<span class="meta mono"'+(tip ? ' title="'+esc(tip)+'"' : '')+'>'+esc(meta)+'</span></span></div>'+
+        '<div class="tool-temp"><span class="now" data-live="nozzle-now-'+n+'"></span>'+
+          '<span class="tgt mono">°C / </span>'+tset("Tool "+n+" target", "nozzle-target-"+n, "temp-nozzle-"+n)+
+          '<span class="tgt mono">°C</span></div>'+
+        tmsg("temp-nozzle-"+n)+
+        '<span class="heat"><i data-live="nozzle-heat-'+n+'"></i></span>'+
+        '<span data-grp="slotact-'+n+'">'+slotActions()+'</span>'+
+        '<span data-live-load="'+n+'"></span>'+
+        '</article>';
+    }
+    setStructure(el("toolrail"), html);
+  }
+
+  /* The volatile half of every card, written in place after each poll. */
+  function applyToolCards(p, raw, ms, printing){
+    /* No snapshot: the cards keep the state they were last told about rather than every slot
+       claiming to be empty. The em-dashed readings and the banner already say it is stale. */
+    if (!p) return;
+    var byId    = slotsById(p);
+    var nozzles = (p.temperatures || {}).nozzles || [];
     var action  = num(ms.stateAction);
     var moving  = action === 1 || action === 2;
     var step    = num(ms.stateStep);
@@ -781,46 +839,30 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     setHTML(el("stationStrip"),
       (moving && !moveOn) ? '<div class="stationstrip">'+loadStrip(action, step, "material station")+'</div>' : "");
 
-    var html = "";
-    for (var i = 0; i < count; i++){
-      var n    = i + 1;
-      var id   = n;
-      var slot = byId[id] || { slot_id:id, has_filament:false, material:"", color:"" };
-      var nz   = nozzles[i] || { current:0, target:0 };
-      var col  = hex(slot.color);
+    var cards = document.querySelectorAll("[data-tool]");
+    for (var i = 0; i < cards.length; i++){
+      var card = cards[i];
+      var n    = num(card.getAttribute("data-tool"));
+      var slot = byId[n] || { has_filament:false };
+      var nz   = nozzles[n - 1] || { target:0 };
       var on   = !!slot.has_filament;
-      var busy = moving && moveOn === id;
+      var busy = moving && moveOn === n;
 
       var state, badge, kind;
-      if (busy)                        { state = "loading"; badge = ACTIONS[action]; kind = "standby"; }
-      else if (printing && current===id){ state = "active";  badge = "Printing";      kind = "active";  }
-      else if (feeding === id)         { state = "active";  badge = "Feeding";       kind = "standby"; }
-      else if (num(nz.target) > 0)     { state = "idle";    badge = "Standby";       kind = "standby"; }
-      else if (!on)                    { state = "empty";   badge = "Empty";         kind = "idle";    }
-      else                             { state = "idle";    badge = "Idle";          kind = "idle";    }
+      if (busy)                          { state = "loading"; badge = ACTIONS[action]; kind = "standby"; }
+      else if (printing && current === n){ state = "active";  badge = "Printing";      kind = "active";  }
+      else if (feeding === n)            { state = "active";  badge = "Feeding";       kind = "standby"; }
+      else if (num(nz.target) > 0)       { state = "idle";    badge = "Standby";       kind = "standby"; }
+      else if (!on)                      { state = "empty";   badge = "Empty";         kind = "idle";    }
+      else                               { state = "idle";    badge = "Idle";          kind = "idle";    }
 
-      var name = on ? (slot.material || "Filament loaded") : "Empty";
-      var meta = on ? (col ? col.toUpperCase() : "Colour not set") : "No spool in this slot";
-      var tip  = (on && !col)
-        ? "The printer has not reported a material or colour for this slot yet. Edit slot will set it."
-        : "";
-
-      html += '<article class="tool" data-tool="'+n+'" data-state="'+state+'" style="--fil:'+(col || "var(--muted)")+'">'+
-        '<span class="fiber"></span>'+
-        '<div class="tool-head"><span class="tool-id"><b>Tool '+n+'</b><span>slot '+id+'</span></span>'+
-          '<span class="badge" data-kind="'+kind+'">'+esc(badge)+'</span></div>'+
-        '<div class="tool-body">'+spoolSVG(n, col, on)+
-          '<span class="tool-fil"><span class="name">'+esc(name)+'</span>'+
-          '<span class="meta mono"'+(tip ? ' title="'+esc(tip)+'"' : '')+'>'+esc(meta)+'</span></span></div>'+
-        '<div class="tool-temp"><span class="now" data-live="nozzle-now-'+n+'"></span>'+
-          '<span class="tgt mono">°C / </span>'+tset("Tool "+n+" target", "nozzle-target-"+n, "temp-nozzle-"+n)+
-          '<span class="tgt mono">°C</span></div>'+
-        tmsg("temp-nozzle-"+n)+
-        '<span class="heat"><i data-live="nozzle-heat-'+n+'"></i></span>'+
-        (busy ? loadStrip(action, step) : slotActions())+
-        '</article>';
+      setAttr(card, "data-state", state);
+      var pip = card.querySelector("[data-live-badge]");
+      setAttr(pip, "data-kind", kind);
+      setText(pip, badge);
+      show(card.querySelector('[data-grp="slotact-'+n+'"]'), !busy);
+      setHTML(card.querySelector("[data-live-load]"), busy ? loadStrip(action, step) : "");
     }
-    setHTML(el("toolrail"), html);
   }
 
   /* Chamber, filtration and air quality only exist on the Pro (pid 41). Light, door and
@@ -841,7 +883,7 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
       row("door","Door", '<span data-live="door"></span>') +
       (pro ? row("air","Air quality", '<span data-live="tvoc"></span> <small>TVOC</small>') : "") +
       row("disk","Storage", '<span data-live="disk"></span> <small>GB free</small>');
-    setHTML(el("envRows"), html);
+    setStructure(el("envRows"), html);
   }
 
   /* The MJPEG stream is an ordinary <img>; it is created once and only its
@@ -929,8 +971,21 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
       '<span class="ctlmsg" data-msg="bar"></span>');
   }
 
+  /* No printer in this snapshot - a blip, or the first moments. The panels keep their shape and
+     say they have nothing rather than showing the last reading as though it were current. */
+  function blankLive(){
+    var holes = document.querySelectorAll("[data-live]");
+    for (var i = 0; i < holes.length; i++){
+      var key = holes[i].getAttribute("data-live");
+      if (/-bar$|-heat-/.test(key)){ holes[i].style.width = "0%"; continue; }
+      if (key === "z-value") continue;          // applyControls owns this one
+      setHTML(holes[i], "—");
+    }
+  }
+
   /* Runs after every poll, whether or not anything structural changed. */
   function applyLive(p, raw){
+    if (!p){ blankLive(); return; }
     var t   = p.temperatures || {};
     var bed = t.bed || {}, ch = t.chamber || {};
     var nozzles = t.nozzles || [];
@@ -974,7 +1029,7 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
 
   /* Long enough for the immediate poll the command triggers plus two more at
      the idle cadence, short enough that a control does not sit spinning. */
-  var WAIT_MS = 14000, MSG_MS = 8000, STOP_ARM_MS = 6000;
+  var WAIT_MS = 14000, MSG_MS = 8000, STOP_ARM_MS = 6000, STOP_SAFE_MS = 400;
   var waiting = {}, msgTimers = {}, lastState = null;
 
   function ctlNode(key){ return document.querySelector('[data-ctl="' + key + '"]'); }
@@ -1030,19 +1085,21 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
          slicer polls immediately after a command, so that is usually one beat. */
     }, function(err){
       delete waiting[key];
-      showMsg(msgSlot(key), String((err && err.message) || err));
+      /* A parked page has no one reading it and no printer of its own any more. */
+      if (!suspended) showMsg(msgSlot(key), String((err && err.message) || err));
       repaint();
     });
   }
 
   /* ══ What can act right now ═══════════════════════════════════════════
-     Firmware 1.9.9 answers printerCtl_cmd and circulateCtl_cmd with
-     {"code":0,"message":"Success"} on an idle machine and then changes
-     nothing at all - not the speed, not the Z compensation, not even a
-     chamber fan commanded to 100 %. They are print-time controls, so the
-     page disables them rather than offering a button that can never be
-     confirmed. Light and temperature apply at any time, and are reported
-     back within one poll.                                              */
+     Print speed is the one control with nothing to act on when no job is
+     running, so it is the one that is disabled. Filtration and the Z offset
+     both have real uses on an idle machine - clearing fumes after a print or
+     during a filament purge, and setting an offset before one - so they are
+     offered, attempted, and answered for: if the firmware quietly ignores
+     the command the wait runs out and the page says the printer still
+     reports its previous value. That is a better answer than a button which
+     silently cannot be pressed.                                        */
   var OFF_REASON  = "The printer is not answering, so nothing can be sent to it.";
   var PARKED      = "This printer is not the selected one any more.";
   var SAMPLE_ONLY = "This page was opened outside OrcaSlicer, so there is no printer to talk to.";
@@ -1072,26 +1129,30 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     if (!opts.grouped) setFlag(node, "data-pending", !!w);
   }
 
-  var stopArmed = false, stopTimer = null;
+  var stopArmed = false, stopTimer = null, stopSafeUntil = 0;
   function disarmStop(){
     if (stopTimer){ clearTimeout(stopTimer); stopTimer = null; }
     if (!stopArmed) return;
     stopArmed = false;
     repaint();
   }
+  /* Focus goes to Keep printing, and Yes stays dead for a moment: a button fires on Enter, so
+     arming under a held or doubled Enter must not be able to cancel a print by itself. */
   function armStop(){
-    stopArmed = true;
+    stopArmed     = true;
+    stopSafeUntil = Date.now() + STOP_SAFE_MS;
     if (stopTimer) clearTimeout(stopTimer);
     stopTimer = setTimeout(disarmStop, STOP_ARM_MS);
     repaint();
-    var yes = ctlNode("stop-yes");
-    if (yes) yes.focus();
+    var no = ctlNode("stop-no");
+    if (no) no.focus();
+    setTimeout(function(){ if (stopArmed) repaint(); }, STOP_SAFE_MS + 20);
   }
 
   function applyControls(s){
     if (!s || !ctlNode("light")) return;
     var p = s.printer || {}, raw = p.raw || {};
-    var pro   = num(p.pid) === 41;
+    var pro   = isPro(p);
     var phase = jobPhase(s);
     var busy  = phase !== "none";
     var live_ = !!bridge && !suspended && !!s.connected;
@@ -1100,8 +1161,8 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
 
     setCtl("light", live_, why, expected("light", !!p.light_on));
     if (pro){
-      setCtl("internal", live_ && busy, jobWhy, expected("internal", String(raw.internalFanStatus) === "open"));
-      setCtl("external", live_ && busy, jobWhy, expected("external", String(raw.externalFanStatus) === "open"));
+      setCtl("internal", live_, why, expected("internal", String(raw.internalFanStatus) === "open"));
+      setCtl("external", live_, why, expected("external", String(raw.externalFanStatus) === "open"));
     }
 
     var speed = expected("speed", Math.round(num(raw.printSpeedAdjust)));
@@ -1111,9 +1172,11 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     setFlag(grpNode("speed"), "data-pending", !!waiting.speed);
 
     var z = expected("z", round3(raw.zAxisCompensation));
-    setLive("z-value", zText(z));
-    setCtl("z-down", live_ && busy && z - Z_STEP >= -Z_LIMIT, jobWhy, undefined, { wait: "z", grouped: true });
-    setCtl("z-up",   live_ && busy && z + Z_STEP <=  Z_LIMIT, jobWhy, undefined, { wait: "z", grouped: true });
+    /* Nothing to show an offset for until the printer has reported one. */
+    setLive("z-value", (s.printer || waiting.z) ? zText(z) : "—");
+    var zWhy = "The Z offset has to stay within ±" + Z_LIMIT.toFixed(3) + " mm.";
+    setCtl("z-down", live_ && z - Z_STEP >= -Z_LIMIT, live_ ? zWhy : why, undefined, { wait: "z", grouped: true });
+    setCtl("z-up",   live_ && z + Z_STEP <=  Z_LIMIT, live_ ? zWhy : why, undefined, { wait: "z", grouped: true });
     setFlag(grpNode("z"), "data-pending", !!waiting.z);
 
     setCtl("cool", live_, why);
@@ -1127,8 +1190,10 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     show(grpNode("stop-idle"), !armed);
     show(grpNode("stop-armed"), armed);
     setCtl("stop", live_ && busy, live_ ? NO_JOB : why, undefined, { wait: "job" });
-    setCtl("stop-yes", live_ && busy, why, undefined, { wait: "job" });
-    setCtl("stop-no", true, "");
+    setCtl("stop-yes", live_ && busy && Date.now() >= stopSafeUntil, why, undefined, { wait: "job" });
+    /* Only live while the confirmation is showing, so it is never the one thing on a parked or
+       sample page that answers to a click. */
+    setCtl("stop-no", armed, "");
 
     /* Targets are the one thing this machine will change whatever it is doing. */
     applyTempChip("temp-bed", "bed-target", live_, why);
@@ -1211,7 +1276,7 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     var nozzles = [null, null, null, null];
     for (var i = 0; i < Math.min(count, 4); i++) nozzles[i] = 0;
     var params = { nozzles: nozzles, bed: 0 };
-    var pro = num(p.pid) === 41;
+    var pro = isPro(p);
     if (pro) params.chamber = 0;
 
     /* A chip still waiting on its own target would otherwise sit there and then
@@ -1429,12 +1494,21 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
   });
 
   /* ══ One render pass ══════════════════════════════════════════════════ */
+  /* Which machine this is does not change when the network hiccups. Remembering it keeps the
+     Environment panel's shape - and therefore its markup - stable across a blip, so the rows do
+     not tear down and rebuild empty. */
+  var knownPro = false;
+  function isPro(p){
+    if (num(p.pid) > 0) knownPro = num(p.pid) === 41;
+    return knownPro;
+  }
+
   function render(s){
     lastState = s;
     var p   = s.printer || {};
     var raw = p.raw || {};
     var ms  = raw.matlStationInfo || {};
-    var pro = num(p.pid) === 41;
+    var pro = isPro(p);
     var state = String(p.state || "").toLowerCase();
     var printing = s.connected && (state === "printing" || state === "paused" ||
                                    (state === "heating" && !!p.print_file));
@@ -1443,13 +1517,14 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     renderIdentity(s, p);
     renderBanner(s);
     renderMachine(p, raw, pro);
-    renderTools(p, raw, ms, printing);
+    renderTools(p, raw, ms);
+    applyToolCards(s.printer, raw, ms, printing);
     renderEnvironment(pro);
     renderCamera(s, p, raw, pro, printing);
     renderControls(pro);
     renderJob(s, p, raw, ms, printing);
     renderFiles();
-    if (s.printer) applyLive(p, raw);
+    applyLive(s.printer, raw);
     /* Last, so a control still waiting on the printer keeps showing what was asked
        for rather than the value applyLive just wrote under it. */
     applyControls(s);
