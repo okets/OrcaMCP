@@ -130,23 +130,46 @@ double json_double(const json& obj, const char* key, double fallback)
     return (it != obj.end() && it->is_number()) ? it->get<double>() : fallback;
 }
 
+bool has_number(const json& obj, const char* key)
+{
+    const auto it = obj.find(key);
+    return it != obj.end() && it->is_number();
+}
+
 /// Replaces `value` only when the page actually sent that field: everything else keeps what the
-/// printer currently reports, which is the whole point of reading the snapshot.
-void override_number(const json& params, const char* key, double& value)
+/// printer currently reports, which is the whole point of reading the snapshot. A field that is
+/// present but not a number is refused rather than quietly dropped - silently keeping the current
+/// speed when the caller meant to change it is the kind of near-miss nobody notices.
+bool override_number(const json& params, const char* key, double& value, std::string& error)
 {
     const auto it = params.find(key);
-    if (it != params.end() && it->is_number())
-        value = it->get<double>();
+    if (it == params.end() || it->is_null())
+        return true;
+    if (!it->is_number()) {
+        error = into_u8(wxString::Format(_L("'%s' must be a number."), from_u8(key)));
+        return false;
+    }
+    value = it->get<double>();
+    return true;
 }
 
 /// One half of circulateCtl_cmd: the side being toggled comes from the page, the other from the
 /// printer's own report, so switching the exhaust cannot close the recirculation.
-std::string switch_or_current(const json& params, const json& raw, const char* param_key, const char* raw_key)
+bool read_switch(const json& params, const json& raw, const char* param_key, const char* raw_key,
+                 std::string& out, std::string& error)
 {
     const auto it = params.find(param_key);
-    const std::string value = (it != params.end() && it->is_string()) ? it->get<std::string>()
-                                                                     : raw.value(raw_key, std::string());
-    return value == "open" ? "open" : "close";
+    if (it == params.end() || it->is_null()) {
+        out = raw.value(raw_key, std::string()) == "open" ? "open" : "close";
+        return true;
+    }
+    const std::string value = it->is_string() ? it->get<std::string>() : std::string();
+    if (value != "open" && value != "close") {
+        error = into_u8(wxString::Format(_L("'%s' must be \"open\" or \"close\"."), from_u8(param_key)));
+        return false;
+    }
+    out = value;
+    return true;
 }
 
 /// A temperature the page sent, bounded. Absent or null means "leave this one alone"; 0 means
@@ -521,10 +544,17 @@ private:
         if (kind == "light") {
             ok = host.set_light(operation.value("on", false), msg);
         } else if (kind == "job") {
+            // Explicit, never a ternary's else: an action nobody recognises must not fall through
+            // to cancelling somebody's print.
             const std::string action = operation.value("action", std::string());
-            ok = action == "pause"    ? host.pause_job(msg)
-                 : action == "resume" ? host.resume_job(msg)
-                                      : host.cancel_job(msg);
+            if (action == "pause")
+                ok = host.pause_job(msg);
+            else if (action == "resume")
+                ok = host.resume_job(msg);
+            else if (action == "stop")
+                ok = host.cancel_job(msg);
+            else
+                msg = _L("Unknown job action.");
         } else if (kind == "temperature") {
             std::vector<std::optional<double>> nozzles;
             for (const auto& target : operation["nozzles"])
@@ -641,21 +671,21 @@ bool build_console_operation(const json& params, const json& snapshot, json& ope
     }
 
     if (name == "filtration") {
+        std::string internal, external;
+        if (!read_switch(params, *raw, "internal", "internalFanStatus", internal, error) ||
+            !read_switch(params, *raw, "external", "externalFanStatus", external, error))
+            return false;
         operation = json{{"kind", "control"},
                          {"cmd", "circulateCtl_cmd"},
-                         {"args",
-                          {{"internal", switch_or_current(params, *raw, "internal", "internalFanStatus")},
-                           {"external", switch_or_current(params, *raw, "external", "externalFanStatus")}}}};
+                         {"args", {{"internal", internal}, {"external", external}}}};
         return true;
     }
 
     if (name == "printer_ctl") {
-        double z     = json_double(*raw, "zAxisCompensation", 0);
-        double speed = json_double(*raw, "printSpeedAdjust", 0);
+        double z           = json_double(*raw, "zAxisCompensation", 0);
+        double speed       = json_double(*raw, "printSpeedAdjust", 0);
         double chamber_fan = json_double(*raw, "chamberFanSpeed", 0);
         double cooling_fan = json_double(*raw, "coolingFanSpeed", 0);
-        // The firmware reports no left-fan speed on this machine, and the command wants the field.
-        double cooling_left_fan = json_double(*raw, "coolingLeftFanSpeed", 0);
 
         // An idle printer reports 0 % speed, which is not a speed it would accept back. Carrying it
         // into a Z nudge would ask the machine to stop moving, so an untouched speed reads 100 %.
@@ -663,11 +693,11 @@ bool build_console_operation(const json& params, const json& snapshot, json& ope
             speed = 100;
 
         const bool changing_speed = params.contains("speed");
-        override_number(params, "zAxisCompensation", z);
-        override_number(params, "speed", speed);
-        override_number(params, "chamberFan", chamber_fan);
-        override_number(params, "coolingFan", cooling_fan);
-        override_number(params, "coolingLeftFan", cooling_left_fan);
+        if (!override_number(params, "zAxisCompensation", z, error) ||
+            !override_number(params, "speed", speed, error) ||
+            !override_number(params, "chamberFan", chamber_fan, error) ||
+            !override_number(params, "coolingFan", cooling_fan, error))
+            return false;
 
         if (changing_speed && std::find(std::begin(PRINT_SPEEDS), std::end(PRINT_SPEEDS), speed) == std::end(PRINT_SPEEDS)) {
             error = _u8L("Print speed must be one of 50, 100, 125 or 166 %.");
@@ -678,14 +708,22 @@ bool build_console_operation(const json& params, const json& snapshot, json& ope
             return false;
         }
 
-        operation = json{{"kind", "control"},
-                         {"cmd", "printerCtl_cmd"},
-                         {"args",
-                          {{"zAxisCompensation", z},
-                           {"speed", speed},
-                           {"chamberFan", chamber_fan},
-                           {"coolingFan", cooling_fan},
-                           {"coolingLeftFan", cooling_left_fan}}}};
+        json args = {{"zAxisCompensation", z},
+                     {"speed", speed},
+                     {"chamberFan", chamber_fan},
+                     {"coolingFan", cooling_fan}};
+
+        // Only a machine that reports a left cooling fan is told what to do with one. The Creator 5
+        // reports none; a dual-head Flashforge does, and sending a 0 we invented would stop its
+        // left part cooling in the middle of a print.
+        if (has_number(*raw, "coolingLeftFanSpeed") || params.contains("coolingLeftFan")) {
+            double cooling_left_fan = json_double(*raw, "coolingLeftFanSpeed", 0);
+            if (!override_number(params, "coolingLeftFan", cooling_left_fan, error))
+                return false;
+            args["coolingLeftFan"] = cooling_left_fan;
+        }
+
+        operation = json{{"kind", "control"}, {"cmd", "printerCtl_cmd"}, {"args", std::move(args)}};
         return true;
     }
 

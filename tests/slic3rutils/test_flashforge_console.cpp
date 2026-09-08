@@ -117,7 +117,9 @@ TEST_CASE("Flashforge console commands map onto printer calls", "[flashforge][fl
         CHECK(op["args"]["zAxisCompensation"] == 0.05); // the printer's own value, untouched
         CHECK(op["args"]["chamberFan"] == 30);
         CHECK(op["args"]["coolingFan"] == 70);
-        CHECK(op["args"]["coolingLeftFan"] == 0);
+        // This machine reports no left cooling fan, so it is never told what to do with one:
+        // a 0 we invented would stop the left part cooling on a printer that does have it.
+        CHECK_FALSE(op["args"].contains("coolingLeftFan"));
 
         // Nudging Z leaves the fans alone, and does not send back the 0 % speed an idle printer
         // reports - which the machine would read as "stop moving".
@@ -135,11 +137,32 @@ TEST_CASE("Flashforge console commands map onto printer calls", "[flashforge][fl
         CHECK(build({{"name", "printer_ctl"}, {"zAxisCompensation", 0}}, snapshot, error)["args"]["speed"] == 166);
     }
 
+    SECTION("a machine that does report a left cooling fan keeps its speed")
+    {
+        json snapshot = idle_snapshot();
+        snapshot["printer"]["raw"]["coolingLeftFanSpeed"] = 55;
+
+        const json op = build({{"name", "printer_ctl"}, {"zAxisCompensation", 0.1}}, snapshot, error);
+        CHECK(op["args"]["coolingLeftFan"] == 55);
+        CHECK(op["args"]["coolingFan"] == 70);
+
+        // And it can still be set on purpose.
+        CHECK(build({{"name", "printer_ctl"}, {"coolingLeftFan", 0}}, snapshot, error)["args"]["coolingLeftFan"] == 0);
+    }
+
     SECTION("out-of-range control values are refused before they reach the printer")
     {
         CHECK(build({{"name", "printer_ctl"}, {"speed", 200}}, idle_snapshot(), error).is_null());
         CHECK(error.find("50") != std::string::npos);
         CHECK(build({{"name", "printer_ctl"}, {"zAxisCompensation", 4}}, idle_snapshot(), error).is_null());
+
+        // A field that is present but not a number is a caller bug. Quietly keeping the printer's
+        // current value would look like the command worked.
+        CHECK(build({{"name", "printer_ctl"}, {"speed", "125"}}, idle_snapshot(), error).is_null());
+        CHECK(error.find("speed") != std::string::npos);
+        CHECK(build({{"name", "printer_ctl"}, {"zAxisCompensation", true}}, idle_snapshot(), error).is_null());
+        CHECK(build({{"name", "filtration"}, {"internal", "on"}}, idle_snapshot(), error).is_null());
+        CHECK(build({{"name", "filtration"}, {"external", 1}}, idle_snapshot(), error).is_null());
     }
 
     SECTION("a control that needs the printer's current settings waits for a status")
