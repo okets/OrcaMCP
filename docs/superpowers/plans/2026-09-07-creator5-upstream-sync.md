@@ -1528,6 +1528,8 @@ User rule (2026-09-08): every bug found is fixed, together with related occurren
 
 - [ ] **Item P — auto material mapping ignores colour**: `auto_material_mappings` takes the first free slot of the matching material family (same as the GUI dialog), so with four PLA slots loaded, tool 1 (blue) mapped to slot 1 (magenta). Prefer, within the same material family, the loaded slot whose `materialColor` is closest to the project filament colour (CIE76 via `color_decompose_delta_e`), falling back to first-free when no colours are known; report `color_delta_e` per mapping in the response so an agent can warn on poor matches. Applies to both `print_printer_file` and `send_to_printer` (shared helper).
 
+- [ ] **Item Q — Device tab Play shows Bambu's "update the printer firmware" text for Flashforge**: in `MediaPlayCtrl` (the `LVL_None` early return, ~305-310) show, for printers whose agent has no live view, a neutral message such as "Live view is not available for this printer; open the Device (Web) tab for the camera." Keep Bambu wording unchanged for Bambu printers.
+
 - [ ] **Step: build, run `[flashforge]` tests, regen schema, pytest, live checks per item, commit per item** with messages `fix: <item>`, each ending with the Co-Authored-By trailer.
 
 ---
