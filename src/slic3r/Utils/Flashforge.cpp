@@ -8,6 +8,7 @@
 #include <fstream>
 #include <set>
 #include <map>
+#include <mutex>
 #include <boost/filesystem/path.hpp>
 #include <boost/format.hpp>
 #include <boost/log/trivial.hpp>
@@ -43,6 +44,44 @@ namespace pt = boost::property_tree;
 using json = nlohmann::json;
 
 namespace Slic3r {
+
+namespace {
+
+// The printer reports its own camera address in every status (`cameraStreamUrl`). The Device (Web)
+// tab is built from the preset alone and must not block on the network, so the last address each
+// host reported is remembered here and used in preference to the derived default.
+std::mutex                                  g_camera_url_mutex;
+std::map<std::string, std::string>          g_camera_urls; // print_host -> last reported stream URL
+
+void remember_camera_url(const std::string& host, const std::string& url)
+{
+    if (host.empty() || url.empty())
+        return;
+    std::lock_guard<std::mutex> lock(g_camera_url_mutex);
+    g_camera_urls[host] = url;
+}
+
+std::string recall_camera_url(const std::string& host)
+{
+    std::lock_guard<std::mutex> lock(g_camera_url_mutex);
+    const auto it = g_camera_urls.find(host);
+    return it == g_camera_urls.end() ? std::string() : it->second;
+}
+
+/// `host` without a scheme, path or port - what a new URL has to be built around.
+std::string bare_host(std::string host)
+{
+    boost::trim(host);
+    if (const auto scheme = host.find("://"); scheme != std::string::npos)
+        host = host.substr(scheme + 3);
+    if (const auto slash = host.find('/'); slash != std::string::npos)
+        host = host.substr(0, slash);
+    if (const auto colon = host.rfind(':'); colon != std::string::npos && host.find(':') == colon)
+        host = host.substr(0, colon);
+    return host;
+}
+
+} // namespace
 
 namespace {
 
@@ -572,7 +611,29 @@ bool Flashforge::fetch_status(FlashforgeApi::PrinterStatus& out, wxString& msg) 
         return false;
     }
 
+    remember_camera_url(m_host, out.camera_stream_url);
     return true;
+}
+
+std::string Flashforge::get_print_host_webui(DynamicPrintConfig* config)
+{
+    if (config == nullptr)
+        return {};
+
+    // An explicit web UI is the user's own choice; only fill the gap when there is none.
+    if (!config->opt_string("print_host_webui").empty())
+        return {};
+
+    const std::string host = config->opt_string("print_host");
+    if (host.empty())
+        return {};
+
+    if (const std::string reported = recall_camera_url(host); !reported.empty())
+        return reported;
+
+    // Before the first status poll, the endpoint every Flashforge LAN firmware serves.
+    const std::string name = bare_host(host);
+    return name.empty() ? std::string() : "http://" + name + ":8080/?action=stream";
 }
 
 bool Flashforge::send_control(const std::string& cmd, const nlohmann::json& args, wxString& msg) const

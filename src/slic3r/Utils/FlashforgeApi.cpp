@@ -313,8 +313,12 @@ nlohmann::json flashforge_status_to_bambu_payload(const PrinterStatus& status)
     print["lights_report"] = nlohmann::json::array({
         nlohmann::json{{"node", "chamber_light"}, {"mode", status.light_on ? "on" : "off"}}});
 
-    if (!status.camera_stream_url.empty())
-        print["ipcam"] = nlohmann::json{{"rtsp_url", status.camera_stream_url}};
+    // No `ipcam`, deliberately. MachineObject reads `ipcam.rtsp_url` as a Bambu liveview address
+    // (DeviceManager.cpp:3849-3852) and arms MediaPlayCtrl's BambuSource player with
+    // "bambu:///rtsp___<user>:<code>@<ip>/streaming/live/1" (MediaPlayCtrl.cpp:280-284). Flashforge
+    // serves an HTTP MJPEG stream, not RTSP, so that player has nothing to open - it aborted the app
+    // when the Play button was pressed. The camera reaches the user through the Device (Web) tab
+    // instead; see Flashforge::get_print_host_webui.
 
     return nlohmann::json{{"print", std::move(print)}};
 }

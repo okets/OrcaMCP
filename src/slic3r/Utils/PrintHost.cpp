@@ -92,6 +92,12 @@ std::string PrintHost::get_print_host_webui(DynamicPrintConfig* config)
         webui_url = ElegooLink::get_print_host_webui(config);
         break;
     }
+    case htFlashforge: {
+        // No web UI on the printer, but it does serve a live MJPEG camera stream - which is the one
+        // thing the native Device tab cannot show, since its player only speaks Bambu's RTSP tunnel.
+        webui_url = Flashforge::get_print_host_webui(config);
+        break;
+    }
     default: break;
     }
 

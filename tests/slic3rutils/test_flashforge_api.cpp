@@ -127,7 +127,9 @@ TEST_CASE("flashforge_status_to_bambu_payload maps the whole Creator 5 Pro detai
     CHECK(p["lights_report"][0]["node"] == "chamber_light");
     CHECK(p["lights_report"][0]["mode"] == "on");
 
-    CHECK(p["ipcam"]["rtsp_url"] == "http://192.168.1.50:8080/?action=stream");
+    // Never an `ipcam` block, even though this fixture has a camera URL: it would arm the Bambu
+    // RTSP player against an HTTP MJPEG stream. The camera is exposed through the Device (Web) tab.
+    CHECK_FALSE(p.contains("ipcam"));
 }
 
 TEST_CASE("flashforge_status_to_bambu_payload picks the first heated nozzle", "[flashforge]") {
@@ -164,7 +166,7 @@ TEST_CASE("flashforge_status_to_bambu_payload forwards numeric error codes only"
 TEST_CASE("flashforge_status_to_bambu_payload omits absent optional fields", "[flashforge]") {
     PrinterStatus s = make_status("ready");
     const auto p = flashforge_status_to_bambu_payload(s)["print"];
-    CHECK_FALSE(p.contains("ipcam"));       // no camera_stream_url
+    CHECK_FALSE(p.contains("ipcam"));       // never emitted, with or without a camera URL
     CHECK_FALSE(p.contains("subtask_name"));// no print_file
     CHECK(p["mc_remaining_time"] == 0);
     CHECK(p["lights_report"][0]["mode"] == "off");
