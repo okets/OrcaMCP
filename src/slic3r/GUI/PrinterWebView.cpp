@@ -212,6 +212,12 @@ void PrinterWebView::reload()
     m_browser->Reload();
 }
 
+void PrinterWebView::suspend()
+{
+    if (m_handler != nullptr)
+        m_handler->on_suspended();
+}
+
 void PrinterWebView::update_mode()
 {
     m_browser->EnableAccessToDevTools(wxGetApp().app_config->get_bool("developer_mode"));
@@ -304,9 +310,9 @@ void PrinterWebView::OnLoaded(wxWebViewEvent& evt)
     if (evt.GetURL().IsEmpty())
         return;
     //ORCA: url loaded successfully, safe to clear.
-    // Not for about:blank though: that is the page every web view starts on, and it finishes after
-    // a load_url made while the panel was hidden - which would drop a URL nobody has shown yet.
-    if (evt.GetURL() != "about:blank")
+    // Not for an about: page though: about:blank is what every web view starts on, and it finishes
+    // after a load_url made while the panel was hidden - which would drop a URL nobody has shown yet.
+    if (!evt.GetURL().StartsWith("about:"))
         m_url_deferred.clear();
     SendAPIKey();
   

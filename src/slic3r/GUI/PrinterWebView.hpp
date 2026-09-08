@@ -51,6 +51,8 @@ public:
     void OnScriptMessage(wxWebViewEvent& evt);
     void reload();
     void update_mode();
+    /// Called when the page is taken off the tab bar, so its handler can stop background work.
+    void suspend();
 
     bool Show(bool show = true) override;
 

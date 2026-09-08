@@ -36,6 +36,10 @@ void PrinterWebViewHandler::on_script_message(wxWebViewEvent &evt)
 {
 }
 
+void PrinterWebViewHandler::on_suspended()
+{
+}
+
 PrinterWebView& PrinterWebViewHandler::owner() const
 {
     return m_owner;

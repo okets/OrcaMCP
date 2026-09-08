@@ -1401,18 +1401,13 @@ void MainFrame::show_device(bool should_use_native) {
     // instead; every other printer keeps MonitorPanel exactly as before.
     const bool use_flashforge_console = printer_uses_flashforge_console();
 
-    // The web Device page is the extra tab printer-agents mode shows alongside the native one.
-    // Printers that drive the native Bambu device tab have nothing to put in it, so they don't
-    // get it — otherwise a Bambu user sees two Device tabs, one of them permanently empty.
-    const bool want_web_device_tab = use_printer_agents && wxGetApp().preset_bundle != nullptr &&
-                                     !wxGetApp().preset_bundle->use_bbl_device_tab();
-
-    // Remove the extra page before switching to any layout that shouldn't have it.
-    if (!want_web_device_tab) {
-        if ((idx = m_tabpanel->FindPageByName(TAB_ID_MONITOR_WEB)) != wxNOT_FOUND) {
+    // There is no second "Device (Web)" tab any more: the console shows the printer's camera
+    // inline, so the extra tab was the same stream with nothing around it. Older sessions can still
+    // have it on the tab bar, so it is taken off wherever it is found.
+    if ((idx = m_tabpanel->FindPageByName(TAB_ID_MONITOR_WEB)) != wxNOT_FOUND) {
+        if (m_printer_view != nullptr)
             m_printer_view->Show(false);
-            m_tabpanel->RemovePage(idx);
-        }
+        m_tabpanel->RemovePage(idx);
     }
 
     if (use_printer_agents) {
@@ -1432,28 +1427,20 @@ void MainFrame::show_device(bool should_use_native) {
         wxWindow* stale_page = use_flashforge_console ? static_cast<wxWindow*>(m_monitor)
                                                       : static_cast<wxWindow*>(m_flashforge_view);
         if (stale_page != nullptr && (idx = m_tabpanel->FindPage(stale_page)) != wxNOT_FOUND) {
+            if (stale_page == m_flashforge_view)
+                m_flashforge_view->suspend(); // stop polling a printer that is no longer selected
             stale_page->Show(false);
             m_tabpanel->RemovePage(idx);
         }
 
         if (m_tabpanel->FindPage(device_page) == wxNOT_FOUND) {
-            if ((idx = m_tabpanel->FindPage(m_printer_view)) != wxNOT_FOUND) {
+            if (m_printer_view != nullptr && (idx = m_tabpanel->FindPage(m_printer_view)) != wxNOT_FOUND) {
                 m_printer_view->Show(false);
                 m_tabpanel->RemovePage(idx);
             }
             device_page->Show(false);
             m_tabpanel->InsertPage(m_tabpanel->PositionAfter({TAB_ID_PREVIEW}), TAB_ID_MONITOR, device_page,
                                    _L("Device"), "tab_monitor_active");
-        }
-
-        if (m_printer_view == nullptr) {
-            m_printer_view = new PrinterWebView(m_tabpanel);
-            Bind(EVT_LOAD_PRINTER_URL, [this](LoadPrinterViewEvent& evt) {
-                wxString url = evt.GetString();
-                wxString key = evt.GetAPIkey();
-                // select_tab(MainFrame::tpMonitor);
-                m_printer_view->load_url(url, key);
-            });
         }
 
         if (wxGetApp().is_enable_multi_machine()) {
@@ -1464,9 +1451,7 @@ void MainFrame::show_device(bool should_use_native) {
             // TODO: change the bitmap
             if (m_tabpanel->FindPage(m_multi_machine) == wxNOT_FOUND) {
                 m_multi_machine->Show(false);
-                // Past the web Device tab when it is already there, so enabling multi-machine
-                // later can't wedge this page between the two Device tabs.
-                m_tabpanel->InsertPage(m_tabpanel->PositionAfter({TAB_ID_MONITOR_WEB, TAB_ID_MONITOR}),
+                m_tabpanel->InsertPage(m_tabpanel->PositionAfter({TAB_ID_MONITOR}),
                                        TAB_ID_MULTI_DEVICE, m_multi_machine, _L("Multi-device"), "tab_multi_active");
             }
         }
@@ -1478,17 +1463,6 @@ void MainFrame::show_device(bool should_use_native) {
             m_calibration->Show(false);
             m_tabpanel->InsertPage(m_tabpanel->PositionAfter({TAB_ID_PROJECT}), TAB_ID_CALIBRATION, m_calibration,
                                    _L("Calibration"), "tab_calibration_active");
-        }
-
-        if (want_web_device_tab) {
-            if ((idx = m_tabpanel->FindPage(m_printer_view)) == wxNOT_FOUND) {
-                m_printer_view->Show(false);
-                // Immediately right of the native Device tab, not at the end of the tab bar.
-                m_tabpanel->InsertPage(m_tabpanel->PositionAfter({TAB_ID_MONITOR}), TAB_ID_MONITOR_WEB,
-                                       m_printer_view, _L("Device (Web)"), "tab_monitor_active");
-            } else {
-                m_tabpanel->SetPageText(idx, _L("Device (Web)"));
-            }
         }
 
 #ifdef _MSW_DARK_MODE
@@ -1512,6 +1486,7 @@ void MainFrame::show_device(bool should_use_native) {
             m_tabpanel->RemovePage(idx);
         }
         if (m_flashforge_view != nullptr && (idx = m_tabpanel->FindPage(m_flashforge_view)) != wxNOT_FOUND) {
+            m_flashforge_view->suspend();
             m_flashforge_view->Show(false);
             m_tabpanel->RemovePage(idx);
         }
@@ -1559,6 +1534,8 @@ void MainFrame::show_device(bool should_use_native) {
         wxWindow* stale_page = use_flashforge_console ? static_cast<wxWindow*>(m_printer_view)
                                                       : static_cast<wxWindow*>(m_flashforge_view);
         if (stale_page != nullptr && (idx = m_tabpanel->FindPage(stale_page)) != wxNOT_FOUND) {
+            if (stale_page == m_flashforge_view)
+                m_flashforge_view->suspend();
             stale_page->Show(false);
             m_tabpanel->RemovePage(idx);
         }

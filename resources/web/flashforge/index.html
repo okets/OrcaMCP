@@ -1,7 +1,37 @@
 <meta charset="utf-8">
 <title>Creator 5 Console</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
 <style>
+/* ── Typography ─────────────────────────────────────────────────────────
+   The faces the design asks for, served from next to this file. A page
+   that has to work on an isolated printer LAN cannot block its first
+   paint on fonts.googleapis.com - and should not announce the slicer's
+   version and theme to it either. Bricolage and Plex Sans are the
+   variable cuts, so one file covers every weight the page uses.     */
+@font-face{font-family:'Bricolage Grotesque';font-style:normal;font-weight:400 800;font-display:swap;
+  src:url(fonts/bricolage-400-800-latin-ext.woff2) format('woff2');
+  unicode-range:U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF}
+@font-face{font-family:'Bricolage Grotesque';font-style:normal;font-weight:400 800;font-display:swap;
+  src:url(fonts/bricolage-400-800-latin.woff2) format('woff2');
+  unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD}
+@font-face{font-family:'IBM Plex Mono';font-style:normal;font-weight:400;font-display:swap;
+  src:url(fonts/plex-mono-400-latin-ext.woff2) format('woff2');
+  unicode-range:U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF}
+@font-face{font-family:'IBM Plex Mono';font-style:normal;font-weight:400;font-display:swap;
+  src:url(fonts/plex-mono-400-latin.woff2) format('woff2');
+  unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD}
+@font-face{font-family:'IBM Plex Mono';font-style:normal;font-weight:500;font-display:swap;
+  src:url(fonts/plex-mono-500-latin-ext.woff2) format('woff2');
+  unicode-range:U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF}
+@font-face{font-family:'IBM Plex Mono';font-style:normal;font-weight:500;font-display:swap;
+  src:url(fonts/plex-mono-500-latin.woff2) format('woff2');
+  unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD}
+@font-face{font-family:'IBM Plex Sans';font-style:normal;font-weight:100 700;font-display:swap;
+  src:url(fonts/plex-sans-400-latin-ext.woff2) format('woff2');
+  unicode-range:U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF}
+@font-face{font-family:'IBM Plex Sans';font-style:normal;font-weight:100 700;font-display:swap;
+  src:url(fonts/plex-sans-400-latin.woff2) format('woff2');
+  unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD}
+
 /* ── Tokens ─────────────────────────────────────────────────────────────
    Dark is this design's home: an instrument panel in slate ink and brass.
    Light is a full, deliberate counterpart, not an inversion.            */
@@ -444,12 +474,44 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
   function setHTML(node, html){ if (node && node.__h !== html){ node.__h = html; node.innerHTML = html; } }
   function setText(node, text){ if (node && node.textContent !== text) node.textContent = text; }
   function show(node, on){ if (node) node.hidden = !on; }
+  /* Anything that changes every poll is a [data-live] hole in otherwise static
+     markup, filled by applyLive(). Rebuilding the rail once a second instead
+     would snap every CSS transition and tear the element out from under a
+     hovering pointer - which is how the disabled controls explain themselves. */
+  function live(key){ return document.querySelector('[data-live="' + key + '"]'); }
+  function setLive(key, text){ setText(live(key), text); }
+  function setLiveWidth(key, fraction){
+    var n = live(key);
+    if (!n) return;
+    var w = Math.round(Math.max(0, Math.min(1, fraction)) * 100) + "%";
+    if (n.style.width !== w) n.style.width = w;
+  }
+  function setLiveTarget(key, value){
+    var n = live(key);
+    if (!n) return;
+    var v = Math.round(num(value));
+    setText(n, String(v));
+    var btn = n.parentNode;
+    if (btn && btn.getAttribute("data-live-label"))
+      btn.setAttribute("aria-label", btn.getAttribute("data-live-label") + ", currently " +
+                       (v ? v + " degrees" : "off"));
+  }
   function esc(s){
     return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){
       return { "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c];
     });
   }
-  function num(v, d){ return (typeof v === "number" && isFinite(v)) ? v : (d === undefined ? 0 : d); }
+  /* The printer is loose about types - an int here, a numeric string there - so
+     this accepts what the C++ side accepts rather than silently reading 0. */
+  function num(v, d){
+    if (typeof v === "number" && isFinite(v)) return v;
+    if (typeof v === "boolean") return v ? 1 : 0;
+    if (typeof v === "string" && v !== ""){
+      var n = Number(v);
+      if (isFinite(n)) return n;
+    }
+    return d === undefined ? 0 : d;
+  }
   function t1(v){ return num(v).toFixed(1); }
   function pick(o, k, d){ return (o && o[k] !== undefined && o[k] !== null) ? o[k] : d; }
   function isHex(c){ return typeof c === "string" && /^#?[0-9A-Fa-f]{6}$/.test(c); }
@@ -495,10 +557,11 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     '<path d="M9.5 4 12 6.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
   var SOON = "Controls arrive in the next increment; this page is read-only for now.";
 
-  /* A target the user cannot type into yet, but can see. */
-  function tset(v, label){
-    return '<button class="tset" type="button" disabled title="'+esc(SOON)+'" aria-label="'+esc(label)+', currently '+
-      (num(v) ? num(v)+" degrees" : "off")+'"><span class="tval">'+Math.round(num(v))+'</span>'+PENCIL+'</button>';
+  /* A target the user cannot type into yet, but can see. The value itself is a
+     live hole, so a changing target never rebuilds the button under the cursor. */
+  function tset(label, key){
+    return '<button class="tset" type="button" disabled title="'+esc(SOON)+'" data-live-label="'+esc(label)+'">'+
+      '<span class="tval" data-live="'+key+'"></span>'+PENCIL+'</button>';
   }
 
   function slotActions(){
@@ -621,6 +684,10 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     }
     specs.push([pro ? "Chamber" : "Enclosure", pro ? "Heated" : "None"]);
     if (raw.location) specs.push(["Location", String(raw.location)]);
+    // The firmware documents no units for these two. Minutes and metres are the
+    // only self-consistent reading of what a real machine reports (1270 and 45.3
+    // on a printer with ~21 h on it); hours would put 45 m of filament across 53
+    // days of printing, and seconds would put it across 21 minutes.
     if (raw.cumulativePrintTime !== undefined) specs.push(["Lifetime", durMinutes(raw.cumulativePrintTime)]);
     if (raw.cumulativeFilament !== undefined) specs.push(["Filament used", num(raw.cumulativeFilament).toFixed(1) + " m"]);
     setHTML(el("machineSpecs"), specs.map(function(r){
@@ -682,17 +749,17 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
         ? "The printer has not reported a material or colour for this slot yet. Edit slot will set it."
         : "";
 
-      html += '<article class="tool" data-state="'+state+'" style="--fil:'+(col || "var(--muted)")+'">'+
+      html += '<article class="tool" data-tool="'+n+'" data-state="'+state+'" style="--fil:'+(col || "var(--muted)")+'">'+
         '<span class="fiber"></span>'+
         '<div class="tool-head"><span class="tool-id"><b>Tool '+n+'</b><span>slot '+id+'</span></span>'+
           '<span class="badge" data-kind="'+kind+'">'+esc(badge)+'</span></div>'+
         '<div class="tool-body">'+spoolSVG(n, col, on)+
           '<span class="tool-fil"><span class="name">'+esc(name)+'</span>'+
           '<span class="meta mono"'+(tip ? ' title="'+esc(tip)+'"' : '')+'>'+esc(meta)+'</span></span></div>'+
-        '<div class="tool-temp"><span class="now">'+t1(nz.current)+'</span>'+
-          '<span class="tgt mono">°C / </span>'+tset(nz.target, "Tool "+n+" target")+
+        '<div class="tool-temp"><span class="now" data-live="nozzle-now-'+n+'"></span>'+
+          '<span class="tgt mono">°C / </span>'+tset("Tool "+n+" target", "nozzle-target-"+n)+
           '<span class="tgt mono">°C</span></div>'+
-        '<span class="heat"><i style="width:'+Math.round(ratio(nz.current, nz.target)*100)+'%"></i></span>'+
+        '<span class="heat"><i data-live="nozzle-heat-'+n+'"></i></span>'+
         (busy ? loadStrip(action, step) : slotActions())+
         '</article>';
     }
@@ -711,18 +778,18 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
               : door ? '<span class="state-good">Closed</span>' : "—";
 
     var html =
-      row("bed","Bed",'<span class="bar"><i style="width:'+Math.round(ratio(bed.current,bed.target)*100)+'%"></i></span>'+
-          '<b>'+t1(bed.current)+'</b> <small>/ </small>'+tset(bed.target,"Bed target")+'<small> °C</small>') +
-      (pro ? row("chamber","Chamber",'<span class="bar"><i style="width:'+Math.round(ratio(ch.current,ch.target)*100)+'%"></i></span>'+
-          '<b>'+t1(ch.current)+'</b> <small>/ </small>'+tset(ch.target,"Chamber target")+'<small> °C</small>') : "") +
-      row("fan","Part cooling", Math.round(num(raw.coolingFanSpeed)) + ' <small>%</small>') +
+      row("bed","Bed",'<span class="bar"><i data-live="bed-bar"></i></span>'+
+          '<b data-live="bed-now"></b> <small>/ </small>'+tset("Bed target","bed-target")+'<small> °C</small>') +
+      (pro ? row("chamber","Chamber",'<span class="bar"><i data-live="chamber-bar"></i></span>'+
+          '<b data-live="chamber-now"></b> <small>/ </small>'+tset("Chamber target","chamber-target")+'<small> °C</small>') : "") +
+      row("fan","Part cooling", '<span data-live="fan"></span> <small>%</small>') +
       (pro ? row("filter","Filtration", fans.length
-          ? '<span class="state-good">'+fans.join(" + ")+'</span>'
+          ? '<span class="state-good">'+esc(fans.join(" + "))+'</span>'
           : '<span>Off</span>') : "") +
       row("bulb","Light", p.light_on ? '<span class="state-good">On</span>' : '<span>Off</span>') +
       row("door","Door", doorV) +
-      (pro ? row("air","Air quality", num(raw.tvoc).toFixed(2) + ' <small>TVOC</small>') : "") +
-      row("disk","Storage", num(raw.remainingDiskSpace).toFixed(2) + ' <small>GB free</small>');
+      (pro ? row("air","Air quality", '<span data-live="tvoc"></span> <small>TVOC</small>') : "") +
+      row("disk","Storage", '<span data-live="disk"></span> <small>GB free</small>');
     setHTML(el("envRows"), html);
   }
 
@@ -798,6 +865,31 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
           '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">'+
           '<rect x="3.5" y="3.5" width="9" height="9" rx="1.6" fill="currentColor"/></svg>Stop</button>'+
       '</div>');
+  }
+
+  /* Runs after every poll, whether or not anything structural changed. */
+  function applyLive(p, raw){
+    var t   = p.temperatures || {};
+    var bed = t.bed || {}, ch = t.chamber || {};
+    var nozzles = t.nozzles || [];
+
+    for (var i = 0; i < nozzles.length; i++){
+      var nz = nozzles[i] || {};
+      setLive("nozzle-now-" + (i + 1), t1(nz.current));
+      setLiveTarget("nozzle-target-" + (i + 1), nz.target);
+      setLiveWidth("nozzle-heat-" + (i + 1), ratio(nz.current, nz.target));
+    }
+
+    setLive("bed-now", t1(bed.current));
+    setLiveTarget("bed-target", bed.target);
+    setLiveWidth("bed-bar", ratio(bed.current, bed.target));
+    setLive("chamber-now", t1(ch.current));
+    setLiveTarget("chamber-target", ch.target);
+    setLiveWidth("chamber-bar", ratio(ch.current, ch.target));
+
+    setLive("fan",  String(Math.round(num(raw.coolingFanSpeed))));
+    setLive("tvoc", num(raw.tvoc).toFixed(2));
+    setLive("disk", num(raw.remainingDiskSpace).toFixed(2));
   }
 
   function stat(label, value){ return '<div class="stat"><dt>'+esc(label)+'</dt><dd>'+esc(value)+'</dd></div>'; }
@@ -918,11 +1010,38 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     renderControls(p, raw, pro);
     renderJob(s, p, raw, ms, printing);
     renderFiles();
+    if (s.printer) applyLive(p, raw);
     renderFoot(s);
-    if (s.printer) document.body.setAttribute("data-ready", "1");
+
+    // data-ready freezes the tool cards' staggered entrance. Setting it in the
+    // same frame as the first paint cancels the animation before it runs, so it
+    // waits for the last card's delay + duration to elapse.
+    if (s.printer && !document.body.getAttribute("data-ready") && !markingReady){
+      markingReady = true;
+      setTimeout(function(){ document.body.setAttribute("data-ready", "1"); }, 900);
+    }
   }
 
-  function onStatus(s){ render(s || { connected:false, error:"Empty status" }); }
+  var markingReady = false;
+
+  /* ══ Watchdog ═════════════════════════════════════════════════════════
+     The slicer's poller can stop without the page knowing - the printer was
+     deselected, or it never started because the preset had no host yet. One
+     `status` restarts it, so the page asks again whenever the pushes go quiet
+     for three cadences. Recovery never needs a restart of anything.      */
+  var lastStatusAt = Date.now(), lastPollMs = 5000;
+
+  function onStatus(s){
+    lastStatusAt = Date.now();
+    lastPollMs   = num((s && s.poll_ms), 5000);
+    render(s || { connected:false, error:"Empty status" });
+  }
+
+  setInterval(function(){
+    if (!bridge) return;
+    if (Date.now() - lastStatusAt > Math.max(8000, lastPollMs * 3))
+      bridge.call("status").then(onStatus, function(){ /* the next tick tries again */ });
+  }, 2000);
 
   /* ══ Start ════════════════════════════════════════════════════════════
      window.wx is installed by the host just after the web view is created,

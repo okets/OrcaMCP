@@ -3478,9 +3478,10 @@ void Sidebar::update_all_preset_comboboxes()
                                  : MainFrame::PrintSelectType::eSendGcode;
         }
 
-        if (use_printer_agents)
-            p_mainframe->load_printer_url();
-        else if (!use_native_device_tab)
+        // Only the legacy web Device tab shows a printer page. Printer-agents mode has the native
+        // tab (our own console, for Flashforge) and no second web tab since it was removed, so there
+        // is nothing there to point at a URL.
+        if (!use_native_device_tab)
             p_mainframe->load_printer_url(url, apikey);
 
 
@@ -12827,9 +12828,8 @@ void Plater::priv::on_tab_selection_changing(wxBookCtrlEvent& e)
             }
         }
     } else {
-        // Pointer test, not a name lookup: in printer-agents mode this page is TAB_ID_MONITOR_WEB
-        // while the native Device tab holds TAB_ID_MONITOR, and in legacy-web mode it holds
-        // TAB_ID_MONITOR itself.
+        // Pointer test, not a name lookup: the web view holds TAB_ID_MONITOR in legacy-web mode,
+        // and in printer-agents mode it is not on the tab bar at all.
         const bool selecting_web_device_tab = main_frame->m_printer_view &&
             main_frame->m_tabpanel->GetPage(new_sel) == main_frame->m_printer_view;
         if (selecting_web_device_tab) {

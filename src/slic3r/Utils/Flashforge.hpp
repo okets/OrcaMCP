@@ -49,10 +49,6 @@ public:
     std::string                get_host() const override { return m_host; }
     bool                       fetch_material_slots(std::vector<FlashforgeMaterialSlot>& slots, bool* supports_material_station, wxString& msg) const;
     static bool                discover_printers(std::vector<FlashforgeDiscoveredPrinter>& printers, wxString& msg, int timeout_ms = 10000, int idle_timeout_ms = 1500, int max_retries = 3);
-    /// The page the Device (Web) tab should show for a Flashforge printer: its live MJPEG camera
-    /// stream, which WebKit renders natively. Empty when the preset already names a `print_host_webui`
-    /// (the user's choice wins) or has no host at all. See PrintHost::get_print_host_webui.
-    static std::string         get_print_host_webui(DynamicPrintConfig* config);
 
     // Local API status and control. All are safe to call off the main thread; all return false and fill `msg` on failure.
     bool has_local_api_credentials() const { return !m_serial_number.empty() && !m_check_code.empty(); }
