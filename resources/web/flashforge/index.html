@@ -289,12 +289,29 @@ footer.foot .sep{width:1px;height:12px;background:var(--edge)}
 .viewport img.cam{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;background:#0a0d12}
 .camoff{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:18px;
   color:#8A94A4;font-size:12px;line-height:1.6}
-/* Every control on this page is inert until the controls increment lands;
-   the affordance stays visible so the layout is the finished one.      */
+/* A control the machine cannot act on right now keeps its place and says why on hover. */
 button:disabled,.tset:disabled{opacity:.45;cursor:not-allowed}
 button:disabled:hover,.tset:disabled:hover{border-color:var(--edge);color:inherit;background:var(--ground-2)}
 .tset:disabled:hover{background:var(--glass)}
 .slotbtn:disabled:hover{border-color:var(--edge);color:var(--muted)}
+
+/* ── Pending, and what went wrong ────────────────────────────────────
+   A control never shows a state the printer has not confirmed. Pressing
+   one dims it and lets it breathe until the next status either agrees or
+   the printer explains itself - inline, next to the control, never in a
+   dialog. Opacity and border only, so nothing moves as it settles.   */
+[data-pending="1"],button[data-pending="1"]{opacity:.62;cursor:progress;border-color:var(--brass);
+  animation:pulse 1.15s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:.55}50%{opacity:.92}}
+.ctlmsg{display:block;margin-top:5px;font-size:11px;line-height:1.4;color:var(--warn);
+  white-space:normal;max-width:26em;font-weight:400}
+.ctlmsg:empty{display:none}
+.controlbar .ctlmsg{flex-basis:100%;margin:0}
+.tset-edit{width:62px;font:inherit;font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;
+  font-size:12px;color:var(--text);background:var(--panel);border:1px solid var(--brass);border-radius:6px;
+  padding:1px 5px;outline:none;vertical-align:baseline;-webkit-appearance:none}
+/* Stopping a print is destructive, so it takes a second, deliberate click. */
+.confirm{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--crit)}
 /* The entry animation belongs to the first paint, not to every poll. */
 body[data-ready="1"] .tool{animation:none;opacity:1;transform:none}
 body[data-ready="1"] .tool[data-state="idle"]{opacity:.72}
@@ -370,7 +387,7 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
       <div class="camfoot">
         <span class="file" id="camFile"></span>
         <span class="badge" data-kind="standby" id="camBadge" hidden></span>
-        <button class="mini" type="button" disabled>Time-lapse</button>
+        <button class="mini" type="button" disabled id="timelapseBtn">Time-lapse</button>
       </div>
       <div class="controlbar" id="controlbar"></div>
     </div>
@@ -425,7 +442,14 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     /* The host parks this page when its printer stops being the selected one.
        Asking again would restart exactly the polling it just stopped, so the
        page goes quiet until it is told otherwise. */
-    if (msg.method === "suspended"){ suspended = true;  return; }
+    if (msg.method === "suspended"){
+      /* Parked: no poll is coming, so nothing would ever confirm a pending control. */
+      suspended = true;
+      waiting   = {};
+      disarmStop();
+      repaint();
+      return;
+    }
     if (msg.method === "resumed"){
       suspended    = false;
       lastStatusAt = Date.now();
@@ -549,6 +573,21 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
   }
   function ratio(now, target){ return num(target) > 0 ? Math.max(0, Math.min(1, num(now)/num(target))) : 0; }
+  function round3(v){ return Math.round(num(v) * 1000) / 1000; }
+  function zText(v){ return (num(v) >= 0 ? "+" : "−") + Math.abs(num(v)).toFixed(3) + " mm"; }
+  function assign(target, extra){
+    for (var k in extra) if (extra.hasOwnProperty(k)) target[k] = extra[k];
+    return target;
+  }
+  function setLiveHTML(key, html){ setHTML(live(key), html); }
+  function setAttr(node, name, value){
+    if (node && node.getAttribute(name) !== value) node.setAttribute(name, value);
+  }
+  function setFlag(node, name, on){
+    if (!node) return;
+    if (on) setAttr(node, name, "1");
+    else if (node.hasAttribute(name)) node.removeAttribute(name);
+  }
 
   /* ══ Vocabulary the printer speaks ═══════════════════════════════════
      stateStep / stateAction come straight from matlStationInfo; the
@@ -567,19 +606,24 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
   var PENCIL = '<svg class="pencil" width="10" height="10" viewBox="0 0 16 16" fill="none" aria-hidden="true">'+
     '<path d="M10.8 2.7 13.3 5.2 5.7 12.8 2.7 13.3 3.2 10.3 10.8 2.7Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>'+
     '<path d="M9.5 4 12 6.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
-  var SOON = "Controls arrive in the next increment; this page is read-only for now.";
+  /* Two things the printer's local API has no command for. They keep their place in the
+     design - the machine can do both, just not from here - and say so on hover. */
+  var NO_SLOT_CMD = "Material slots are named and coloured at the printer; its local API has no command for it.";
+  var NO_TIMELAPSE = "Time-lapse is chosen when a job is sent to the printer, not from here.";
 
-  /* A target the user cannot type into yet, but can see. The value itself is a
-     live hole, so a changing target never rebuilds the button under the cursor. */
-  function tset(label, key){
-    return '<button class="tset" type="button" disabled title="'+esc(SOON)+'" data-live-label="'+esc(label)+'">'+
+  /* A target you can type into. The value is a live hole so a drifting target never
+     rebuilds the button under the cursor, and data-ctl is what makes it clickable. */
+  function tset(label, key, ctl){
+    return '<button class="tset" type="button" data-ctl="'+esc(ctl)+'" data-live-label="'+esc(label)+'">'+
       '<span class="tval" data-live="'+key+'"></span>'+PENCIL+'</button>';
   }
+  /* Where a refusal about that chip appears: its own line, directly under the control. */
+  function tmsg(ctl){ return '<span class="ctlmsg" data-msg="'+esc(ctl)+'"></span>'; }
 
   function slotActions(){
     return '<div class="slotact">'+
-      '<button class="slotbtn" type="button" disabled title="'+esc(SOON)+'">'+PENCIL+'Edit slot</button>'+
-      '<button class="slotbtn" type="button" disabled title="'+esc(SOON)+'">'+
+      '<button class="slotbtn" type="button" disabled title="'+esc(NO_SLOT_CMD)+'">'+PENCIL+'Edit slot</button>'+
+      '<button class="slotbtn" type="button" disabled title="'+esc(NO_SLOT_CMD)+'">'+
         '<svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true">'+
         '<circle cx="8" cy="8" r="5.6" stroke="currentColor" stroke-width="1.3"/>'+
         '<path d="M8 7.2v3.4M8 5.2v.9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>'+
@@ -636,8 +680,8 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     recirc:'<path d="M3.2 8a4.8 4.8 0 0 1 8.2-3.4M12.8 8a4.8 4.8 0 0 1-8.2 3.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M11.4 2.2v2.6H8.8M4.6 13.8v-2.6h2.6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>',
     exhaust:'<path d="M8 12.8V3.6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M4.8 6.6 8 3.2l3.2 3.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M3.4 13.4h9.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>'
   };
-  function toggle(icon, label, on){
-    return '<button class="toggle" type="button" disabled title="'+esc(SOON)+'" aria-pressed="'+(on?"true":"false")+'">'+
+  function toggle(icon, label, ctl){
+    return '<button class="toggle" type="button" data-ctl="'+esc(ctl)+'" aria-pressed="false">'+
       '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">'+CBI[icon]+'</svg>'+esc(label)+'</button>';
   }
 
@@ -769,8 +813,9 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
           '<span class="tool-fil"><span class="name">'+esc(name)+'</span>'+
           '<span class="meta mono"'+(tip ? ' title="'+esc(tip)+'"' : '')+'>'+esc(meta)+'</span></span></div>'+
         '<div class="tool-temp"><span class="now" data-live="nozzle-now-'+n+'"></span>'+
-          '<span class="tgt mono">°C / </span>'+tset("Tool "+n+" target", "nozzle-target-"+n)+
+          '<span class="tgt mono">°C / </span>'+tset("Tool "+n+" target", "nozzle-target-"+n, "temp-nozzle-"+n)+
           '<span class="tgt mono">°C</span></div>'+
+        tmsg("temp-nozzle-"+n)+
         '<span class="heat"><i data-live="nozzle-heat-'+n+'"></i></span>'+
         (busy ? loadStrip(action, step) : slotActions())+
         '</article>';
@@ -778,28 +823,22 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     setHTML(el("toolrail"), html);
   }
 
-  /* Chamber, filtration and air quality only exist on the Pro (pid 41). */
-  function renderEnvironment(p, raw, pro){
-    var t   = p.temperatures || {};
-    var bed = t.bed || {}, ch = t.chamber || {};
-    var fans = [];
-    if (String(raw.internalFanStatus) === "open") fans.push("Internal");
-    if (String(raw.externalFanStatus) === "open") fans.push("External");
-    var door  = String(p.door || "").toLowerCase();
-    var doorV = door === "open" ? '<span class="state-warn">Open</span>'
-              : door ? '<span class="state-good">Closed</span>' : "—";
-
+  /* Chamber, filtration and air quality only exist on the Pro (pid 41). Light, door and
+     filtration are live holes rather than markup: the light is a control now, and rebuilding
+     this panel every time it changed would tear the bed and chamber chips out from under the
+     pointer that was about to click one. */
+  function renderEnvironment(pro){
     var html =
       row("bed","Bed",'<span class="bar"><i data-live="bed-bar"></i></span>'+
-          '<b data-live="bed-now"></b> <small>/ </small>'+tset("Bed target","bed-target")+'<small> °C</small>') +
+          '<b data-live="bed-now"></b> <small>/ </small>'+tset("Bed target","bed-target","temp-bed")+'<small> °C</small>'+
+          tmsg("temp-bed")) +
       (pro ? row("chamber","Chamber",'<span class="bar"><i data-live="chamber-bar"></i></span>'+
-          '<b data-live="chamber-now"></b> <small>/ </small>'+tset("Chamber target","chamber-target")+'<small> °C</small>') : "") +
+          '<b data-live="chamber-now"></b> <small>/ </small>'+tset("Chamber target","chamber-target","temp-chamber")+'<small> °C</small>'+
+          tmsg("temp-chamber")) : "") +
       row("fan","Part cooling", '<span data-live="fan"></span> <small>%</small>') +
-      (pro ? row("filter","Filtration", fans.length
-          ? '<span class="state-good">'+esc(fans.join(" + "))+'</span>'
-          : '<span>Off</span>') : "") +
-      row("bulb","Light", p.light_on ? '<span class="state-good">On</span>' : '<span>Off</span>') +
-      row("door","Door", doorV) +
+      (pro ? row("filter","Filtration", '<span data-live="filtration"></span>') : "") +
+      row("bulb","Light", '<span data-live="light"></span>') +
+      row("door","Door", '<span data-live="door"></span>') +
       (pro ? row("air","Air quality", '<span data-live="tvoc"></span> <small>TVOC</small>') : "") +
       row("disk","Storage", '<span data-live="disk"></span> <small>GB free</small>');
     setHTML(el("envRows"), html);
@@ -838,45 +877,56 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     if (printing) setText(el("camClock"), clock(p.duration_s));
   }
 
-  /* Every control below maps to a command this firmware accepts
-     (lightControl_cmd, circulateCtl_cmd, printerCtl_cmd, jobCtl_cmd);
-     none of them is wired yet, so all of them are disabled. */
-  function renderControls(p, raw, pro){
-    var speed = Math.round(num(raw.printSpeedAdjust));
+  var SPEEDS  = [50, 100, 125, 166];
+  var Z_STEP  = 0.025;   /* the vendor's own compensation increment */
+  var Z_LIMIT = 1;       /* the C++ side refuses more, and so does this */
+
+  var ICON_COOL = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">'+
+    '<path d="M8 2v12M3 5l10 6M13 5 3 11" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>';
+  var ICON_PAUSE = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">'+
+    '<rect x="4" y="3" width="3" height="10" rx="1" fill="currentColor"/>'+
+    '<rect x="9" y="3" width="3" height="10" rx="1" fill="currentColor"/></svg>';
+  var ICON_PLAY = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">'+
+    '<path d="M4.5 3.2 12.6 8l-8.1 4.8V3.2Z" fill="currentColor"/></svg>';
+  var ICON_STOP = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">'+
+    '<rect x="3.5" y="3.5" width="9" height="9" rx="1.6" fill="currentColor"/></svg>';
+
+  /* Structure only, and it depends on nothing but the machine kind: every value, pressed state,
+     label and disabled reason is written in place by applyControls(). A control bar that was
+     rebuilt whenever the light changed would swallow the click that changed it. */
+  function renderControls(pro){
     setHTML(el("controlbar"),
       '<div class="cb-group">'+
-        toggle("light","Light", !!p.light_on)+
-        (pro ? toggle("recirc","Recirculate", String(raw.internalFanStatus) === "open") : "")+
-        (pro ? toggle("exhaust","Exhaust", String(raw.externalFanStatus) === "open") : "")+
+        toggle("light","Light","light")+
+        (pro ? toggle("recirc","Recirculate","internal") : "")+
+        (pro ? toggle("exhaust","Exhaust","external") : "")+
       '</div>'+
       '<span class="cb-div"></span>'+
       '<div class="cb-group"><span class="cb-label">Speed</span>'+
-        '<span class="seg" role="group" aria-label="Print speed">'+
-        [50,100,125,166].map(function(v){
-          return '<button type="button" disabled title="'+esc(SOON)+'" aria-pressed="'+(v === speed)+'">'+v+'%</button>';
+        '<span class="seg" role="group" aria-label="Print speed" data-grp="speed">'+
+        SPEEDS.map(function(v){
+          return '<button type="button" data-ctl="speed-'+v+'" aria-pressed="false">'+v+'%</button>';
         }).join("")+
         '</span></div>'+
       '<span class="cb-div"></span>'+
       '<div class="cb-group"><span class="cb-label">Z</span>'+
-        '<span class="stepper"><button type="button" disabled title="'+esc(SOON)+'" aria-label="Lower nozzle">−</button>'+
-        '<span class="val">'+(num(raw.zAxisCompensation) >= 0 ? "+" : "−")+
-          Math.abs(num(raw.zAxisCompensation)).toFixed(3)+' mm</span>'+
-        '<button type="button" disabled title="'+esc(SOON)+'" aria-label="Raise nozzle">+</button></span></div>'+
+        '<span class="stepper" data-grp="z">'+
+        '<button type="button" data-ctl="z-down" aria-label="Lower nozzle">−</button>'+
+        '<span class="val" data-live="z-value"></span>'+
+        '<button type="button" data-ctl="z-up" aria-label="Raise nozzle">+</button></span></div>'+
       '<span class="cb-div"></span>'+
-      '<div class="cb-group"><button class="tbtn" type="button" disabled title="'+esc(SOON)+'">'+
-        '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">'+
-        '<path d="M8 2v12M3 5l10 6M13 5 3 11" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>'+
-        'Cool down</button></div>'+
+      '<div class="cb-group"><button class="tbtn" type="button" data-ctl="cool">'+ICON_COOL+'Cool down</button></div>'+
       '<span class="spacer" style="flex:1"></span>'+
       '<div class="cb-group">'+
-        '<button class="tbtn" type="button" disabled title="'+esc(SOON)+'">'+
-          '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">'+
-          '<rect x="4" y="3" width="3" height="10" rx="1" fill="currentColor"/>'+
-          '<rect x="9" y="3" width="3" height="10" rx="1" fill="currentColor"/></svg>Pause</button>'+
-        '<button class="tbtn" data-tone="stop" type="button" disabled title="'+esc(SOON)+'">'+
-          '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">'+
-          '<rect x="3.5" y="3.5" width="9" height="9" rx="1.6" fill="currentColor"/></svg>Stop</button>'+
-      '</div>');
+        '<button class="tbtn" type="button" data-ctl="job">'+
+          '<span data-ctl-icon>'+ICON_PAUSE+'</span><span data-ctl-label>Pause</span></button>'+
+        '<span data-grp="stop-idle">'+
+          '<button class="tbtn" data-tone="stop" type="button" data-ctl="stop">'+ICON_STOP+'Stop</button></span>'+
+        '<span class="confirm" data-grp="stop-armed" hidden>Stop print?'+
+          '<button class="tbtn" data-tone="stop" type="button" data-ctl="stop-yes">Yes, stop</button>'+
+          '<button class="mini" type="button" data-ctl="stop-no">Keep printing</button></span>'+
+      '</div>'+
+      '<span class="ctlmsg" data-msg="bar"></span>');
   }
 
   /* Runs after every poll, whether or not anything structural changed. */
@@ -902,7 +952,381 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     setLive("fan",  String(Math.round(num(raw.coolingFanSpeed))));
     setLive("tvoc", num(raw.tvoc).toFixed(2));
     setLive("disk", num(raw.remainingDiskSpace).toFixed(2));
+
+    var fans = [];
+    if (String(raw.internalFanStatus) === "open") fans.push("Internal");
+    if (String(raw.externalFanStatus) === "open") fans.push("External");
+    setLiveHTML("filtration", fans.length ? '<span class="state-good">'+esc(fans.join(" + "))+'</span>' : "Off");
+    setLiveHTML("light", p.light_on ? '<span class="state-good">On</span>' : "Off");
+    var door = String(p.door || "").toLowerCase();
+    setLiveHTML("door", door === "open" ? '<span class="state-warn">Open</span>'
+                      : door ? '<span class="state-good">Closed</span>' : "—");
+    setLive("z-value", zText(num(raw.zAxisCompensation)));
   }
+
+  /* ══ Controls ═════════════════════════════════════════════════════════
+     Optimistic, but never dishonest. A click sends one command and marks the
+     control pending; the pending state clears only when the printer's own
+     next status reports the value that was asked for, when the printer
+     refuses (its words appear beside the control), or when the wait runs
+     out - and then the control settles on whatever the printer says, not on
+     what the click hoped for. Nothing here ever opens a dialog.        */
+
+  /* Long enough for the immediate poll the command triggers plus two more at
+     the idle cadence, short enough that a control does not sit spinning. */
+  var WAIT_MS = 14000, MSG_MS = 8000, STOP_ARM_MS = 6000;
+  var waiting = {}, msgTimers = {}, lastState = null;
+
+  function ctlNode(key){ return document.querySelector('[data-ctl="' + key + '"]'); }
+  function grpNode(name){ return document.querySelector('[data-grp="' + name + '"]'); }
+  /* Everything on the control bar shares one message line; a temperature chip
+     gets its own, because its bar is somewhere else on the page entirely. */
+  function msgSlot(key){ return key.indexOf("temp-") === 0 ? key : "bar"; }
+
+  function showMsg(slot, text){
+    var node = document.querySelector('[data-msg="' + slot + '"]');
+    if (!node) return;
+    setText(node, text || "");
+    if (msgTimers[slot]) clearTimeout(msgTimers[slot]);
+    if (text) msgTimers[slot] = setTimeout(function(){ setText(node, ""); }, MSG_MS);
+  }
+
+  /* The value a control should be showing right now: what the last press asked
+     for while that press is still unconfirmed, and the printer's own otherwise. */
+  function expected(key, reported){
+    var w = waiting[key];
+    return (w && w.show !== undefined) ? w.show : reported;
+  }
+
+  function beginWait(key, expect, show, label){
+    waiting[key] = { expect: expect, show: show, until: Date.now() + WAIT_MS, label: label };
+    showMsg(msgSlot(key), "");
+    repaint();
+  }
+
+  /* Run against every incoming status: agree, or eventually own up. */
+  function settleWaits(s){
+    var now = Date.now();
+    for (var key in waiting){
+      if (!waiting.hasOwnProperty(key)) continue;
+      var w = waiting[key], done = false;
+      try { done = !!w.expect(s); } catch (e) { done = false; }
+      if (done){ delete waiting[key]; continue; }
+      if (now > w.until){
+        delete waiting[key];
+        showMsg(msgSlot(key), w.label + " did not change: the printer still reports its previous value.");
+      }
+    }
+  }
+
+  function command(key, name, params, expect, show, label){
+    if (!bridge || suspended){
+      showMsg(msgSlot(key), "This console is not connected to OrcaSlicer, so nothing can be sent.");
+      return;
+    }
+    beginWait(key, expect, show, label);
+    bridge.call("command", assign({ name: name }, params)).then(function(){
+      /* Accepted. The pending state stands until the printer itself agrees - the
+         slicer polls immediately after a command, so that is usually one beat. */
+    }, function(err){
+      delete waiting[key];
+      showMsg(msgSlot(key), String((err && err.message) || err));
+      repaint();
+    });
+  }
+
+  /* ══ What can act right now ═══════════════════════════════════════════
+     Firmware 1.9.9 answers printerCtl_cmd and circulateCtl_cmd with
+     {"code":0,"message":"Success"} on an idle machine and then changes
+     nothing at all - not the speed, not the Z compensation, not even a
+     chamber fan commanded to 100 %. They are print-time controls, so the
+     page disables them rather than offering a button that can never be
+     confirmed. Light and temperature apply at any time, and are reported
+     back within one poll.                                              */
+  var OFF_REASON  = "The printer is not answering, so nothing can be sent to it.";
+  var PARKED      = "This printer is not the selected one any more.";
+  var SAMPLE_ONLY = "This page was opened outside OrcaSlicer, so there is no printer to talk to.";
+  var JOB_ONLY    = "The printer applies this only while a job is running.";
+  var NO_JOB      = "Nothing is printing.";
+
+  function jobPhase(s){
+    if (!s || !s.connected) return "none";
+    var p = s.printer || {}, st = String(p.state || "").toLowerCase();
+    if (st === "paused") return "paused";
+    if (st === "printing") return "running";
+    if ((st === "heating" || st === "busy") && p.print_file) return "running";
+    return "none";
+  }
+
+  function setCtl(key, on, why, pressed, opts){
+    var node = ctlNode(key);
+    if (!node) return;
+    opts = opts || {};
+    var w   = waiting[opts.wait || key];
+    var off = !!w || !on;
+    if (node.disabled !== off) node.disabled = off;
+    setAttr(node, "title", w ? "Waiting for the printer to confirm…" : (on ? (opts.title || "") : why));
+    if (pressed !== undefined) setAttr(node, "aria-pressed", pressed ? "true" : "false");
+    /* A grouped control (the speed segment, the Z stepper) pulses as one piece
+       rather than lighting up each of its buttons. */
+    if (!opts.grouped) setFlag(node, "data-pending", !!w);
+  }
+
+  var stopArmed = false, stopTimer = null;
+  function disarmStop(){
+    if (stopTimer){ clearTimeout(stopTimer); stopTimer = null; }
+    if (!stopArmed) return;
+    stopArmed = false;
+    repaint();
+  }
+  function armStop(){
+    stopArmed = true;
+    if (stopTimer) clearTimeout(stopTimer);
+    stopTimer = setTimeout(disarmStop, STOP_ARM_MS);
+    repaint();
+    var yes = ctlNode("stop-yes");
+    if (yes) yes.focus();
+  }
+
+  function applyControls(s){
+    if (!s || !ctlNode("light")) return;
+    var p = s.printer || {}, raw = p.raw || {};
+    var pro   = num(p.pid) === 41;
+    var phase = jobPhase(s);
+    var busy  = phase !== "none";
+    var live_ = !!bridge && !suspended && !!s.connected;
+    var why   = !bridge ? SAMPLE_ONLY : suspended ? PARKED : !s.connected ? OFF_REASON : "";
+    var jobWhy = live_ ? JOB_ONLY : why;
+
+    setCtl("light", live_, why, expected("light", !!p.light_on));
+    if (pro){
+      setCtl("internal", live_ && busy, jobWhy, expected("internal", String(raw.internalFanStatus) === "open"));
+      setCtl("external", live_ && busy, jobWhy, expected("external", String(raw.externalFanStatus) === "open"));
+    }
+
+    var speed = expected("speed", Math.round(num(raw.printSpeedAdjust)));
+    SPEEDS.forEach(function(v){
+      setCtl("speed-" + v, live_ && busy, jobWhy, v === speed, { wait: "speed", grouped: true });
+    });
+    setFlag(grpNode("speed"), "data-pending", !!waiting.speed);
+
+    var z = expected("z", round3(raw.zAxisCompensation));
+    setLive("z-value", zText(z));
+    setCtl("z-down", live_ && busy && z - Z_STEP >= -Z_LIMIT, jobWhy, undefined, { wait: "z", grouped: true });
+    setCtl("z-up",   live_ && busy && z + Z_STEP <=  Z_LIMIT, jobWhy, undefined, { wait: "z", grouped: true });
+    setFlag(grpNode("z"), "data-pending", !!waiting.z);
+
+    setCtl("cool", live_, why);
+
+    var resuming = phase === "paused";
+    setHTML(document.querySelector('[data-ctl="job"] [data-ctl-icon]'), resuming ? ICON_PLAY : ICON_PAUSE);
+    setText(document.querySelector('[data-ctl="job"] [data-ctl-label]'), resuming ? "Resume" : "Pause");
+    setCtl("job", live_ && busy, live_ ? NO_JOB : why);
+
+    var armed = stopArmed && live_ && busy;
+    show(grpNode("stop-idle"), !armed);
+    show(grpNode("stop-armed"), armed);
+    setCtl("stop", live_ && busy, live_ ? NO_JOB : why, undefined, { wait: "job" });
+    setCtl("stop-yes", live_ && busy, why, undefined, { wait: "job" });
+    setCtl("stop-no", true, "");
+
+    /* Targets are the one thing this machine will change whatever it is doing. */
+    applyTempChip("temp-bed", "bed-target", live_, why);
+    if (pro) applyTempChip("temp-chamber", "chamber-target", live_, why);
+    var chips = document.querySelectorAll('[data-ctl^="temp-nozzle-"]');
+    for (var i = 0; i < chips.length; i++){
+      var tool = chips[i].getAttribute("data-ctl").slice(12);
+      applyTempChip("temp-nozzle-" + tool, "nozzle-target-" + tool, live_, why);
+    }
+  }
+
+  function applyTempChip(key, liveKey, on, why){
+    var w = waiting[key];
+    if (w && w.show !== undefined) setLiveTarget(liveKey, w.show);
+    setCtl(key, on, why, undefined, { title: "Set this target" });
+  }
+
+  /* Everything outside a poll that changes what a control should look like. */
+  function repaint(){
+    if (!lastState) return;
+    var p = lastState.printer;
+    if (p) applyLive(p, p.raw || {});
+    applyControls(lastState);
+  }
+
+  /* ══ The controls themselves ═════════════════════════════════════════ */
+
+  function targetOf(s, key){
+    var t = ((s && s.printer) || {}).temperatures || {};
+    if (key === "temp-bed") return num((t.bed || {}).target);
+    if (key === "temp-chamber") return num((t.chamber || {}).target);
+    return num(((t.nozzles || [])[num(key.slice(12)) - 1] || {}).target);
+  }
+  function rawOf(s){ return (((s || {}).printer) || {}).raw || {}; }
+
+  var TEMP_MAX = { "temp-bed": 150, "temp-chamber": 100, nozzle: 350 };
+  function tempMax(key){ return TEMP_MAX[key] || TEMP_MAX.nozzle; }
+
+  function onLight(s){
+    var want = !expected("light", !!(s.printer || {}).light_on);
+    command("light", "light", { on: want },
+            function(st){ return !!((st.printer || {}).light_on) === want; },
+            want, "The chamber light");
+  }
+
+  function onFan(s, key){
+    var field = key === "internal" ? "internalFanStatus" : "externalFanStatus";
+    var want  = expected(key, String(rawOf(s)[field]) === "open") ? "close" : "open";
+    var params = {};
+    params[key] = want;
+    command(key, "filtration", params,
+            function(st){ return String(rawOf(st)[field]) === want; },
+            want === "open",
+            key === "internal" ? "Recirculation" : "The exhaust fan");
+  }
+
+  function onSpeed(v){
+    command("speed", "printer_ctl", { speed: v },
+            function(st){ return Math.round(num(rawOf(st).printSpeedAdjust)) === v; },
+            v, "Print speed");
+  }
+
+  function onZ(s, up){
+    var target = round3(expected("z", round3(rawOf(s).zAxisCompensation)) + (up ? Z_STEP : -Z_STEP));
+    if (Math.abs(target) > Z_LIMIT){
+      showMsg("bar", "The Z offset has to stay within ±" + Z_LIMIT.toFixed(3) + " mm.");
+      return;
+    }
+    command("z", "printer_ctl", { zAxisCompensation: target },
+            function(st){ return round3(rawOf(st).zAxisCompensation) === target; },
+            target, "The Z offset");
+  }
+
+  /* Every target to zero in one command, so nothing is left heating. A 0 here is
+     an instruction to switch off, not the "leave this one alone" that an absent
+     value means. */
+  function onCoolDown(s){
+    var p = s.printer || {};
+    var count = ((p.temperatures || {}).nozzles || []).length || 4;
+    var nozzles = [null, null, null, null];
+    for (var i = 0; i < Math.min(count, 4); i++) nozzles[i] = 0;
+    var params = { nozzles: nozzles, bed: 0 };
+    var pro = num(p.pid) === 41;
+    if (pro) params.chamber = 0;
+
+    /* A chip still waiting on its own target would otherwise sit there and then
+       complain that the printer ignored it. Cooling down supersedes all of them. */
+    for (var key in waiting)
+      if (waiting.hasOwnProperty(key) && key.indexOf("temp-") === 0) delete waiting[key];
+
+    command("cool", "temperature", params, function(st){
+      var t = (st.printer || {}).temperatures || {};
+      if (num((t.bed || {}).target) !== 0) return false;
+      if (pro && num((t.chamber || {}).target) !== 0) return false;
+      var nz = t.nozzles || [];
+      for (var j = 0; j < nz.length; j++)
+        if (num(nz[j].target) !== 0) return false;
+      return true;
+    }, undefined, "Cooling down");
+  }
+
+  function onJob(s){
+    var resuming = jobPhase(s) === "paused";
+    command("job", "job", { action: resuming ? "resume" : "pause" },
+            function(st){ return jobPhase(st) === (resuming ? "running" : "paused"); },
+            undefined, resuming ? "Resuming the print" : "Pausing the print");
+  }
+
+  function onStopConfirmed(){
+    disarmStop();
+    command("job", "job", { action: "stop" },
+            function(st){ return jobPhase(st) === "none"; },
+            undefined, "Stopping the print");
+  }
+
+  /* A target you type rather than a number you nudge: the chip becomes a field in
+     place, Enter sends it and Escape leaves everything alone. The chip element is
+     kept and put back, so applyLive keeps writing into the same live hole. */
+  function openTempEditor(chip, key){
+    var input = document.createElement("input");
+    input.type      = "text";
+    input.inputMode = "decimal";
+    input.className = "tset-edit";
+    input.value     = String(Math.round(expected(key, targetOf(lastState, key))));
+    input.setAttribute("aria-label", (chip.getAttribute("data-live-label") || "Target") + " in degrees Celsius");
+    chip.parentNode.replaceChild(input, chip);
+    input.focus();
+    input.select();
+
+    var closed = false;
+    function close(){
+      if (closed) return;
+      closed = true;
+      if (input.parentNode) input.parentNode.replaceChild(chip, input);
+      repaint();
+    }
+    input.addEventListener("keydown", function(ev){
+      if (ev.key === "Escape" || ev.keyCode === 27){ ev.preventDefault(); close(); }
+      else if (ev.key === "Enter" || ev.keyCode === 13){
+        ev.preventDefault();
+        var typed = input.value;
+        close();
+        commitTemp(key, typed);
+      }
+    });
+    input.addEventListener("blur", close);
+  }
+
+  function commitTemp(key, typed){
+    var max = tempMax(key);
+    var v   = Number(String(typed).replace(",", ".").trim());
+    if (String(typed).trim() === "" || !isFinite(v) || v < 0 || v > max){
+      showMsg(key, "Enter a target between 0 and " + max + " °C.");
+      return;
+    }
+    v = Math.round(v);
+
+    var params = {}, label;
+    if (key === "temp-bed"){ params.bed = v; label = "The bed target"; }
+    else if (key === "temp-chamber"){ params.chamber = v; label = "The chamber target"; }
+    else {
+      var tool = num(key.slice(12));
+      if (!(tool >= 1 && tool <= 4)){ showMsg(key, "Unknown toolhead."); return; }
+      var arr = [null, null, null, null];
+      arr[tool - 1] = v;
+      params.nozzles = arr;
+      label = "Tool " + tool + "'s target";
+    }
+    command(key, "temperature", params,
+            function(st){ return Math.round(targetOf(st, key)) === v; },
+            v, label);
+  }
+
+  /* One listener for the whole page: the rail, the environment rows and the bar
+     are all rebuilt from strings, and a listener bound to a button would go with
+     it. Disabled buttons dispatch no click at all, and the guard says so anyway. */
+  document.addEventListener("click", function(ev){
+    var node = ev.target && ev.target.closest ? ev.target.closest("[data-ctl]") : null;
+    if (!node || node.disabled || !lastState) return;
+    var key = node.getAttribute("data-ctl");
+    var s   = lastState;
+
+    if (key === "light") onLight(s);
+    else if (key === "internal" || key === "external") onFan(s, key);
+    else if (key.indexOf("speed-") === 0) onSpeed(num(key.slice(6)));
+    else if (key === "z-up" || key === "z-down") onZ(s, key === "z-up");
+    else if (key === "cool") onCoolDown(s);
+    else if (key === "job") onJob(s);
+    else if (key === "stop") armStop();
+    else if (key === "stop-yes") onStopConfirmed();
+    else if (key === "stop-no") disarmStop();
+    else if (key.indexOf("temp-") === 0) openTempEditor(node, key);
+  });
+
+  /* Escape backs out of the stop confirmation, the same as clicking Keep printing. */
+  document.addEventListener("keydown", function(ev){
+    if ((ev.key === "Escape" || ev.keyCode === 27) && stopArmed) disarmStop();
+  });
 
   function stat(label, value){ return '<div class="stat"><dt>'+esc(label)+'</dt><dd>'+esc(value)+'</dd></div>'; }
 
@@ -971,8 +1395,8 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
 
   function renderFiles(){
     setHTML(el("fileList"),
-      '<div class="nodata">Browsing and printing the files stored on the printer arrives with the controls, '+
-      'in the next increment.</div>');
+      '<div class="nodata">Browsing and reprinting the files already stored on the printer is not part of '+
+      'this console yet.</div>');
   }
 
   function renderFoot(s){
@@ -985,7 +1409,7 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
       '<span>OrcaMCP · Flashforge console</span><span class="sep"></span>'+
       '<span class="mono">Polling the local API every '+poll+' s</span><span class="sep"></span>'+
       '<span>'+esc(where)+'</span><span class="sep"></span>'+
-      '<span>Read-only — controls arrive in the next increment</span>');
+      '<span>Controls settle on what the printer confirms</span>');
   }
 
   /* ══ Theme ════════════════════════════════════════════════════════════
@@ -995,6 +1419,8 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     if (themeLocked || typeof s.app_dark !== "boolean") return;
     document.documentElement.setAttribute("data-theme", s.app_dark ? "dark" : "light");
   }
+  el("timelapseBtn").setAttribute("title", NO_TIMELAPSE);
+
   el("themeBtn").addEventListener("click", function(){
     themeLocked = true;
     var cur  = document.documentElement.getAttribute("data-theme");
@@ -1004,6 +1430,7 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
 
   /* ══ One render pass ══════════════════════════════════════════════════ */
   function render(s){
+    lastState = s;
     var p   = s.printer || {};
     var raw = p.raw || {};
     var ms  = raw.matlStationInfo || {};
@@ -1017,12 +1444,15 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     renderBanner(s);
     renderMachine(p, raw, pro);
     renderTools(p, raw, ms, printing);
-    renderEnvironment(p, raw, pro);
+    renderEnvironment(pro);
     renderCamera(s, p, raw, pro, printing);
-    renderControls(p, raw, pro);
+    renderControls(pro);
     renderJob(s, p, raw, ms, printing);
     renderFiles();
     if (s.printer) applyLive(p, raw);
+    /* Last, so a control still waiting on the printer keeps showing what was asked
+       for rather than the value applyLive just wrote under it. */
+    applyControls(s);
     renderFoot(s);
 
     // data-ready freezes the tool cards' staggered entrance. Setting it in the
@@ -1054,7 +1484,12 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
   function onStatus(s){
     lastStatusAt = Date.now();
     lastPollMs   = num((s && s.poll_ms), 5000);
-    render(s || { connected:false, error:"Empty status" });
+    s = s || { connected:false, error:"Empty status" };
+    /* Before painting: every control still waiting either gets what it asked for
+       or, once the wait is up, says so and settles on what the printer reports. */
+    settleWaits(s);
+    if (jobPhase(s) === "none") disarmStop();
+    render(s);
   }
 
   setInterval(function(){
