@@ -1526,6 +1526,8 @@ User rule (2026-09-08): every bug found is fixed, together with related occurren
 
 - [ ] **Item O — `export_3mf` / `load_project` now name the project silently** (Item L follow-up): `export_3mf` calls `set_project_filename`, which retitles the window and adds the path to Recent Projects; a later Cmd-S in the GUI overwrites that file. Surface it: add `"project_renamed_to": <path>` and an `info_messages` line to the `export_3mf` and `load_project` responses, and document the semantics ("export_3mf is this API's Save") in reference.md and CLAUDE.md's dialog section.
 
+- [ ] **Item P — auto material mapping ignores colour**: `auto_material_mappings` takes the first free slot of the matching material family (same as the GUI dialog), so with four PLA slots loaded, tool 1 (blue) mapped to slot 1 (magenta). Prefer, within the same material family, the loaded slot whose `materialColor` is closest to the project filament colour (CIE76 via `color_decompose_delta_e`), falling back to first-free when no colours are known; report `color_delta_e` per mapping in the response so an agent can warn on poor matches. Applies to both `print_printer_file` and `send_to_printer` (shared helper).
+
 - [ ] **Step: build, run `[flashforge]` tests, regen schema, pytest, live checks per item, commit per item** with messages `fix: <item>`, each ending with the Co-Authored-By trailer.
 
 ---
