@@ -923,15 +923,104 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                   'required': [],
                   'type': 'object'},
   'name': 'select_printer'},
- {'description': 'Send sliced G-code to printer.',
+ {'description': 'Upload the sliced plate to the configured print host and '
+                 'optionally start it. The upload runs without any dialog: on '
+                 "a Flashforge printer with a material station the project's "
+                 'filaments are mapped onto the loaded slots automatically '
+                 '(pass material_mappings to choose the slots yourself). Pass '
+                 "direct=false to open OrcaSlicer's send dialog and leave the "
+                 'send to the user.',
   'inputSchema': {'additionalProperties': False,
-                  'properties': {'all_plates': {'description': 'If true, send '
-                                                               'all plates. If '
-                                                               'false '
-                                                               '(default), '
-                                                               'send current '
-                                                               'plate only.',
-                                                'type': 'boolean'}},
+                  'properties': {'all_plates': {'description': 'Dialog sends '
+                                                               'only '
+                                                               '(direct=false): '
+                                                               'send all '
+                                                               'plates instead '
+                                                               'of the current '
+                                                               'one.',
+                                                'type': 'boolean'},
+                                 'direct': {'description': 'When true '
+                                                           '(default), upload '
+                                                           'straight to the '
+                                                           'printer. When '
+                                                           'false, open '
+                                                           "OrcaSlicer's send "
+                                                           'dialog for the '
+                                                           'user instead.',
+                                            'type': 'boolean'},
+                                 'file_name': {'description': 'Name to store '
+                                                              'the upload '
+                                                              'under (default: '
+                                                              "the plate's own "
+                                                              'output file '
+                                                              'name). Direct '
+                                                              'sends only.',
+                                               'type': 'string'},
+                                 'leveling_before_print': {'description': 'Run '
+                                                                          'bed '
+                                                                          'leveling '
+                                                                          'before '
+                                                                          'printing '
+                                                                          '(default '
+                                                                          'false). '
+                                                                          'Direct '
+                                                                          'sends '
+                                                                          'only.',
+                                                           'type': 'boolean'},
+                                 'material_mappings': {'description': 'Explicit '
+                                                                      'tool-to-slot '
+                                                                      'mapping. '
+                                                                      'Omit to '
+                                                                      'map the '
+                                                                      "project's "
+                                                                      'filaments '
+                                                                      'onto '
+                                                                      'matching '
+                                                                      'loaded '
+                                                                      'slots '
+                                                                      'automatically. '
+                                                                      'Direct '
+                                                                      'sends '
+                                                                      'only.',
+                                                       'items': {'properties': {'slot_id': {'description': 'Material '
+                                                                                                           'station '
+                                                                                                           'slot '
+                                                                                                           'id',
+                                                                                            'type': 'integer'},
+                                                                                'tool_id': {'description': 'Project '
+                                                                                                           'filament/tool '
+                                                                                                           'index, '
+                                                                                                           '0-based',
+                                                                                            'type': 'integer'}},
+                                                                 'required': ['tool_id',
+                                                                              'slot_id'],
+                                                                 'type': 'object'},
+                                                       'type': 'array'},
+                                 'start_print': {'description': 'Start '
+                                                                'printing once '
+                                                                'the upload '
+                                                                'finishes '
+                                                                '(default '
+                                                                'true). Direct '
+                                                                'sends only.',
+                                                 'type': 'boolean'},
+                                 'use_material_station': {'description': 'Print '
+                                                                         'from '
+                                                                         'the '
+                                                                         'material '
+                                                                         'station '
+                                                                         '(default: '
+                                                                         'true '
+                                                                         'when '
+                                                                         'the '
+                                                                         'Flashforge '
+                                                                         'printer '
+                                                                         'reports '
+                                                                         'one). '
+                                                                         'Direct '
+                                                                         'sends '
+                                                                         'only.',
+                                                          'type': 'boolean'}},
                   'required': [],
                   'type': 'object'},
   'name': 'send_to_printer'},

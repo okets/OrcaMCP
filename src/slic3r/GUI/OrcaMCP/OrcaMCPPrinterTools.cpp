@@ -101,67 +101,71 @@ bool resolve_flashforge(std::unique_ptr<Slic3r::PrintHost>& host, Slic3r::Flashf
     return true;
 }
 
-// Builds the {toolId, slotId, materialName, toolMaterialColor, slotMaterialColor} entries the Flashforge
-// local API expects, matching each project tool to the first free material-station slot of the same
-// normalized material family (same rule as FlashforgePrintHostSendDialog::auto_assign_mappings, minus
-// its colour tie-break between same-family slots).
-nlohmann::json auto_material_mappings(const nlohmann::json& project_filaments, const std::vector<Slic3r::FlashforgeApi::MaterialSlot>& slots)
+// send_to_printer with direct=false: hand the send over to the user's own dialog.
+nlohmann::json open_send_dialog(bool all_plates)
 {
-    nlohmann::json    mappings = nlohmann::json::array();
-    std::vector<bool> slot_used(slots.size(), false);
+    return run_on_main_thread([all_plates]() {
+        Plater* plater = wxGetApp().plater();
+        if (!plater)
+            return error_response("Plater not available");
 
-    for (const auto& filament : project_filaments) {
-        const std::string project_material = Slic3r::GUI::flashforge_normalize_material(filament.value("type", std::string()));
-        if (project_material.empty())
-            continue;
+        // Check if slicing is complete
+        if (plater->is_background_process_slicing())
+            return error_response("Slicing is still in progress. Wait for slicing to complete before sending to printer.");
 
-        for (size_t i = 0; i < slots.size(); ++i) {
-            if (slot_used[i] || !slots[i].has_filament)
-                continue;
-            if (Slic3r::GUI::flashforge_normalize_material(slots[i].material_name) != project_material)
-                continue;
+        // Check if current printer preset has a print host configured (OctoPrint, Klipper, etc.)
+        PresetBundle* preset_bundle  = wxGetApp().preset_bundle;
+        bool          has_print_host = false;
+        std::string   host_type_str  = "unknown";
+        std::string   print_host;
 
-            slot_used[i] = true;
-            mappings.push_back({{"toolId", filament.value("tool_id", 0)},
-                                {"slotId", slots[i].slot_id},
-                                {"materialName", slots[i].material_name},
-                                {"toolMaterialColor", filament.value("color", std::string())},
-                                {"slotMaterialColor", slots[i].material_color}});
-            break;
-        }
-    }
-    return mappings;
-}
-
-// Builds the same payload shape from caller-supplied {tool_id, slot_id} pairs, filling in the slot's
-// reported material/colour so the printer sees a payload consistent with the auto-mapped one. Only
-// checks the *shape* of each entry (both fields present and integers) -- validate_material_mappings is
-// the single place that checks the slot actually exists/is loaded and every project tool got mapped.
-bool build_explicit_material_mappings(const nlohmann::json&                                    requested,
-                                      const std::vector<Slic3r::FlashforgeApi::MaterialSlot>& slots,
-                                      nlohmann::json&                                          mappings_out,
-                                      std::string&                                             error)
-{
-    mappings_out = nlohmann::json::array();
-    for (const auto& entry : requested) {
-        if (!entry.is_object() || !entry.contains("tool_id") || !entry.contains("slot_id") ||
-            !entry.at("tool_id").is_number_integer() || !entry.at("slot_id").is_number_integer()) {
-            error = "Each material_mappings entry requires integer 'tool_id' and 'slot_id'";
-            return false;
+        if (preset_bundle) {
+            const DynamicPrintConfig& printer_config = preset_bundle->printers.get_edited_preset().config;
+            if (printer_config.has("print_host")) {
+                print_host     = printer_config.opt_string("print_host");
+                has_print_host = !print_host.empty();
+            }
+            if (has_print_host && !print_host_type_name(printer_config).empty())
+                host_type_str = print_host_type_name(printer_config);
         }
 
-        const int  tool_id = entry.at("tool_id").get<int>();
-        const int  slot_id = entry.at("slot_id").get<int>();
-        const auto slot_it = std::find_if(slots.begin(), slots.end(),
-                                          [&](const Slic3r::FlashforgeApi::MaterialSlot& s) { return s.slot_id == slot_id; });
+        // Both send paths open a modal dialog (SelectMachineDialog / the print-host send
+        // dialog). Opening one here would block the GUI thread until the user dismisses it,
+        // and this call would never return. Schedule it to open after the tool has replied,
+        // so the user gets the dialog and MCP gets an immediate answer.
+        nlohmann::json result;
+        if (has_print_host) {
+            // Use legacy send for OctoPrint/Klipper/etc. printers
+            int plate_idx = all_plates ? -1 : plater->get_partplate_list().get_curr_plate_index();
+            wxGetApp().CallAfter([plate_idx]() {
+                if (Plater* p = wxGetApp().plater())
+                    p->send_gcode_legacy(plate_idx);
+            });
 
-        mappings_out.push_back({{"toolId", tool_id},
-                                {"slotId", slot_id},
-                                {"materialName", slot_it != slots.end() ? slot_it->material_name : std::string()},
-                                {"toolMaterialColor", std::string()},
-                                {"slotMaterialColor", slot_it != slots.end() ? slot_it->material_color : std::string()}});
-    }
-    return true;
+            result = {
+                {"status", "dialog_opened"},
+                {"method", "send_gcode_legacy"},
+                {"host_type", host_type_str},
+                {"print_host", print_host},
+                {"note", "Send G-code dialog opening for print host upload; it is driven by the user, not by MCP."}
+            };
+        } else {
+            // Use Bambu-specific send dialog
+            wxGetApp().CallAfter([all_plates]() {
+                if (Plater* p = wxGetApp().plater())
+                    p->send_to_printer(all_plates);
+            });
+
+            result = {
+                {"status", "dialog_opened"},
+                {"method", "send_to_printer"},
+                {"all_plates", all_plates},
+                {"note", "The send-to-printer dialog is opening; the user selects printer and options there."}
+            };
+        }
+
+        return result;
+    });
 }
 
 // The tool_id/slot_id pairs actually sent, for the tool's response (mirrors the request schema rather
@@ -349,91 +353,177 @@ void OrcaMCPServer::register_printer_tools()
         }
     });
 
-    // send_to_printer - Open the send-to-printer dialog
+    // send_to_printer - Upload the sliced plate to the configured print host
     register_tool({
         "send_to_printer",
-        "Send sliced G-code to printer.",
+        "Upload the sliced plate to the configured print host and optionally start it. The upload runs "
+        "without any dialog: on a Flashforge printer with a material station the project's filaments are "
+        "mapped onto the loaded slots automatically (pass material_mappings to choose the slots "
+        "yourself). Pass direct=false to open OrcaSlicer's send dialog and leave the send to the user.",
         {
             {"type", "object"},
             {"properties", {
+                {"direct", {
+                    {"type", "boolean"},
+                    {"description", "When true (default), upload straight to the printer. When false, open "
+                                    "OrcaSlicer's send dialog for the user instead."}
+                }},
+                {"start_print", {
+                    {"type", "boolean"},
+                    {"description", "Start printing once the upload finishes (default true). Direct sends only."}
+                }},
+                {"leveling_before_print", {
+                    {"type", "boolean"},
+                    {"description", "Run bed leveling before printing (default false). Direct sends only."}
+                }},
+                {"use_material_station", {
+                    {"type", "boolean"},
+                    {"description", "Print from the material station (default: true when the Flashforge printer "
+                                    "reports one). Direct sends only."}
+                }},
+                {"material_mappings", {
+                    {"type", "array"},
+                    {"description", "Explicit tool-to-slot mapping. Omit to map the project's filaments onto "
+                                    "matching loaded slots automatically. Direct sends only."},
+                    {"items", {
+                        {"type", "object"},
+                        {"properties", {
+                            {"tool_id", {{"type", "integer"}, {"description", "Project filament/tool index, 0-based"}}},
+                            {"slot_id", {{"type", "integer"}, {"description", "Material station slot id"}}}
+                        }},
+                        {"required", {"tool_id", "slot_id"}}
+                    }}
+                }},
+                {"file_name", {
+                    {"type", "string"},
+                    {"description", "Name to store the upload under (default: the plate's own output file name). "
+                                    "Direct sends only."}
+                }},
                 {"all_plates", {
                     {"type", "boolean"},
-                    {"description", "If true, send all plates. If false (default), send current plate only."}
+                    {"description", "Dialog sends only (direct=false): send all plates instead of the current one."}
                 }}
             }}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
-            bool all_plates = params.value("all_plates", false);
-            return run_on_main_thread([all_plates]() {
-                Plater* plater = wxGetApp().plater();
+            if (params.contains("direct") && !params.at("direct").is_boolean())
+                return error_response("direct must be a boolean");
+            const bool all_plates = params.value("all_plates", false);
+            if (!params.value("direct", true))
+                return open_send_dialog(all_plates);
+
+            if (all_plates)
+                return error_response("direct send supports one plate at a time; select the plate first with "
+                                      "select_plate, or pass direct=false to send all plates from the dialog");
+
+            for (const char* flag : {"start_print", "leveling_before_print", "use_material_station"})
+                if (params.contains(flag) && !params.at(flag).is_boolean())
+                    return error_response(std::string(flag) + " must be a boolean");
+            if (params.contains("file_name") && !params.at("file_name").is_string())
+                return error_response("file_name must be a string");
+            const nlohmann::json requested_mappings = params.value("material_mappings", nlohmann::json::array());
+            if (!requested_mappings.is_array())
+                return error_response("material_mappings must be an array");
+
+            const bool        start_print = params.value("start_print", true);
+            const bool        leveling    = params.value("leveling_before_print", false);
+            const std::string file_name   = params.value("file_name", std::string());
+
+            // Main thread: everything that reads the plater and the presets.
+            DynamicPrintConfig       cfg;
+            std::string              host_type;
+            std::string              prep_error;
+            nlohmann::json           project_filaments;
+            int                      plate_idx = 0;
+            std::vector<std::string> info_messages;
+            run_on_main_thread([&]() -> nlohmann::json {
+                McpDialogSuppressionGuard suppression;
+                Plater*                   plater = wxGetApp().plater();
                 if (!plater) {
-                    return nlohmann::json{
-                        {"status", "error"},
-                        {"message", "Plater not available"}
-                    };
+                    prep_error = "Plater not available";
+                    return nlohmann::json::object();
                 }
-
-                // Check if slicing is complete
                 if (plater->is_background_process_slicing()) {
-                    return nlohmann::json{
-                        {"status", "error"},
-                        {"message", "Slicing is still in progress. Wait for slicing to complete before sending to printer."}
-                    };
+                    prep_error = "Slicing is still in progress. Wait for slicing to complete before sending to printer.";
+                    return nlohmann::json::object();
                 }
-
-                // Check if current printer preset has a print host configured (OctoPrint, Klipper, etc.)
-                PresetBundle* preset_bundle = wxGetApp().preset_bundle;
-                bool has_print_host = false;
-                std::string host_type_str = "unknown";
-                std::string print_host;
-
-                if (preset_bundle) {
-                    const DynamicPrintConfig& printer_config = preset_bundle->printers.get_edited_preset().config;
-                    if (printer_config.has("print_host")) {
-                        print_host = printer_config.opt_string("print_host");
-                        has_print_host = !print_host.empty();
-                    }
-                    if (has_print_host && !print_host_type_name(printer_config).empty())
-                        host_type_str = print_host_type_name(printer_config);
+                PartPlate* plate = plater->get_partplate_list().get_curr_plate();
+                if (plate == nullptr || !plate->is_slice_result_valid()) {
+                    prep_error = "Plate is not sliced; run slice_all first";
+                    return nlohmann::json::object();
                 }
+                plate_idx = plater->get_partplate_list().get_curr_plate_index();
+                if (!resolve_print_host_config(cfg, host_type, prep_error))
+                    return nlohmann::json::object();
 
-                // Both send paths open a modal dialog (SelectMachineDialog / the print-host send
-                // dialog). Opening one here would block the GUI thread until the user dismisses it,
-                // and this call would never return. Schedule it to open after the tool has replied,
-                // so the user gets the dialog and MCP gets an immediate answer.
-                nlohmann::json result;
-                if (has_print_host) {
-                    // Use legacy send for OctoPrint/Klipper/etc. printers
-                    int plate_idx = all_plates ? -1 : plater->get_partplate_list().get_curr_plate_index();
-                    wxGetApp().CallAfter([plate_idx]() {
-                        if (Plater* p = wxGetApp().plater())
-                            p->send_gcode_legacy(plate_idx);
-                    });
-
-                    result = {
-                        {"status", "dialog_opened"},
-                        {"method", "send_gcode_legacy"},
-                        {"host_type", host_type_str},
-                        {"print_host", print_host},
-                        {"note", "Send G-code dialog opening for print host upload; it is driven by the user, not by MCP."}
-                    };
-                } else {
-                    // Use Bambu-specific send dialog
-                    wxGetApp().CallAfter([all_plates]() {
-                        if (Plater* p = wxGetApp().plater())
-                            p->send_to_printer(all_plates);
-                    });
-
-                    result = {
-                        {"status", "dialog_opened"},
-                        {"method", "send_to_printer"},
-                        {"all_plates", all_plates},
-                        {"note", "The send-to-printer dialog is opening; the user selects printer and options there."}
-                    };
-                }
-
-                return result;
+                project_filaments = gather_project_filaments(prep_error);
+                info_messages     = suppression.messages();
+                return nlohmann::json::object();
             });
+            if (!prep_error.empty())
+                return error_response(prep_error);
+
+            // Off the main thread: the material station round-trip, so the GUI is never blocked on it.
+            std::unique_ptr<Slic3r::PrintHost> host = make_print_host(cfg);
+            if (!host)
+                return error_response("Failed to create a print host for type '" + host_type + "'");
+
+            std::map<std::string, std::string> extended_info;
+            nlohmann::json                     mappings_payload = nlohmann::json::array();
+            auto*                              ff = dynamic_cast<Slic3r::Flashforge*>(host.get());
+            if (ff != nullptr && ff->has_local_api_credentials()) {
+                Slic3r::FlashforgeApi::PrinterStatus status;
+                wxString                             msg;
+                if (!ff->fetch_status(status, msg))
+                    return error_response(msg.empty() ? "Failed to read printer status" : to_std(msg));
+
+                const bool use_material_station = params.value("use_material_station", status.has_material_station);
+                if (use_material_station) {
+                    nlohmann::json mapping_error;
+                    if (!resolve_material_mappings(requested_mappings, status.slots, project_filaments,
+                                                   mappings_payload, mapping_error))
+                        return mapping_error;
+                }
+
+                // Exactly the keys FlashforgePrintHostSendDialog::extendedInfo() produces. The dialog's
+                // time-lapse checkbox has no tool parameter, so it stays off.
+                extended_info = {{"levelingBeforePrint", leveling ? "1" : "0"},
+                                 {"timeLapseVideo", "0"},
+                                 {"useMatlStation", use_material_station ? "1" : "0"},
+                                 {"gcodeToolCnt", std::to_string(mappings_payload.size())},
+                                 {"materialMappings", mappings_payload.dump()}};
+            }
+
+            // Main thread again: exporting the plate and queueing the upload are Plater work.
+            std::string    send_error;
+            std::string    uploaded_file_name;
+            const nlohmann::json sent = run_on_main_thread([&]() -> nlohmann::json {
+                McpDialogSuppressionGuard suppression;
+                Plater*                   plater = wxGetApp().plater();
+                if (!plater) {
+                    send_error = "Plater not available";
+                    return {{"ok", false}};
+                }
+                const bool ok = plater->send_gcode_direct(plate_idx, extended_info,
+                                                          start_print ? Slic3r::PrintHostPostUploadAction::StartPrint
+                                                                      : Slic3r::PrintHostPostUploadAction::None,
+                                                          send_error, file_name, &uploaded_file_name);
+                const std::vector<std::string> messages = suppression.messages();
+                info_messages.insert(info_messages.end(), messages.begin(), messages.end());
+                return {{"ok", ok}};
+            });
+            if (!sent.value("ok", false))
+                return error_response(send_error.empty() ? "Failed to queue the upload" : send_error);
+
+            nlohmann::json response = {{"status", "queued"},
+                                       {"host_type", host_type},
+                                       {"file_name", uploaded_file_name},
+                                       {"material_mappings", mapping_response_echo(mappings_payload)},
+                                       {"start_print", start_print},
+                                       {"note", "Upload progress is shown in OrcaSlicer; poll get_printer_status."}};
+            if (!info_messages.empty())
+                response["info_messages"] = info_messages;
+            return response;
         }
     });
 
@@ -776,28 +866,11 @@ void OrcaMCPServer::register_printer_tools()
                 if (!filaments_error.empty())
                     return error_response(filaments_error);
 
-                if (!requested_mappings.empty()) {
-                    std::string build_error;
-                    if (!build_explicit_material_mappings(requested_mappings, status.slots, mappings_payload, build_error))
-                        return error_response(build_error);
-                } else {
-                    mappings_payload = auto_material_mappings(project_filaments, status.slots);
-                }
-
-                // Single gate, shared with (task 2.6) send_to_printer: every mapping's slot must exist
-                // and be loaded, and every project tool must end up mapped -- a partial mapping (auto or
-                // explicit) never reaches the printer.
-                std::string      validation_error;
-                std::vector<int> unmapped_tools;
-                if (!validate_material_mappings(mappings_payload, status.slots, project_filaments.size(),
-                                                validation_error, unmapped_tools)) {
-                    nlohmann::json err = error_response(validation_error);
-                    if (!unmapped_tools.empty()) {
-                        err["unmapped_tools"] = unmapped_tools;
-                        err["slots"]          = material_slots_json(status.slots);
-                    }
-                    return err;
-                }
+                // Build and validate the mapping the same way send_to_printer does.
+                nlohmann::json mapping_error;
+                if (!resolve_material_mappings(requested_mappings, status.slots, project_filaments,
+                                               mappings_payload, mapping_error))
+                    return mapping_error;
             }
 
             wxString msg;

@@ -19223,17 +19223,24 @@ void Plater::reslice_SLA_until_step(SLAPrintObjectStep step, const ModelObject &
     // and let the background processing start.
     this->p->restart_background_process(state | priv::UPDATE_BACKGROUND_PROCESS_FORCE_RESTART);
 }
-void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn)
+// Orca: the legacy send flow minus the send dialog, shared by the GUI (send_gcode_legacy) and MCP
+// (send_gcode_direct) so both build the very same upload job. `configure_upload` fills in what the
+// dialog collects; returning false from it aborts the send.
+bool Plater::send_gcode_upload(int plate_idx, const SendGcodeConfigureFn& configure_upload, SendGcodeError& error)
 {
     // if physical_printer is selected, send gcode for this printer
     // DynamicPrintConfig* physical_printer_config = wxGetApp().preset_bundle->physical_printers.get_selected_printer_config();
     DynamicPrintConfig* physical_printer_config = &Slic3r::GUI::wxGetApp().preset_bundle->printers.get_edited_preset().config;
-    if (! physical_printer_config || p->model.objects.empty())
-        return;
+    if (! physical_printer_config || p->model.objects.empty()) {
+        error = {"There is nothing to send: the project has no objects"};
+        return false;
+    }
 
     PrintHostJob upload_job(physical_printer_config);
-    if (upload_job.empty())
-        return;
+    if (upload_job.empty()) {
+        error = {"The selected printer preset has no print host configured"};
+        return false;
+    }
 
     // Orca: the use_3mf printer option makes us send a .gcode.3mf to the printer
     const auto* use_3mf_opt = physical_printer_config->option<ConfigOptionBool>("use_3mf");
@@ -19249,23 +19256,75 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn)
         // Update the background processing, so that the placeholder parser will get the correct values for the ouput file template.
         // Also if there is something wrong with the current configuration, a pop-up dialog will be shown and the export will not be performed.
         unsigned int state = this->p->update_restart_background_process(false, false);
-        if (state & priv::UPDATE_BACKGROUND_PROCESS_INVALID)
-            return;
+        if (state & priv::UPDATE_BACKGROUND_PROCESS_INVALID) {
+            error = {"The current configuration is invalid; fix it and slice again"};
+            return false;
+        }
         default_output_file = this->p->background_process.output_filepath_for_project(
             into_path(this->p->get_project_filename(".3mf")));
     } catch (const Slic3r::PlaceholderParserError& ex) {
         // Show the error with monospaced font.
-        show_error(this, ex.what(), true);
-        return;
+        error = {ex.what(), true, true};
+        return false;
     } catch (const std::exception& ex) {
-        show_error(this, ex.what(), false);
-        return;
+        error = {ex.what(), true, false};
+        return false;
     }
     default_output_file = fs::path(Slic3r::fold_utf8_to_ascii(default_output_file.string()));
     if (use_3mf) {
         // Orca: a gcode-in-3mf bundle is named ".gcode.3mf" (matching "Export plate sliced file")
         default_output_file.replace_extension(".gcode.3mf");
     }
+
+    // Everything the user picks in the send dialog: file name, post-upload action, group, storage
+    // and the host's extended info.
+    if (!configure_upload(upload_job, default_output_file, resolved_plate_idx, error))
+        return false;
+
+    // Orca: gcode inside a .gcode.3mf is index-coded (Metadata/plate_<N>.gcode) and a bundle may
+    // carry several of them, so the upload must name which plate to print via a 1-based plateindex.
+    // Even a single-plate bundle needs it, since its gcode entry is still indexed. The host upload
+    // forwards the field and servers that don't use it ignore it. "All plates" points at the
+    // current plate — the bundle still carries every plate's gcode.
+    if (use_3mf) {
+        const int plateindex = (plate_idx == PLATE_ALL_IDX ? get_partplate_list().get_curr_plate_index() : resolved_plate_idx) + 1;
+        upload_job.upload_data.extended_info["plateindex"] = std::to_string(plateindex);
+    }
+
+    // Show "Is printer clean" dialog for PrusaConnect - Upload and print.
+    if (std::string(upload_job.printhost->get_name()) == "PrusaConnect" && upload_job.upload_data.post_action == PrintHostPostUploadAction::StartPrint) {
+        GUI::MessageDialog dlg(nullptr, _L("Is the printer ready? Is the print sheet in place, empty and clean?"), _L("Upload and Print"), wxOK | wxCANCEL);
+        if (dlg.ShowModal() != wxID_OK) {
+            error = {"Upload cancelled"};
+            return false;
+        }
+    }
+
+    if (use_3mf) {
+        // Process gcode
+        const int result = send_gcode(resolved_plate_idx, nullptr);
+
+        if (result < 0) {
+            error = {_u8L("Abnormal print file data. Please slice again"), true, false};
+            return false;
+        }
+
+        upload_job.upload_data.source_path = p->m_print_job_data._3mf_path;
+    }
+
+    p->export_gcode(fs::path(), false, std::move(upload_job));
+    return true;
+}
+
+// Orca: the send dialog half of the flow -- queries the host for groups/storage, picks the dialog
+// for the host type, shows it and copies the user's choices into the upload job.
+bool Plater::configure_send_from_dialog(PrintHostJob&   upload_job,
+                                        const fs::path& default_output_file,
+                                        int             plate_idx,
+                                        int             resolved_plate_idx,
+                                        SendGcodeError& error)
+{
+    DynamicPrintConfig* physical_printer_config = &Slic3r::GUI::wxGetApp().preset_bundle->printers.get_edited_preset().config;
 
     // Repetier specific: Query the server for the list of file groups.
     wxArrayString groups;
@@ -19282,8 +19341,8 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn)
         try {
             upload_job.printhost->get_storage(storage_paths, storage_names);
         } catch (const Slic3r::IOError& ex) {
-            show_error(this, ex.what(), false);
-            return;
+            error = {ex.what(), true, false};
+            return false;
         }
     }
 
@@ -19311,8 +19370,8 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn)
         } else if (flashforge_local_api) {
             auto* flashforge_host = dynamic_cast<Flashforge*>(upload_job.printhost.get());
             if (flashforge_host == nullptr) {
-                show_error(this, _L("Flashforge host is not available."), false);
-                return;
+                error = {_u8L("Flashforge host is not available."), true, false};
+                return false;
             }
 
             std::vector<FlashforgeMaterialSlot> slots;
@@ -19321,8 +19380,8 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn)
                 wxBusyCursor wait;
                 wxString     msg;
                 if (!flashforge_host->fetch_material_slots(slots, &supports_material_station, msg)) {
-                    show_error(this, msg.empty() ? _L("Unable to log in to the Flashforge printer.") : msg, false);
-                    return;
+                    error = {into_u8(msg.empty() ? _L("Unable to log in to the Flashforge printer.") : msg), true, false};
+                    return false;
                 }
             }
 
@@ -19385,7 +19444,8 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn)
 
         pDlg->init();
         if (pDlg->ShowModal() != wxID_OK) {
-            return;
+            error = {"Send cancelled"};
+            return false;
         }
 
         config->set_bool("open_device_tab_post_upload", pDlg->switch_to_device_tab());
@@ -19396,38 +19456,57 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn)
         upload_job.upload_data.group       = pDlg->group();
         upload_job.upload_data.storage     = pDlg->storage();
         upload_job.upload_data.extended_info = pDlg->extendedInfo();
-        // Orca: gcode inside a .gcode.3mf is index-coded (Metadata/plate_<N>.gcode) and a bundle may
-        // carry several of them, so the upload must name which plate to print via a 1-based plateindex.
-        // Even a single-plate bundle needs it, since its gcode entry is still indexed. The host upload
-        // forwards the field and servers that don't use it ignore it. "All plates" points at the
-        // current plate — the bundle still carries every plate's gcode.
-        if (use_3mf) {
-            const int plateindex = (plate_idx == PLATE_ALL_IDX ? get_partplate_list().get_curr_plate_index() : resolved_plate_idx) + 1;
-            upload_job.upload_data.extended_info["plateindex"] = std::to_string(plateindex);
-        }
     }
 
-    // Show "Is printer clean" dialog for PrusaConnect - Upload and print.
-    if (std::string(upload_job.printhost->get_name()) == "PrusaConnect" && upload_job.upload_data.post_action == PrintHostPostUploadAction::StartPrint) {
-        GUI::MessageDialog dlg(nullptr, _L("Is the printer ready? Is the print sheet in place, empty and clean?"), _L("Upload and Print"), wxOK | wxCANCEL);
-        if (dlg.ShowModal() != wxID_OK)
-            return;
+    return true;
+}
+
+void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn)
+{
+    SendGcodeError error;
+    const bool     queued = send_gcode_upload(plate_idx,
+        [this, plate_idx](PrintHostJob& upload_job, const fs::path& default_output_file, int resolved_plate_idx,
+                          SendGcodeError& dialog_error) {
+            return configure_send_from_dialog(upload_job, default_output_file, plate_idx, resolved_plate_idx, dialog_error);
+        },
+        error);
+
+    if (!queued && error.show)
+        show_error(this, from_u8(error.message), error.monospaced);
+}
+
+bool Plater::send_gcode_direct(int                                       plate_idx,
+                               const std::map<std::string, std::string>& extended_info,
+                               PrintHostPostUploadAction                 post_action,
+                               std::string&                              error,
+                               const std::string&                        file_name,
+                               std::string*                              uploaded_file_name)
+{
+    // priv::export_gcode refuses (and pops its own error) while another export is scheduled, so
+    // catch that here, where it can still be reported to the caller.
+    if (p->background_process.is_export_scheduled()) {
+        error = "Another export job is running; wait for it to finish";
+        return false;
     }
 
-    if (use_3mf) {
-        // Process gcode
-        const int result = send_gcode(resolved_plate_idx, nullptr);
+    SendGcodeError send_error;
+    const bool     queued = send_gcode_upload(plate_idx,
+        [&](PrintHostJob& upload_job, const fs::path& default_output_file, int, SendGcodeError&) {
+            // What the send dialog would have collected, taken from the caller's parameters. The
+            // upload name is the plate's own output file name unless one was given; the print host
+            // sanitizes it and supplies the extension. Group and storage stay empty: they are
+            // Repetier/PrusaLink pickers with no meaningful non-interactive default.
+            upload_job.upload_data.upload_path   = file_name.empty() ? default_output_file.filename() : fs::path(file_name);
+            upload_job.upload_data.post_action   = post_action;
+            upload_job.upload_data.extended_info = extended_info;
+            if (uploaded_file_name != nullptr)
+                *uploaded_file_name = upload_job.upload_data.upload_path.filename().string();
+            return true;
+        },
+        send_error);
 
-        if (result < 0) {
-            wxString msg = _L("Abnormal print file data. Please slice again");
-            show_error(this, msg, false);
-            return;
-        }
-
-        upload_job.upload_data.source_path = p->m_print_job_data._3mf_path;
-    }
-
-    p->export_gcode(fs::path(), false, std::move(upload_job));
+    error = send_error.message;
+    return queued;
 }
 int Plater::send_gcode(int plate_idx, Export3mfProgressFn proFn)
 {

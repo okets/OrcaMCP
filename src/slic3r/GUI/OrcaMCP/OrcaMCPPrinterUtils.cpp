@@ -10,6 +10,7 @@
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/GUI/Plater.hpp"
+#include "slic3r/GUI/PrintHostDialogs.hpp"
 #include "slic3r/GUI/Tab.hpp"
 #include "slic3r/Utils/PrintHost.hpp"
 
@@ -90,6 +91,78 @@ std::string dirty_preset_collections()
         if (presets->current_is_dirty())
             dirty.push_back(label);
     return boost::algorithm::join(dirty, ", ");
+}
+
+// Builds the {toolId, slotId, materialName, toolMaterialColor, slotMaterialColor} entries the Flashforge
+// local API expects, matching each project tool to the first free material-station slot of the same
+// normalized material family (same rule as FlashforgePrintHostSendDialog::auto_assign_mappings, minus
+// its colour tie-break between same-family slots).
+nlohmann::json auto_material_mappings(const nlohmann::json& project_filaments, const std::vector<FlashforgeApi::MaterialSlot>& slots)
+{
+    nlohmann::json    mappings = nlohmann::json::array();
+    std::vector<bool> slot_used(slots.size(), false);
+
+    for (const auto& filament : project_filaments) {
+        const std::string project_material = flashforge_normalize_material(filament.value("type", std::string()));
+        if (project_material.empty())
+            continue;
+
+        for (size_t i = 0; i < slots.size(); ++i) {
+            if (slot_used[i] || !slots[i].has_filament)
+                continue;
+            if (flashforge_normalize_material(slots[i].material_name) != project_material)
+                continue;
+
+            slot_used[i] = true;
+            mappings.push_back({{"toolId", filament.value("tool_id", 0)},
+                                {"slotId", slots[i].slot_id},
+                                {"materialName", slots[i].material_name},
+                                {"toolMaterialColor", filament.value("color", std::string())},
+                                {"slotMaterialColor", slots[i].material_color}});
+            break;
+        }
+    }
+    return mappings;
+}
+
+// Builds the same payload shape from caller-supplied {tool_id, slot_id} pairs, filling in the slot's
+// reported material/colour so the printer sees a payload consistent with the auto-mapped one. Only
+// checks the *shape* of each entry (both fields present and integers) -- validate_material_mappings is
+// the single place that checks the slot actually exists/is loaded and every project tool got mapped.
+bool build_explicit_material_mappings(const nlohmann::json&                           requested,
+                                      const std::vector<FlashforgeApi::MaterialSlot>& slots,
+                                      nlohmann::json&                                 mappings_out,
+                                      std::string&                                    error)
+{
+    mappings_out = nlohmann::json::array();
+    for (const auto& entry : requested) {
+        if (!entry.is_object() || !entry.contains("tool_id") || !entry.contains("slot_id") ||
+            !entry.at("tool_id").is_number_integer() || !entry.at("slot_id").is_number_integer()) {
+            error = "Each material_mappings entry requires integer 'tool_id' and 'slot_id'";
+            return false;
+        }
+
+        const int  tool_id = entry.at("tool_id").get<int>();
+        const int  slot_id = entry.at("slot_id").get<int>();
+        const auto slot_it = std::find_if(slots.begin(), slots.end(),
+                                          [&](const FlashforgeApi::MaterialSlot& s) { return s.slot_id == slot_id; });
+
+        mappings_out.push_back({{"toolId", tool_id},
+                                {"slotId", slot_id},
+                                {"materialName", slot_it != slots.end() ? slot_it->material_name : std::string()},
+                                {"toolMaterialColor", std::string()},
+                                {"slotMaterialColor", slot_it != slots.end() ? slot_it->material_color : std::string()}});
+    }
+    return true;
+}
+
+// "[0,1]" -- tool ids as they read in a validation error.
+std::string tool_id_list(const std::vector<int>& tool_ids)
+{
+    std::string list = "[";
+    for (size_t i = 0; i < tool_ids.size(); ++i)
+        list += (i == 0 ? "" : ",") + std::to_string(tool_ids[i]);
+    return list + "]";
 }
 
 // The response shared by add_physical_printer and select_printer: whatever the edited preset now is.
@@ -177,12 +250,12 @@ nlohmann::json material_slots_json(const std::vector<FlashforgeApi::MaterialSlot
 
 bool validate_material_mappings(const nlohmann::json&                           mappings,
                                 const std::vector<FlashforgeApi::MaterialSlot>& slots,
-                                size_t                                          tool_count,
+                                const std::vector<int>&                         project_tool_ids,
                                 std::string&                                    error,
                                 std::vector<int>&                               unmapped_tools)
 {
     unmapped_tools.clear();
-    std::vector<bool> tool_mapped(tool_count, false);
+    std::vector<bool> tool_mapped(project_tool_ids.size(), false);
 
     for (const auto& mapping : mappings) {
         // Slot validity first: a caller-supplied slot_id that does not exist (or is not currently
@@ -195,30 +268,66 @@ bool validate_material_mappings(const nlohmann::json&                           
             return false;
         }
 
-        const int tool_id = mapping.value("toolId", -1);
-        if (tool_id < 0 || static_cast<size_t>(tool_id) >= tool_count) {
-            error = "Mapping references tool " + std::to_string(tool_id) + ", which is outside the project's " +
-                    std::to_string(tool_count) + " filament(s)";
+        const int  tool_id = mapping.value("toolId", -1);
+        const auto tool_it = std::find(project_tool_ids.begin(), project_tool_ids.end(), tool_id);
+        if (tool_it == project_tool_ids.end()) {
+            error = "Mapping references tool " + std::to_string(tool_id) + ", which is not one of the project's " +
+                    tool_id_list(project_tool_ids) + " filament(s)";
             return false;
         }
 
-        tool_mapped[tool_id] = true;
+        tool_mapped[std::distance(project_tool_ids.begin(), tool_it)] = true;
     }
 
-    for (size_t i = 0; i < tool_count; ++i)
+    for (size_t i = 0; i < project_tool_ids.size(); ++i)
         if (!tool_mapped[i])
-            unmapped_tools.push_back(static_cast<int>(i));
+            unmapped_tools.push_back(project_tool_ids[i]);
 
     if (!unmapped_tools.empty()) {
-        std::string tool_list = "[";
-        for (size_t i = 0; i < unmapped_tools.size(); ++i)
-            tool_list += (i == 0 ? "" : ",") + std::to_string(unmapped_tools[i]);
-        tool_list += "]";
-        error = "Could not map tools " + tool_list +
+        error = "Could not map tools " + tool_id_list(unmapped_tools) +
                 " to material station slots by material type; pass material_mappings explicitly";
         return false;
     }
 
+    return true;
+}
+
+bool resolve_material_mappings(const nlohmann::json&                           requested,
+                               const std::vector<FlashforgeApi::MaterialSlot>& slots,
+                               const nlohmann::json&                           project_filaments,
+                               nlohmann::json&                                 mappings_out,
+                               nlohmann::json&                                 error_out)
+{
+    mappings_out = nlohmann::json::array();
+
+    if (!requested.empty()) {
+        std::string build_error;
+        if (!build_explicit_material_mappings(requested, slots, mappings_out, build_error)) {
+            error_out = {{"status", "error"}, {"message", build_error}};
+            return false;
+        }
+    } else {
+        mappings_out = auto_material_mappings(project_filaments, slots);
+    }
+
+    // Single gate for both tools: every mapping's slot must exist and be loaded, and every project
+    // tool must end up mapped -- a partial mapping (auto or explicit) never reaches the printer.
+    // Only the tools the sliced plate actually uses; their ids need not be contiguous (an object
+    // printed with filament 2 alone yields the single tool id 1).
+    std::vector<int> project_tool_ids;
+    for (const auto& filament : project_filaments)
+        project_tool_ids.push_back(filament.value("tool_id", -1));
+
+    std::string      validation_error;
+    std::vector<int> unmapped_tools;
+    if (!validate_material_mappings(mappings_out, slots, project_tool_ids, validation_error, unmapped_tools)) {
+        error_out = {{"status", "error"}, {"message", validation_error}};
+        if (!unmapped_tools.empty()) {
+            error_out["unmapped_tools"] = unmapped_tools;
+            error_out["slots"]          = material_slots_json(slots);
+        }
+        return false;
+    }
     return true;
 }
 

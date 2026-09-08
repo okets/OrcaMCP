@@ -38,19 +38,34 @@ nlohmann::json status_to_json(const FlashforgeApi::PrinterStatus& s);
 nlohmann::json material_slots_json(const std::vector<FlashforgeApi::MaterialSlot>& slots);
 
 // Any thread; pure data, no I/O. Validates a built {toolId, slotId, ...} mapping payload (see
-// OrcaMCPPrinterTools.cpp's auto_material_mappings / build_explicit_material_mappings) against the
-// printer's material station and the project's tool count. Fails when a mapping's slot_id does not name
-// a slot that is present and loaded on the printer, a mapping's toolId is outside [0, tool_count), or any
-// tool in that range has no mapping at all -- the same "every project material must be assigned to a
-// loaded slot" rule FlashforgePrintHostSendDialog::validate_before_close enforces before enabling Send.
+// resolve_material_mappings) against the printer's material station and the project's own tool ids.
+// Fails when a mapping's slot_id does not name a slot that is present and loaded on the printer, a
+// mapping's toolId is not one of `project_tool_ids`, or one of those tools has no mapping at all --
+// the same "every project material must be assigned to a loaded slot" rule
+// FlashforgePrintHostSendDialog::validate_before_close enforces before enabling Send. The ids are
+// passed as a list rather than a count because a sliced plate only reports the tools it actually
+// uses: an object printed with filament 2 alone yields the single tool id 1.
 // On failure `error` explains why; `unmapped_tools` additionally lists the specific tool ids left
-// unmapped (only for that failure mode; empty otherwise). Shared by print_printer_file and (task 2.6)
-// send_to_printer so the rule exists in exactly one place.
+// unmapped (only for that failure mode; empty otherwise). Called through resolve_material_mappings,
+// which is what the tools use.
 bool validate_material_mappings(const nlohmann::json&                           mappings,
                                 const std::vector<FlashforgeApi::MaterialSlot>& slots,
-                                size_t                                          tool_count,
+                                const std::vector<int>&                         project_tool_ids,
                                 std::string&                                    error,
                                 std::vector<int>&                               unmapped_tools);
+
+// Any thread; pure data, no I/O. The whole material-mapping step of print_printer_file and
+// send_to_printer: builds the {toolId, slotId, materialName, toolMaterialColor, slotMaterialColor}
+// payload the Flashforge local API takes -- from the caller's explicit {tool_id, slot_id} pairs when
+// it gave any, otherwise by matching each project filament to a free loaded slot of the same material
+// family -- and puts the result through validate_material_mappings. On failure `error_out` is a
+// ready-to-return tool error response, carrying `unmapped_tools` and `slots` when auto-mapping came
+// up short so the caller can see what the printer has loaded.
+bool resolve_material_mappings(const nlohmann::json&                           requested,
+                               const std::vector<FlashforgeApi::MaterialSlot>& slots,
+                               const nlohmann::json&                           project_filaments,
+                               nlohmann::json&                                 mappings_out,
+                               nlohmann::json&                                 error_out);
 
 // Main thread. The current plate's per-tool filament types/colours for material-mapping, mirroring how
 // Plater::send_gcode_legacy builds `project_filaments` (Plater.cpp ~19297-19311): a
@@ -62,7 +77,7 @@ bool validate_material_mappings(const nlohmann::json&                           
 // genuinely uses no filaments, an edge case that in practice does not happen. Returns an empty array
 // either way; `error` is set to "Plate is not sliced; run slice_all first" only in the former case, and
 // left empty otherwise (including "no plate"/"nothing on it" cases some callers may treat as fine).
-// Shared by print_printer_file and (task 2.6) send_to_printer.
+// Shared by print_printer_file and send_to_printer.
 nlohmann::json gather_project_filaments(std::string& error);
 
 // Main thread. Every printer preset carrying a non-empty print_host.

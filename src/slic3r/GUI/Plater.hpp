@@ -1,7 +1,10 @@
 #ifndef slic3r_Plater_hpp_
 #define slic3r_Plater_hpp_
 
+#include <functional>
+#include <map>
 #include <memory>
+#include <string>
 #include <vector>
 #include <boost/filesystem/path.hpp>
 
@@ -55,6 +58,9 @@ class BackgroundSlicingProcess;
 enum SLAPrintObjectStep : unsigned int;
 enum class ConversionType : int;
 class DevAms;
+// Orca: only the send-to-print-host declarations need these; PrintHost.hpp stays out of Plater.hpp.
+struct PrintHostJob;
+enum class PrintHostPostUploadAction;
 
 using ModelInstancePtrs = std::vector<ModelInstance*>;
 
@@ -311,6 +317,17 @@ private:
 
     wxBoxSizer* m_scrolled_sizer = nullptr;
     bool            m_need_auto_sync_after_connect_printer{false};
+};
+
+// Orca: why a send to a print host could not start. The dialog path show_error'd some of these
+// reasons and returned silently for the rest, so each reason records how it used to be reported:
+// `show` mirrors that choice and `monospaced` mirrors show_error's has_code_excerpts flag. MCP
+// surfaces `message` for every reason, the silent ones included.
+struct SendGcodeError
+{
+    std::string message;
+    bool        show       = false;
+    bool        monospaced = false;
 };
 
 class Plater: public wxPanel
@@ -574,6 +591,18 @@ public:
      * -2: send all gcode to target machine */
     int send_gcode(int plate_idx = -1, Export3mfProgressFn proFn = nullptr);
     void send_gcode_legacy(int plate_idx = -1, Export3mfProgressFn proFn = nullptr);
+    // Orca (MCP): send_gcode_legacy without its send dialog -- the caller supplies what that dialog
+    // would have collected. `extended_info` is passed to the print host verbatim (for Flashforge:
+    // levelingBeforePrint/timeLapseVideo/useMatlStation/gcodeToolCnt/materialMappings), `file_name`
+    // defaults to the plate's own output file name and `uploaded_file_name`, when given, receives the
+    // name the upload was queued under. The upload is queued, not awaited: false with `error` set
+    // means it could not even be queued.
+    bool send_gcode_direct(int                                       plate_idx,
+                           const std::map<std::string, std::string>& extended_info,
+                           PrintHostPostUploadAction                 post_action,
+                           std::string&                              error,
+                           const std::string&                        file_name          = std::string(),
+                           std::string*                              uploaded_file_name = nullptr);
     int export_config_3mf(int plate_idx = -1, Export3mfProgressFn proFn = nullptr);
     //BBS jump to nonitor after print job finished
     void send_calibration_job_finished(wxCommandEvent &evt);
@@ -1035,6 +1064,22 @@ private:
     void single_snapshots_leave(SingleSnapshot *single);
     // BBS: add project slice related functions
     int start_next_slice();
+
+    // Orca: everything the legacy send flow does apart from asking the user. `configure_upload`
+    // fills in the per-upload fields (file name, post action, group/storage, extended info) the
+    // send dialog collects for the GUI and MCP's send_gcode_direct supplies from its parameters;
+    // returning false from it aborts the send. Both send paths go through here, so they build the
+    // very same job.
+    using SendGcodeConfigureFn = std::function<bool(PrintHostJob& /*upload_job*/,
+                                                    const boost::filesystem::path& /*default_output_file*/,
+                                                    int /*resolved_plate_idx*/,
+                                                    SendGcodeError& /*error*/)>;
+    bool send_gcode_upload(int plate_idx, const SendGcodeConfigureFn& configure_upload, SendGcodeError& error);
+    bool configure_send_from_dialog(PrintHostJob&                  upload_job,
+                                    const boost::filesystem::path& default_output_file,
+                                    int                            plate_idx,
+                                    int                            resolved_plate_idx,
+                                    SendGcodeError&                error);
 
     void _calib_pa_pattern(const Calib_Params& params);
     void _calib_pa_pattern_gen_gcode();
