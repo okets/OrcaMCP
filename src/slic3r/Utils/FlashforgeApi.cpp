@@ -310,6 +310,13 @@ nlohmann::json flashforge_status_to_bambu_payload(const PrinterStatus& status)
         print["gcode_file"]   = status.print_file;
     }
 
+    // Every `print` message is handed to DevFan::command_handle_response (DeviceManager.cpp:4514),
+    // which logs a warning for anything without a `sequence_id` - once per poll, for ever. Real Bambu
+    // pushes do carry one, so this is protocol-shaped rather than a workaround. "0" is deliberately
+    // outside the studio command range [START_SEQ_ID, END_SEQ_ID) = [20000, 30000), so it can never
+    // match a pending command's callback (DeviceManager.hpp:54-55) or read as a studio reply.
+    print["sequence_id"] = "0";
+
     print["lights_report"] = nlohmann::json::array({
         nlohmann::json{{"node", "chamber_light"}, {"mode", status.light_on ? "on" : "off"}}});
 

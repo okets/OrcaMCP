@@ -130,6 +130,10 @@ TEST_CASE("flashforge_status_to_bambu_payload maps the whole Creator 5 Pro detai
     // Never an `ipcam` block, even though this fixture has a camera URL: it would arm the Bambu
     // RTSP player against an HTTP MJPEG stream. The camera is exposed through the Device (Web) tab.
     CHECK_FALSE(p.contains("ipcam"));
+
+    // Present so the push is not logged as a malformed command reply, and outside the studio
+    // command id range so it can never be taken for one.
+    CHECK(p["sequence_id"] == "0");
 }
 
 TEST_CASE("flashforge_status_to_bambu_payload picks the first heated nozzle", "[flashforge]") {
