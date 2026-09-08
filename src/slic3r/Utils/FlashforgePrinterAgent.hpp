@@ -114,9 +114,15 @@ private:
     bool wait_for_next_poll(std::chrono::milliseconds interval);
 
     // Dispatch back into the GUI, marshalled through queue_on_main_fn when one is registered.
-    void dispatch_message(const std::string& dev_id, const std::string& payload);
+    /// `sync_machine` additionally runs sync_machine_object() on the GUI thread, immediately before
+    /// the payload reaches MachineObject::parse_json. Only status pushes need it.
+    void dispatch_message(const std::string& dev_id, const std::string& payload, bool sync_machine = false);
     void dispatch_local_connect(int state, const std::string& dev_id, const std::string& msg);
     void dispatch_printer_connected(const std::string& dev_id);
+
+    /// GUI thread only. Fills in the MachineObject fields the Device tab needs but a Bambu-shaped
+    /// `push_status` cannot carry, exactly as MoonrakerPrinterAgent does after its own pushes.
+    void sync_machine_object(const std::string& dev_id) const;
 
     std::shared_ptr<Flashforge> get_host() const;
 
@@ -131,6 +137,7 @@ private:
     std::string                         m_selected_machine;
     std::string                         m_access_code;
     std::string                         m_firmware_version; // learned from the first successful poll
+    std::string                         m_model_id;         // vendor model_id of the selected preset
 
     OnMsgArrivedFn        m_on_ssdp_msg_fn;
     OnPrinterConnectedFn  m_on_printer_connected_fn;

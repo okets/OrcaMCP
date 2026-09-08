@@ -5,6 +5,9 @@
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
+#include "slic3r/GUI/DeviceCore/DevManager.h"
+#include "slic3r/GUI/DeviceCore/DevStorage.h"
+#include "slic3r/GUI/DeviceCore/DevFirmware.h"
 
 #include <boost/log/trivial.hpp>
 
@@ -87,7 +90,8 @@ int FlashforgePrinterAgent::connect_printer(std::string dev_id, std::string dev_
         return BAMBU_NETWORK_ERR_INVALID_HANDLE;
     }
 
-    DynamicPrintConfig config = preset_bundle->printers.get_edited_preset().config;
+    Preset&            preset = preset_bundle->printers.get_edited_preset();
+    DynamicPrintConfig config = preset.config;
     auto               host   = std::make_shared<Flashforge>(&config);
     if (!host->has_local_api_credentials()) {
         BOOST_LOG_TRIVIAL(warning) << "FlashforgePrinterAgent: printer preset has no serial number / access code; "
@@ -95,12 +99,19 @@ int FlashforgePrinterAgent::connect_printer(std::string dev_id, std::string dev_
         return BAMBU_NETWORK_ERR_INVALID_HANDLE;
     }
 
+    // The Device tab matches this against the preset when it decides whether the machine and the
+    // project agree; MoonrakerPrinterAgent.cpp:1105 reads the same value.
+    std::string model_id = preset.get_printer_type(preset_bundle);
+    if (model_id.empty())
+        model_id = config.opt_string("printer_model");
+
     stop_polling(); // a previous selection may still be polling a different printer
 
     {
         std::lock_guard<std::recursive_mutex> lock(m_state_mutex);
         m_host        = std::move(host);
         m_access_code = password.empty() ? ACCESS_CODE_PLACEHOLDER : password;
+        m_model_id    = std::move(model_id);
         m_firmware_version.clear();
     }
 
@@ -116,6 +127,7 @@ int FlashforgePrinterAgent::disconnect_printer()
         std::lock_guard<std::recursive_mutex> lock(m_state_mutex);
         m_host.reset();
         m_firmware_version.clear();
+        m_model_id.clear();
     }
     return BAMBU_NETWORK_SUCCESS;
 }
@@ -530,7 +542,7 @@ void FlashforgePrinterAgent::run_poll_loop(std::string dev_id)
 
         nlohmann::json payload = FlashforgeApi::flashforge_status_to_bambu_payload(status);
         payload["t_utc"]       = now_ms();
-        dispatch_message(dev_id, payload.dump());
+        dispatch_message(dev_id, payload.dump(), /*sync_machine=*/true);
 
         const bool printing = payload["print"]["gcode_state"] == "RUNNING";
         if (!wait_for_next_poll(printing ? POLL_INTERVAL_PRINTING : POLL_INTERVAL_IDLE))
@@ -544,7 +556,7 @@ void FlashforgePrinterAgent::run_poll_loop(std::string dev_id)
 // Dispatch
 // ============================================================================
 
-void FlashforgePrinterAgent::dispatch_message(const std::string& dev_id, const std::string& payload)
+void FlashforgePrinterAgent::dispatch_message(const std::string& dev_id, const std::string& payload, bool sync_machine)
 {
     OnMessageFn   local_fn;
     OnMessageFn   cloud_fn;
@@ -561,7 +573,10 @@ void FlashforgePrinterAgent::dispatch_message(const std::string& dev_id, const s
         return;
     }
 
-    auto dispatch = [dev_id, payload, local_fn, cloud_fn]() {
+    auto dispatch = [this, dev_id, payload, sync_machine, local_fn, cloud_fn]() {
+        // Before the payload, not after: parse_json reads printer_type while it parses.
+        if (sync_machine)
+            sync_machine_object(dev_id);
         if (local_fn)
             local_fn(dev_id, payload);
         else
@@ -572,6 +587,50 @@ void FlashforgePrinterAgent::dispatch_message(const std::string& dev_id, const s
         queue_fn(dispatch);
     else
         dispatch();
+}
+
+void FlashforgePrinterAgent::sync_machine_object(const std::string& dev_id) const
+{
+    DeviceManager* dev_manager = GUI::wxGetApp().getDeviceManager();
+    if (!dev_manager)
+        return;
+    MachineObject* obj = dev_manager->get_my_machine(dev_id);
+    if (!obj)
+        return;
+
+    std::string model_id;
+    std::string firmware;
+    {
+        std::lock_guard<std::recursive_mutex> lock(m_state_mutex);
+        model_id = m_model_id;
+        firmware = m_firmware_version;
+    }
+
+
+    // GUI_App::select_machine seeds printer_type from the preset's *display* name, which no
+    // printer-type table knows; the vendor model_id is what update_sync_status compares against.
+    if (!model_id.empty())
+        obj->printer_type = model_id;
+
+    // is_info_ready() - the gate on StatusPanel::update - wants a version, at least one full message
+    // and at least one push. A polling agent has no MQTT "first full message" to count, so it says so
+    // once; parse_json takes over the counting from the very same payload this call precedes.
+    if (obj->module_vers.empty()) {
+        DevFirmwareVersionInfo ota_info;
+        ota_info.name   = "ota";
+        ota_info.sw_ver = firmware.empty() ? "1.0.0" : firmware;
+        obj->module_vers.emplace("ota", ota_info);
+    }
+    if (obj->m_push_count == 0)
+        obj->m_push_count = 1;
+    if (obj->m_full_msg_count == 0)
+        obj->m_full_msg_count = 1;
+    obj->last_push_time = std::chrono::system_clock::now();
+
+    // Flashforge printers print from their own internal storage, which is always there. Without this
+    // SelectMachineDialog/PrintJob refuse with "A Storage needs to be inserted before printing via
+    // LAN." (PrintJob.cpp:614-618).
+    obj->GetStorage()->set_sdcard_state(DevStorage::HAS_SDCARD_NORMAL);
 }
 
 void FlashforgePrinterAgent::dispatch_local_connect(int state, const std::string& dev_id, const std::string& msg)
