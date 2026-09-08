@@ -14,13 +14,17 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include <boost/log/trivial.hpp>
 
@@ -94,6 +98,81 @@ json printer_json(const FlashforgeApi::PrinterStatus& status)
     return printer;
 }
 
+// ── Command shaping ──────────────────────────────────────────────────────────────────────────
+
+/// The vendor's own speed steps, and the only ones the page offers. A value from anywhere else is
+/// refused rather than passed through to the firmware.
+const double PRINT_SPEEDS[] = {50, 100, 125, 166};
+
+/// What the machine will accept as a target, generously bounded. The printer is still the
+/// authority - these only stop a typo becoming a command.
+constexpr double MAX_NOZZLE_TEMP = 350, MAX_BED_TEMP = 150, MAX_CHAMBER_TEMP = 100;
+/// Z compensation is an offset, nudged one step at a time; a whole millimetre is already far more
+/// than a first layer.
+constexpr double MAX_Z_COMPENSATION = 1.0;
+
+/// The printer's untouched `detail` object inside a cached snapshot, or null when nothing has
+/// arrived yet.
+const json* raw_detail(const json& snapshot)
+{
+    if (!snapshot.is_object())
+        return nullptr;
+    const auto printer = snapshot.find("printer");
+    if (printer == snapshot.end() || !printer->is_object())
+        return nullptr;
+    const auto raw = printer->find("raw");
+    return (raw != printer->end() && raw->is_object()) ? &*raw : nullptr;
+}
+
+double json_double(const json& obj, const char* key, double fallback)
+{
+    const auto it = obj.find(key);
+    return (it != obj.end() && it->is_number()) ? it->get<double>() : fallback;
+}
+
+/// Replaces `value` only when the page actually sent that field: everything else keeps what the
+/// printer currently reports, which is the whole point of reading the snapshot.
+void override_number(const json& params, const char* key, double& value)
+{
+    const auto it = params.find(key);
+    if (it != params.end() && it->is_number())
+        value = it->get<double>();
+}
+
+/// One half of circulateCtl_cmd: the side being toggled comes from the page, the other from the
+/// printer's own report, so switching the exhaust cannot close the recirculation.
+std::string switch_or_current(const json& params, const json& raw, const char* param_key, const char* raw_key)
+{
+    const auto it = params.find(param_key);
+    const std::string value = (it != params.end() && it->is_string()) ? it->get<std::string>()
+                                                                     : raw.value(raw_key, std::string());
+    return value == "open" ? "open" : "close";
+}
+
+/// A temperature the page sent, bounded. Absent or null means "leave this one alone"; 0 means
+/// "off", and the two must never be confused - the firmware's own sentinel for no-change is -200,
+/// which set_temperatures writes for an empty optional.
+bool read_target(const json& params, const char* key, double max_value, const wxString& label, json& out, std::string& error)
+{
+    out = nullptr;
+    const auto it = params.find(key);
+    if (it == params.end() || it->is_null())
+        return true;
+
+    const double value = it->is_number() ? it->get<double>() : -1;
+    if (!it->is_number() || value < 0 || value > max_value) {
+        error = into_u8(wxString::Format(_L("%s must be between 0 and %d °C."), label, static_cast<int>(max_value)));
+        return false;
+    }
+    out = value;
+    return true;
+}
+
+std::optional<double> to_optional(const json& value)
+{
+    return value.is_number() ? std::optional<double>(value.get<double>()) : std::nullopt;
+}
+
 /// One run of the poll loop, and everything that outlives the thread it runs on.
 ///
 /// The thread is detached rather than joined, because a fetch_status fifteen seconds into a dead
@@ -105,6 +184,9 @@ struct PollSession
     std::mutex              mutex;
     std::condition_variable cv;
     bool                    stop = false;
+    /// Set by poke(); cleared by the wait it shortens. A separate flag rather than a shorter
+    /// interval, so a wake that lands while the loop is inside fetch_status is not lost.
+    bool wake = false;
 
     /// False once the loop has left, so the handler knows a new session is needed.
     std::atomic_bool running{true};
@@ -124,17 +206,31 @@ struct PollSession
         cv.notify_all();
     }
 
+    /// Asks for one immediate fetch without ending the session. A control command has just changed
+    /// something and the page is holding a pending state until the printer confirms it, so the
+    /// shorter that wait the better.
+    void poke()
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            wake = true;
+        }
+        cv.notify_all();
+    }
+
     bool stopped()
     {
         std::lock_guard<std::mutex> lock(mutex);
         return stop;
     }
 
-    /// Sleeps up to `interval`, waking early when the session is stopped. False means "stop now".
+    /// Sleeps up to `interval`, waking early when the session is stopped or poked. False means
+    /// "stop now".
     bool wait(std::chrono::milliseconds interval)
     {
         std::unique_lock<std::mutex> lock(mutex);
-        cv.wait_for(lock, interval, [this]() { return stop; });
+        cv.wait_for(lock, interval, [this]() { return stop || wake; });
+        wake = false;
         return !stop;
     }
 
@@ -201,6 +297,11 @@ public:
             return;
         }
 
+        if (method == "command") {
+            handle_command(id, request.value("params", json::object()));
+            return;
+        }
+
         answer_error(id, method, "Unknown method '" + method + "'");
     }
 
@@ -247,6 +348,49 @@ private:
     void answer_error(int id, const std::string& method, const std::string& error)
     {
         run_in_page(json{{"id", id}, {"method", method}, {"ok", false}, {"error", error}});
+    }
+
+    /// The page holds the control in a pending state until this arrives, and reverts it on ok:false
+    /// with `error` shown inline beside the control - never in a dialog.
+    void answer_command(int id, bool ok, const std::string& error)
+    {
+        run_in_page(json{{"id", id}, {"method", "command"}, {"ok", ok}, {"error", error}});
+    }
+
+    // ── Commands (dispatch on the GUI thread, execute off it) ────────────────────────────────
+
+    /// Resolves what the command needs from the GUI thread - the preset's host and credentials, and
+    /// the cached snapshot the untouched fields come from - then hands the blocking part to a
+    /// worker. Nothing here talks to the printer.
+    void handle_command(int id, const json& params)
+    {
+        if (m_suspended) {
+            // The page is parked because its printer is no longer the selected one. A parked page
+            // must not be able to move a machine the user has looked away from.
+            answer_command(id, false, into_u8(_L("This printer is not the selected one any more.")));
+            return;
+        }
+
+        DynamicPrintConfig config;
+        std::string        host_type, error;
+        if (!OrcaMCP::resolve_print_host_config(config, host_type, error)) {
+            answer_command(id, false, error);
+            return;
+        }
+
+        json operation;
+        if (!build_console_operation(params, last_status(), operation, error)) {
+            answer_command(id, false, error);
+            return;
+        }
+
+        // Idempotent, and the reason the poke below has something to wake: a console whose session
+        // had ended (no credentials at the time, say) gets one back before its first command lands.
+        start_polling();
+
+        std::thread(&FlashforgeConsoleHandler::run_command, m_session, m_alive, this, std::move(config),
+                    std::move(operation), id)
+            .detach();
     }
 
     void run_in_page(const json& message)
@@ -358,6 +502,54 @@ private:
         }
     }
 
+    // ── Commands (its own thread) ────────────────────────────────────────────────────────────
+
+    /// One control request. Same discipline as the poll loop: its own config copy, a detached
+    /// thread nobody waits for, and a reply that only reaches the handler through `alive`.
+    static void run_command(std::shared_ptr<PollSession>      session,
+                            std::shared_ptr<std::atomic_bool> alive,
+                            FlashforgeConsoleHandler*         self,
+                            DynamicPrintConfig                config,
+                            json                              operation,
+                            int                               id)
+    {
+        const Flashforge  host(&config);
+        const std::string kind = operation.value("kind", std::string());
+        wxString          msg;
+        bool              ok = false;
+
+        if (kind == "light") {
+            ok = host.set_light(operation.value("on", false), msg);
+        } else if (kind == "job") {
+            const std::string action = operation.value("action", std::string());
+            ok = action == "pause"    ? host.pause_job(msg)
+                 : action == "resume" ? host.resume_job(msg)
+                                      : host.cancel_job(msg);
+        } else if (kind == "temperature") {
+            std::vector<std::optional<double>> nozzles;
+            for (const auto& target : operation["nozzles"])
+                nozzles.push_back(to_optional(target));
+            ok = host.set_temperatures(to_optional(operation["bed"]), to_optional(operation["chamber"]), nozzles, msg);
+        } else {
+            ok = host.send_control(operation.value("cmd", std::string()), operation.value("args", json::object()), msg);
+        }
+
+        // The page is showing a pending control until the printer itself confirms the change, so
+        // the next snapshot is wanted now rather than at the end of the cadence.
+        if (ok && session)
+            session->poke();
+
+        const std::string error = ok ? std::string()
+                                     : (msg.empty() ? into_u8(_L("The printer refused the command."))
+                                                    : std::string(msg.ToUTF8().data()));
+        if (!*alive)
+            return;
+        wxGetApp().CallAfter([alive, self, id, ok, error]() {
+            if (*alive)
+                self->answer_command(id, ok, error);
+        });
+    }
+
     /// Any thread. Caches the snapshot on the session and hands it to the GUI thread to deliver.
     static void push(const std::shared_ptr<PollSession>&      session,
                      const std::shared_ptr<std::atomic_bool>& alive,
@@ -391,6 +583,115 @@ private:
 };
 
 } // namespace
+
+bool build_console_operation(const json& params, const json& snapshot, json& operation, std::string& error)
+{
+    const std::string name = params.value("name", std::string());
+
+    if (name == "light") {
+        const auto on = params.find("on");
+        if (on == params.end() || !on->is_boolean()) {
+            error = _u8L("The light command needs an on/off value.");
+            return false;
+        }
+        operation = json{{"kind", "light"}, {"on", on->get<bool>()}};
+        return true;
+    }
+
+    if (name == "job") {
+        const std::string action = params.value("action", std::string());
+        if (action != "pause" && action != "resume" && action != "stop") {
+            error = into_u8(wxString::Format(_L("Unknown job action '%s'."), from_u8(action)));
+            return false;
+        }
+        operation = json{{"kind", "job"}, {"action", action}};
+        return true;
+    }
+
+    if (name == "temperature") {
+        json bed, chamber;
+        if (!read_target(params, "bed", MAX_BED_TEMP, _L("Bed target"), bed, error) ||
+            !read_target(params, "chamber", MAX_CHAMBER_TEMP, _L("Chamber target"), chamber, error))
+            return false;
+
+        // Four entries whatever the page sent, because that is the array the firmware takes; a null
+        // is the one that becomes "leave this nozzle alone", and 0 is a real instruction to cool.
+        const auto sent    = params.find("nozzles");
+        json       nozzles = json::array();
+        for (size_t tool = 0; tool < 4; ++tool) {
+            json target = nullptr;
+            if (sent != params.end() && sent->is_array() && tool < sent->size()) {
+                const json one = json{{"t", sent->at(tool)}};
+                if (!read_target(one, "t", MAX_NOZZLE_TEMP, _L("Nozzle target"), target, error))
+                    return false;
+            }
+            nozzles.push_back(target);
+        }
+
+        operation = json{{"kind", "temperature"}, {"bed", bed}, {"chamber", chamber}, {"nozzles", nozzles}};
+        return true;
+    }
+
+    // The two commands below each carry every field they own. Without a snapshot to read the
+    // untouched ones from, sending either would reset whatever it did not mention.
+    const json* raw = raw_detail(snapshot);
+    if (raw == nullptr && (name == "filtration" || name == "printer_ctl")) {
+        error = _u8L("The printer has not reported its current settings yet.");
+        return false;
+    }
+
+    if (name == "filtration") {
+        operation = json{{"kind", "control"},
+                         {"cmd", "circulateCtl_cmd"},
+                         {"args",
+                          {{"internal", switch_or_current(params, *raw, "internal", "internalFanStatus")},
+                           {"external", switch_or_current(params, *raw, "external", "externalFanStatus")}}}};
+        return true;
+    }
+
+    if (name == "printer_ctl") {
+        double z     = json_double(*raw, "zAxisCompensation", 0);
+        double speed = json_double(*raw, "printSpeedAdjust", 0);
+        double chamber_fan = json_double(*raw, "chamberFanSpeed", 0);
+        double cooling_fan = json_double(*raw, "coolingFanSpeed", 0);
+        // The firmware reports no left-fan speed on this machine, and the command wants the field.
+        double cooling_left_fan = json_double(*raw, "coolingLeftFanSpeed", 0);
+
+        // An idle printer reports 0 % speed, which is not a speed it would accept back. Carrying it
+        // into a Z nudge would ask the machine to stop moving, so an untouched speed reads 100 %.
+        if (!(speed > 0))
+            speed = 100;
+
+        const bool changing_speed = params.contains("speed");
+        override_number(params, "zAxisCompensation", z);
+        override_number(params, "speed", speed);
+        override_number(params, "chamberFan", chamber_fan);
+        override_number(params, "coolingFan", cooling_fan);
+        override_number(params, "coolingLeftFan", cooling_left_fan);
+
+        if (changing_speed && std::find(std::begin(PRINT_SPEEDS), std::end(PRINT_SPEEDS), speed) == std::end(PRINT_SPEEDS)) {
+            error = _u8L("Print speed must be one of 50, 100, 125 or 166 %.");
+            return false;
+        }
+        if (std::abs(z) > MAX_Z_COMPENSATION) {
+            error = _u8L("Z offset must be within \u00b11 mm.");
+            return false;
+        }
+
+        operation = json{{"kind", "control"},
+                         {"cmd", "printerCtl_cmd"},
+                         {"args",
+                          {{"zAxisCompensation", z},
+                           {"speed", speed},
+                           {"chamberFan", chamber_fan},
+                           {"coolingFan", cooling_fan},
+                           {"coolingLeftFan", cooling_left_fan}}}};
+        return true;
+    }
+
+    error = into_u8(wxString::Format(_L("Unknown command '%s'."), from_u8(name)));
+    return false;
+}
 
 wxString flashforge_console_url()
 {
