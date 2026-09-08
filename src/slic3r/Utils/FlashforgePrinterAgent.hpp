@@ -129,25 +129,20 @@ private:
     static constexpr std::chrono::milliseconds POLL_INTERVAL_PRINTING{2000};
     static constexpr std::chrono::milliseconds POLL_INTERVAL_IDLE{5000};
 
-    std::string m_log_dir;
+    mutable std::recursive_mutex m_state_mutex; // guards everything below it
+    std::shared_ptr<Flashforge>  m_host;
+    std::string                  m_selected_machine;
+    std::string                  m_access_code;
+    std::string                  m_firmware_version; // learned from the first successful poll
+    std::string                  m_model_id;         // vendor model_id of the selected preset
 
-    mutable std::recursive_mutex        m_state_mutex; // guards everything below it
-    std::shared_ptr<ICloudServiceAgent> m_cloud_agent;
-    std::shared_ptr<Flashforge>         m_host;
-    std::string                         m_selected_machine;
-    std::string                         m_access_code;
-    std::string                         m_firmware_version; // learned from the first successful poll
-    std::string                         m_model_id;         // vendor model_id of the selected preset
-
-    OnMsgArrivedFn        m_on_ssdp_msg_fn;
-    OnPrinterConnectedFn  m_on_printer_connected_fn;
-    GetSubscribeFailureFn m_on_subscribe_failure_fn;
-    OnMessageFn           m_on_message_fn;
-    OnMessageFn           m_on_user_message_fn;
-    OnLocalConnectedFn    m_on_local_connect_fn;
-    OnMessageFn           m_on_local_message_fn;
-    QueueOnMainFn         m_queue_on_main_fn;
-    OnServerErrFn         m_on_server_err_fn;
+    // Only the callbacks this agent actually invokes are stored; the rest of the IPrinterAgent
+    // setters accept and drop their argument rather than keeping a member nothing ever reads.
+    OnPrinterConnectedFn m_on_printer_connected_fn;
+    OnMessageFn          m_on_message_fn;
+    OnLocalConnectedFn   m_on_local_connect_fn;
+    OnMessageFn          m_on_local_message_fn;
+    QueueOnMainFn        m_queue_on_main_fn;
 
     // Poll thread lifecycle. m_poll_mutex is only ever held for the flag + the cv wait, so
     // stopping never has to wait on m_state_mutex or on an in-flight HTTP request's lock.

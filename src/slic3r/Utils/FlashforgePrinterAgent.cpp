@@ -30,6 +30,22 @@ uint64_t now_ms()
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
 }
 
+/// The bare host of a `dev_id`-style address. DeviceManager builds those as `host[:printhost_port]`
+/// (MachineObject::dev_id_from_address), but the Flashforge local API always lives on its own fixed
+/// port, so the trailing `:port` has to come off before Flashforge builds a URL from it.
+std::string host_name_of(const std::string& address)
+{
+    std::string host = address;
+    if (const auto scheme = host.find("://"); scheme != std::string::npos)
+        host = host.substr(scheme + 3);
+    if (const auto slash = host.find('/'); slash != std::string::npos)
+        host = host.substr(0, slash);
+    // Only a trailing IPv4/hostname port; an unbracketed IPv6 literal is not a shape dev_id ever has.
+    if (const auto colon = host.rfind(':'); colon != std::string::npos && host.find(':') == colon)
+        host = host.substr(0, colon);
+    return host;
+}
+
 std::string json_string(const nlohmann::json& obj, const char* key)
 {
     if (obj.contains(key) && obj[key].is_string())
@@ -39,7 +55,9 @@ std::string json_string(const nlohmann::json& obj, const char* key)
 
 } // namespace
 
-FlashforgePrinterAgent::FlashforgePrinterAgent(std::string log_dir) : m_log_dir(std::move(log_dir)) {}
+// The log directory is an OrcaPrinterAgent/Bambu-plugin concept; this agent logs through
+// BOOST_LOG_TRIVIAL like the rest of the slicer, so it has nothing to keep.
+FlashforgePrinterAgent::FlashforgePrinterAgent(std::string log_dir) { (void) log_dir; }
 
 FlashforgePrinterAgent::~FlashforgePrinterAgent() { stop_polling(); }
 
@@ -50,8 +68,8 @@ AgentInfo FlashforgePrinterAgent::get_agent_info_static()
 
 void FlashforgePrinterAgent::set_cloud_agent(std::shared_ptr<ICloudServiceAgent> cloud)
 {
-    std::lock_guard<std::recursive_mutex> lock(m_state_mutex);
-    m_cloud_agent = std::move(cloud);
+    // The printer is reached directly over the LAN; there is no cloud relay to fall back on.
+    (void) cloud;
 }
 
 // ============================================================================
@@ -82,8 +100,10 @@ int FlashforgePrinterAgent::connect_printer(std::string dev_id, std::string dev_
         return BAMBU_NETWORK_ERR_INVALID_HANDLE;
     }
 
-    // The host is built from the printer preset, which is where print_host, the serial number
-    // and the check code live. dev_ip carries only host:port, not the credentials.
+    // The credentials (serial number, check code) only exist in the printer preset, so the host is
+    // built from it - but the address is the caller's: connect_printer is told which device to talk
+    // to, and honouring dev_ip is what keeps the agent pointed at the machine DeviceManager selected
+    // (MoonrakerPrinterAgent.cpp:150 does the same with its base_url).
     PresetBundle* preset_bundle = GUI::wxGetApp().preset_bundle;
     if (!preset_bundle) {
         BOOST_LOG_TRIVIAL(error) << "FlashforgePrinterAgent: no preset bundle; cannot reach the printer";
@@ -92,7 +112,10 @@ int FlashforgePrinterAgent::connect_printer(std::string dev_id, std::string dev_
 
     Preset&            preset = preset_bundle->printers.get_edited_preset();
     DynamicPrintConfig config = preset.config;
-    auto               host   = std::make_shared<Flashforge>(&config);
+    if (!dev_ip.empty())
+        config.set_key_value("print_host", new ConfigOptionString(host_name_of(dev_ip)));
+
+    auto host = std::make_shared<Flashforge>(&config);
     if (!host->has_local_api_credentials()) {
         BOOST_LOG_TRIVIAL(warning) << "FlashforgePrinterAgent: printer preset has no serial number / access code; "
                                       "status polling is unavailable";
@@ -210,8 +233,8 @@ int FlashforgePrinterAgent::get_hms_snapshot(std::string dev_id, std::string fil
 
 int FlashforgePrinterAgent::set_server_callback(OnServerErrFn fn)
 {
-    std::lock_guard<std::recursive_mutex> lock(m_state_mutex);
-    m_on_server_err_fn = std::move(fn);
+    // Reports cloud-server errors; this agent never talks to one, so it never fires.
+    (void) fn;
     return BAMBU_NETWORK_SUCCESS;
 }
 
@@ -291,8 +314,8 @@ int FlashforgePrinterAgent::start_sdcard_print(PrintParams params, OnUpdateStatu
 
 int FlashforgePrinterAgent::set_on_ssdp_msg_fn(OnMsgArrivedFn fn)
 {
-    std::lock_guard<std::recursive_mutex> lock(m_state_mutex);
-    m_on_ssdp_msg_fn = std::move(fn);
+    // start_discovery() is a no-op (see there), so no SSDP message is ever delivered.
+    (void) fn;
     return BAMBU_NETWORK_SUCCESS;
 }
 
@@ -305,8 +328,8 @@ int FlashforgePrinterAgent::set_on_printer_connected_fn(OnPrinterConnectedFn fn)
 
 int FlashforgePrinterAgent::set_on_subscribe_failure_fn(GetSubscribeFailureFn fn)
 {
-    std::lock_guard<std::recursive_mutex> lock(m_state_mutex);
-    m_on_subscribe_failure_fn = std::move(fn);
+    // MQTT subscription failures; polling has no subscription to fail.
+    (void) fn;
     return BAMBU_NETWORK_SUCCESS;
 }
 
@@ -319,8 +342,8 @@ int FlashforgePrinterAgent::set_on_message_fn(OnMessageFn fn)
 
 int FlashforgePrinterAgent::set_on_user_message_fn(OnMessageFn fn)
 {
-    std::lock_guard<std::recursive_mutex> lock(m_state_mutex);
-    m_on_user_message_fn = std::move(fn);
+    // Account-scoped cloud messages; there is no account.
+    (void) fn;
     return BAMBU_NETWORK_SUCCESS;
 }
 
@@ -379,11 +402,17 @@ int FlashforgePrinterAgent::handle_request(const std::string& dev_id, const std:
         return BAMBU_NETWORK_ERR_INVALID_RESULT;
     }
 
-    // "pushall" asks the printer to re-send its full state. The poll loop already pushes the
-    // full state on every tick, so acknowledging is honest - and keeps MachineObject from
-    // logging a publish failure on every reconnect.
-    if (json.contains("pushing") && json["pushing"].is_object())
-        return BAMBU_NETWORK_SUCCESS;
+    if (json.contains("pushing") && json["pushing"].is_object()) {
+        // "pushall"/"start" ask the printer to (re)send its full state. The poll loop already pushes
+        // the full state on every tick, so acknowledging is honest - and keeps MachineObject from
+        // logging a publish failure on every reconnect. "stop" is a different promise: the poll loop
+        // is the connection, and it does not stop on request, so that one is refused.
+        const std::string cmd = json_string(json["pushing"], "command");
+        if (cmd == "pushall" || cmd == "start")
+            return BAMBU_NETWORK_SUCCESS;
+        BOOST_LOG_TRIVIAL(info) << "FlashforgePrinterAgent: unsupported pushing command '" << cmd << "'";
+        return ORCA_NETWORK_ERR_CMD_NOT_SUPPORTED;
+    }
 
     if (json.contains("print") && json["print"].is_object())
         return handle_print_command(dev_id, json["print"]);
