@@ -1535,6 +1535,8 @@ python3 -m pytest scripts/tests -q
 ./build/arm64/tests/slic3rutils/RelWithDebInfo/slic3rutils_tests "[flashforge]"
 ```
 
+  - Dialog-hang regression (Task 2.7b Item L): `load_model` + `apply_config layer_height` (dirty project *and* presets) → `new_project`, then the same again → `export_3mf` (explicit path) → `load_model` → `load_project` of that file; both must return in seconds with `status: success` and `info_messages` naming the suppressed unsaved-changes dialogs (never a hang), and `save_project` / `export_3mf` / `export_gcode` with no path must return an error instead of opening a file dialog.
+
 - [ ] **Step 2: Full natural-language run** through Claude Code: "Load benchy, split it into four color regions by part, assign one tool each, add a 60/40 red-blue mix for the hull, slice, send to the Creator 5 Pro and start it, then report progress every minute until it's done." Every step must go through MCP tools with no dialogs.
 
 - [ ] **Step 3: Push**

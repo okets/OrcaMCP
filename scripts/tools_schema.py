@@ -301,20 +301,24 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
   'name': 'discover_printers'},
  {'description': 'Export project as 3MF file.',
   'inputSchema': {'additionalProperties': False,
-                  'properties': {'output_path': {'description': 'Output path. '
-                                                                'If omitted, '
-                                                                'opens file '
-                                                                'dialog.',
+                  'properties': {'output_path': {'description': 'Output path '
+                                                                '(required; '
+                                                                'file dialogs '
+                                                                'cannot be '
+                                                                'opened from '
+                                                                'MCP).',
                                                  'type': 'string'}},
                   'required': [],
                   'type': 'object'},
   'name': 'export_3mf'},
  {'description': 'Export G-code. Requires slicing complete.',
   'inputSchema': {'additionalProperties': False,
-                  'properties': {'output_path': {'description': 'Output path. '
-                                                                'If omitted, '
-                                                                'opens file '
-                                                                'dialog.',
+                  'properties': {'output_path': {'description': 'Output path '
+                                                                '(required; '
+                                                                'file dialogs '
+                                                                'cannot be '
+                                                                'opened from '
+                                                                'MCP).',
                                                  'type': 'string'}},
                   'required': [],
                   'type': 'object'},
@@ -834,11 +838,15 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
   'name': 'save_preset'},
  {'description': 'Save current project.',
   'inputSchema': {'additionalProperties': False,
-                  'properties': {'save_as': {'description': 'If true, shows '
-                                                            'save dialog. If '
-                                                            'false (default), '
-                                                            'saves silently if '
-                                                            'file exists.',
+                  'properties': {'save_as': {'description': 'Kept for '
+                                                            'compatibility; '
+                                                            'file dialogs '
+                                                            'cannot be opened '
+                                                            'from MCP, so the '
+                                                            'project is only '
+                                                            'saved when it '
+                                                            'already has a '
+                                                            'file name.',
                                              'type': 'boolean'}},
                   'required': [],
                   'type': 'object'},

@@ -2210,7 +2210,7 @@ void OrcaMCPServer::register_builtin_tools()
             {"properties", {
                 {"output_path", {
                     {"type", "string"},
-                    {"description", "Output path. If omitted, opens file dialog."}
+                    {"description", "Output path (required; file dialogs cannot be opened from MCP)."}
                 }}
             }}
         },
@@ -2223,15 +2223,14 @@ void OrcaMCPServer::register_builtin_tools()
                 }
 
                 // Enable dialog suppression to capture any error messages
-                set_mcp_dialog_suppression(true);
+                McpDialogSuppressionGuard suppression_guard;
 
                 nlohmann::json result;
 
                 if (!output_path.empty()) {
                     // Silent export to specific path
                     bool success = plater->export_gcode_to_file(output_path);
-                    auto info_messages = get_mcp_suppressed_messages();
-                    set_mcp_dialog_suppression(false);
+                    auto info_messages = suppression_guard.messages();
 
                     if (success) {
                         result["status"] = "export_started";
@@ -2245,35 +2244,10 @@ void OrcaMCPServer::register_builtin_tools()
                         result["info_messages"] = info_messages;
                     }
                 } else {
-                    // No path provided - open file dialog
-                    plater->export_gcode(false);
-
-                    // Get any suppressed messages (errors, warnings)
-                    auto info_messages = get_mcp_suppressed_messages();
-                    set_mcp_dialog_suppression(false);
-
-                    // Check if there were error messages
-                    bool has_errors = false;
-                    for (const auto& msg : info_messages) {
-                        if (msg.find("error") != std::string::npos ||
-                            msg.find("Error") != std::string::npos ||
-                            msg.find("Failed") != std::string::npos ||
-                            msg.find("failed") != std::string::npos) {
-                            has_errors = true;
-                            break;
-                        }
-                    }
-
-                    if (has_errors) {
-                        result["status"] = "error";
-                        result["error_messages"] = info_messages;
-                    } else {
-                        result["status"] = "export_dialog_opened";
-                        result["note"] = "Use the file dialog to choose export location";
-                        if (!info_messages.empty()) {
-                            result["info_messages"] = info_messages;
-                        }
-                    }
+                    // No path provided. File dialogs are modal and would block the GUI thread
+                    // for as long as the MCP call waits, so require an explicit path instead.
+                    result["status"] = "error";
+                    result["message"] = "output_path is required: file dialogs cannot be opened from MCP.";
                 }
 
                 return result;
@@ -2290,7 +2264,7 @@ void OrcaMCPServer::register_builtin_tools()
             {"properties", {
                 {"output_path", {
                     {"type", "string"},
-                    {"description", "Output path. If omitted, opens file dialog."}
+                    {"description", "Output path (required; file dialogs cannot be opened from MCP)."}
                 }}
             }}
         },
@@ -2300,7 +2274,7 @@ void OrcaMCPServer::register_builtin_tools()
                 Plater* plater = wxGetApp().plater();
 
                 // Enable dialog suppression to capture any error messages
-                set_mcp_dialog_suppression(true);
+                McpDialogSuppressionGuard suppression_guard;
 
                 nlohmann::json result;
 
@@ -2308,8 +2282,7 @@ void OrcaMCPServer::register_builtin_tools()
                     // Silent export with path
                     int export_result = plater->export_3mf(boost::filesystem::path(output_path), SaveStrategy::Silence | SaveStrategy::SplitModel);
 
-                    auto info_messages = get_mcp_suppressed_messages();
-                    set_mcp_dialog_suppression(false);
+                    auto info_messages = suppression_guard.messages();
 
                     if (export_result == 0) {
                         result["status"] = "success";
@@ -2322,33 +2295,10 @@ void OrcaMCPServer::register_builtin_tools()
                         result["info_messages"] = info_messages;
                     }
                 } else {
-                    // Show dialog
-                    plater->export_3mf();
-
-                    auto info_messages = get_mcp_suppressed_messages();
-                    set_mcp_dialog_suppression(false);
-
-                    // Check for errors in messages
-                    bool has_errors = false;
-                    for (const auto& msg : info_messages) {
-                        if (msg.find("error") != std::string::npos ||
-                            msg.find("Error") != std::string::npos ||
-                            msg.find("Failed") != std::string::npos ||
-                            msg.find("failed") != std::string::npos) {
-                            has_errors = true;
-                            break;
-                        }
-                    }
-
-                    if (has_errors) {
-                        result["status"] = "error";
-                        result["error_messages"] = info_messages;
-                    } else {
-                        result["status"] = "export_dialog_opened";
-                        if (!info_messages.empty()) {
-                            result["info_messages"] = info_messages;
-                        }
-                    }
+                    // No path provided. File dialogs are modal and would block the GUI thread
+                    // for as long as the MCP call waits, so require an explicit path instead.
+                    result["status"] = "error";
+                    result["message"] = "output_path is required: file dialogs cannot be opened from MCP.";
                 }
 
                 return result;
@@ -2365,7 +2315,7 @@ void OrcaMCPServer::register_builtin_tools()
             {"properties", {
                 {"save_as", {
                     {"type", "boolean"},
-                    {"description", "If true, shows save dialog. If false (default), saves silently if file exists."}
+                    {"description", "Kept for compatibility; file dialogs cannot be opened from MCP, so the project is only saved when it already has a file name."}
                 }}
             }}
         },
@@ -2375,17 +2325,17 @@ void OrcaMCPServer::register_builtin_tools()
                 Plater* plater = wxGetApp().plater();
 
                 // Suppress any dialogs during save
-                set_mcp_dialog_suppression(true);
+                McpDialogSuppressionGuard suppression_guard;
                 int result = plater->save_project(saveAs);
-                auto info_messages = get_mcp_suppressed_messages();
-                set_mcp_dialog_suppression(false);
+                auto info_messages = suppression_guard.messages();
 
                 nlohmann::json response;
-                if (result == 0) {
+                if (result == wxID_YES) {
                     std::string filename = into_u8(plater->get_project_filename(".3mf"));
                     response = {{"status", "success"}, {"filename", filename}};
                 } else {
-                    response = {{"status", "cancelled"}};
+                    response = {{"status", "cancelled"},
+                                {"message", "Project not saved. Save the project once from the GUI, or use export_3mf with an explicit output_path."}};
                 }
                 if (!info_messages.empty()) {
                     response["info_messages"] = info_messages;
@@ -2555,10 +2505,9 @@ void OrcaMCPServer::register_builtin_tools()
                 Plater* plater = wxGetApp().plater();
 
                 // Suppress dialogs (like "save unsaved changes?") and capture messages
-                set_mcp_dialog_suppression(true);
+                McpDialogSuppressionGuard suppression_guard;
                 plater->new_project();
-                auto info_messages = get_mcp_suppressed_messages();
-                set_mcp_dialog_suppression(false);
+                auto info_messages = suppression_guard.messages();
 
                 nlohmann::json response = {{"status", "success"}};
                 if (!info_messages.empty()) {
@@ -2594,14 +2543,13 @@ void OrcaMCPServer::register_builtin_tools()
                 Plater* plater = wxGetApp().plater();
 
                 // Suppress dialogs and capture info messages
-                set_mcp_dialog_suppression(true);
+                McpDialogSuppressionGuard suppression_guard;
 
                 // Use load_project with "<silence>" to suppress dialogs via LoadStrategy::Silence
                 // This ensures both MCP suppression AND the silence flag are active
                 plater->load_project(wxString::FromUTF8(file_path), "<silence>");
 
-                auto info_messages = get_mcp_suppressed_messages();
-                set_mcp_dialog_suppression(false);
+                auto info_messages = suppression_guard.messages();
 
                 // Check if project loaded by seeing if there are objects
                 bool result = !plater->model().objects.empty();

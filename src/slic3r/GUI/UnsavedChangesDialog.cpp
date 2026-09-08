@@ -20,6 +20,7 @@
 #include "SavePresetDialog.hpp"
 #include "MainFrame.hpp"
 #include "MsgDialog.hpp"
+#include "GUI.hpp"
 
 #include "PresetComboBoxes.hpp"
 #include "Widgets/RoundedRectangle.hpp"
@@ -836,6 +837,14 @@ UnsavedChangesDialog::UnsavedChangesDialog(Preset::Type type, PresetCollection *
 
 inline int UnsavedChangesDialog::ShowModal()
 {
+    // MCP automation: this dialog is modal and would block the GUI thread forever while the
+    // MCP handler waits. Discard the unsaved preset changes, as documented for automation.
+    if (is_mcp_dialog_suppression_enabled()) {
+        m_exit_action = Action::Discard;
+        add_mcp_suppressed_message(into_u8(GetTitle()) + ": unsaved preset changes were discarded.");
+        return wxID_OK;
+    }
+
     auto choise_key = "save_preset_choise"; 
     auto choise     = wxGetApp().app_config->get(choise_key);
     long result = 0;

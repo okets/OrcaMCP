@@ -9732,6 +9732,14 @@ fs::path Plater::priv::get_export_file_path(GUI::FileType file_type)
 
 wxString Plater::priv::get_export_file(GUI::FileType file_type)
 {
+    // MCP automation: a native file dialog is modal and would block the GUI thread forever
+    // while the MCP handler waits for this call to return. Report it instead of opening it.
+    if (is_mcp_dialog_suppression_enabled()) {
+        add_mcp_suppressed_message("File dialog suppressed: no output path was given, so the operation was skipped. "
+                                   "Pass an explicit output path.");
+        return wxString();
+    }
+
     wxString wildcard;
     switch (file_type) {
         case FT_STL:
@@ -16818,6 +16826,14 @@ std::vector<size_t> Plater::load_files(const std::vector<std::string>& input_fil
 
 bool Plater::preview_zip_archive(const boost::filesystem::path& archive_path)
 {
+    // MCP automation: the archive file picker is modal and would block the GUI thread while
+    // the MCP handler waits. Report it instead of opening it.
+    if (is_mcp_dialog_suppression_enabled()) {
+        add_mcp_suppressed_message("Archive contents dialog suppressed: the ZIP was not imported. "
+                                   "Extract it and load the model files individually.");
+        return false;
+    }
+
     //std::vector<fs::path> unzipped_paths;
     std::vector<fs::path> non_project_paths;
     std::vector<fs::path> project_paths;
@@ -17324,6 +17340,15 @@ LoadType determine_load_type(std::string filename, std::string override_setting)
     if (setting == OPTION_PROJECT_LOAD_BEHAVIOUR_LOAD_GEOMETRY) {
         return LoadType::LoadGeometry;
     } else if (setting == OPTION_PROJECT_LOAD_BEHAVIOUR_ALWAYS_ASK) {
+        // MCP automation: this dialog is modal and would block the GUI thread while the MCP
+        // handler waits. Only load_model reaches it (load_project loads silently), so import
+        // the geometry, which is what that tool means and never discards the current project.
+        if (is_mcp_dialog_suppression_enabled()) {
+            add_mcp_suppressed_message("Project load behaviour prompt suppressed: the 3MF was imported as geometry only. "
+                                       "Use load_project to open it as a full project.");
+            return LoadType::LoadGeometry;
+        }
+
         ProjectDropDialog dlg(filename);
         if (dlg.ShowModal() == wxID_OK) {
             int      choice    = dlg.get_action();
@@ -17570,6 +17595,17 @@ int GUI::Plater::close_with_confirm(std::function<bool(bool)> second_check)
     if (up_to_date(false, false)) {
         if (second_check && !second_check(false)) return wxID_CANCEL;
         model().set_backup_path("");
+        return wxID_NO;
+    }
+
+    // MCP automation: answer "No" (continue without saving). The generic MsgDialog suppression
+    // answers Yes/No dialogs with Yes, which would route into save_project() and a modal file dialog.
+    if (is_mcp_dialog_suppression_enabled()) {
+        add_mcp_suppressed_message("The current project has unsaved changes. Continued without saving.");
+        if (second_check && !second_check(false)) return wxID_CANCEL;
+        model().set_backup_path("");
+        up_to_date(true, false);
+        up_to_date(true, true);
         return wxID_NO;
     }
 

@@ -361,7 +361,7 @@ T run_on_main_thread(std::function<T()> func);
 
 ## Known Limitations
 
-1. **Export dialogs**: `export_gcode` and `export_3mf` open file dialogs if no path specified
+1. **Export paths**: `export_gcode`, `export_3mf` and `save_project` never open a file dialog (a modal would hang the MCP call); without a path they return an error / `cancelled`
 2. **Slicing progress**: `get_slicing_status` reports running/idle, not percentage
 3. **Threading**: Long operations may cause HTTP timeouts (120s default)
 
@@ -431,13 +431,25 @@ When `load_model`, `load_project`, or `new_project` is called:
 | Warning dialogs | Auto-OK, message captured |
 | 3MF version warnings | Auto-OK, message captured |
 | Object too large/small | Auto-YES (scale to fit) |
+| "Project has unsaved changes, save before continuing?" (`Plater::close_with_confirm`) | Auto-NO: continue without saving, message captured. Answering Yes would open a modal file dialog and hang the MCP call. |
+| `UnsavedChangesDialog` (modified presets on new/load project, preset switch) | Discard the preset changes, message captured |
+| `ProjectDropDialog` (project load behaviour, "load geometry only") | Load geometry only (`load_model` never replaces the current project; use `load_project` to open a 3MF as a project) |
+| Native file dialogs (`wxFileDialog` via `Plater::priv::get_export_file`) | Never opened. `save_project` returns `cancelled`; `export_gcode` / `export_3mf` without `output_path` return an error asking for a path. |
+| Archive contents picker (`FileArchiveDialog`, loading a .zip) | Not opened; the ZIP is not imported, message captured |
 
 ### Implementation
 
 Dialog suppression is implemented in:
 - `GUI.hpp/cpp`: `set_mcp_dialog_suppression()`, `is_mcp_dialog_suppression_enabled()`
 - `MsgDialog.cpp`: `ShowModal()` override checks suppression flag
+- `UnsavedChangesDialog.cpp`: `ShowModal()` discards preset changes under suppression
+- `Plater.cpp`: `close_with_confirm()`, `determine_load_type()`, `priv::get_export_file()`, `preview_zip_archive()` check the flag before opening a modal
 - `OrcaMCPServer.cpp`: All critical endpoints enable suppression
+
+Dialogs that are NOT `MsgDialog` subclasses (native `wxFileDialog`/`wxDirDialog`/`wxMessageBox`, and
+`DPIDialog` subclasses such as `UnsavedChangesDialog`) bypass `MsgDialog::ShowModal`, so each one must
+check `is_mcp_dialog_suppression_enabled()` at its call site. A modal opened inside `run_on_main_thread`
+blocks the GUI thread forever and the MCP call never returns.
 
 ### Endpoints with Dialog Suppression
 
