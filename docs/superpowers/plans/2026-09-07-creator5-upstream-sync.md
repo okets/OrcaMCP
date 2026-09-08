@@ -1524,6 +1524,8 @@ User rule (2026-09-08): every bug found is fixed, together with related occurren
 - [ ] **Item M — raw `set_mcp_dialog_suppression(true/false)` pairs leak the flag on exceptions** (~a dozen handlers in OrcaMCPServer.cpp and the tool files): replace every manual pair with `McpDialogSuppressionGuard` (Task 1.2) so an exception between the calls cannot leave suppression enabled globally. Related occurrence: any new handler added in Stage 2. Verify with `grep -n "set_mcp_dialog_suppression(" src/slic3r/GUI/OrcaMCP/` → only the guard's own two calls remain.
 - [ ] **Item N — no MCP way to name an unsaved project**: after Item L, `save_project` without a path returns `cancelled` instead of opening a dialog. Add a required-or-derived `output_path` behaviour: if the project has no path and none is given, return an error telling the caller to pass `output_path`; document in reference.md.
 
+- [ ] **Item O — `export_3mf` / `load_project` now name the project silently** (Item L follow-up): `export_3mf` calls `set_project_filename`, which retitles the window and adds the path to Recent Projects; a later Cmd-S in the GUI overwrites that file. Surface it: add `"project_renamed_to": <path>` and an `info_messages` line to the `export_3mf` and `load_project` responses, and document the semantics ("export_3mf is this API's Save") in reference.md and CLAUDE.md's dialog section.
+
 - [ ] **Step: build, run `[flashforge]` tests, regen schema, pytest, live checks per item, commit per item** with messages `fix: <item>`, each ending with the Co-Authored-By trailer.
 
 ---
