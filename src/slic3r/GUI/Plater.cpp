@@ -8276,6 +8276,23 @@ void read_binary_stl(const std::string& filename, std::string& model_id, std::st
 }
 
 // BBS: backup & restore
+// MCP automation: StepMeshDialog is modal and would block the GUI thread while the MCP handler
+// waits. Answer it with the caller's configured deflection defaults instead of showing it.
+// Returns true when the dialog was skipped and the out parameters were filled.
+static bool mcp_skip_step_mesh_dialog(double linear, double angle, bool split_compound,
+                                      double& linear_value, double& angle_value, bool& is_split)
+{
+    if (!is_mcp_dialog_suppression_enabled())
+        return false;
+
+    add_mcp_suppressed_message("STEP mesh settings dialog suppressed: the file was imported with the "
+                               "configured linear/angle deflection.");
+    linear_value = linear;
+    angle_value  = angle;
+    is_split     = split_compound;
+    return true;
+}
+
 std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_files, LoadStrategy strategy, bool ask_multi)
 {
     std::vector<size_t> empty_result;
@@ -9040,6 +9057,8 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                             }
                         },
                         [&is_user_cancel, &linear, &angle, &split_compound](Slic3r::Step& file, double& linear_value, double& angle_value, bool& is_split)-> int {
+                            if (mcp_skip_step_mesh_dialog(linear, angle, split_compound, linear_value, angle_value, is_split))
+                                return 1;
                             if (wxGetApp().app_config->get_bool("enable_step_mesh_setting")) {
                                 StepMeshDialog mesh_dlg(nullptr, file, linear, angle);
                                 if (mesh_dlg.ShowModal() == wxID_OK) {
@@ -9735,8 +9754,7 @@ wxString Plater::priv::get_export_file(GUI::FileType file_type)
     // MCP automation: a native file dialog is modal and would block the GUI thread forever
     // while the MCP handler waits for this call to return. Report it instead of opening it.
     if (is_mcp_dialog_suppression_enabled()) {
-        add_mcp_suppressed_message("File dialog suppressed: no output path was given, so the operation was skipped. "
-                                   "Pass an explicit output path.");
+        add_mcp_suppressed_message("A file-save dialog was required and skipped under automation; nothing was written.");
         return wxString();
     }
 
@@ -10849,6 +10867,8 @@ bool Plater::priv::replace_volume_with_stl(int object_idx, int volume_idx, const
             bool is_user_cancel = false;
 
             auto callback = [&is_user_cancel, linear, angle, split_compound](Slic3r::Step &file, double &linear_value, double &angle_value, bool &is_split) -> int {
+                if (mcp_skip_step_mesh_dialog(linear, angle, split_compound, linear_value, angle_value, is_split))
+                    return 1;
                 if (wxGetApp().app_config->get_bool("enable_step_mesh_setting")) {
                     StepMeshDialog mesh_dlg(nullptr, file, linear, angle);
                     if (mesh_dlg.ShowModal() == wxID_OK) {

@@ -920,10 +920,9 @@ void OrcaMCPServer::register_builtin_tools()
             std::string name = params["name"];
             return run_on_main_thread([type, name]() {
                 // Suppress any dialogs during preset selection
-                set_mcp_dialog_suppression(true);
+                McpDialogSuppressionGuard suppression_guard;
                 OrcaMCPPresetConfigUtils::SelectPreset(type, name);
-                auto info_messages = get_mcp_suppressed_messages();
-                set_mcp_dialog_suppression(false);
+                auto info_messages = suppression_guard.messages();
 
                 nlohmann::json response = {{"status", "success"}};
                 if (!info_messages.empty()) {
@@ -1051,11 +1050,10 @@ void OrcaMCPServer::register_builtin_tools()
             std::string source_name = params["source_name"];
             std::string new_name = params["new_name"];
             return run_on_main_thread([type, source_name, new_name]() {
-                set_mcp_dialog_suppression(true);
+                McpDialogSuppressionGuard suppression_guard;
                 try {
                     OrcaMCPPresetConfigUtils::ClonePreset(type, source_name, new_name);
-                    auto info_messages = get_mcp_suppressed_messages();
-                    set_mcp_dialog_suppression(false);
+                    auto info_messages = suppression_guard.messages();
                     nlohmann::json response = {
                         {"status", "success"},
                         {"message", "Preset '" + source_name + "' cloned to '" + new_name + "'"},
@@ -1066,8 +1064,7 @@ void OrcaMCPServer::register_builtin_tools()
                     }
                     return response;
                 } catch (const std::exception& e) {
-                    auto info_messages = get_mcp_suppressed_messages();
-                    set_mcp_dialog_suppression(false);
+                    auto info_messages = suppression_guard.messages();
                     nlohmann::json response = {{"status", "error"}, {"error", e.what()}};
                     if (!info_messages.empty()) {
                         response["info_messages"] = info_messages;
@@ -1101,11 +1098,10 @@ void OrcaMCPServer::register_builtin_tools()
             std::string type = params["type"];
             std::string name = params.value("name", "");
             return run_on_main_thread([type, name]() {
-                set_mcp_dialog_suppression(true);
+                McpDialogSuppressionGuard suppression_guard;
                 try {
                     OrcaMCPPresetConfigUtils::SavePreset(type, name);
-                    auto info_messages = get_mcp_suppressed_messages();
-                    set_mcp_dialog_suppression(false);
+                    auto info_messages = suppression_guard.messages();
                     std::string saved_name = name.empty() ? "current preset" : name;
                     nlohmann::json response = {
                         {"status", "success"},
@@ -1117,8 +1113,7 @@ void OrcaMCPServer::register_builtin_tools()
                     }
                     return response;
                 } catch (const std::exception& e) {
-                    auto info_messages = get_mcp_suppressed_messages();
-                    set_mcp_dialog_suppression(false);
+                    auto info_messages = suppression_guard.messages();
                     nlohmann::json response = {{"status", "error"}, {"error", e.what()}};
                     if (!info_messages.empty()) {
                         response["info_messages"] = info_messages;
@@ -1152,11 +1147,10 @@ void OrcaMCPServer::register_builtin_tools()
             std::string type = params["type"];
             std::string name = params["name"];
             return run_on_main_thread([type, name]() {
-                set_mcp_dialog_suppression(true);
+                McpDialogSuppressionGuard suppression_guard;
                 try {
                     OrcaMCPPresetConfigUtils::DeletePreset(type, name);
-                    auto info_messages = get_mcp_suppressed_messages();
-                    set_mcp_dialog_suppression(false);
+                    auto info_messages = suppression_guard.messages();
                     nlohmann::json response = {
                         {"status", "success"},
                         {"message", "Preset '" + name + "' deleted successfully"}
@@ -1166,8 +1160,7 @@ void OrcaMCPServer::register_builtin_tools()
                     }
                     return response;
                 } catch (const std::exception& e) {
-                    auto info_messages = get_mcp_suppressed_messages();
-                    set_mcp_dialog_suppression(false);
+                    auto info_messages = suppression_guard.messages();
                     nlohmann::json response = {{"status", "error"}, {"error", e.what()}};
                     if (!info_messages.empty()) {
                         response["info_messages"] = info_messages;
@@ -1196,11 +1189,10 @@ void OrcaMCPServer::register_builtin_tools()
         [](const nlohmann::json& params) -> nlohmann::json {
             std::string type = params["type"];
             return run_on_main_thread([type]() {
-                set_mcp_dialog_suppression(true);
+                McpDialogSuppressionGuard suppression_guard;
                 try {
                     OrcaMCPPresetConfigUtils::ResetPreset(type);
-                    auto info_messages = get_mcp_suppressed_messages();
-                    set_mcp_dialog_suppression(false);
+                    auto info_messages = suppression_guard.messages();
                     nlohmann::json response = {
                         {"status", "success"},
                         {"message", "Preset changes discarded for " + type}
@@ -1210,8 +1202,7 @@ void OrcaMCPServer::register_builtin_tools()
                     }
                     return response;
                 } catch (const std::exception& e) {
-                    auto info_messages = get_mcp_suppressed_messages();
-                    set_mcp_dialog_suppression(false);
+                    auto info_messages = suppression_guard.messages();
                     nlohmann::json response = {{"status", "error"}, {"error", e.what()}};
                     if (!info_messages.empty()) {
                         response["info_messages"] = info_messages;
@@ -2184,10 +2175,9 @@ void OrcaMCPServer::register_builtin_tools()
                 Plater* plater = wxGetApp().plater();
 
                 // Suppress any dialogs during slicing initiation
-                set_mcp_dialog_suppression(true);
+                McpDialogSuppressionGuard suppression_guard;
                 plater->reslice();
-                auto info_messages = get_mcp_suppressed_messages();
-                set_mcp_dialog_suppression(false);
+                auto info_messages = suppression_guard.messages();
 
                 nlohmann::json result = {
                     {"status", "slicing_started"},
@@ -2212,7 +2202,8 @@ void OrcaMCPServer::register_builtin_tools()
                     {"type", "string"},
                     {"description", "Output path (required; file dialogs cannot be opened from MCP)."}
                 }}
-            }}
+            }},
+            {"required", {"output_path"}}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
             std::string output_path = params.value("output_path", "");
@@ -2266,7 +2257,8 @@ void OrcaMCPServer::register_builtin_tools()
                     {"type", "string"},
                     {"description", "Output path (required; file dialogs cannot be opened from MCP)."}
                 }}
-            }}
+            }},
+            {"required", {"output_path"}}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
             std::string output_path = params.value("output_path", "");
@@ -2285,6 +2277,9 @@ void OrcaMCPServer::register_builtin_tools()
                     auto info_messages = suppression_guard.messages();
 
                     if (export_result == 0) {
+                        // SaveStrategy::Silence skips Plater's own naming, so do it here: this is
+                        // the API's save-project operation, and save_project can then save in place.
+                        plater->set_project_filename(wxString::FromUTF8(output_path));
                         result["status"] = "success";
                         result["output_path"] = output_path;
                     } else {
@@ -2315,7 +2310,7 @@ void OrcaMCPServer::register_builtin_tools()
             {"properties", {
                 {"save_as", {
                     {"type", "boolean"},
-                    {"description", "Kept for compatibility; file dialogs cannot be opened from MCP, so the project is only saved when it already has a file name."}
+                    {"description", "Ignored for a project that already has a file name (it is saved in place). A project with no file name cannot be saved from MCP, because that needs a file dialog."}
                 }}
             }}
         },
@@ -2326,7 +2321,10 @@ void OrcaMCPServer::register_builtin_tools()
 
                 // Suppress any dialogs during save
                 McpDialogSuppressionGuard suppression_guard;
-                int result = plater->save_project(saveAs);
+                // A named project always saves in place; only a nameless one would need a file
+                // dialog, which cannot be opened from MCP.
+                const bool needs_new_name = plater->get_project_filename(".3mf").IsEmpty();
+                int result = plater->save_project(saveAs && needs_new_name);
                 auto info_messages = suppression_guard.messages();
 
                 nlohmann::json response;
@@ -2372,10 +2370,9 @@ void OrcaMCPServer::register_builtin_tools()
                 files.Add(wxString::FromUTF8(file_path));
 
                 // Suppress dialogs and capture info messages
-                set_mcp_dialog_suppression(true);
+                McpDialogSuppressionGuard suppression_guard;
                 bool result = plater->load_files(files);
-                auto info_messages = get_mcp_suppressed_messages();
-                set_mcp_dialog_suppression(false);
+                auto info_messages = suppression_guard.messages();
 
                 nlohmann::json response;
                 if (result) {
@@ -2553,6 +2550,12 @@ void OrcaMCPServer::register_builtin_tools()
 
                 // Check if project loaded by seeing if there are objects
                 bool result = !plater->model().objects.empty();
+
+                // LoadStrategy::Silence skips Plater's own set_project_filename, which would leave
+                // the project nameless (wrong window title, and save_project could never save in
+                // place). Name it after the file we just opened.
+                if (result)
+                    plater->set_project_filename(wxString::FromUTF8(file_path));
 
                 nlohmann::json response = {
                     {"status", result ? "success" : "error"},

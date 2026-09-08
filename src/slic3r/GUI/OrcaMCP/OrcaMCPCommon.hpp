@@ -35,11 +35,20 @@ nlohmann::json get_active_warnings_json(Plater* plater);
 void add_turntable_preview_if_requested(nlohmann::json& result, bool include_preview, int view_count = 4, int resolution = 256);
 
 // RAII: suppress modal dialogs for the lifetime of the guard and collect their messages.
+// Nest-safe: an inner guard keeps the outer guard's messages and restores its state.
 struct McpDialogSuppressionGuard
 {
-    McpDialogSuppressionGuard()  { clear_mcp_suppressed_messages(); set_mcp_dialog_suppression(true); }
-    ~McpDialogSuppressionGuard() { set_mcp_dialog_suppression(false); }
+    McpDialogSuppressionGuard() : m_was_enabled(is_mcp_dialog_suppression_enabled())
+    {
+        if (!m_was_enabled)
+            clear_mcp_suppressed_messages();
+        set_mcp_dialog_suppression(true);
+    }
+    ~McpDialogSuppressionGuard() { set_mcp_dialog_suppression(m_was_enabled); }
     std::vector<std::string> messages() const { return get_mcp_suppressed_messages(); }
+
+private:
+    bool m_was_enabled;
 };
 
 }}} // namespace Slic3r::GUI::OrcaMCP

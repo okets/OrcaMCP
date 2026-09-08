@@ -43,11 +43,10 @@ namespace GUI {
 static bool s_mcp_dialog_suppression = false;
 static std::vector<std::string> s_mcp_suppressed_messages;
 
+// Note: this only flips the flag. Clearing the collected messages is McpDialogSuppressionGuard's
+// job, so that a nested guard does not discard the messages its caller is still collecting.
 void set_mcp_dialog_suppression(bool suppress) {
     s_mcp_dialog_suppression = suppress;
-    if (suppress) {
-        s_mcp_suppressed_messages.clear();
-    }
 }
 
 bool is_mcp_dialog_suppression_enabled() {

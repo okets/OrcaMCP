@@ -308,7 +308,7 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                                                                 'opened from '
                                                                 'MCP).',
                                                  'type': 'string'}},
-                  'required': [],
+                  'required': ['output_path'],
                   'type': 'object'},
   'name': 'export_3mf'},
  {'description': 'Export G-code. Requires slicing complete.',
@@ -320,7 +320,7 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                                                                 'opened from '
                                                                 'MCP).',
                                                  'type': 'string'}},
-                  'required': [],
+                  'required': ['output_path'],
                   'type': 'object'},
   'name': 'export_gcode'},
  {'description': 'Automatically orient an object to lay flat on its best face '
@@ -838,15 +838,17 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
   'name': 'save_preset'},
  {'description': 'Save current project.',
   'inputSchema': {'additionalProperties': False,
-                  'properties': {'save_as': {'description': 'Kept for '
-                                                            'compatibility; '
-                                                            'file dialogs '
-                                                            'cannot be opened '
-                                                            'from MCP, so the '
-                                                            'project is only '
-                                                            'saved when it '
+                  'properties': {'save_as': {'description': 'Ignored for a '
+                                                            'project that '
                                                             'already has a '
-                                                            'file name.',
+                                                            'file name (it is '
+                                                            'saved in place). '
+                                                            'A project with no '
+                                                            'file name cannot '
+                                                            'be saved from '
+                                                            'MCP, because that '
+                                                            'needs a file '
+                                                            'dialog.',
                                              'type': 'boolean'}},
                   'required': [],
                   'type': 'object'},

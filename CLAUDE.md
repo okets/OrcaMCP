@@ -427,15 +427,16 @@ When `load_model`, `load_project`, or `new_project` is called:
 |-------------|----------------|
 | Info dialogs (OK only) | Auto-OK, message captured |
 | Yes/No dialogs (scaling) | Auto-YES (safer to scale) |
-| Yes/No/Cancel (save changes) | Auto-NO (discard changes for new_project) |
 | Warning dialogs | Auto-OK, message captured |
 | 3MF version warnings | Auto-OK, message captured |
 | Object too large/small | Auto-YES (scale to fit) |
-| "Project has unsaved changes, save before continuing?" (`Plater::close_with_confirm`) | Auto-NO: continue without saving, message captured. Answering Yes would open a modal file dialog and hang the MCP call. |
+| "Project has unsaved changes, save before continuing?" (Yes/No/Cancel, `Plater::close_with_confirm`) | Auto-NO: continue without saving (discard), message captured. Answering Yes would open a modal file dialog and hang the MCP call. |
 | `UnsavedChangesDialog` (modified presets on new/load project, preset switch) | Discard the preset changes, message captured |
 | `ProjectDropDialog` (project load behaviour, "load geometry only") | Load geometry only (`load_model` never replaces the current project; use `load_project` to open a 3MF as a project) |
 | Native file dialogs (`wxFileDialog` via `Plater::priv::get_export_file`) | Never opened. `save_project` returns `cancelled`; `export_gcode` / `export_3mf` without `output_path` return an error asking for a path. |
 | Archive contents picker (`FileArchiveDialog`, loading a .zip) | Not opened; the ZIP is not imported, message captured |
+| `StepMeshDialog` (STEP/STP import tessellation) | Not opened; imported with the configured linear/angle deflection, message captured |
+| Send-to-printer dialogs (`SelectMachineDialog`, print-host send) | Not suppressed: `send_to_printer` schedules them with `CallAfter` and returns `dialog_opened` immediately, so the user drives the dialog after the tool replies |
 
 ### Implementation
 
@@ -443,8 +444,10 @@ Dialog suppression is implemented in:
 - `GUI.hpp/cpp`: `set_mcp_dialog_suppression()`, `is_mcp_dialog_suppression_enabled()`
 - `MsgDialog.cpp`: `ShowModal()` override checks suppression flag
 - `UnsavedChangesDialog.cpp`: `ShowModal()` discards preset changes under suppression
-- `Plater.cpp`: `close_with_confirm()`, `determine_load_type()`, `priv::get_export_file()`, `preview_zip_archive()` check the flag before opening a modal
-- `OrcaMCPServer.cpp`: All critical endpoints enable suppression
+- `Plater.cpp`: `close_with_confirm()`, `determine_load_type()`, `priv::get_export_file()`, `preview_zip_archive()`, `mcp_skip_step_mesh_dialog()` check the flag before opening a modal
+- `OrcaMCPServer.cpp` / `OrcaMCPPrinterTools.cpp`: endpoints scope suppression with the RAII
+  `McpDialogSuppressionGuard` (`OrcaMCPCommon.hpp`), which is nest-safe and restores the previous
+  state even if the handler throws. Never call `set_mcp_dialog_suppression()` directly.
 
 Dialogs that are NOT `MsgDialog` subclasses (native `wxFileDialog`/`wxDirDialog`/`wxMessageBox`, and
 `DPIDialog` subclasses such as `UnsavedChangesDialog`) bypass `MsgDialog::ShowModal`, so each one must

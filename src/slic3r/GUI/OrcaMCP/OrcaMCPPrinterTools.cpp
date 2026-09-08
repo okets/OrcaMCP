@@ -397,54 +397,39 @@ void OrcaMCPServer::register_printer_tools()
                         host_type_str = print_host_type_name(printer_config);
                 }
 
-                // Suppress any dialogs during send operation
-                set_mcp_dialog_suppression(true);
-
+                // Both send paths open a modal dialog (SelectMachineDialog / the print-host send
+                // dialog). Opening one here would block the GUI thread until the user dismisses it,
+                // and this call would never return. Schedule it to open after the tool has replied,
+                // so the user gets the dialog and MCP gets an immediate answer.
                 nlohmann::json result;
                 if (has_print_host) {
                     // Use legacy send for OctoPrint/Klipper/etc. printers
                     int plate_idx = all_plates ? -1 : plater->get_partplate_list().get_curr_plate_index();
-                    plater->send_gcode_legacy(plate_idx);
+                    wxGetApp().CallAfter([plate_idx]() {
+                        if (Plater* p = wxGetApp().plater())
+                            p->send_gcode_legacy(plate_idx);
+                    });
 
                     result = {
                         {"status", "dialog_opened"},
                         {"method", "send_gcode_legacy"},
                         {"host_type", host_type_str},
                         {"print_host", print_host},
-                        {"note", "Send G-code dialog opened for print host upload."}
+                        {"note", "Send G-code dialog opening for print host upload; it is driven by the user, not by MCP."}
                     };
                 } else {
                     // Use Bambu-specific send dialog
-                    plater->send_to_printer(all_plates);
+                    wxGetApp().CallAfter([all_plates]() {
+                        if (Plater* p = wxGetApp().plater())
+                            p->send_to_printer(all_plates);
+                    });
 
                     result = {
                         {"status", "dialog_opened"},
                         {"method", "send_to_printer"},
                         {"all_plates", all_plates},
-                        {"note", "The send-to-printer dialog is now open. User can select printer and options."}
+                        {"note", "The send-to-printer dialog is opening; the user selects printer and options there."}
                     };
-                }
-
-                auto info_messages = get_mcp_suppressed_messages();
-                set_mcp_dialog_suppression(false);
-
-                // Check for errors
-                bool has_errors = false;
-                for (const auto& msg : info_messages) {
-                    if (msg.find("error") != std::string::npos ||
-                        msg.find("Error") != std::string::npos ||
-                        msg.find("Failed") != std::string::npos ||
-                        msg.find("failed") != std::string::npos) {
-                        has_errors = true;
-                        break;
-                    }
-                }
-
-                if (has_errors) {
-                    result["status"] = "error";
-                    result["error_messages"] = info_messages;
-                } else if (!info_messages.empty()) {
-                    result["info_messages"] = info_messages;
                 }
 
                 return result;
