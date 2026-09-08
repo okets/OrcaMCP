@@ -5,17 +5,23 @@
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Plater.hpp"
+#include "slic3r/GUI/PartPlate.hpp"
+#include "slic3r/GUI/PrintHostDialogs.hpp"
 #include "slic3r/GUI/DeviceManager.hpp"
 #include "slic3r/GUI/DeviceCore/DevManager.h"
 #include "slic3r/Utils/Flashforge.hpp"
+#include "slic3r/Utils/FlashforgeApi.hpp"
+#include "slic3r/Utils/PrintHost.hpp"
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/PrintConfig.hpp"
+#include "libslic3r/ProjectTask.hpp"
 
 #include <algorithm>
 #include <optional>
 #include <boost/algorithm/string/join.hpp>
 
+using namespace Slic3r;
 using namespace Slic3r::GUI;
 using namespace Slic3r::GUI::OrcaMCP;
 
@@ -37,6 +43,158 @@ std::optional<std::string> optional_string(const nlohmann::json& params, const s
     if (!params.contains(key) || !params.at(key).is_string())
         return std::nullopt;
     return params.at(key).get<std::string>();
+}
+
+std::string to_std(const wxString& s)
+{
+    return std::string(s.ToUTF8().data());
+}
+
+// Resolves the print host the same way Plater::send_gcode_legacy does (main thread, fast), then builds
+// the concrete PrintHost off the main thread so no network I/O ever blocks the GUI.
+bool resolve_print_host(std::unique_ptr<Slic3r::PrintHost>& host, DynamicPrintConfig& cfg, std::string& host_type, nlohmann::json& error_out)
+{
+    std::string err;
+    const nlohmann::json resolved = run_on_main_thread([&]() -> nlohmann::json {
+        bool ok = resolve_print_host_config(cfg, host_type, err);
+        return {{"ok", ok}};
+    });
+    if (!resolved["ok"].get<bool>()) {
+        error_out = error_response(err);
+        return false;
+    }
+
+    host = make_print_host(cfg);
+    if (!host) {
+        error_out = error_response("Failed to create a print host for type '" + host_type + "'");
+        return false;
+    }
+    return true;
+}
+
+// The four Flashforge control/status tools all need the same thing: a resolved Flashforge host, off the
+// main thread. `cfg` is kept alive by the caller for as long as `host` is used.
+bool resolve_flashforge(std::unique_ptr<Slic3r::PrintHost>& host, Slic3r::Flashforge*& ff, nlohmann::json& error_out)
+{
+    DynamicPrintConfig cfg;
+    std::string        host_type;
+    if (!resolve_print_host(host, cfg, host_type, error_out))
+        return false;
+
+    ff = dynamic_cast<Slic3r::Flashforge*>(host.get());
+    if (!ff) {
+        error_out = error_response("Selected printer host type is '" + host_type +
+                                    "'; this tool requires a Flashforge host");
+        return false;
+    }
+    if (!ff->has_local_api_credentials()) {
+        error_out = error_response("Flashforge local API requires both a serial number and an access code. "
+                                    "Use add_physical_printer to set them.");
+        return false;
+    }
+    return true;
+}
+
+// Main thread: the current plate's per-tool filament types and colours, the way
+// Plater::send_gcode_legacy builds `project_filaments` for the Flashforge send dialog.
+nlohmann::json gather_project_filaments()
+{
+    return run_on_main_thread([]() -> nlohmann::json {
+        nlohmann::json      result = nlohmann::json::array();
+        Plater*             plater = wxGetApp().plater();
+        PresetBundle*       bundle = wxGetApp().preset_bundle;
+        if (!plater || !bundle)
+            return result;
+
+        PartPlate* plate = plater->get_partplate_list().get_curr_plate();
+        if (!plate)
+            return result;
+
+        DynamicPrintConfig cfg = bundle->full_config();
+        for (const Slic3r::FilamentInfo& filament : plate->get_slice_filaments_info()) {
+            if (filament.id < 0)
+                continue;
+
+            std::string display_type, type;
+            try {
+                type = cfg.get_filament_type(display_type, filament.id);
+            } catch (...) {
+            }
+            if (type.empty())
+                type = display_type;
+            if (type.empty())
+                type = "Unknown";
+
+            result.push_back({{"tool_id", filament.id},
+                              {"type", type},
+                              {"color", filament.color.empty() ? "#FFFFFF" : filament.color}});
+        }
+        return result;
+    });
+}
+
+// Builds the {toolId, slotId, materialName, toolMaterialColor, slotMaterialColor} entries the Flashforge
+// local API expects, matching each project tool to the first free material-station slot of the same
+// normalized material family (same rule as FlashforgePrintHostSendDialog::auto_assign_mappings, minus
+// its colour tie-break between same-family slots).
+nlohmann::json auto_material_mappings(const nlohmann::json& project_filaments, const std::vector<Slic3r::FlashforgeApi::MaterialSlot>& slots)
+{
+    nlohmann::json    mappings = nlohmann::json::array();
+    std::vector<bool> slot_used(slots.size(), false);
+
+    for (const auto& filament : project_filaments) {
+        const std::string project_material = Slic3r::GUI::flashforge_normalize_material(filament.value("type", std::string()));
+        if (project_material.empty())
+            continue;
+
+        for (size_t i = 0; i < slots.size(); ++i) {
+            if (slot_used[i] || !slots[i].has_filament)
+                continue;
+            if (Slic3r::GUI::flashforge_normalize_material(slots[i].material_name) != project_material)
+                continue;
+
+            slot_used[i] = true;
+            mappings.push_back({{"toolId", filament.value("tool_id", 0)},
+                                {"slotId", slots[i].slot_id},
+                                {"materialName", slots[i].material_name},
+                                {"toolMaterialColor", filament.value("color", std::string())},
+                                {"slotMaterialColor", slots[i].material_color}});
+            break;
+        }
+    }
+    return mappings;
+}
+
+// Builds the same payload shape from caller-supplied {tool_id, slot_id} pairs, filling in the slot's
+// reported material/colour so the printer sees a payload consistent with the auto-mapped one.
+nlohmann::json explicit_material_mappings(const nlohmann::json& requested, const std::vector<Slic3r::FlashforgeApi::MaterialSlot>& slots)
+{
+    nlohmann::json mappings = nlohmann::json::array();
+    for (const auto& entry : requested) {
+        if (!entry.is_object() || !entry.contains("tool_id") || !entry.contains("slot_id"))
+            continue;
+        const int slot_id = entry.at("slot_id").get<int>();
+
+        const auto slot_it = std::find_if(slots.begin(), slots.end(),
+                                          [&](const Slic3r::FlashforgeApi::MaterialSlot& s) { return s.slot_id == slot_id; });
+
+        mappings.push_back({{"toolId", entry.at("tool_id").get<int>()},
+                            {"slotId", slot_id},
+                            {"materialName", slot_it != slots.end() ? slot_it->material_name : std::string()},
+                            {"toolMaterialColor", std::string()},
+                            {"slotMaterialColor", slot_it != slots.end() ? slot_it->material_color : std::string()}});
+    }
+    return mappings;
+}
+
+// The tool_id/slot_id pairs actually sent, for the tool's response (mirrors the request schema rather
+// than the printer's camelCase wire format).
+nlohmann::json mapping_response_echo(const nlohmann::json& mappings_payload)
+{
+    nlohmann::json echoed = nlohmann::json::array();
+    for (const auto& m : mappings_payload)
+        echoed.push_back({{"tool_id", m.at("toolId")}, {"slot_id", m.at("slotId")}});
+    return echoed;
 }
 
 } // namespace
@@ -410,6 +568,240 @@ void OrcaMCPServer::register_printer_tools()
                     return error_response(error);
                 return select_print_host_preset(name);
             });
+        }
+    });
+
+    // get_printer_status - Live status from the configured print host (full detail for Flashforge)
+    register_tool({
+        "get_printer_status",
+        "Get live status from the configured print host: state, progress, temperatures, light, material "
+        "station. Full detail is only available for Flashforge hosts; other host types report online/offline.",
+        {
+            {"type", "object"},
+            {"properties", nlohmann::json::object()}
+        },
+        [](const nlohmann::json&) -> nlohmann::json {
+            std::unique_ptr<Slic3r::PrintHost> host;
+            DynamicPrintConfig                 cfg;
+            std::string                        host_type;
+            nlohmann::json                     error_out;
+            if (!resolve_print_host(host, cfg, host_type, error_out))
+                return error_out;
+
+            const std::string print_host_value = cfg.has("print_host") ? cfg.opt_string("print_host") : std::string();
+
+            auto* ff = dynamic_cast<Slic3r::Flashforge*>(host.get());
+            if (!ff) {
+                wxString test_msg;
+                const bool online = host->test(test_msg);
+                return {{"status", "success"},
+                        {"host_type", host_type},
+                        {"print_host", print_host_value},
+                        {"online", online},
+                        {"printer", nullptr},
+                        {"note", "Status details are only implemented for Flashforge hosts"}};
+            }
+
+            if (!ff->has_local_api_credentials())
+                return error_response("Flashforge local API requires both a serial number and an access code. "
+                                      "Use add_physical_printer to set them.");
+
+            Slic3r::FlashforgeApi::PrinterStatus status;
+            wxString                     msg;
+            if (!ff->fetch_status(status, msg))
+                return error_response(msg.empty() ? "Failed to fetch printer status" : to_std(msg));
+
+            return {{"status", "success"},
+                    {"host_type", host_type},
+                    {"print_host", print_host_value},
+                    {"online", true},
+                    {"printer", status_to_json(status)}};
+        }
+    });
+
+    // printer_control - Pause/resume/cancel the current job, toggle the light, or set temperatures
+    register_tool({
+        "printer_control",
+        "Control the Flashforge printer: pause, resume or cancel the current job, turn the enclosure "
+        "light on/off, or set bed/chamber/nozzle target temperatures.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"action", {
+                    {"type", "string"},
+                    {"enum", {"pause", "resume", "cancel", "light_on", "light_off", "set_temperature"}},
+                    {"description", "Control action to perform"}
+                }},
+                {"bed", {
+                    {"type", "number"},
+                    {"description", "set_temperature only: target bed temperature. Omit for no change."}
+                }},
+                {"chamber", {
+                    {"type", "number"},
+                    {"description", "set_temperature only: target chamber temperature. Omit for no change."}
+                }},
+                {"nozzles", {
+                    {"type", "array"},
+                    {"description", "set_temperature only: per-tool target temperatures. Tools not listed are left unchanged."},
+                    {"items", {
+                        {"type", "object"},
+                        {"properties", {
+                            {"tool", {{"type", "integer"}, {"description", "Tool/nozzle index, 0-3"}}},
+                            {"temp", {{"type", "number"}, {"description", "Target temperature"}}}
+                        }},
+                        {"required", {"tool", "temp"}}
+                    }}
+                }}
+            }},
+            {"required", {"action"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            static const std::vector<std::string> kActions = {"pause", "resume", "cancel", "light_on", "light_off", "set_temperature"};
+            const std::string action = params.value("action", std::string());
+            if (std::find(kActions.begin(), kActions.end(), action) == kActions.end())
+                return error_response("Unknown action '" + action + "'. Supported: " + boost::algorithm::join(kActions, ", "));
+
+            std::optional<double>              bed;
+            std::optional<double>              chamber;
+            std::vector<std::optional<double>> nozzles(4, std::nullopt);
+            if (action == "set_temperature") {
+                if (params.contains("bed") && params.at("bed").is_number())
+                    bed = params.at("bed").get<double>();
+                if (params.contains("chamber") && params.at("chamber").is_number())
+                    chamber = params.at("chamber").get<double>();
+                if (params.contains("nozzles") && params.at("nozzles").is_array()) {
+                    for (const auto& entry : params.at("nozzles")) {
+                        if (!entry.is_object() || !entry.contains("tool") || !entry.contains("temp"))
+                            return error_response("Each entry in nozzles requires 'tool' and 'temp'");
+                        const int tool = entry.at("tool").get<int>();
+                        if (tool < 0 || tool > 3)
+                            return error_response("nozzles[].tool must be between 0 and 3");
+                        nozzles[tool] = entry.at("temp").get<double>();
+                    }
+                }
+            }
+
+            std::unique_ptr<Slic3r::PrintHost> host;
+            Slic3r::Flashforge*                ff = nullptr;
+            nlohmann::json                     error_out;
+            if (!resolve_flashforge(host, ff, error_out))
+                return error_out;
+
+            wxString msg;
+            bool     ok = false;
+            if (action == "pause")
+                ok = ff->pause_job(msg);
+            else if (action == "resume")
+                ok = ff->resume_job(msg);
+            else if (action == "cancel")
+                ok = ff->cancel_job(msg);
+            else if (action == "light_on")
+                ok = ff->set_light(true, msg);
+            else if (action == "light_off")
+                ok = ff->set_light(false, msg);
+            else // set_temperature
+                ok = ff->set_temperatures(bed, chamber, nozzles, msg);
+
+            if (!ok)
+                return error_response(msg.empty() ? ("Failed to perform action '" + action + "'") : to_std(msg));
+            return {{"status", "success"}, {"action", action}};
+        }
+    });
+
+    // list_printer_files - G-code files stored on the Flashforge printer
+    register_tool({
+        "list_printer_files",
+        "List G-code files stored on the Flashforge printer.",
+        {
+            {"type", "object"},
+            {"properties", nlohmann::json::object()}
+        },
+        [](const nlohmann::json&) -> nlohmann::json {
+            std::unique_ptr<Slic3r::PrintHost> host;
+            Slic3r::Flashforge*                ff = nullptr;
+            nlohmann::json                     error_out;
+            if (!resolve_flashforge(host, ff, error_out))
+                return error_out;
+
+            std::vector<std::string> files;
+            wxString                 msg;
+            if (!ff->list_gcode_files(files, msg))
+                return error_response(msg.empty() ? "Failed to list printer files" : to_std(msg));
+            return {{"status", "success"}, {"files", files}};
+        }
+    });
+
+    // print_printer_file - Start printing a G-code file already on the Flashforge printer
+    register_tool({
+        "print_printer_file",
+        "Start printing a G-code file already stored on the Flashforge printer, with optional material "
+        "station mapping.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"file_name", {
+                    {"type", "string"},
+                    {"description", "File name as returned by list_printer_files"}
+                }},
+                {"leveling_before_print", {
+                    {"type", "boolean"},
+                    {"description", "Run bed leveling before printing (default false)"}
+                }},
+                {"material_mappings", {
+                    {"type", "array"},
+                    {"description", "Explicit tool-to-slot mapping. Overrides auto_map when provided."},
+                    {"items", {
+                        {"type", "object"},
+                        {"properties", {
+                            {"tool_id", {{"type", "integer"}, {"description", "Project filament/tool index, 0-based"}}},
+                            {"slot_id", {{"type", "integer"}, {"description", "Material station slot id"}}}
+                        }},
+                        {"required", {"tool_id", "slot_id"}}
+                    }}
+                }},
+                {"auto_map", {
+                    {"type", "boolean"},
+                    {"description", "When true (default) and material_mappings is not given, build the mapping "
+                                    "from the current project's filament types matched against the material "
+                                    "station's loaded slots."}
+                }}
+            }},
+            {"required", {"file_name"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            const std::string file_name = params.value("file_name", std::string());
+            if (file_name.empty())
+                return error_response("file_name is required");
+
+            const bool           leveling = params.value("leveling_before_print", false);
+            const bool           auto_map = params.value("auto_map", true);
+            const nlohmann::json requested_mappings = params.value("material_mappings", nlohmann::json::array());
+            if (!requested_mappings.is_array())
+                return error_response("material_mappings must be an array");
+
+            std::unique_ptr<Slic3r::PrintHost> host;
+            Slic3r::Flashforge*                ff = nullptr;
+            nlohmann::json                     error_out;
+            if (!resolve_flashforge(host, ff, error_out))
+                return error_out;
+
+            nlohmann::json mappings_payload = nlohmann::json::array();
+            if (!requested_mappings.empty() || auto_map) {
+                Slic3r::FlashforgeApi::PrinterStatus status;
+                wxString                     msg;
+                if (!ff->fetch_status(status, msg))
+                    return error_response(msg.empty() ? "Failed to read material station status" : to_std(msg));
+
+                mappings_payload = !requested_mappings.empty()
+                                       ? explicit_material_mappings(requested_mappings, status.slots)
+                                       : auto_material_mappings(gather_project_filaments(), status.slots);
+            }
+
+            wxString msg;
+            if (!ff->print_gcode_file(file_name, leveling, mappings_payload, msg))
+                return error_response(msg.empty() ? "Failed to start print" : to_std(msg));
+
+            return {{"status", "success"}, {"file_name", file_name}, {"material_mappings", mapping_response_echo(mappings_payload)}};
         }
     });
 }

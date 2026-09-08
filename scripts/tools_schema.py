@@ -435,6 +435,15 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                   'required': [],
                   'type': 'object'},
   'name': 'get_print_estimate'},
+ {'description': 'Get live status from the configured print host: state, '
+                 'progress, temperatures, light, material station. Full detail '
+                 'is only available for Flashforge hosts; other host types '
+                 'report online/offline.',
+  'inputSchema': {'additionalProperties': False,
+                  'properties': {},
+                  'required': [],
+                  'type': 'object'},
+  'name': 'get_printer_status'},
  {'description': 'Get available printers and their status.',
   'inputSchema': {'additionalProperties': False,
                   'properties': {},
@@ -502,6 +511,12 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                   'required': [],
                   'type': 'object'},
   'name': 'get_valid_config_keys'},
+ {'description': 'List G-code files stored on the Flashforge printer.',
+  'inputSchema': {'additionalProperties': False,
+                  'properties': {},
+                  'required': [],
+                  'type': 'object'},
+  'name': 'list_printer_files'},
  {'description': 'Import a 3D model file (STL, 3MF, OBJ, STEP, etc.)',
   'inputSchema': {'additionalProperties': False,
                   'properties': {'file_path': {'description': 'Path to model '
@@ -595,6 +610,104 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                   'required': [],
                   'type': 'object'},
   'name': 'new_project'},
+ {'description': 'Start printing a G-code file already stored on the '
+                 'Flashforge printer, with optional material station mapping.',
+  'inputSchema': {'additionalProperties': False,
+                  'properties': {'auto_map': {'description': 'When true '
+                                                             '(default) and '
+                                                             'material_mappings '
+                                                             'is not given, '
+                                                             'build the '
+                                                             'mapping from the '
+                                                             'current '
+                                                             "project's "
+                                                             'filament types '
+                                                             'matched against '
+                                                             'the material '
+                                                             "station's loaded "
+                                                             'slots.',
+                                              'type': 'boolean'},
+                                 'file_name': {'description': 'File name as '
+                                                              'returned by '
+                                                              'list_printer_files',
+                                               'type': 'string'},
+                                 'leveling_before_print': {'description': 'Run '
+                                                                          'bed '
+                                                                          'leveling '
+                                                                          'before '
+                                                                          'printing '
+                                                                          '(default '
+                                                                          'false)',
+                                                           'type': 'boolean'},
+                                 'material_mappings': {'description': 'Explicit '
+                                                                      'tool-to-slot '
+                                                                      'mapping. '
+                                                                      'Overrides '
+                                                                      'auto_map '
+                                                                      'when '
+                                                                      'provided.',
+                                                       'items': {'properties': {'slot_id': {'description': 'Material '
+                                                                                                           'station '
+                                                                                                           'slot '
+                                                                                                           'id',
+                                                                                            'type': 'integer'},
+                                                                                'tool_id': {'description': 'Project '
+                                                                                                           'filament/tool '
+                                                                                                           'index, '
+                                                                                                           '0-based',
+                                                                                            'type': 'integer'}},
+                                                                 'required': ['tool_id',
+                                                                              'slot_id'],
+                                                                 'type': 'object'},
+                                                       'type': 'array'}},
+                  'required': ['file_name'],
+                  'type': 'object'},
+  'name': 'print_printer_file'},
+ {'description': 'Control the Flashforge printer: pause, resume or cancel the '
+                 'current job, turn the enclosure light on/off, or set '
+                 'bed/chamber/nozzle target temperatures.',
+  'inputSchema': {'additionalProperties': False,
+                  'properties': {'action': {'description': 'Control action to '
+                                                           'perform',
+                                            'enum': ['pause',
+                                                     'resume',
+                                                     'cancel',
+                                                     'light_on',
+                                                     'light_off',
+                                                     'set_temperature'],
+                                            'type': 'string'},
+                                 'bed': {'description': 'set_temperature only: '
+                                                        'target bed '
+                                                        'temperature. Omit for '
+                                                        'no change.',
+                                         'type': 'number'},
+                                 'chamber': {'description': 'set_temperature '
+                                                            'only: target '
+                                                            'chamber '
+                                                            'temperature. Omit '
+                                                            'for no change.',
+                                             'type': 'number'},
+                                 'nozzles': {'description': 'set_temperature '
+                                                            'only: per-tool '
+                                                            'target '
+                                                            'temperatures. '
+                                                            'Tools not listed '
+                                                            'are left '
+                                                            'unchanged.',
+                                             'items': {'properties': {'temp': {'description': 'Target '
+                                                                                              'temperature',
+                                                                               'type': 'number'},
+                                                                      'tool': {'description': 'Tool/nozzle '
+                                                                                              'index, '
+                                                                                              '0-3',
+                                                                               'type': 'integer'}},
+                                                       'required': ['tool',
+                                                                    'temp'],
+                                                       'type': 'object'},
+                                             'type': 'array'}},
+                  'required': ['action'],
+                  'type': 'object'},
+  'name': 'printer_control'},
  {'description': 'Redo the last undone operation',
   'inputSchema': {'additionalProperties': False,
                   'properties': {'include_preview': {'description': 'Return '

@@ -1087,7 +1087,7 @@ bool FlashforgePrintHostSendDialog::validate_before_close()
     return true;
 }
 
-std::string FlashforgePrintHostSendDialog::normalize_material(const std::string& material) const
+std::string flashforge_normalize_material(const std::string& material)
 {
     std::string normalized = boost::to_upper_copy(material);
     normalized.erase(std::remove_if(normalized.begin(), normalized.end(), [](unsigned char ch) { return !std::isalnum(ch); }), normalized.end());
@@ -1120,6 +1120,11 @@ std::string FlashforgePrintHostSendDialog::normalize_material(const std::string&
         return "TPU";
 
     return normalized;
+}
+
+std::string FlashforgePrintHostSendDialog::normalize_material(const std::string& material) const
+{
+    return flashforge_normalize_material(material);
 }
 
 wxColour FlashforgePrintHostSendDialog::to_wx_colour(const std::string& color) const

@@ -219,6 +219,10 @@ private:
     std::vector<BitmapComboBox*> m_slot_combos; // one per gcode filament
 };
 
+// Flashforge material-family normalization shared with OrcaMCP's printer tools (auto material mapping):
+// PLA/PLA+/PLA-CF -> PLA, PETG/PETG-CF -> PETG, ABS/ASA -> ABS, TPU, SILK. Any thread.
+std::string flashforge_normalize_material(const std::string& material);
+
 class FlashforgePrintHostSendDialog : public PrintHostSendDialog
 {
 public:
