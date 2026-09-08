@@ -1530,6 +1530,8 @@ User rule (2026-09-08): every bug found is fixed, together with related occurren
 
 - [ ] **Item Q — Device tab Play shows Bambu's "update the printer firmware" text for Flashforge**: in `MediaPlayCtrl` (the `LVL_None` early return, ~305-310) show, for printers whose agent has no live view, a neutral message such as "Live view is not available for this printer; open the Device (Web) tab for the camera." Keep Bambu wording unchanged for Bambu printers.
 
+- [ ] **Item R — `select_preset` cannot target a filament slot** (found 2026-09-09 setting up the first real print): the tool calls `Tab::select_preset` on the filament tab, which edits whichever filament the tab is on; on a 4-slot printer `get_filaments` still shows the old preset in every slot and the tool reports success. Add an optional `slot` (1-based) to `select_preset` for `type: "filament"`, applying it the way the sidebar combo does (`PresetBundle::set_filament_preset` / the combo's selection path), refresh the sidebar, and return the resulting per-slot list. Without it a multi-material project cannot be set up over MCP at all.
+
 - [ ] **Step: build, run `[flashforge]` tests, regen schema, pytest, live checks per item, commit per item** with messages `fix: <item>`, each ending with the Co-Authored-By trailer.
 
 ---
