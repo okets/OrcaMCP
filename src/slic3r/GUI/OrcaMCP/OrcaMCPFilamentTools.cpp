@@ -77,7 +77,12 @@ void OrcaMCPServer::register_filament_tools()
             std::string err;
             if (!mixed_result_from_params(params, req, err))
                 return {{"status", "error"}, {"message", err}};
+            // Omitted means "create a new slot"; an explicit slot addresses an existing one. A
+            // caller that passes 0 or a negative slot means the second and gets the first, so say so.
             const int slot = params.value("slot", -1);
+            if (params.contains("slot") && slot < 1)
+                return nlohmann::json{{"status", "error"},
+                                      {"message", "slot must be 1-based; omit it to create a new mixed slot"}};
 
             return run_on_main_thread([req, slot]() -> nlohmann::json {
                 std::string error;
@@ -133,7 +138,8 @@ void OrcaMCPServer::register_filament_tools()
                 {"filament", {{"type", "integer"}, {"description", "Filament slot, 1-based"}}},
                 {"volume_id", {
                     {"type", "integer"},
-                    {"description", "Part index within the object; omit for the whole object"}
+                    {"minimum", -1},
+                    {"description", "Part index within the object (0-based); omit, or pass -1, for the whole object"}
                 }}
             }},
             {"required", {"object_id", "filament"}}

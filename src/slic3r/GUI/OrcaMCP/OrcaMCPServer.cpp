@@ -3556,6 +3556,13 @@ void OrcaMCPServer::register_builtin_tools()
             int destination_plate = params.contains("destination_plate") ? params["destination_plate"].get<int>() :
                                     params.value("target_plate", -1);  // -1 means current plate
             bool destination_was_explicit = params.contains("destination_plate") || params.contains("target_plate");
+            // -1 is the documented "current plate"; any other negative index is a caller mistake and
+            // must not silently become "current plate" (same rule as set_object_filament's volume_id).
+            if (destination_was_explicit && destination_plate < -1) {
+                return nlohmann::json{{"status", "error"},
+                                      {"message", "Invalid destination_plate " + std::to_string(destination_plate) +
+                                                  ": use a 0-based plate index, or omit it (or pass -1) for the current plate"}};
+            }
             bool include_preview = params.value("include_preview", false);
             return run_on_main_thread([object_id, count, duplicate, destination_plate, destination_was_explicit, include_preview]() {
                 Plater* plater = wxGetApp().plater();

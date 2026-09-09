@@ -127,6 +127,14 @@ bool set_object_filament(int object_id, int volume_id, int slot, std::string& er
     Model& model = plater->model();
     if (object_id < 0 || object_id >= int(model.objects.size())) { error = "Invalid object_id"; return false; }
     if (slot_to_config_index(slot, error) < 0) return false;
+    // -1 (or an absent parameter, which the tool turns into -1) is the documented "whole object".
+    // Any other negative index is a caller mistake -- silently treating -2 as "whole object" hides
+    // an off-by-one that would otherwise be obvious immediately.
+    if (volume_id < -1) {
+        error = "Invalid volume_id " + std::to_string(volume_id) +
+                ": use a 0-based part index, or omit it (or pass -1) for the whole object";
+        return false;
+    }
 
     ModelObject* obj = model.objects[object_id];
     ModelVolume* vol = nullptr;
