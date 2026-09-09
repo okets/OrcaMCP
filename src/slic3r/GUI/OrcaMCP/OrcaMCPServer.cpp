@@ -1062,15 +1062,37 @@ void OrcaMCPServer::register_builtin_tools()
                 // contract). OrcaMCPPresetConfigUtils::ApplyConfig operates on a batch of settings
                 // per type ({"type":..., "settings": {key: value, ...}}), so group by type here,
                 // preserving each type's first-seen order.
+                //
+                // Grouping collapses a key listed twice for the same type into one write, so the
+                // earlier values are dropped. That is still the behaviour (last one wins, as it
+                // would be with two separate calls), but it is reported instead of silent: a
+                // caller that builds a batch programmatically otherwise has no way to notice that
+                // half of it never took effect.
                 std::vector<std::string> type_order;
                 std::map<std::string, nlohmann::json> grouped_settings;
+                std::vector<std::pair<std::string, std::string>> duplicate_order;  // (type, key), first seen
+                std::map<std::pair<std::string, std::string>, int> occurrences;
                 for (const auto& item : settings) {
                     const std::string type = item.value("type", "");
+                    const std::string key = item.value("key", "");
                     if (grouped_settings.find(type) == grouped_settings.end()) {
                         grouped_settings[type] = nlohmann::json::object();
                         type_order.push_back(type);
                     }
-                    grouped_settings[type][item.value("key", "")] = item.at("value");
+                    const int count = ++occurrences[{type, key}];
+                    if (count == 2)
+                        duplicate_order.push_back({type, key});
+                    grouped_settings[type][key] = item.at("value");
+                }
+
+                nlohmann::json duplicate_keys = nlohmann::json::array();
+                for (const auto& [type, key] : duplicate_order) {
+                    duplicate_keys.push_back({
+                        {"type", type},
+                        {"key", key},
+                        {"occurrences", occurrences[{type, key}]},
+                        {"applied_value", grouped_settings[type][key]}
+                    });
                 }
 
                 nlohmann::json applied_keys = nlohmann::json::array();
@@ -1099,6 +1121,7 @@ void OrcaMCPServer::register_builtin_tools()
                     {"status", status},
                     {"applied_keys", applied_keys},
                     {"invalid_keys", invalid_keys},
+                    {"duplicate_keys", duplicate_keys},
                     {"active_warnings", get_active_warnings_json(plater)}
                 };
                 auto info_messages = suppression_guard.messages();
@@ -1564,9 +1587,15 @@ void OrcaMCPServer::register_builtin_tools()
                     ModelObject* obj = model.objects[object_id];
                     std::vector<std::string> applied_keys;
                     std::vector<std::string> invalid_keys;
+                    // Same shape as apply_config: a key listed twice for one object is applied
+                    // twice, last value wins, and the caller is told rather than left guessing.
+                    std::vector<std::string> duplicate_order;
+                    std::map<std::string, int> occurrences;
 
                     for (const auto& item : settings) {
                         std::string key = item["key"];
+                        if (++occurrences[key] == 2)
+                            duplicate_order.push_back(key);
                         std::string value_str = item["value"].is_string() ?
                             item["value"].get<std::string>() : item["value"].dump();
 
@@ -1593,6 +1622,10 @@ void OrcaMCPServer::register_builtin_tools()
                     if (!invalid_keys.empty()) {
                         obj_result["invalid_keys"] = invalid_keys;
                     }
+                    nlohmann::json duplicate_keys = nlohmann::json::array();
+                    for (const std::string& key : duplicate_order)
+                        duplicate_keys.push_back({{"key", key}, {"occurrences", occurrences[key]}});
+                    obj_result["duplicate_keys"] = duplicate_keys;
                     results.push_back(obj_result);
                 }
 

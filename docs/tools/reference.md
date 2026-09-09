@@ -470,6 +470,22 @@ Modify configuration settings.
 }}
 ```
 
+**Returns:**
+```json
+{
+  "status": "success",
+  "applied_keys": ["layer_height"],
+  "invalid_keys": [],
+  "duplicate_keys": [],
+  "active_warnings": {"count": 0, "warnings": []}
+}
+```
+
+**Duplicates:** listing the same `type` + `key` twice in one call applies the **last** value (the
+same as two separate calls would). Each such key is reported in `duplicate_keys` as
+`{"type", "key", "occurrences", "applied_value"}` so a batch built programmatically cannot lose
+half its writes silently. `set_object_config` reports the same array per object.
+
 ---
 
 ### clone_preset
