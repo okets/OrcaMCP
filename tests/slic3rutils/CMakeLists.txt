@@ -24,6 +24,7 @@ add_executable(${_TEST_NAME}_tests
     test_project_match.cpp
     test_slice_estimate.cpp
     test_preset_query.cpp
+    test_hex_color.cpp
     ../fff_print/test_helpers.cpp
     )
 

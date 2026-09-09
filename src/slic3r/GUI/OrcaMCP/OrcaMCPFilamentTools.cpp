@@ -267,6 +267,12 @@ void OrcaMCPServer::register_filament_tools()
             const std::string material_type = params.value("material_type", std::string());
             const bool create = params.value("create", false);
 
+            // color_decompose_hex_to_rgb only needs six digits after the '#' and ignores whatever
+            // follows, so "#B17C38ff" and "#B17C38 (bronze)" would both quietly become #B17C38.
+            if (!is_hex_color(target_color))
+                return nlohmann::json{{"status", "error"},
+                                      {"message", "target_color must be exactly \"#RRGGBB\", got \"" + target_color + "\""}};
+
             return run_on_main_thread([target_color, material_type, create]() -> nlohmann::json {
                 ColorDecomposeRgb target;
                 if (!color_decompose_hex_to_rgb(target_color, target))

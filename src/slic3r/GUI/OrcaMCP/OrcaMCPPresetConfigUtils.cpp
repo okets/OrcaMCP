@@ -1,4 +1,5 @@
 #include "OrcaMCPPresetConfigUtils.hpp"
+#include "OrcaMCPCommon.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Tab.hpp"
 #include "slic3r/GUI/Plater.hpp"
@@ -10,12 +11,35 @@
 
 #include <algorithm>
 #include <cctype>
+#include <memory>
 
 namespace Slic3r { namespace GUI {
 
 namespace {
 // Defined below, next to WriteProjectFilamentColor, which is its other caller.
 bool sync_filament_color_keys(size_t config_index, const std::string& color, bool& flattened, std::string& error);
+
+// Every value of a colour-typed option must be a real "#RRGGBB" (or "#RRGGBBAA"); an empty value
+// means "no colour assigned" and is allowed, as extruder_colour's own default is empty.
+bool color_option_is_valid(const ConfigOption* option, std::string& bad_value)
+{
+    if (option == nullptr)
+        return true;
+    std::vector<std::string> values;
+    if (const auto* strings = dynamic_cast<const ConfigOptionStrings*>(option))
+        values = strings->values;
+    else if (const auto* single = dynamic_cast<const ConfigOptionString*>(option))
+        values.push_back(single->value);
+    else
+        return true; // not a string-shaped colour; nothing to check
+
+    for (const std::string& value : values)
+        if (!value.empty() && !OrcaMCP::is_hex_color(value, /*allow_alpha=*/true)) {
+            bad_value = value;
+            return false;
+        }
+    return true;
+}
 }
 
 namespace {
@@ -236,17 +260,35 @@ ApplyConfigResult OrcaMCPPresetConfigUtils::ApplyConfig(const nlohmann::json& it
     for (auto& [key, value] : item.at("settings").items()) {
         // Can't blindly dump json object to string, otherwise the original string will become "\"value\""
         const std::string value_str = value.is_string() ? value.get<std::string>() : value.dump();
-        if (print_config_def.get(key) == nullptr) {
+        const ConfigOptionDef* def = print_config_def.get(key);
+        if (def == nullptr) {
             result.invalid.push_back(key);
             continue;
         }
+        // A colour key deserializes any string at all, and upstream then decodes an unparseable one
+        // as black -- so "B17C38" (no '#') would be accepted here and show up as a black spool.
+        // Keep the old value and report the key instead.
+        const bool is_color = def->gui_type == ConfigOptionDef::GUIType::color;
+        std::unique_ptr<ConfigOption> previous;
+        if (is_color && config->option(key) != nullptr)
+            previous.reset(config->option(key)->clone());
         try {
             config->set_deserialize(key, value_str, context);
-            result.applied.push_back(key);
         } catch (const std::exception& e) {
             BOOST_LOG_TRIVIAL(error) << "ApplyConfig: '" << key << ":" << value_str << "' failed: " << e.what();
             result.invalid.push_back(key);
+            continue;
         }
+        std::string bad_color;
+        if (is_color && !color_option_is_valid(config->option(key), bad_color)) {
+            BOOST_LOG_TRIVIAL(error) << "ApplyConfig: '" << key << ":" << value_str << "' is not a #RRGGBB colour ("
+                                     << bad_color << ")";
+            if (previous)
+                config->set_key_value(key, previous.release());
+            result.invalid.push_back(key);
+            continue;
+        }
+        result.applied.push_back(key);
     }
 
     if (type == "project") {

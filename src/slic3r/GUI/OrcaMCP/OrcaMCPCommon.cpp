@@ -3,10 +3,23 @@
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/NotificationManager.hpp"
 
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
+
+bool is_hex_color(const std::string& value, bool allow_alpha)
+{
+    if (value.size() != 7 && !(allow_alpha && value.size() == 9))
+        return false;
+    if (value.front() != '#')
+        return false;
+    for (size_t i = 1; i < value.size(); ++i)
+        if (!std::isxdigit(static_cast<unsigned char>(value[i])))
+            return false;
+    return true;
+}
 
 bool parse_integer_param(const nlohmann::json& value, int& out)
 {

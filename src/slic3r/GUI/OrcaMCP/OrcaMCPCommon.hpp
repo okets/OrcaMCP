@@ -36,6 +36,13 @@ nlohmann::json run_on_main_thread(Func&& func)
 bool parse_integer_param(const nlohmann::json& value, int& out);
 bool parse_boolean_param(const nlohmann::json& value, bool& out);
 
+// True for "#RRGGBB" -- and, with allow_alpha, also "#RRGGBBAA". Upstream's parsers are lenient in
+// ways that turn a typo into a wrong colour rather than an error: can_decode_color only checks the
+// length and the '#' (so "#GGGGGG" decodes as black) and color_decompose_hex_to_rgb accepts any
+// trailing garbage after six digits. Every MCP entry point that takes a colour from a caller
+// validates it here first, so the caller is told instead of quietly getting a different colour.
+bool is_hex_color(const std::string& value, bool allow_alpha = false);
+
 // Always returns {"count": N, "warnings": [{level, message, type}...]}.
 nlohmann::json get_active_warnings_json(Plater* plater);
 

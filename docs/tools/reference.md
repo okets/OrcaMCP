@@ -529,6 +529,10 @@ same as two separate calls would). Each such key is reported in `duplicate_keys`
 `{"type", "key", "occurrences", "applied_value"}` so a batch built programmatically cannot lose
 half its writes silently. `set_object_config` reports the same array per object.
 
+**Colours:** a colour-typed key (`filament_colour`, `extruder_colour`, ...) must be `#RRGGBB` or
+`#RRGGBBAA`; an empty value means "no colour". Anything else (`B17C38`, `#GGGGGG`) is rejected into
+`invalid_keys` with the previous value kept, instead of being stored and later decoded as black.
+
 ---
 
 ### clone_preset
