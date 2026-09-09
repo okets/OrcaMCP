@@ -81,6 +81,9 @@ private:
     bool upload_local_api(PrintHostUpload upload_data, ProgressFn progress_fn, ErrorFn error_fn) const;
     bool test_local_api(wxString& msg) const;
     bool request_local_api_json(const std::string& path, const std::string& body, std::string& response_body, wxString& error_msg) const;
+    // The precondition every local-API method shares: true when the credentials are there, false
+    // with `msg` set to the one message all of them used to spell out for themselves.
+    bool require_local_api_credentials(wxString& msg) const;
     std::string make_http_url(const std::string& path) const;
     std::string extract_host_name() const;
     int  get_err_code_from_body(const std::string &body) const;

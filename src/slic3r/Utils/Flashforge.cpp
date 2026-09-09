@@ -500,6 +500,15 @@ bool Flashforge::upload(PrintHostUpload upload_data, ProgressFn progress_fn, Err
     return res;
 }
 
+bool Flashforge::require_local_api_credentials(wxString& msg) const
+{
+    if (has_local_api_credentials())
+        return true;
+
+    msg = _(L("Flashforge local API requires both serial number and access code."));
+    return false;
+}
+
 bool Flashforge::test_local_api(wxString& msg) const
 {
     std::string body;
@@ -510,10 +519,8 @@ bool Flashforge::fetch_material_slots(std::vector<FlashforgeMaterialSlot>& slots
 {
     slots.clear();
 
-    if (!has_local_api_credentials()) {
-        msg = _(L("Flashforge local API requires both serial number and access code."));
+    if (!require_local_api_credentials(msg))
         return false;
-    }
 
     std::string body;
     if (!request_local_api_json("detail", json{{"serialNumber", m_serial_number}, {"checkCode", m_check_code}}.dump(), body, msg))
@@ -568,10 +575,8 @@ bool Flashforge::fetch_material_slots(std::vector<FlashforgeMaterialSlot>& slots
 
 bool Flashforge::fetch_status(FlashforgeApi::PrinterStatus& out, wxString& msg) const
 {
-    if (!has_local_api_credentials()) {
-        msg = _(L("Flashforge local API requires both serial number and access code."));
+    if (!require_local_api_credentials(msg))
         return false;
-    }
 
     std::string body;
     if (!request_local_api_json("detail", FlashforgeApi::make_credentials_payload(m_serial_number, m_check_code).dump(), body, msg))
@@ -588,10 +593,8 @@ bool Flashforge::fetch_status(FlashforgeApi::PrinterStatus& out, wxString& msg) 
 
 bool Flashforge::send_control(const std::string& cmd, const nlohmann::json& args, wxString& msg) const
 {
-    if (!has_local_api_credentials()) {
-        msg = _(L("Flashforge local API requires both serial number and access code."));
+    if (!require_local_api_credentials(msg))
         return false;
-    }
 
     std::string body;
     return request_local_api_json("control", FlashforgeApi::make_control_payload(m_serial_number, m_check_code, cmd, args).dump(), body, msg);
@@ -611,10 +614,8 @@ bool Flashforge::list_gcode_files(std::vector<std::string>& files, wxString& msg
 {
     files.clear();
 
-    if (!has_local_api_credentials()) {
-        msg = _(L("Flashforge local API requires both serial number and access code."));
+    if (!require_local_api_credentials(msg))
         return false;
-    }
 
     std::string body;
     if (!request_local_api_json("gcodeList", FlashforgeApi::make_credentials_payload(m_serial_number, m_check_code).dump(), body, msg))
@@ -637,10 +638,8 @@ bool Flashforge::list_gcode_files(std::vector<std::string>& files, wxString& msg
 
 bool Flashforge::print_gcode_file(const std::string& file_name, bool leveling, const nlohmann::json& material_mappings, wxString& msg) const
 {
-    if (!has_local_api_credentials()) {
-        msg = _(L("Flashforge local API requires both serial number and access code."));
+    if (!require_local_api_credentials(msg))
         return false;
-    }
 
     std::string body;
     return request_local_api_json("printGcode", FlashforgeApi::make_print_gcode_payload(m_serial_number, m_check_code, file_name, leveling, material_mappings).dump(), body, msg);
