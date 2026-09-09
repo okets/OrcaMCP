@@ -401,19 +401,21 @@ private:
             return;
         }
 
+        // Ahead of the print-host lookup: this is the one command that never reaches the printer,
+        // so a preset with no host configured must not make it fail with a host error. It reads the
+        // station snapshot the poller already cached and rewrites the *project*. Preset work is
+        // main-thread-only and fast, so it runs right here rather than on a worker - and through
+        // exactly the helper the match_project_to_printer MCP tool calls, so the button and an
+        // agent take the same path.
+        if (params.value("name", std::string()) == "match_project_to_printer") {
+            handle_project_match(id, params);
+            return;
+        }
+
         DynamicPrintConfig config;
         std::string        host_type, error;
         if (!OrcaMCP::resolve_print_host_config(config, host_type, error)) {
             answer_command(id, false, error);
-            return;
-        }
-
-        // The one command that never reaches the printer: it reads the station snapshot the poller
-        // already has and rewrites the *project*. Preset work is main-thread-only and fast, so it
-        // runs right here rather than on a worker - and it goes through exactly the helper the
-        // match_project_to_printer MCP tool calls, so the button and an agent take the same path.
-        if (params.value("name", std::string()) == "match_project_to_printer") {
-            handle_project_match(id, params);
             return;
         }
 

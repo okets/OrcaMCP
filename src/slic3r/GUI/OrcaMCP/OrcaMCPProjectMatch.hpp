@@ -44,6 +44,10 @@ struct ProjectSlot
     std::string type;      // the slot preset's filament_type
     std::string color;     // "#RRGGBB"
     bool        is_mixed{false};
+    // filament_colour_type "0": the slot shows a gradient/multi-colour spool. The printer reports
+    // one flat colour per slot, so matching replaces it -- and says so rather than quietly
+    // discarding the second colour.
+    bool color_is_gradient{false};
 };
 
 // One material-station slot, reduced to what matching needs.
@@ -92,8 +96,11 @@ std::string normalize_hex_color(const std::string& raw);
 //   0. a same-vendor profile built for this exact printer model  ("Flashforge PETG Pro @FF C5P")
 //   1. any other compatible same-vendor profile of that material ("Flashforge PETG Pro @FF AD5X"
 //      would never be compatible, but a vendor's generic-machine profile is)
-//   2. "Generic <MATERIAL> @System"
-//   3. anything else compatible of that material family -- better than leaving the slot on a
+//   2. any *other* profile built for this exact printer model -- the bundle ships model-specific
+//      profiles with no filament_vendor at all ("Generic BVOH @FF C5P"), and one of those is tuned
+//      for this machine where an alphabetically-earlier stranger is not
+//   3. a vendor-neutral "Generic <MATERIAL>" profile
+//   4. anything else compatible of that material family -- better than leaving the slot on a
 //      material the machine is not holding, which is the bug this whole feature exists to fix.
 //
 // The model tag ("FF C5P") is a naming convention with no machine-readable source: no printer preset

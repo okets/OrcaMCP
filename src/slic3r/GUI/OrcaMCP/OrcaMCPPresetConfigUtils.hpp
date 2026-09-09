@@ -30,8 +30,28 @@ public:
     // item = {"type": "print"|"filament"|"printer"|"project", "settings": {key: value, ...}}
     static ApplyConfigResult ApplyConfig(const nlohmann::json& item);
     // Refreshes derived UI/state after a direct write to preset_bundle->project_config
-    // (filament colors, dynamic/mixed filament lists, project-dirty flag, background process).
+    // (filament colors, dynamic/mixed filament lists, project-dirty flag, background process) and
+    // persists it with export_selections.
+    //
+    // The persistence is not optional bookkeeping. Several project_config keys -- filament_colour,
+    // filament_multi_colour, filament_colour_type, flush_volumes_matrix/vector, flush_multiplier
+    // and the mixed-filament metadata -- live *only* in the per-printer app-config snapshot between
+    // sessions (PresetBundle::export_selections / load_selections). A write that skips it looks
+    // right until the next restart and then silently reverts, which is exactly the kind of stale
+    // project this whole area exists to prevent. Every GUI path that writes one of those keys
+    // (the filament colour picker, the wipe-tower dialog, Sidebar::auto_calc_flushing_volumes)
+    // calls export_selections, so every MCP path must too.
     static void RefreshAfterProjectConfigChange();
+
+    // Sets one filament slot's colour the way the sidebar's own colour picker does
+    // (PlaterPresetComboBox::sync_colour_config): filament_colour, filament_multi_colour and
+    // filament_colour_type together, then RefreshAfterProjectConfigChange(). `config_index` is the
+    // 0-based project_config index, NOT a position in combos_filament() -- that list holds only the
+    // physical slots, so the two differ as soon as a mixed slot exists.
+    // `flattened` comes back true when the slot held a multi-colour (gradient) that this replaced
+    // with one flat colour. Returns false with `error` set and nothing written on a bad index.
+    static bool WriteProjectFilamentColor(size_t config_index, const std::string& color, bool& flattened,
+                                          std::string& error);
     static void SelectPreset(const std::string& type, const std::string& presetName);
     // Sets one filament slot (1-based) to `presetName`, mirroring the sidebar filament combo
     // (Plater::priv::on_select_preset's TYPE_FILAMENT branch) instead of the filament tab, so a

@@ -1446,11 +1446,16 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
       if (r.changed) done.push("Slot " + r.slot + ": " + [r.preset_after, r.color_after].filter(Boolean).join(", "));
       else if (!r.matched) notes.push(r.reason);
     }
+    /* Anything a dialog would have said - most importantly "modified filament presets were
+       discarded". Losing preset edits silently because a dialog was suppressed for automation
+       would be a nasty way to find out. */
+    var said = (res && res.info_messages) || [];
     var parts = [];
     if (done.length) parts.push(done.join(" \u00B7 ") + ".");
     if (notes.length) parts.push(notes.join(" "));
+    for (var j = 0; j < said.length; j++) parts.push(String(said[j]));
     if (!parts.length) parts.push("The project already matched the printer.");
-    return { text: parts.join(" "), warn: notes.length > 0 };
+    return { text: parts.join(" "), warn: notes.length > 0 || said.length > 0 };
   }
 
   function onMatch(){

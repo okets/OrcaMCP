@@ -10,6 +10,11 @@
 
 namespace Slic3r { namespace GUI {
 
+namespace {
+// Defined below, next to WriteProjectFilamentColor, which is its other caller.
+bool sync_filament_color_keys(size_t config_index, const std::string& color, bool& flattened, std::string& error);
+}
+
 nlohmann::json OrcaMCPPresetConfigUtils::PresetsToJson(const std::vector<std::pair<const Preset*, bool>>& presets)
 {
     nlohmann::json j_array = nlohmann::json::array();
@@ -157,6 +162,14 @@ ApplyConfigResult OrcaMCPPresetConfigUtils::ApplyConfig(const nlohmann::json& it
         }
     }
 
+    // A caller writing filament_colour through apply_config gets the same three-key treatment the
+    // colour picker gives -- but only for the slots whose colour actually moved, so a gradient set
+    // deliberately on some other slot is not flattened as a side effect.
+    std::vector<std::string> colors_before;
+    if (type == "project")
+        if (const auto* opt = config->option<ConfigOptionStrings>("filament_colour"))
+            colors_before = opt->values;
+
     ConfigSubstitutionContext context(ForwardCompatibilitySubstitutionRule::Enable);
     for (auto& [key, value] : item.at("settings").items()) {
         // Can't blindly dump json object to string, otherwise the original string will become "\"value\""
@@ -175,6 +188,13 @@ ApplyConfigResult OrcaMCPPresetConfigUtils::ApplyConfig(const nlohmann::json& it
     }
 
     if (type == "project") {
+        if (const auto* opt = config->option<ConfigOptionStrings>("filament_colour"))
+            for (size_t i = 0; i < opt->values.size(); ++i)
+                if (i >= colors_before.size() || colors_before[i] != opt->values[i]) {
+                    bool        flattened = false;
+                    std::string sync_error;
+                    sync_filament_color_keys(i, opt->values[i], flattened, sync_error);
+                }
         RefreshAfterProjectConfigChange();
     }
 
@@ -187,7 +207,56 @@ void OrcaMCPPresetConfigUtils::RefreshAfterProjectConfigChange() {
     wxGetApp().sidebar().update_dynamic_filament_list();
     wxGetApp().sidebar().update_mixed_filament_list();
     plater->update_project_dirty_from_presets();
+    // Several project_config keys survive a restart only through the per-printer app-config
+    // snapshot; see the header. Without this, an MCP write of a filament colour or a flush volume
+    // is forgotten the next time OrcaSlicer starts.
+    wxGetApp().preset_bundle->export_selections(*wxGetApp().app_config);
     wxPostEvent(&wxGetApp().sidebar(), SimpleEvent(EVT_SCHEDULE_BACKGROUND_PROCESS, &wxGetApp().sidebar()));
+}
+
+namespace {
+
+// filament_colour alone is only a third of a colour: filament_multi_colour is what the swatch and
+// the sync paths read, and filament_colour_type says whether the slot is a gradient. Writing one
+// without the others leaves the sidebar showing a different colour from the preview. No refresh
+// here -- the two callers each already do exactly one.
+bool sync_filament_color_keys(size_t config_index, const std::string& color, bool& flattened, std::string& error)
+{
+    flattened = false;
+
+    DynamicPrintConfig& project     = wxGetApp().preset_bundle->project_config;
+    auto*               colour      = project.option<ConfigOptionStrings>("filament_colour");
+    auto*               multi       = project.option<ConfigOptionStrings>("filament_multi_colour", true);
+    auto*               colour_type = project.option<ConfigOptionStrings>("filament_colour_type", true);
+
+    if (colour == nullptr || config_index >= colour->values.size()) {
+        error = "Filament slot " + std::to_string(config_index + 1) + " has no colour entry in the project.";
+        return false;
+    }
+    while (multi->values.size() <= config_index) multi->values.push_back(std::string());
+    while (colour_type->values.size() <= config_index) colour_type->values.push_back("1");
+
+    // "0" is the gradient/multi-colour type; a single flat colour replaces it, and the caller is
+    // told so it can say what it did rather than quietly discarding a spool's second colour.
+    flattened = colour_type->values[config_index] == "0";
+
+    colour->values[config_index]      = color;
+    multi->values[config_index]       = color;
+    colour_type->values[config_index] = "1";
+    return true;
+}
+
+} // namespace
+
+bool OrcaMCPPresetConfigUtils::WriteProjectFilamentColor(size_t             config_index,
+                                                         const std::string& color,
+                                                         bool&              flattened,
+                                                         std::string&       error)
+{
+    if (!sync_filament_color_keys(config_index, color, flattened, error))
+        return false;
+    RefreshAfterProjectConfigChange();
+    return true;
 }
 
 void OrcaMCPPresetConfigUtils::SelectPreset(const std::string& type, const std::string& presetName) {
@@ -235,9 +304,13 @@ bool OrcaMCPPresetConfigUtils::SelectFilamentSlotPreset(int slot, const std::str
     sidebar.update_dynamic_filament_list();
     plater->on_filament_change(idx);
 
-    auto& combos = sidebar.combos_filament();
-    if (idx < combos.size())
-        combos[idx]->update();
+    // combos_filament() holds only the physical slots, and each combo carries the project_config
+    // index it edits -- so with a mixed slot present, position and index are not the same thing.
+    for (PlaterPresetComboBox* combo : sidebar.combos_filament())
+        if (combo != nullptr && combo->get_filament_idx() == int(idx)) {
+            combo->update();
+            break;
+        }
 
     // A single-filament printer takes PresetBundle::full_fff_config()'s num_filaments <= 1
     // branch, which reads the filament tab's edited preset rather than filament_presets[0], so

@@ -126,6 +126,7 @@ std::vector<ProjectSlot> gather_project_slots(PresetBundle& bundle)
         slot.preset   = bundle.filament_presets[i];
         slot.color    = config_string_at(project, "filament_colour", i);
         slot.is_mixed = bundle.is_mixed_filament(i);
+        slot.color_is_gradient = config_string_at(project, "filament_colour_type", i) == "0";
         // The slot's own preset, not full_config(): the two agree for a physical slot, and this
         // costs nothing on the console's poll cadence.
         if (const Preset* preset = bundle.filaments.find_preset(slot.preset, false))
@@ -140,23 +141,6 @@ std::string printer_vendor_name(const PresetBundle& bundle)
     const PresetWithVendorProfile printer =
         bundle.printers.get_preset_with_vendor_profile(bundle.printers.get_edited_preset());
     return printer.vendor != nullptr ? printer.vendor->name : std::string();
-}
-
-// Colours go through the sidebar's own writer -- the single place OrcaSlicer sets a filament colour,
-// and what the swatch's colour picker calls. Writing filament_colour by hand would miss three things
-// it does: keeping filament_multi_colour and filament_colour_type consistent with it, and persisting
-// the choice with export_selections. Without that last one the match would be forgotten on the next
-// restart, which is precisely the trap this feature exists to remove.
-bool write_slot_color(int slot, const std::string& color, std::string& error)
-{
-    auto&        combos = wxGetApp().sidebar().combos_filament();
-    const size_t idx    = size_t(slot - 1);
-    if (slot < 1 || idx >= combos.size() || combos[idx] == nullptr) {
-        error = "Slot " + std::to_string(slot) + " has no filament combo, so its colour was left unchanged.";
-        return false;
-    }
-    combos[idx]->sync_colour_config({color}, /*is_gradient*/ false);
-    return true;
 }
 
 } // namespace
@@ -193,8 +177,15 @@ std::string choose_filament_preset(const std::string&                 material,
     if (flashforge_normalize_material(material).empty())
         return {};
 
-    const std::string generic_name  = "Generic " + material + " @System";
-    const std::string material_key  = alnum_upper(material);
+    const std::string material_key = alnum_upper(material);
+
+    // A vendor-neutral generic profile *of exactly this material*. Compared normalized, like the
+    // family check: a printer that says "PET-G" or "PLA+" must still find "Generic PETG @System"
+    // rather than skipping the generic tier because the spelling differs.
+    const auto is_generic_profile = [&material_key](const MatchCandidate& candidate) {
+        return boost::istarts_with(candidate.name, "Generic ") &&
+               alnum_upper(preset_core_name(candidate.name, candidate.vendor)) == material_key;
+    };
 
     // Lower sorts first, so the first element of the best key wins.
     using Rank = std::tuple<int, int, int, std::string>;
@@ -206,13 +197,15 @@ std::string choose_filament_preset(const std::string&                 material,
             continue;
 
         const bool same_vendor = !printer_vendor.empty() && boost::iequals(candidate.vendor, printer_vendor);
-        int        tier        = 3;
+        int        tier        = 4;
         if (candidate.model_specific && same_vendor)
             tier = 0;
         else if (same_vendor)
             tier = 1;
-        else if (boost::iequals(candidate.name, generic_name))
-            tier = 2;
+        else if (candidate.model_specific)
+            tier = 2;   // built for this machine, whoever wrote it
+        else if (is_generic_profile(candidate))
+            tier = 3;
 
         const int  exact_type = alnum_upper(candidate.filament_type) == material_key ? 0 : 1;
         const bool leads      = boost::istarts_with(alnum_upper(preset_core_name(candidate.name, candidate.vendor)),
@@ -323,6 +316,12 @@ std::vector<SlotPlan> plan_project_match(const std::vector<StationSlot>&    stat
                               (plan.color_changes ? " and colour " + plan.color : "") + ".";
             }
         }
+
+        // The station reports one flat colour per slot, so matching a gradient spool loses its
+        // second colour. Said out loud, in the plan, so a dry run warns before anything is written.
+        if (plan.color_changes && current.color_is_gradient)
+            plan.reason += " Slot " + std::to_string(slot.slot_id) +
+                           " showed a gradient, which one flat colour from the printer replaces.";
 
         plans.push_back(std::move(plan));
     }
@@ -444,7 +443,6 @@ nlohmann::json match_project_to_printer(const std::vector<FlashforgeApi::Materia
         // would hang on the GUI thread, and the console promised never to show a modal.
         McpDialogSuppressionGuard suppression;
 
-        bool colors_written = false;
         for (SlotPlan& entry : plan) {
             if (entry.preset_changes) {
                 std::string error;
@@ -458,10 +456,13 @@ nlohmann::json match_project_to_printer(const std::vector<FlashforgeApi::Materia
                 }
             }
             if (entry.color_changes) {
+                // Addressed by project_config index. combos_filament() is the *physical* subset and
+                // each combo carries its own index, so going through the combo list by position
+                // would colour the wrong slot as soon as a mixed slot sits before this one.
+                bool        flattened = false;
                 std::string error;
-                if (write_slot_color(entry.slot, entry.color_after, error)) {
-                    colors_written = true;
-                } else {
+                if (!OrcaMCPPresetConfigUtils::WriteProjectFilamentColor(size_t(entry.slot - 1),
+                                                                         entry.color_after, flattened, error)) {
                     entry.color_after   = entry.color_before;
                     entry.color_changes = false;
                     entry.matched       = false;
@@ -469,9 +470,6 @@ nlohmann::json match_project_to_printer(const std::vector<FlashforgeApi::Materia
                 }
             }
         }
-        if (colors_written)
-            OrcaMCPPresetConfigUtils::RefreshAfterProjectConfigChange();
-
         info_messages = suppression.messages();
     }
 

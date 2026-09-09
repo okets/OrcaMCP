@@ -4809,6 +4809,10 @@ int Sidebar::apply_mixed_filament(const MixedFilamentResult& result,
         update_mixed_filament_list();
         update_dynamic_filament_list();
         wxGetApp().plater()->update_project_dirty_from_presets();
+        // The mixed-filament metadata (components, ratios, gradient) lives only in the per-printer
+        // app-config snapshot between sessions, so an edit that skips this looks right until the
+        // next restart and then reverts. The create branch above already does it.
+        wxGetApp().preset_bundle->export_selections(*wxGetApp().app_config);
         wxPostEvent(this, SimpleEvent(EVT_SCHEDULE_BACKGROUND_PROCESS, this));
     }
 

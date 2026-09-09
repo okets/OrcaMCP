@@ -129,9 +129,44 @@ TEST_CASE("A material with no vendor profile falls back to a generic one", "[Pro
         CHECK(choose_filament_preset("PETG", third_party_only, "Flashforge") == "AliZ PETG @System");
     }
 
-    SECTION("an unknown printer vendor cannot reach the vendor tiers, so Generic wins")
+    SECTION("with the printer's vendor unknown, a profile for this machine still beats the generic")
     {
-        CHECK(choose_filament_preset("PETG", c5p_candidates(), "") == "Generic PETG @System");
+        // No vendor tier is reachable, but "built for this printer model" is decided structurally
+        // and does not need one.
+        CHECK(choose_filament_preset("PETG", c5p_candidates(), "") == "Flashforge PETG Pro @FF C5P");
+    }
+
+    SECTION("only when nothing is model-specific does the generic win")
+    {
+        CHECK(choose_filament_preset("PETG", without(c5p_candidates(), "@FF C5P"), "") == "Generic PETG @System");
+    }
+
+    SECTION("the generic tier is matched on the material, not on its spelling")
+    {
+        // A printer that says "PET-G" or "PLA+" must still find the generic; comparing the literal
+        // "Generic <MATERIAL> @System" would skip the tier entirely and fall through to a stranger.
+        const auto no_model_specific = without(c5p_candidates(), "@FF C5P");
+        CHECK(choose_filament_preset("PET-G", no_model_specific, "") == "Generic PETG @System");
+        CHECK(choose_filament_preset("PLA+", no_model_specific, "") == "Generic PLA @System");
+    }
+}
+
+TEST_CASE("A profile built for this printer beats a stranger, whoever wrote it", "[ProjectMatch]")
+{
+    // The bundle ships model-specific profiles with no filament_vendor at all, and before this
+    // ranking they fell to the bottom tier and lost to whatever sorted first alphabetically.
+    const std::vector<MatchCandidate> candidates = {
+        {"AAA Filaments PETG @System", "PETG", "AAA Filaments", false},
+        {"Generic BVOH @FF C5P", "BVOH", "Generic", true},
+        {"Vendorless PETG @FF C5P", "PETG", "", true},
+    };
+    CHECK(choose_filament_preset("PETG", candidates, "Flashforge") == "Vendorless PETG @FF C5P");
+
+    SECTION("but a same-vendor profile still outranks it")
+    {
+        auto with_vendor = candidates;
+        with_vendor.push_back({"Flashforge PETG Basic @Flashforge", "PETG", "Flashforge", false});
+        CHECK(choose_filament_preset("PETG", with_vendor, "Flashforge") == "Flashforge PETG Basic @Flashforge");
     }
 }
 
@@ -254,6 +289,27 @@ TEST_CASE("A loaded slot takes the printer's material and colour", "[ProjectMatc
         CHECK(plan[0].preset_changes == false);
         CHECK(plan[0].color_changes == true);
         CHECK(plan[0].disagrees == true);
+    }
+
+    SECTION("a gradient slot is told it will be flattened")
+    {
+        auto project               = project_all_pla();
+        project[0].color_is_gradient = true;
+        const auto plan = plan_project_match(station_petg_then_empty(), project, c5p_candidates(), "Flashforge", {});
+        REQUIRE(plan.size() == 1);
+        CHECK(plan[0].color_changes == true);
+        CHECK(plan[0].reason.find("showed a gradient") != std::string::npos);
+    }
+
+    SECTION("a slot whose colour already agrees is not told anything about gradients")
+    {
+        auto project                 = project_all_pla();
+        project[0].color             = "#B17C38";
+        project[0].color_is_gradient = true;
+        const auto plan = plan_project_match(station_petg_then_empty(), project, c5p_candidates(), "Flashforge", {});
+        REQUIRE(plan.size() == 1);
+        CHECK(plan[0].color_changes == false);
+        CHECK(plan[0].reason.find("gradient") == std::string::npos);
     }
 
     SECTION("nothing to do at all")
