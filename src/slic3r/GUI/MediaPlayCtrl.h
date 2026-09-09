@@ -86,6 +86,10 @@ private:
     std::string m_tutk_state;
     bool m_camera_exists = false;
     bool m_lan_mode = false;
+    // True when this printer was found by the Bambu agent, i.e. when liveview_local/liveview_remote
+    // mean anything at all. Every other agent leaves them at LVL_None/LVR_None, and Bambu's advice
+    // about firmware and the printer's LAN-mode switch does not apply to those printers.
+    bool m_bambu_liveview = true;
     int m_remote_proto = 0;
     bool m_device_busy = false;
     bool m_disable_lan = false;

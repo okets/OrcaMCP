@@ -8,6 +8,7 @@
 #include "MsgDialog.hpp"
 #include "DownloadProgressDialog.hpp"
 #include "slic3r/Utils/BBLNetworkPlugin.hpp"
+#include "slic3r/Utils/NetworkAgentFactory.hpp"
 
 
 #include <boost/lexical_cast.hpp>
@@ -158,6 +159,13 @@ void MediaPlayCtrl::SetMachineObject(MachineObject* obj)
         m_lan_passwd     = obj->get_access_code();
         m_device_busy    = obj->is_camera_busy_off();
         m_tutk_state     = obj->tutk_state;
+        // liveview_local/liveview_remote are only ever written from Bambu's `ipcam` push
+        // (DeviceManager.cpp ~3817-3852), so for a printer discovered by any other agent -
+        // FlashForge, Moonraker, Qidi, Creality - they stay at their LVL_None/LVR_None defaults.
+        // That is not a fault to report, so Play() must not read it as one. An empty
+        // printer_agent_id means an entry persisted before the field existed, which DevManager
+        // (DevManager.cpp:36) also treats as Bambu's.
+        m_bambu_liveview = obj->printer_agent_id.empty() || obj->printer_agent_id == BBL_PRINTER_AGENT_ID;
 
         if (DevPrinterConfigUtil::get_printer_series_str(obj->printer_type) == "series_o" && BBLNetworkPlugin::instance().use_legacy_network()) {
             // Legacy plugin cannot support remote play for H2D, force using local mode
@@ -173,6 +181,7 @@ void MediaPlayCtrl::SetMachineObject(MachineObject* obj)
         m_tutk_state.clear();
         m_remote_proto = 0;
         m_device_busy = false;
+        m_bambu_liveview = true;
     }
     Enable(obj && obj->is_info_ready() && obj->m_push_count > 0);
     if (machine == m_machine) {
@@ -307,7 +316,14 @@ void MediaPlayCtrl::Play()
     // !m_lan_mode && !m_remote_proto && m_lan_proto == LVL_None (x)
 
     if (m_lan_proto <= MachineObject::LVL_Disable && (m_lan_mode || !m_remote_proto)) {
-        Stop(m_lan_proto == MachineObject::LVL_None
+        // This player opens `bambu:///` URLs and nothing else, and it is told which one to open by
+        // the `ipcam` block only a Bambu printer pushes. For any other printer there is no firmware
+        // to update and no liveview switch on its screen to turn on - there is simply no Bambu live
+        // view - so say that instead of sending the user off to fix a printer that is not broken.
+        // Bambu printers keep both messages below unchanged.
+        Stop(!m_bambu_liveview
+            ? _L("Live view is not available for this printer. Its camera, when it has one, is shown on the Device page.")
+            : m_lan_proto == MachineObject::LVL_None
             ? _L("A problem occurred. Please update the printer firmware and try again.")
             : _L("LAN Only Liveview is off. Please turn on the liveview on printer screen."));
         return;
