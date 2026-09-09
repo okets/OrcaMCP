@@ -22,6 +22,7 @@
 #include "libslic3r/Print.hpp"
 #include "libslic3r/Utils.hpp"
 
+#include <boost/algorithm/string/predicate.hpp>
 #include <boost/log/trivial.hpp>
 #include <cmath>
 #include <future>
@@ -2486,36 +2487,69 @@ void OrcaMCPServer::register_builtin_tools()
     // save_project - Save current project
     register_tool({
         "save_project",
-        "Save current project.",
+        "Save the current project. Saves in place once the project has a file name; pass "
+        "output_path to name it (or to save a copy under a new name).",
         {
             {"type", "object"},
             {"properties", {
+                {"output_path", {
+                    {"type", "string"},
+                    {"description", "Path of the .3mf to save to. Required while the project has no "
+                                    "file name; naming it any other way needs a file dialog, which "
+                                    "MCP cannot open. Also acts as Save As."}
+                }},
                 {"save_as", {
                     {"type", "boolean"},
-                    {"description", "Ignored for a project that already has a file name (it is saved in place). A project with no file name cannot be saved from MCP, because that needs a file dialog."}
+                    {"description", "Legacy, ignored: use output_path to save under a new name."}
                 }}
             }}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
-            bool saveAs = params.value("save_as", false);
-            return run_on_main_thread([saveAs]() {
+            const std::string output_path = params.value("output_path", std::string());
+            return run_on_main_thread([output_path]() -> nlohmann::json {
                 Plater* plater = wxGetApp().plater();
 
                 // Suppress any dialogs during save
                 McpDialogSuppressionGuard suppression_guard;
-                // A named project always saves in place; only a nameless one would need a file
-                // dialog, which cannot be opened from MCP.
-                const bool needs_new_name = plater->get_project_filename(".3mf").IsEmpty();
-                int result = plater->save_project(saveAs && needs_new_name);
+
+                const std::string current_name = into_u8(plater->get_project_filename(".3mf"));
+                const std::string target = output_path.empty() ? current_name : output_path;
+                if (target.empty()) {
+                    return nlohmann::json{
+                        {"status", "error"},
+                        {"message", "This project has no file name yet, and MCP cannot open the file "
+                                    "dialog that would ask for one. Call save_project again with "
+                                    "output_path set to the .3mf path to save to."}};
+                }
+                if (!boost::iends_with(target, ".3mf")) {
+                    return nlohmann::json{{"status", "error"},
+                                          {"message", "output_path must end in .3mf, got \"" + target + "\""}};
+                }
+
+                // Naming the project first turns save_project into the Save As the GUI would do
+                // after its file dialog; with the name already set it saves in place.
+                const bool renamed = target != current_name;
+                if (renamed)
+                    plater->set_project_filename(wxString::FromUTF8(target));
+
+                int result = plater->save_project(false);
                 auto info_messages = suppression_guard.messages();
 
                 nlohmann::json response;
                 if (result == wxID_YES) {
-                    std::string filename = into_u8(plater->get_project_filename(".3mf"));
-                    response = {{"status", "success"}, {"filename", filename}};
+                    response = {{"status", "success"}, {"filename", into_u8(plater->get_project_filename(".3mf"))}};
+                    if (renamed) {
+                        response["project_renamed_to"] = target;
+                        info_messages.push_back("The project is now named " + target +
+                                                ": save_project and the GUI's Save both write there from now on.");
+                    }
                 } else {
-                    response = {{"status", "cancelled"},
-                                {"message", "Project not saved. Save the project once from the GUI, or use export_3mf with an explicit output_path."}};
+                    response = {{"status", "error"},
+                                {"message", std::string("Failed to save the project to ") + target +
+                                            ". Check that the folder exists and is writable." +
+                                            (renamed ? " The project has been renamed to that path even though the "
+                                                       "save failed."
+                                                     : "")}};
                 }
                 if (!info_messages.empty()) {
                     response["info_messages"] = info_messages;

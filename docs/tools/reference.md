@@ -137,12 +137,32 @@ Load a project file (.3mf).
 ---
 
 ### save_project
-Save current project to file.
+Save the current project.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `file_path` | string | No | Output path (opens dialog if omitted) |
+| `output_path` | string | No | Path of the `.3mf` to save to. **Required while the project has no file name.** Also acts as Save As. |
+| `save_as` | boolean | No | Legacy, ignored - use `output_path` |
+
+A project that already has a file name (it was loaded with `load_project`, or named by a previous
+`export_3mf` / `save_project`) is saved in place when `output_path` is omitted. A project with no
+name cannot be saved without one: naming it would need a file dialog, and MCP never opens modal
+dialogs, so the call returns
+
+```json
+{"status": "error",
+ "message": "This project has no file name yet, and MCP cannot open the file dialog that would ask for one. Call save_project again with output_path set to the .3mf path to save to."}
+```
+
+**Returns:**
+```json
+{"status": "success", "filename": "/Users/me/prints/bracket.3mf",
+ "project_renamed_to": "/Users/me/prints/bracket.3mf",
+ "info_messages": ["The project is now named /Users/me/prints/bracket.3mf: save_project and the GUI's Save both write there from now on."]}
+```
+
+`project_renamed_to` appears only when this call changed the project's name.
 
 ---
 
