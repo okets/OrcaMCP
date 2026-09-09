@@ -8,6 +8,9 @@
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/PresetBundle.hpp"
 
+#include <algorithm>
+#include <cctype>
+
 namespace Slic3r { namespace GUI {
 
 namespace {
@@ -15,34 +18,90 @@ namespace {
 bool sync_filament_color_keys(size_t config_index, const std::string& color, bool& flattened, std::string& error);
 }
 
-nlohmann::json OrcaMCPPresetConfigUtils::PresetsToJson(const std::vector<std::pair<const Preset*, bool>>& presets)
+namespace {
+
+std::string to_lower(std::string value)
+{
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return value;
+}
+
+// A preset's vendor: the vendor profile it came from for a system preset, and for filaments the
+// filament_vendor config key, which is what a user preset derived from a vendor profile keeps.
+std::string preset_vendor(const Preset* preset)
+{
+    if (preset->vendor != nullptr && !preset->vendor->name.empty())
+        return preset->vendor->name;
+    if (const auto* opt = preset->config.option<ConfigOptionStrings>("filament_vendor"))
+        if (!opt->values.empty())
+            return opt->values.front();
+    return std::string();
+}
+
+// One config value, or "" when this preset type does not have that key.
+std::string preset_config_string(const Preset* preset, const std::string& key)
+{
+    if (!preset->config.has(key))
+        return std::string();
+    return preset->config.opt_serialize(key);
+}
+
+} // namespace
+
+bool preset_query_matches(const std::string& name, const std::string& vendor, const PresetQuery& query)
+{
+    if (!query.vendor.empty() && to_lower(vendor).find(to_lower(query.vendor)) == std::string::npos)
+        return false;
+    if (!query.name_contains.empty() && to_lower(name).find(to_lower(query.name_contains)) == std::string::npos)
+        return false;
+    return true;
+}
+
+nlohmann::json OrcaMCPPresetConfigUtils::PresetsToJson(const std::vector<std::pair<const Preset*, bool>>& presets,
+                                                      const PresetQuery& query)
 {
     nlohmann::json j_array = nlohmann::json::array();
     for (const auto& [preset, is_selected] : presets) {
-        j_array.push_back(PresetToJson(preset, is_selected));
+        if (!preset_query_matches(preset->name, preset_vendor(preset), query))
+            continue;
+        j_array.push_back(PresetToJson(preset, is_selected, query));
     }
     return j_array;
 }
 
-nlohmann::json OrcaMCPPresetConfigUtils::PresetToJson(const Preset* preset, bool is_selected)
+nlohmann::json OrcaMCPPresetConfigUtils::PresetToJson(const Preset* preset, bool is_selected, const PresetQuery& query)
 {
     nlohmann::json j;
     j["name"] = preset->name;
     j["is_default"] = preset->is_default;
     j["is_selected"] = is_selected;
-
-    // Serialize config keys and values
-    nlohmann::json config_json = nlohmann::json::object();
-    const DynamicPrintConfig& config = preset->config;
-    for (const std::string& key : config.keys()) {
-        config_json[key] = config.opt_serialize(key);
-    }
-    j["config"] = config_json;
+    j["is_system"] = preset->is_system;
+    j["vendor"] = preset_vendor(preset);
     j["version"] = preset->version.to_string();
+
+    // The few keys that identify what a preset *is*, so "a PETG profile for this printer" can be
+    // answered without the caller downloading every config key of every preset.
+    const std::string filament_type = preset_config_string(preset, "filament_type");
+    if (!filament_type.empty())
+        j["filament_type"] = filament_type;
+    const std::string printer_model = preset_config_string(preset, "printer_model");
+    if (!printer_model.empty())
+        j["printer_model"] = printer_model;
+
+    if (!query.summary) {
+        // Serialize config keys and values
+        nlohmann::json config_json = nlohmann::json::object();
+        const DynamicPrintConfig& config = preset->config;
+        for (const std::string& key : config.keys()) {
+            config_json[key] = config.opt_serialize(key);
+        }
+        j["config"] = config_json;
+    }
     return j;
 }
 
-nlohmann::json OrcaMCPPresetConfigUtils::GetPresetsJson(Preset::Type type) {
+nlohmann::json OrcaMCPPresetConfigUtils::GetPresetsJson(Preset::Type type, const PresetQuery& query) {
     Tab* tab = wxGetApp().get_tab(type);
     if (!tab) {
         return nlohmann::json::array();
@@ -67,7 +126,7 @@ nlohmann::json OrcaMCPPresetConfigUtils::GetPresetsJson(Preset::Type type) {
         }
     }
 
-    return PresetsToJson(presets);
+    return PresetsToJson(presets, query);
 }
 
 nlohmann::json OrcaMCPPresetConfigUtils::GetEditedPresetJson(Preset::Type type) {
@@ -80,7 +139,10 @@ nlohmann::json OrcaMCPPresetConfigUtils::GetEditedPresetJson(Preset::Type type) 
         return nlohmann::json::array();
     }
 
-    nlohmann::json j = PresetToJson(&presets->get_edited_preset(), true); // is_selected is true because it is the edited preset
+    // The edited preset is one preset, and the caller asked about its values: always the full config.
+    PresetQuery full;
+    full.summary = false;
+    nlohmann::json j = PresetToJson(&presets->get_edited_preset(), true, full); // is_selected is true because it is the edited preset
 
     const bool deep_compare = (type == Preset::TYPE_PRINTER || type == Preset::TYPE_SLA_MATERIAL);
     j["dirty_options"] = presets->current_dirty_options(deep_compare);
@@ -89,10 +151,10 @@ nlohmann::json OrcaMCPPresetConfigUtils::GetEditedPresetJson(Preset::Type type) 
 }
 
 
-nlohmann::json OrcaMCPPresetConfigUtils::GetAllPresetJson() {
-    nlohmann::json printerPresetsJson = GetPresetsJson(Preset::Type::TYPE_PRINTER);
-    nlohmann::json filamentPresetsJson = GetPresetsJson(Preset::Type::TYPE_FILAMENT);
-    nlohmann::json printPresetsJson = GetPresetsJson(Preset::Type::TYPE_PRINT);
+nlohmann::json OrcaMCPPresetConfigUtils::GetAllPresetJson(const PresetQuery& query) {
+    nlohmann::json printerPresetsJson = GetPresetsJson(Preset::Type::TYPE_PRINTER, query);
+    nlohmann::json filamentPresetsJson = GetPresetsJson(Preset::Type::TYPE_FILAMENT, query);
+    nlohmann::json printPresetsJson = GetPresetsJson(Preset::Type::TYPE_PRINT, query);
 
     return {
         {"printerPresets", printerPresetsJson},

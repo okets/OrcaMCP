@@ -23,6 +23,7 @@ add_executable(${_TEST_NAME}_tests
     test_flashforge_live.cpp
     test_project_match.cpp
     test_slice_estimate.cpp
+    test_preset_query.cpp
     ../fff_print/test_helpers.cpp
     )
 

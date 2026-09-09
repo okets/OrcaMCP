@@ -8,6 +8,21 @@
 
 namespace Slic3r { namespace GUI {
 
+// What get_presets was asked for. The full preset list with every config key is ~1.9 MB, which no
+// MCP client can take in one response, so a query narrows it: `summary` (the default) drops the
+// per-preset config blob and keeps the identifying fields, and the filters cut the list down to
+// what the caller is actually looking for.
+struct PresetQuery
+{
+    std::string vendor;        // case-insensitive substring of the preset's vendor, empty = any
+    std::string name_contains; // case-insensitive substring of the preset name, empty = any
+    bool        summary = true;
+};
+
+// Pure: the two text filters, applied the way a person means them (case-insensitive "contains").
+// An empty filter matches everything, including a preset with no vendor at all.
+bool preset_query_matches(const std::string& name, const std::string& vendor, const PresetQuery& query);
+
 // Result of applying a batch of settings for one {type, settings} item.
 // `error` is non-empty only for a structural failure (unknown type / no tab);
 // per-key failures are reported via `invalid` instead of aborting the whole item.
@@ -19,10 +34,13 @@ struct ApplyConfigResult {
 
 class OrcaMCPPresetConfigUtils {
 public:
-    static nlohmann::json PresetToJson(const Preset* preset, bool is_selected);
-    static nlohmann::json PresetsToJson(const std::vector<std::pair<const Preset*, bool>>& presets);
-    static nlohmann::json GetPresetsJson(Preset::Type type);
-    static nlohmann::json GetAllPresetJson();
+    static nlohmann::json PresetToJson(const Preset* preset, bool is_selected, const PresetQuery& query);
+    static nlohmann::json PresetsToJson(const std::vector<std::pair<const Preset*, bool>>& presets,
+                                        const PresetQuery& query);
+    // Only presets the tab's combo box lists, i.e. the visible ones compatible with the selected
+    // printer, filtered by `query`.
+    static nlohmann::json GetPresetsJson(Preset::Type type, const PresetQuery& query = {});
+    static nlohmann::json GetAllPresetJson(const PresetQuery& query = {});
     static nlohmann::json GetAllEditedPresetJson();
     static nlohmann::json GetEditedPresetJson(Preset::Type type);
     static void DiscardCurrentPresetChanges();

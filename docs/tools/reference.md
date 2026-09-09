@@ -411,12 +411,55 @@ Remove a plate from the project.
 ## Preset & Config Tools
 
 ### get_presets
-List all available presets.
+List the presets available for the **selected printer**. The list is exactly what the preset combo
+boxes show: visible presets compatible with the current printer, system and user alike.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `type` | string | No | "printer", "filament", "print", or "all" |
+| `type` | string | No | `printer`, `filament`, `print`, or `all` (default) |
+| `vendor` | string | No | Only presets from this vendor (case-insensitive substring) |
+| `name_contains` | string | No | Only presets whose name contains this (case-insensitive) |
+| `summary` | boolean | No | Default `true`: identifying fields only. `false` adds every config key of every match. |
+
+**Why `summary` defaults to true:** the unfiltered full-config response is ~1.9 MB, which no MCP
+client can accept - the tool was effectively unusable. The response shape is unchanged (the same
+`printerPresets` / `filamentPresets` / `printProcessPresets` arrays of preset objects, with the same
+`name` / `is_default` / `is_selected` fields); `summary` only decides whether each preset carries its
+`config` blob. Ask for `summary: false` **with** a filter when you need actual values.
+
+**Example - find a PETG profile for the current printer in one call:**
+```json
+{"name": "get_presets", "arguments": {"type": "filament", "name_contains": "PETG", "vendor": "Flashforge"}}
+```
+
+**Returns:**
+```json
+{
+  "filamentPresets": [
+    {
+      "name": "Flashforge PETG Pro @FF C5P",
+      "is_default": false,
+      "is_selected": true,
+      "is_system": true,
+      "vendor": "Flashforge",
+      "version": "02.03.00.01",
+      "filament_type": "PETG"
+    }
+  ],
+  "query": {
+    "type": "filament",
+    "vendor": "Flashforge",
+    "name_contains": "PETG",
+    "summary": true,
+    "compatible_with_selected_printer_only": true,
+    "counts": {"filamentPresets": 4}
+  }
+}
+```
+
+`filament_type` (filaments) and `printer_model` (printers) are included whenever the preset has
+them, so material searches do not need the full config.
 
 ---
 

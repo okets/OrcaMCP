@@ -636,7 +636,8 @@ void OrcaMCPServer::register_builtin_tools()
                         {"get_server_info", "This documentation"},
                         {"get_scene_info", "Get current project state: plates, objects, positions"},
                         {"get_object_info", "Get single object info. Faster than get_scene_info for targeted queries."},
-                        {"get_presets", "List all available presets (printer, filament, print)"},
+                        {"get_presets", "List presets for the selected printer. Narrow with type/vendor/name_contains; "
+                                        "summary:false adds full configs (large)"},
                         {"get_edited_presets", "Get currently active presets with their config values and dirty_options"},
                         {"get_slicing_status", "Check if slicing is in progress"}
                     }},
@@ -755,7 +756,8 @@ void OrcaMCPServer::register_builtin_tools()
                         {"critical", "ALWAYS use save_to_file=true with render_plate_view to avoid 5KB+ base64 images per view"},
                         {"avoid_heavy_tools", {
                             {"get_edited_presets", "~15-20KB response. Use sparingly, cache results."},
-                            {"get_presets", "Can be large. Call once, remember preset names."},
+                            {"get_presets", "Filter it: {type, vendor, name_contains}. summary:false without a filter "
+                                            "is ~1.9MB and will not fit in a response."},
                             {"get_scene_info", "Use with_model_object_features=false unless you need volume/overhang data."}
                         }},
                         {"prefer_light_tools", {
@@ -851,17 +853,76 @@ void OrcaMCPServer::register_builtin_tools()
         }
     });
 
-    // get_presets - Get all available presets
+    // get_presets - List the presets compatible with the selected printer
     register_tool({
         "get_presets",
-        "Get all available printer, filament, and print presets",
+        "List the printer, filament and print presets available for the selected printer. "
+        "Returns names and identifying fields only; pass summary:false for full configs "
+        "(large -- always narrow it with type/vendor/name_contains first).",
         {
             {"type", "object"},
-            {"properties", nlohmann::json::object()}
+            {"properties", {
+                {"type", {
+                    {"type", "string"},
+                    {"enum", {"printer", "filament", "print", "all"}},
+                    {"description", "Only this preset type. Omit (or \"all\") for all three."}
+                }},
+                {"vendor", {
+                    {"type", "string"},
+                    {"description", "Only presets from this vendor (case-insensitive substring, e.g. \"Flashforge\")"}
+                }},
+                {"name_contains", {
+                    {"type", "string"},
+                    {"description", "Only presets whose name contains this (case-insensitive, e.g. \"PETG\")"}
+                }},
+                {"summary", {
+                    {"type", "boolean"},
+                    {"default", true},
+                    {"description", "true (default): name, vendor, filament_type/printer_model and flags. "
+                                    "false: also every config key of every matching preset."}
+                }}
+            }}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
-            return run_on_main_thread([]() {
-                return OrcaMCPPresetConfigUtils::GetAllPresetJson();
+            PresetQuery query;
+            query.vendor = params.value("vendor", std::string());
+            query.name_contains = params.value("name_contains", std::string());
+            if (params.contains("summary") && !parse_boolean_param(params["summary"], query.summary))
+                return nlohmann::json{{"status", "error"}, {"message", "summary must be a boolean"}};
+
+            std::string type = params.value("type", std::string());
+            if (type == "all")
+                type.clear();
+            if (!type.empty() && type != "printer" && type != "filament" && type != "print")
+                return nlohmann::json{{"status", "error"},
+                                      {"message", "type must be one of: printer, filament, print, all"}};
+
+            return run_on_main_thread([query, type]() -> nlohmann::json {
+                nlohmann::json result;
+                if (type.empty()) {
+                    result = OrcaMCPPresetConfigUtils::GetAllPresetJson(query);
+                } else if (type == "printer") {
+                    result = {{"printerPresets", OrcaMCPPresetConfigUtils::GetPresetsJson(Preset::TYPE_PRINTER, query)}};
+                } else if (type == "filament") {
+                    result = {{"filamentPresets", OrcaMCPPresetConfigUtils::GetPresetsJson(Preset::TYPE_FILAMENT, query)}};
+                } else {
+                    result = {{"printProcessPresets", OrcaMCPPresetConfigUtils::GetPresetsJson(Preset::TYPE_PRINT, query)}};
+                }
+                // Say what was searched and how much of it came back, so a caller can tell an empty
+                // list from a filter that was too narrow, and knows the list is already restricted
+                // to presets compatible with the selected printer.
+                nlohmann::json counts = nlohmann::json::object();
+                for (const auto& [key, presets] : result.items())
+                    counts[key] = presets.size();
+                result["query"] = {
+                    {"type", type.empty() ? nlohmann::json(nullptr) : nlohmann::json(type)},
+                    {"vendor", query.vendor},
+                    {"name_contains", query.name_contains},
+                    {"summary", query.summary},
+                    {"compatible_with_selected_printer_only", true},
+                    {"counts", counts}
+                };
+                return result;
             });
         }
     });
