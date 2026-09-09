@@ -78,16 +78,32 @@ Get current project state including plates, objects, and positions.
 ---
 
 ### get_slicing_status
-Check if slicing is in progress.
+Check whether the current plate has been sliced.
 
 **Parameters:** None
 
 **Returns:**
 ```json
-{"is_slicing": false}
+{
+  "is_slicing": false,
+  "state": "done",
+  "status": "idle",
+  "plate_index": 0,
+  "slice_result_valid": true,
+  "active_warnings": {"count": 0, "warnings": []}
+}
 ```
 
-**Usage:** Poll every 2-3 seconds after calling `slice_all`.
+| Field | Meaning |
+|-------|---------|
+| `state` | `idle` (never sliced, or the result was invalidated by an edit), `slicing` (in progress), `done` (the current plate has a valid slice result) |
+| `is_slicing` | Background process running right now |
+| `status` | Legacy field, `slicing` or `idle` only - use `state` |
+| `slice_result_valid` | The current plate's own slice-result flag, the same one the GUI's Print/Export buttons use |
+
+**Usage:** Poll every 2-3 seconds after `slice_all` until `state` is `done`, then call
+`get_print_estimate`. `is_slicing: false` on its own does **not** mean the slice finished - it is
+also false before slicing ever started.
 
 ---
 
@@ -711,19 +727,47 @@ Export sliced G-code to file.
 ---
 
 ### get_print_estimate
-Get print time and material estimates (after slicing).
+Get print time and material estimates for the current plate. Requires a valid slice result
+(`get_slicing_status` reporting `state: "done"`).
 
 **Parameters:** None
 
 **Returns:**
 ```json
 {
-  "print_time": "2h 30m",
-  "print_time_seconds": 9000,
-  "filament_used_g": 45.2,
-  "filament_used_m": 15.3
+  "status": "success",
+  "state": "done",
+  "plate_index": 0,
+  "estimated_time": "38m 26s",
+  "estimated_time_seconds": 2306.4,
+  "estimated_time_silent": null,
+  "layer_count": 92,
+  "filament": {
+    "total_length_mm": 4553.2,
+    "total_volume_mm3": 10795.3,
+    "total_weight_grams": 13.71,
+    "total_cost": 0.34,
+    "per_filament": [
+      {"filament": 1, "volume_mm3": 10795.3, "length_mm": 4553.2, "weight_grams": 13.71, "cost": 0.34}
+    ]
+  },
+  "total_toolchanges": 0,
+  "active_warnings": {"count": 0, "warnings": []}
 }
 ```
+
+The numbers are read from the plate's own slice result, so they match the G-code's
+`; estimated printing time (normal mode)` and `; total filament used [g]` comments. `filament`
+entries are `null`, never `0`, when the slicer did not record the property they need (a filament
+with no configured density has an unknown weight). `filament` is 1-based, as in every other
+filament tool.
+
+**Other statuses:**
+
+| Status | State | Meaning |
+|--------|-------|---------|
+| `in_progress` | `slicing` | The background slicer is still running |
+| `error` | `idle` | The current plate has no valid slice result - run `slice_all` first |
 
 ---
 

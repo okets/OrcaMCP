@@ -4,6 +4,7 @@
 #include "OrcaMCPPlateUtils.hpp"
 #include "OrcaMCPConfigKeys.hpp"
 #include "OrcaMCPFilamentUtils.hpp"
+#include "OrcaMCPSliceEstimate.hpp"
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Plater.hpp"
@@ -19,6 +20,7 @@
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/Slicing.hpp"
 #include "libslic3r/Print.hpp"
+#include "libslic3r/Utils.hpp"
 
 #include <boost/log/trivial.hpp>
 #include <cmath>
@@ -2490,7 +2492,8 @@ void OrcaMCPServer::register_builtin_tools()
     // get_slicing_status - Check slicing progress
     register_tool({
         "get_slicing_status",
-        "Get the current slicing status and progress",
+        "Get the current slicing state: idle (not sliced), slicing (in progress) or done (the "
+        "current plate has a valid slice result). Poll until state is done, then get_print_estimate.",
         {
             {"type", "object"},
             {"properties", nlohmann::json::object()}
@@ -2498,11 +2501,19 @@ void OrcaMCPServer::register_builtin_tools()
         [](const nlohmann::json& params) -> nlohmann::json {
             return run_on_main_thread([]() {
                 Plater* plater = wxGetApp().plater();
-                bool is_running = plater->is_background_process_slicing();
+                PartPlate* plate = plater->get_partplate_list().get_curr_plate();
+                const bool is_running = plater->is_background_process_slicing();
+                // "not running" is not "finished": before the first slice, and after any edit
+                // invalidates the result, the background process is equally idle. The plate's own
+                // slice-result validity is what the GUI's Print/Export buttons use, so use it here.
+                const bool has_result = plate != nullptr && plate->is_slice_result_valid();
 
                 nlohmann::json result = {
                     {"is_slicing", is_running},
-                    {"status", is_running ? "slicing" : "idle"},
+                    {"state", is_running ? "slicing" : (has_result ? "done" : "idle")},
+                    {"status", is_running ? "slicing" : "idle"},  // kept for older callers
+                    {"plate_index", plater->get_partplate_list().get_curr_plate_index()},
+                    {"slice_result_valid", has_result},
                     {"active_warnings", get_active_warnings_json(plater)}
                 };
 
@@ -2514,61 +2525,93 @@ void OrcaMCPServer::register_builtin_tools()
     // get_print_estimate - Get print time and filament estimates after slicing
     register_tool({
         "get_print_estimate",
-        "Get print time and filament estimates.",
+        "Get print time and filament estimates for the current plate. Requires a valid slice "
+        "result (get_slicing_status state \"done\").",
         {
             {"type", "object"},
             {"properties", nlohmann::json::object()}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
-            return run_on_main_thread([]() {
+            return run_on_main_thread([]() -> nlohmann::json {
                 Plater* plater = wxGetApp().plater();
 
                 // Check if slicing is actively running
                 if (plater->is_background_process_slicing()) {
                     return nlohmann::json{
                         {"status", "in_progress"},
-                        {"message", "Slicing still in progress. Poll again in 2-3 seconds."}
+                        {"state", "slicing"},
+                        {"message", "Slicing still in progress. Poll get_slicing_status until state is \"done\"."}
                     };
                 }
 
-                const Print& print = plater->fff_print();
-
-                // Check if G-code export is complete (statistics are populated during this step)
-                if (!print.finished()) {
-                    return nlohmann::json{
-                        {"status", "in_progress"},
-                        {"message", "G-code export still processing. Poll again shortly."}
-                    };
+                // Plater::fff_print() is the Plater's own Print object, which nothing ever slices:
+                // every plate owns its Print (PartPlate::set_print) and the background process is
+                // pointed at it by PartPlate::update_slice_context. Asking the Plater's copy
+                // whether it finished the G-code export therefore always answered "no", which is
+                // what left this tool reporting in_progress forever after a completed slice.
+                PartPlateList& plate_list = plater->get_partplate_list();
+                PartPlate*     plate      = plate_list.get_curr_plate();
+                if (plate == nullptr) {
+                    return nlohmann::json{{"status", "error"}, {"state", "idle"}, {"message", "No current plate"}};
                 }
-
-                const PrintStatistics& stats = print.print_statistics();
-
-                // Check if we have valid stats (non-empty time string indicates slicing was done)
-                if (stats.estimated_normal_print_time.empty()) {
+                GCodeProcessorResult* slice_result = plate->get_slice_result();
+                if (!plate->is_slice_result_valid() || slice_result == nullptr) {
                     return nlohmann::json{
                         {"status", "error"},
-                        {"message", "No print statistics available. Run slice_all first."}
+                        {"state", "idle"},
+                        {"message", "The current plate has no valid slice result. Run slice_all and poll "
+                                    "get_slicing_status until state is \"done\"."},
+                        {"active_warnings", get_active_warnings_json(plater)}
                     };
                 }
 
-                // Calculate total layer count (max across all print objects)
-                size_t total_layers = 0;
-                for (const PrintObject* obj : print.objects()) {
-                    total_layers = std::max(total_layers, obj->total_layer_count());
+                const PrintEstimatedStatistics& ps = slice_result->print_statistics;
+                const double normal_time = ps.modes[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Normal)].time;
+                const double silent_time = ps.modes[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Stealth)].time;
+
+                const SliceEstimate estimate = compute_slice_estimate(
+                    ps.total_volumes_per_extruder, slice_result->filament_diameters,
+                    slice_result->filament_densities, slice_result->filament_costs);
+
+                // A property the slicer did not record is reported as null, never as zero.
+                auto number_or_null = [](const std::optional<double>& value) {
+                    return value ? nlohmann::json(*value) : nlohmann::json(nullptr);
+                };
+
+                nlohmann::json per_filament = nlohmann::json::array();
+                for (const FilamentUsage& usage : estimate.per_filament) {
+                    per_filament.push_back({
+                        {"filament", static_cast<int>(usage.filament_id) + 1},  // 1-based, as every other filament tool
+                        {"volume_mm3", usage.volume_mm3},
+                        {"length_mm", number_or_null(usage.length_mm)},
+                        {"weight_grams", number_or_null(usage.weight_g)},
+                        {"cost", number_or_null(usage.cost)}
+                    });
                 }
+
+                // Layer count comes from the plate's own Print, the one that was actually sliced.
+                size_t total_layers = 0;
+                if (const Print* print = plate->fff_print())
+                    for (const PrintObject* obj : print->objects())
+                        total_layers = std::max(total_layers, obj->total_layer_count());
 
                 return nlohmann::json{
                     {"status", "success"},
-                    {"estimated_time", stats.estimated_normal_print_time},
-                    {"estimated_time_silent", stats.estimated_silent_print_time},
+                    {"state", "done"},
+                    {"plate_index", plate_list.get_curr_plate_index()},
+                    {"estimated_time", get_time_dhms(static_cast<float>(normal_time))},
+                    {"estimated_time_seconds", normal_time},
+                    {"estimated_time_silent", silent_time > 0.0 ? nlohmann::json(get_time_dhms(static_cast<float>(silent_time)))
+                                                                : nlohmann::json(nullptr)},
                     {"layer_count", total_layers},
                     {"filament", {
-                        {"total_length_mm", stats.total_used_filament},
-                        {"total_volume_mm3", stats.total_extruded_volume},
-                        {"total_weight_grams", stats.total_weight},
-                        {"total_cost", stats.total_cost}
+                        {"total_length_mm", number_or_null(estimate.length_mm)},
+                        {"total_volume_mm3", estimate.volume_mm3},
+                        {"total_weight_grams", number_or_null(estimate.weight_g)},
+                        {"total_cost", number_or_null(estimate.cost)},
+                        {"per_filament", per_filament}
                     }},
-                    {"total_toolchanges", stats.total_toolchanges},
+                    {"total_toolchanges", ps.total_filament_changes},
                     {"active_warnings", get_active_warnings_json(plater)}
                 };
             });
