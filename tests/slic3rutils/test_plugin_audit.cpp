@@ -9,12 +9,31 @@
 
 #include <boost/filesystem.hpp>
 
+#include <algorithm>
+#include <cctype>
 #include <string>
 
 using namespace Slic3r;
 namespace fs = boost::filesystem;
 
 namespace {
+
+// The deny list is built from SLIC3R_APP_KEY, which is the fork's name ("OrcaMCP" here,
+// "OrcaSlicer" upstream). Tests derive their case variants from the same macro so a rename can
+// never turn a case-folding assertion into a "this name was never denied" failure.
+std::string to_lower(std::string text)
+{
+    std::transform(text.begin(), text.end(), text.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return text;
+}
+
+std::string to_upper(std::string text)
+{
+    std::transform(text.begin(), text.end(), text.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    return text;
+}
 
 // Seed the deny registry with the same list install_hook() uses. Both draw from
 // PluginAuditManager::default_denied_filenames(), so the test and production seeding cannot
@@ -71,9 +90,12 @@ TEST_CASE("Plugin audit denies app config and token filenames anywhere", "[audit
 
     SECTION("matching is case-insensitive on every platform")
     {
-        CHECK(mgr.is_denied_filename(fs::path("orcaslicer.conf")));
-        CHECK(mgr.is_denied_filename(fs::path("ORCASLICER.CONF")));
-        CHECK(mgr.is_denied_filename(fs::path("ORCA_REFRESH_TOKEN.SEC")));
+        // Derived from SLIC3R_APP_KEY, never spelled out: this fork's key is "OrcaMCP", so the
+        // literal "orcaslicer.conf" tested a name that is not in the deny list at all and the
+        // section failed for the rename rather than for the case-folding it is about.
+        CHECK(mgr.is_denied_filename(fs::path(to_lower(SLIC3R_APP_KEY ".conf"))));
+        CHECK(mgr.is_denied_filename(fs::path(to_upper(SLIC3R_APP_KEY ".conf"))));
+        CHECK(mgr.is_denied_filename(fs::path(to_upper(secret_constants::USER_SECRET_FILENAME))));
     }
 
     SECTION("an unrelated name that merely shares a stem is not denied")
