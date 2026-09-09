@@ -122,17 +122,30 @@ Create a new empty project.
 ---
 
 ### load_project
-Load a project file (.3mf).
+Load a project file (.3mf), replacing the current project.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `file_path` | string | Yes | Path to .3mf file |
+| `include_preview` | boolean | No | Return a turntable preview path |
 
 **Example:**
 ```json
 {"name": "load_project", "arguments": {"file_path": "/path/to/project.3mf"}}
 ```
+
+**Returns:**
+```json
+{"status": "success",
+ "file": "/path/to/project.3mf",
+ "project_renamed_to": "/path/to/project.3mf",
+ "info_messages": ["The project is now named /path/to/project.3mf: save_project and the GUI's Save both write there from now on."],
+ "active_warnings": {"count": 0, "warnings": []}}
+```
+
+The project takes the loaded file's name, so `save_project` with no `output_path` writes back to
+it - `project_renamed_to` says which file that is.
 
 ---
 
@@ -167,13 +180,25 @@ dialogs, so the call returns
 ---
 
 ### export_3mf
-Export project as 3MF file.
+Write the project to a `.3mf` file. **This is this API's Save**: it also names the project, exactly
+as the GUI's Save As does.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `output_path` | string | No | Output path (opens dialog if omitted) |
-| `all_plates` | boolean | No | Export all plates (default: current only) |
+| `output_path` | string | Yes | Path of the `.3mf` to write. No dialog is ever opened, so it cannot be omitted. |
+
+**Returns:**
+```json
+{"status": "success",
+ "output_path": "/Users/me/prints/bracket.3mf",
+ "project_renamed_to": "/Users/me/prints/bracket.3mf",
+ "info_messages": ["The project is now named /Users/me/prints/bracket.3mf: export_3mf is this API's Save, so save_project and the GUI's Save both write there from now on."]}
+```
+
+`project_renamed_to` is present whenever the call changed the project's name. The rename is not
+cosmetic: it retitles the window, adds the file to Recent Projects, and makes both `save_project`
+and a Cmd-S in the GUI overwrite that file.
 
 ---
 

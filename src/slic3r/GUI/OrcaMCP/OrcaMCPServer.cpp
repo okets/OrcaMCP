@@ -2454,6 +2454,12 @@ void OrcaMCPServer::register_builtin_tools()
                 nlohmann::json result;
 
                 if (!output_path.empty()) {
+                    if (!boost::iends_with(output_path, ".3mf")) {
+                        return nlohmann::json{{"status", "error"},
+                                              {"message", "output_path must end in .3mf, got \"" + output_path + "\""}};
+                    }
+                    const std::string name_before = into_u8(plater->get_project_filename(".3mf"));
+
                     // Silent export with path
                     int export_result = plater->export_3mf(boost::filesystem::path(output_path), SaveStrategy::Silence | SaveStrategy::SplitModel);
 
@@ -2465,9 +2471,19 @@ void OrcaMCPServer::register_builtin_tools()
                         plater->set_project_filename(wxString::FromUTF8(output_path));
                         result["status"] = "success";
                         result["output_path"] = output_path;
+                        // Naming the project is not a side effect a caller can be expected to guess:
+                        // it retitles the window, adds the file to Recent Projects, and makes both
+                        // save_project and a Cmd-S in the GUI overwrite this file from now on.
+                        if (output_path != name_before) {
+                            result["project_renamed_to"] = output_path;
+                            info_messages.push_back("The project is now named " + output_path +
+                                                    ": export_3mf is this API's Save, so save_project and the GUI's "
+                                                    "Save both write there from now on.");
+                        }
                     } else {
                         result["status"] = "error";
-                        result["message"] = "Export failed";
+                        result["message"] = "Failed to export the project to " + output_path +
+                                            ". Check that the folder exists and is writable.";
                     }
                     if (!info_messages.empty()) {
                         result["info_messages"] = info_messages;
@@ -2818,6 +2834,13 @@ void OrcaMCPServer::register_builtin_tools()
                     {"status", result ? "success" : "error"},
                     {"file", file_path}
                 };
+
+                // Say so: from here on save_project and the GUI's Save write back to this file.
+                if (result) {
+                    response["project_renamed_to"] = file_path;
+                    info_messages.push_back("The project is now named " + file_path +
+                                            ": save_project and the GUI's Save both write there from now on.");
+                }
 
                 // Add turntable preview if requested and load succeeded
                 if (result) {

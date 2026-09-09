@@ -433,7 +433,7 @@ When `load_model`, `load_project`, or `new_project` is called:
 | "Project has unsaved changes, save before continuing?" (Yes/No/Cancel, `Plater::close_with_confirm`) | Auto-NO: continue without saving (discard), message captured. Answering Yes would open a modal file dialog and hang the MCP call. |
 | `UnsavedChangesDialog` (modified presets on new/load project, preset switch) | Discard the preset changes, message captured |
 | `ProjectDropDialog` (project load behaviour, "load geometry only") | Load geometry only (`load_model` never replaces the current project; use `load_project` to open a 3MF as a project) |
-| Native file dialogs (`wxFileDialog` via `Plater::priv::get_export_file`) | Never opened. `save_project` returns `cancelled`; `export_gcode` / `export_3mf` without `output_path` return an error asking for a path. |
+| Native file dialogs (`wxFileDialog` via `Plater::priv::get_export_file`) | Never opened. `save_project` without a name returns an error asking for `output_path`; `export_gcode` / `export_3mf` without `output_path` return an error asking for a path. |
 | Archive contents picker (`FileArchiveDialog`, loading a .zip) | Not opened; the ZIP is not imported, message captured |
 | `StepMeshDialog` (STEP/STP import tessellation) | Not opened; imported with the configured linear/angle deflection, message captured |
 | Send-to-printer dialogs (`SelectMachineDialog`, print-host send) | Not suppressed: `send_to_printer` schedules them with `CallAfter` and returns `dialog_opened` immediately, so the user drives the dialog after the tool replies |
@@ -453,6 +453,26 @@ Dialogs that are NOT `MsgDialog` subclasses (native `wxFileDialog`/`wxDirDialog`
 `DPIDialog` subclasses such as `UnsavedChangesDialog`) bypass `MsgDialog::ShowModal`, so each one must
 check `is_mcp_dialog_suppression_enabled()` at its call site. A modal opened inside `run_on_main_thread`
 blocks the GUI thread forever and the MCP call never returns.
+
+### Naming the Project ("export_3mf is this API's Save")
+
+`export_3mf`, `save_project` and `load_project` all call `Plater::set_project_filename`, because a
+nameless project cannot be saved from MCP at all (naming it needs a file dialog). Naming it is not
+cosmetic: it retitles the window, adds the path to Recent Projects, and makes both `save_project`
+and a Cmd-S in the GUI overwrite that file.
+
+So the API's verbs map to the GUI's like this:
+
+| MCP tool | GUI equivalent |
+|----------|----------------|
+| `export_3mf` with `output_path` | Save As (writes the file **and** names the project) |
+| `save_project` with no `output_path` | Save (in place; error if the project has no name yet) |
+| `save_project` with `output_path` | Save As |
+| `load_project` | Open (the project takes the opened file's name) |
+
+Each of those responses carries `"project_renamed_to": <path>` and an `info_messages` line whenever
+the call changed the project's name, so an agent never has to guess which file a later
+`save_project` will overwrite.
 
 ### Endpoints with Dialog Suppression
 
