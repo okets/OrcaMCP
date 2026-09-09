@@ -145,8 +145,8 @@ nlohmann::json auto_material_mappings(const nlohmann::json& project_filaments, c
 }
 
 // The tool-facing echo of a built mapping payload: what went where, and how close the colours are.
-// Reads the colours back out of `project_filaments`/`slots` rather than trusting the payload's own
-// toolMaterialColor, which build_explicit_material_mappings leaves empty for a caller-supplied pair.
+// Scores from `project_filaments`/`slots` rather than from the payload it is echoing, so the report
+// stays right whatever a future builder does or does not put in the payload's own colour fields.
 nlohmann::json mapping_report(const nlohmann::json&                           mappings,
                               const std::vector<FlashforgeApi::MaterialSlot>& slots,
                               const nlohmann::json&                           project_filaments)
@@ -176,6 +176,7 @@ nlohmann::json mapping_report(const nlohmann::json&                           ma
 // the single place that checks the slot actually exists/is loaded and every project tool got mapped.
 bool build_explicit_material_mappings(const nlohmann::json&                           requested,
                                       const std::vector<FlashforgeApi::MaterialSlot>& slots,
+                                      const nlohmann::json&                           project_filaments,
                                       nlohmann::json&                                 mappings_out,
                                       std::string&                                    error)
 {
@@ -192,10 +193,16 @@ bool build_explicit_material_mappings(const nlohmann::json&                     
         const auto slot_it = std::find_if(slots.begin(), slots.end(),
                                           [&](const FlashforgeApi::MaterialSlot& s) { return s.slot_id == slot_id; });
 
+        // The tool's own colour, looked up the way auto_material_mappings does. Leaving it empty
+        // sent the printer a strictly less complete payload for a hand-picked pair than for an
+        // auto-mapped one, for no reason other than that this branch never had the project to
+        // hand.
+        const nlohmann::json* filament = find_project_filament(project_filaments, tool_id);
+
         mappings_out.push_back({{"toolId", tool_id},
                                 {"slotId", slot_id},
                                 {"materialName", slot_it != slots.end() ? slot_it->material_name : std::string()},
-                                {"toolMaterialColor", std::string()},
+                                {"toolMaterialColor", filament != nullptr ? filament->value("color", std::string()) : std::string()},
                                 {"slotMaterialColor", slot_it != slots.end() ? slot_it->material_color : std::string()}});
     }
     return true;
@@ -424,7 +431,7 @@ bool resolve_material_mappings(const nlohmann::json&                           r
 
     if (!requested.empty()) {
         std::string build_error;
-        if (!build_explicit_material_mappings(requested, slots, mappings_out, build_error)) {
+        if (!build_explicit_material_mappings(requested, slots, project_filaments, mappings_out, build_error)) {
             error_out = {{"status", "error"}, {"message", build_error}};
             return false;
         }
