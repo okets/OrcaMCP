@@ -25,6 +25,17 @@ struct PrinterStatus {
 // Returns false with `error` set if the body is not a successful API response.
 bool parse_detail(const std::string& body, PrinterStatus& out, std::string& error);
 
+// Pure parsers for the local API's two list-shaped responses. Both take whatever the printer sent
+// and skip any element that is not the shape they expect: firmware revisions we have not seen must
+// cost us the one entry we cannot read, never the whole call.
+// parse_gcode_list takes the parsed `gcodeList` response object (its `gcodeListDetail` sibling is
+// the documented fallback) and returns the file names, accepting both a plain string element and a
+// {"gcodeFileName": ...} object. Nameless entries are dropped.
+std::vector<std::string> parse_gcode_list(const nlohmann::json& response);
+// parse_material_slots takes the `slotInfos` array itself. A slot that does not report a `slotId`
+// is numbered by its position in the result, 1-based, the way the API numbers them.
+std::vector<MaterialSlot> parse_material_slots(const nlohmann::json& slot_infos);
+
 // Re-shapes a PrinterStatus into the Bambu-flavoured `push_status` message that MachineObject
 // (and therefore the Device tab) already knows how to parse. Pure and side-effect free: the
 // caller stamps `t_utc` and dispatches. Optional fields are omitted rather than zero-filled so

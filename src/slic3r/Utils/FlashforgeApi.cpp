@@ -6,6 +6,7 @@
 #include <cmath>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace Slic3r { namespace FlashforgeApi {
 
@@ -186,6 +187,24 @@ void fill_nozzles(const nlohmann::json& detail, PrinterStatus& out)
     }
 }
 
+// One pass of a G-code listing. `list` is whatever the printer put under the key, which is not
+// necessarily an array, and an element is a name only when it is a string or an object carrying one.
+void append_gcode_names(const nlohmann::json& list, std::vector<std::string>& out)
+{
+    if (!list.is_array())
+        return;
+
+    for (const auto& entry : list) {
+        std::string name;
+        if (entry.is_string())
+            name = entry.get<std::string>();
+        else if (entry.is_object())
+            name = get_string(entry, "gcodeFileName");
+        if (!name.empty())
+            out.push_back(std::move(name));
+    }
+}
+
 void fill_material_slots(const nlohmann::json& detail, PrinterStatus& out)
 {
     out.slots.clear();
@@ -193,18 +212,7 @@ void fill_material_slots(const nlohmann::json& detail, PrinterStatus& out)
     if (!detail.contains("matlStationInfo") || !detail["matlStationInfo"].is_object())
         return;
 
-    const auto& matl = detail["matlStationInfo"];
-    if (!matl.contains("slotInfos") || !matl["slotInfos"].is_array())
-        return;
-
-    for (const auto& slot : matl["slotInfos"]) {
-        MaterialSlot ms;
-        ms.slot_id         = static_cast<int>(get_number(slot, "slotId"));
-        ms.has_filament    = get_bool(slot, "hasFilament");
-        ms.material_name   = get_string(slot, "materialName");
-        ms.material_color  = get_string(slot, "materialColor");
-        out.slots.push_back(ms);
-    }
+    out.slots = parse_material_slots(detail["matlStationInfo"].value("slotInfos", nlohmann::json()));
 }
 
 } // namespace
@@ -270,6 +278,42 @@ bool parse_detail(const std::string& body, PrinterStatus& out, std::string& erro
     out = std::move(result);
     error.clear();
     return true;
+}
+
+std::vector<std::string> parse_gcode_list(const nlohmann::json& response)
+{
+    std::vector<std::string> files;
+    if (!response.is_object())
+        return files;
+
+    append_gcode_names(response.value("gcodeList", nlohmann::json()), files);
+    if (files.empty())
+        append_gcode_names(response.value("gcodeListDetail", nlohmann::json()), files);
+    return files;
+}
+
+std::vector<MaterialSlot> parse_material_slots(const nlohmann::json& slot_infos)
+{
+    std::vector<MaterialSlot> slots;
+    if (!slot_infos.is_array())
+        return slots;
+
+    for (const auto& slot : slot_infos) {
+        // A number, a null or a nested array here is not a slot: skip it and keep the ones we can
+        // read. get_number/get_string/get_bool below would return their defaults for it anyway, so
+        // without this a malformed element would silently become an empty slot 0.
+        if (!slot.is_object())
+            continue;
+
+        MaterialSlot ms;
+        ms.slot_id        = slot.contains("slotId") ? static_cast<int>(get_number(slot, "slotId"))
+                                                    : static_cast<int>(slots.size()) + 1;
+        ms.has_filament   = get_bool(slot, "hasFilament");
+        ms.material_name  = get_string(slot, "materialName");
+        ms.material_color = get_string(slot, "materialColor");
+        slots.push_back(std::move(ms));
+    }
+    return slots;
 }
 
 nlohmann::json flashforge_status_to_bambu_payload(const PrinterStatus& status)

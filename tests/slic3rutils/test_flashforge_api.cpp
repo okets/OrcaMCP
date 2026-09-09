@@ -175,3 +175,57 @@ TEST_CASE("flashforge_status_to_bambu_payload omits absent optional fields", "[f
     CHECK(p["mc_remaining_time"] == 0);
     CHECK(p["lights_report"][0]["mode"] == "off");
 }
+
+// --- List parsers: one element we cannot read must not cost us the rest of the response ---
+
+TEST_CASE("parse_gcode_list skips elements that are not a file name", "[flashforge]") {
+    // json::value() throws type_error.306 on a non-object, so a single number, null or nested array
+    // from an unseen firmware revision used to take down list_gcode_files with an exception.
+    const auto response = nlohmann::json::parse(
+        R"({"code":0,"gcodeList":[{"gcodeFileName":"good1.gcode"},7,null,["nested.gcode"],{"gcodeFileName":"good2.gcode"}]})");
+    CHECK(parse_gcode_list(response) == std::vector<std::string>{"good1.gcode", "good2.gcode"});
+}
+
+TEST_CASE("parse_gcode_list accepts plain strings and the gcodeListDetail fallback", "[flashforge]") {
+    CHECK(parse_gcode_list(nlohmann::json::parse(R"({"gcodeList":["a.gcode","b.gcode"]})")) ==
+          std::vector<std::string>{"a.gcode", "b.gcode"});
+
+    // Objects without a name leave the primary list empty, which is what arms the fallback.
+    CHECK(parse_gcode_list(nlohmann::json::parse(R"({"gcodeList":[{"size":1}],"gcodeListDetail":[{"gcodeFileName":"c.gcode"}]})")) ==
+          std::vector<std::string>{"c.gcode"});
+
+    CHECK(parse_gcode_list(nlohmann::json::parse(R"({"code":0})")).empty());
+    CHECK(parse_gcode_list(nlohmann::json::parse(R"({"gcodeList":"not an array"})")).empty());
+    CHECK(parse_gcode_list(nlohmann::json("not an object")).empty());
+}
+
+TEST_CASE("parse_material_slots keeps only the well-formed slots", "[flashforge]") {
+    const auto slot_infos = nlohmann::json::parse(
+        R"([{"slotId":1,"hasFilament":true,"materialName":"PLA","materialColor":"#FF0000"},
+            "junk",
+            {"slotId":3,"hasFilament":false,"materialName":"","materialColor":""}])");
+    const auto slots = parse_material_slots(slot_infos);
+    REQUIRE(slots.size() == 2);
+    CHECK(slots[0].slot_id == 1);
+    CHECK(slots[0].material_name == "PLA");
+    CHECK(slots[1].slot_id == 3);
+    CHECK_FALSE(slots[1].has_filament);
+
+    CHECK(parse_material_slots(nlohmann::json::object()).empty());
+}
+
+TEST_CASE("parse_material_slots numbers a slot that reports no slotId", "[flashforge]") {
+    const auto slots = parse_material_slots(nlohmann::json::parse(R"([{"materialName":"PLA"},{"materialName":"PETG"}])"));
+    REQUIRE(slots.size() == 2);
+    CHECK(slots[0].slot_id == 1);
+    CHECK(slots[1].slot_id == 2);
+}
+
+TEST_CASE("parse_detail survives a malformed slotInfos element", "[flashforge]") {
+    PrinterStatus s; std::string err;
+    REQUIRE(parse_detail(R"({"code":0,"detail":{"status":"ready","hasMatlStation":true,"matlStationInfo":{"slotCnt":2,
+             "slotInfos":[{"slotId":1,"hasFilament":true,"materialName":"PLA","materialColor":"#00FF00"},42]}}})", s, err));
+    REQUIRE(s.slots.size() == 1);
+    CHECK(s.slots[0].material_color == "#00FF00");
+    CHECK(s.has_material_station);
+}

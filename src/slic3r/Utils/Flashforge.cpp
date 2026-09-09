@@ -551,12 +551,15 @@ bool Flashforge::fetch_material_slots(std::vector<FlashforgeMaterialSlot>& slots
     if (supports_material_station != nullptr)
         *supports_material_station = reports_material_station;
 
-    for (const auto& slot : slot_infos) {
+    // json::value() throws type_error.306 on anything that is not an object, so parsing the slots is
+    // done by FlashforgeApi::parse_material_slots -- the same parser fetch_status already goes
+    // through -- which skips an element it cannot read instead of taking the whole call down.
+    for (const FlashforgeApi::MaterialSlot& parsed : FlashforgeApi::parse_material_slots(slot_infos)) {
         FlashforgeMaterialSlot info;
-        info.slot_id        = slot.value("slotId", static_cast<int>(slots.size()) + 1);
-        info.has_filament   = slot.value("hasFilament", false);
-        info.material_name  = slot.value("materialName", std::string());
-        info.material_color = slot.value("materialColor", std::string());
+        info.slot_id        = parsed.slot_id;
+        info.has_filament   = parsed.has_filament;
+        info.material_name  = parsed.material_name;
+        info.material_color = parsed.material_color;
         slots.emplace_back(std::move(info));
     }
 
@@ -625,15 +628,9 @@ bool Flashforge::list_gcode_files(std::vector<std::string>& files, wxString& msg
 
     // Observed shape: {"code":0,"gcodeList":[{"gcodeFileName":"a.gcode", ...}, ...]}. A plain array of
     // strings and a top-level `gcodeListDetail` fallback are also accepted since the exact response
-    // shape returned by different firmware versions is not fully documented.
-    for (const auto& f : j.value("gcodeList", json::array()))
-        files.push_back(f.is_string() ? f.get<std::string>() : f.value("gcodeFileName", std::string()));
-
-    if (files.empty()) {
-        for (const auto& f : j.value("gcodeListDetail", json::array()))
-            if (f.is_object())
-                files.push_back(f.value("gcodeFileName", std::string()));
-    }
+    // shape returned by different firmware versions is not fully documented -- which is exactly why
+    // the parsing lives in FlashforgeApi, where it is pure, tested, and skips what it cannot read.
+    files = FlashforgeApi::parse_gcode_list(j);
 
     return true;
 }
