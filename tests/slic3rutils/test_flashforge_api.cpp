@@ -229,3 +229,35 @@ TEST_CASE("parse_detail survives a malformed slotInfos element", "[flashforge]")
     CHECK(s.slots[0].material_color == "#00FF00");
     CHECK(s.has_material_station);
 }
+
+// --- try_parse_json_int: one implementation, and it trims ---
+
+TEST_CASE("try_parse_json_int reads every shape the local API types an integer as", "[flashforge]") {
+    int out = -1;
+    CHECK((try_parse_json_int(nlohmann::json(7), out) && out == 7));
+    CHECK((try_parse_json_int(nlohmann::json(true), out) && out == 1));
+    CHECK((try_parse_json_int(nlohmann::json(false), out) && out == 0));
+    CHECK((try_parse_json_int(nlohmann::json("42"), out) && out == 42));
+
+    // The padded string is the whole point of item F: the copy that used to live in FlashforgeApi
+    // had no trim, so a printer sending " 0 " passed validate_local_api_response in Flashforge.cpp
+    // and was rejected as a failure by parse_detail.
+    out = -1;
+    CHECK((try_parse_json_int(nlohmann::json(" 0 "), out) && out == 0));
+    CHECK((try_parse_json_int(nlohmann::json("\t-12\n"), out) && out == -12));
+
+    CHECK_FALSE(try_parse_json_int(nlohmann::json("12abc"), out));
+    CHECK_FALSE(try_parse_json_int(nlohmann::json("   "), out));
+    CHECK_FALSE(try_parse_json_int(nlohmann::json(), out));
+    CHECK_FALSE(try_parse_json_int(nlohmann::json::array({1}), out));
+    CHECK_FALSE(try_parse_json_int(nlohmann::json("99999999999999999999"), out)); // out of long range
+}
+
+TEST_CASE("parse_detail accepts a padded success code", "[flashforge]") {
+    PrinterStatus s; std::string err;
+    CHECK(parse_detail(R"({"code":" 0 ","detail":{"status":"ready"}})", s, err));
+    CHECK(s.state == "ready");
+
+    CHECK_FALSE(parse_detail(R"({"code":" 401 ","message":"check code error"})", s, err));
+    CHECK(err.find("401") != std::string::npos);
+}

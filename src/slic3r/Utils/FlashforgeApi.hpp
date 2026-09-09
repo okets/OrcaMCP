@@ -22,6 +22,11 @@ struct PrinterStatus {
     nlohmann::json raw;                // the untouched `detail` object
 };
 
+// The local API is inconsistent about how it types its integers: `code`/`err`/`hasMatlStation`/
+// `slotCnt` arrive as a number on one firmware, a bool on another and a (sometimes padded) string on
+// a third. Reads any of those into `out` and returns false -- without throwing -- for anything else.
+bool try_parse_json_int(const nlohmann::json& value, int& out);
+
 // Returns false with `error` set if the body is not a successful API response.
 bool parse_detail(const std::string& body, PrinterStatus& out, std::string& error);
 

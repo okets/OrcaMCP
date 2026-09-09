@@ -1,5 +1,7 @@
 #include "FlashforgeApi.hpp"
 
+#include <boost/algorithm/string/trim.hpp>
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -11,36 +13,6 @@
 namespace Slic3r { namespace FlashforgeApi {
 
 namespace {
-
-// Mirrors the int/bool/numeric-string tolerance of Flashforge.cpp's file-local
-// try_parse_json_int() (~Flashforge.cpp:120-150), duplicated here because that helper is a
-// translation-unit-local static and FlashforgeApi must stay a pure, dependency-free layer.
-bool try_parse_json_int(const nlohmann::json& value, int& out)
-{
-    try {
-        if (value.is_number_integer() || value.is_number_unsigned()) {
-            out = value.get<int>();
-            return true;
-        }
-        if (value.is_boolean()) {
-            out = value.get<bool>() ? 1 : 0;
-            return true;
-        }
-        if (value.is_string()) {
-            const std::string text = value.get<std::string>();
-            if (text.empty())
-                return false;
-            size_t pos = 0;
-            const long parsed = std::stol(text, &pos, 10);
-            if (pos == text.size()) {
-                out = static_cast<int>(parsed);
-                return true;
-            }
-        }
-    } catch (...) {
-    }
-    return false;
-}
 
 double get_number(const nlohmann::json& obj, const char* key, double def = 0.0)
 {
@@ -216,6 +188,34 @@ void fill_material_slots(const nlohmann::json& detail, PrinterStatus& out)
 }
 
 } // namespace
+
+bool try_parse_json_int(const nlohmann::json& value, int& out)
+{
+    try {
+        if (value.is_number_integer() || value.is_number_unsigned()) {
+            out = value.get<int>();
+            return true;
+        }
+        if (value.is_boolean()) {
+            out = value.get<bool>() ? 1 : 0;
+            return true;
+        }
+        if (value.is_string()) {
+            std::string text = value.get<std::string>();
+            boost::trim(text);
+            if (text.empty())
+                return false;
+            size_t pos = 0;
+            const long parsed = std::stol(text, &pos, 10);
+            if (pos == text.size()) {
+                out = static_cast<int>(parsed);
+                return true;
+            }
+        }
+    } catch (...) {
+    }
+    return false;
+}
 
 bool parse_detail(const std::string& body, PrinterStatus& out, std::string& error)
 {

@@ -126,38 +126,6 @@ std::string safe_config_string(DynamicPrintConfig* config, const char* key)
     return {};
 }
 
-bool try_parse_json_int(const json& value, int& out)
-{
-    try {
-        if (value.is_number_integer() || value.is_number_unsigned()) {
-            out = value.get<int>();
-            return true;
-        }
-
-        if (value.is_boolean()) {
-            out = value.get<bool>() ? 1 : 0;
-            return true;
-        }
-
-        if (value.is_string()) {
-            std::string text = value.get<std::string>();
-            boost::trim(text);
-            if (text.empty())
-                return false;
-
-            size_t pos = 0;
-            const long parsed = std::stol(text, &pos, 10);
-            if (pos == text.size()) {
-                out = static_cast<int>(parsed);
-                return true;
-            }
-        }
-    } catch (...) {
-    }
-
-    return false;
-}
-
 bool validate_local_api_response(const std::string& response_body, wxString& error_msg)
 {
     const auto parsed = json::parse(response_body, nullptr, false, true);
@@ -170,9 +138,9 @@ bool validate_local_api_response(const std::string& response_body, wxString& err
     bool has_code    = false;
 
     if (parsed.contains("code"))
-        has_code = try_parse_json_int(parsed["code"], result_code);
+        has_code = FlashforgeApi::try_parse_json_int(parsed["code"], result_code);
     if (!has_code && parsed.contains("err"))
-        has_code = try_parse_json_int(parsed["err"], result_code);
+        has_code = FlashforgeApi::try_parse_json_int(parsed["err"], result_code);
 
     if (has_code && result_code != 0) {
         std::string message;
@@ -541,15 +509,15 @@ bool Flashforge::fetch_material_slots(std::vector<FlashforgeMaterialSlot>& slots
     bool reports_material_station = false;
 
     int has_material_station_flag = 0;
-    if (detail.contains("hasMatlStation") && try_parse_json_int(detail["hasMatlStation"], has_material_station_flag))
+    if (detail.contains("hasMatlStation") && FlashforgeApi::try_parse_json_int(detail["hasMatlStation"], has_material_station_flag))
         reports_material_station = has_material_station_flag != 0;
-    else if (detail.contains("HasMatlStation") && try_parse_json_int(detail["HasMatlStation"], has_material_station_flag))
+    else if (detail.contains("HasMatlStation") && FlashforgeApi::try_parse_json_int(detail["HasMatlStation"], has_material_station_flag))
         reports_material_station = has_material_station_flag != 0;
 
     int slot_count = 0;
-    if (station.contains("slotCnt") && try_parse_json_int(station["slotCnt"], slot_count))
+    if (station.contains("slotCnt") && FlashforgeApi::try_parse_json_int(station["slotCnt"], slot_count))
         reports_material_station = reports_material_station || slot_count > 0;
-    else if (station.contains("SlotCnt") && try_parse_json_int(station["SlotCnt"], slot_count))
+    else if (station.contains("SlotCnt") && FlashforgeApi::try_parse_json_int(station["SlotCnt"], slot_count))
         reports_material_station = reports_material_station || slot_count > 0;
 
     if (slot_infos.is_array() && !slot_infos.empty())
