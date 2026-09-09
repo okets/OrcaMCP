@@ -51,6 +51,39 @@ void OrcaMCPServer::register_tool(const ToolDefinition& tool)
     BOOST_LOG_TRIVIAL(debug) << "OrcaMCPServer: Registered tool '" << tool.name << "'";
 }
 
+namespace {
+
+// The HTTP server outlives the GUI at both ends of the app's life: it is started from post_init()
+// while the rest of that function is still running, and it keeps answering while the frame is being
+// torn down. A tools/call in either window used to reach handlers that dereference
+// wxGetApp().plater() / preset_bundle unconditionally -- a json type_error at best, a crash of the
+// whole process at worst. Every tool handler needs those two, so the check lives in one place.
+// tools/list, initialize and ping are deliberately *not* gated: an MCP client sends them while
+// connecting, and answering them early is harmless (the tool table is static).
+bool mcp_gui_ready(std::string& reason)
+{
+    if (wxApp::GetInstance() == nullptr) {
+        reason = "the application object does not exist yet";
+        return false;
+    }
+    GUI_App& app = wxGetApp();
+    if (!app.post_initialized()) {
+        reason = "the GUI has not finished starting up";
+        return false;
+    }
+    if (app.plater() == nullptr) {
+        reason = "the plater is not available";
+        return false;
+    }
+    if (app.preset_bundle == nullptr) {
+        reason = "the preset bundle is not loaded";
+        return false;
+    }
+    return true;
+}
+
+} // namespace
+
 std::shared_ptr<HttpServer::Response> OrcaMCPServer::handle_request(
     const std::string& method,
     const std::string& url,
@@ -121,6 +154,13 @@ std::shared_ptr<HttpServer::Response> OrcaMCPServer::handle_request(
         } else if (rpc_method == "tools/list") {
             result = handle_tools_list();
         } else if (rpc_method == "tools/call") {
+            std::string not_ready_reason;
+            if (!mcp_gui_ready(not_ready_reason)) {
+                BOOST_LOG_TRIVIAL(warning) << "OrcaMCPServer: tools/call rejected, " << not_ready_reason;
+                auto error = make_error_response(id, -32001, "OrcaMCP is starting up: " + not_ready_reason +
+                                                             ". Retry in a few seconds.");
+                return std::make_shared<HttpServer::ResponseJson>(error.dump(), 200);
+            }
             result = handle_tools_call(params);
         } else if (rpc_method == "ping") {
             result = nlohmann::json::object();  // Empty response for ping
@@ -137,6 +177,12 @@ std::shared_ptr<HttpServer::Response> OrcaMCPServer::handle_request(
         auto error = make_error_response(id, -32603, std::string("Internal error: ") + e.what());
         // Return HTTP 200 with JSON-RPC error (per MCP protocol spec)
         // HTTP 500 causes clients to interpret this as a connection failure
+        return std::make_shared<HttpServer::ResponseJson>(error.dump(), 200);
+    } catch (...) {
+        // Nothing may escape onto the HTTP worker thread: an unhandled exception there takes the
+        // whole process down instead of failing one call.
+        BOOST_LOG_TRIVIAL(error) << "OrcaMCPServer: Unknown error handling " << rpc_method;
+        auto error = make_error_response(id, -32603, "Internal error: unknown exception in " + rpc_method);
         return std::make_shared<HttpServer::ResponseJson>(error.dump(), 200);
     }
 }
@@ -202,8 +248,16 @@ nlohmann::json OrcaMCPServer::handle_tools_call(const nlohmann::json& params)
 
     BOOST_LOG_TRIVIAL(info) << "OrcaMCPServer: Calling tool '" << tool_name << "'";
 
-    // Execute the tool handler
-    nlohmann::json tool_result = it->second.handler(arguments);
+    // Execute the tool handler. Every failure inside a handler is reported as a JSON-RPC error for
+    // that one call, naming the tool, rather than propagating further up the HTTP thread.
+    nlohmann::json tool_result;
+    try {
+        tool_result = it->second.handler(arguments);
+    } catch (const std::exception& e) {
+        throw std::runtime_error("Tool '" + tool_name + "' failed: " + e.what());
+    } catch (...) {
+        throw std::runtime_error("Tool '" + tool_name + "' failed with an unknown exception");
+    }
 
     // Format as MCP tool result
     return {

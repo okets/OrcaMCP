@@ -348,6 +348,11 @@ public:
     bool            OnInit() override;
     int             OnExit() override;
     bool            initialized() const { return m_initialized; }
+    // True once post_init() has been entered, i.e. the plater, the preset bundle and the main
+    // frame are constructed. Anything reachable from another thread (the MCP HTTP server) must
+    // check this before touching the GUI: before it, plater() is null and preset_bundle is
+    // half-loaded.
+    bool            post_initialized() const { return m_post_initialized; }
     inline bool     is_enable_multi_machine() { return this->app_config&& this->app_config->get("enable_multi_machine") == "true"; }
 
     std::map<std::string, bool> test_url_state;
