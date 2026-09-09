@@ -26,10 +26,16 @@ class PrinterWebViewHandler;
 //
 // The page's second method is `command`:
 //     {"id": <n>, "method": "command", "params": {"name": "light", "on": true}}
-// answered with {"id": <n>, "method": "command", "ok": true} or ok:false plus the printer's own
-// message. Every command runs on a worker thread - a control request is the same blocking HTTP
-// call the poller makes - and a successful one wakes the poller so the page settles on what the
-// printer reports rather than on what the click hoped for.
+// answered with {"id": <n>, "method": "command", "ok": true, "result": <null|object>} or ok:false
+// plus the printer's own message. Every command runs on a worker thread - a control request is the
+// same blocking HTTP call the poller makes - and a successful one wakes the poller so the page
+// settles on what the printer reports rather than on what the click hoped for.
+//
+// The one exception is `{"name": "match_project_to_printer"}`, which never reaches the printer: it
+// reads the material station out of the snapshot the poller already has and rewrites the *project*
+// to agree with it, through the same helper the match_project_to_printer MCP tool calls. It answers
+// with the per-slot result in `result`, and every `status` push carries a `project_match` field -
+// null while the project and the station agree - which is what the page's suggestion is drawn from.
 
 /// file:// URL of the bundled console page.
 wxString flashforge_console_url();

@@ -5,7 +5,9 @@
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/I18N.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPCommon.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPPrinterUtils.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPProjectMatch.hpp"
 #include "slic3r/GUI/Widgets/WebView.hpp"
 #include "slic3r/Utils/Flashforge.hpp"
 #include "slic3r/Utils/FlashforgeApi.hpp"
@@ -359,6 +361,10 @@ private:
     void answer(int id, json result)
     {
         result["app_dark"] = wxGetApp().dark_mode();
+        // Whether the project still says what the machine is holding is a question only the GUI
+        // thread can answer, and this is the one place every snapshot passes through on it. Null
+        // when they agree, which is what keeps the page's suggestion off the screen.
+        result["project_match"] = OrcaMCP::project_match_suggestion(result);
         run_in_page(json{{"id", id}, {"method", "status"}, {"ok", true}, {"result", std::move(result)}});
     }
 
@@ -375,9 +381,10 @@ private:
 
     /// The page holds the control in a pending state until this arrives, and reverts it on ok:false
     /// with `error` shown inline beside the control - never in a dialog.
-    void answer_command(int id, bool ok, const std::string& error)
+    void answer_command(int id, bool ok, const std::string& error, json result = json())
     {
-        run_in_page(json{{"id", id}, {"method", "command"}, {"ok", ok}, {"error", error}});
+        run_in_page(json{{"id", id}, {"method", "command"}, {"ok", ok}, {"error", error},
+                         {"result", std::move(result)}});
     }
 
     // ── Commands (dispatch on the GUI thread, execute off it) ────────────────────────────────
@@ -401,6 +408,15 @@ private:
             return;
         }
 
+        // The one command that never reaches the printer: it reads the station snapshot the poller
+        // already has and rewrites the *project*. Preset work is main-thread-only and fast, so it
+        // runs right here rather than on a worker - and it goes through exactly the helper the
+        // match_project_to_printer MCP tool calls, so the button and an agent take the same path.
+        if (params.value("name", std::string()) == "match_project_to_printer") {
+            handle_project_match(id, params);
+            return;
+        }
+
         json operation;
         if (!build_console_operation(params, last_status(), operation, error)) {
             answer_command(id, false, error);
@@ -414,6 +430,52 @@ private:
         std::thread(&FlashforgeConsoleHandler::run_command, m_session, m_alive, this, std::move(config),
                     std::move(operation), id)
             .detach();
+    }
+
+    /// Reads the printer's material station out of the last snapshot and matches the project to it.
+    /// GUI thread throughout: nothing here talks to the printer.
+    void handle_project_match(int id, const json& params)
+    {
+        const json snapshot = last_status();
+        const auto station  = OrcaMCP::material_slots_from_json(snapshot);
+        if (station.empty()) {
+            answer_command(id, false,
+                           into_u8(_L("The printer has not reported its material station yet.")));
+            return;
+        }
+
+        // Parsed the same way, and as strictly, as the MCP tool: a value nobody can read is refused
+        // rather than dropped, because dropping a slot id silently would match every loaded slot.
+        std::vector<int> slots;
+        if (const auto requested = params.find("slots"); requested != params.end() && !requested->is_null()) {
+            if (!requested->is_array()) {
+                answer_command(id, false, into_u8(_L("slots must be a list of slot numbers.")));
+                return;
+            }
+            for (const auto& value : *requested) {
+                int slot = 0;
+                if (!OrcaMCP::parse_integer_param(value, slot) || slot < 1) {
+                    answer_command(id, false, into_u8(_L("slots must be whole numbers from 1 up.")));
+                    return;
+                }
+                slots.push_back(slot);
+            }
+        }
+
+        bool dry_run = false;
+        if (const auto asked = params.find("dry_run"); asked != params.end() && !asked->is_null() &&
+                                                       !OrcaMCP::parse_boolean_param(*asked, dry_run)) {
+            answer_command(id, false, into_u8(_L("dry_run must be true or false.")));
+            return;
+        }
+
+        json result = OrcaMCP::match_project_to_printer(station, slots, dry_run);
+        const bool ok = result.value("status", std::string()) != "error";
+        answer_command(id, ok, ok ? std::string() : result.value("message", std::string()), std::move(result));
+
+        // The suggestion is computed from a snapshot, so the page needs a fresh one to see it go.
+        if (ok)
+            answer(0, last_status());
     }
 
     void run_in_page(const json& message)

@@ -286,6 +286,20 @@ footer.foot .sep{width:1px;height:12px;background:var(--edge)}
   border:1px solid color-mix(in srgb,var(--crit) 45%,var(--edge));background:color-mix(in srgb,var(--crit) 8%,transparent);
   color:var(--text-2);font-size:12.5px}
 .banner b{color:var(--crit);font-weight:600}
+/* ── The project disagreeing with the machine ────────────────────────
+   Not an error and never a modal: one line saying what differs, a button
+   that fixes it, and an x meaning "I know". Brass, not crimson - the
+   printer is fine, the project is merely out of date.                 */
+.suggest{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 12px;padding:10px 12px;
+  border-radius:11px;border:1px solid color-mix(in srgb,var(--brass) 45%,var(--edge));
+  background:color-mix(in srgb,var(--brass) 8%,transparent);color:var(--text-2);font-size:12.5px}
+.suggest .s-dot{width:7px;height:7px;border-radius:50%;background:var(--brass);flex:none}
+.suggest .s-text{flex:1 1 18em;min-width:0}
+.suggest .s-go,.suggest .s-x{flex:none}
+.suggest .s-x{width:26px;height:26px;font-size:16px;line-height:1}
+.matchmsg{display:block;margin:-4px 0 12px;font-size:11.5px;line-height:1.45;color:var(--muted)}
+.matchmsg[data-kind="warn"]{color:var(--warn)}
+.matchmsg:empty{display:none}
 .viewport img.cam{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;background:#0a0d12}
 .camoff{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:18px;
   color:#8A94A4;font-size:12px;line-height:1.6}
@@ -366,6 +380,8 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
   <section aria-labelledby="toolsHead">
     <h2 class="eyebrow" id="toolsHead">Toolheads &amp; loaded filament</h2>
     <div id="stationStrip"></div>
+    <div id="matchSuggest"></div>
+    <span class="matchmsg" data-msg="match"></span>
     <div class="toolrail" id="toolrail"></div>
   </section>
 
@@ -1367,6 +1383,95 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
             v, label);
   }
 
+  /* ══ Match project to printer ═════════════════════════════════════════
+     The station knows what is loaded; the project only knows what it was
+     last told. When they disagree the slicer refuses to send (the material
+     families do not line up) and the plate preview paints the part the
+     wrong colour - so the page says so, in one line, with a button.
+
+     Never a modal, and never automatic: rewriting someone's filament slots
+     is their decision. Dismissing it remembers the exact wording, so the
+     line comes back by itself if what disagrees changes.               */
+
+  var suggestDismissed = "", matchBusy = false, matchMsgTimer = null;
+
+  function suggestion(s){
+    if (!bridge || suspended || !s || s.sample) return null;
+    var m = s.project_match;
+    return (m && m.summary) ? m : null;
+  }
+
+  function renderSuggestion(s){
+    var m   = suggestion(s);
+    var box = el("matchSuggest");
+    if (!m || m.summary === suggestDismissed){ setHTML(box, ""); return; }
+    /* Structure from the wording alone, so a poll that changes nothing leaves
+       the button the same DOM node the pointer is already over. */
+    setHTML(box,
+      '<div class="suggest">' +
+        '<span class="s-dot" aria-hidden="true"></span>' +
+        '<span class="s-text">' + esc(m.summary) + '</span>' +
+        '<button class="mini s-go" type="button" data-ctl="match">Match project to printer</button>' +
+        '<button class="iconbtn s-x" type="button" data-ctl="match-dismiss" ' +
+          'title="Dismiss. It comes back if what disagrees changes." aria-label="Dismiss">\u00D7</button>' +
+      '</div>');
+    applySuggestion();
+  }
+
+  function applySuggestion(){
+    var go = document.querySelector('[data-ctl="match"]');
+    if (!go) return;
+    go.disabled = matchBusy;
+    setFlag(go, "data-pending", matchBusy);
+    setAttr(go, "title", matchBusy
+      ? "Matching\u2026"
+      : "Give each loaded slot the filament preset and colour the printer reports.");
+  }
+
+  /* Its own line, outside the suggestion box: the box disappears the moment the
+     project agrees, and the result of the click has to outlive it. */
+  function showMatchMsg(text, warn){
+    var node = document.querySelector('[data-msg="match"]');
+    if (!node) return;
+    setText(node, text || "");
+    setAttr(node, "data-kind", warn ? "warn" : "ok");
+    if (matchMsgTimer) clearTimeout(matchMsgTimer);
+    if (text) matchMsgTimer = setTimeout(function(){ setText(node, ""); }, MSG_MS);
+  }
+
+  function matchResultLine(res){
+    var slots = (res && res.slots) || [], done = [], notes = [];
+    for (var i = 0; i < slots.length; i++){
+      var r = slots[i];
+      if (r.changed) done.push("Slot " + r.slot + ": " + [r.preset_after, r.color_after].filter(Boolean).join(", "));
+      else if (!r.matched) notes.push(r.reason);
+    }
+    var parts = [];
+    if (done.length) parts.push(done.join(" \u00B7 ") + ".");
+    if (notes.length) parts.push(notes.join(" "));
+    if (!parts.length) parts.push("The project already matched the printer.");
+    return { text: parts.join(" "), warn: notes.length > 0 };
+  }
+
+  function onMatch(){
+    if (!bridge || suspended || matchBusy) return;
+    matchBusy = true;
+    showMatchMsg("", false);
+    applySuggestion();
+    bridge.call("command", { name: "match_project_to_printer" }).then(function(res){
+      matchBusy = false;
+      var line = matchResultLine(res);
+      showMatchMsg(line.text, line.warn);
+      /* The host pushes a fresh status right after, and the suggestion goes with
+         it - or stays, if something could not be matched. Both are honest. */
+      applySuggestion();
+    }, function(err){
+      matchBusy = false;
+      if (!suspended) showMatchMsg(String((err && err.message) || err), true);
+      applySuggestion();
+    });
+  }
+
   /* One listener for the whole page: the rail, the environment rows and the bar
      are all rebuilt from strings, and a listener bound to a button would go with
      it. Disabled buttons dispatch no click at all, and the guard says so anyway. */
@@ -1385,6 +1490,12 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     else if (key === "stop") armStop();
     else if (key === "stop-yes") onStopConfirmed();
     else if (key === "stop-no") disarmStop();
+    else if (key === "match") onMatch();
+    else if (key === "match-dismiss"){
+      var m = suggestion(s);
+      suggestDismissed = (m && m.summary) || "";
+      renderSuggestion(s);
+    }
     else if (key.indexOf("temp-") === 0) openTempEditor(node, key);
   });
 
@@ -1519,6 +1630,7 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     renderMachine(p, raw, pro);
     renderTools(p, raw, ms);
     applyToolCards(s.printer, raw, ms, printing);
+    renderSuggestion(s);
     renderEnvironment(pro);
     renderCamera(s, p, raw, pro, printing);
     renderControls(pro);
