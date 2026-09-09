@@ -490,7 +490,25 @@ void MediaPlayCtrl::ToggleStream()
         file.close();
         m_streaming = false;
         return;
-    } else if (!boost::filesystem::exists(file_url)) {
+    }
+
+    // Same root cause as the Play button above: the virtual camera can only republish a
+    // `bambu:///` stream, and for a printer no Bambu agent found there is never going to be one.
+    // Without this guard the LAN branch below is skipped (m_lan_proto is LVL_None) and
+    // NetworkAgent::get_camera_url returns -1 *without invoking its callback* when the provider
+    // has no cloud agent (NetworkAgent.cpp:510-516), so the button did nothing whatsoever -- no
+    // stream, no error, no dialog -- after possibly offering to download Virtual Camera Tools the
+    // printer could never use. Checked after the stop branch so a running stream can always be
+    // stopped.
+    if (!m_bambu_liveview) {
+        MessageDialog(this->GetParent(),
+                      _L("The virtual camera is not available for this printer. Its camera, when it has one, is shown on the Device page."),
+                      _L("Information"), wxICON_INFORMATION)
+            .ShowModal();
+        return;
+    }
+
+    if (!boost::filesystem::exists(file_url)) {
         boost::nowide::ofstream file(file_url);
         file.close();
     }
