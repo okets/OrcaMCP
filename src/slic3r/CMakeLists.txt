@@ -418,6 +418,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/OrcaMCP/OrcaMCPPrinterUtils.hpp
     GUI/OrcaMCP/OrcaMCPPrinterUtils.cpp
     GUI/OrcaMCP/OrcaMCPPrinterTools.cpp
+    GUI/OrcaMCP/OrcaMCPProjectMatch.hpp
+    GUI/OrcaMCP/OrcaMCPProjectMatch.cpp
     GUI/OrcaMCP/MCPClientConfig.hpp
     GUI/OrcaMCP/MCPClientConfig.cpp
     GUI/OptionsGroup.cpp

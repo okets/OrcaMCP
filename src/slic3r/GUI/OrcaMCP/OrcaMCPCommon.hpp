@@ -29,6 +29,13 @@ nlohmann::json run_on_main_thread(Func&& func)
     return future.get();
 }
 
+// MCP clients do not all deliver scalars the same way: a client whose cached tool schema predates a
+// new parameter tends to send it as a string ("1", "true"), and some send every number as a float
+// (1.0). These accept any JSON value that is exactly the wanted type, and reject everything else, so
+// a stale client can still reach a new parameter. Both return false without touching `out`.
+bool parse_integer_param(const nlohmann::json& value, int& out);
+bool parse_boolean_param(const nlohmann::json& value, bool& out);
+
 // Always returns {"count": N, "warnings": [{level, message, type}...]}.
 nlohmann::json get_active_warnings_json(Plater* plater);
 

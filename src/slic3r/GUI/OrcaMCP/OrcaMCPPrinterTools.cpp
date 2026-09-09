@@ -2,6 +2,7 @@
 #include "OrcaMCPServer.hpp"
 #include "OrcaMCPCommon.hpp"
 #include "OrcaMCPPrinterUtils.hpp"
+#include "OrcaMCPProjectMatch.hpp"
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Plater.hpp"
@@ -886,6 +887,65 @@ void OrcaMCPServer::register_printer_tools()
                 return error_response(msg.empty() ? "Failed to start print" : to_std(msg));
 
             return {{"status", "success"}, {"file_name", file_name}, {"material_mappings", mapping_response_echo(mappings_payload)}};
+        }
+    });
+    // match_project_to_printer - Make the project's filament slots say what the machine actually holds
+    register_tool({
+        "match_project_to_printer",
+        "Match the project's filament slots to the printer's material station: for every loaded slot, "
+        "pick a filament preset of the material the printer reports and set that slot's colour to the "
+        "colour it reports. Slots the printer reports as empty are left untouched. Fixes the two things "
+        "a stale project causes: send_to_printer refusing on a material mismatch, and a plate preview in "
+        "the wrong colour.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"slots", {
+                    {"type", "array"},
+                    {"description", "1-based material-station slot ids to match. Omit for every loaded slot."},
+                    {"items", {{"type", "integer"}}}
+                }},
+                {"dry_run", {
+                    {"type", "boolean"},
+                    {"description", "Report the plan without changing anything (default false). Each slot's "
+                                    "'changed' then means 'would change'."}
+                }}
+            }}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            std::vector<int> slots;
+            if (params.contains("slots") && !params["slots"].is_null()) {
+                if (!params["slots"].is_array())
+                    return error_response("slots must be an array of 1-based material-station slot ids");
+                for (const auto& value : params["slots"]) {
+                    int slot = 0;
+                    if (!parse_integer_param(value, slot) || slot < 1)
+                        return error_response("slots must contain 1-based integers, got: " + value.dump());
+                    slots.push_back(slot);
+                }
+            }
+
+            bool dry_run = false;
+            if (params.contains("dry_run") && !params["dry_run"].is_null() &&
+                !parse_boolean_param(params["dry_run"], dry_run))
+                return error_response("dry_run must be a boolean, got: " + params["dry_run"].dump());
+
+            std::unique_ptr<Slic3r::PrintHost> host;
+            Slic3r::Flashforge*                ff = nullptr;
+            nlohmann::json                     error_out;
+            if (!resolve_flashforge(host, ff, error_out))
+                return error_out;
+
+            Slic3r::FlashforgeApi::PrinterStatus status;
+            wxString                             msg;
+            if (!ff->fetch_status(status, msg))
+                return error_response(msg.empty() ? "Failed to read material station status" : to_std(msg));
+
+            // Params and the station snapshot cross to the GUI thread by value; everything the match
+            // touches (presets, project config, sidebar) is main-thread-only.
+            return run_on_main_thread([station = status.slots, slots, dry_run]() -> nlohmann::json {
+                return match_project_to_printer(station, slots, dry_run);
+            });
         }
     });
 }

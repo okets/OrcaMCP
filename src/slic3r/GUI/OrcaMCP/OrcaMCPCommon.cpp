@@ -3,7 +3,66 @@
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/NotificationManager.hpp"
 
+#include <cmath>
+#include <cstdlib>
+
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
+
+bool parse_integer_param(const nlohmann::json& value, int& out)
+{
+    if (value.is_number_integer()) {
+        out = value.get<int>();
+        return true;
+    }
+    if (value.is_number_float()) {
+        const double d = value.get<double>();
+        if (d != std::floor(d) || std::abs(d) > 1e9)
+            return false;
+        out = int(d);
+        return true;
+    }
+    if (value.is_string()) {
+        const std::string str = value.get<std::string>();
+        try {
+            size_t    pos    = 0;
+            const int parsed = std::stoi(str, &pos);
+            if (pos != str.size())
+                return false;
+            out = parsed;
+            return true;
+        } catch (const std::exception&) {
+            return false;
+        }
+    }
+    return false;
+}
+
+bool parse_boolean_param(const nlohmann::json& value, bool& out)
+{
+    if (value.is_boolean()) {
+        out = value.get<bool>();
+        return true;
+    }
+    // 0/1 and "true"/"false"/"1"/"0" only: anything else is a caller mistake worth reporting rather
+    // than a value to guess at.
+    int as_int = 0;
+    if (value.is_number() && parse_integer_param(value, as_int) && (as_int == 0 || as_int == 1)) {
+        out = as_int == 1;
+        return true;
+    }
+    if (value.is_string()) {
+        const std::string str = value.get<std::string>();
+        if (str == "true" || str == "1") {
+            out = true;
+            return true;
+        }
+        if (str == "false" || str == "0") {
+            out = false;
+            return true;
+        }
+    }
+    return false;
+}
 
 // Helper to get active warnings as JSON object (always includes count, even if 0)
 nlohmann::json get_active_warnings_json(Plater* plater) {

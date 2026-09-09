@@ -547,6 +547,32 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                   'required': ['file_path'],
                   'type': 'object'},
   'name': 'load_project'},
+ {'description': "Match the project's filament slots to the printer's material "
+                 'station: for every loaded slot, pick a filament preset of '
+                 "the material the printer reports and set that slot's colour "
+                 'to the colour it reports. Slots the printer reports as empty '
+                 'are left untouched. Fixes the two things a stale project '
+                 'causes: send_to_printer refusing on a material mismatch, and '
+                 'a plate preview in the wrong colour.',
+  'inputSchema': {'additionalProperties': False,
+                  'properties': {'dry_run': {'description': 'Report the plan '
+                                                            'without changing '
+                                                            'anything (default '
+                                                            'false). Each '
+                                                            "slot's 'changed' "
+                                                            "then means 'would "
+                                                            "change'.",
+                                             'type': 'boolean'},
+                                 'slots': {'description': '1-based '
+                                                          'material-station '
+                                                          'slot ids to match. '
+                                                          'Omit for every '
+                                                          'loaded slot.',
+                                           'items': {'type': 'integer'},
+                                           'type': 'array'}},
+                  'required': [],
+                  'type': 'object'},
+  'name': 'match_project_to_printer'},
  {'description': 'Mirror an object across the specified axis',
   'inputSchema': {'additionalProperties': False,
                   'properties': {'axis': {'description': 'Axis: x, y, or z',

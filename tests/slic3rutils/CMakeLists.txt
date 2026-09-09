@@ -21,6 +21,7 @@ add_executable(${_TEST_NAME}_tests
     test_flashforge_api.cpp
     test_flashforge_console.cpp
     test_flashforge_live.cpp
+    test_project_match.cpp
     ../fff_print/test_helpers.cpp
     )
 

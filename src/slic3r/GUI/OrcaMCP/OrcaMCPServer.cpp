@@ -28,42 +28,6 @@ namespace Slic3r { namespace GUI {
 
 using namespace Slic3r::GUI::OrcaMCP;
 
-namespace {
-
-// MCP clients do not all deliver numbers the same way: a client whose cached tool schema
-// predates a new parameter tends to send it as a string ("1"), and some send every number as a
-// float (1.0). Accept any JSON value that is exactly an integer, reject everything else.
-bool parse_integer_param(const nlohmann::json& value, int& out)
-{
-    if (value.is_number_integer()) {
-        out = value.get<int>();
-        return true;
-    }
-    if (value.is_number_float()) {
-        const double d = value.get<double>();
-        if (d != std::floor(d) || std::abs(d) > 1e9)
-            return false;
-        out = int(d);
-        return true;
-    }
-    if (value.is_string()) {
-        const std::string str = value.get<std::string>();
-        try {
-            size_t pos = 0;
-            const int parsed = std::stoi(str, &pos);
-            if (pos != str.size())
-                return false;
-            out = parsed;
-            return true;
-        } catch (const std::exception&) {
-            return false;
-        }
-    }
-    return false;
-}
-
-} // namespace
-
 // Static member initialization
 std::map<std::string, OrcaMCPServer::ToolDefinition> OrcaMCPServer::s_tools;
 bool OrcaMCPServer::s_initialized = false;
@@ -683,7 +647,8 @@ void OrcaMCPServer::register_builtin_tools()
                         {"select_printer", "Select a Bambu printer by dev_id, or a print-host preset by physical_printer"},
                         {"discover_printers", "Find Flashforge printers on the local network"},
                         {"add_physical_printer", "Save a print host into a printer preset and select it"},
-                        {"send_to_printer", "Send G-code: auto-detects OctoPrint/Klipper vs Bambu dialog"}
+                        {"send_to_printer", "Send G-code: auto-detects OctoPrint/Klipper vs Bambu dialog"},
+                        {"match_project_to_printer", "Point the project's filament slots at the material and colour the printer's station actually holds"}
                     }}
                 }},
 
