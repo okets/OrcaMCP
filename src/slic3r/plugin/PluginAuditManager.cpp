@@ -282,11 +282,21 @@ std::vector<std::string> PluginAuditManager::default_denied_filenames()
     // four names is cheaper and more robust than replicating that; the two unused names cost one
     // string comparison each.  Single-sourced here so install_hook() and the tests seed from the
     // same list and cannot drift apart.
+    //
+    // The upstream names are here for the same reason: this is a fork, its data dir is a
+    // migration target for an OrcaSlicer one, and a config carried across is exactly as
+    // sensitive as a native one. The ".conf" spellings would also be caught by the "conf"
+    // path keyword, but the ".ini" ones would not be caught by anything, so the pair is listed
+    // together rather than leaving a reader to work out which half is load-bearing.
     return {
         SLIC3R_APP_KEY ".conf",
         GCODEVIEWER_APP_KEY ".conf",
         SLIC3R_APP_KEY ".ini",
         GCODEVIEWER_APP_KEY ".ini",
+        "OrcaSlicer.conf",
+        "OrcaSlicer.ini",
+        "OrcaSlicer-gcodeviewer.conf",
+        "OrcaSlicer-gcodeviewer.ini",
         secret_constants::USER_SECRET_FILENAME,
     };
 }

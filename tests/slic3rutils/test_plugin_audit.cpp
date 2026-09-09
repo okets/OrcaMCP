@@ -72,6 +72,17 @@ TEST_CASE("Plugin audit denies app config and token filenames anywhere", "[audit
         CHECK(mgr.is_denied_filename(fs::path(secret_constants::USER_SECRET_FILENAME)));
     }
 
+    SECTION("a config carried over from upstream OrcaSlicer is denied too")
+    {
+        // This fork's data dir is a migration target for an OrcaSlicer one, and a config carried
+        // across holds the same secrets. The ".conf" pair would also be caught by the "conf" path
+        // keyword; the ".ini" pair is caught by nothing else, which is why both are seeded.
+        CHECK(mgr.is_denied_filename(fs::path("OrcaSlicer.conf")));
+        CHECK(mgr.is_denied_filename(fs::path("OrcaSlicer.ini")));
+        CHECK(mgr.is_denied_filename(fs::path("OrcaSlicer-gcodeviewer.conf")));
+        CHECK(mgr.is_denied_filename(fs::path("OrcaSlicer-gcodeviewer.ini")));
+    }
+
     SECTION("companions holding the same secrets are denied by the prefix rule")
     {
         CHECK(mgr.is_denied_filename(fs::path(SLIC3R_APP_KEY ".conf.bak")));
