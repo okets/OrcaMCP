@@ -3,6 +3,11 @@
 
 set(SLIC3R_APP_NAME "OrcaMCP")
 set(SLIC3R_APP_KEY "OrcaMCP")
+# The executable's own name on Linux/Unix, and the name every packaging script looks for. It has
+# to live beside the other two: it was previously set twice, to two different values (the top-level
+# CMakeLists said "orca-slicer" while src/CMakeLists.txt renamed the binary to "orca-mcp"), so the
+# AppImage build looked for a file no build ever produced.
+set(SLIC3R_APP_CMD "orca-mcp")
 
 if(NOT DEFINED BBL_INTERNAL_TESTING)
 set(BBL_INTERNAL_TESTING "0")

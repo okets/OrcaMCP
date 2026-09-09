@@ -31,8 +31,18 @@ if ($versionContent -notmatch 'set\(SoftFever_VERSION "(\d+)\.(\d+)\.(\d+)') {
 $msixVersion = "$($Matches[1]).$($Matches[2]).$($Matches[3]).0"
 Write-Output "MSIX version: $msixVersion"
 
-if (-not (Test-Path (Join-Path $InstallDir 'orca-slicer.exe'))) {
-    throw "orca-slicer.exe not found in '$InstallDir' - build the install tree first"
+# The executable's name is read from the same version.inc that CMake reads, rather than spelled out
+# here: this is a fork, its binary is not called orca-slicer, and a copy of the name in this script
+# is a copy that goes stale silently. That is exactly what happened - this check threw
+# "orca-slicer.exe not found" on every Windows CI run because the build produces orca-mcp.exe.
+if ($versionContent -notmatch 'set\(SLIC3R_APP_CMD "([^"]+)"') {
+    throw "Could not parse SLIC3R_APP_CMD from version.inc"
+}
+$appCmd = $Matches[1]
+$appExe = "$appCmd.exe"
+
+if (-not (Test-Path (Join-Path $InstallDir $appExe))) {
+    throw "$appExe not found in '$InstallDir' - build the install tree first"
 }
 
 if ([string]::IsNullOrEmpty($StagingDir)) {
@@ -50,6 +60,7 @@ $manifest = $manifest.Replace('@MSIX_IDENTITY_NAME@', $IdentityName)
 $manifest = $manifest.Replace('@MSIX_PUBLISHER@', $Publisher)
 $manifest = $manifest.Replace('@MSIX_PUBLISHER_DISPLAY_NAME@', $PublisherDisplayName)
 $manifest = $manifest.Replace('@MSIX_ARCH@', $Architecture)
+$manifest = $manifest.Replace('@SLIC3R_APP_EXE@', $appExe)
 Set-Content -Path (Join-Path $StagingDir 'AppxManifest.xml') -Value $manifest -Encoding utf8
 
 if ($StageOnly) {

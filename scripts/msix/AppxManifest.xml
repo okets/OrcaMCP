@@ -40,7 +40,7 @@
   </Resources>
 
   <Applications>
-    <Application Id="OrcaSlicer" Executable="orca-slicer.exe" EntryPoint="Windows.FullTrustApplication">
+    <Application Id="OrcaSlicer" Executable="@SLIC3R_APP_EXE@" EntryPoint="Windows.FullTrustApplication">
       <uap:VisualElements
         DisplayName="OrcaSlicer"
         Description="Open-source slicer for FDM 3D printers"
@@ -77,7 +77,7 @@
         </uap:Extension>
         <uap3:Extension Category="windows.appExecutionAlias" EntryPoint="Windows.FullTrustApplication">
           <uap3:AppExecutionAlias>
-            <desktop:ExecutionAlias Alias="orca-slicer.exe" />
+            <desktop:ExecutionAlias Alias="@SLIC3R_APP_EXE@" />
           </uap3:AppExecutionAlias>
         </uap3:Extension>
       </Extensions>

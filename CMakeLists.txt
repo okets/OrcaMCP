@@ -1223,7 +1223,14 @@ if(BUILD_TESTS)
 endif()
 
 if (NOT WIN32 AND NOT APPLE)
-    set(SLIC3R_APP_CMD "orca-slicer")
+    # The desktop entry has to name the binary that is actually installed. It used to be a static
+    # file saying `Exec=orca-slicer`, so an FHS install got a menu entry that launched nothing.
+    set(SLIC3R_DESKTOP_FILE "${CMAKE_CURRENT_BINARY_DIR}/com.orcaslicer.${SLIC3R_APP_KEY}.desktop")
+    configure_file(${LIBDIR}/dev-utils/platform/unix/com.orcaslicer.desktop.in ${SLIC3R_DESKTOP_FILE} @ONLY)
+
+    # SLIC3R_APP_CMD comes from version.inc. It used to be re-set here to "orca-slicer", which is
+    # not the name this fork's binary is built under, so build_appimage.sh's `mv @SLIC3R_APP_CMD@
+    # AppRun` could never find it.
     configure_file(${LIBDIR}/dev-utils/platform/unix/build_appimage.sh.in ${CMAKE_CURRENT_BINARY_DIR}/build_appimage.sh USE_SOURCE_PERMISSIONS @ONLY)
 endif()
 
@@ -1245,7 +1252,11 @@ elseif (SLIC3R_FHS)
     if(ORCA_BUNDLED_UV_EXECUTABLE)
         install(PROGRAMS "${ORCA_BUNDLED_UV_EXECUTABLE}" DESTINATION "${SLIC3R_FHS_RESOURCES}/tools/uv" RENAME "${ORCA_BUNDLED_UV_FILENAME}")
     endif()
-    install(FILES src/dev-utils/platform/unix/com.orcaslicer.OrcaSlicer.desktop DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
+    # Only configured on Linux/Unix (see the configure_file above); a macOS or Windows install
+    # tree has no desktop entry to place.
+    if (SLIC3R_DESKTOP_FILE)
+        install(FILES ${SLIC3R_DESKTOP_FILE} DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
+    endif ()
     foreach(SIZE 32 128 192)
         install(FILES ${SLIC3R_RESOURCES_DIR}/images/OrcaSlicer_${SIZE}px.png
             DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/${SIZE}x${SIZE}/apps RENAME OrcaSlicer.png
@@ -1257,7 +1268,9 @@ elseif (CMAKE_MACOSX_BUNDLE)
         install(PROGRAMS "${ORCA_BUNDLED_UV_EXECUTABLE}" DESTINATION "${CMAKE_INSTALL_PREFIX}/OrcaSlicer.app/Contents/Resources/tools/uv" RENAME "${ORCA_BUNDLED_UV_FILENAME}")
     endif()
 else ()
-    install(FILES src/dev-utils/platform/unix/com.orcaslicer.OrcaSlicer.desktop DESTINATION ${CMAKE_INSTALL_PREFIX}/resources/applications)
+    if (SLIC3R_DESKTOP_FILE)
+        install(FILES ${SLIC3R_DESKTOP_FILE} DESTINATION ${CMAKE_INSTALL_PREFIX}/resources/applications)
+    endif ()
     install(DIRECTORY "${SLIC3R_RESOURCES_DIR}/" DESTINATION "${CMAKE_INSTALL_PREFIX}/resources")
     if(ORCA_BUNDLED_UV_EXECUTABLE)
         install(PROGRAMS "${ORCA_BUNDLED_UV_EXECUTABLE}" DESTINATION "${CMAKE_INSTALL_PREFIX}/resources/tools/uv" RENAME "${ORCA_BUNDLED_UV_FILENAME}")

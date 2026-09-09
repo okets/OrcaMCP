@@ -162,9 +162,10 @@ elseif (UNIX AND NOT WIN32)
 endif ()
 
 if (NOT WIN32 AND NOT APPLE)
-    # Binary name on unix like systems (Linux, Unix)
-    set_target_properties(OrcaSlicer PROPERTIES OUTPUT_NAME "orca-mcp")
-    set(SLIC3R_APP_CMD "orca-mcp")
+    # Binary name on unix like systems (Linux, Unix). SLIC3R_APP_CMD comes from version.inc and is
+    # the single source of this name: the packaging templates below and the ones the top-level
+    # CMakeLists configures all substitute it, and they must agree with what is actually built.
+    set_target_properties(OrcaSlicer PROPERTIES OUTPUT_NAME "${SLIC3R_APP_CMD}")
     configure_file(${CMAKE_CURRENT_SOURCE_DIR}/dev-utils/platform/unix/build_linux_image.sh.in ${CMAKE_CURRENT_BINARY_DIR}/build_linux_image.sh USE_SOURCE_PERMISSIONS @ONLY)
 endif ()
 
@@ -219,7 +220,7 @@ if (WIN32)
     target_compile_definitions(OrcaSlicer_app_gui PRIVATE "$<$<NOT:$<CONFIG:RelWithDebInfo>>:SLIC3R_WRAPPER_NOCONSOLE>")
     add_dependencies(OrcaSlicer_app_gui OrcaSlicer)
     set_target_properties(OrcaSlicer_app_gui PROPERTIES
-        OUTPUT_NAME "orca-mcp"
+        OUTPUT_NAME "${SLIC3R_APP_CMD}"
         WIN32_EXECUTABLE "$<NOT:$<CONFIG:RelWithDebInfo>>"
     )
     target_link_libraries(OrcaSlicer_app_gui PRIVATE boost_headeronly)
