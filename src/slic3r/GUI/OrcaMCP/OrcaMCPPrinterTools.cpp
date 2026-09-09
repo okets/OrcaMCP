@@ -170,14 +170,6 @@ nlohmann::json open_send_dialog(bool all_plates)
 
 // The tool_id/slot_id pairs actually sent, for the tool's response (mirrors the request schema rather
 // than the printer's camelCase wire format).
-nlohmann::json mapping_response_echo(const nlohmann::json& mappings_payload)
-{
-    nlohmann::json echoed = nlohmann::json::array();
-    for (const auto& m : mappings_payload)
-        echoed.push_back({{"tool_id", m.at("toolId")}, {"slot_id", m.at("slotId")}});
-    return echoed;
-}
-
 } // namespace
 
 void OrcaMCPServer::register_printer_tools()
@@ -479,6 +471,7 @@ void OrcaMCPServer::register_printer_tools()
 
             std::map<std::string, std::string> extended_info;
             nlohmann::json                     mappings_payload = nlohmann::json::array();
+            nlohmann::json                     mappings_report  = nlohmann::json::array();
             auto*                              ff = dynamic_cast<Slic3r::Flashforge*>(host.get());
             if (ff != nullptr && ff->has_local_api_credentials()) {
                 Slic3r::FlashforgeApi::PrinterStatus status;
@@ -490,7 +483,7 @@ void OrcaMCPServer::register_printer_tools()
                 if (use_material_station) {
                     nlohmann::json mapping_error;
                     if (!resolve_material_mappings(requested_mappings, status.slots, project_filaments,
-                                                   mappings_payload, mapping_error))
+                                                   mappings_payload, mapping_error, &mappings_report))
                         return mapping_error;
                 }
 
@@ -527,7 +520,7 @@ void OrcaMCPServer::register_printer_tools()
             nlohmann::json response = {{"status", "queued"},
                                        {"host_type", host_type},
                                        {"file_name", uploaded_file_name},
-                                       {"material_mappings", mapping_response_echo(mappings_payload)},
+                                       {"material_mappings", mappings_report},
                                        {"start_print", start_print},
                                        {"note", "Upload progress is shown in OrcaSlicer; poll get_printer_status."}};
             if (!info_messages.empty())
@@ -860,6 +853,7 @@ void OrcaMCPServer::register_printer_tools()
                 return error_out;
 
             nlohmann::json mappings_payload = nlohmann::json::array();
+            nlohmann::json mappings_report  = nlohmann::json::array();
             if (!requested_mappings.empty() || auto_map) {
                 Slic3r::FlashforgeApi::PrinterStatus status;
                 wxString                             msg;
@@ -878,7 +872,7 @@ void OrcaMCPServer::register_printer_tools()
                 // Build and validate the mapping the same way send_to_printer does.
                 nlohmann::json mapping_error;
                 if (!resolve_material_mappings(requested_mappings, status.slots, project_filaments,
-                                               mappings_payload, mapping_error))
+                                               mappings_payload, mapping_error, &mappings_report))
                     return mapping_error;
             }
 
@@ -886,7 +880,7 @@ void OrcaMCPServer::register_printer_tools()
             if (!ff->print_gcode_file(file_name, leveling, mappings_payload, msg))
                 return error_response(msg.empty() ? "Failed to start print" : to_std(msg));
 
-            return {{"status", "success"}, {"file_name", file_name}, {"material_mappings", mapping_response_echo(mappings_payload)}};
+            return {{"status", "success"}, {"file_name", file_name}, {"material_mappings", mappings_report}};
         }
     });
     // match_project_to_printer - Make the project's filament slots say what the machine actually holds

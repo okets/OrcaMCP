@@ -1020,6 +1020,40 @@ Send sliced G-code to printer.
 
 ---
 
+### Material mapping (Flashforge material station)
+
+`send_to_printer` and `print_printer_file` both return a `material_mappings` array saying which
+material-station slot feeds which project tool. Pass `material_mappings` explicitly (a list of
+`{tool_id, slot_id}`) to choose the slots yourself; leave it out and the slots are chosen
+automatically.
+
+Auto-mapping picks, among the loaded slots whose material family matches the project filament's, the
+slot whose colour is closest to it (CIE76 / delta E, the same metric `suggest_color_mix` uses). Ties
+break on the lower slot id, and a slot is never assigned to two tools. When neither colour can be
+read the first free slot of the family is used, as before.
+
+**Response:**
+```json
+{
+  "status": "queued",
+  "material_mappings": [
+    {"tool_id": 0, "slot_id": 4, "color_delta_e": 0.0},
+    {"tool_id": 1, "slot_id": 2, "color_delta_e": 18.7}
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `tool_id` | integer | 0-based project filament/tool |
+| `slot_id` | integer | 1-based material-station slot the printer will feed it from |
+| `color_delta_e` | number \| null | Perceptual distance between the project filament's colour and the slot's. `0` is an exact match, ~2.3 is a just-noticeable difference, and anything above ~10 is a visibly different colour — worth warning the user about before printing. `null` when either colour is missing or is not a `#RRGGBB` value. |
+
+`color_delta_e` is reported for explicitly requested mappings too, so a hand-picked slot can be
+checked the same way.
+
+---
+
 ## History Tools
 
 ### undo

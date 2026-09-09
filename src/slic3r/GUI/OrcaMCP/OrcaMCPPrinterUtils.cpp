@@ -1,6 +1,7 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPPrinterUtils.cpp
 #include "OrcaMCPPrinterUtils.hpp"
 #include "OrcaMCPCommon.hpp"
+#include "OrcaMCPFilamentUtils.hpp" // color_delta_e_hex -- the one colour metric in this codebase
 #include "OrcaMCPPresetConfigUtils.hpp"
 
 #include "libslic3r/Format/bbs_3mf.hpp"
@@ -15,6 +16,8 @@
 #include "slic3r/Utils/PrintHost.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <boost/algorithm/string/join.hpp>
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
@@ -101,36 +104,70 @@ int filament_tool_id(const nlohmann::json& filament)
     return it != filament.end() && it->is_number_integer() ? it->get<int>() : -1;
 }
 
+const FlashforgeApi::MaterialSlot* find_slot(const std::vector<FlashforgeApi::MaterialSlot>& slots, int slot_id)
+{
+    const auto it = std::find_if(slots.begin(), slots.end(),
+                                 [&](const FlashforgeApi::MaterialSlot& s) { return s.slot_id == slot_id; });
+    return it == slots.end() ? nullptr : &*it;
+}
+
+// The project filament a mapping's toolId names, or null. Only ever a handful of entries, so a scan.
+const nlohmann::json* find_project_filament(const nlohmann::json& project_filaments, int tool_id)
+{
+    for (const auto& filament : project_filaments)
+        if (filament_tool_id(filament) == tool_id)
+            return &filament;
+    return nullptr;
+}
+
 // Builds the {toolId, slotId, materialName, toolMaterialColor, slotMaterialColor} entries the Flashforge
-// local API expects, matching each project tool to the first free material-station slot of the same
-// normalized material family (same rule as FlashforgePrintHostSendDialog::auto_assign_mappings, minus
-// its colour tie-break between same-family slots).
+// local API expects. The choice of slot is auto_map_tools_to_slots' -- same material family as
+// FlashforgePrintHostSendDialog::auto_assign_mappings, and now its colour tie-break too.
 nlohmann::json auto_material_mappings(const nlohmann::json& project_filaments, const std::vector<FlashforgeApi::MaterialSlot>& slots)
 {
-    nlohmann::json    mappings = nlohmann::json::array();
-    std::vector<bool> slot_used(slots.size(), false);
+    std::vector<ProjectFilamentTool> tools;
+    tools.reserve(project_filaments.size());
+    for (const auto& filament : project_filaments)
+        tools.push_back({filament_tool_id(filament), filament.value("type", std::string()),
+                         filament.value("color", std::string())});
 
-    for (const auto& filament : project_filaments) {
-        const std::string project_material = flashforge_normalize_material(filament.value("type", std::string()));
-        if (project_material.empty())
-            continue;
-
-        for (size_t i = 0; i < slots.size(); ++i) {
-            if (slot_used[i] || !slots[i].has_filament)
-                continue;
-            if (flashforge_normalize_material(slots[i].material_name) != project_material)
-                continue;
-
-            slot_used[i] = true;
-            mappings.push_back({{"toolId", filament_tool_id(filament)},
-                                {"slotId", slots[i].slot_id},
-                                {"materialName", slots[i].material_name},
-                                {"toolMaterialColor", filament.value("color", std::string())},
-                                {"slotMaterialColor", slots[i].material_color}});
-            break;
-        }
+    nlohmann::json mappings = nlohmann::json::array();
+    for (const AutoMaterialMapping& chosen : auto_map_tools_to_slots(tools, slots)) {
+        const FlashforgeApi::MaterialSlot* slot     = find_slot(slots, chosen.slot_id);
+        const nlohmann::json*              filament = find_project_filament(project_filaments, chosen.tool_id);
+        mappings.push_back({{"toolId", chosen.tool_id},
+                            {"slotId", chosen.slot_id},
+                            {"materialName", slot != nullptr ? slot->material_name : std::string()},
+                            {"toolMaterialColor", filament != nullptr ? filament->value("color", std::string()) : std::string()},
+                            {"slotMaterialColor", slot != nullptr ? slot->material_color : std::string()}});
     }
     return mappings;
+}
+
+// The tool-facing echo of a built mapping payload: what went where, and how close the colours are.
+// Reads the colours back out of `project_filaments`/`slots` rather than trusting the payload's own
+// toolMaterialColor, which build_explicit_material_mappings leaves empty for a caller-supplied pair.
+nlohmann::json mapping_report(const nlohmann::json&                           mappings,
+                              const std::vector<FlashforgeApi::MaterialSlot>& slots,
+                              const nlohmann::json&                           project_filaments)
+{
+    nlohmann::json report = nlohmann::json::array();
+    for (const auto& mapping : mappings) {
+        const int                          tool_id  = mapping.value("toolId", -1);
+        const int                          slot_id  = mapping.value("slotId", -1);
+        const FlashforgeApi::MaterialSlot* slot     = find_slot(slots, slot_id);
+        const nlohmann::json*              filament = find_project_filament(project_filaments, tool_id);
+
+        const std::optional<double> delta =
+            (slot != nullptr && filament != nullptr)
+                ? material_color_delta_e(filament->value("color", std::string()), slot->material_color)
+                : std::nullopt;
+
+        report.push_back({{"tool_id", tool_id},
+                          {"slot_id", slot_id},
+                          {"color_delta_e", delta.has_value() ? nlohmann::json(*delta) : nlohmann::json(nullptr)}});
+    }
+    return report;
 }
 
 // Builds the same payload shape from caller-supplied {tool_id, slot_id} pairs, filling in the slot's
@@ -260,6 +297,64 @@ nlohmann::json material_slots_json(const std::vector<FlashforgeApi::MaterialSlot
     return slots_json;
 }
 
+std::optional<double> material_color_delta_e(const std::string& a, const std::string& b)
+{
+    if (!is_hex_color(a, /*allow_alpha=*/true) || !is_hex_color(b, /*allow_alpha=*/true))
+        return std::nullopt;
+
+    const double delta = color_delta_e_hex(a, b);
+    if (!std::isfinite(delta) || delta >= std::numeric_limits<double>::max())
+        return std::nullopt; // color_delta_e_hex's "incomparable" sentinel; is_hex_color should have caught it
+    return delta;
+}
+
+std::vector<AutoMaterialMapping> auto_map_tools_to_slots(const std::vector<ProjectFilamentTool>&         tools,
+                                                        const std::vector<FlashforgeApi::MaterialSlot>& slots)
+{
+    std::vector<AutoMaterialMapping> chosen;
+    std::vector<bool>                slot_used(slots.size(), false);
+
+    for (const ProjectFilamentTool& tool : tools) {
+        const std::string family = flashforge_normalize_material(tool.material);
+        if (family.empty())
+            continue;
+
+        size_t                best_index = slots.size();
+        std::optional<double> best_delta;
+
+        for (size_t i = 0; i < slots.size(); ++i) {
+            if (slot_used[i] || !slots[i].has_filament)
+                continue;
+            if (flashforge_normalize_material(slots[i].material_name) != family)
+                continue;
+
+            const std::optional<double> delta = material_color_delta_e(tool.color, slots[i].material_color);
+
+            // First candidate wins by default -- that alone is the old first-free rule, which is
+            // still what happens when no candidate's colour can be scored.
+            if (best_index == slots.size()) {
+                best_index = i;
+                best_delta = delta;
+                continue;
+            }
+            if (!delta.has_value())
+                continue; // an unscorable candidate never displaces one already chosen
+            if (!best_delta.has_value() || *delta < *best_delta - 1e-9 ||
+                (std::abs(*delta - *best_delta) <= 1e-9 && slots[i].slot_id < slots[best_index].slot_id)) {
+                best_index = i;
+                best_delta = delta;
+            }
+        }
+
+        if (best_index == slots.size())
+            continue;
+
+        slot_used[best_index] = true;
+        chosen.push_back({tool.tool_id, slots[best_index].slot_id, best_delta});
+    }
+    return chosen;
+}
+
 bool validate_material_mappings(const nlohmann::json&                           mappings,
                                 const std::vector<FlashforgeApi::MaterialSlot>& slots,
                                 const std::vector<int>&                         project_tool_ids,
@@ -308,9 +403,12 @@ bool resolve_material_mappings(const nlohmann::json&                           r
                                const std::vector<FlashforgeApi::MaterialSlot>& slots,
                                const nlohmann::json&                           project_filaments,
                                nlohmann::json&                                 mappings_out,
-                               nlohmann::json&                                 error_out)
+                               nlohmann::json&                                 error_out,
+                               nlohmann::json*                                 report_out)
 {
     mappings_out = nlohmann::json::array();
+    if (report_out != nullptr)
+        *report_out = nlohmann::json::array();
 
     // Only the tools the sliced plate actually uses; their ids need not be contiguous (an object
     // printed with filament 2 alone yields the single tool id 1).
@@ -346,6 +444,9 @@ bool resolve_material_mappings(const nlohmann::json&                           r
         }
         return false;
     }
+
+    if (report_out != nullptr)
+        *report_out = mapping_report(mappings_out, slots, project_filaments);
     return true;
 }
 
