@@ -56,11 +56,20 @@ void OrcaMCPServer::register_tool(const ToolDefinition& tool)
 
 namespace {
 
-// The HTTP server outlives the GUI at both ends of the app's life: it is started from post_init()
-// while the rest of that function is still running, and it keeps answering while the frame is being
-// torn down. A tools/call in either window used to reach handlers that dereference
-// wxGetApp().plater() / preset_bundle unconditionally -- a json type_error at best, a crash of the
-// whole process at worst. Every tool handler needs those two, so the check lives in one place.
+// Every tool handler dereferences wxGetApp().plater() / preset_bundle unconditionally -- a json
+// type_error at best, a crash of the whole process at worst if either is missing -- so the check
+// that they exist lives here, in one place.
+//
+// The window that actually matters is recreate_GUI() (a language or theme change): it destroys the
+// main frame and builds a new one, and MainFrame::shutdown() -> GUI_App::shutdown() deliberately
+// returns early without stopping the HTTP server, because the app is not exiting. Meanwhile
+// recreate_GUI's ProgressDialog pumps the event loop, so work queued by run_on_main_thread() can
+// run against a half-rebuilt frame and a preset bundle in the middle of load_current_presets().
+// At the app's two ends there is no such window: the server is only started at the end of
+// post_init(), and GUI_App::shutdown() stops it before the frame is torn down. The startup checks
+// below are kept anyway -- they are two pointer reads, and they keep this honest if the server is
+// ever started earlier (WebUserLoginDialog already starts it on another port).
+//
 // tools/list, initialize and ping are deliberately *not* gated: an MCP client sends them while
 // connecting, and answering them early is harmless (the tool table is static).
 bool mcp_gui_ready(std::string& reason)
@@ -72,6 +81,10 @@ bool mcp_gui_ready(std::string& reason)
     GUI_App& app = wxGetApp();
     if (!app.post_initialized()) {
         reason = "the GUI has not finished starting up";
+        return false;
+    }
+    if (app.is_recreating_gui()) {
+        reason = "the GUI is being rebuilt (language or theme change)";
         return false;
     }
     if (app.plater() == nullptr) {
