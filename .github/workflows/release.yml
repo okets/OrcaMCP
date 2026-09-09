@@ -84,26 +84,32 @@ jobs:
           fi
           # Remove 'v' prefix for artifact matching
           VERSION="${TAG#v}"
+          # The artifact prefix comes from the same version.inc line build_orca.yml reads, so the
+          # names here cannot drift from the names uploaded there. They did: build_orca.yml was
+          # resynced from upstream and went back to uploading "OrcaSlicer_*", while these steps
+          # still asked for "OrcaMCP_*", which fails the release an hour into a tag build.
+          APP_NAME=$(grep 'set(SLIC3R_APP_NAME' version.inc | cut -d '"' -f2)
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Tag: $TAG, Version: $VERSION"
+          echo "app_name=$APP_NAME" >> $GITHUB_OUTPUT
+          echo "Tag: $TAG, Version: $VERSION, App: $APP_NAME"
 
       - name: Download macOS artifact
         uses: actions/download-artifact@v4
         with:
-          name: OrcaMCP_Mac_universal_V${{ steps.version.outputs.version }}
+          name: ${{ steps.version.outputs.app_name }}_Mac_universal_V${{ steps.version.outputs.version }}
           path: artifacts/macos
 
       - name: Download Linux artifact
         uses: actions/download-artifact@v4
         with:
-          name: OrcaMCP_Linux_ubuntu_2404_V${{ steps.version.outputs.version }}
+          name: ${{ steps.version.outputs.app_name }}_Linux_ubuntu_2404_V${{ steps.version.outputs.version }}
           path: artifacts/linux
 
       - name: Download Windows artifact
         uses: actions/download-artifact@v4
         with:
-          name: OrcaMCP_Windows_V${{ steps.version.outputs.version }}
+          name: ${{ steps.version.outputs.app_name }}_Windows_V${{ steps.version.outputs.version }}
           path: artifacts/windows
 
       - name: List artifacts
