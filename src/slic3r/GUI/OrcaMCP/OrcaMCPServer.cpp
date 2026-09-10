@@ -1703,22 +1703,47 @@ void OrcaMCPServer::register_builtin_tools()
                     std::vector<std::string> duplicate_order;
                     std::map<std::string, int> occurrences;
 
+                    std::vector<std::string> unknown_keys;
+                    nlohmann::json rejected_values = nlohmann::json::array();
+
                     for (const auto& item : settings) {
                         std::string key = item["key"];
                         if (++occurrences[key] == 2)
                             duplicate_order.push_back(key);
-                        std::string value_str = item["value"].is_string() ?
-                            item["value"].get<std::string>() : item["value"].dump();
+
+                        const ConfigOptionDef* def = print_config_def.get(key);
+                        if (def == nullptr) {
+                            invalid_keys.push_back(key);
+                            unknown_keys.push_back(key);
+                            continue;
+                        }
+                        // Same shaping apply_config uses (config_value_to_string): a list-typed key
+                        // takes a JSON array, and a shape that cannot work is reported rather than
+                        // stored as the literal text of the array.
+                        const ConfigValueText shaped = config_value_to_string(item["value"], def->type);
+                        if (!shaped.ok) {
+                            invalid_keys.push_back(key);
+                            rejected_values.push_back({{"key", key},
+                                                       {"reason", shaped.reason},
+                                                       {"expected", config_value_expected_shape(def->type)}});
+                            continue;
+                        }
 
                         try {
-                            obj->config.set_deserialize(key, value_str, context);
+                            obj->config.set_deserialize(key, shaped.text, context);
                             if (obj->config.has(key)) {
                                 applied_keys.push_back(key);
                             } else {
                                 invalid_keys.push_back(key);
+                                rejected_values.push_back({{"key", key},
+                                                           {"reason", "the override was not stored"},
+                                                           {"expected", config_value_expected_shape(def->type)}});
                             }
-                        } catch (...) {
+                        } catch (const std::exception& e) {
                             invalid_keys.push_back(key);
+                            rejected_values.push_back({{"key", key},
+                                                       {"reason", std::string("could not be read as a value: ") + e.what()},
+                                                       {"expected", config_value_expected_shape(def->type)}});
                         }
                     }
 
@@ -1733,6 +1758,10 @@ void OrcaMCPServer::register_builtin_tools()
                     if (!invalid_keys.empty()) {
                         obj_result["invalid_keys"] = invalid_keys;
                     }
+                    // Same split apply_config reports: a key that does not exist, versus a value
+                    // this key would not take. invalid_keys stays the union.
+                    obj_result["unknown_keys"] = unknown_keys;
+                    obj_result["rejected_values"] = rejected_values;
                     nlohmann::json duplicate_keys = nlohmann::json::array();
                     for (const std::string& key : duplicate_order)
                         duplicate_keys.push_back({{"key", key}, {"occurrences", occurrences[key]}});

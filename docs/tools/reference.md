@@ -788,6 +788,11 @@ Set per-object configuration overrides.
 }}
 ```
 
+**Lists and failures:** identical to `apply_config` — a list-typed key takes a JSON array or the
+joined string, `unknown_keys` holds keys that do not exist, and `rejected_values` holds
+`{"key", "reason", "expected"}` for values this key would not take. `invalid_keys` remains the union
+of both, per object.
+
 ---
 
 ### reset_object_config

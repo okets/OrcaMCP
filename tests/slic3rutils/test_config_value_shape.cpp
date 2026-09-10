@@ -114,3 +114,16 @@ TEST_CASE("the rejection message tells a caller both halves", "[orcamcp][config]
     CHECK(shaped.reason == "an array was given for a key that is not a list");
     CHECK(config_value_expected_shape(Slic3r::coFloat) == "a number");
 }
+
+TEST_CASE("per-object list keys shape the same way", "[orcamcp][config]")
+{
+    // set_object_config takes the same keys apply_config does; nothing about being a per-object
+    // override changes what deserialize wants. These are the two per-object list keys an agent
+    // actually reaches for.
+    const auto extruders = config_value_to_string(nlohmann::json({1, 3}), Slic3r::coInts);
+    CHECK(extruders.ok);
+    CHECK(extruders.text == "1,3");
+
+    const auto not_a_list = config_value_to_string(nlohmann::json({0.2, 0.3}), Slic3r::coFloat);
+    CHECK_FALSE(not_a_list.ok);
+}
