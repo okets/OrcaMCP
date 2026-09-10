@@ -187,3 +187,58 @@ Two consequences:
 2. `get_color_palette` / `suggest_color_mix` responses would be more honest if an
    out-of-gamut result said so, rather than returning a confident recipe with a
    ΔE of 54. Consider a `"gamut": "outside"` marker above some threshold.
+
+---
+
+## T5 — there is no MCP tool that can paint a model. This is the missing half of the flagship feature.
+
+**Severity: highest of anything found so far.** Not a bug — a capability gap, and
+it undercuts the feature this project leads with.
+
+**What was asked:** paint the scraper in 14 evenly spaced sections along its
+length, from the scraping edge to the hanging hole.
+
+**Why it could not be done:**
+
+| Tool | What it does | Why it does not help |
+|---|---|---|
+| `set_object_filament` | one filament per object, or per *part/volume* | the scraper is a single volume; there is nothing to address |
+| `cut_object` | cuts at a **Z height** only | the length runs along Y (122 mm), lying flat. Z-cuts band the 6 mm thickness |
+| `set_object_layer_range` | settings per **Z range** | same axis problem: bands through the 6 mm thickness, ~30 layers total |
+| `set_object_config` | per-object override | whole object only |
+
+Verified against the source, not from memory:
+
+```
+grep -rln "mmu_segmentation\|FacetsAnnotation\|EnforcerBlockerType" src/slic3r/GUI/OrcaMCP/
+-> no matches
+```
+
+The MCP layer never touches paint data at all. The GUI's multi-material paint
+gizmo has no MCP equivalent.
+
+**Why this matters more than the other items.** The stated headline feature of this
+project is agentic colour tooling — suggest a mix for a named colour, generate a
+palette *to choose from when painting*. `suggest_color_mix` and `get_color_palette`
+both work well (proven this session: 16 targets resolved, 14 mixed slots created,
+all rendering correctly). But an agent can propose a palette and then cannot apply
+it. The user has to pick up the mouse for the actual painting, which is exactly the
+step the feature exists to automate.
+
+**Fix direction:** a `paint_object` tool writing `mmu_segmentation` facet
+annotations on the `ModelVolume`, the same data the paint gizmo writes. Worth
+supporting at least:
+
+- **bands along an axis** — `{axis: "x"|"y"|"z", sections: [{filament, from, to}]}`
+  or a simple even split across N filaments. This alone covers the request above.
+- **a whole volume** to one filament (already possible, but belongs in the same
+  tool for symmetry).
+- reading current paint back, so an agent can verify what it did.
+
+Later, and harder: paint by geometric selection (a sphere/box region), or by
+surface feature. Bands are the 80% case and are unambiguous to specify.
+
+**Do not** ship the rotation workaround as if it were the feature: standing the
+part on end so its length becomes Z makes layer ranges work, but turns a flat 6 mm
+part into a 122 mm tower on a 40x6 mm footprint. It slices, it demonstrates the
+banding, and it is not a print anyone would run.
