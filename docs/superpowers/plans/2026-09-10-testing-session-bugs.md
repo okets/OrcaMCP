@@ -306,3 +306,76 @@ That makes the build order fairly clear:
 
 Assembly view and the manual layer-height painting are view/interaction features
 with little agent value; explicitly out of scope unless asked for.
+
+---
+
+## T7 — MCP mutations are not undoable, yet `undo`/`redo` are shipped tools
+
+**Severity: high.** Found 2026-09-10 while writing the batch-2 spec, after Plan 4's
+author flagged that the spec's own advice was wrong.
+
+The entire MCP layer contains exactly **two** `take_snapshot` calls:
+
+```
+src/slic3r/GUI/OrcaMCP/OrcaMCPServer.cpp:4080   (set_object_printable)
+src/slic3r/GUI/OrcaMCP/OrcaMCPFilamentUtils.cpp:151  ("Change Filaments")
+```
+
+`move_object` translates the `ModelObject` directly and calls `plater->update()`.
+No snapshot. The same is true of rotate, scale, mirror, flatten, cut, clone,
+delete, arrange, auto_orient, the layer-range tools and the per-object config
+tools.
+
+`undo` and `redo` are registered MCP tools. So an agent that makes a mistake cannot
+take it back, and calling `undo` does not fail — it silently reverts whatever the
+*user* last did in the GUI instead, which is worse than doing nothing.
+
+**Fix:** `plater->take_snapshot(<description>)` before mutating, in every tool that
+mutates. `set_object_printable` is the correct existing pattern. Sweep the whole
+tool surface, not just the transforms.
+
+**Note:** the batch-2 spec originally told plan authors to copy `move_object` for
+this. Corrected in place; every plan now points at `set_object_printable`.
+
+---
+
+## T8 — `apply_config` silently corrupts list values (widens T1)
+
+Found by Plan 1's author while grounding T1 in the code. **T1 is worse than the
+session showed.** The rejection we saw was the *safe* case.
+
+- `value.dump()` (`OrcaMCPPresetConfigUtils.cpp:264`) turns a JSON array into the
+  literal `["#00FFFF",…]`. `unescape_strings_cstyle` (`Config.cpp:149`) finds no
+  separator, stores **the whole literal as one string**, and returns `true` — no
+  throw. For `filament_colour` the colour check added by sweep item I catches it and
+  restores the old value. That is why we saw a clean rejection.
+- **Non-colour `coStrings` keys have no such check.** `filament_notes` and
+  `filament_mixed_components` store the array literal as a single garbage string and
+  report `status: "success"`.
+- **Worse, `ConfigOptionFloats::deserialize` (`Config.hpp:911`) returns `true`
+  unconditionally** (line 935) after storing `0` for the element carrying the `[`.
+  So `flush_volumes_vector` and `flush_volumes_matrix` accept an array, report
+  success, and store **wrong numbers**.
+
+So sweep item I did not cause T1 — it *exposed* it, for one key, by accident.
+
+**Also corrected:** the batch-2 spec said to join array elements with `;`. That is
+right only for `coStrings`. `coInts` (`Config.hpp:1089`), `coFloats` (`:911`) and
+`coBools` (`:1959`) split on `,`. The separator must come from the option type.
+
+---
+
+## T2 resolved: the stale schema is the bridge, not the client
+
+`scripts/tools_schema.py` is a **checked-in, hand-regenerated** file. Its
+`get_presets` entry still reads `'properties': {}`. `orcamcp-bridge.py:354` answers
+the first `tools/list` from that file when a 0.1 s probe of the app fails — the
+normal case at startup — and `initialize` advertises `"tools": {}` with no
+`listChanged`, so the client never asks again.
+
+And **T3's root cause is confirmed exactly:** `check_orcaslicer_connection` probes
+with a 0.3 s GET, collapses every failure into "not connected" via a bare
+`except Exception`, and caches that `False` for 3 s. It cannot answer in 0.3 s
+under load, because `HttpServer` runs a single `io_service.run()` thread
+(`HttpServer.cpp:210`) and every handler blocks it inside `run_on_main_thread`'s
+`future.get()`. A burst serialises by design.
