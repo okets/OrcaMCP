@@ -83,3 +83,45 @@ TEST_CASE("make_even_bands handles the scraper's 14 bands along Y", "[orcamcp][p
         CHECK(bands[i].from == bands[i - 1].to);
     CHECK_THAT(bands[0].to - bands[0].from, WithinAbs(122.0 / 14.0, 1e-9));
 }
+
+TEST_CASE("band_index_for_value puts a shared boundary in the upper band, once", "[orcamcp][paint]")
+{
+    const std::vector<PaintBand> bands = make_even_bands({5, 6, 7}, 0.0, 12.0);
+
+    CHECK(band_index_for_value(bands, 0.0) == 0);
+    CHECK(band_index_for_value(bands, 3.999) == 0);
+    // Exactly on the boundary: the upper band, never both, never neither.
+    CHECK(band_index_for_value(bands, 4.0) == 1);
+    CHECK(band_index_for_value(bands, 8.0) == 2);
+    // The far end of the range is inside the last band, or the whole far face goes unpainted.
+    CHECK(band_index_for_value(bands, 12.0) == 2);
+}
+
+TEST_CASE("band_index_for_value reports a value outside every band", "[orcamcp][paint]")
+{
+    const std::vector<PaintBand> bands = make_even_bands({5, 6}, 0.0, 10.0);
+
+    CHECK(band_index_for_value(bands, -0.001) == -1);
+    CHECK(band_index_for_value(bands, 10.001) == -1);
+    CHECK(band_index_for_value({}, 1.0) == -1);
+}
+
+TEST_CASE("band_index_for_value honours explicit ranges as the caller wrote them",
+          "[orcamcp][paint]")
+{
+    // Explicit ranges need not tile the object: a caller may paint two stripes and leave the
+    // rest alone. A value in the gap belongs to nothing.
+    const std::vector<PaintBand> gapped = {{5, 0.0, 2.0}, {6, 10.0, 12.0}};
+    CHECK(band_index_for_value(gapped, 1.0) == 0);
+    CHECK(band_index_for_value(gapped, 5.0) == -1);
+    CHECK(band_index_for_value(gapped, 11.0) == 1);
+    // The largest `to` in the set is inclusive even when the bands do not tile.
+    CHECK(band_index_for_value(gapped, 12.0) == 1);
+    // ... but the smaller band's `to` is not, so 2.0 belongs to no band here.
+    CHECK(band_index_for_value(gapped, 2.0) == -1);
+
+    // Overlapping ranges are a caller's choice, not an error: the first match wins.
+    const std::vector<PaintBand> overlapping = {{5, 0.0, 8.0}, {6, 4.0, 12.0}};
+    CHECK(band_index_for_value(overlapping, 5.0) == 0);
+    CHECK(band_index_for_value(overlapping, 9.0) == 1);
+}

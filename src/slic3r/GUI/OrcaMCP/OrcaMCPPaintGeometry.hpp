@@ -38,6 +38,16 @@ struct PaintBand
 // a handful of randomly unpainted triangles.
 // Returns an empty vector when `states` is empty or axis_max <= axis_min. It does not decide what
 // the caller should be told about that -- the tool layer turns an empty result into an error.
+// Every band but the last is half-open [from, to); the last is closed [from, to] so axis_max
+// itself belongs to a band instead of falling off the end of the range.
 std::vector<PaintBand> make_even_bands(const std::vector<int>& states, double axis_min, double axis_max);
+
+// Index of the band `value` belongs to, or -1 when it belongs to none.
+// Bands are half-open [from, to), so a value sitting exactly on the boundary between two adjacent
+// bands lands in the upper one and never in both. The one exception is the largest `to` in the
+// set: a value there (within 1e-9) lands in that band, because otherwise every facet on the far
+// face of the object would go unpainted. Bands need not tile and need not be sorted; overlapping
+// bands are a caller's choice rather than an error, and the first match wins.
+int band_index_for_value(const std::vector<PaintBand>& bands, double value);
 
 }}} // namespace Slic3r::GUI::OrcaMCP

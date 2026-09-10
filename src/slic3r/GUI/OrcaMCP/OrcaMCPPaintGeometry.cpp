@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
@@ -47,6 +48,26 @@ std::vector<PaintBand> make_even_bands(const std::vector<int>& states, double ax
         bands.push_back(band);
     }
     return bands;
+}
+
+int band_index_for_value(const std::vector<PaintBand>& bands, double value)
+{
+    for (std::size_t i = 0; i < bands.size(); ++i)
+        if (value >= bands[i].from && value < bands[i].to)
+            return int(i);
+
+    // Nothing matched. The far end of the painted range is the one closed boundary in the set,
+    // so a facet centroid sitting exactly on it belongs to the band that ends there.
+    int    best_idx = -1;
+    double best_to  = 0.0;
+    for (std::size_t i = 0; i < bands.size(); ++i)
+        if (best_idx < 0 || bands[i].to > best_to) {
+            best_idx = int(i);
+            best_to  = bands[i].to;
+        }
+    if (best_idx >= 0 && std::abs(value - best_to) <= 1e-9)
+        return best_idx;
+    return -1;
 }
 
 }}} // namespace Slic3r::GUI::OrcaMCP
