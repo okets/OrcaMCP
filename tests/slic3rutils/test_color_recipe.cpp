@@ -108,3 +108,13 @@ TEST_CASE("an empty palette cannot reach anything", "[orcamcp][colorrecipe]")
 {
     CHECK(unreachable_hue_sectors({}).size() == 12);
 }
+
+TEST_CASE("hues past 360 or below 0 wrap onto the same circle", "[orcamcp][colorrecipe]")
+{
+    // 370 is really 10 (sector 0, red); -10 is really 350 (sector 330).
+    const auto unreachable = unreachable_hue_sectors({370.0, -10.0});
+
+    CHECK(std::find(unreachable.begin(), unreachable.end(), 0) == unreachable.end());
+    CHECK(std::find(unreachable.begin(), unreachable.end(), 330) == unreachable.end());
+    CHECK(unreachable.size() == 10);
+}
