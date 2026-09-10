@@ -132,6 +132,16 @@ model-specific tooling:
 |---------|-------|
 | [FlashForge Creator 5 / 5 Pro](docs/printers/flashforge-creator-5.md) | Live console, 4-slot material station, colour-aware material mapping |
 
+### FlashForge Creator 5 owners
+
+These two toolchangers get first-class, maintained support: a device console built
+around what the printer actually exposes, four-tool workflows, colour mixing, and
+material mapping that reads the material station — all on current OrcaSlicer rather
+than a vendor fork that trails it, and all over the printer's own local API with no
+cloud account and no closed network plugin.
+
+See [FlashForge Creator 5 and Creator 5 Pro](docs/printers/flashforge-creator-5.md).
+
 
 ## Documentation
 

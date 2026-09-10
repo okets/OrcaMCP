@@ -1,11 +1,53 @@
 # FlashForge Creator 5 and Creator 5 Pro
 
-Everything specific to the Creator 5 family lives here. The rest of the
-documentation stays printer-agnostic.
+**First-class support, not a compatibility layer.**
 
-Both machines are four-head toolchangers with a four-slot material station.
-OrcaMCP talks to them over the printer's own local HTTP API on port 8898 — no
-cloud account, and no FlashPrint/Orca-Flashforge network plugin.
+The Creator 5 and Creator 5 Pro are excellent four-head toolchangers, and they
+deserve a slicer that keeps up with them. This is a deliberate, maintained
+integration built for these two machines specifically — a live device console
+designed around what the printer actually exposes, four-tool workflows, colour
+mixing, and material mapping that understands the material station.
+
+It is built on current OrcaSlicer. Vendor slicers are forks, and forks fall
+behind: features that land upstream reach you whenever the fork next merges. Here,
+upstream *is* the base. Tree supports, adaptive layer heights, the calibration
+suite, per-object settings, the modern multi-material work — you get them as
+OrcaSlicer ships them, on a Creator 5.
+
+**What you get beyond a stock slicer**
+
+- A device console written for this printer, not a generic panel with the wrong
+  logos on it. Four nozzles, four material slots in their real colours, live job
+  progress, the camera inline.
+- No cloud account, and no closed network plugin. It speaks the printer's own
+  local HTTP API on port 8898, on your network, and nothing leaves it.
+- Colour mixing with an assistant that can do the arithmetic: name a colour and it
+  works out which loaded filaments to combine, or generates a palette to choose
+  from.
+- A project that can match itself to the machine — read what is actually loaded in
+  the four slots and set the presets and colours to match, before you slice
+  something in the wrong material.
+- Every one of these reachable by an AI assistant through the MCP server, which is
+  what the rest of this project is about.
+
+Honesty matters more than a feature list, so this page also says plainly what the
+printer's firmware will *not* let any slicer do — see
+[What you cannot control, and why](#what-you-cannot-control-and-why). Nothing here
+ships a button that does nothing.
+
+Bug reports from Creator 5 owners are the fastest way to make this better. If
+something is wrong or missing, open an issue.
+
+---
+
+## The machines
+
+Both are four-head toolchangers with a four-slot material station. OrcaMCP talks to
+them over the printer's own local HTTP API on port 8898 — no cloud account, and no
+FlashPrint or Orca-Flashforge network plugin.
+
+Everything specific to the Creator 5 family lives on this page. The rest of the
+documentation stays printer-agnostic.
 
 ---
 
