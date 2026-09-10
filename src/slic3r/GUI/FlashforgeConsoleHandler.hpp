@@ -40,6 +40,12 @@ class PrinterWebViewHandler;
 /// file:// URL of the bundled console page.
 wxString flashforge_console_url();
 
+/// The printer's own `detail` object cut down to the fields the console page and its commands read.
+/// Pure. An allowlist rather than a list of secrets to strip: `detail` is the vendor's object, so
+/// anything they add to a future firmware - a registration code, a cloud token, the owner's name -
+/// would otherwise reach the page by default. Keys the page no longer reads simply stop being sent.
+nlohmann::json console_raw_detail(const nlohmann::json& detail);
+
 /// Maps one `command` from the page onto the concrete printer call the worker thread makes. Pure:
 /// no GUI, no network, no printer, so the whole control surface is testable without one.
 ///

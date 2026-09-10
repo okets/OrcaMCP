@@ -303,6 +303,11 @@ footer.foot .sep{width:1px;height:12px;background:var(--edge)}
 .viewport img.cam{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;background:#0a0d12}
 .camoff{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:18px;
   color:#8A94A4;font-size:12px;line-height:1.6}
+/* A reading nobody is refreshing any more - the page is parked, so what it holds is the last thing
+   the printer said before the user looked away. Shown, because it is still the truth about a moment;
+   dimmed the way a control that cannot act is dimmed, so it is never mistaken for a live one. The
+   footer says when it was read. */
+body[data-stale="1"] [data-live]{opacity:.5}
 /* A control the machine cannot act on right now keeps its place and says why on hover. */
 button:disabled,.tset:disabled{opacity:.45;cursor:not-allowed}
 button:disabled:hover,.tset:disabled:hover{border-color:var(--edge);color:inherit;background:var(--ground-2)}
@@ -494,7 +499,9 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
         }
       pending = {};
       disarmStop();
-      repaint();
+      /* A full pass rather than repaint(): what the page is holding has just become a reading
+         nobody will refresh, and saying so is the footer's job as much as the controls'. */
+      if (lastState) render(lastState); else repaint();
       return;
     }
     if (msg.method === "resumed"){
@@ -621,6 +628,21 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     min = Math.max(0, Math.round(num(min)));
     var h = Math.floor(min/60);
     return h ? (h.toLocaleString() + " h " + pad2(min%60) + " m") : (min + " m");
+  }
+  /* How long ago, in the units the rest of the page uses. */
+  function ago(ms){
+    var sec = Math.max(0, Math.round(num(ms) / 1000));
+    return sec < 60 ? (sec + " s ago") : (dur(sec) + " ago");
+  }
+  /* How old what the page is showing is, in ms, or -1 while it is live. Two ways it goes stale, and
+     both mean the same thing to a reader: the host answered a request from a cache it has stopped
+     refreshing (it says so, and how old), or this page has been parked since the last push it did
+     get. Either way nothing will update these numbers, and a temperature from before the user
+     switched printers must not be rendered as though it were current. */
+  function staleMs(s){
+    if (s && s.stale) return num(s.stale_age_ms);
+    if (suspended && lastStatusAt) return Date.now() - lastStatusAt;
+    return -1;
   }
   function eta(remaining){
     if (!(num(remaining) > 0)) return "—";
@@ -1622,13 +1644,19 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
 
   function renderFoot(s){
     var poll = num(s.poll_ms, 2000) / 1000;
-    var where = s.sample ? "Sample data — no printer connected"
+    /* Parked: the host answered from a cache it has stopped refreshing, so the cadence line would
+       be describing polling that is not happening and "Connected" a connection nobody is holding. */
+    var stale   = staleMs(s);
+    var cadence = stale >= 0 ? "Not polling — this printer is not the selected one"
+                             : "Polling the local API every " + poll + " s";
+    var where = stale >= 0 ? "Last read " + ago(stale)
+              : s.sample ? "Sample data — no printer connected"
               : s.connected ? "Connected to " + (s.host || "the printer")
               : s.connecting ? "Connecting to " + (s.host || "the printer") + "…"
               : "Reconnecting…";
     setHTML(el("foot"),
       '<span>OrcaMCP · Flashforge console</span><span class="sep"></span>'+
-      '<span class="mono">Polling the local API every '+poll+' s</span><span class="sep"></span>'+
+      '<span class="mono">'+esc(cadence)+'</span><span class="sep"></span>'+
       '<span>'+esc(where)+'</span><span class="sep"></span>'+
       '<span>Controls settle on what the printer confirms</span>');
   }
@@ -1673,6 +1701,9 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
                                    (state === "heating" && !!p.print_file));
 
     applyTheme(s);
+    /* Set before anything paints: the host marks a snapshot stale when it answered from a cache it
+       has stopped refreshing, and every live reading on the page is dimmed for as long as it is. */
+    setFlag(document.body, "data-stale", staleMs(s) >= 0);
     renderIdentity(s, p);
     renderBanner(s);
     renderMachine(p, raw, pro);

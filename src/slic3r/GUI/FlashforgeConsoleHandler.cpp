@@ -46,10 +46,6 @@ constexpr std::chrono::milliseconds POLL_IDLE{5000};
 // matlStationInfo.stateAction: 0 free, 1 supply wire (loading), 2 withdraw wire (unloading).
 constexpr int ACTION_LOADING = 1, ACTION_UNLOADING = 2;
 
-/// Vendor identifiers that are not the page's business. The check code and serial never leave the
-/// preset, and the raw `detail` object is passed through wholesale, so it gets filtered here.
-const char* const REDACTED_RAW_KEYS[] = {"flashRegisterCode", "polarRegisterCode", "macAddr"};
-
 /// As tolerant as FlashforgeApi's own try_parse_json_int: this firmware is loose about types, and a
 /// stateAction that arrives as "1" rather than 1 must not silently read as 0 - that would take the
 /// load progress strip off the page altogether.
@@ -94,9 +90,7 @@ std::chrono::milliseconds cadence_for(const FlashforgeApi::PrinterStatus& status
 json printer_json(const FlashforgeApi::PrinterStatus& status)
 {
     json printer = OrcaMCP::status_to_json(status);
-    if (printer["raw"].is_object())
-        for (const char* key : REDACTED_RAW_KEYS)
-            printer["raw"].erase(key);
+    printer["raw"] = console_raw_detail(printer["raw"]);
     return printer;
 }
 
@@ -218,6 +212,9 @@ struct PollSession
 
     mutable std::mutex status_mutex;
     json               last_status;
+    /// When set_status last ran, so a snapshot handed out after this session has ended can say how
+    /// old it is. Default-constructed means nothing has been read from the printer yet.
+    std::chrono::steady_clock::time_point last_status_at{};
 
     /// Written before the thread starts, read-only afterwards.
     json identity = json::object();
@@ -262,13 +259,22 @@ struct PollSession
     void set_status(json snapshot)
     {
         std::lock_guard<std::mutex> lock(status_mutex);
-        last_status = std::move(snapshot);
+        last_status    = std::move(snapshot);
+        last_status_at = std::chrono::steady_clock::now();
     }
 
     json status() const
     {
         std::lock_guard<std::mutex> lock(status_mutex);
         return last_status;
+    }
+
+    /// When status() was read from the printer. A default-constructed value means never - the
+    /// session's opening "connecting" snapshot is written straight to last_status, not read.
+    std::chrono::steady_clock::time_point status_time() const
+    {
+        std::lock_guard<std::mutex> lock(status_mutex);
+        return last_status_at;
     }
 
     /// The snapshot shape for "no answer": the page renders the reason in its own banner, never as
@@ -318,7 +324,7 @@ public:
             // own watchdog asking again must not be able to revive a printer the user deselected.
             if (!m_suspended)
                 start_polling();
-            answer(id, last_status());
+            answer(id, status_answer());
             return;
         }
 
@@ -477,7 +483,7 @@ private:
 
         // The suggestion is computed from a snapshot, so the page needs a fresh one to see it go.
         if (ok)
-            answer(0, last_status());
+            answer(0, status_answer());
     }
 
     void run_in_page(const json& message)
@@ -507,6 +513,7 @@ private:
             m_session.reset();
             m_no_session_status = json{{"connected", false}, {"error", error},
                                        {"poll_ms", static_cast<int>(POLL_IDLE.count())}};
+            m_no_session_at = {}; // not a reading, so it has no age to report
             return;
         }
 
@@ -529,6 +536,7 @@ private:
             return;
         m_session->ask_to_stop();
         m_no_session_status = m_session->status();
+        m_no_session_at     = m_session->status_time();
         m_session.reset();
     }
 
@@ -539,6 +547,28 @@ private:
         return m_no_session_status.is_null() ? json{{"connected", false}, {"connecting", true},
                                                     {"poll_ms", static_cast<int>(POLL_IDLE.count())}}
                                              : m_no_session_status;
+    }
+
+    /// What a `status` request is answered with. While a session is running the cache is at most one
+    /// cadence old and the next push is already on its way, so it goes as it is.
+    ///
+    /// A parked page is the different case: its session has ended, nothing will ever refresh what it
+    /// is holding, and a temperature read before the user switched printers - rendered as though it
+    /// were current - is the page telling a lie with the printer's own numbers. So the reading is
+    /// stamped with its age, and the page dims it and says when it was last read.
+    json status_answer() const
+    {
+        json snapshot = last_status();
+        if (m_session && m_session->running.load())
+            return snapshot;
+        if (!snapshot.is_object() || !snapshot.value("connected", false) ||
+            m_no_session_at.time_since_epoch().count() == 0)
+            return snapshot; // nothing was ever read, or it already says it is not connected
+        const auto age           = std::chrono::steady_clock::now() - m_no_session_at;
+        snapshot["stale"]        = true;
+        snapshot["stale_age_ms"] = static_cast<long long>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(age).count());
+        return snapshot;
     }
 
     // ── The poll loop (its own thread) ───────────────────────────────────────────────────────
@@ -668,8 +698,11 @@ private:
     bool                         m_suspended = false;
     std::shared_ptr<PollSession> m_session;
     /// What last_status() answers with while there is no session: the reason the last one stopped,
-    /// or why one could not start.
-    json m_no_session_status;
+    /// or why one could not start. `m_no_session_at` is when that snapshot was read from the
+    /// printer, which is what tells a parked page how old what it is showing is; default-
+    /// constructed when the snapshot is not a reading at all.
+    json                                  m_no_session_status;
+    std::chrono::steady_clock::time_point m_no_session_at{};
 
     // Cleared before anything else in the destructor, so a CallAfter queued by a detached poll
     // thread cannot reach a handler that no longer exists.
@@ -677,6 +710,42 @@ private:
 };
 
 } // namespace
+
+json console_raw_detail(const json& detail)
+{
+    // Every field the console reads out of `raw`, and nothing else. A deny list was the wrong shape
+    // here: it has to be complete to be correct, and it is written against one firmware version of
+    // one machine, so the next field the vendor adds to `detail` - another registration code, a
+    // cloud token, an owner's name - reaches the page by default. This way a new field reaches the
+    // page only when someone adds it here, next to the code that reads it.
+    //
+    // Grouped by what consumes it, so a field that stops being read stops being sent.
+    static const char* const PAGE_KEYS[] = {
+        // Machine card
+        "nozzleCnt", "nozzleModel", "measure", "location", "camera",
+        // Environment panel
+        "coolingFanSpeed", "internalFanStatus", "externalFanStatus", "tvoc", "remainingDiskSpace",
+        // Machine card and the idle job card
+        "cumulativePrintTime", "cumulativeFilament",
+        // Job card
+        "printLayer", "targetPrintLayer",
+        // Read by the page *and* carried by build_console_operation: printerCtl_cmd and
+        // circulateCtl_cmd each send every field they own, so a control that changes one of these
+        // reads the others back out of this snapshot. Dropping one would make a Z nudge reset it.
+        "printSpeedAdjust", "zAxisCompensation", "chamberFanSpeed", "coolingLeftFanSpeed",
+        // Toolhead cards: which slot is feeding, and how far along a filament move is
+        "matlStationInfo"};
+
+    json out = json::object();
+    if (!detail.is_object())
+        return out;
+    for (const char* key : PAGE_KEYS) {
+        const auto it = detail.find(key);
+        if (it != detail.end())
+            out[key] = *it;
+    }
+    return out;
+}
 
 bool build_console_operation(const json& params, const json& snapshot, json& operation, std::string& error)
 {

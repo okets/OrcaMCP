@@ -184,3 +184,93 @@ TEST_CASE("Flashforge console commands map onto printer calls", "[flashforge][fl
         CHECK(error.find("reboot") != std::string::npos);
     }
 }
+
+// ── What of the printer's own `detail` object reaches the page ───────────────────────────────────
+
+namespace {
+
+// A Creator 5 Pro's `detail`, trimmed to one field per group the page reads plus the vendor
+// identifiers that come with it. The two register codes are the printer's cloud credentials and
+// macAddr identifies the machine on the LAN; none of the three is any of the page's business.
+json detail_snapshot()
+{
+    return json{{"nozzleCnt", 4},
+                {"nozzleModel", "0.4mm;0.4mm;0.4mm;0.4mm"},
+                {"measure", "256X256X256"},
+                {"location", "Studio"},
+                {"camera", 1},
+                {"coolingFanSpeed", 78},
+                {"internalFanStatus", "open"},
+                {"externalFanStatus", "close"},
+                {"tvoc", 0.12},
+                {"remainingDiskSpace", 4.96},
+                {"cumulativePrintTime", 19122},
+                {"cumulativeFilament", 4820.5},
+                {"printLayer", 412},
+                {"targetPrintLayer", 1180},
+                {"printSpeedAdjust", 100},
+                {"zAxisCompensation", 0.02},
+                {"chamberFanSpeed", 40},
+                {"coolingLeftFanSpeed", 0},
+                {"matlStationInfo", {{"slotCnt", 4}, {"currentSlot", 1}, {"stateAction", 1}, {"stateStep", 3}}},
+                {"flashRegisterCode", "SECRET-FLASH"},
+                {"polarRegisterCode", "SECRET-POLAR"},
+                {"macAddr", "AA:BB:CC:DD:EE:FF"},
+                {"ownerName", "someone"}};
+}
+
+} // namespace
+
+TEST_CASE("only the fields the console reads leave the printer's detail object", "[flashforge][flashforge-console]")
+{
+    const json raw = Slic3r::GUI::console_raw_detail(detail_snapshot());
+
+    SECTION("the vendor's identifiers do not reach the page")
+    {
+        CHECK_FALSE(raw.contains("flashRegisterCode"));
+        CHECK_FALSE(raw.contains("polarRegisterCode"));
+        CHECK_FALSE(raw.contains("macAddr"));
+    }
+
+    SECTION("a field nobody reads is dropped rather than passed through")
+    {
+        // The point of the allowlist: this key is not a known secret and was never on any deny
+        // list, and it still does not reach the page, because nothing on the page reads it.
+        CHECK_FALSE(raw.contains("ownerName"));
+    }
+
+    SECTION("every field the page renders survives, with its value")
+    {
+        for (const char* key : {"nozzleCnt", "nozzleModel", "measure", "location", "camera", "coolingFanSpeed",
+                                "internalFanStatus", "externalFanStatus", "tvoc", "remainingDiskSpace",
+                                "cumulativePrintTime", "cumulativeFilament", "printLayer", "targetPrintLayer",
+                                "printSpeedAdjust", "zAxisCompensation", "matlStationInfo"})
+            CHECK(raw.contains(key));
+        CHECK(raw["nozzleModel"] == "0.4mm;0.4mm;0.4mm;0.4mm");
+        // The station object goes through whole: the load strip is drawn from its stateAction and
+        // stateStep, and the toolhead cards from currentSlot.
+        CHECK(raw["matlStationInfo"]["stateStep"] == 3);
+    }
+
+    SECTION("every field a command carries survives, so one control cannot clobber another")
+    {
+        // printerCtl_cmd and circulateCtl_cmd send every field they own, read back out of this
+        // same snapshot: a Z nudge that lost the fan speeds would send zeros for them.
+        std::string error;
+        const json  snapshot = json{{"connected", true}, {"printer", {{"raw", raw}}}};
+        const json  op       = build({{"name", "printer_ctl"}, {"zAxisCompensation", 0.1}}, snapshot, error);
+        CHECK(op["args"]["speed"] == 100);
+        CHECK(op["args"]["chamberFan"] == 40);
+        CHECK(op["args"]["coolingFan"] == 78);
+        CHECK(op["args"]["coolingLeftFan"] == 0);
+
+        const json fans = build({{"name", "filtration"}, {"external", "open"}}, snapshot, error);
+        CHECK(fans["args"]["internal"] == "open");
+    }
+
+    SECTION("anything but an object answers with an empty object")
+    {
+        CHECK(Slic3r::GUI::console_raw_detail(json()) == json::object());
+        CHECK(Slic3r::GUI::console_raw_detail(json::array({1, 2})) == json::object());
+    }
+}
