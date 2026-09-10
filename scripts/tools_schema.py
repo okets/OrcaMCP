@@ -418,9 +418,51 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                   'required': ['object_id'],
                   'type': 'object'},
   'name': 'get_object_layer_ranges'},
- {'description': 'Get all available printer, filament, and print presets',
+ {'description': 'List the printer, filament and print presets available for the '
+                 'selected printer. Returns names and identifying fields only; '
+                 'pass summary:false for full configs. Capped per type (default '
+                 '25) -- narrow it with type/vendor/name_contains, or raise limit.',
   'inputSchema': {'additionalProperties': False,
-                  'properties': {},
+                  'properties': {'limit': {'description': 'Max presets per type. '
+                                                          'Default 25 with '
+                                                          'summary, 5 without. 0 '
+                                                          '= no cap (the '
+                                                          'unfiltered summary '
+                                                          'list is ~54,600 '
+                                                          'characters and '
+                                                          'overflows most MCP '
+                                                          'clients).',
+                                           'minimum': 0,
+                                           'type': 'integer'},
+                                 'name_contains': {'description': 'Only presets '
+                                                                  'whose name '
+                                                                  'contains this '
+                                                                  '(case-insensitive, '
+                                                                  'e.g. "PETG")',
+                                                   'type': 'string'},
+                                 'summary': {'default': True,
+                                             'description': 'true (default): '
+                                                            'name, vendor, '
+                                                            'filament_type/printer_model '
+                                                            'and flags. false: '
+                                                            'also every config '
+                                                            'key of every '
+                                                            'matching preset.',
+                                             'type': 'boolean'},
+                                 'type': {'description': 'Only this preset type. '
+                                                         'Omit (or "all") for all '
+                                                         'three.',
+                                          'enum': ['printer',
+                                                   'filament',
+                                                   'print',
+                                                   'all'],
+                                          'type': 'string'},
+                                 'vendor': {'description': 'Only presets from '
+                                                           'this vendor '
+                                                           '(case-insensitive '
+                                                           'substring, e.g. '
+                                                           '"Flashforge")',
+                                            'type': 'string'}},
                   'required': [],
                   'type': 'object'},
   'name': 'get_presets'},

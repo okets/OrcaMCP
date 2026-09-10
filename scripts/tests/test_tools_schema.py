@@ -29,6 +29,17 @@ def test_static_list_has_required_fields():
         assert t["inputSchema"]["type"] == "object", t["name"]
         assert "properties" in t["inputSchema"], t["name"]
 
+def test_static_list_carries_get_presets_filters():
+    """The one entry that was found stale in the field, pinned so it cannot silently go back.
+
+    test_static_list_matches_running_server catches every drift but skips when nothing is
+    listening -- which is exactly the situation in which this file is edited.
+    """
+    entry = next(t for t in _load_static() if t["name"] == "get_presets")
+    assert set(entry["inputSchema"]["properties"]) == {
+        "type", "vendor", "name_contains", "summary", "limit"
+    }
+
 def test_static_list_matches_running_server():
     live = _server_tools()
     if live is None:
