@@ -176,6 +176,13 @@ nlohmann::json brim_ears_json(const Slic3r::ModelObject& obj, std::size_t instan
 // lives on the ModelVolume, so it applies to every instance of the object, and instances can sit
 // on different plates; notifying one would leave the other plates holding a slice result that no
 // longer matches the model.
+//
+// ONLY SAFE AFTER A WRITE THAT LEAVES THE MESH GEOMETRY UNCHANGED, which paint does. If an
+// instance's convex-hull bounding box moves, notify_instance_update re-homes it onto another plate
+// and that branch can reach show_spiral_mode_settings_dialog (PartPlate.cpp, the spiral_mode check
+// in the add_instance branch), a MessageDialog. These tools run without a suppression guard, and a
+// modal opened inside run_on_main_thread blocks the GUI thread forever, so the MCP call never
+// returns. Paint never moves a vertex, so the re-homing branch is unreachable from here.
 void refresh_after_paint(const PaintTarget& target)
 {
     Plater* plater = wxGetApp().plater();
@@ -183,9 +190,11 @@ void refresh_after_paint(const PaintTarget& target)
     for (std::size_t i = 0; i < target.object->instances.size(); ++i)
         plater->get_partplate_list().notify_instance_update(target.object_id, int(i));
     // Rescheduling the background process is what eventually makes the paint visible in the
-    // preview. Posted through the 3D canvas the way apply_adaptive_layer_height does, null-checked
-    // because the canvas does not exist until the first window is shown.
-    if (GLCanvas3D* canvas = plater->get_view3D_canvas3D())
+    // preview. Guarded the way Plater.cpp guards its own canvas notifications: get_view3D_canvas3D
+    // returns null only when the Plater pimpl is gone, and a canvas that exists but has not run its
+    // first render has no event handler worth posting to yet.
+    GLCanvas3D* canvas = plater->get_view3D_canvas3D();
+    if (canvas && canvas->is_initialized())
         canvas->post_event(SimpleEvent(EVT_GLCANVAS_SCHEDULE_BACKGROUND_PROCESS));
     plater->update();
 }
@@ -235,7 +244,13 @@ bool parse_single_state(const nlohmann::json& params, PaintMode mode, int& out, 
             error = "mode 'color' needs a `filament` (1-based slot, or 0 to unpaint)";
             return false;
         }
-        out = params["filament"].get<int>();
+        // Through parse_integer_param rather than get<int>: a client whose cached tool schema
+        // predates this tool sends "2" as a string, and get<int> would throw a nlohmann type_error
+        // instead of the message validate_color_slot exists to produce.
+        if (!parse_integer_param(params["filament"], out)) {
+            error = "filament must be a whole number: a 1-based slot, or 0 to unpaint";
+            return false;
+        }
         return validate_color_slot(out, error);
     }
     if (!params.contains("state")) {
@@ -270,7 +285,15 @@ bool parse_paint_request(const nlohmann::json& params,
                          std::string&          error)
 {
     out.mode    = mode;
-    out.replace = params.value("replace", true);
+    // json::value with a bool default throws type_error.302 on "replace": "false", which is what a
+    // client with a stale schema sends; parse_boolean_param accepts that spelling. Anything it
+    // cannot read is reported rather than silently taken as false -- replace decides whether the
+    // existing paint survives, so guessing at it is the one thing not to do here.
+    out.replace = true;
+    if (params.contains("replace") && !parse_boolean_param(params["replace"], out.replace)) {
+        error = "replace must be true or false";
+        return false;
+    }
 
     out.selection = params.value("selection", std::string());
     if (out.selection.empty()) {
@@ -336,7 +359,12 @@ bool parse_paint_request(const nlohmann::json& params,
         }
         std::vector<int> slots;
         for (const nlohmann::json& slot : params["filaments"]) {
-            const int value = slot.get<int>();
+            int value = 0;
+            if (!parse_integer_param(slot, value)) {
+                error = "every entry of `filaments` must be a whole number: a 1-based slot, or 0 "
+                        "to unpaint";
+                return false;
+            }
             if (!validate_color_slot(value, error))
                 return false;
             slots.push_back(value);
@@ -488,7 +516,8 @@ void OrcaMCPServer::register_paint_tools()
                             {"from", {{"type", "number"}}},
                             {"to", {{"type", "number"}}},
                             {"filament", {{"type", "integer"}}},
-                            {"state", {{"type", "string"}, {"enum", {"none", "enforcer", "blocker"}}}}
+                            {"state", {{"type", "string"},
+                                       {"enum", {"none", "enforcer", "blocker", "fuzzy_skin"}}}}
                         }}
                     }},
                     {"description", "Explicit ranges in plate mm, each with a filament (mode=color) or "
@@ -496,9 +525,13 @@ void OrcaMCPServer::register_paint_tools()
                                     "are left alone."}
                 }},
                 {"from", {{"type", "number"}, {"description", "Start of the even split in plate mm "
-                                                              "(default: the object's own extent)"}}},
+                                                              "(default: the object's own extent). "
+                                                              "Ignored when explicit `bands` are given, "
+                                                              "which carry their own ranges."}}},
                 {"to", {{"type", "number"}, {"description", "End of the even split in plate mm "
-                                                            "(default: the object's own extent)"}}},
+                                                            "(default: the object's own extent). "
+                                                            "Ignored when explicit `bands` are given, "
+                                                            "which carry their own ranges."}}},
                 {"box", {
                     {"type", "object"},
                     {"properties", {
@@ -522,9 +555,13 @@ void OrcaMCPServer::register_paint_tools()
                 }},
                 {"state", {
                     {"type", "string"},
-                    {"enum", {"none", "enforcer", "blocker"}},
+                    // "fuzzy_skin" is the token get_object_paint reads back for that mode's
+                    // enforcer state, so it has to be accepted here or the round-trip we built
+                    // is blocked for a client that validates against this schema.
+                    {"enum", {"none", "enforcer", "blocker", "fuzzy_skin"}},
                     {"description", "State for selection=box/sphere/all when mode is not color. "
-                                    "fuzzy_skin accepts none and enforcer only."}
+                                    "fuzzy_skin accepts none and enforcer (spelled either "
+                                    "'enforcer' or 'fuzzy_skin'), never blocker."}
                 }},
                 {"replace", {
                     {"type", "boolean"},
@@ -562,9 +599,13 @@ void OrcaMCPServer::register_paint_tools()
 
                 // Everything is validated -- only now touch the undo stack, the way
                 // set_object_filament does (OrcaMCPFilamentUtils.cpp, set_object_filament).
-                plater->take_snapshot(_u8L("Paint Object"));
+                // Named per mode: painting colour and then supports would otherwise leave two
+                // identical entries in the undo menu with nothing to tell them apart.
+                plater->take_snapshot(_u8L("Paint Object") + " (" + paint_mode_name(mode) + ")");
 
-                int              facets_painted    = 0;
+                // Facets the selection COVERED, which is not the same as facets given a paint:
+                // `filament: 0` covers a facet and unpaints it. Named for what it counts.
+                int              facets_selected   = 0;
                 int              original_facets   = 0;
                 int              facets_unassigned = 0;
                 std::vector<int> band_counts(request.bands.size(), 0);
@@ -589,7 +630,7 @@ void OrcaMCPServer::register_paint_tools()
                     facets_unassigned += assignment.unassigned;
                     for (std::size_t i = 0; i < assignment.band_counts.size() && i < band_counts.size(); ++i)
                         band_counts[i] += assignment.band_counts[i];
-                    facets_painted += int(assignment.states.size()) - assignment.unassigned;
+                    facets_selected += int(assignment.states.size()) - assignment.unassigned;
 
                     // False here can only mean "the annotation already held exactly this": every
                     // other reason apply_facet_states rejects a write was ruled out above.
@@ -617,7 +658,7 @@ void OrcaMCPServer::register_paint_tools()
                     // facet_count counts leaf triangles and can exceed this, so the two are not a
                     // part and a whole. coverage_percent is the ratio to read.
                     {"original_facets", original_facets},
-                    {"facets_painted", facets_painted},
+                    {"facets_selected", facets_selected},
                     {"facets_unassigned", facets_unassigned},
                     {"volumes", volumes},
                     {"active_warnings", get_active_warnings_json(plater)}
@@ -645,10 +686,17 @@ void OrcaMCPServer::register_paint_tools()
                 if (facets_unassigned > 0 && request.selection != "bands")
                     messages.push_back(std::to_string(facets_unassigned) +
                                        " facets fell outside the selection and kept their previous state.");
-                if (facets_painted == 0)
-                    messages.push_back("Nothing was painted: no facet centroid fell inside the selection. "
-                                       "Check the coordinates against get_object_info's bounding_box, which "
-                                       "is in the same plate frame.");
+                if (facets_selected == 0) {
+                    // With replace this is not a no-op: the reset happened and the selection then
+                    // wrote nothing back, so the volume came out bare. Saying only "nothing was
+                    // painted" would read as "nothing happened".
+                    std::string message = "Nothing was painted: no facet centroid fell inside the "
+                                          "selection. Check the coordinates against get_object_info's "
+                                          "bounding_box, which is in the same plate frame.";
+                    if (request.replace && changed)
+                        message += " Because replace was true, this mode's existing paint was cleared.";
+                    messages.push_back(message);
+                }
                 if (!messages.empty())
                     result["info_messages"] = messages;
 
