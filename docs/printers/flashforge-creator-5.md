@@ -35,8 +35,22 @@ printer's firmware will *not* let any slicer do — see
 [What you cannot control, and why](#what-you-cannot-control-and-why). Nothing here
 ships a button that does nothing.
 
-Bug reports from Creator 5 owners are the fastest way to make this better. If
-something is wrong or missing, open an issue.
+## Who maintains this, and why it will keep working
+
+I maintain OrcaMCP, and I own a Creator 5 Pro. This is the slicer I print with —
+not a side project I tested once against someone else's machine and moved on from.
+When something about the Creator 5 support is broken or awkward, I hit it on my own
+prints, which is the difference between support that decays and support that gets
+fixed.
+
+So the commitment is simple and I have every reason to keep it: I will keep
+maintaining this slicer, keep the FlashForge-specific support working, and keep
+tracking upstream OrcaSlicer releases so these printers get new Orca features
+without waiting for a vendor fork to catch up.
+
+Bug reports from other Creator 5 owners are the fastest way to make this better. If
+something is wrong or missing, open an issue — a machine in someone else's room
+finds things mine never will.
 
 ---
 
