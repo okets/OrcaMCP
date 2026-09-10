@@ -89,4 +89,31 @@ std::vector<Vec3d> facet_centroids(const indexed_triangle_set& its, const Transf
 // ratio, so the units cancel and a scaled instance reports the same coverage as an unscaled one.
 double its_surface_area(const indexed_triangle_set& its);
 
+// What a selection resolved to, per facet of the volume's mesh.
+struct FacetAssignment
+{
+    // One entry per facet, in facet order. -1 means "this selection does not cover this facet",
+    // which the writer leaves at whatever state it already had.
+    std::vector<int> states;
+    // Facets that landed in each band, parallel to the `bands` argument. Empty for the region
+    // and whole-volume selections, which have no bands to count.
+    std::vector<int> band_counts;
+    // Facets that landed in no band, or outside the region. Reported so a caller can tell an
+    // empty selection from a selection whose coordinates missed the object.
+    int              unassigned = 0;
+};
+
+// Assigns bands[k].state to every facet whose centroid's `axis` component falls in bands[k],
+// per band_index_for_value's rules (half-open except the last, first match wins on overlap).
+// `centroids` and the returned `states` line up index for index with the facets they came from.
+FacetAssignment assign_bands(const std::vector<Vec3d>&     centroids,
+                             PaintAxis                     axis,
+                             const std::vector<PaintBand>& bands);
+// Assigns `state` to every facet whose centroid lies in `box`, per point_in_box's inclusive rule.
+FacetAssignment assign_box(const std::vector<Vec3d>& centroids, const PaintBox& box, int state);
+// Assigns `state` to every facet whose centroid lies in `sphere`, per point_in_sphere's inclusive rule.
+FacetAssignment assign_sphere(const std::vector<Vec3d>& centroids, const PaintSphere& sphere, int state);
+// Assigns `state` to every facet of a `facet_count`-facet mesh: the whole-volume selection.
+FacetAssignment assign_all(std::size_t facet_count, int state);
+
 }}} // namespace Slic3r::GUI::OrcaMCP

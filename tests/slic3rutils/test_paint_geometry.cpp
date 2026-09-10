@@ -240,3 +240,112 @@ TEST_CASE("facet_centroids applies a rotation, not just a translation", "[orcamc
     CHECK_THAT(rotated[0].y(), WithinAbs(8.0 / 3.0, 1e-9));
     CHECK_THAT(rotated[0].z(), WithinAbs(0.0, 1e-9));
 }
+
+namespace {
+
+// A 40 x 122 x 6 box centred at plate (150, 150), lying flat with its length along Y --
+// the print-bed scraper's shape, tessellated coarsely enough to check by hand. Plate extents
+// are x 130..170, y 89..211, z 0..6.
+indexed_triangle_set scraper_like_box()
+{
+    indexed_triangle_set its;
+    const double x0 = 130.0, x1 = 170.0, y0 = 89.0, y1 = 211.0, z1 = 6.0;
+    // Two facets per band-worth of length, so every band is guaranteed a facet: 14 slabs.
+    for (int i = 0; i < 14; ++i) {
+        const double ya = y0 + (y1 - y0) * (double(i) / 14.0);
+        const double yb = y0 + (y1 - y0) * (double(i + 1) / 14.0);
+        const int    base = int(its.vertices.size());
+        its.vertices.push_back(Vec3f(float(x0), float(ya), float(z1)));
+        its.vertices.push_back(Vec3f(float(x1), float(ya), float(z1)));
+        its.vertices.push_back(Vec3f(float(x1), float(yb), float(z1)));
+        its.vertices.push_back(Vec3f(float(x0), float(yb), float(z1)));
+        its.indices.push_back(Vec3i32(base, base + 1, base + 2));
+        its.indices.push_back(Vec3i32(base, base + 2, base + 3));
+    }
+    return its;
+}
+
+} // namespace
+
+TEST_CASE("assign_bands paints the scraper in 14 even bands along Y with slots 5-18",
+          "[orcamcp][paint]")
+{
+    // This is the session's original request (T5) reduced to arithmetic: 14 even sections
+    // along the 122 mm length, one mixed filament slot each, slots 5 through 18.
+    const indexed_triangle_set its       = scraper_like_box();
+    const std::vector<Vec3d>   centroids = facet_centroids(its, Transform3d::Identity());
+
+    std::vector<int> slots;
+    for (int slot = 5; slot <= 18; ++slot)
+        slots.push_back(slot);
+    const std::vector<PaintBand> bands = make_even_bands(slots, 89.0, 211.0);
+
+    const FacetAssignment assignment = assign_bands(centroids, PaintAxis::Y, bands);
+
+    REQUIRE(assignment.states.size() == its.indices.size());
+    // Every facet of a mesh that spans exactly the banded range lands in a band. A single
+    // unassigned facet here would mean a boundary gap, which is the failure this guards.
+    CHECK(assignment.unassigned == 0);
+    REQUIRE(assignment.band_counts.size() == 14);
+    for (int count : assignment.band_counts)
+        CHECK(count == 2);
+    // Slot order follows Y: the first band along Y is slot 5, the last is slot 18.
+    CHECK(assignment.states.front() == 5);
+    CHECK(assignment.states.back() == 18);
+    for (int i = 0; i < 14; ++i) {
+        CHECK(assignment.states[size_t(i) * 2] == 5 + i);
+        CHECK(assignment.states[size_t(i) * 2 + 1] == 5 + i);
+    }
+}
+
+TEST_CASE("assign_bands leaves a facet outside every band alone", "[orcamcp][paint]")
+{
+    const std::vector<Vec3d> centroids = {Vec3d(0.0, 1.0, 0.0), Vec3d(0.0, 50.0, 0.0),
+                                          Vec3d(0.0, 11.0, 0.0)};
+    const std::vector<PaintBand> bands = {{5, 0.0, 10.0}, {6, 10.0, 20.0}};
+
+    const FacetAssignment assignment = assign_bands(centroids, PaintAxis::Y, bands);
+
+    REQUIRE(assignment.states.size() == 3);
+    CHECK(assignment.states[0] == 5);
+    // -1 means "this selection does not cover this facet", which the writer leaves untouched.
+    CHECK(assignment.states[1] == -1);
+    CHECK(assignment.states[2] == 6);
+    CHECK(assignment.unassigned == 1);
+    REQUIRE(assignment.band_counts.size() == 2);
+    CHECK(assignment.band_counts[0] == 1);
+    CHECK(assignment.band_counts[1] == 1);
+}
+
+TEST_CASE("assign_bands reads the axis it was given", "[orcamcp][paint]")
+{
+    const std::vector<Vec3d>     centroids = {Vec3d(1.0, 50.0, 90.0)};
+    const std::vector<PaintBand> bands     = {{7, 0.0, 10.0}};
+
+    CHECK(assign_bands(centroids, PaintAxis::X, bands).states[0] == 7);
+    CHECK(assign_bands(centroids, PaintAxis::Y, bands).states[0] == -1);
+    CHECK(assign_bands(centroids, PaintAxis::Z, bands).states[0] == -1);
+}
+
+TEST_CASE("assign_box, assign_sphere and assign_all report what they covered",
+          "[orcamcp][paint]")
+{
+    const std::vector<Vec3d> centroids = {Vec3d(1.0, 1.0, 1.0), Vec3d(50.0, 50.0, 50.0)};
+
+    const FacetAssignment boxed = assign_box(centroids, {Vec3d(0, 0, 0), Vec3d(10, 10, 10)}, 3);
+    CHECK(boxed.states[0] == 3);
+    CHECK(boxed.states[1] == -1);
+    CHECK(boxed.unassigned == 1);
+    CHECK(boxed.band_counts.empty());
+
+    const FacetAssignment sphered = assign_sphere(centroids, {Vec3d(0, 0, 0), 2.0}, 2);
+    CHECK(sphered.states[0] == 2);
+    CHECK(sphered.states[1] == -1);
+    CHECK(sphered.unassigned == 1);
+
+    const FacetAssignment everything = assign_all(2, 0);
+    CHECK(everything.states.size() == 2);
+    CHECK(everything.states[0] == 0);
+    CHECK(everything.states[1] == 0);
+    CHECK(everything.unassigned == 0);
+}

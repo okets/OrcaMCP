@@ -116,4 +116,63 @@ double its_surface_area(const indexed_triangle_set& its)
     return area;
 }
 
+namespace {
+
+// Shared shape for the three predicate-driven selections: every facet the predicate accepts
+// gets `state`, every other facet is left to whatever it already was.
+template<typename Predicate>
+FacetAssignment assign_by_predicate(const std::vector<Vec3d>& centroids, int state, Predicate&& inside)
+{
+    FacetAssignment assignment;
+    assignment.states.assign(centroids.size(), -1);
+    for (std::size_t i = 0; i < centroids.size(); ++i) {
+        if (inside(centroids[i]))
+            assignment.states[i] = state;
+        else
+            ++assignment.unassigned;
+    }
+    return assignment;
+}
+
+} // namespace
+
+FacetAssignment assign_bands(const std::vector<Vec3d>&     centroids,
+                             PaintAxis                     axis,
+                             const std::vector<PaintBand>& bands)
+{
+    FacetAssignment assignment;
+    assignment.states.assign(centroids.size(), -1);
+    assignment.band_counts.assign(bands.size(), 0);
+
+    const int row = int(axis);
+    for (std::size_t i = 0; i < centroids.size(); ++i) {
+        const int band = band_index_for_value(bands, centroids[i][row]);
+        if (band < 0) {
+            ++assignment.unassigned;
+            continue;
+        }
+        assignment.states[i] = bands[std::size_t(band)].state;
+        ++assignment.band_counts[std::size_t(band)];
+    }
+    return assignment;
+}
+
+FacetAssignment assign_box(const std::vector<Vec3d>& centroids, const PaintBox& box, int state)
+{
+    return assign_by_predicate(centroids, state, [&box](const Vec3d& p) { return point_in_box(box, p); });
+}
+
+FacetAssignment assign_sphere(const std::vector<Vec3d>& centroids, const PaintSphere& sphere, int state)
+{
+    return assign_by_predicate(centroids, state,
+                               [&sphere](const Vec3d& p) { return point_in_sphere(sphere, p); });
+}
+
+FacetAssignment assign_all(std::size_t facet_count, int state)
+{
+    FacetAssignment assignment;
+    assignment.states.assign(facet_count, state);
+    return assignment;
+}
+
 }}} // namespace Slic3r::GUI::OrcaMCP
