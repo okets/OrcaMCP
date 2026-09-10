@@ -2,6 +2,7 @@
 #pragma once
 #include <cstddef>
 #include <string>
+#include <vector>
 
 #include "libslic3r/Model.hpp"
 #include "libslic3r/TriangleSelector.hpp"
@@ -33,6 +34,14 @@ const FacetsAnnotation& annotation_for_mode(const ModelVolume& mv, PaintMode mod
 // slicer would clamp away in ModelVolume::update_extruder_count (Model.cpp:2641-2648).
 int max_paint_state();
 
+// The largest state `mode` itself can hold, which is the bound a write is validated against.
+// Color addresses filament slots 1..max_paint_state(); Support and Seam only distinguish
+// NONE/ENFORCER/BLOCKER; FuzzySkin only NONE/FUZZY_SKIN (TriangleSelector.hpp:19 aliases
+// FUZZY_SKIN to ENFORCER, and GLGizmoFuzzySkin.hpp:29-30 paints nothing else). Centralised here
+// because every caller that writes a state needs the same bound, and a copy of it per tool is
+// how the four modes drift apart.
+int max_paint_state_for(PaintMode mode);
+
 // Raw EnforcerBlockerType value for a caller-supplied state name, for every mode except Color:
 // "none" -> 0, "enforcer" -> 1, "blocker" -> 2. FuzzySkin also accepts "fuzzy_skin" as a synonym
 // for "enforcer" (both -> 1) but rejects "blocker" (TriangleSelector.hpp:19 aliases FUZZY_SKIN to
@@ -56,5 +65,51 @@ std::string paint_state_label(PaintMode mode, int state);
 // with the bounding_box get_object_info reports. An out-of-range or absent instance falls back to
 // instance 0; an object with no instance at all yields the volume matrix alone.
 Transform3d volume_to_plate(const ModelObject& obj, const ModelVolume& mv, std::size_t instance_idx);
+
+// Writes `states` (one raw EnforcerBlockerType value per facet of mv.mesh(), -1 = leave alone)
+// into the annotation `mode` selects, the same way GLGizmoMmuSegmentation::update_model_object
+// does (GLGizmoMmuSegmentation.cpp, update_model_object): drive a TriangleSelector with set_facet,
+// then hand it to FacetsAnnotation::set. Going through the selector rather than writing the
+// bitstream directly is what makes MCP-painted data byte-identical to gizmo-painted data, so it
+// renders in the gizmo and round-trips through 3MF unchanged.
+// `replace` starts from a blank selector, discarding whatever the volume already carried for
+// this mode; otherwise the existing paint is the base and only the listed facets move.
+//
+// Returns false for two unrelated reasons, which the bool alone cannot tell apart:
+//   * the call was rejected and the annotation was not touched at all -- `states` is not exactly
+//     one entry per facet, the mesh has no facets, or some entry is outside
+//     [-1, max_paint_state_for(mode)];
+//   * the call was applied but the annotation already held exactly this (FacetsAnnotation::set's
+//     own return).
+// A caller that must distinguish the two validates the size and the range itself first; the tool
+// layer does, so that it can report which entry was wrong.
+//
+// Rejecting rather than clamping is deliberate. `states` comes from a FacetAssignment, which is
+// sized to the facet count by construction, so a short vector is always a caller bug; painting
+// its prefix would leave a half-painted model that looks deliberate. And EnforcerBlockerType is
+// an int8_t whose values are bit-packed by the serializer, so an out-of-range state is stored raw
+// here and silently clamped much later, far from the call that caused it.
+bool apply_facet_states(ModelVolume& mv, PaintMode mode, const std::vector<int>& states, bool replace);
+
+// One state present on one volume.
+struct PaintedStateInfo
+{
+    int    state       = 0;
+    // Leaf triangles at this state. A facet a gizmo split earlier counts more than once, which
+    // is why area_ratio and not this number is the honest measure of how much is painted.
+    int    facet_count = 0;
+    // 0..1 of the volume's total mesh area. A ratio, so a scaled instance reports the same value.
+    double area_ratio  = 0.0;
+};
+
+// Every state carrying at least one facet, ascending by state, state 0 (unpainted) included so a
+// caller can see how much of the volume is still bare. An unpainted volume returns exactly one
+// entry, {0, all facets, 1.0}.
+std::vector<PaintedStateInfo> read_volume_paint(const ModelVolume& mv, PaintMode mode);
+
+// FacetsAnnotation::reset() on the member `mode` selects, leaving the other three alone.
+// Returns false when the annotation was already empty, so a caller can tell "cleared" from
+// "there was nothing to clear".
+bool clear_volume_paint(ModelVolume& mv, PaintMode mode);
 
 }}} // namespace Slic3r::GUI::OrcaMCP

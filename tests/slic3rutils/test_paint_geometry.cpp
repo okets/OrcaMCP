@@ -6,6 +6,7 @@
 #include "libslic3r/TriangleMesh.hpp"
 #include "libslic3r/Model.hpp"
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -22,6 +23,8 @@ using Slic3r::Model;
 using Slic3r::ModelObject;
 using Slic3r::ModelVolume;
 using Slic3r::ModelInstance;
+using Slic3r::EnforcerBlockerType;
+using Slic3r::TriangleSelector;
 using Slic3r::TriangleMesh;
 using Catch::Matchers::WithinAbs;
 
@@ -629,4 +632,203 @@ TEST_CASE("volume_to_plate falls back to the volume matrix alone when the object
     volume->set_offset(Vec3d(1.0, 2.0, 3.0));
 
     CHECK(volume_to_plate(*object, *volume, 0).isApprox(volume->get_matrix()));
+}
+
+TEST_CASE("apply_facet_states writes paint the gizmo's own read path can see", "[orcamcp][paint]")
+{
+    HeadlessObject built = make_headless_object(two_triangle_rectangle(), Vec3d(0, 0, 0));
+
+    CHECK_FALSE(built.volume->is_mm_painted());
+    CHECK(apply_facet_states(*built.volume, PaintMode::Color, {5, 6}, true));
+    CHECK(built.volume->is_mm_painted());
+
+    // ModelVolume::get_extruders (Model.cpp:2610-2639) is what the slicer and the object list
+    // read painted filaments through. If it does not see 5 and 6, nothing downstream will.
+    const std::vector<int> extruders = built.volume->get_extruders();
+    CHECK(std::find(extruders.begin(), extruders.end(), 5) != extruders.end());
+    CHECK(std::find(extruders.begin(), extruders.end(), 6) != extruders.end());
+}
+
+TEST_CASE("apply_facet_states leaves -1 facets at whatever they already were", "[orcamcp][paint]")
+{
+    HeadlessObject built = make_headless_object(two_triangle_rectangle(), Vec3d(0, 0, 0));
+
+    REQUIRE(apply_facet_states(*built.volume, PaintMode::Color, {5, 6}, true));
+    // replace = false and -1 for the second facet: facet 0 becomes 7, facet 1 stays 6.
+    REQUIRE(apply_facet_states(*built.volume, PaintMode::Color, {7, -1}, false));
+
+    const std::vector<PaintedStateInfo> painted = read_volume_paint(*built.volume, PaintMode::Color);
+    REQUIRE(painted.size() == 2);
+    CHECK(painted[0].state == 6);
+    CHECK(painted[0].facet_count == 1);
+    CHECK(painted[1].state == 7);
+    CHECK(painted[1].facet_count == 1);
+
+    // replace = true starts from a blank selector, so the earlier paint is gone entirely.
+    REQUIRE(apply_facet_states(*built.volume, PaintMode::Color, {9, -1}, true));
+    const std::vector<PaintedStateInfo> replaced = read_volume_paint(*built.volume, PaintMode::Color);
+    REQUIRE(replaced.size() == 2);
+    CHECK(replaced[0].state == 0);          // the -1 facet fell back to unpainted
+    CHECK(replaced[1].state == 9);
+}
+
+TEST_CASE("read_volume_paint reports facet counts and an area ratio that sums to one",
+          "[orcamcp][paint]")
+{
+    HeadlessObject built = make_headless_object(two_triangle_rectangle(), Vec3d(0, 0, 0));
+    REQUIRE(apply_facet_states(*built.volume, PaintMode::Color, {5, 6}, true));
+
+    const std::vector<PaintedStateInfo> painted = read_volume_paint(*built.volume, PaintMode::Color);
+    REQUIRE(painted.size() == 2);
+    double total = 0.0;
+    for (const PaintedStateInfo& info : painted)
+        total += info.area_ratio;
+    CHECK_THAT(total, WithinAbs(1.0, 1e-9));
+    // The two triangles of the 4 x 6 rectangle are equal halves.
+    CHECK_THAT(painted[0].area_ratio, WithinAbs(0.5, 1e-9));
+
+    // An unpainted volume reports one entry: every facet at state 0.
+    HeadlessObject blank = make_headless_object(two_triangle_rectangle(), Vec3d(0, 0, 0));
+    const std::vector<PaintedStateInfo> none = read_volume_paint(*blank.volume, PaintMode::Color);
+    REQUIRE(none.size() == 1);
+    CHECK(none[0].state == 0);
+    CHECK(none[0].facet_count == 2);
+}
+
+TEST_CASE("clear_volume_paint resets only the mode it was asked for", "[orcamcp][paint]")
+{
+    HeadlessObject built = make_headless_object(two_triangle_rectangle(), Vec3d(0, 0, 0));
+    REQUIRE(apply_facet_states(*built.volume, PaintMode::Color, {5, 6}, true));
+    REQUIRE(apply_facet_states(*built.volume, PaintMode::Support, {1, 1}, true));
+
+    CHECK(clear_volume_paint(*built.volume, PaintMode::Color));
+    CHECK_FALSE(built.volume->is_mm_painted());
+    // The support paint is untouched: clearing one annotation must not clear its siblings.
+    CHECK(built.volume->supported_facets.has_facets(*built.volume, EnforcerBlockerType::ENFORCER));
+
+    // Clearing an already-empty annotation reports that there was nothing to clear.
+    CHECK_FALSE(clear_volume_paint(*built.volume, PaintMode::Seam));
+}
+
+TEST_CASE("the scraper's 14 bands survive the round trip through FacetsAnnotation",
+          "[orcamcp][paint]")
+{
+    // The acceptance case end to end, minus the GUI: build the part, band it along plate Y,
+    // write it, read it back. This is the shape the 3MF writer serialises.
+    HeadlessObject built = make_headless_object(scraper_like_box(), Vec3d(0.0, 0.0, 0.0));
+
+    const Transform3d        to_plate  = volume_to_plate(*built.object, *built.volume, 0);
+    const std::vector<Vec3d> centroids = facet_centroids(built.volume->mesh().its, to_plate);
+
+    std::vector<int> slots;
+    for (int slot = 5; slot <= 18; ++slot)
+        slots.push_back(slot);
+    const FacetAssignment assignment =
+        assign_bands(centroids, PaintAxis::Y, make_even_bands(slots, 89.0, 211.0));
+    REQUIRE(assignment.unassigned == 0);
+    REQUIRE(apply_facet_states(*built.volume, PaintMode::Color, assignment.states, true));
+
+    const std::vector<PaintedStateInfo> painted = read_volume_paint(*built.volume, PaintMode::Color);
+    REQUIRE(painted.size() == 14);
+    for (int i = 0; i < 14; ++i) {
+        CHECK(painted[size_t(i)].state == 5 + i);
+        CHECK(painted[size_t(i)].facet_count == 2);
+        CHECK_THAT(painted[size_t(i)].area_ratio, WithinAbs(1.0 / 14.0, 1e-6));
+    }
+}
+
+TEST_CASE("max_paint_state_for bounds each mode by what its own gizmo can write",
+          "[orcamcp][paint]")
+{
+    // One shared bound, because a copy of it per calling tool is how the four modes drift apart.
+    CHECK(max_paint_state_for(PaintMode::Color) == max_paint_state());
+    CHECK(max_paint_state_for(PaintMode::Support) == int(EnforcerBlockerType::BLOCKER));
+    CHECK(max_paint_state_for(PaintMode::Seam) == int(EnforcerBlockerType::BLOCKER));
+    // FuzzySkin has no blocker: FUZZY_SKIN aliases ENFORCER and the gizmo paints nothing else.
+    CHECK(max_paint_state_for(PaintMode::FuzzySkin) == int(EnforcerBlockerType::FUZZY_SKIN));
+    CHECK(max_paint_state_for(PaintMode::FuzzySkin) < max_paint_state_for(PaintMode::Seam));
+}
+
+TEST_CASE("apply_facet_states accepts the highest state each mode allows", "[orcamcp][paint]")
+{
+    // The boundary itself is legal -- an off-by-one in the guard would make filament 32,
+    // a blocker, or a fuzzy skin enforcer unpaintable, and nothing else would notice.
+    // A cube, not the flat rectangle: this test checks states, not hand-checked centroids, and
+    // a coplanar fixture logs an its_convex_hull error per volume built.
+    const PaintMode modes[] = {PaintMode::Color, PaintMode::Support, PaintMode::Seam,
+                               PaintMode::FuzzySkin};
+    for (PaintMode mode : modes) {
+        HeadlessObject built = make_headless_object(Slic3r::its_make_cube(1.0, 1.0, 1.0),
+                                                    Vec3d(0, 0, 0));
+        const std::size_t facets = built.volume->mesh().its.indices.size();
+        const int         top    = max_paint_state_for(mode);
+        CHECK(apply_facet_states(*built.volume, mode, std::vector<int>(facets, top), true));
+
+        const std::vector<PaintedStateInfo> painted = read_volume_paint(*built.volume, mode);
+        REQUIRE(painted.size() == 1);
+        CHECK(painted[0].state == top);
+        CHECK(painted[0].facet_count == int(facets));
+        // Every facet painted, so this state's share of the surface is all of it.
+        CHECK_THAT(painted[0].area_ratio, WithinAbs(1.0, 1e-9));
+
+        // One past the boundary is rejected for that mode, even where another mode allows it:
+        // a blocker is legal for Seam and not for FuzzySkin, and 33 is legal for nothing.
+        CHECK_FALSE(apply_facet_states(*built.volume, mode, std::vector<int>(facets, top + 1), true));
+    }
+}
+
+TEST_CASE("a rejected apply_facet_states leaves the annotation byte-identical", "[orcamcp][paint]")
+{
+    // Returning false is not enough: a rejected call must not have painted a prefix, because a
+    // half-painted model looks deliberate and nothing downstream can tell it from an intended one.
+    HeadlessObject    built  = make_headless_object(Slic3r::its_make_cube(1.0, 1.0, 1.0),
+                                                    Vec3d(0, 0, 0));
+    const std::size_t facets = built.volume->mesh().its.indices.size();
+    REQUIRE(facets > 1);
+    REQUIRE(apply_facet_states(*built.volume, PaintMode::Color, std::vector<int>(facets, 5), true));
+    const TriangleSelector::TriangleSplittingData before =
+        built.volume->mmu_segmentation_facets.get_data();
+
+    // Too few entries. This is the case a std::min clamp would have let through, repainting the
+    // first facet to 9 and reporting success.
+    CHECK_FALSE(apply_facet_states(*built.volume, PaintMode::Color, {9}, true));
+    CHECK(built.volume->mmu_segmentation_facets.get_data() == before);
+
+    // Too many entries: equally a caller bug, since a FacetAssignment is sized to the facet count.
+    CHECK_FALSE(apply_facet_states(*built.volume, PaintMode::Color,
+                                   std::vector<int>(facets + 1, 9), true));
+    CHECK(built.volume->mmu_segmentation_facets.get_data() == before);
+
+    // A state above the mode's ceiling. EnforcerBlockerType is an int8_t the serializer bit-packs,
+    // so writing this would be clamped much later, far from the call that caused it.
+    std::vector<int> too_high(facets, 5);
+    too_high.back() = max_paint_state() + 1;
+    CHECK_FALSE(apply_facet_states(*built.volume, PaintMode::Color, too_high, true));
+    CHECK(built.volume->mmu_segmentation_facets.get_data() == before);
+
+    // A negative that is not the documented -1 sentinel is a caller bug, not "leave alone".
+    std::vector<int> bad_sentinel(facets, 5);
+    bad_sentinel.back() = -2;
+    CHECK_FALSE(apply_facet_states(*built.volume, PaintMode::Color, bad_sentinel, true));
+    CHECK(built.volume->mmu_segmentation_facets.get_data() == before);
+
+    // All -1: a legal call that asks for no change at all, so it is applied and reports false
+    // because the annotation already held exactly this -- not because it was rejected.
+    CHECK_FALSE(apply_facet_states(*built.volume, PaintMode::Color,
+                                   std::vector<int>(facets, -1), false));
+    CHECK(built.volume->mmu_segmentation_facets.get_data() == before);
+}
+
+TEST_CASE("apply_facet_states refuses a volume with no facets", "[orcamcp][paint]")
+{
+    // A mesh with no triangles has no facet to address, so every states vector is the wrong size
+    // for it, including the empty one. Guarded explicitly rather than left to fall out of the
+    // size comparison, because 0 == 0 would otherwise report success for a no-op.
+    HeadlessObject built = make_headless_object(indexed_triangle_set(), Vec3d(0, 0, 0));
+    REQUIRE(built.volume->mesh().its.indices.empty());
+
+    CHECK_FALSE(apply_facet_states(*built.volume, PaintMode::Color, {}, true));
+    CHECK_FALSE(apply_facet_states(*built.volume, PaintMode::Color, {5}, true));
+    CHECK(built.volume->mmu_segmentation_facets.empty());
+    CHECK(read_volume_paint(*built.volume, PaintMode::Color).empty());
 }

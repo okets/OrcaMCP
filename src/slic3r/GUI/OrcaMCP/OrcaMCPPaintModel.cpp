@@ -47,6 +47,19 @@ const FacetsAnnotation& annotation_for_mode(const ModelVolume& mv, PaintMode mod
 
 int max_paint_state() { return int(EnforcerBlockerType::ExtruderMax); }
 
+int max_paint_state_for(PaintMode mode)
+{
+    switch (mode) {
+    // Support and Seam enforcers and blockers are the only two states their gizmos write.
+    case PaintMode::Support:
+    case PaintMode::Seam:      return int(EnforcerBlockerType::BLOCKER);
+    // FUZZY_SKIN is an alias of ENFORCER, and the fuzzy skin gizmo has no blocker at all.
+    case PaintMode::FuzzySkin: return int(EnforcerBlockerType::FUZZY_SKIN);
+    case PaintMode::Color:     break;
+    }
+    return max_paint_state();
+}
+
 bool parse_paint_state(PaintMode mode, const std::string& name, int& out_state)
 {
     if (mode == PaintMode::Color)
@@ -91,6 +104,74 @@ Transform3d volume_to_plate(const ModelObject& obj, const ModelVolume& mv, std::
         return mv.get_matrix();
     const std::size_t idx = instance_idx < obj.instances.size() ? instance_idx : 0;
     return obj.instances[idx]->get_matrix() * mv.get_matrix();
+}
+
+bool apply_facet_states(ModelVolume& mv, PaintMode mode, const std::vector<int>& states, bool replace)
+{
+    // Validate before touching anything, so a rejected call is a no-op rather than a partial paint.
+    // set_facet only accepts original triangles (TriangleSelector.hpp, "Only works for original
+    // triangles", and its assert in TriangleSelector::set_facet), so one entry per original facet
+    // is the only shape that means anything here.
+    const std::size_t facet_count = mv.mesh().its.indices.size();
+    if (facet_count == 0 || states.size() != facet_count)
+        return false;
+    const int max_state = max_paint_state_for(mode);
+    for (int state : states)
+        if (state < -1 || state > max_state)
+            return false;
+
+    FacetsAnnotation& annotation = annotation_for_mode(mv, mode);
+
+    TriangleSelector selector(mv.mesh());
+    if (!replace) {
+        // needs_reset = false: the TriangleSelector constructor already reset, exactly as the
+        // gizmo relies on (GLGizmoMmuSegmentation::init_model_triangle_selectors passes false for
+        // the same reason).
+        selector.deserialize(annotation.get_data(), false);
+    }
+
+    // No bounds clamp on the loop: the guard above already proved states.size() == facet_count.
+    for (std::size_t i = 0; i < states.size(); ++i)
+        if (states[i] >= 0)
+            selector.set_facet(int(i), EnforcerBlockerType(states[i]));
+
+    return annotation.set(selector);
+}
+
+std::vector<PaintedStateInfo> read_volume_paint(const ModelVolume& mv, PaintMode mode)
+{
+    const FacetsAnnotation& annotation = annotation_for_mode(mv, mode);
+
+    TriangleSelector selector(mv.mesh());
+    selector.deserialize(annotation.get_data(), false);
+
+    const double total_area = its_surface_area(mv.mesh().its);
+
+    // Scanned over the whole scheme's range, not max_paint_state_for(mode): a report has to show
+    // whatever is actually on the volume, including a state some other tool put there.
+    std::vector<PaintedStateInfo> painted;
+    for (int state = int(EnforcerBlockerType::NONE); state <= max_paint_state(); ++state) {
+        const int count = selector.num_facets(EnforcerBlockerType(state));
+        if (count == 0)
+            continue;
+        PaintedStateInfo info;
+        info.state       = state;
+        info.facet_count = count;
+        info.area_ratio  = total_area > 0.0
+                               ? its_surface_area(selector.get_facets(EnforcerBlockerType(state))) / total_area
+                               : 0.0;
+        painted.push_back(info);
+    }
+    return painted;
+}
+
+bool clear_volume_paint(ModelVolume& mv, PaintMode mode)
+{
+    FacetsAnnotation& annotation = annotation_for_mode(mv, mode);
+    if (annotation.empty())
+        return false;
+    annotation.reset();
+    return true;
 }
 
 }}} // namespace Slic3r::GUI::OrcaMCP
