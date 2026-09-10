@@ -1215,7 +1215,16 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                                                        'properties': {'object_id': {'type': 'integer'},
                                                                       'settings': {'items': {'additionalProperties': False,
                                                                                              'properties': {'key': {'type': 'string'},
-                                                                                                            'value': {'type': 'string'}},
+                                                                                                            'value': {'description': 'Value, '
+                                                                                                                                     'or '
+                                                                                                                                     'an '
+                                                                                                                                     'array '
+                                                                                                                                     'of '
+                                                                                                                                     'values '
+                                                                                                                                     'for '
+                                                                                                                                     'a '
+                                                                                                                                     'list-typed '
+                                                                                                                                     'key'}},
                                                                                              'required': ['key',
                                                                                                           'value'],
                                                                                              'type': 'object'},
@@ -1230,8 +1239,16 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                                  'settings': {'description': 'Settings array',
                                               'items': {'additionalProperties': False,
                                                         'properties': {'key': {'type': 'string'},
-                                                                       'value': {'description': 'Value',
-                                                                                 'type': 'string'}},
+                                                                       'value': {'description': 'Value, '
+                                                                                                'or '
+                                                                                                'an '
+                                                                                                'array '
+                                                                                                'of '
+                                                                                                'values '
+                                                                                                'for '
+                                                                                                'a '
+                                                                                                'list-typed '
+                                                                                                'key'}},
                                                         'required': ['key',
                                                                      'value'],
                                                         'type': 'object'},
@@ -1265,8 +1282,16 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                                                         'properties': {'key': {'description': 'Key '
                                                                                               'name',
                                                                                'type': 'string'},
-                                                                       'value': {'description': 'Value',
-                                                                                 'type': 'string'}},
+                                                                       'value': {'description': 'Value, '
+                                                                                                'or '
+                                                                                                'an '
+                                                                                                'array '
+                                                                                                'of '
+                                                                                                'values '
+                                                                                                'for '
+                                                                                                'a '
+                                                                                                'list-typed '
+                                                                                                'key'}},
                                                         'required': ['key',
                                                                      'value'],
                                                         'type': 'object'},

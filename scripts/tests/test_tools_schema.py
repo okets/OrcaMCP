@@ -1,4 +1,4 @@
-import json, os, sys, urllib.request, importlib
+import json, os, sys, unittest, urllib.request, importlib
 import pytest
 
 SCRIPTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -49,3 +49,37 @@ def test_static_list_matches_running_server():
     assert set(static) == set(live_map), f"drift: run scripts/regen_tools_schema.py; diff={set(static) ^ set(live_map)}"
     for name, tool in live_map.items():
         assert static[name]["inputSchema"] == tool["inputSchema"], name
+
+
+class ValueSchemaAcceptsLists(unittest.TestCase):
+    """A `value` that advertises "type": "string" is a contract the handler does not keep.
+
+    apply_config, set_object_config and set_object_layer_range all shape a JSON value from the
+    option's declared type (config_value_to_string), so a list-typed key takes an array. A
+    schema-validating client rejects that array before the bridge ever sees it, and this file is
+    the copy such a client is served while OrcaSlicer is still starting. A unittest.TestCase, not
+    a bare function, because `python3 -m unittest discover` is the command that gates this repo's
+    Python changes and it collects only TestCase subclasses.
+    """
+
+    def value_schemas(self):
+        by_name = {t["name"]: t for t in _load_static()}
+        object_config = by_name["set_object_config"]["inputSchema"]["properties"]
+        layer_range = by_name["set_object_layer_range"]["inputSchema"]["properties"]
+        return {
+            "set_object_config.settings": object_config["settings"]["items"]["properties"]["value"],
+            "set_object_config.configs": object_config["configs"]["items"]["properties"]["settings"]["items"]["properties"]["value"],
+            "set_object_layer_range.settings": layer_range["settings"]["items"]["properties"]["value"],
+        }
+
+    def test_value_is_not_constrained_to_a_string(self):
+        for where, schema in self.value_schemas().items():
+            with self.subTest(where=where):
+                self.assertNotIn("type", schema)
+
+    def test_key_is_still_constrained_to_a_string(self):
+        by_name = {t["name"]: t for t in _load_static()}
+        for name in ("set_object_config", "set_object_layer_range"):
+            key = by_name[name]["inputSchema"]["properties"]["settings"]["items"]["properties"]["key"]
+            with self.subTest(tool=name):
+                self.assertEqual(key["type"], "string")

@@ -1651,7 +1651,11 @@ void OrcaMCPServer::register_builtin_tools()
                         {"type", "object"},
                         {"properties", {
                             {"key", {{"type", "string"}}},
-                            {"value", {{"type", "string"}, {"description", "Value"}}}
+                            // No "type" constraint, matching apply_config: a list-typed key takes a
+                            // JSON array (see config_value_to_string), so advertising string-only
+                            // would have a schema-validating client reject an array the handler
+                            // accepts, before it ever reached the bridge.
+                            {"value", {{"description", "Value, or an array of values for a list-typed key"}}}
                         }},
                         {"required", {"key", "value"}},
                         {"additionalProperties", false}
@@ -1670,7 +1674,7 @@ void OrcaMCPServer::register_builtin_tools()
                                     {"type", "object"},
                                     {"properties", {
                                         {"key", {{"type", "string"}}},
-                                        {"value", {{"type", "string"}}}
+                                        {"value", {{"description", "Value, or an array of values for a list-typed key"}}}
                                     }},
                                     {"required", {"key", "value"}},
                                     {"additionalProperties", false}
@@ -2083,7 +2087,9 @@ void OrcaMCPServer::register_builtin_tools()
                         {"type", "object"},
                         {"properties", {
                             {"key", {{"type", "string"}, {"description", "Key name"}}},
-                            {"value", {{"type", "string"}, {"description", "Value"}}}
+                            // No "type" constraint, for the same reason as set_object_config: a
+                            // list-typed key takes a JSON array.
+                            {"value", {{"description", "Value, or an array of values for a list-typed key"}}}
                         }},
                         {"required", {"key", "value"}},
                         {"additionalProperties", false}
@@ -2110,22 +2116,63 @@ void OrcaMCPServer::register_builtin_tools()
                 ModelConfig& layer_cfg = obj->layer_config_ranges[range];
 
                 ConfigSubstitutionContext context(ForwardCompatibilitySubstitutionRule::Enable);
+                std::vector<std::string> applied_keys;
+                std::vector<std::string> invalid_keys;
+                std::vector<std::string> unknown_keys;
+                nlohmann::json           rejected_values = nlohmann::json::array();
+
                 for (const auto& item : settings) {
-                    std::string key = item["key"];
-                    std::string value_str = item["value"].is_string() ?
-                        item["value"].get<std::string>() : item["value"].dump();
-                    layer_cfg.set_deserialize(key, value_str, context);
+                    const std::string key = item["key"];
+                    // Same three checks apply_config and set_object_config make, and for the same
+                    // reason: without the print_config_def lookup an unknown key was
+                    // indistinguishable from a bad value, without config_value_to_string a
+                    // coFloats key silently stored zeros (Config.hpp:935 returns true regardless),
+                    // and without the try/catch a throw escaped to the dispatcher and abandoned
+                    // the whole call. applied_count reported settings.size() through all three.
+                    const ConfigOptionDef* def = print_config_def.get(key);
+                    if (def == nullptr) {
+                        invalid_keys.push_back(key);
+                        unknown_keys.push_back(key);
+                        continue;
+                    }
+                    const ConfigValueText shaped = config_value_to_string(item["value"], def->type);
+                    if (!shaped.ok) {
+                        invalid_keys.push_back(key);
+                        rejected_values.push_back({{"key", key},
+                                                   {"reason", shaped.reason},
+                                                   {"expected", config_value_expected_shape(def->type)}});
+                        continue;
+                    }
+                    try {
+                        layer_cfg.set_deserialize(key, shaped.text, context);
+                        applied_keys.push_back(key);
+                    } catch (const std::exception& e) {
+                        invalid_keys.push_back(key);
+                        rejected_values.push_back({{"key", key},
+                                                   {"reason", std::string("could not be read as a value: ") + e.what()},
+                                                   {"expected", config_value_expected_shape(def->type)}});
+                    }
                 }
 
                 // Notify UI of changes
                 wxGetApp().obj_list()->changed_object(object_id);
                 plater->update();
 
+                // "error" only when nothing at all was written -- a range with no settings on it is
+                // not the success the old unconditional applied_count claimed it was.
+                const char* status = invalid_keys.empty() ? "success"
+                                                          : (applied_keys.empty() ? "error" : "partial");
                 return nlohmann::json{
-                    {"status", "success"},
+                    {"status", status},
                     {"object_id", object_id},
                     {"range", {z_min, z_max}},
-                    {"applied_count", settings.size()}
+                    {"applied_count", applied_keys.size()},
+                    {"applied_keys", applied_keys},
+                    // invalid_keys is the union, as in apply_config; the two below say which
+                    // problem it was.
+                    {"invalid_keys", invalid_keys},
+                    {"unknown_keys", unknown_keys},
+                    {"rejected_values", rejected_values}
                 };
             });
         }

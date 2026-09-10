@@ -867,6 +867,26 @@ Set settings for a specific Z height range.
 }}
 ```
 
+**Returns:**
+```json
+{
+  "status": "success",
+  "object_id": 0,
+  "range": [10, 20],
+  "applied_count": 1,
+  "applied_keys": ["layer_height"],
+  "invalid_keys": [],
+  "unknown_keys": [],
+  "rejected_values": []
+}
+```
+
+**Lists and failures:** identical to `apply_config` and `set_object_config` — a list-typed key takes
+a JSON array or the joined string, `unknown_keys` holds keys that do not exist, `rejected_values`
+holds `{"key", "reason", "expected"}` for values this key would not take, and `invalid_keys` is the
+union. `applied_count` counts only what was written, so `status` is `partial` when some keys applied
+and `error` when none did.
+
 ---
 
 ### delete_object_layer_range
