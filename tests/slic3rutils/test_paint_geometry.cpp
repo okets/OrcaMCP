@@ -11,6 +11,7 @@
 // has to be right before anything is written to a FacetsAnnotation.
 
 using namespace Slic3r::GUI::OrcaMCP;
+using Slic3r::Vec3d;
 using Catch::Matchers::WithinAbs;
 
 TEST_CASE("parse_paint_axis takes the three axis names in any case", "[orcamcp][paint]")
@@ -124,4 +125,42 @@ TEST_CASE("band_index_for_value honours explicit ranges as the caller wrote them
     const std::vector<PaintBand> overlapping = {{5, 0.0, 8.0}, {6, 4.0, 12.0}};
     CHECK(band_index_for_value(overlapping, 5.0) == 0);
     CHECK(band_index_for_value(overlapping, 9.0) == 1);
+}
+
+TEST_CASE("point_in_box is inclusive on every face", "[orcamcp][paint]")
+{
+    const PaintBox box{Vec3d(0.0, 0.0, 0.0), Vec3d(10.0, 20.0, 5.0)};
+
+    CHECK(point_in_box(box, Vec3d(5.0, 10.0, 2.5)));
+    // A facet centroid exactly on a face is inside: excluding it would silently drop the
+    // triangles a caller most obviously meant to include when the box is the object's own bbox.
+    CHECK(point_in_box(box, Vec3d(0.0, 0.0, 0.0)));
+    CHECK(point_in_box(box, Vec3d(10.0, 20.0, 5.0)));
+
+    CHECK_FALSE(point_in_box(box, Vec3d(-0.001, 10.0, 2.5)));
+    CHECK_FALSE(point_in_box(box, Vec3d(5.0, 20.001, 2.5)));
+    CHECK_FALSE(point_in_box(box, Vec3d(5.0, 10.0, 5.001)));
+}
+
+TEST_CASE("paint_box_is_valid rejects an inverted or flat box", "[orcamcp][paint]")
+{
+    CHECK(paint_box_is_valid({Vec3d(0.0, 0.0, 0.0), Vec3d(10.0, 20.0, 5.0)}));
+    // min > max on any axis is a caller mistake, not an empty selection: report it.
+    CHECK_FALSE(paint_box_is_valid({Vec3d(10.0, 0.0, 0.0), Vec3d(0.0, 20.0, 5.0)}));
+    CHECK_FALSE(paint_box_is_valid({Vec3d(0.0, 0.0, 6.0), Vec3d(10.0, 20.0, 5.0)}));
+    // Zero thickness on one axis is legal -- it selects the facets whose centroid lies in a plane.
+    CHECK(paint_box_is_valid({Vec3d(0.0, 0.0, 5.0), Vec3d(10.0, 20.0, 5.0)}));
+}
+
+TEST_CASE("point_in_sphere includes the surface", "[orcamcp][paint]")
+{
+    const PaintSphere sphere{Vec3d(100.0, 100.0, 3.0), 5.0};
+
+    CHECK(point_in_sphere(sphere, Vec3d(100.0, 100.0, 3.0)));
+    CHECK(point_in_sphere(sphere, Vec3d(105.0, 100.0, 3.0)));
+    CHECK(point_in_sphere(sphere, Vec3d(103.0, 104.0, 3.0)));   // 3-4-5
+    CHECK_FALSE(point_in_sphere(sphere, Vec3d(105.001, 100.0, 3.0)));
+    // A radius of zero selects nothing but the exact centre, and never crashes.
+    CHECK(point_in_sphere({Vec3d(0.0, 0.0, 0.0), 0.0}, Vec3d(0.0, 0.0, 0.0)));
+    CHECK_FALSE(point_in_sphere({Vec3d(0.0, 0.0, 0.0), 0.0}, Vec3d(0.1, 0.0, 0.0)));
 }

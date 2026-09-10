@@ -50,4 +50,31 @@ std::vector<PaintBand> make_even_bands(const std::vector<int>& states, double ax
 // bands are a caller's choice rather than an error, and the first match wins.
 int band_index_for_value(const std::vector<PaintBand>& bands, double value);
 
+// An axis-aligned box in plate millimetres.
+struct PaintBox
+{
+    Vec3d min = Vec3d::Zero();
+    Vec3d max = Vec3d::Zero();
+};
+
+// A sphere in plate millimetres.
+struct PaintSphere
+{
+    Vec3d  center = Vec3d::Zero();
+    double radius = 0.0;
+};
+
+// min <= max on every axis. A box that is flat on one axis is valid (it selects the facets whose
+// centroid lies in that plane); a box whose min exceeds its max is a caller mistake, and the tool
+// layer reports it rather than treating it as an empty selection.
+bool paint_box_is_valid(const PaintBox& box);
+
+// Inclusive on every face: a facet centroid exactly on a boundary is inside. Excluding it would
+// silently drop the facets a caller most obviously meant to include when the box is the object's
+// own bounding box.
+bool point_in_box(const PaintBox& box, const Vec3d& p);
+
+// Inclusive of the surface.
+bool point_in_sphere(const PaintSphere& sphere, const Vec3d& p);
+
 }}} // namespace Slic3r::GUI::OrcaMCP

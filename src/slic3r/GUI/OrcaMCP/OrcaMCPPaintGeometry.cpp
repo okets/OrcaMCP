@@ -70,4 +70,23 @@ int band_index_for_value(const std::vector<PaintBand>& bands, double value)
     return -1;
 }
 
+bool paint_box_is_valid(const PaintBox& box)
+{
+    return box.min.x() <= box.max.x() && box.min.y() <= box.max.y() && box.min.z() <= box.max.z();
+}
+
+bool point_in_box(const PaintBox& box, const Vec3d& p)
+{
+    return p.x() >= box.min.x() && p.x() <= box.max.x() &&
+           p.y() >= box.min.y() && p.y() <= box.max.y() &&
+           p.z() >= box.min.z() && p.z() <= box.max.z();
+}
+
+bool point_in_sphere(const PaintSphere& sphere, const Vec3d& p)
+{
+    // Compare squared lengths so a zero radius needs no special case and no sqrt is taken
+    // once per facet of a mesh that can carry hundreds of thousands of them.
+    return (p - sphere.center).squaredNorm() <= sphere.radius * sphere.radius;
+}
+
 }}} // namespace Slic3r::GUI::OrcaMCP
