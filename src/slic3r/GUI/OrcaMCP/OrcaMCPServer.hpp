@@ -65,6 +65,8 @@ private:
     static void register_filament_tools();
     // Printer and physical-printer tools (OrcaMCPPrinterTools.cpp)
     static void register_printer_tools();
+    // Facet painting and brim ears (OrcaMCPPaintTools.cpp)
+    static void register_paint_tools();
 };
 
 }} // namespace Slic3r::GUI

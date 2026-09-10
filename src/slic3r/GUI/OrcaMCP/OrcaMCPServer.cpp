@@ -4443,6 +4443,7 @@ void OrcaMCPServer::register_builtin_tools()
 
     register_filament_tools();
     register_printer_tools();
+    register_paint_tools();
 
     BOOST_LOG_TRIVIAL(info) << "OrcaMCPServer: Registered " << s_tools.size() << " tools";
 }
