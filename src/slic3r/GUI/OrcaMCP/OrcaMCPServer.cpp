@@ -910,10 +910,8 @@ void OrcaMCPServer::register_builtin_tools()
             query.name_contains = params.value("name_contains", std::string());
             if (params.contains("summary") && !parse_boolean_param(params["summary"], query.summary))
                 return nlohmann::json{{"status", "error"}, {"message", "summary must be a boolean"}};
-            if (params.contains("limit") && !parse_integer_param(params["limit"], query.limit))
-                return nlohmann::json{{"status", "error"}, {"message", "limit must be an integer"}};
-            if (query.limit < 0)
-                return nlohmann::json{{"status", "error"}, {"message", "limit must be 0 or more; 0 means no cap"}};
+            if (const std::string limit_error = parse_preset_limit_param(params, query.limit); !limit_error.empty())
+                return nlohmann::json{{"status", "error"}, {"message", limit_error}};
 
             std::string type = params.value("type", std::string());
             if (type == "all")
@@ -943,12 +941,11 @@ void OrcaMCPServer::register_builtin_tools()
                 // meaning -- every preset that matched -- and `returned` says how many fit.
                 nlohmann::json matched_counts = nlohmann::json::object();
                 nlohmann::json returned_counts = nlohmann::json::object();
-                bool truncated = false;
                 for (const auto& [key, count] : counts) {
                     matched_counts[key] = count.matched;
                     returned_counts[key] = count.returned;
-                    truncated = truncated || count.returned < count.matched;
                 }
+                const bool truncated = preset_list_truncated(counts);
                 result["query"] = {
                     {"type", type.empty() ? nlohmann::json(nullptr) : nlohmann::json(type)},
                     {"vendor", query.vendor},

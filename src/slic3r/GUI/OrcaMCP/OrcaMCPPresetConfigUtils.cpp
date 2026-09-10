@@ -105,6 +105,26 @@ std::string preset_truncation_hint(const std::map<std::string, PresetListCount>&
            "raise limit, or pass limit: 0 for the whole list.";
 }
 
+bool preset_list_truncated(const std::map<std::string, PresetListCount>& counts)
+{
+    for (const auto& [name, count] : counts)
+        if (count.returned < count.matched)
+            return true;
+    return false;
+}
+
+std::string parse_preset_limit_param(const nlohmann::json& params, int& limit)
+{
+    limit = -1;
+    if (!params.contains("limit"))
+        return {};
+    if (!OrcaMCP::parse_integer_param(params["limit"], limit))
+        return "limit must be an integer";
+    if (limit < 0)
+        return "limit must be 0 or more; 0 means no cap";
+    return {};
+}
+
 namespace {
 
 // The text form of one array element. Booleans become "1"/"0" because ConfigOptionBools accepts

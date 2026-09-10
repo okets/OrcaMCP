@@ -47,6 +47,17 @@ int preset_query_effective_limit(int requested_limit, bool summary);
 // Empty when nothing was dropped.
 std::string preset_truncation_hint(const std::map<std::string, PresetListCount>& counts);
 
+// Whether the cap dropped anything from any type in `counts`. The one predicate the hint
+// and the response's `query.truncated` flag both need, so they cannot disagree.
+bool preset_list_truncated(const std::map<std::string, PresetListCount>& counts);
+
+// Parses get_presets' `limit` argument out of the raw request params. Absent leaves `limit`
+// at the -1 sentinel (this query's default for its `summary`) and returns success ("").
+// Present values must be a non-negative integer; anything else is a request error, returned
+// as the message to send back verbatim. Pure and free of the MCP dispatch machinery so the
+// decision -- not just the arithmetic it feeds -- has a unit test.
+std::string parse_preset_limit_param(const nlohmann::json& params, int& limit);
+
 // One JSON value from a tool call, turned into the text ConfigOption::deserialize expects.
 struct ConfigValueText
 {
