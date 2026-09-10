@@ -95,21 +95,43 @@ Or add to `~/.claude.json`:
 
 See [Architecture Overview](docs/architecture/overview.md) for details.
 
-## Available Tools (50)
+## Available Tools (70)
+
+A selection, by category. The full list with parameters is in the tools reference.
 
 | Category | Tools |
 |----------|-------|
 | **Scene** | `get_scene_info`, `new_project`, `load_project`, `save_project`, `export_3mf` |
-| **Models** | `load_model`, `auto_orient`, `arrange_objects` |
+| **Models** | `load_model`, `auto_orient`, `arrange_objects`, `set_object_printable` |
 | **Transforms** | `move_object`, `rotate_object`, `scale_object`, `mirror_object`, `flatten_object`, `cut_object` |
 | **Config** | `get_presets`, `select_preset`, `apply_config`, `get_edited_presets` |
 | **Per-Object** | `get_object_config`, `set_object_config`, `reset_object_config` |
+| **Filaments & colour** | `get_filaments`, `set_object_filament`, `set_mixed_filament`, `suggest_color_mix`, `get_color_palette`, `get_flush_volumes` |
 | **Slicing** | `slice_all`, `get_slicing_status`, `export_gcode`, `get_print_estimate` |
-| **Visualization** | `render_plate_view` |
-| **Printers** | `get_printers`, `select_printer`, `send_to_printer` |
+| **Visualization** | `render_plate_view`, `set_gcode_view_type` |
+| **Printers** | `get_printers`, `select_printer`, `discover_printers`, `send_to_printer`, `get_printer_status`, `printer_control`, `match_project_to_printer` |
 | **History** | `undo`, `redo` |
 
 See [Tools Reference](docs/tools/reference.md) for complete documentation.
+
+### Colour mixing
+
+On a printer with more than one extruder, a filament slot can be a *mix* of loaded
+filaments. `suggest_color_mix` takes a colour you name and works out which loaded
+filaments to combine to reach it, and `get_color_palette` generates a set of mixes
+you can choose from — so an assistant can propose a palette for a model rather than
+leaving you to work out ratios by hand.
+
+## Printer support
+
+Sending a job works through OrcaSlicer's own print-host support, so anything it
+handles works here. Some printers additionally have a live device console and
+model-specific tooling:
+
+| Printer | Notes |
+|---------|-------|
+| [FlashForge Creator 5 / 5 Pro](docs/printers/flashforge-creator-5.md) | Live console, 4-slot material station, colour-aware material mapping |
+
 
 ## Documentation
 
@@ -118,7 +140,7 @@ See [Tools Reference](docs/tools/reference.md) for complete documentation.
 | [CLAUDE.md](CLAUDE.md) | **AI Agent Quick Reference** - Start here for coding agents |
 | [Architecture](docs/architecture/) | System design, threading model, transport layer |
 | [ADRs](docs/adr/) | Architecture Decision Records |
-| [Tools Reference](docs/tools/reference.md) | All 50 tools with parameters and examples |
+| [Tools Reference](docs/tools/reference.md) | Every tool, with parameters and examples |
 | [Workflows](docs/tools/workflows.md) | Common task patterns |
 | [Contributing](docs/contributing/) | Adding tools, code style |
 | [Setup](docs/setup/) | Building, configuration, troubleshooting |

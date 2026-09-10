@@ -79,7 +79,7 @@ cd build && ctest --output-on-failure
                                                              │  OrcaMCPServer  │
                                                              │                 │
                                                              │ - JSON-RPC 2.0  │
-                                                             │ - 49 MCP Tools  │
+                                                             │ - 70 MCP Tools  │
                                                              │ - Thread-safe   │
                                                              └─────────────────┘
 ```
@@ -99,23 +99,32 @@ cd build && ctest --output-on-failure
 
 **Status**: Complete & Tested ✓
 
-### MCP Tools (49 total)
+### MCP Tools (70 registered, 71 reachable)
+
+The server registers 70; the bridge adds `start_orca`, which launches OrcaSlicer and
+so cannot live inside it. To regenerate this count after adding a tool:
+
+```bash
+grep -hA1 -E '^\s*register_tool\(\{' src/slic3r/GUI/OrcaMCP/*.cpp | grep -coE '^\s*"[a-z0-9_]+",'
+```
 
 | Category | Tools |
 |----------|-------|
 | **Scene** | `get_scene_info`, `new_project`, `load_project`, `save_project`, `export_3mf` |
-| **Models** | `load_model`, `auto_orient`, `arrange_objects`, `get_object_info`, `rename_object` |
+| **Models** | `load_model`, `auto_orient`, `arrange_objects`, `get_object_info`, `rename_object`, `set_object_printable` |
 | **Transforms** | `move_object`, `rotate_object`, `scale_object`, `mirror_object`, `flatten_object`, `clone_object`, `cut_object`, `delete_object`, `transform_objects` |
 | **Plates** | `add_plate`, `select_plate`, `delete_plate` |
 | **Config** | `get_presets`, `get_edited_presets`, `select_preset`, `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset`, `get_valid_config_keys` |
 | **Per-Object** | `get_object_config`, `set_object_config`, `reset_object_config` |
 | **Layer Ranges** | `get_object_layer_ranges`, `set_object_layer_range`, `delete_object_layer_range` |
+| **Filaments & colour** | `get_filaments`, `set_object_filament`, `set_mixed_filament`, `delete_mixed_filament`, `get_flush_volumes`, `set_flush_volumes`, `auto_calc_flush_volumes`, `get_toolchanger_config`, `suggest_color_mix`, `get_color_palette` |
 | **Slicing** | `slice_all`, `get_slicing_status`, `export_gcode`, `get_print_estimate` |
-| **Visualization** | `render_plate_view`, `get_preview_base64` |
-| **Printers** | `get_printers`, `select_printer`, `send_to_printer` |
+| **Visualization** | `render_plate_view`, `get_preview_base64`, `set_gcode_view_type` |
+| **Printers** | `get_printers`, `select_printer`, `add_physical_printer`, `discover_printers`, `send_to_printer`, `get_printer_status`, `printer_control`, `list_printer_files`, `print_printer_file`, `match_project_to_printer` |
 | **Adaptive** | `apply_adaptive_layer_height`, `clear_adaptive_layer_height` |
 | **History** | `undo`, `redo` |
 | **Info** | `get_server_info` |
+| **Bridge only** | `start_orca` |
 
 ---
 
@@ -129,7 +138,7 @@ For detailed documentation beyond this quick reference, see the `docs/` folder:
 | [Threading Model](docs/architecture/threading-model.md) | GUI thread requirements and patterns |
 | [Transport Layer](docs/architecture/transport-layer.md) | HTTP + stdio bridge design |
 | [ADRs](docs/adr/) | Architecture Decision Records |
-| [Tools Reference](docs/tools/reference.md) | All 50 tools with parameters and examples |
+| [Tools Reference](docs/tools/reference.md) | Every tool, with parameters and examples |
 | [Workflows](docs/tools/workflows.md) | Common multi-tool patterns |
 | [Adding Tools](docs/contributing/adding-tools.md) | How to add new MCP tools |
 | [Code Style](docs/contributing/code-style.md) | C++ and Python conventions |
@@ -285,7 +294,7 @@ gh release upload v2.3.2.10 ./path/to/new/artifact.exe -R okets/OrcaMCP
 | File | Purpose |
 |------|---------|
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPServer.hpp` | MCP server class definition |
-| `src/slic3r/GUI/OrcaMCP/OrcaMCPServer.cpp` | 48 tool implementations (~3,900 lines) |
+| `src/slic3r/GUI/OrcaMCP/OrcaMCPServer.cpp` | Most tool implementations; filament and printer tools live in OrcaMCPFilamentTools.cpp / OrcaMCPPrinterTools.cpp |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPPlateUtils.cpp` | Plate rendering, turntable previews |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPPresetConfigUtils.cpp` | Preset/config management |
 | `src/slic3r/GUI/HttpServer.hpp` | HTTP server with JSON responses |
