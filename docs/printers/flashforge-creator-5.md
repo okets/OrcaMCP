@@ -30,10 +30,10 @@ OrcaSlicer ships them, on a Creator 5.
 - Every one of these reachable by an AI assistant through the MCP server, which is
   what the rest of this project is about.
 
-Honesty matters more than a feature list, so this page also says plainly what the
-printer's firmware will *not* let any slicer do — see
-[What you cannot control, and why](#what-you-cannot-control-and-why). Nothing here
-ships a button that does nothing.
+Honesty matters more than a feature list, so this page also says plainly what this
+*printer* will not let any slicer do, ours or FlashForge's — see
+[Limits of the printer, not of this slicer](#limits-of-the-printer-not-of-this-slicer).
+Nothing here ships a button that does nothing.
 
 ## Who maintains this, and why it will keep working
 
@@ -122,18 +122,25 @@ entirely when you switch away from the tab.
 - Z offset
 - Material slot contents: the material type and colour of each of the four slots
 
-### What you cannot control, and why
+### Limits of the printer, not of this slicer
 
-These are firmware limits, not gaps in OrcaMCP. The console does not show dead
-buttons for them.
+Two things you cannot do from a computer at all with a Creator 5. Neither is
+something this integration gave up on, and switching to FlashForge's own software
+does not get them back — so they are not a reason to choose one slicer over the
+other. The console does not show dead buttons for them.
 
-- **Motion — jogging, homing, manual extrusion.** The Creator 5 exposes no move
-  command over the HTTP API and has no separate motion channel. FlashForge's own
-  software has no jog controls for it either.
-- **Loading and unloading filament.** The `ms_cmd` command that does this is
-  specific to the AD5X. Load *progress* is reported, though, so when you push
-  filament in at the machine the console follows it through heating, pushing,
-  purging, cutting and retracting.
+- **Motion — jogging, homing, manual extrusion.** The printer exposes no move
+  command over its API and has no separate motion channel. FlashForge's own slicer
+  has no jog controls for this machine either; we checked before deciding not to
+  build them. You move a Creator 5 from its own touchscreen.
+- **Loading and unloading filament.** The command that does this (`ms_cmd`) is
+  specific to the AD5X, a different FlashForge model — the Creator 5 does not take
+  it. You load at the machine, as you would anyway with a four-slot station in
+  front of you.
+
+  What the console *does* do is follow the load live: push filament in at the
+  printer and it tracks the sequence through heating, pushing, purging, cutting and
+  retracting, so you can watch it complete from where you are sitting.
 
 One firmware quirk worth knowing: **while the printer is idle, the filtration and
 Z-offset commands answer "Success" and then do nothing.** The console sends them
