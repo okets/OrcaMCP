@@ -1,5 +1,6 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPFilamentUtils.cpp
 #include "OrcaMCPFilamentUtils.hpp"
+#include "OrcaMCPColorRecipe.hpp"
 #include "OrcaMCPConfigKeys.hpp"
 #include "OrcaMCPPresetConfigUtils.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
@@ -425,6 +426,8 @@ nlohmann::json enumerate_mix_palette(int max_count, int max_components, const st
         accepted.resize(size_t(max_count));
 
     nlohmann::json palette = nlohmann::json::array();
+    std::vector<double> hues;
+    hues.reserve(accepted.size());
     for (const auto& c : accepted) {
         palette.push_back({
             {"components", c.components},
@@ -432,8 +435,16 @@ nlohmann::json enumerate_mix_palette(int max_count, int max_components, const st
             {"predicted_color", c.predicted_color},
             {"measured", c.measured}
         });
+        hues.push_back(hue_degrees(c.predicted_color));
     }
-    return palette;
+    // The palette IS the gamut: a hue no entry reaches cannot be mixed from these filaments. With
+    // cyan, magenta and yellow loaded the red and orange sectors come back empty, which is the
+    // honest form of "this set does not behave like printer inks".
+    nlohmann::json unreachable = nlohmann::json::array();
+    for (int sector : unreachable_hue_sectors(hues))
+        unreachable.push_back({{"hue_degrees", sector}, {"name", hue_sector_name(sector)}});
+
+    return {{"entries", palette}, {"unreachable_hues", unreachable}};
 }
 
 }}} // namespace Slic3r::GUI::OrcaMCP

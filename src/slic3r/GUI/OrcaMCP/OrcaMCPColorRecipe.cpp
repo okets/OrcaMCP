@@ -49,4 +49,23 @@ std::vector<int> unreachable_hue_sectors(const std::vector<double>& hues)
     return unreachable;
 }
 
+const char* hue_sector_name(int sector_degrees)
+{
+    switch (((sector_degrees % 360) + 360) % 360) {
+    case 0:   return "red";
+    case 30:  return "orange";
+    case 60:  return "yellow";
+    case 90:  return "yellow-green";
+    case 120: return "green";
+    case 150: return "spring green";
+    case 180: return "cyan";
+    case 210: return "azure";
+    case 240: return "blue";
+    case 270: return "violet";
+    case 300: return "magenta";
+    case 330: return "rose";
+    default:  return "off-sector";
+    }
+}
+
 }}} // namespace Slic3r::GUI::OrcaMCP

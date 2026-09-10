@@ -80,8 +80,10 @@ double color_delta_e_hex(const std::string& hex_a, const std::string& hex_b);
 // "PLA" matches "PLA Basic"), not exact string equality, and material_type (when given) filters
 // candidates with the same rule. Candidates within delta_e < 5 of a physical filament or an
 // already-accepted candidate are dropped, the rest are sorted by hue and truncated to max_count.
-// Returns a JSON array of {"components": [1-based...], "ratios": [...],
-// "predicted_color": "#RRGGBB", "measured": bool}. Main thread only.
+// Returns {"entries": [{"components": [1-based...], "ratios": [...], "predicted_color": "#RRGGBB",
+// "measured": bool}...], "unreachable_hues": [{"hue_degrees": int, "name": string}...]}, where the
+// second is the 30-degree hue sectors no entry reaches -- the colours this filament set cannot
+// mix. Main thread only.
 nlohmann::json enumerate_mix_palette(int max_count, int max_components, const std::string& material_type);
 
 }}} // namespace Slic3r::GUI::OrcaMCP

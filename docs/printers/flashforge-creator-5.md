@@ -166,6 +166,16 @@ filament — a half-mapped job never reaches the printer.
 
 You can override it by passing explicit `{tool_id, slot_id}` pairs.
 
+**Mixed slots average, they do not mix like pigment.** A mixed slot alternates layers of its
+components, so the printed result is close to a weighted average of their RGB values. Magenta +
+yellow at 40/60 gives a salmon (`#FA8B6C`), not red; cyan + magenta gives lavender (`#BA44ED`), not
+blue. A cyan/magenta/yellow set therefore does **not** behave like printer inks, and the reds and
+blues of the colour wheel are outside what it can reach at all.
+
+`suggest_color_mix` marks that with `gamut: "outside"` past ΔE 20, and `get_color_palette` lists the
+hue sectors nothing in the palette reaches under `unreachable_hues`. Buy filament for the colours
+you want to land on, not for the primaries you would mix them from.
+
 ### Matching the project to what is loaded
 
 `match_project_to_printer` reads what is actually in the four slots and updates the

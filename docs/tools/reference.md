@@ -1071,6 +1071,8 @@ loaded physical filaments. Optionally create the mixed slot.
   },
   "delta_e": 8.4,
   "exact_match": false,
+  "gamut": "inside",
+  "gamut_delta_e_threshold": 20.0,
   "slot": null
 }
 ```
@@ -1085,6 +1087,12 @@ reports the matching slot and `created: false`; there is nothing to create.
 layers** of its components, so the result is close to a weighted average of the component RGB
 values, *not* subtractive pigment mixing. Cyan + magenta gives lavender, not blue; magenta + yellow
 gives salmon, not red. A CMY filament set does not behave like printer inks.
+
+**Gamut.** `gamut` is `"inside"` while `delta_e` is below `gamut_delta_e_threshold` (CIE76 ΔE 20)
+and `"outside"` at or above it, with a `message` explaining why. The threshold is calibrated from
+real results: usable mixes land at ΔE 3.6–14, while pure red from a cyan/magenta/yellow set lands
+at ΔE 54. An `"outside"` recipe is the engine's closest attempt, not an answer — load a closer
+filament instead of mixing.
 
 ### get_color_palette
 Enumerate an achievable palette of filament mixes (pairs, and optionally triples) from the loaded
@@ -1103,13 +1111,22 @@ physical filaments — a shortlist to choose from before painting.
   "status": "success",
   "palette": [
     {"components": [1, 2], "ratios": [70, 30], "predicted_color": "#5FC9E8", "measured": true}
-  ]
+  ],
+  "unreachable_hues": [
+    {"hue_degrees": 0, "name": "red"},
+    {"hue_degrees": 30, "name": "orange"}
+  ],
+  "gamut_delta_e_threshold": 20.0
 }
 ```
 
 `measured: true` means the colour came from the standard recipe table rather than the blend model.
 Entries within ΔE 5 of a loaded filament, or of an already-accepted entry, are dropped, and the
 list is ordered by hue.
+
+`unreachable_hues` lists the 30-degree hue sectors no palette entry reaches — the colours this
+filament set cannot mix at all. With cyan, magenta and yellow loaded, red and orange come back
+here, because alternating layers averages the components rather than mixing them like pigment.
 
 ---
 

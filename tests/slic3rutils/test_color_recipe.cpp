@@ -133,3 +133,19 @@ TEST_CASE("hues past 360 or below 0 wrap onto the same circle", "[orcamcp][color
     CHECK(std::find(unreachable.begin(), unreachable.end(), 330) == unreachable.end());
     CHECK(unreachable.size() == 10);
 }
+
+TEST_CASE("unreachable sectors are reported as names a person can act on", "[orcamcp][colorrecipe]")
+{
+    using Slic3r::GUI::OrcaMCP::hue_sector_name;
+
+    CHECK(std::string(hue_sector_name(0)) == "red");
+    CHECK(std::string(hue_sector_name(30)) == "orange");
+    CHECK(std::string(hue_sector_name(60)) == "yellow");
+    CHECK(std::string(hue_sector_name(120)) == "green");
+    CHECK(std::string(hue_sector_name(180)) == "cyan");
+    CHECK(std::string(hue_sector_name(240)) == "blue");
+    CHECK(std::string(hue_sector_name(300)) == "magenta");
+    // Every sector the enumerator can produce has a name; nothing falls through to a number.
+    for (int sector = 0; sector < 360; sector += 30)
+        CHECK(std::string(hue_sector_name(sector)).empty() == false);
+}

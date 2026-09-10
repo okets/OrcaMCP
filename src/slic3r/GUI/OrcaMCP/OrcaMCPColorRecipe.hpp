@@ -41,4 +41,8 @@ const char* gamut_label(double delta_e);
 // `hues` are degrees in [0, 360); anything outside is wrapped.
 std::vector<int> unreachable_hue_sectors(const std::vector<double>& hues);
 
+// A name for one of the sector boundaries unreachable_hue_sectors returns (0, 30, ... 330).
+// "the red and orange sectors are unreachable" is actionable; "sectors 0 and 30" is not.
+const char* hue_sector_name(int sector_degrees);
+
 }}} // namespace Slic3r::GUI::OrcaMCP

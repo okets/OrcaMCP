@@ -313,12 +313,26 @@ void OrcaMCPServer::register_filament_tools()
                     }},
                     {"delta_e", delta_e},
                     {"exact_match", recipe.exact_match},
+                    // A mixed slot averages layers instead of mixing pigment, so whole regions of
+                    // the colour wheel are simply unreachable -- the session that prompted this got
+                    // a confident-looking recipe for pure red at delta_e 54. Say which side of the
+                    // threshold this landed on rather than letting the number speak for itself.
+                    {"gamut", gamut_label(delta_e)},
+                    {"gamut_delta_e_threshold", kGamutDeltaEThreshold},
                     {"slot", nullptr}
                 };
                 if (recipe.exact_match)
                     out["message"] = "target_color already matches physical filament " +
                                      std::to_string(recipe.components.front()) +
                                      " (" + recipe.hexes.front() + "); no mix needed";
+                if (std::string(gamut_label(delta_e)) == "outside")
+                    out["message"] = "The closest mix is delta_e " + std::to_string(int(delta_e + 0.5)) +
+                                     " from target_color, past the delta_e " +
+                                     std::to_string(int(kGamutDeltaEThreshold)) +
+                                     " gamut threshold. A mixed slot alternates layers, so it averages "
+                                     "its components' colours rather than mixing them like pigment; this "
+                                     "colour is not reachable from the loaded filaments. Load a filament "
+                                     "closer to it instead.";
 
                 if (create) {
                     // An exact match has nothing to create: apply_mixed_filament needs 2-3
@@ -372,9 +386,12 @@ void OrcaMCPServer::register_filament_tools()
             const std::string material_type = params.value("material_type", std::string());
 
             return run_on_main_thread([max_count, max_components, material_type]() -> nlohmann::json {
+                nlohmann::json enumerated = enumerate_mix_palette(max_count, max_components, material_type);
                 nlohmann::json r = {
                     {"status", "success"},
-                    {"palette", enumerate_mix_palette(max_count, max_components, material_type)}
+                    {"palette", enumerated["entries"]},
+                    {"unreachable_hues", enumerated["unreachable_hues"]},
+                    {"gamut_delta_e_threshold", kGamutDeltaEThreshold}
                 };
                 r["active_warnings"] = get_active_warnings_json(wxGetApp().plater());
                 return r;
