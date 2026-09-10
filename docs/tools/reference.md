@@ -1184,13 +1184,13 @@ does not restrict which instances are painted. **Brim ears are the one exception
 object-level data, not per-volume, and slicing resolves them through instance 0 only — see
 `set_brim_ears` and `get_object_paint` below.
 
-Two field names recur across `paint_object` and `get_object_paint`: `original_facets` is the
-mesh's own triangle count, and `facets_selected` counts facets the selection *covered* —
-including ones covered but set to state `0` (unpainted) — so neither one is "how much of the
-object is painted". `coverage_percent`, reported per state by `get_object_paint`, is the
-honest measure: it is area-weighted, and a paint stroke can subdivide a triangle into several
-leaf triangles, so a state's `facet_count` can exceed `original_facets` and the two must never
-be divided one by the other.
+Three fields decide whether you read these responses correctly. `original_facets`, reported by
+both tools, is the mesh's own triangle count. `facets_selected`, reported by `paint_object`
+only, counts facets the selection *covered* — including ones covered but set to state `0`
+(unpainted) — so neither of those is "how much of the object is painted". `coverage_percent`,
+reported per state by both tools, is the honest measure: it is area-weighted, and a paint
+stroke can subdivide a triangle into several leaf triangles, so a state's `facet_count` can
+exceed `original_facets` and the two must never be divided one by the other.
 
 ### paint_object
 Write per-triangle paint — the same data the GUI paint gizmos write.
