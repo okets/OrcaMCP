@@ -1174,6 +1174,12 @@ void OrcaMCPServer::register_builtin_tools()
                 nlohmann::json invalid_keys = nlohmann::json::array();
                 bool has_error = false;
                 bool has_invalid = false;
+                // Writing a slot's colour rewrites filament_multi_colour and filament_colour_type
+                // with it, which turns a gradient into one flat colour. That is the right thing to
+                // do -- it is what the colour picker does -- but a caller that is never told has no
+                // way to know a spool's second colour is gone.
+                std::vector<int> flattened_slots;
+                std::vector<std::string> color_errors;
 
                 for (const auto& type : type_order) {
                     nlohmann::json config_item = {{"type", type}, {"settings", grouped_settings[type]}};
@@ -1186,6 +1192,9 @@ void OrcaMCPServer::register_builtin_tools()
                     }
                     for (const auto& key : result.applied) applied_keys.push_back(key);
                     for (const auto& key : result.invalid) invalid_keys.push_back(key);
+                    flattened_slots.insert(flattened_slots.end(), result.flattened_slots.begin(),
+                                           result.flattened_slots.end());
+                    color_errors.insert(color_errors.end(), result.color_errors.begin(), result.color_errors.end());
                 }
                 OrcaMCPPresetConfigUtils::UpdatePresetTabs();
 
@@ -1200,6 +1209,21 @@ void OrcaMCPServer::register_builtin_tools()
                     {"active_warnings", get_active_warnings_json(plater)}
                 };
                 auto info_messages = suppression_guard.messages();
+                if (!flattened_slots.empty()) {
+                    response["flattened_gradient_slots"] = flattened_slots;
+                    for (int slot : flattened_slots)
+                        info_messages.push_back("Filament slot " + std::to_string(slot) +
+                                                " held a multi-colour gradient; it is now the single colour that "
+                                                "was written.");
+                }
+                // A colour that could not be written to all three keys leaves the slot's colour,
+                // swatch and preview disagreeing, which is exactly what those keys exist to prevent.
+                if (!color_errors.empty()) {
+                    if (status == "success")
+                        response["status"] = "partial";
+                    for (const auto& message : color_errors)
+                        info_messages.push_back(message);
+                }
                 if (!info_messages.empty()) {
                     response["info_messages"] = info_messages;
                 }

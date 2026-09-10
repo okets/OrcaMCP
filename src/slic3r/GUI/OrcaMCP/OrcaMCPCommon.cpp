@@ -21,6 +21,21 @@ bool is_hex_color(const std::string& value, bool allow_alpha)
     return true;
 }
 
+bool color_changed(const std::string& before, const std::string& after)
+{
+    if (before == after)
+        return false;
+    // Only hex spellings of the same colour are interchangeable; anything else is compared as text.
+    if (!is_hex_color(before, /*allow_alpha=*/true) || !is_hex_color(after, /*allow_alpha=*/true))
+        return true;
+    if (before.size() != after.size())
+        return true; // "#RRGGBB" and "#RRGGBBAA" are not the same value
+    for (size_t i = 0; i < before.size(); ++i)
+        if (std::tolower(static_cast<unsigned char>(before[i])) != std::tolower(static_cast<unsigned char>(after[i])))
+            return true;
+    return false;
+}
+
 bool parse_integer_param(const nlohmann::json& value, int& out)
 {
     if (value.is_number_integer()) {

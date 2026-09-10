@@ -43,6 +43,13 @@ bool parse_boolean_param(const nlohmann::json& value, bool& out);
 // validates it here first, so the caller is told instead of quietly getting a different colour.
 bool is_hex_color(const std::string& value, bool allow_alpha = false);
 
+// True when `after` is a different colour from `before`. Two hex colours are compared
+// case-insensitively, because "#ff0000" and "#FF0000" are the same colour and calling that a change
+// is not free: apply_config gives every slot whose colour moved the colour picker's three-key
+// treatment, which flattens a gradient. Anything that is not a hex colour -- an empty slot, a name
+// this code cannot interpret -- is compared exactly, since nothing here can say what it means.
+bool color_changed(const std::string& before, const std::string& after);
+
 // Always returns {"count": N, "warnings": [{level, message, type}...]}.
 nlohmann::json get_active_warnings_json(Plater* plater);
 

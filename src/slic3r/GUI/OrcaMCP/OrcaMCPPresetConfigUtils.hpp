@@ -30,6 +30,12 @@ struct ApplyConfigResult {
     std::vector<std::string> applied;
     std::vector<std::string> invalid;
     std::string error;
+    // Writing filament_colour gives each changed slot the colour picker's three-key treatment, and
+    // that replaces a gradient with one flat colour. `flattened_slots` holds the 1-based slots that
+    // happened to, so the caller can say what it did instead of the spool quietly losing its second
+    // colour; `color_errors` holds the reason for any slot whose three keys could not be written.
+    std::vector<int> flattened_slots;
+    std::vector<std::string> color_errors;
 };
 
 class OrcaMCPPresetConfigUtils {
@@ -69,6 +75,16 @@ public:
     // `flattened` comes back true when the slot held a multi-colour (gradient) that this replaced
     // with one flat colour. Returns false with `error` set and nothing written on a bad index.
     static bool WriteProjectFilamentColor(size_t config_index, const std::string& color, bool& flattened,
+                                          std::string& error);
+    // The same write, without the refresh, for a caller changing several slots at once: stage each
+    // slot, then call RefreshAfterProjectConfigChange() exactly once. Matching a four-slot material
+    // station otherwise rebuilt both filament lists, re-evaluated the project's dirty state and
+    // rewrote the app config once per slot, for one user action.
+    //
+    // That final call is not optional. export_selections lives inside it and is the only thing that
+    // makes any of these three keys survive a restart, so a batch that skips it looks right until
+    // the next launch and then silently reverts.
+    static bool StageProjectFilamentColor(size_t config_index, const std::string& color, bool& flattened,
                                           std::string& error);
     static void SelectPreset(const std::string& type, const std::string& presetName);
     // Sets one filament slot (1-based) to `presetName`, mirroring the sidebar filament combo

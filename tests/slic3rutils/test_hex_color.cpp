@@ -35,3 +35,35 @@ TEST_CASE("is_hex_color takes an alpha byte only when asked", "[orcamcp][color]"
     CHECK_FALSE(is_hex_color("#B17C38FFF", /*allow_alpha=*/true));
     CHECK_FALSE(is_hex_color("#B17C38Fz", /*allow_alpha=*/true));
 }
+
+// Whether a colour "moved" is not a string comparison. apply_config gives every slot whose colour
+// changed the colour picker's three-key treatment, and that replaces a gradient with one flat
+// colour -- so re-submitting a slot's own colour in a different case used to cost that slot its
+// second colour.
+
+using Slic3r::GUI::OrcaMCP::color_changed;
+
+TEST_CASE("the same hex colour in a different case is not a change", "[orcamcp][color]")
+{
+    CHECK_FALSE(color_changed("#ff0000", "#FF0000"));
+    CHECK_FALSE(color_changed("#B17C38", "#b17c38"));
+    CHECK_FALSE(color_changed("#B17C38FF", "#b17c38ff")); // with an alpha byte
+    CHECK_FALSE(color_changed("#B17C38", "#B17C38"));
+    CHECK_FALSE(color_changed("", ""));
+}
+
+TEST_CASE("a different colour is a change", "[orcamcp][color]")
+{
+    CHECK(color_changed("#FF0000", "#FF0001"));
+    CHECK(color_changed("", "#FF0000"));            // a slot that had no colour
+    CHECK(color_changed("#FF0000", ""));            // a colour being cleared
+    CHECK(color_changed("#B17C38", "#B17C38FF"));   // same RGB, but now carrying an alpha byte
+}
+
+TEST_CASE("a value that is not a hex colour is compared exactly", "[orcamcp][color]")
+{
+    // Nothing here can say what "Bronze" means, so it is text: two spellings of it are two values.
+    CHECK(color_changed("Bronze", "bronze"));
+    CHECK_FALSE(color_changed("Bronze", "Bronze"));
+    CHECK(color_changed("#GGGGGG", "#gggggg")); // right shape, not hex - never treated as a colour
+}

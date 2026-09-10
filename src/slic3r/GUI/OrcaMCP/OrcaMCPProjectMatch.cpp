@@ -443,6 +443,13 @@ nlohmann::json match_project_to_printer(const std::vector<FlashforgeApi::Materia
         // would hang on the GUI thread, and the console promised never to show a modal.
         McpDialogSuppressionGuard suppression;
 
+        // One refresh for the whole match, not one per slot. Each colour write is staged straight
+        // into project_config -- so the next slot's preset selection already sees it -- and the
+        // derived work (both filament lists, the project-dirty flag, the app-config snapshot, the
+        // background-process kick) runs once at the end. A four-slot station did all of that four
+        // times for one button press.
+        bool colors_staged = false;
+
         for (SlotPlan& entry : plan) {
             if (entry.preset_changes) {
                 std::string error;
@@ -461,8 +468,10 @@ nlohmann::json match_project_to_printer(const std::vector<FlashforgeApi::Materia
                 // would colour the wrong slot as soon as a mixed slot sits before this one.
                 bool        flattened = false;
                 std::string error;
-                if (!OrcaMCPPresetConfigUtils::WriteProjectFilamentColor(size_t(entry.slot - 1),
-                                                                         entry.color_after, flattened, error)) {
+                if (OrcaMCPPresetConfigUtils::StageProjectFilamentColor(size_t(entry.slot - 1),
+                                                                        entry.color_after, flattened, error)) {
+                    colors_staged = true;
+                } else {
                     entry.color_after   = entry.color_before;
                     entry.color_changes = false;
                     entry.matched       = false;
@@ -470,6 +479,10 @@ nlohmann::json match_project_to_printer(const std::vector<FlashforgeApi::Materia
                 }
             }
         }
+        // Never conditional on the response being a success: export_selections lives in here, and it
+        // is the only thing that makes a filament colour survive a restart.
+        if (colors_staged)
+            OrcaMCPPresetConfigUtils::RefreshAfterProjectConfigChange();
         info_messages = suppression.messages();
     }
 

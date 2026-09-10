@@ -250,7 +250,9 @@ ApplyConfigResult OrcaMCPPresetConfigUtils::ApplyConfig(const nlohmann::json& it
 
     // A caller writing filament_colour through apply_config gets the same three-key treatment the
     // colour picker gives -- but only for the slots whose colour actually moved, so a gradient set
-    // deliberately on some other slot is not flattened as a side effect.
+    // deliberately on some other slot is not flattened as a side effect. "Moved" is decided by
+    // OrcaMCP::color_changed, i.e. case-insensitively for hex: re-submitting a slot's own colour in
+    // a different case is not a change, and treating it as one would flatten that slot's gradient.
     std::vector<std::string> colors_before;
     if (type == "project")
         if (const auto* opt = config->option<ConfigOptionStrings>("filament_colour"))
@@ -293,12 +295,17 @@ ApplyConfigResult OrcaMCPPresetConfigUtils::ApplyConfig(const nlohmann::json& it
 
     if (type == "project") {
         if (const auto* opt = config->option<ConfigOptionStrings>("filament_colour"))
-            for (size_t i = 0; i < opt->values.size(); ++i)
-                if (i >= colors_before.size() || colors_before[i] != opt->values[i]) {
-                    bool        flattened = false;
-                    std::string sync_error;
-                    sync_filament_color_keys(i, opt->values[i], flattened, sync_error);
-                }
+            for (size_t i = 0; i < opt->values.size(); ++i) {
+                // A slot the project did not have before is new, so it counts as changed.
+                if (i < colors_before.size() && !OrcaMCP::color_changed(colors_before[i], opt->values[i]))
+                    continue;
+                bool        flattened = false;
+                std::string sync_error;
+                if (!sync_filament_color_keys(i, opt->values[i], flattened, sync_error))
+                    result.color_errors.push_back(sync_error);
+                else if (flattened)
+                    result.flattened_slots.push_back(int(i) + 1);
+            }
         RefreshAfterProjectConfigChange();
     }
 
@@ -352,12 +359,20 @@ bool sync_filament_color_keys(size_t config_index, const std::string& color, boo
 
 } // namespace
 
+bool OrcaMCPPresetConfigUtils::StageProjectFilamentColor(size_t             config_index,
+                                                         const std::string& color,
+                                                         bool&              flattened,
+                                                         std::string&       error)
+{
+    return sync_filament_color_keys(config_index, color, flattened, error);
+}
+
 bool OrcaMCPPresetConfigUtils::WriteProjectFilamentColor(size_t             config_index,
                                                          const std::string& color,
                                                          bool&              flattened,
                                                          std::string&       error)
 {
-    if (!sync_filament_color_keys(config_index, color, flattened, error))
+    if (!StageProjectFilamentColor(config_index, color, flattened, error))
         return false;
     RefreshAfterProjectConfigChange();
     return true;
