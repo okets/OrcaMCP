@@ -706,6 +706,95 @@ void OrcaMCPServer::register_paint_tools()
     });
 
     register_tool({
+        "clear_object_paint",
+        "Reset a paint annotation on an object back to unpainted -- the equivalent of the paint "
+        "gizmo's 'Remove all' button. mode picks which annotation; omit it to clear all four. "
+        "This resets the annotation outright, which is not the same as painting every facet with "
+        "state none: the reset leaves no data at all for the 3MF to carry.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"object_id", {{"type", "integer"}, {"description", "Object index (0-based)"}}},
+                {"volume_id", {
+                    {"type", "integer"},
+                    {"minimum", -1},
+                    {"description", "Part index within the object (0-based); omit, or pass -1, for every part"}
+                }},
+                {"instance_id", {
+                    {"type", "integer"},
+                    {"minimum", 0},
+                    {"description", "Which instance's transform defines plate coordinates (default 0). "
+                                    "Paint is shared by every instance."}
+                }},
+                {"mode", {
+                    {"type", "string"},
+                    {"enum", {"color", "support", "seam", "fuzzy_skin"}},
+                    {"description", "Which annotation to clear; omit to clear all four"}
+                }}
+            }},
+            {"required", {"object_id"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            return run_on_main_thread([params]() -> nlohmann::json {
+                Plater*     plater = wxGetApp().plater();
+                PaintTarget target;
+                std::string error;
+                if (!resolve_paint_target(params, target, error))
+                    return nlohmann::json{{"status", "error"}, {"message", error}};
+
+                std::vector<PaintMode> modes = {PaintMode::Color, PaintMode::Support,
+                                                PaintMode::Seam, PaintMode::FuzzySkin};
+                if (params.contains("mode")) {
+                    PaintMode one = PaintMode::Color;
+                    if (!parse_paint_mode(params["mode"].get<std::string>(), one))
+                        return nlohmann::json{{"status", "error"},
+                                              {"message", "Unknown mode; expected color, support, seam or fuzzy_skin"}};
+                    modes = {one};
+                }
+
+                // Snapshot before the first write, so one undo restores every mode this call cleared.
+                // Named per mode, the same reason paint_object is: a clear-all call would otherwise
+                // leave four identical "Clear Object Paint" entries in the undo menu.
+                plater->take_snapshot(_u8L("Clear Object Paint") + " (" +
+                                      (modes.size() == 1 ? paint_mode_name(modes.front()) : "all") + ")");
+
+                nlohmann::json cleared = nlohmann::json::array();
+                bool           changed = false;
+                for (PaintMode mode : modes) {
+                    int volumes_cleared = 0;
+                    for (Slic3r::ModelVolume* mv : target.volumes)
+                        if (clear_volume_paint(*mv, mode))
+                            ++volumes_cleared;
+                    changed |= volumes_cleared > 0;
+                    cleared.push_back({{"mode", paint_mode_name(mode)},
+                                       {"volumes_cleared", volumes_cleared},
+                                       {"volumes_targeted", int(target.volumes.size())}});
+                }
+
+                // clear_volume_paint never moves a vertex, so refresh_after_paint's constraint holds
+                // here exactly as it does for paint_object: reuse it rather than reimplement the GUI
+                // bookkeeping it owes (object-list refresh, every instance's plate notified, reslice).
+                refresh_after_paint(target);
+
+                nlohmann::json result = {
+                    {"status", "success"},
+                    {"object_id", target.object_id},
+                    {"object_name", target.object->name},
+                    {"coordinate_frame", "plate"},
+                    {"instance_id", int(target.instance_idx)},
+                    {"cleared", cleared},
+                    {"annotation_changed", changed},
+                    {"active_warnings", get_active_warnings_json(plater)}
+                };
+                if (!changed)
+                    result["info_messages"] = std::vector<std::string>{
+                        "Nothing was cleared: the requested annotation(s) were already empty."};
+                return result;
+            });
+        }
+    });
+
+    register_tool({
         "get_object_paint",
         "Read what is currently painted on an object: per-volume facet counts and surface "
         "coverage for each of the four paint modes (color, support, seam, fuzzy_skin), plus its "
