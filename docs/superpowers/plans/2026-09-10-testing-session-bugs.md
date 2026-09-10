@@ -105,3 +105,85 @@ built to make this response small cannot be told to filter.
   up as PLA. Expected: the project and the machine disagree until the filament is
   physically changed or `match_project_to_printer` is run. This is the case that
   tool exists for.
+
+---
+
+## T3 — the bridge falsely reports "OrcaMCP is not running" under concurrent calls
+
+**Severity: high.** It is a false negative that tells an agent to restart a running
+application.
+
+Eight `suggest_color_mix` calls were issued in one batch. Six answered normally;
+the last two came back with:
+
+```
+OrcaMCP is not running. Use the 'start_orca' tool to start it, then try again.
+```
+
+The app was **still running** — `pgrep` confirmed the process, there was no crash
+report in `~/Library/DiagnosticReports`, and the identical two calls succeeded
+immediately afterwards when sent one at a time.
+
+So the liveness check in `scripts/orcamcp-bridge.py` reports "not running" for what
+is really a timeout or a refused connection while the server is busy. An agent
+following that advice would call `start_orca` on an already-running instance.
+
+**Where to look:** the liveness/health check in `scripts/orcamcp-bridge.py`, and
+how many concurrent connections `HttpServer` accepts. Two separate questions:
+
+1. Does the bridge distinguish "connection refused" (really down) from "timed out"
+   or "server busy"? It must — the advice it gives differs completely.
+2. Does the embedded HTTP server serialise requests such that a burst queues behind
+   `run_on_main_thread`? If so, a slow batch is expected and the client needs a
+   longer timeout, not a "not running" verdict.
+
+**Reproduce:** issue 8 `suggest_color_mix` calls in one batch against a running
+instance.
+
+---
+
+## T4 — `suggest_color_mix` returns an error when the target needs no mixing
+
+**Severity: low, but it breaks palette loops.**
+
+```
+suggest_color_mix {"target_color": "#00FFFF"}
+-> {"status":"error",
+    "message":"target_color already matches physical filament 1 (#00FFFF); no mix needed"}
+```
+
+That is a correct and useful answer — "load slot 1, no mix required" — reported as
+a failure. An agent walking a set of target colours hits `status: "error"` partway
+through and has to special-case the message text to carry on.
+
+**Fix direction:** return `status: "success"` with the recipe expressed as a single
+component (the matching slot, ratio 100) and `delta_e: 0`, plus a flag such as
+`"exact_match": true`. Keep the message. Reserve `status: "error"` for calls that
+could not be answered.
+
+---
+
+## Not a bug: the mix model averages, it does not mix like pigment
+
+Worth recording because it looks like a bug and is not, and because it should be in
+the Creator 5 docs.
+
+A mixed slot **alternates layers** of its components, so the result is close to a
+weighted average of the RGB values — not subtractive pigment mixing. With cyan,
+magenta and yellow loaded:
+
+- magenta + yellow at 40/60 predicts `#FA8B6C` (a salmon), because averaging
+  `#FF00FF` and `#FFFF00` gives roughly `#FF9966`. It cannot give red.
+- cyan + magenta gives lavender (`#BA44ED`), not blue.
+
+So a CMY set does **not** behave like printer inks, and the reds and blues of the
+colour wheel are outside the achievable gamut. Targets near cyan/green/magenta
+resolve well (ΔE 3.6–14); pure red was ΔE 54.
+
+Two consequences:
+
+1. `docs/printers/flashforge-creator-5.md` should say what the mix model actually
+   is, so nobody buys CMY filament expecting ink behaviour.
+2. `get_color_palette` / `suggest_color_mix` responses would be more honest if an
+   out-of-gamut result said so, rather than returning a confident recipe with a
+   ΔE of 54. Consider a `"gamut": "outside"` marker above some threshold.
