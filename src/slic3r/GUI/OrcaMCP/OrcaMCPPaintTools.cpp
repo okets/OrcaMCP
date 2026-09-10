@@ -41,6 +41,12 @@ bool resolve_paint_target(const nlohmann::json& params, PaintTarget& out, std::s
     Plater*        plater = wxGetApp().plater();
     Slic3r::Model& model  = plater->model();
 
+    // Told apart from a bad one: defaulting a missing object_id to -1 and falling into the range
+    // check below would report "Invalid object_id -1", which reads as a value the caller chose.
+    if (!params.contains("object_id")) {
+        error = "object_id is required: pass the 0-based index of the object to paint";
+        return false;
+    }
     const int object_id = params.value("object_id", -1);
     if (object_id < 0 || object_id >= int(model.objects.size())) {
         error = "Invalid object_id " + std::to_string(object_id) + ": the scene has " +
@@ -160,11 +166,18 @@ void OrcaMCPServer::register_paint_tools()
         "Read what is currently painted on an object: per-volume facet counts and surface "
         "coverage for each of the four paint modes (color, support, seam, fuzzy_skin), plus its "
         "brim ears. Coordinates are PLATE millimetres, the same frame get_object_info reports "
-        "its bounding_box in. Use it to verify a paint_object call did what you asked.",
+        "its bounding_box in. Use it to verify a paint_object call did what you asked. "
+        "coverage_percent is how much of the surface a state covers -- use that. Do not divide "
+        "facet_count by original_facets: facet_count counts the leaf triangles a paint stroke "
+        "subdivided the mesh into, so on a painted volume it can exceed the original count.",
         {
             {"type", "object"},
             {"properties", {
-                {"object_id", {{"type", "integer"}, {"description", "Object index (0-based)"}}},
+                {"object_id", {
+                    {"type", "integer"},
+                    {"minimum", 0},
+                    {"description", "Object index (0-based)"}
+                }},
                 {"volume_id", {
                     {"type", "integer"},
                     {"minimum", -1},
@@ -172,6 +185,7 @@ void OrcaMCPServer::register_paint_tools()
                 }},
                 {"instance_id", {
                     {"type", "integer"},
+                    {"minimum", 0},
                     {"description", "Which instance's transform defines plate coordinates (default 0). "
                                     "Paint is shared by every instance."}
                 }},
@@ -200,18 +214,26 @@ void OrcaMCPServer::register_paint_tools()
                     modes = {one};
                 }
 
-                nlohmann::json volumes = nlohmann::json::array();
+                nlohmann::json        volumes = nlohmann::json::array();
+                // Merged as the per-volume boxes are computed rather than by a second pass through
+                // target_plate_bbox, which would walk every vertex of every volume twice.
+                Slic3r::BoundingBoxf3 object_bbox;
                 for (std::size_t i = 0; i < target.volumes.size(); ++i) {
                     Slic3r::ModelVolume* mv = target.volumes[i];
                     nlohmann::json by_mode = nlohmann::json::object();
                     for (PaintMode mode : modes)
                         by_mode[paint_mode_name(mode)] = painted_json(*mv, mode);
+                    const Slic3r::BoundingBoxf3 volume_bbox = mv->mesh().transformed_bounding_box(
+                        volume_to_plate(*target.object, *mv, target.instance_idx));
+                    object_bbox.merge(volume_bbox);
                     volumes.push_back({
                         {"volume_id", target.volume_ids[i]},
                         {"name", mv->name},
-                        {"facets_total", int(mv->mesh().its.indices.size())},
-                        {"bounding_box", bbox_json(mv->mesh().transformed_bounding_box(
-                                             volume_to_plate(*target.object, *mv, target.instance_idx)))},
+                        // Original triangles. Deliberately not named facets_total: the per-state
+                        // facet_count is a count of leaf triangles, so the two are not a part and
+                        // a whole and dividing them can exceed 100%. coverage_percent is the ratio.
+                        {"original_facets", int(mv->mesh().its.indices.size())},
+                        {"bounding_box", bbox_json(volume_bbox)},
                         {"modes", by_mode}
                     });
                 }
@@ -222,7 +244,7 @@ void OrcaMCPServer::register_paint_tools()
                     {"object_name", target.object->name},
                     {"coordinate_frame", "plate"},
                     {"instance_id", int(target.instance_idx)},
-                    {"bounding_box", bbox_json(target_plate_bbox(target))},
+                    {"bounding_box", bbox_json(object_bbox)},
                     {"volumes", volumes},
                     {"brim_ears", brim_ears_json(*target.object, target.instance_idx)}
                 };
