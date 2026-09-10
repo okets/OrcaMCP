@@ -82,6 +82,94 @@ bool preset_query_matches(const std::string& name, const std::string& vendor, co
     return true;
 }
 
+namespace {
+
+// The text form of one array element. Booleans become "1"/"0" because ConfigOptionBools accepts
+// nothing else without a forward-compatibility substitution (Config.hpp:1975).
+bool json_scalar_to_text(const nlohmann::json& value, std::string& out)
+{
+    if (value.is_string()) {
+        out = value.get<std::string>();
+        return true;
+    }
+    if (value.is_boolean()) {
+        out = value.get<bool>() ? "1" : "0";
+        return true;
+    }
+    if (value.is_number()) {
+        out = value.dump();
+        return true;
+    }
+    return false;
+}
+
+} // namespace
+
+std::string config_value_expected_shape(ConfigOptionType type)
+{
+    switch (type) {
+    case coStrings:            return "a string, or an array of strings";
+    case coFloats:
+    case coPercents:
+    case coFloatsOrPercents:   return "a number, or an array of numbers";
+    case coInts:
+    case coEnums:              return "a whole number, or an array of whole numbers";
+    case coBools:              return "true or false, or an array of them";
+    case coPoints:             return "\"XxY\", or an array of them";
+    case coBool:               return "true or false";
+    case coFloat:
+    case coPercent:
+    case coFloatOrPercent:     return "a number";
+    case coInt:
+    case coEnum:               return "a whole number";
+    default:                   return "a string";
+    }
+}
+
+ConfigValueText config_value_to_string(const nlohmann::json& value, ConfigOptionType type)
+{
+    const bool is_list = (int(type) & int(coVectorType)) != 0;
+
+    std::string scalar_text;
+    if (json_scalar_to_text(value, scalar_text))
+        return {true, scalar_text, {}};
+
+    if (!value.is_array())
+        return {false, {}, value.is_null() ? "null is not a setting value"
+                                           : "an object is not a setting value"};
+
+    if (!is_list)
+        return {false, {}, "an array was given for a key that is not a list"};
+
+    // "" means "one empty value" to ConfigOptionFloats (Config.hpp:916 pushes 0), never "no
+    // values", so an empty array has no honest text form. Say so instead of writing a zero.
+    if (value.empty())
+        return {false, {}, "an empty array cannot be expressed; omit the key instead"};
+
+    std::vector<std::string> elements;
+    elements.reserve(value.size());
+    for (const auto& element : value) {
+        std::string text;
+        if (!json_scalar_to_text(element, text))
+            return {false, {}, "an array element was itself an array, an object or null"};
+        elements.push_back(std::move(text));
+    }
+
+    // ConfigOptionStrings is the only vector type that reads ';', and escape_strings_cstyle
+    // (Config.cpp:75) is what writes that form -- it quotes only the elements that need it, so a
+    // value containing ';' survives instead of splitting in two.
+    if (type == coStrings)
+        return {true, escape_strings_cstyle(elements), {}};
+
+    std::string joined;
+    for (size_t i = 0; i < elements.size(); ++i) {
+        if (i > 0)
+            joined += ',';
+        joined += elements[i];
+    }
+    return {true, joined, {}};
+}
+
 nlohmann::json OrcaMCPPresetConfigUtils::PresetsToJson(const std::vector<std::pair<const Preset*, bool>>& presets,
                                                       const PresetQuery& query)
 {

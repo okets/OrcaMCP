@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include "libslic3r/Preset.hpp"
+#include "libslic3r/PrintConfig.hpp"
 
 namespace Slic3r { namespace GUI {
 
@@ -22,6 +23,29 @@ struct PresetQuery
 // Pure: the two text filters, applied the way a person means them (case-insensitive "contains").
 // An empty filter matches everything, including a preset with no vendor at all.
 bool preset_query_matches(const std::string& name, const std::string& vendor, const PresetQuery& query);
+
+// One JSON value from a tool call, turned into the text ConfigOption::deserialize expects.
+struct ConfigValueText
+{
+    bool        ok = false;
+    std::string text;    // meaningful only when ok
+    std::string reason;  // meaningful only when !ok
+};
+
+// get_valid_config_keys advertises list-typed keys as "strings" / "ints" / "bools" / "floats", so
+// an array is the obvious thing for a caller to send -- but dumping the array and handing the
+// literal text to deserialize does not fail loudly. ConfigOptionStrings stores the whole "[...]"
+// as one string (Config.cpp:149 finds no ';'), and ConfigOptionFloats stores 0 for the element
+// carrying the '[' and returns true anyway (Config.hpp:935). Both are silent corruption.
+//
+// So the shape is decided here, from the option's declared type, before anything is written. The
+// separator is not one separator: ConfigOptionStrings splits on ';' (via unescape_strings_cstyle),
+// while ConfigOptionInts (Config.hpp:1089), ConfigOptionFloats (Config.hpp:911) and
+// ConfigOptionBools (Config.hpp:1959) split on ','.
+ConfigValueText config_value_to_string(const nlohmann::json& value, ConfigOptionType type);
+
+// What a caller should have sent for an option of this type, phrased for an error message.
+std::string config_value_expected_shape(ConfigOptionType type);
 
 // Result of applying a batch of settings for one {type, settings} item.
 // `error` is non-empty only for a structural failure (unknown type / no tab);
