@@ -442,8 +442,13 @@ ApplyConfigResult OrcaMCPPresetConfigUtils::ApplyConfig(const nlohmann::json& it
             if (previous)
                 config->set_key_value(key, previous.release());
             result.invalid.push_back(key);
+            // Only a list-typed colour key (filament_colour, extruder_colour) takes an array;
+            // material_colour is coString, and offering it an array would name a shape
+            // config_value_to_string refuses on the very next call.
             result.rejected.push_back({key, "not a #RRGGBB colour (" + bad_color + ")",
-                                       "\"#RRGGBB\" or \"#RRGGBBAA\", or an array of them"});
+                                       def->type == coStrings
+                                           ? "\"#RRGGBB\" or \"#RRGGBBAA\", or an array of them"
+                                           : "\"#RRGGBB\" or \"#RRGGBBAA\""});
             continue;
         }
         result.applied.push_back(key);

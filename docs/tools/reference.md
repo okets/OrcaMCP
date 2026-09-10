@@ -566,8 +566,9 @@ Modify configuration settings.
 
 **Setting object format:**
 ```json
-{"type": "print|filament|printer", "key": "setting_name", "value": "new_value"}
+{"type": "print|filament|printer|project", "key": "setting_name", "value": "new_value"}
 ```
+`project` writes the project config — that is where `filament_colour` and the flush volumes live.
 
 **Examples:**
 ```json
@@ -1136,7 +1137,8 @@ physical filaments — a shortlist to choose from before painting.
     {"hue_degrees": 30, "name": "orange"},
     {"hue_degrees": 210, "name": "azure"}
   ],
-  "gamut_delta_e_threshold": 20.0
+  "gamut_delta_e_threshold": 20.0,
+  "active_warnings": {"count": 0, "warnings": []}
 }
 ```
 

@@ -13,6 +13,9 @@ constexpr int kHueSectorCount   = 360 / kHueSectorDegrees;
 
 ColorMixRecipe color_mix_recipe_from_result(const ColorDecomposeRecipeResult& result)
 {
+    // Scope: results from recommend_from_physical_filaments, whose components carry real 1-based
+    // filament slots. A lookup_standard_recipe result must NOT be fed through here -- its
+    // components are catalogue entries with filament_index 0, which would come back as "slot 0".
     ColorMixRecipe recipe;
     if (!result.valid || result.components.empty())
         return recipe;

@@ -47,8 +47,9 @@ int preset_query_effective_limit(int requested_limit, bool summary);
 // Empty when nothing was dropped.
 std::string preset_truncation_hint(const std::map<std::string, PresetListCount>& counts);
 
-// Whether the cap dropped anything from any type in `counts`. The one predicate the hint
-// and the response's `query.truncated` flag both need, so they cannot disagree.
+// Whether the cap dropped anything from any type in `counts`. The response's `query.truncated`
+// flag needs it as a bool; preset_truncation_hint asks the same question per type while building
+// its text, and returns "" exactly when this returns false.
 bool preset_list_truncated(const std::map<std::string, PresetListCount>& counts);
 
 // Parses get_presets' `limit` argument out of the raw request params. Absent leaves `limit`

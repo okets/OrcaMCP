@@ -319,6 +319,9 @@ void OrcaMCPServer::register_filament_tools()
                         {"components", recipe.components},
                         {"ratios", recipe.ratios},
                         {"predicted_color", predicted_color},
+                        // Always false: predicted_color comes from gui_mix_color, never from the
+                        // measured recipe table, so what is reported is exactly what the GUI shows
+                        // for the same slot. get_color_palette's entries can say true.
                         {"measured", false}
                     }},
                     {"delta_e", delta_e},
@@ -335,7 +338,7 @@ void OrcaMCPServer::register_filament_tools()
                     out["message"] = "target_color already matches physical filament " +
                                      std::to_string(recipe.components.front()) +
                                      " (" + recipe.hexes.front() + "); no mix needed";
-                if (std::string(gamut_label(delta_e)) == "outside")
+                if (delta_e >= kGamutDeltaEThreshold)
                     out["message"] = "The closest mix is delta_e " + format_one_decimal(delta_e) +
                                      " from target_color, past the delta_e " +
                                      format_one_decimal(kGamutDeltaEThreshold) +

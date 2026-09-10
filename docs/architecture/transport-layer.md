@@ -73,7 +73,8 @@ The bridge handles several error conditions:
 
 | Error | Response |
 |-------|----------|
-| Connection refused | JSON-RPC error -32000 "Cannot connect to OrcaSlicer" |
+| Nothing listening | JSON-RPC error -32000 "Nothing is listening at {URL}. OrcaMCP is not running -- use the 'start_orca' tool." |
+| Reachable but the request failed | JSON-RPC error -32000 "OrcaSlicer is reachable but the request did not complete: ..." |
 | Timeout | JSON-RPC error -32000 "Request timed out" |
 | Invalid JSON | JSON-RPC error -32700 "Parse error" |
 | HTTP error | JSON-RPC error with HTTP status |
@@ -207,9 +208,9 @@ Use Claude Code with the `.mcp.json` configuration and observe the tools availab
 
 ## Troubleshooting
 
-### Connection Refused
+### Nothing Listening
 ```
-Error: Cannot connect to OrcaSlicer at localhost:13618
+Nothing is listening at http://localhost:13618/mcp. OrcaMCP is not running -- use the 'start_orca' tool.
 ```
 **Causes:**
 - OrcaSlicer not running
@@ -220,6 +221,17 @@ Error: Cannot connect to OrcaSlicer at localhost:13618
 - Launch OrcaSlicer
 - Check if MCP server initialized in OrcaSlicer console
 - Change port via `ORCAMCP_PORT` env var
+
+### Reachable But Not Answering
+```
+OrcaSlicer is reachable but the request did not complete: ...
+```
+Something answered at the port, so the app is running. The bridge never turns this into
+"not running": a probe that fails is not proof of death, only proof of no answer.
+
+**Solutions:**
+- Retry; the server handles one request at a time, so a burst queues
+- Raise `ORCAMCP_TIMEOUT` if a slice, render or export is in progress
 
 ### Timeout Errors
 ```

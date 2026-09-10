@@ -351,6 +351,11 @@ def check_orcaslicer_connection(use_cache: bool = True, timeout: float = 0.3) ->
     # This is the one place liveness is actually proven, so it is also the one place that notes
     # it -- every call site (start_orca's already-running check, the launch poll, both tools/list
     # fast paths) gets the notification hook for free instead of needing its own.
+    #
+    # A forwarded request that succeeds after a BUSY probe therefore does NOT note contact, even
+    # though it proves the server is alive. Deliberate: the list_changed notification is deferred
+    # to the next LIVE probe, which the following call makes, so a stale tool list is corrected
+    # one call later rather than never.
     if verdict == LIVE:
         note_live_contact()
 
