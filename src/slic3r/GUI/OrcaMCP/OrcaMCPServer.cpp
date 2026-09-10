@@ -704,6 +704,17 @@ void OrcaMCPServer::register_builtin_tools()
                         {"set_object_layer_range", "Set settings for a specific Z height range"},
                         {"delete_object_layer_range", "Remove layer range configs"}
                     }},
+                    {"painting", {
+                        {"paint_object", "Paint per-triangle annotations: mode=color (multi-material), "
+                                         "support, seam or fuzzy_skin. selection=bands along a plate axis "
+                                         "(even split over `filaments`, or explicit `bands`), box, sphere, "
+                                         "or all. ALL COORDINATES ARE PLATE MM, same frame as "
+                                         "get_object_info's bounding_box."},
+                        {"get_object_paint", "Read back what is painted per volume and per mode, plus brim ears"},
+                        {"clear_object_paint", "Reset one paint annotation, or all four, back to unpainted"},
+                        {"set_brim_ears", "Place brim ears at plate x/y points. Not facet paint - these are "
+                                          "points on the object, and need brim_type='painted' to print."}
+                    }},
                     {"variable_layer_height", {
                         {"apply_adaptive_layer_height", "Apply VLH to object based on geometry. Quality 0.0-1.0 controls layer variation."},
                         {"clear_adaptive_layer_height", "Remove VLH from object, revert to fixed layer height."}

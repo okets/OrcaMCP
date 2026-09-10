@@ -1,6 +1,14 @@
 # OrcaMCP Tools Reference
 
-Complete reference for all 50 MCP tools available in OrcaMCP.
+Reference for the MCP tools available in OrcaMCP. The authoritative tool count and the
+command that regenerates it live in `CLAUDE.md`, so it is not repeated here.
+
+Two pre-existing gaps, neither of them new: the Quick Reference Table below omits several
+printer tools entirely (`get_printer_status`, `printer_control`, `discover_printers`,
+`add_physical_printer`, `list_printer_files`, `print_printer_file`,
+`match_project_to_printer`), and several tools it does list — `get_filaments`,
+`set_mixed_filament`, `get_flush_volumes` among them — have no dedicated section below.
+`CLAUDE.md`'s table is the complete list.
 
 ## Quick Reference Table
 
@@ -20,6 +28,7 @@ Complete reference for all 50 MCP tools available in OrcaMCP.
 | **Slicing** | `slice_all`, `export_gcode`, `get_print_estimate` |
 | **Visualization** | `render_plate_view`, `get_preview_base64` |
 | **Adaptive** | `apply_adaptive_layer_height`, `clear_adaptive_layer_height` |
+| **Painting** | `paint_object`, `get_object_paint`, `clear_object_paint`, `set_brim_ears` |
 | **Printers** | `get_printers`, `select_printer`, `send_to_printer` |
 | **History** | `undo`, `redo` |
 
@@ -1159,6 +1168,154 @@ A sector is a coarse instrument: a colour can be far out of reach while its sect
 Pure red from that set is ΔE 54 away, but the 0–30 sector still counts as reached because magenta
 and yellow at 30/70 land on the orange-red `#F9A05A`. Use `suggest_color_mix`’s `gamut` and
 `delta_e` for one specific target; use `unreachable_hues` for “what is this set missing entirely”.
+
+---
+
+## Painting Tools
+
+All four tools take and report **plate millimetres** — the same coordinate frame
+`get_object_info` reports its `bounding_box` and `position` in. They are never object-local.
+A facet belongs to the band or region containing its **centroid**, so a triangle is painted
+whole or not at all.
+
+Paint is stored on the *volume*, so it applies to every instance of an object. `instance_id`
+(default `0`) only decides which instance's transform your coordinates are read through; it
+does not restrict which instances are painted. **Brim ears are the one exception**: they are
+object-level data, not per-volume, and slicing resolves them through instance 0 only — see
+`set_brim_ears` and `get_object_paint` below.
+
+Two field names recur across `paint_object` and `get_object_paint`: `original_facets` is the
+mesh's own triangle count, and `facets_selected` counts facets the selection *covered* —
+including ones covered but set to state `0` (unpainted) — so neither one is "how much of the
+object is painted". `coverage_percent`, reported per state by `get_object_paint`, is the
+honest measure: it is area-weighted, and a paint stroke can subdivide a triangle into several
+leaf triangles, so a state's `facet_count` can exceed `original_facets` and the two must never
+be divided one by the other.
+
+### paint_object
+Write per-triangle paint — the same data the GUI paint gizmos write.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `object_id` | integer | Yes | Object index (0-based) |
+| `selection` | string | Yes | `bands`, `box`, `sphere` or `all` |
+| `mode` | string | No | `color` (default), `support`, `seam`, `fuzzy_skin` |
+| `volume_id` | integer | No | Part index (0-based); omit or `-1` for every model part |
+| `instance_id` | integer | No | Whose transform reads your coordinates (default 0) |
+| `axis` | string | `bands` | `x`, `y` or `z` — the plate axis the bands run along |
+| `filaments` | array | `bands` + `color` | One 1-based slot per band, split evenly. `0` = unpainted |
+| `bands` | array | `bands` | Explicit `[{from, to, filament\|state}]` in plate mm |
+| `from` / `to` | number | No | Even-split range; defaults to the painted volumes' own extent. Ignored when explicit `bands` are given |
+| `box` | object | `box` | `{min: [x,y,z], max: [x,y,z]}` in plate mm |
+| `sphere` | object | `sphere` | `{center: [x,y,z], radius: n}` in plate mm |
+| `filament` | integer | `box`/`sphere`/`all` + `color` | 1-based slot; `0` = unpainted |
+| `state` | string | `box`/`sphere`/`all`, non-color | `none`, `enforcer`, `blocker`; in `fuzzy_skin` mode, `fuzzy_skin` is also accepted as a synonym for `enforcer` (there is no `blocker`) |
+| `replace` | boolean | No | `true` (default) discards this mode's existing paint first |
+
+**Notes:**
+- An even split (`filaments`) is colour-only. The other three modes take explicit `bands`
+  with a `state`, because alternating enforcer and blocker along an axis means nothing.
+- `fuzzy_skin` has no `blocker`: `EnforcerBlockerType::FUZZY_SKIN` is an alias of `ENFORCER`.
+- Bands are half-open `[from, to)`, except the one band reaching furthest along the axis,
+  whose `to` is closed, so a centroid sitting exactly on the outer edge is still painted. A
+  box or sphere region is inclusive on every face / at the surface (`<=`/`>=`, not `<`/`>`).
+- Explicit `bands` need not tile the object and may overlap; the first match wins, and
+  facets outside every band keep their previous state.
+- Painted supports need `enable_support: true`; painted fuzzy skin needs `fuzzy_skin` set to
+  something other than `disabled_fuzzy` (the default). The response says so in
+  `info_messages` when they are not.
+- Filament slots above 32 cannot be painted — a facet state stops at
+  `EnforcerBlockerType::ExtruderMax`. Use `set_object_filament` for those.
+
+**Example — 14 even bands along Y across mixed slots 5-18:**
+```json
+{"object_id": 0, "selection": "bands", "axis": "y",
+ "filaments": [5,6,7,8,9,10,11,12,13,14,15,16,17,18]}
+```
+
+**Example — support enforcers under a Z height:**
+```json
+{"object_id": 0, "mode": "support", "selection": "bands", "axis": "z",
+ "bands": [{"from": 0, "to": 12, "state": "enforcer"}]}
+```
+
+**Response includes:** `mode`, `selection`, `coordinate_frame` (always `"plate"`),
+`instance_id`, `replace`, `annotation_changed`, `original_facets`, `facets_selected` (facets
+the selection covered, including ones set to state `0` — not "how much is painted"),
+`facets_unassigned`, per-volume `painted` lists (`state`, `label`, `filament`, `facet_count`,
+`coverage_percent`), `info_messages`, `active_warnings`. For `selection: bands` only: `axis`,
+`axis_range`, and per-band `from`, `to`, `state`, `label`, `filament`, `facet_count`.
+
+---
+
+### get_object_paint
+Read back what is painted, plus the object's brim ears.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `object_id` | integer | Yes | Object index (0-based) |
+| `volume_id` | integer | No | Part index (0-based); omit or `-1` for every part |
+| `instance_id` | integer | No | Whose transform reports plate coordinates for paint (default 0). Brim ears always report through instance 0 regardless — see below |
+| `mode` | string | No | Report one mode; omit for all four |
+
+**Response includes:** per volume, `original_facets`, a plate-frame `bounding_box`, and per
+mode a list of `{state, label, filament, facet_count, coverage_percent}` (state `0`,
+unpainted, is included). `coverage_percent` is area-weighted, not facet-count-weighted,
+because a facet an earlier gizmo stroke subdivided would otherwise count the same as a whole
+face. Brim ears are reported through instance 0 regardless of the requested `instance_id` —
+`Brim.cpp` resolves stored points through instance 0 only, so any other frame would silently
+misplace the ear — and the response says so explicitly with `brim_ears_instance_id: 0`.
+
+---
+
+### clear_object_paint
+Reset an annotation, the equivalent of the gizmo's "Remove all".
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `object_id` | integer | Yes | Object index (0-based) |
+| `volume_id` | integer | No | Part index (0-based); omit or `-1` for every part |
+| `mode` | string | No | Which annotation; omit to clear all four |
+
+This resets the annotation, which is **not** the same as painting every facet with state
+`none`: a reset leaves no data for the 3MF to carry, while painting `none` leaves a full
+bitstream of zeroes.
+
+**Response includes:** `coordinate_frame` (`"plate"`), `instance_id`, `volume_ids` (every
+volume this call addressed), `cleared` (one entry per mode: `mode`, `volumes_cleared`,
+`cleared_volume_ids`), `annotation_changed`, `info_messages` (only when nothing was cleared),
+`active_warnings`.
+
+---
+
+### set_brim_ears
+Place the small brim tabs at chosen points. Brim ears are **not** facet paint — they are
+`BrimPoints` on the `ModelObject`, which is why they are a separate tool.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `object_id` | integer | Yes | Object index (0-based) |
+| `points` | array | Yes | `[{x, y, radius?}]` in plate mm. An empty array removes every ear, when `append` is left `false` |
+| `radius` | number | No | Default ear radius for points without one (default 5.0 mm, range 0.1-100) |
+| `append` | boolean | No | `false` (default) replaces the object's ears; `true` adds to them |
+| `instance_id` | integer | No | Must be `0` (the default) — `set_brim_ears` rejects any other value |
+
+Only `x` and `y` matter: an ear always sits on the underside of the object. Ears produce
+brim only when `brim_type` is `painted`; the response says so in `info_messages` when it
+is not.
+
+Brim ears are object-level data, not per-instance: `Brim.cpp` resolves stored ears through
+instance 0 only when slicing, so writing through any other instance's frame would store a
+point that prints somewhere else than this call's own response would suggest. Rather than
+accept that with a caveat, `instance_id != 0` is rejected outright.
+
+**Response includes:** `object_id`, `coordinate_frame` (`"plate"`), `instance_id` (always
+`0`), `brim_ear_count`, `brim_ears` (`{x, y, z, radius}` per ear, in plate mm),
+`info_messages`, `active_warnings`.
 
 ---
 
