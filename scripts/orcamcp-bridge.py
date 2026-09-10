@@ -30,6 +30,7 @@ Configuration (Claude Code):
 import sys
 import json
 import os
+import socket
 import subprocess
 import time
 import urllib.request
@@ -133,7 +134,7 @@ def get_orcamcp_executable() -> str | None:
 def launch_orcamcp() -> dict:
     """Launch OrcaMCP application and wait for it to be ready"""
     # Check if already running
-    if check_orcaslicer_connection():
+    if check_orcaslicer_connection() != DOWN:
         return {"success": True, "message": "OrcaMCP is already running"}
 
     executable = get_orcamcp_executable()
@@ -194,7 +195,7 @@ def launch_orcamcp() -> dict:
         while time.time() - start_time < max_wait:
             time.sleep(1)
             # Bypass cache when polling for startup
-            if check_orcaslicer_connection(use_cache=False):
+            if check_orcaslicer_connection(use_cache=False) == LIVE:
                 elapsed = int(time.time() - start_time)
                 return {
                     "success": True,
@@ -254,11 +255,44 @@ def make_tool_error_result(message: str) -> dict:
     }
 
 
-def check_orcaslicer_connection(use_cache: bool = True, timeout: float = 0.3) -> bool:
-    """Check if OrcaSlicer is reachable (with caching to speed up startup)"""
+# What a liveness probe concluded. Three values, not two, because the advice differs completely:
+# a refused connection means "start the app", a timeout means "it is busy, wait or raise the
+# timeout", and telling a user to restart a running application is the worse of the two mistakes.
+LIVE = "live"  # something answered, even an HTTP error
+BUSY = "busy"  # reachable but did not answer in time, or failed in a way that is not proof of death
+DOWN = "down"  # connection refused, no listener, or the host does not resolve
+
+
+def _verdict_for_exception(exc) -> str:
+    """Classify a urlopen failure. Unknown failures are BUSY: absence of an answer is not proof."""
+    if isinstance(exc, urllib.error.HTTPError):
+        # A status code means the server is there and formed a reply.
+        return LIVE
+    reason = getattr(exc, "reason", exc)
+    if isinstance(reason, (socket.timeout, TimeoutError)):
+        return BUSY
+    if isinstance(reason, (ConnectionRefusedError, socket.gaierror)):
+        return DOWN
+    if isinstance(reason, OSError) and reason.errno in (
+        61,   # ECONNREFUSED on macOS
+        111,  # ECONNREFUSED on Linux
+        10061,  # WSAECONNREFUSED on Windows
+    ):
+        return DOWN
+    return BUSY
+
+
+def check_orcaslicer_connection(use_cache: bool = True, timeout: float = 0.3) -> str:
+    """Probe OrcaSlicer and return LIVE, BUSY or DOWN.
+
+    The probe timeout is deliberately short so startup stays fast. That is only safe because a
+    timeout no longer means "down": HttpServer runs a single io thread (HttpServer.cpp:210) and
+    every handler blocks it inside run_on_main_thread, so a burst of calls serialises and this
+    probe queues behind them. Under that load the old bool verdict said "not running" about an
+    application that was answering, and cached it for CONNECTION_CACHE_TTL seconds.
+    """
     global _connection_cache
 
-    # Use cached result if still valid (avoids repeated slow checks during startup)
     if use_cache:
         now = time.time()
         if now - _connection_cache["last_check"] < CONNECTION_CACHE_TTL:
@@ -266,17 +300,17 @@ def check_orcaslicer_connection(use_cache: bool = True, timeout: float = 0.3) ->
                 return _connection_cache["connected"]
 
     try:
-        req = urllib.request.Request(
-            ORCAMCP_URL,
-            method="GET"
-        )
+        req = urllib.request.Request(ORCAMCP_URL, method="GET")
         with urllib.request.urlopen(req, timeout=timeout) as response:
-            connected = response.status == 200
-            _connection_cache = {"connected": connected, "last_check": time.time()}
-            return connected
-    except Exception:
-        _connection_cache = {"connected": False, "last_check": time.time()}
-        return False
+            verdict = LIVE if response.status == 200 else BUSY
+    except Exception as exc:
+        verdict = _verdict_for_exception(exc)
+
+    # BUSY is a momentary state, so it is never cached: caching it is precisely how one timed-out
+    # probe turned into three seconds of fabricated "not running" answers.
+    if verdict in (LIVE, DOWN):
+        _connection_cache = {"connected": verdict, "last_check": time.time()}
+    return verdict
 
 
 def get_full_tools_list() -> list:
@@ -352,19 +386,17 @@ def handle_local_request(request: dict) -> dict | None:
     # Optimization: For tools/list during initial startup (no cached tools),
     # return minimal list immediately without slow connection check
     if method == "tools/list" and CACHED_TOOLS is None:
-        # First time - try a quick check, but return minimal list fast if offline
-        is_connected = check_orcaslicer_connection(timeout=0.1)
-        if not is_connected:
-            log_debug("Quick startup: returning minimal tools list")
+        # First time - try a quick check, but return the static list fast if nothing answers
+        if check_orcaslicer_connection(timeout=0.1) != LIVE:
+            log_debug("Quick startup: returning static tools list")
             return make_success_response(request_id, {"tools": get_full_tools_list()})
         # Connected - let it through to get full tools list
         return None
 
-    # For other methods, check if OrcaSlicer is available
-    is_connected = check_orcaslicer_connection()
-
-    if is_connected:
-        # OrcaSlicer is available - let request go through
+    # For other methods, only a DOWN verdict is answered locally. A BUSY server is forwarded to:
+    # the real request has the full ORCAMCP_TIMEOUT to be answered, and a real error from a real
+    # attempt is worth more to a caller than a guess made from a 0.3-second probe.
+    if check_orcaslicer_connection() != DOWN:
         return None
 
     # Handle methods locally when OrcaSlicer is offline
@@ -451,12 +483,37 @@ def send_request(request: dict) -> dict:
             if "id" not in result or result["id"] is None:
                 result["id"] = request_id
             return result
-    except urllib.error.URLError as e:
-        log_debug(f"Connection error: {e}")
+    except urllib.error.HTTPError as e:
+        log_debug(f"HTTP error: {e}")
         return make_error_response(
             request_id,
             -32000,
-            f"Cannot connect to OrcaSlicer at {ORCAMCP_URL}. Is OrcaSlicer running? Error: {str(e)}"
+            f"OrcaSlicer answered with HTTP {e.code} ({e.reason}) at {ORCAMCP_URL}."
+        )
+    except (socket.timeout, TimeoutError):
+        log_debug(f"Request timed out after {TIMEOUT}s")
+        return make_error_response(
+            request_id,
+            -32000,
+            f"OrcaSlicer did not answer within {TIMEOUT}s. It serves one request at a time, so a "
+            f"batch of calls queues; a slice or a render can also outlast the timeout. Wait and "
+            f"retry, or raise ORCAMCP_TIMEOUT. This is not a sign that it stopped running."
+        )
+    except urllib.error.URLError as e:
+        verdict = _verdict_for_exception(e)
+        log_debug(f"Connection error ({verdict}): {e}")
+        if verdict == DOWN:
+            return make_error_response(
+                request_id,
+                -32000,
+                f"Nothing is listening at {ORCAMCP_URL}. OrcaMCP is not running -- use the "
+                f"'start_orca' tool. Error: {str(e)}"
+            )
+        return make_error_response(
+            request_id,
+            -32000,
+            f"OrcaSlicer is reachable but the request did not complete: {str(e)}. Retry, or raise "
+            f"ORCAMCP_TIMEOUT if a long operation is running."
         )
     except json.JSONDecodeError as e:
         log_debug(f"JSON decode error: {e}")

@@ -42,24 +42,31 @@ Error: Cannot connect to OrcaSlicer at localhost:13618
 
 ### "Request timed out"
 
-**Symptoms:**
+OrcaSlicer's embedded HTTP server runs **one** worker thread, and every MCP handler blocks it while
+the operation runs on the GUI thread. Calls are therefore served strictly one at a time: a batch of
+eight tool calls queues, and the last one waits for the seven ahead of it.
+
+Raise the ceiling if you are batching or slicing:
+
+```bash
+export ORCAMCP_TIMEOUT=300
 ```
-Error: Request timed out after 120 seconds
-```
 
-**Causes & Solutions:**
+### "OrcaMCP is not running" while it clearly is
 
-1. **Long-running operation**
-   - Slicing large models can take minutes
-   - Increase timeout: `ORCAMCP_TIMEOUT=300`
+This should no longer happen. The bridge used to treat any failed liveness probe — including a
+0.3-second probe that queued behind a batch — as "not running", and cached that answer for three
+seconds, so a burst of calls could get the verdict fabricated for the calls at the end of it.
 
-2. **OrcaSlicer frozen**
-   - Check if OrcaSlicer UI is responsive
-   - Force quit and restart if frozen
+The probe now returns one of three verdicts, and only the last one produces that message:
 
-3. **Deadlock** (rare)
-   - Restart OrcaSlicer
-   - Report issue if reproducible
+| Verdict | Meaning | What the bridge does |
+|---|---|---|
+| live | Something answered, even an HTTP error | Forward the request |
+| busy | Reachable, no answer inside the probe window | Forward the request anyway, with the full `ORCAMCP_TIMEOUT` |
+| down | Connection refused, or nothing listening | Answer locally: "OrcaMCP is not running" |
+
+So if you see it, nothing is listening on the port. Check `ORCAMCP_PORT`, and use `start_orca`.
 
 ## Tool Errors
 
