@@ -69,6 +69,18 @@ std::optional<double> chromatic_hue_degrees(const std::string& hex)
     return h < 0.0 ? h + 360.0 : h;
 }
 
+std::vector<double> reachable_hues(const std::vector<std::string>& physical_hexes,
+                                   const std::vector<std::string>& candidate_hexes)
+{
+    std::vector<double> hues;
+    hues.reserve(physical_hexes.size() + candidate_hexes.size());
+    for (const std::vector<std::string>* list : {&physical_hexes, &candidate_hexes})
+        for (const std::string& hex : *list)
+            if (const auto hue = chromatic_hue_degrees(hex))
+                hues.push_back(*hue);
+    return hues;
+}
+
 const char* hue_sector_name(int sector_degrees)
 {
     switch (((sector_degrees % 360) + 360) % 360) {

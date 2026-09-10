@@ -3,6 +3,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "libslic3r/FilamentMixer.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPColorRecipe.hpp"
 
 // The decisions behind suggest_color_mix and get_color_palette that do not need a printer: what a
@@ -16,6 +17,7 @@ using Slic3r::GUI::OrcaMCP::chromatic_hue_degrees;
 using Slic3r::GUI::OrcaMCP::color_mix_recipe_from_result;
 using Slic3r::GUI::OrcaMCP::gamut_label;
 using Slic3r::GUI::OrcaMCP::kGamutDeltaEThreshold;
+using Slic3r::GUI::OrcaMCP::reachable_hues;
 using Slic3r::GUI::OrcaMCP::unreachable_hue_sectors;
 
 namespace {
@@ -194,4 +196,49 @@ TEST_CASE("a gray candidate cannot hide an unreachable red", "[orcamcp][colorrec
 
     const auto unreachable = unreachable_hue_sectors(hues);
     CHECK(std::find(unreachable.begin(), unreachable.end(), 0) != unreachable.end());
+}
+
+TEST_CASE("a colour already loaded is never called unreachable", "[orcamcp][colorrecipe]")
+{
+    // The second half of the bug: add_candidate_if_novel drops any mix within delta E 5 of a
+    // loaded filament as redundant, so with red loaded no candidate is anywhere near red -- and a
+    // gamut built from the candidates alone reported "red" for a colour sitting in the machine.
+    const auto hues = reachable_hues({"#FF0000", "#808080"}, {"#00FFFF"});
+    const auto unreachable = unreachable_hue_sectors(hues);
+
+    CHECK(std::find(unreachable.begin(), unreachable.end(), 0) == unreachable.end());
+    CHECK(std::find(unreachable.begin(), unreachable.end(), 180) == unreachable.end());
+    // Nothing else was invented: ten of the twelve sectors are still empty.
+    CHECK(unreachable.size() == 10);
+}
+
+TEST_CASE("achromatic and unparsable inputs contribute no hue", "[orcamcp][colorrecipe]")
+{
+    // A gray spool and a gray mix are printable, but neither reaches a hue, so neither may mark a
+    // sector reached. An unparsable string is not a colour at all.
+    CHECK(reachable_hues({"#808080", "#000000"}, {"#FFFFFF", "not-a-color"}).empty());
+    CHECK(unreachable_hue_sectors(reachable_hues({"#808080"}, {"#FFFFFF"})).size() == 12);
+}
+
+TEST_CASE("a cyan/magenta/yellow/gray set still cannot reach every sector", "[orcamcp][colorrecipe]")
+{
+    // The documented scenario, driven through the same blend model enumerate_mix_palette uses, so
+    // the sectors named here are the ones the tool actually reports. Counting the loaded filaments
+    // and every enumerated mix must not turn into "everything is reachable": orange and azure stay
+    // empty because no pair of these four lands between 30-60 or 210-240 degrees.
+    const std::vector<std::string> physicals = {"#00FFFF", "#FF00FF", "#FFFF00", "#808080"};
+    std::vector<std::string> mixes;
+    for (size_t i = 0; i < physicals.size(); ++i)
+        for (size_t j = i + 1; j < physicals.size(); ++j)
+            for (const std::vector<int>& ratios : {std::vector<int>{70, 30}, {50, 50}, {30, 70}})
+                mixes.push_back(Slic3r::blend_color_multi({physicals[i], physicals[j]}, ratios));
+
+    const auto unreachable = unreachable_hue_sectors(reachable_hues(physicals, mixes));
+
+    CHECK(std::find(unreachable.begin(), unreachable.end(), 30) != unreachable.end());   // orange
+    CHECK(std::find(unreachable.begin(), unreachable.end(), 210) != unreachable.end());  // azure
+    // Pure red is NOT reachable -- suggest_color_mix puts it at delta E 54 -- but the 0-30 sector
+    // is, because magenta + yellow at 30/70 really does produce the orange-red #F9A05A. A sector
+    // is a coarse instrument; what it can honestly say is "nothing lands anywhere near here".
+    CHECK(std::find(unreachable.begin(), unreachable.end(), 0) == unreachable.end());
 }

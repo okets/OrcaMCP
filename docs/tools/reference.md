@@ -1113,8 +1113,8 @@ physical filaments — a shortlist to choose from before painting.
     {"components": [1, 2], "ratios": [70, 30], "predicted_color": "#5FC9E8", "measured": true}
   ],
   "unreachable_hues": [
-    {"hue_degrees": 0, "name": "red"},
-    {"hue_degrees": 30, "name": "orange"}
+    {"hue_degrees": 30, "name": "orange"},
+    {"hue_degrees": 210, "name": "azure"}
   ],
   "gamut_delta_e_threshold": 20.0
 }
@@ -1124,9 +1124,16 @@ physical filaments — a shortlist to choose from before painting.
 Entries within ΔE 5 of a loaded filament, or of an already-accepted entry, are dropped, and the
 list is ordered by hue.
 
-`unreachable_hues` lists the 30-degree hue sectors no palette entry reaches — the colours this
-filament set cannot mix at all. With cyan, magenta and yellow loaded, red and orange come back
-here, because alternating layers averages the components rather than mixing them like pigment.
+`unreachable_hues` lists the 30-degree hue sectors that **no loaded filament and no enumerated mix
+reaches** — nothing this set can put on the plate lands anywhere near them. It is computed over the
+whole enumeration and over the loaded filaments themselves, so `max_count` never affects it and a
+colour already in the machine is never listed. With cyan, magenta, yellow and a gray loaded, orange
+and azure come back here.
+
+A sector is a coarse instrument: a colour can be far out of reach while its sector is not empty.
+Pure red from that set is ΔE 54 away, but the 0–30 sector still counts as reached because magenta
+and yellow at 30/70 land on the orange-red `#F9A05A`. Use `suggest_color_mix`’s `gamut` and
+`delta_e` for one specific target; use `unreachable_hues` for “what is this set missing entirely”.
 
 ---
 

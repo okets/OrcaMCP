@@ -173,8 +173,9 @@ blue. A cyan/magenta/yellow set therefore does **not** behave like printer inks,
 blues of the colour wheel are outside what it can reach at all.
 
 `suggest_color_mix` marks that with `gamut: "outside"` past ΔE 20, and `get_color_palette` lists the
-hue sectors nothing in the palette reaches under `unreachable_hues`. Buy filament for the colours
-you want to land on, not for the primaries you would mix them from.
+hue sectors that no loaded filament and no enumerated mix reaches under `unreachable_hues` — a
+colour already in a slot is never listed there, and the list does not shrink when `max_count` does.
+Buy filament for the colours you want to land on, not for the primaries you would mix them from.
 
 ### Matching the project to what is loaded
 

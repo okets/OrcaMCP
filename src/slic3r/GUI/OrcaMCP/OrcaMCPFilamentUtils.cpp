@@ -425,12 +425,26 @@ nlohmann::json enumerate_mix_palette(int max_count, int max_components, const st
     std::sort(accepted.begin(), accepted.end(), [](const PaletteCandidate& a, const PaletteCandidate& b) {
         return hue_degrees(a.predicted_color) < hue_degrees(b.predicted_color);
     });
+    // The gamut is decided BEFORE the cap, and over the loaded filaments as well as the mixes.
+    // The returned palette is not the gamut: max_count is a response-size cap applied to a
+    // hue-sorted list, so it keeps the low hues and drops the high ones -- with the default 12 and
+    // 12 sectors, everything past the twelfth candidate would have been called unreachable. And
+    // add_candidate_if_novel drops any mix within delta E 5 of a loaded filament, so a red spool's
+    // own hue reaches no candidate either. See reachable_hues.
+    std::vector<std::string> physical_hexes;
+    physical_hexes.reserve(candidates.size());
+    for (const auto& f : candidates)
+        physical_hexes.push_back(f.color_hex);
+    std::vector<std::string> candidate_hexes;
+    candidate_hexes.reserve(accepted.size());
+    for (const auto& c : accepted)
+        candidate_hexes.push_back(c.predicted_color);
+    const std::vector<double> hues = reachable_hues(physical_hexes, candidate_hexes);
+
     if (int(accepted.size()) > max_count)
         accepted.resize(size_t(max_count));
 
     nlohmann::json palette = nlohmann::json::array();
-    std::vector<double> hues;
-    hues.reserve(accepted.size());
     for (const auto& c : accepted) {
         palette.push_back({
             {"components", c.components},
@@ -438,14 +452,9 @@ nlohmann::json enumerate_mix_palette(int max_count, int max_components, const st
             {"predicted_color", c.predicted_color},
             {"measured", c.measured}
         });
-        // An achromatic candidate (gray) has no hue and must not be counted as "reaching" red --
-        // it would hide a genuinely unreachable red from unreachable_hue_sectors below.
-        if (const auto hue = chromatic_hue_degrees(c.predicted_color))
-            hues.push_back(*hue);
     }
-    // The palette IS the gamut: a hue no entry reaches cannot be mixed from these filaments. With
-    // cyan, magenta, yellow and gray loaded the red and orange sectors come back empty, which is
-    // the honest form of "this set does not behave like printer inks".
+    // A sector no loaded filament and no enumerated mix falls into cannot be made from this set at
+    // all -- which is the honest form of "this set does not behave like printer inks".
     nlohmann::json unreachable = nlohmann::json::array();
     for (int sector : unreachable_hue_sectors(hues))
         unreachable.push_back({{"hue_degrees", sector}, {"name", hue_sector_name(sector)}});

@@ -53,6 +53,20 @@ std::vector<int> unreachable_hue_sectors(const std::vector<double>& hues);
 // give gray a stable fallback hue for display ordering; that fallback is wrong for gamut decisions.
 std::optional<double> chromatic_hue_degrees(const std::string& hex);
 
+// Every hue this filament set can actually put on the plate, ready for unreachable_hue_sectors.
+// Two things belong in it, and leaving either out names a hue the set can reach:
+//
+//  - the loaded filaments' own hues (`physical_hexes`), because a colour already in the machine is
+//    printable directly -- and the mix enumerator drops any candidate within delta E 5 of a loaded
+//    filament as redundant, so a red spool's hue appears in NO candidate at all;
+//  - every enumerated mix (`candidate_hexes`), which must be the whole enumeration, not the page
+//    of it a response happens to carry: a per-response count cap is presentation, not gamut.
+//
+// Achromatic entries (gray, black, white) and unparsable strings contribute nothing, per
+// chromatic_hue_degrees.
+std::vector<double> reachable_hues(const std::vector<std::string>& physical_hexes,
+                                   const std::vector<std::string>& candidate_hexes);
+
 // A name for one of the sector boundaries unreachable_hue_sectors returns (0, 30, ... 330).
 // "the red and orange sectors are unreachable" is actionable; "sectors 0 and 30" is not.
 const char* hue_sector_name(int sector_degrees);
