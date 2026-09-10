@@ -414,6 +414,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/OrcaMCP/OrcaMCPPresetConfigUtils.hpp
     GUI/OrcaMCP/OrcaMCPPresetConfigUtils.cpp
     GUI/OrcaMCP/OrcaMCPConfigKeys.hpp
+    GUI/OrcaMCP/OrcaMCPColorRecipe.hpp
+    GUI/OrcaMCP/OrcaMCPColorRecipe.cpp
     GUI/OrcaMCP/OrcaMCPFilamentUtils.hpp
     GUI/OrcaMCP/OrcaMCPFilamentUtils.cpp
     GUI/OrcaMCP/OrcaMCPFilamentTools.cpp

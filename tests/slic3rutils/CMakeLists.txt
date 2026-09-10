@@ -26,6 +26,7 @@ add_executable(${_TEST_NAME}_tests
     test_preset_query.cpp
     test_config_value_shape.cpp
     test_hex_color.cpp
+    test_color_recipe.cpp
     test_material_mapping.cpp
     ../fff_print/test_helpers.cpp
     )
