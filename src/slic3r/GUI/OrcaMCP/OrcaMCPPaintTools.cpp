@@ -107,6 +107,23 @@ bool resolve_paint_target(const nlohmann::json& params, PaintTarget& out, std::s
     return true;
 }
 
+// The `mode` parameter both paint readers/clearers share: absent means all four annotations,
+// present means exactly one. Kept here, once, so get_object_paint and clear_object_paint cannot
+// drift the way a copy of this block did before this was factored out.
+bool resolve_paint_modes(const nlohmann::json& params, std::vector<PaintMode>& out, std::string& error)
+{
+    out = {PaintMode::Color, PaintMode::Support, PaintMode::Seam, PaintMode::FuzzySkin};
+    if (!params.contains("mode"))
+        return true;
+    PaintMode one = PaintMode::Color;
+    if (!parse_paint_mode(params["mode"].get<std::string>(), one)) {
+        error = "Unknown mode; expected color, support, seam or fuzzy_skin";
+        return false;
+    }
+    out = {one};
+    return true;
+}
+
 // The plate-frame bounding box of exactly the volumes a call paints, so a band range defaulted
 // from it covers what is actually being painted rather than the whole object.
 Slic3r::BoundingBoxf3 target_plate_bbox(const PaintTarget& target)
@@ -742,15 +759,9 @@ void OrcaMCPServer::register_paint_tools()
                 if (!resolve_paint_target(params, target, error))
                     return nlohmann::json{{"status", "error"}, {"message", error}};
 
-                std::vector<PaintMode> modes = {PaintMode::Color, PaintMode::Support,
-                                                PaintMode::Seam, PaintMode::FuzzySkin};
-                if (params.contains("mode")) {
-                    PaintMode one = PaintMode::Color;
-                    if (!parse_paint_mode(params["mode"].get<std::string>(), one))
-                        return nlohmann::json{{"status", "error"},
-                                              {"message", "Unknown mode; expected color, support, seam or fuzzy_skin"}};
-                    modes = {one};
-                }
+                std::vector<PaintMode> modes;
+                if (!resolve_paint_modes(params, modes, error))
+                    return nlohmann::json{{"status", "error"}, {"message", error}};
 
                 // Snapshot before the first write, so one undo restores every mode this call cleared.
                 // Named per mode, the same reason paint_object is: a clear-all call would otherwise
@@ -758,17 +769,23 @@ void OrcaMCPServer::register_paint_tools()
                 plater->take_snapshot(_u8L("Clear Object Paint") + " (" +
                                       (modes.size() == 1 ? paint_mode_name(modes.front()) : "all") + ")");
 
+                // Same set of volumes for every mode this call touches, so it is reported once
+                // rather than repeated identically in each entry of `cleared`.
+                nlohmann::json volume_ids = nlohmann::json::array();
+                for (int id : target.volume_ids)
+                    volume_ids.push_back(id);
+
                 nlohmann::json cleared = nlohmann::json::array();
                 bool           changed = false;
                 for (PaintMode mode : modes) {
-                    int volumes_cleared = 0;
-                    for (Slic3r::ModelVolume* mv : target.volumes)
-                        if (clear_volume_paint(*mv, mode))
-                            ++volumes_cleared;
-                    changed |= volumes_cleared > 0;
+                    nlohmann::json cleared_volume_ids = nlohmann::json::array();
+                    for (std::size_t i = 0; i < target.volumes.size(); ++i)
+                        if (clear_volume_paint(*target.volumes[i], mode))
+                            cleared_volume_ids.push_back(target.volume_ids[i]);
+                    changed |= !cleared_volume_ids.empty();
                     cleared.push_back({{"mode", paint_mode_name(mode)},
-                                       {"volumes_cleared", volumes_cleared},
-                                       {"volumes_targeted", int(target.volumes.size())}});
+                                       {"volumes_cleared", int(cleared_volume_ids.size())},
+                                       {"cleared_volume_ids", cleared_volume_ids}});
                 }
 
                 // clear_volume_paint never moves a vertex, so refresh_after_paint's constraint holds
@@ -782,6 +799,7 @@ void OrcaMCPServer::register_paint_tools()
                     {"object_name", target.object->name},
                     {"coordinate_frame", "plate"},
                     {"instance_id", int(target.instance_idx)},
+                    {"volume_ids", volume_ids},
                     {"cleared", cleared},
                     {"annotation_changed", changed},
                     {"active_warnings", get_active_warnings_json(plater)}
@@ -837,15 +855,9 @@ void OrcaMCPServer::register_paint_tools()
                 if (!resolve_paint_target(params, target, error))
                     return nlohmann::json{{"status", "error"}, {"message", error}};
 
-                std::vector<PaintMode> modes = {PaintMode::Color, PaintMode::Support,
-                                                PaintMode::Seam, PaintMode::FuzzySkin};
-                if (params.contains("mode")) {
-                    PaintMode one = PaintMode::Color;
-                    if (!parse_paint_mode(params["mode"].get<std::string>(), one))
-                        return nlohmann::json{{"status", "error"},
-                                              {"message", "Unknown mode; expected color, support, seam or fuzzy_skin"}};
-                    modes = {one};
-                }
+                std::vector<PaintMode> modes;
+                if (!resolve_paint_modes(params, modes, error))
+                    return nlohmann::json{{"status", "error"}, {"message", error}};
 
                 nlohmann::json        volumes = nlohmann::json::array();
                 // Merged as the per-volume boxes are computed rather than by a second pass through
