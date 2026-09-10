@@ -2,7 +2,9 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "slic3r/GUI/OrcaMCP/OrcaMCPPaintGeometry.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPPaintModel.hpp"
 #include "libslic3r/TriangleMesh.hpp"
+#include "libslic3r/Model.hpp"
 
 #include <string>
 #include <vector>
@@ -16,6 +18,11 @@ using Slic3r::Vec3d;
 using Slic3r::Vec3f;
 using Slic3r::Vec3i32;
 using Slic3r::Transform3d;
+using Slic3r::Model;
+using Slic3r::ModelObject;
+using Slic3r::ModelVolume;
+using Slic3r::ModelInstance;
+using Slic3r::TriangleMesh;
 using Catch::Matchers::WithinAbs;
 
 TEST_CASE("parse_paint_axis takes the three axis names in any case", "[orcamcp][paint]")
@@ -409,4 +416,160 @@ TEST_CASE("assign_bands puts a centroid exactly on an interior band edge in the 
     REQUIRE(assignment.band_counts.size() == 2);
     CHECK(assignment.band_counts[0] == 0);
     CHECK(assignment.band_counts[1] == 1);
+}
+
+namespace {
+
+// A Model built in memory: no Plater, no wxWidgets, no OpenGL. The paint write path is
+// libslic3r-only by design so it can be exercised exactly like this.
+struct HeadlessObject
+{
+    Model         model;
+    ModelObject*  object = nullptr;
+    ModelVolume*  volume = nullptr;
+};
+
+HeadlessObject make_headless_object(const indexed_triangle_set& its, const Vec3d& instance_offset)
+{
+    HeadlessObject built;
+    built.object = built.model.add_object();
+    // modify_to_center_geometry = false: recentring would move the mesh under the volume
+    // matrix and the hand-checked plate coordinates below would stop being hand-checkable.
+    const TriangleMesh mesh(its);
+    built.volume = built.object->add_volume(mesh, false);
+    ModelInstance* instance = built.object->add_instance();
+    instance->set_offset(instance_offset);
+    return built;
+}
+
+} // namespace
+
+TEST_CASE("parse_paint_mode covers the four FacetsAnnotation members", "[orcamcp][paint]")
+{
+    PaintMode mode = PaintMode::Seam;
+    REQUIRE(parse_paint_mode("color", mode));
+    CHECK(mode == PaintMode::Color);
+    REQUIRE(parse_paint_mode("support", mode));
+    CHECK(mode == PaintMode::Support);
+    REQUIRE(parse_paint_mode("seam", mode));
+    CHECK(mode == PaintMode::Seam);
+    REQUIRE(parse_paint_mode("fuzzy_skin", mode));
+    CHECK(mode == PaintMode::FuzzySkin);
+
+    CHECK(std::string(paint_mode_name(PaintMode::FuzzySkin)) == "fuzzy_skin");
+
+    PaintMode untouched = PaintMode::Color;
+    CHECK_FALSE(parse_paint_mode("mmu", untouched));
+    CHECK_FALSE(parse_paint_mode("brim_ear", untouched));   // brim ears are not facets
+    CHECK(untouched == PaintMode::Color);
+}
+
+TEST_CASE("every PaintMode round-trips through paint_mode_name and parse_paint_mode",
+          "[orcamcp][paint]")
+{
+    // Unlike parse_paint_axis, mode names are exact-match (the header says so): these are tool
+    // parameter values, not single-letter axis input, so there is no case to normalize.
+    for (PaintMode mode : {PaintMode::Color, PaintMode::Support, PaintMode::Seam, PaintMode::FuzzySkin}) {
+        PaintMode parsed = PaintMode::Color;
+        REQUIRE(parse_paint_mode(paint_mode_name(mode), parsed));
+        CHECK(parsed == mode);
+    }
+}
+
+TEST_CASE("annotation_for_mode selects the member the GUI gizmo writes", "[orcamcp][paint]")
+{
+    HeadlessObject built = make_headless_object(two_triangle_rectangle(), Vec3d(0, 0, 0));
+
+    // Identity by address: the four members are the same type, so a wrong mapping here would
+    // compile, run, and quietly paint supports when the caller asked for colour.
+    CHECK(&annotation_for_mode(*built.volume, PaintMode::Color) == &built.volume->mmu_segmentation_facets);
+    CHECK(&annotation_for_mode(*built.volume, PaintMode::Support) == &built.volume->supported_facets);
+    CHECK(&annotation_for_mode(*built.volume, PaintMode::Seam) == &built.volume->seam_facets);
+    CHECK(&annotation_for_mode(*built.volume, PaintMode::FuzzySkin) == &built.volume->fuzzy_skin_facets);
+}
+
+TEST_CASE("parse_paint_state names the enforcer/blocker states, and refuses the wrong ones",
+          "[orcamcp][paint]")
+{
+    int state = -99;
+    REQUIRE(parse_paint_state(PaintMode::Support, "none", state));
+    CHECK(state == 0);
+    REQUIRE(parse_paint_state(PaintMode::Support, "enforcer", state));
+    CHECK(state == 1);
+    REQUIRE(parse_paint_state(PaintMode::Support, "blocker", state));
+    CHECK(state == 2);
+    REQUIRE(parse_paint_state(PaintMode::Seam, "blocker", state));
+    CHECK(state == 2);
+
+    // FuzzySkin has no blocker: TriangleSelector.hpp:19 aliases FUZZY_SKIN to ENFORCER and
+    // GLGizmoFuzzySkin.hpp:30 paints NONE with the right button. Accepting "blocker" would
+    // write state 2, which the fuzzy skin code has no meaning for.
+    CHECK_FALSE(parse_paint_state(PaintMode::FuzzySkin, "blocker", state));
+    REQUIRE(parse_paint_state(PaintMode::FuzzySkin, "enforcer", state));
+    CHECK(state == 1);
+
+    // Colour states are filament slot numbers, not names.
+    CHECK_FALSE(parse_paint_state(PaintMode::Color, "enforcer", state));
+    CHECK_FALSE(parse_paint_state(PaintMode::Support, "yes", state));
+}
+
+TEST_CASE("paint_state_label reads a raw state back the way its mode means it", "[orcamcp][paint]")
+{
+    CHECK(paint_state_label(PaintMode::Color, 0) == "unpainted");
+    CHECK(paint_state_label(PaintMode::Color, 5) == "filament 5");
+    CHECK(paint_state_label(PaintMode::Support, 0) == "none");
+    CHECK(paint_state_label(PaintMode::Support, 1) == "enforcer");
+    CHECK(paint_state_label(PaintMode::Support, 2) == "blocker");
+    CHECK(paint_state_label(PaintMode::FuzzySkin, 1) == "fuzzy_skin");
+
+    // EnforcerBlockerType stops at Extruder32 (TriangleSelector.hpp:31-32), so a project with
+    // more filament slots than that cannot paint the ones above it, and the tool must say so.
+    CHECK(max_paint_state() == 32);
+}
+
+TEST_CASE("volume_to_plate composes the instance and volume transforms", "[orcamcp][paint]")
+{
+    HeadlessObject built = make_headless_object(two_triangle_rectangle(), Vec3d(150.0, 150.0, 0.0));
+
+    const Transform3d to_plate = volume_to_plate(*built.object, *built.volume, 0);
+    const std::vector<Vec3d> centroids = facet_centroids(built.volume->mesh().its, to_plate);
+
+    REQUIRE(centroids.size() == 2);
+    // The mesh centroid (8/3, 2, 0) sits at (150 + 8/3, 152, 0) once the instance offset applies.
+    CHECK_THAT(centroids[0].x(), WithinAbs(150.0 + 8.0 / 3.0, 1e-9));
+    CHECK_THAT(centroids[0].y(), WithinAbs(152.0, 1e-9));
+
+    // An out-of-range instance falls back to instance 0 rather than reading past the vector.
+    CHECK(volume_to_plate(*built.object, *built.volume, 99).isApprox(to_plate));
+}
+
+TEST_CASE("volume_to_plate composes a translated volume with a translated instance",
+          "[orcamcp][paint]")
+{
+    // The single-offset test above cannot tell instance.get_matrix() * volume.get_matrix() apart
+    // from either matrix alone, since the volume side was identity. Giving the volume its own
+    // offset too is what actually proves the composition, and its order.
+    HeadlessObject built = make_headless_object(two_triangle_rectangle(), Vec3d(150.0, 150.0, 0.0));
+    built.volume->set_offset(Vec3d(10.0, 20.0, 0.0));
+
+    const Transform3d to_plate = volume_to_plate(*built.object, *built.volume, 0);
+    const std::vector<Vec3d> centroids = facet_centroids(built.volume->mesh().its, to_plate);
+
+    REQUIRE(centroids.size() == 2);
+    CHECK_THAT(centroids[0].x(), WithinAbs(150.0 + 10.0 + 8.0 / 3.0, 1e-9));
+    CHECK_THAT(centroids[0].y(), WithinAbs(150.0 + 20.0 + 2.0, 1e-9));
+}
+
+TEST_CASE("volume_to_plate falls back to the volume matrix alone when the object has no instance",
+          "[orcamcp][paint]")
+{
+    // Documented in the header: an object with no instance at all yields the volume matrix alone,
+    // rather than indexing an empty instances vector.
+    Model model;
+    ModelObject* object = model.add_object();
+    const TriangleMesh mesh(two_triangle_rectangle());
+    ModelVolume* volume = object->add_volume(mesh, false);
+    volume->set_offset(Vec3d(1.0, 2.0, 3.0));
+
+    CHECK(volume_to_plate(*object, *volume, 0).isApprox(volume->get_matrix()));
 }
