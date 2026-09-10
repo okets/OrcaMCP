@@ -89,4 +89,31 @@ bool point_in_sphere(const PaintSphere& sphere, const Vec3d& p)
     return (p - sphere.center).squaredNorm() <= sphere.radius * sphere.radius;
 }
 
+std::vector<Vec3d> facet_centroids(const indexed_triangle_set& its, const Transform3d& to_plate)
+{
+    std::vector<Vec3d> centroids;
+    centroids.reserve(its.indices.size());
+    for (const Vec3i32& face : its.indices) {
+        const Vec3d a = its.vertices[face[0]].cast<double>();
+        const Vec3d b = its.vertices[face[1]].cast<double>();
+        const Vec3d c = its.vertices[face[2]].cast<double>();
+        // Transform the centroid rather than the three vertices: the transform is affine, so
+        // the two agree, and this is one matrix multiply per facet instead of three.
+        centroids.push_back(to_plate * ((a + b + c) / 3.0));
+    }
+    return centroids;
+}
+
+double its_surface_area(const indexed_triangle_set& its)
+{
+    double area = 0.0;
+    for (const Vec3i32& face : its.indices) {
+        const Vec3d a = its.vertices[face[0]].cast<double>();
+        const Vec3d b = its.vertices[face[1]].cast<double>();
+        const Vec3d c = its.vertices[face[2]].cast<double>();
+        area += 0.5 * (b - a).cross(c - a).norm();
+    }
+    return area;
+}
+
 }}} // namespace Slic3r::GUI::OrcaMCP

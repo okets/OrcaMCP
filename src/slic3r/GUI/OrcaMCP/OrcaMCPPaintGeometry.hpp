@@ -77,4 +77,16 @@ bool point_in_box(const PaintBox& box, const Vec3d& p);
 // Inclusive of the surface.
 bool point_in_sphere(const PaintSphere& sphere, const Vec3d& p);
 
+// Centroid of every facet of `its`, in the frame `to_plate` maps the mesh into -- for this
+// feature always instance.get_matrix() * volume.get_matrix(), i.e. plate millimetres.
+// Index i of the result is facet i of `its`, which is the same index
+// TriangleSelector::set_facet takes (TriangleSelector.hpp:361), so the two line up directly.
+// A facet belongs to the band or region containing its centroid: one facet, one answer, no
+// partially painted triangles and no subdivision.
+std::vector<Vec3d> facet_centroids(const indexed_triangle_set& its, const Transform3d& to_plate);
+
+// Total area of `its` in the mesh's own units. Used only as the denominator of a coverage
+// ratio, so the units cancel and a scaled instance reports the same coverage as an unscaled one.
+double its_surface_area(const indexed_triangle_set& its);
+
 }}} // namespace Slic3r::GUI::OrcaMCP

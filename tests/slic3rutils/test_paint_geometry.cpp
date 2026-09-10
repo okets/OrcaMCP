@@ -2,6 +2,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "slic3r/GUI/OrcaMCP/OrcaMCPPaintGeometry.hpp"
+#include "libslic3r/TriangleMesh.hpp"
 
 #include <string>
 #include <vector>
@@ -12,6 +13,9 @@
 
 using namespace Slic3r::GUI::OrcaMCP;
 using Slic3r::Vec3d;
+using Slic3r::Vec3f;
+using Slic3r::Vec3i32;
+using Slic3r::Transform3d;
 using Catch::Matchers::WithinAbs;
 
 TEST_CASE("parse_paint_axis takes the three axis names in any case", "[orcamcp][paint]")
@@ -163,4 +167,76 @@ TEST_CASE("point_in_sphere includes the surface", "[orcamcp][paint]")
     // A radius of zero selects nothing but the exact centre, and never crashes.
     CHECK(point_in_sphere({Vec3d(0.0, 0.0, 0.0), 0.0}, Vec3d(0.0, 0.0, 0.0)));
     CHECK_FALSE(point_in_sphere({Vec3d(0.0, 0.0, 0.0), 0.0}, Vec3d(0.1, 0.0, 0.0)));
+}
+
+namespace {
+
+// Two right triangles forming a 4 x 6 rectangle in the z = 0 plane. Small enough to check
+// every number by hand, which is the point: the centroid is what decides a facet's band.
+indexed_triangle_set two_triangle_rectangle()
+{
+    indexed_triangle_set its;
+    its.vertices = {Vec3f(0.f, 0.f, 0.f), Vec3f(4.f, 0.f, 0.f), Vec3f(4.f, 6.f, 0.f), Vec3f(0.f, 6.f, 0.f)};
+    its.indices  = {Vec3i32(0, 1, 2), Vec3i32(0, 2, 3)};
+    return its;
+}
+
+} // namespace
+
+TEST_CASE("facet_centroids returns one plate-frame centroid per facet, in facet order",
+          "[orcamcp][paint]")
+{
+    const indexed_triangle_set its = two_triangle_rectangle();
+
+    const std::vector<Vec3d> identity = facet_centroids(its, Transform3d::Identity());
+    REQUIRE(identity.size() == 2);
+    // (0,0,0) (4,0,0) (4,6,0) -> mean is (8/3, 2, 0)
+    CHECK_THAT(identity[0].x(), WithinAbs(8.0 / 3.0, 1e-9));
+    CHECK_THAT(identity[0].y(), WithinAbs(2.0, 1e-9));
+    CHECK_THAT(identity[0].z(), WithinAbs(0.0, 1e-9));
+    // (0,0,0) (4,6,0) (0,6,0) -> mean is (4/3, 4, 0)
+    CHECK_THAT(identity[1].x(), WithinAbs(4.0 / 3.0, 1e-9));
+    CHECK_THAT(identity[1].y(), WithinAbs(4.0, 1e-9));
+
+    // The transform is what turns mesh coordinates into the plate coordinates a caller
+    // names its bands in, so it has to be applied to the centroid, not ignored.
+    Transform3d to_plate = Transform3d::Identity();
+    to_plate.translate(Vec3d(150.0, 150.0, 0.0));
+    const std::vector<Vec3d> moved = facet_centroids(its, to_plate);
+    REQUIRE(moved.size() == 2);
+    CHECK_THAT(moved[0].x(), WithinAbs(150.0 + 8.0 / 3.0, 1e-9));
+    CHECK_THAT(moved[1].y(), WithinAbs(154.0, 1e-9));
+
+    CHECK(facet_centroids(indexed_triangle_set(), Transform3d::Identity()).empty());
+}
+
+TEST_CASE("its_surface_area totals the facet areas", "[orcamcp][paint]")
+{
+    // 4 x 6 rectangle split into two triangles: 24 mm2 total.
+    CHECK_THAT(its_surface_area(two_triangle_rectangle()), WithinAbs(24.0, 1e-9));
+    CHECK_THAT(its_surface_area(indexed_triangle_set()), WithinAbs(0.0, 1e-12));
+
+    // A degenerate facet contributes nothing rather than a NaN.
+    indexed_triangle_set degenerate;
+    degenerate.vertices = {Vec3f(0.f, 0.f, 0.f), Vec3f(1.f, 0.f, 0.f), Vec3f(2.f, 0.f, 0.f)};
+    degenerate.indices  = {Vec3i32(0, 1, 2)};
+    CHECK_THAT(its_surface_area(degenerate), WithinAbs(0.0, 1e-12));
+
+    // A unit cube has six unit-square faces: 6 mm2 total, independent of triangulation.
+    CHECK_THAT(its_surface_area(Slic3r::its_make_cube(1.0, 1.0, 1.0)), WithinAbs(6.0, 1e-9));
+}
+
+TEST_CASE("facet_centroids applies a rotation, not just a translation", "[orcamcp][paint]")
+{
+    const indexed_triangle_set its = two_triangle_rectangle();
+
+    // A 90 degree rotation about Z sends (x, y, 0) to (-y, x, 0).
+    Transform3d to_plate = Transform3d::Identity();
+    to_plate.rotate(Eigen::AngleAxisd(M_PI / 2.0, Vec3d::UnitZ()));
+    const std::vector<Vec3d> rotated = facet_centroids(its, to_plate);
+    REQUIRE(rotated.size() == 2);
+    // Facet 0's centroid (8/3, 2, 0) rotates to (-2, 8/3, 0).
+    CHECK_THAT(rotated[0].x(), WithinAbs(-2.0, 1e-9));
+    CHECK_THAT(rotated[0].y(), WithinAbs(8.0 / 3.0, 1e-9));
+    CHECK_THAT(rotated[0].z(), WithinAbs(0.0, 1e-9));
 }
