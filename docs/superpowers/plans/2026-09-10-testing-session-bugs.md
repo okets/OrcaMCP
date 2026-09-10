@@ -379,3 +379,45 @@ with a 0.3 s GET, collapses every failure into "not connected" via a bare
 under load, because `HttpServer` runs a single `io_service.run()` thread
 (`HttpServer.cpp:210`) and every handler blocks it inside `run_on_main_thread`'s
 `future.get()`. A burst serialises by design.
+
+---
+
+## T9 — smaller findings from grounding the plans in the code
+
+All found by plan authors reading the real source, not from testing.
+
+**`cut_object` has never taken an undo snapshot.** It adds objects, calls
+`plater->remove()` and `plater->update()`, with no `take_snapshot`. Worse than the
+rest of T7, because `get_server_info` actively advises "use undo if result is
+wrong" — the tool tells the agent to rely on something that does not work. Covered
+by Plan 3 Task 5.
+
+**`reference.md` documents `cut_object`'s `keep` default as `"both"`; the code
+defaults to `"below"`.** The code is the published contract, so the doc is what
+changes.
+
+**`GLGizmoAdvancedCut.cpp/.hpp` is dead code.** Not listed in
+`src/slic3r/CMakeLists.txt` and no longer compilable — it references
+`ModelObjectCutAttribute::CutToParts` and `ModelObject::get_connector_mesh`,
+neither of which exists any more. Nobody should read cut behaviour out of it.
+Deleting it is a separate janitorial change, not part of batch 2.
+
+**`Plater::split_object(int, bool)` is declared (`Plater.hpp:737`) and never
+defined.** Linking against it fails. Plan 3 avoids it and goes to the `Model` API
+directly.
+
+**`ModelObject::make_boolean` is unusable for an MCP boolean tool.** It calls
+`this->mesh()`, which merges once per instance, and applies no instance transform
+to either operand.
+
+---
+
+## T6 addendum — `merge` and `merge_volumes` were missing from the audit
+
+The coverage audit listed what the toolbar and gizmo bar expose. It missed the
+inverse of `split_object`: OrcaSlicer can **merge** objects into one, and merge
+volumes into one. Real APIs exist. They belong in the same tool family as
+`split_object` and were simply not on the toolbar row that prompted the audit.
+
+Not added to any batch-2 plan — raise with the user, since scope for this batch was
+agreed as "the twelve missing tools" and this is a thirteenth and fourteenth.
