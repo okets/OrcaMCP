@@ -1172,6 +1172,8 @@ void OrcaMCPServer::register_builtin_tools()
 
                 nlohmann::json applied_keys = nlohmann::json::array();
                 nlohmann::json invalid_keys = nlohmann::json::array();
+                nlohmann::json unknown_keys = nlohmann::json::array();
+                nlohmann::json rejected_values = nlohmann::json::array();
                 bool has_error = false;
                 bool has_invalid = false;
                 // Writing a slot's colour rewrites filament_multi_colour and filament_colour_type
@@ -1192,6 +1194,11 @@ void OrcaMCPServer::register_builtin_tools()
                     }
                     for (const auto& key : result.applied) applied_keys.push_back(key);
                     for (const auto& key : result.invalid) invalid_keys.push_back(key);
+                    for (const auto& key : result.unknown) unknown_keys.push_back(key);
+                    for (const auto& rejected : result.rejected)
+                        rejected_values.push_back({{"key", rejected.key},
+                                                   {"reason", rejected.reason},
+                                                   {"expected", rejected.expected}});
                     flattened_slots.insert(flattened_slots.end(), result.flattened_slots.begin(),
                                            result.flattened_slots.end());
                     color_errors.insert(color_errors.end(), result.color_errors.begin(), result.color_errors.end());
@@ -1205,6 +1212,11 @@ void OrcaMCPServer::register_builtin_tools()
                     {"status", status},
                     {"applied_keys", applied_keys},
                     {"invalid_keys", invalid_keys},
+                    // invalid_keys is the union of the two, kept because it is the published field.
+                    // These two say which problem it was: a key that does not exist, or a value
+                    // this key would not take -- and for the second, the shape that would work.
+                    {"unknown_keys", unknown_keys},
+                    {"rejected_values", rejected_values},
                     {"duplicate_keys", duplicate_keys},
                     {"active_warnings", get_active_warnings_json(plater)}
                 };

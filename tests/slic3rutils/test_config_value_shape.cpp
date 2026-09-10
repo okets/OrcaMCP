@@ -104,3 +104,13 @@ TEST_CASE("the expected shape names what the caller should have sent", "[orcamcp
     CHECK(config_value_expected_shape(coFloat) == "a number");
     CHECK(config_value_expected_shape(coString) == "a string");
 }
+
+TEST_CASE("the rejection message tells a caller both halves", "[orcamcp][config]")
+{
+    // apply_config pairs the specific complaint with the shape that would have worked; a caller
+    // that only sees "invalid_keys" cannot tell a typo'd key from a wrong-shaped value.
+    const auto shaped = config_value_to_string(nlohmann::json({1, 2}), Slic3r::coFloat);
+    REQUIRE_FALSE(shaped.ok);
+    CHECK(shaped.reason == "an array was given for a key that is not a list");
+    CHECK(config_value_expected_shape(Slic3r::coFloat) == "a number");
+}

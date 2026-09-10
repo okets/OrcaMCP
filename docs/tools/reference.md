@@ -564,6 +564,8 @@ Modify configuration settings.
   "status": "success",
   "applied_keys": ["layer_height"],
   "invalid_keys": [],
+  "unknown_keys": [],
+  "rejected_values": [],
   "duplicate_keys": [],
   "active_warnings": {"count": 0, "warnings": []}
 }
@@ -577,6 +579,38 @@ half its writes silently. `set_object_config` reports the same array per object.
 **Colours:** a colour-typed key (`filament_colour`, `extruder_colour`, ...) must be `#RRGGBB` or
 `#RRGGBBAA`; an empty value means "no colour". Anything else (`B17C38`, `#GGGGGG`) is rejected into
 `invalid_keys` with the previous value kept, instead of being stored and later decoded as black.
+
+**Lists:** a key that `get_valid_config_keys` reports as `strings` / `ints` / `bools` / `floats` takes
+a JSON array, and the joined string form keeps working:
+
+```json
+{"type": "project", "key": "filament_colour", "value": ["#00FFFF", "#FF00FF", "#FFFF00", "#808080"]}
+{"type": "project", "key": "filament_colour", "value": "#00FFFF;#FF00FF;#FFFF00;#808080"}
+```
+
+Both apply the same four colours. The separator differs per type inside the slicer (`;` for string
+lists, `,` for numeric and boolean lists), which is exactly why passing an array is the safer form.
+
+**Why a key failed:** `invalid_keys` is the union of two different problems and stays that way, but
+each has its own field now:
+
+| Field | Meaning |
+|---|---|
+| `unknown_keys` | No such config key. Check `get_valid_config_keys`. |
+| `rejected_values` | The key exists; this value was not accepted. Each entry is `{"key", "reason", "expected"}`, where `expected` names the shape that would have worked. |
+
+```json
+{
+  "status": "partial",
+  "applied_keys": [],
+  "invalid_keys": ["layer_height"],
+  "unknown_keys": [],
+  "rejected_values": [
+    {"key": "layer_height", "reason": "an array was given for a key that is not a list",
+     "expected": "a number"}
+  ]
+}
+```
 
 ---
 

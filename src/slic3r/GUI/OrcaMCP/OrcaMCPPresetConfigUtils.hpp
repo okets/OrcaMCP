@@ -60,6 +60,18 @@ struct ApplyConfigResult {
     // colour; `color_errors` holds the reason for any slot whose three keys could not be written.
     std::vector<int> flattened_slots;
     std::vector<std::string> color_errors;
+
+    // "No such key" and "that value was not accepted" are different problems for a caller: one is
+    // a typo, the other is a shape it can correct. `invalid` stays the union of the two, because
+    // OrcaMCPPrinterUtils::save_physical_printer_preset already reads it as "anything that failed".
+    struct RejectedValue
+    {
+        std::string key;
+        std::string reason;    // what went wrong with this value
+        std::string expected;  // the shape that would have been accepted
+    };
+    std::vector<std::string>   unknown;
+    std::vector<RejectedValue> rejected;
 };
 
 class OrcaMCPPresetConfigUtils {

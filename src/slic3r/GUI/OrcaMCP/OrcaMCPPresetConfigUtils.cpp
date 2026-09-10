@@ -348,13 +348,23 @@ ApplyConfigResult OrcaMCPPresetConfigUtils::ApplyConfig(const nlohmann::json& it
 
     ConfigSubstitutionContext context(ForwardCompatibilitySubstitutionRule::Enable);
     for (auto& [key, value] : item.at("settings").items()) {
-        // Can't blindly dump json object to string, otherwise the original string will become "\"value\""
-        const std::string value_str = value.is_string() ? value.get<std::string>() : value.dump();
         const ConfigOptionDef* def = print_config_def.get(key);
         if (def == nullptr) {
             result.invalid.push_back(key);
+            result.unknown.push_back(key);
             continue;
         }
+        // Not "can't blindly dump json to string" any more: the dump is decided from the option's
+        // declared type, so an array reaches a list-typed key as a list and a shape that cannot
+        // work is reported instead of stored. See config_value_to_string.
+        const ConfigValueText shaped = config_value_to_string(value, def->type);
+        if (!shaped.ok) {
+            BOOST_LOG_TRIVIAL(error) << "ApplyConfig: '" << key << "' rejected: " << shaped.reason;
+            result.invalid.push_back(key);
+            result.rejected.push_back({key, shaped.reason, config_value_expected_shape(def->type)});
+            continue;
+        }
+        const std::string& value_str = shaped.text;
         // A colour key deserializes any string at all, and upstream then decodes an unparseable one
         // as black -- so "B17C38" (no '#') would be accepted here and show up as a black spool.
         // Keep the old value and report the key instead.
@@ -367,6 +377,8 @@ ApplyConfigResult OrcaMCPPresetConfigUtils::ApplyConfig(const nlohmann::json& it
         } catch (const std::exception& e) {
             BOOST_LOG_TRIVIAL(error) << "ApplyConfig: '" << key << ":" << value_str << "' failed: " << e.what();
             result.invalid.push_back(key);
+            result.rejected.push_back({key, std::string("could not be read as a value: ") + e.what(),
+                                       config_value_expected_shape(def->type)});
             continue;
         }
         std::string bad_color;
@@ -376,6 +388,8 @@ ApplyConfigResult OrcaMCPPresetConfigUtils::ApplyConfig(const nlohmann::json& it
             if (previous)
                 config->set_key_value(key, previous.release());
             result.invalid.push_back(key);
+            result.rejected.push_back({key, "not a #RRGGBB colour (" + bad_color + ")",
+                                       "\"#RRGGBB\" or \"#RRGGBBAA\", or an array of them"});
             continue;
         }
         result.applied.push_back(key);
