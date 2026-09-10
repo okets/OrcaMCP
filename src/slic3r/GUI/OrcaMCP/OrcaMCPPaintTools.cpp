@@ -468,16 +468,33 @@ std::vector<std::string> paint_prerequisite_messages(const Slic3r::ModelObject& 
 
 // No parse_double_param exists in OrcaMCPCommon -- a gap logged for the whole-branch review,
 // out of scope to fix in this file -- so this is the narrow, file-local equivalent for the one
-// tool that takes bare floats (x, y, radius). A non-number here reads as a message naming the
-// field, rather than the generic json::type_error the same mistake would otherwise surface as.
+// tool that takes bare floats (x, y, radius). Mirrors parse_integer_param's string handling
+// (OrcaMCPCommon.cpp) rather than only accepting a JSON number: the same stale-schema client
+// that sends append as "true" sends a coordinate as "110", and rejecting that here while
+// parse_boolean_param accepts its own stringified value would be a needless inconsistency
+// within the same tool. Anything else reads as a message naming the field, rather than the
+// generic json::type_error the same mistake would otherwise surface as.
 bool parse_number_field(const nlohmann::json& value, const char* what, double& out, std::string& error)
 {
-    if (!value.is_number()) {
-        error = std::string(what) + " must be a number";
-        return false;
+    if (value.is_number()) {
+        out = value.get<double>();
+        return true;
     }
-    out = value.get<double>();
-    return true;
+    if (value.is_string()) {
+        const std::string str = value.get<std::string>();
+        try {
+            size_t       pos    = 0;
+            const double parsed = std::stod(str, &pos);
+            if (pos == str.size()) {
+                out = parsed;
+                return true;
+            }
+        } catch (const std::exception&) {
+            // falls through to the shared error below
+        }
+    }
+    error = std::string(what) + " must be a number";
+    return false;
 }
 
 } // namespace
@@ -827,7 +844,9 @@ void OrcaMCPServer::register_paint_tools()
         "are NOT facet paint: they are points on the object (ModelObject::brim_points), so they "
         "have their own tool. Positions are PLATE millimetres, the same frame get_object_info's "
         "bounding_box uses; only x and y matter, because an ear always sits on the bottom of the "
-        "object. Pass an empty points array to remove them all. They only produce brim unless "
+        "object. Brim ears are stored per object, not per instance, and slicing resolves them "
+        "through instance 0 only, so instance_id must be 0 (or omitted). Pass an empty points "
+        "array with append left false to remove them all. They only produce brim unless "
         "brim_type is 'painted'.",
         {
             {"type", "object"},
@@ -835,7 +854,8 @@ void OrcaMCPServer::register_paint_tools()
                 {"object_id", {{"type", "integer"}, {"description", "Object index (0-based)"}}},
                 {"instance_id", {
                     {"type", "integer"},
-                    {"description", "Which instance's transform reads your coordinates (default 0)"}
+                    {"description", "Must be 0 (or omitted): brim ears are object-level data and "
+                                    "slicing resolves them through instance 0 only"}
                 }},
                 {"points", {
                     {"type", "array"},
@@ -848,7 +868,8 @@ void OrcaMCPServer::register_paint_tools()
                         }},
                         {"required", {"x", "y"}}
                     }},
-                    {"description", "Ear positions in plate mm. An empty array removes every ear."}
+                    {"description", "Ear positions in plate mm. An empty array removes every ear, "
+                                    "when append is left false."}
                 }},
                 {"radius", {
                     {"type", "number"},
@@ -869,7 +890,26 @@ void OrcaMCPServer::register_paint_tools()
                 if (!resolve_paint_target(params, target, error))
                     return nlohmann::json{{"status", "error"}, {"message", error}};
 
-                if (!params["points"].is_array())
+                // brim_points is object-level data. Brim.cpp:368-374 hardcodes instances[0]'s
+                // transformation when it reads brim_points back for slicing, so a write through
+                // any other instance's frame would store a point that slicing reinterprets
+                // through instance 0 -- printed somewhere else, or dropped by the world-z>0 test
+                // -- while this same call's response (built through that other instance's frame)
+                // would still read back looking correct. There is no correct non-zero frame here,
+                // so this is rejected outright rather than accepted with a caveat.
+                if (target.instance_idx != 0)
+                    return nlohmann::json{{"status", "error"},
+                                          {"message", "brim ears are stored per object, not per "
+                                                      "instance, and slicing resolves them through "
+                                                      "instance 0, so only instance_id: 0 is "
+                                                      "meaningful here"}};
+
+                // params["points"] would be UB on a missing key (const operator[] asserts
+                // find != end(), and NDEBUG compiles that assert out in every non-Debug config
+                // this project ships) rather than throwing something the dispatcher could catch.
+                // Nothing validates `required` server-side, so this guard is load-bearing, not
+                // belt-and-suspenders.
+                if (!params.contains("points") || !params["points"].is_array())
                     return nlohmann::json{{"status", "error"},
                                           {"message", "points must be an array of {x, y, radius?}"}};
 
