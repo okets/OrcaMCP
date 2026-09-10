@@ -15,6 +15,7 @@
 #include "libslic3r/PrintConfig.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <string>
 #include <vector>
@@ -477,7 +478,15 @@ std::vector<std::string> paint_prerequisite_messages(const Slic3r::ModelObject& 
 bool parse_number_field(const nlohmann::json& value, const char* what, double& out, std::string& error)
 {
     if (value.is_number()) {
-        out = value.get<double>();
+        const double parsed = value.get<double>();
+        // A JSON number literal cannot itself spell NaN or Infinity (the grammar has no token for
+        // either), so this is belt-and-braces for a value built by something other than parsing
+        // the wire text -- cheap, and consistent with the string branch below rejecting the same.
+        if (!std::isfinite(parsed)) {
+            error = std::string(what) + " must be a finite number";
+            return false;
+        }
+        out = parsed;
         return true;
     }
     if (value.is_string()) {
@@ -485,7 +494,12 @@ bool parse_number_field(const nlohmann::json& value, const char* what, double& o
         try {
             size_t       pos    = 0;
             const double parsed = std::stod(str, &pos);
-            if (pos == str.size()) {
+            // std::stod accepts "nan"/"inf" (and their sign/case variants) as valid, fully-consumed
+            // parses; isfinite is what rejects them. A NaN here would clear the radius bounds check
+            // below (every comparison against NaN is false) and, for x/y, reach brim_point_to_object
+            // and then Brim.cpp's own z > 0 test -- also false for NaN -- ending in a NaN -> coord_t
+            // scaled() conversion, which is undefined behaviour.
+            if (pos == str.size() && std::isfinite(parsed)) {
                 out = parsed;
                 return true;
             }
@@ -1028,7 +1042,10 @@ void OrcaMCPServer::register_paint_tools()
                     {"type", "integer"},
                     {"minimum", 0},
                     {"description", "Which instance's transform defines plate coordinates (default 0). "
-                                    "Paint is shared by every instance."}
+                                    "Paint is shared by every instance. Brim ears are reported through "
+                                    "instance 0 regardless of this value (see brim_ears_instance_id in "
+                                    "the response): slicing resolves brim_points through instance 0 "
+                                    "only, unlike paint."}
                 }},
                 {"mode", {
                     {"type", "string"},
@@ -1073,6 +1090,13 @@ void OrcaMCPServer::register_paint_tools()
                     });
                 }
 
+                // brim_points is object-level data that Brim.cpp resolves through instance 0 only
+                // when slicing (unlike paint, which every instance shares in its own frame), so it
+                // is always reported through instance 0 here, independent of instance_id -- which
+                // instance the paint volumes/bounding_box above are read through. Named explicitly
+                // in the response, not left implicit, so a caller reading a non-zero instance_id
+                // does not assume brim_ears shares that frame too. set_brim_ears enforces the same
+                // instance 0 rule on the write side, so the two agree.
                 return nlohmann::json{
                     {"status", "success"},
                     {"object_id", target.object_id},
@@ -1081,7 +1105,8 @@ void OrcaMCPServer::register_paint_tools()
                     {"instance_id", int(target.instance_idx)},
                     {"bounding_box", bbox_json(object_bbox)},
                     {"volumes", volumes},
-                    {"brim_ears", brim_ears_json(*target.object, target.instance_idx)}
+                    {"brim_ears_instance_id", 0},
+                    {"brim_ears", brim_ears_json(*target.object, 0)}
                 };
             });
         }
