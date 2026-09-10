@@ -60,6 +60,33 @@ Copied verbatim from the spec's Global Constraints section. Every task inherits 
 
 ---
 
+## Three things the spec's own wording will send you looking for
+
+**1. The spec says explicit band ranges are "in object coordinates". This plan uses plate
+coordinates instead.** The same spec paragraph then requires the coordinates to "be consistent
+with what `get_object_info` reports", and `get_object_info` reports plate coordinates only. The
+two halves of that requirement cannot both hold, so the consistency half wins — see the next
+section for the full argument. Every tool description and `reference.md` says "plate", loudly,
+which is the part the spec cared about.
+
+**2. The undo constraint says to follow `move_object`. `move_object` takes no snapshot.**
+Check it: `move_object` spans `OrcaMCPServer.cpp:3077-3215` and never calls `take_snapshot` anywhere in
+that range.
+The tools that do it correctly are `set_object_printable` (`OrcaMCPServer.cpp:4075-4080`) and
+`set_object_filament` (`OrcaMCPFilamentUtils.cpp:150-151`), both of which validate everything
+first and only then call `plater->take_snapshot(...)`. That is the pattern every mutating tool
+in this plan follows. Do not "fix" `move_object` here — it is a real gap, but it belongs to
+whoever sweeps the transform tools, and folding it in would bury it in a painting change.
+
+**3. No `McpDialogSuppressionGuard` appears in this plan, and that is correct.** None of the
+four tools opens a modal: they write model data and call `plater->update()`. The guard is
+mandatory when a handler *can* reach a dialog, not decoration on every handler — the existing
+transform tools do not use it either. If a future step here ever reaches a file dialog or a
+`MsgDialog`, it needs the guard, because a modal inside `run_on_main_thread` hangs the GUI
+forever.
+
+---
+
 ## The Coordinate Decision — read this before Task 1
 
 **Every coordinate this feature accepts or reports is in the plate frame**, the same frame
@@ -113,7 +140,7 @@ which is character-for-character what `GLGizmoBrimEars.cpp:395-402` does.
 
 | File | Change |
 |---|---|
-| `src/slic3r/GUI/OrcaMCP/OrcaMCPServer.hpp:66` | Declare `static void register_paint_tools();` beside the other registrars. |
+| `src/slic3r/GUI/OrcaMCP/OrcaMCPServer.hpp:67` | Declare `static void register_paint_tools();` beside the other registrars. |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPServer.cpp:4332-4333` | Call `register_paint_tools();`. |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPServer.cpp:647-790` | Add the four tools to `get_server_info`'s `tools_by_category` catalog. |
 | `src/slic3r/CMakeLists.txt:406-426` | Add the five new source/header files to the `libslic3r_gui` source list. |
@@ -913,7 +940,7 @@ namespace {
 indexed_triangle_set scraper_like_box()
 {
     indexed_triangle_set its;
-    const double x0 = 130.0, x1 = 170.0, y0 = 89.0, y1 = 211.0, z0 = 0.0, z1 = 6.0;
+    const double x0 = 130.0, x1 = 170.0, y0 = 89.0, y1 = 211.0, z1 = 6.0;
     // Two facets per band-worth of length, so every band is guaranteed a facet: 14 slabs.
     for (int i = 0; i < 14; ++i) {
         const double ya = y0 + (y1 - y0) * (double(i) / 14.0);
@@ -926,7 +953,6 @@ indexed_triangle_set scraper_like_box()
         its.indices.push_back(Vec3i32(base, base + 1, base + 2));
         its.indices.push_back(Vec3i32(base, base + 2, base + 3));
     }
-    (void)z0;
     return its;
 }
 
@@ -1196,7 +1222,8 @@ HeadlessObject make_headless_object(const indexed_triangle_set& its, const Vec3d
     built.object = built.model.add_object();
     // modify_to_center_geometry = false: recentring would move the mesh under the volume
     // matrix and the hand-checked plate coordinates below would stop being hand-checkable.
-    built.volume = built.object->add_volume(TriangleMesh(its), false);
+    const TriangleMesh mesh(its);
+    built.volume = built.object->add_volume(mesh, false);
     ModelInstance* instance = built.object->add_instance();
     instance->set_offset(instance_offset);
     return built;
@@ -1769,3 +1796,1583 @@ EOF
 ```
 
 ---
+
+### Task 8: The tools file and `get_object_paint`
+
+**Files:**
+- Create: `src/slic3r/GUI/OrcaMCP/OrcaMCPPaintTools.cpp`
+- Modify: `src/slic3r/GUI/OrcaMCP/OrcaMCPServer.hpp:67` (declare the registrar)
+- Modify: `src/slic3r/GUI/OrcaMCP/OrcaMCPServer.cpp:4332-4333` (call it)
+- Modify: `src/slic3r/CMakeLists.txt` (add the new .cpp)
+
+**Interfaces:**
+- Consumes: `PaintMode`, `parse_paint_mode`, `paint_mode_name`, `paint_state_label`,
+  `read_volume_paint`, `volume_to_plate` (Tasks 6-7); `run_on_main_thread`,
+  `get_active_warnings_json` (`OrcaMCPCommon.hpp`); `OrcaMCPServer::register_tool`.
+- Produces: `void OrcaMCPServer::register_paint_tools()`; the file-local helper
+  `bool resolve_paint_target(const nlohmann::json& params, PaintTarget& out, std::string& error)`
+  with `struct PaintTarget { ModelObject* object; std::vector<ModelVolume*> volumes;
+  std::vector<int> volume_ids; std::size_t instance_idx; int object_id; }` (reused by Tasks
+  9-11), `Slic3r::BoundingBoxf3 target_plate_bbox(const PaintTarget&)` and
+  `nlohmann::json painted_json(const ModelVolume&, PaintMode)` (reused by Task 9),
+  `nlohmann::json brim_ears_json(const ModelObject&, std::size_t)` (reused by Task 11),
+  `nlohmann::json bbox_json(const Slic3r::BoundingBoxf3&)`; and the MCP tool `get_object_paint`.
+
+- [ ] **Step 1: Declare the registrar and call it**
+
+In `src/slic3r/GUI/OrcaMCP/OrcaMCPServer.hpp`, after the `register_printer_tools()` declaration
+(line 67, immediately before the closing `};`):
+
+```cpp
+    // Facet painting and brim ears (OrcaMCPPaintTools.cpp)
+    static void register_paint_tools();
+```
+
+In `src/slic3r/GUI/OrcaMCP/OrcaMCPServer.cpp`, after `register_printer_tools();` (line 4333):
+
+```cpp
+    register_paint_tools();
+```
+
+- [ ] **Step 2: Write the tools file with the shared target resolution and `get_object_paint`**
+
+Create `src/slic3r/GUI/OrcaMCP/OrcaMCPPaintTools.cpp`:
+
+```cpp
+// src/slic3r/GUI/OrcaMCP/OrcaMCPPaintTools.cpp
+#include "OrcaMCPServer.hpp"
+#include "OrcaMCPCommon.hpp"
+#include "OrcaMCPPaintGeometry.hpp"
+#include "OrcaMCPPaintModel.hpp"
+
+#include "slic3r/GUI/GUI_App.hpp"
+#include "slic3r/GUI/GUI_ObjectList.hpp"
+#include "slic3r/GUI/I18N.hpp"
+#include "slic3r/GUI/PartPlate.hpp"
+#include "slic3r/GUI/Plater.hpp"
+#include "libslic3r/BrimEarsPoint.hpp"
+#include "libslic3r/Model.hpp"
+
+#include <algorithm>
+#include <string>
+#include <vector>
+
+using namespace Slic3r::GUI;
+using namespace Slic3r::GUI::OrcaMCP;
+
+namespace {
+
+// The volumes one call addresses, and the instance whose transform defines plate coordinates.
+// Paint lives on the ModelVolume, so it applies to every instance of the object; `instance_idx`
+// only decides which instance's frame the caller's coordinates are read in.
+struct PaintTarget
+{
+    Slic3r::ModelObject*              object   = nullptr;
+    std::vector<Slic3r::ModelVolume*> volumes;
+    std::vector<int>                  volume_ids;
+    std::size_t                       instance_idx = 0;
+    int                               object_id    = -1;
+};
+
+// Main thread only. Reads object_id (required), volume_id (optional, -1 = every model part)
+// and instance_id (optional, default 0).
+bool resolve_paint_target(const nlohmann::json& params, PaintTarget& out, std::string& error)
+{
+    Plater*        plater = wxGetApp().plater();
+    Slic3r::Model& model  = plater->model();
+
+    const int object_id = params.value("object_id", -1);
+    if (object_id < 0 || object_id >= int(model.objects.size())) {
+        error = "Invalid object_id " + std::to_string(object_id) + ": the scene has " +
+                std::to_string(model.objects.size()) + " objects";
+        return false;
+    }
+    out.object    = model.objects[std::size_t(object_id)];
+    out.object_id = object_id;
+
+    const int instance_id = params.value("instance_id", 0);
+    if (instance_id < 0 || instance_id >= int(out.object->instances.size())) {
+        error = "Invalid instance_id " + std::to_string(instance_id) + ": the object has " +
+                std::to_string(out.object->instances.size()) + " instances";
+        return false;
+    }
+    out.instance_idx = std::size_t(instance_id);
+
+    const int volume_id = params.value("volume_id", -1);
+    if (volume_id < -1) {
+        error = "Invalid volume_id " + std::to_string(volume_id) +
+                ": use a 0-based part index, or omit it (or pass -1) for every part of the object";
+        return false;
+    }
+    if (volume_id >= 0) {
+        if (volume_id >= int(out.object->volumes.size())) {
+            error = "Invalid volume_id " + std::to_string(volume_id) + ": the object has " +
+                    std::to_string(out.object->volumes.size()) + " volumes";
+            return false;
+        }
+        Slic3r::ModelVolume* mv = out.object->volumes[std::size_t(volume_id)];
+        // Only a model part has a printed surface. A modifier, a support blocker or a negative
+        // volume carries the same annotation members but nothing reads them, so painting one
+        // would report success and change nothing the caller can see.
+        if (!mv->is_model_part()) {
+            error = "volume_id " + std::to_string(volume_id) +
+                    " is not a model part, so it has no surface to paint";
+            return false;
+        }
+        out.volumes.push_back(mv);
+        out.volume_ids.push_back(volume_id);
+    } else {
+        for (int i = 0; i < int(out.object->volumes.size()); ++i)
+            if (out.object->volumes[std::size_t(i)]->is_model_part()) {
+                out.volumes.push_back(out.object->volumes[std::size_t(i)]);
+                out.volume_ids.push_back(i);
+            }
+        if (out.volumes.empty()) {
+            error = "Object " + std::to_string(object_id) + " has no model parts to paint";
+            return false;
+        }
+    }
+    return true;
+}
+
+// The plate-frame bounding box of exactly the volumes a call paints, so a band range defaulted
+// from it covers what is actually being painted rather than the whole object.
+Slic3r::BoundingBoxf3 target_plate_bbox(const PaintTarget& target)
+{
+    Slic3r::BoundingBoxf3 bbox;
+    for (Slic3r::ModelVolume* mv : target.volumes)
+        bbox.merge(mv->mesh().transformed_bounding_box(
+            volume_to_plate(*target.object, *mv, target.instance_idx)));
+    return bbox;
+}
+
+nlohmann::json bbox_json(const Slic3r::BoundingBoxf3& bbox)
+{
+    return {{"min", {{"x", bbox.min.x()}, {"y", bbox.min.y()}, {"z", bbox.min.z()}}},
+            {"max", {{"x", bbox.max.x()}, {"y", bbox.max.y()}, {"z", bbox.max.z()}}}};
+}
+
+// One mode's paint on one volume, as the response reports it.
+nlohmann::json painted_json(const Slic3r::ModelVolume& mv, PaintMode mode)
+{
+    nlohmann::json states = nlohmann::json::array();
+    for (const PaintedStateInfo& info : read_volume_paint(mv, mode)) {
+        nlohmann::json entry = {{"state", info.state},
+                                {"label", paint_state_label(mode, info.state)},
+                                {"facet_count", info.facet_count},
+                                {"coverage_percent", info.area_ratio * 100.0}};
+        entry["filament"] = mode == PaintMode::Color && info.state > 0
+                                ? nlohmann::json(info.state)
+                                : nlohmann::json(nullptr);
+        states.push_back(entry);
+    }
+    return states;
+}
+
+// The brim ears on an object, converted back into the plate coordinates the API speaks.
+// brim_points are stored object-local (Model.hpp:390; Brim.cpp:373 transforms them by the
+// instance matrix to get a world position), so the read-back has to transform them forward.
+nlohmann::json brim_ears_json(const Slic3r::ModelObject& obj, std::size_t instance_idx)
+{
+    nlohmann::json ears = nlohmann::json::array();
+    const Slic3r::Transform3d to_plate =
+        obj.instances.empty() ? Slic3r::Transform3d::Identity()
+                              : obj.instances[std::min(instance_idx, obj.instances.size() - 1)]->get_matrix();
+    for (const Slic3r::BrimPoint& point : obj.brim_points) {
+        const Slic3r::Vec3d plate_pos = to_plate * point.pos.cast<double>();
+        ears.push_back({{"x", plate_pos.x()},
+                        {"y", plate_pos.y()},
+                        {"z", plate_pos.z()},
+                        {"radius", double(point.head_front_radius)}});
+    }
+    return ears;
+}
+
+} // namespace
+
+void OrcaMCPServer::register_paint_tools()
+{
+    register_tool({
+        "get_object_paint",
+        "Read what is currently painted on an object: per-volume facet counts and surface "
+        "coverage for each of the four paint modes (color, support, seam, fuzzy_skin), plus its "
+        "brim ears. Coordinates are PLATE millimetres, the same frame get_object_info reports "
+        "its bounding_box in. Use it to verify a paint_object call did what you asked.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"object_id", {{"type", "integer"}, {"description", "Object index (0-based)"}}},
+                {"volume_id", {
+                    {"type", "integer"},
+                    {"minimum", -1},
+                    {"description", "Part index within the object (0-based); omit, or pass -1, for every part"}
+                }},
+                {"instance_id", {
+                    {"type", "integer"},
+                    {"description", "Which instance's transform defines plate coordinates (default 0). "
+                                    "Paint is shared by every instance."}
+                }},
+                {"mode", {
+                    {"type", "string"},
+                    {"enum", {"color", "support", "seam", "fuzzy_skin"}},
+                    {"description", "Omit to report all four modes"}
+                }}
+            }},
+            {"required", {"object_id"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            return run_on_main_thread([params]() -> nlohmann::json {
+                PaintTarget target;
+                std::string error;
+                if (!resolve_paint_target(params, target, error))
+                    return nlohmann::json{{"status", "error"}, {"message", error}};
+
+                std::vector<PaintMode> modes = {PaintMode::Color, PaintMode::Support,
+                                                PaintMode::Seam, PaintMode::FuzzySkin};
+                if (params.contains("mode")) {
+                    PaintMode one = PaintMode::Color;
+                    if (!parse_paint_mode(params["mode"].get<std::string>(), one))
+                        return nlohmann::json{{"status", "error"},
+                                              {"message", "Unknown mode; expected color, support, seam or fuzzy_skin"}};
+                    modes = {one};
+                }
+
+                nlohmann::json volumes = nlohmann::json::array();
+                for (std::size_t i = 0; i < target.volumes.size(); ++i) {
+                    Slic3r::ModelVolume* mv = target.volumes[i];
+                    nlohmann::json by_mode = nlohmann::json::object();
+                    for (PaintMode mode : modes)
+                        by_mode[paint_mode_name(mode)] = painted_json(*mv, mode);
+                    volumes.push_back({
+                        {"volume_id", target.volume_ids[i]},
+                        {"name", mv->name},
+                        {"facets_total", int(mv->mesh().its.indices.size())},
+                        {"bounding_box", bbox_json(mv->mesh().transformed_bounding_box(
+                                             volume_to_plate(*target.object, *mv, target.instance_idx)))},
+                        {"modes", by_mode}
+                    });
+                }
+
+                return nlohmann::json{
+                    {"status", "success"},
+                    {"object_id", target.object_id},
+                    {"object_name", target.object->name},
+                    {"coordinate_frame", "plate"},
+                    {"instance_id", int(target.instance_idx)},
+                    {"bounding_box", bbox_json(target_plate_bbox(target))},
+                    {"volumes", volumes},
+                    {"brim_ears", brim_ears_json(*target.object, target.instance_idx)}
+                };
+            });
+        }
+    });
+}
+```
+
+Add the file to `src/slic3r/CMakeLists.txt` after the `OrcaMCPPaintModel.*` lines:
+
+```cmake
+    GUI/OrcaMCP/OrcaMCPPaintTools.cpp
+```
+
+- [ ] **Step 3: Build**
+
+Run: `cmake --build build/arm64 --config RelWithDebInfo --target OrcaSlicer slic3rutils_tests -- -j8`
+Expected: build succeeds, no warnings from the new file.
+
+- [ ] **Step 4: Confirm the tool is registered**
+
+Run: `grep -hA1 -E '^\s*register_tool\(\{' src/slic3r/GUI/OrcaMCP/*.cpp | grep -coE '^\s*"[a-z0-9_]+",'`
+Expected: `71`
+
+- [ ] **Step 5: Run the test suite to confirm no regression**
+
+Run: `build/arm64/tests/slic3rutils/RelWithDebInfo/slic3rutils_tests.app/Contents/MacOS/slic3rutils_tests`
+Expected: 0 failures. Case count is the 174 baseline plus the 26 `[paint]` cases added so far.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/slic3r/GUI/OrcaMCP/OrcaMCPPaintTools.cpp \
+        src/slic3r/GUI/OrcaMCP/OrcaMCPServer.hpp \
+        src/slic3r/GUI/OrcaMCP/OrcaMCPServer.cpp \
+        src/slic3r/CMakeLists.txt
+git commit -m "$(cat <<'EOF'
+feat: an agent can now read back what is painted on an object
+
+Read-back lands before the write tool on purpose: without it, the only way to check a
+paint call was to open the gizmo, which is exactly the mouse-reaching step this feature
+exists to remove. get_object_paint reports every mode's facet counts and surface
+coverage, plus the object's brim ears, so an agent can verify its own work in the same
+loop it did it in.
+
+Coordinates are plate millimetres and the response says so in a coordinate_frame field.
+Brim ears are stored object-local (Brim.cpp:373 transforms them by the instance matrix
+before use), so the read-back transforms them forward rather than reporting the raw
+stored values, which would have looked like plate coordinates and been wrong by the
+instance offset.
+
+resolve_paint_target rejects a volume that is not a model part rather than painting it.
+A modifier or a support blocker carries the same four annotation members, so painting
+one would have reported success and changed nothing the caller could observe.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+EOF
+)"
+```
+
+---
+
+### Task 9: `paint_object`
+
+**Files:**
+- Modify: `src/slic3r/GUI/OrcaMCP/OrcaMCPPaintTools.cpp` (add to the anonymous namespace, then
+  register the tool at the top of `register_paint_tools()`, before `get_object_paint`)
+
+**Interfaces:**
+- Consumes: `PaintTarget`, `resolve_paint_target`, `target_plate_bbox`, `bbox_json`,
+  `painted_json` (Task 8); every geometry and model function from Tasks 1-7.
+- Produces: the MCP tool `paint_object`; the file-local helpers
+  `struct PaintRequest`, `bool parse_paint_request(const nlohmann::json&, PaintMode, const PaintTarget&, PaintRequest&, std::string&)`,
+  `std::vector<std::string> paint_prerequisite_messages(const Slic3r::ModelObject&, PaintMode)`,
+  used again by Task 11.
+
+- [ ] **Step 1: Add the request parsing helper**
+
+Add to the anonymous namespace of `src/slic3r/GUI/OrcaMCP/OrcaMCPPaintTools.cpp`, after
+`brim_ears_json`, and add `#include "libslic3r/PresetBundle.hpp"` and
+`#include "libslic3r/PrintConfig.hpp"` at the top of the file:
+
+```cpp
+// A filament slot a caller asked to paint with. 0 means "unpainted" -- back to whatever filament
+// the volume itself is assigned -- which is the colour-mode equivalent of state NONE.
+bool validate_color_slot(int slot, std::string& error)
+{
+    if (slot == 0)
+        return true;
+    const int filament_count = int(wxGetApp().preset_bundle->filament_presets.size());
+    if (slot < 0 || slot > filament_count) {
+        error = "filament " + std::to_string(slot) + " out of range 1.." + std::to_string(filament_count) +
+                " (0 means unpainted)";
+        return false;
+    }
+    if (slot > max_paint_state()) {
+        error = "filament " + std::to_string(slot) + " cannot be painted: a facet state stops at " +
+                std::to_string(max_paint_state()) + " (EnforcerBlockerType::ExtruderMax), so slots above "
+                "that can only be assigned to a whole object or part with set_object_filament";
+        return false;
+    }
+    return true;
+}
+
+// One parsed paint_object call.
+struct PaintRequest
+{
+    PaintMode              mode      = PaintMode::Color;
+    std::string            selection;                 // "bands" | "box" | "sphere" | "all"
+    PaintAxis              axis      = PaintAxis::Z;
+    std::vector<PaintBand> bands;                     // resolved, even split already expanded
+    double                 range_from = 0.0;
+    double                 range_to   = 0.0;
+    PaintBox               box;
+    PaintSphere            sphere;
+    int                    state     = 0;             // box / sphere / all
+    bool                   replace   = true;
+};
+
+// Reads the one state a non-band selection paints with: `filament` in colour mode, `state` in
+// the other three.
+bool parse_single_state(const nlohmann::json& params, PaintMode mode, int& out, std::string& error)
+{
+    if (mode == PaintMode::Color) {
+        if (!params.contains("filament")) {
+            error = "mode 'color' needs a `filament` (1-based slot, or 0 to unpaint)";
+            return false;
+        }
+        out = params["filament"].get<int>();
+        return validate_color_slot(out, error);
+    }
+    if (!params.contains("state")) {
+        error = std::string("mode '") + paint_mode_name(mode) +
+                "' needs a `state`: none, enforcer" + (mode == PaintMode::FuzzySkin ? "" : " or blocker");
+        return false;
+    }
+    if (!parse_paint_state(mode, params["state"].get<std::string>(), out)) {
+        error = std::string("Unknown state for mode '") + paint_mode_name(mode) + "': expected none, enforcer" +
+                (mode == PaintMode::FuzzySkin
+                     ? " (fuzzy skin has no blocker: it is painted or it is not)"
+                     : " or blocker");
+        return false;
+    }
+    return true;
+}
+
+bool read_vec3(const nlohmann::json& value, Slic3r::Vec3d& out, const char* what, std::string& error)
+{
+    if (!value.is_array() || value.size() != 3) {
+        error = std::string(what) + " must be an array of three numbers [x, y, z] in plate millimetres";
+        return false;
+    }
+    out = Slic3r::Vec3d(value[0].get<double>(), value[1].get<double>(), value[2].get<double>());
+    return true;
+}
+
+bool parse_paint_request(const nlohmann::json& params,
+                        PaintMode             mode,
+                        const PaintTarget&    target,
+                        PaintRequest&         out,
+                        std::string&          error)
+{
+    out.mode    = mode;
+    out.replace = params.value("replace", true);
+
+    out.selection = params.value("selection", std::string());
+    if (out.selection.empty()) {
+        error = "selection is required: bands, box, sphere or all";
+        return false;
+    }
+
+    if (out.selection == "bands") {
+        std::string axis_name = params.value("axis", std::string());
+        if (!parse_paint_axis(axis_name, out.axis)) {
+            error = "selection 'bands' needs an axis: x, y or z (plate axes)";
+            return false;
+        }
+
+        const Slic3r::BoundingBoxf3 bbox = target_plate_bbox(target);
+        const int                   row  = int(out.axis);
+        out.range_from = params.contains("from") ? params["from"].get<double>() : bbox.min[row];
+        out.range_to   = params.contains("to") ? params["to"].get<double>() : bbox.max[row];
+
+        if (params.contains("bands")) {
+            const nlohmann::json& raw = params["bands"];
+            if (!raw.is_array() || raw.empty()) {
+                error = "bands must be a non-empty array of {from, to, filament|state}";
+                return false;
+            }
+            for (const nlohmann::json& entry : raw) {
+                PaintBand band;
+                if (!entry.contains("from") || !entry.contains("to")) {
+                    error = "every band needs `from` and `to` in plate millimetres";
+                    return false;
+                }
+                band.from = entry["from"].get<double>();
+                band.to   = entry["to"].get<double>();
+                if (!(band.to > band.from)) {
+                    error = "band from " + std::to_string(band.from) + " to " + std::to_string(band.to) +
+                            " is empty: `to` must exceed `from`";
+                    return false;
+                }
+                if (!parse_single_state(entry, mode, band.state, error))
+                    return false;
+                out.bands.push_back(band);
+            }
+            // An explicit set defines its own range; report the span it actually covers.
+            out.range_from = out.bands.front().from;
+            out.range_to   = out.bands.front().to;
+            for (const PaintBand& band : out.bands) {
+                out.range_from = std::min(out.range_from, band.from);
+                out.range_to   = std::max(out.range_to, band.to);
+            }
+            return true;
+        }
+
+        if (mode != PaintMode::Color) {
+            error = std::string("mode '") + paint_mode_name(mode) +
+                    "' has no even-split form: pass explicit `bands` with a `state` each. An even "
+                    "split alternates filaments, which only means something in colour mode";
+            return false;
+        }
+        if (!params.contains("filaments") || !params["filaments"].is_array() || params["filaments"].empty()) {
+            error = "selection 'bands' needs either `filaments` (one 1-based slot per band, split "
+                    "evenly) or explicit `bands`";
+            return false;
+        }
+        std::vector<int> slots;
+        for (const nlohmann::json& slot : params["filaments"]) {
+            const int value = slot.get<int>();
+            if (!validate_color_slot(value, error))
+                return false;
+            slots.push_back(value);
+        }
+        out.bands = make_even_bands(slots, out.range_from, out.range_to);
+        if (out.bands.empty()) {
+            error = "cannot split " + std::to_string(out.range_from) + ".." + std::to_string(out.range_to) +
+                    " into " + std::to_string(slots.size()) +
+                    " bands: `to` must exceed `from`. With no from/to the object's own extent along "
+                    "the axis is used, so a zero span means the object is flat on that axis";
+            return false;
+        }
+        return true;
+    }
+
+    if (out.selection == "box") {
+        if (!params.contains("box") || !params["box"].contains("min") || !params["box"].contains("max")) {
+            error = "selection 'box' needs box: {min: [x,y,z], max: [x,y,z]} in plate millimetres";
+            return false;
+        }
+        if (!read_vec3(params["box"]["min"], out.box.min, "box.min", error) ||
+            !read_vec3(params["box"]["max"], out.box.max, "box.max", error))
+            return false;
+        if (!paint_box_is_valid(out.box)) {
+            error = "box.min must not exceed box.max on any axis";
+            return false;
+        }
+        return parse_single_state(params, mode, out.state, error);
+    }
+
+    if (out.selection == "sphere") {
+        if (!params.contains("sphere") || !params["sphere"].contains("center") ||
+            !params["sphere"].contains("radius")) {
+            error = "selection 'sphere' needs sphere: {center: [x,y,z], radius: n} in plate millimetres";
+            return false;
+        }
+        if (!read_vec3(params["sphere"]["center"], out.sphere.center, "sphere.center", error))
+            return false;
+        out.sphere.radius = params["sphere"]["radius"].get<double>();
+        if (!(out.sphere.radius > 0.0)) {
+            error = "sphere.radius must be greater than zero";
+            return false;
+        }
+        return parse_single_state(params, mode, out.state, error);
+    }
+
+    if (out.selection == "all")
+        return parse_single_state(params, mode, out.state, error);
+
+    error = "Unknown selection '" + out.selection + "': expected bands, box, sphere or all";
+    return false;
+}
+
+// Painted supports and painted fuzzy skin do nothing unless the corresponding setting is on.
+// The gizmos say so on screen (GLGizmoFdmSupports.cpp:543, GLGizmoFuzzySkin.cpp:326-331); over
+// MCP the equivalent is an info message, or the caller paints, slices, and sees no difference.
+std::vector<std::string> paint_prerequisite_messages(const Slic3r::ModelObject& obj, PaintMode mode)
+{
+    std::vector<std::string> messages;
+    const Slic3r::DynamicPrintConfig& global = wxGetApp().preset_bundle->prints.get_edited_preset().config;
+    const Slic3r::DynamicPrintConfig& object_cfg = obj.config.get();
+
+    if (mode == PaintMode::Support) {
+        const bool enabled = object_cfg.option("enable_support") ? object_cfg.opt_bool("enable_support")
+                                                                 : global.opt_bool("enable_support");
+        if (!enabled)
+            messages.push_back("Painted support enforcers and blockers have no effect while "
+                               "enable_support is false. Set it with apply_config or set_object_config.");
+    }
+    if (mode == PaintMode::FuzzySkin) {
+        const Slic3r::FuzzySkinType effective =
+            object_cfg.option("fuzzy_skin") ? object_cfg.opt_enum<Slic3r::FuzzySkinType>("fuzzy_skin")
+                                            : global.opt_enum<Slic3r::FuzzySkinType>("fuzzy_skin");
+        if (effective == Slic3r::FuzzySkinType::Disabled_fuzzy)
+            messages.push_back("Painted fuzzy skin has no effect while fuzzy_skin is 'disabled_fuzzy' "
+                               "(the default). Set fuzzy_skin to 'none' to use painted regions only.");
+    }
+    return messages;
+}
+```
+
+- [ ] **Step 2: Register the tool**
+
+Add at the top of `register_paint_tools()`, before the `get_object_paint` registration:
+
+```cpp
+    register_tool({
+        "paint_object",
+        "Paint per-triangle annotations on an object, the same data the GUI paint gizmos write. "
+        "mode selects which: color (multi-material / MMU segmentation), support, seam or "
+        "fuzzy_skin. selection selects where: bands along a plate axis (an even split across a "
+        "list of filaments, or explicit ranges), a box, a sphere, or the whole volume. "
+        "ALL COORDINATES ARE PLATE MILLIMETRES -- the same frame get_object_info reports its "
+        "bounding_box and position in, not object-local coordinates. A facet belongs to the band "
+        "or region containing its centroid. Paint lives on the volume, so it applies to every "
+        "instance; instance_id only says whose transform reads your coordinates. Verify with "
+        "get_object_paint, undo with undo, reset with clear_object_paint.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"object_id", {{"type", "integer"}, {"description", "Object index (0-based)"}}},
+                {"volume_id", {
+                    {"type", "integer"},
+                    {"minimum", -1},
+                    {"description", "Part index within the object (0-based); omit, or pass -1, for every part"}
+                }},
+                {"instance_id", {
+                    {"type", "integer"},
+                    {"description", "Which instance's transform reads your coordinates (default 0)"}
+                }},
+                {"mode", {
+                    {"type", "string"},
+                    {"enum", {"color", "support", "seam", "fuzzy_skin"}},
+                    {"description", "Which annotation to write (default: color)"}
+                }},
+                {"selection", {
+                    {"type", "string"},
+                    {"enum", {"bands", "box", "sphere", "all"}},
+                    {"description", "Where to paint"}
+                }},
+                {"axis", {
+                    {"type", "string"},
+                    {"enum", {"x", "y", "z"}},
+                    {"description", "Plate axis the bands run along (selection=bands)"}
+                }},
+                {"filaments", {
+                    {"type", "array"},
+                    {"items", {{"type", "integer"}}},
+                    {"description", "One 1-based filament slot per band, split evenly along the axis "
+                                    "(selection=bands, mode=color). 0 means unpainted."}
+                }},
+                {"bands", {
+                    {"type", "array"},
+                    {"items", {
+                        {"type", "object"},
+                        {"properties", {
+                            {"from", {{"type", "number"}}},
+                            {"to", {{"type", "number"}}},
+                            {"filament", {{"type", "integer"}}},
+                            {"state", {{"type", "string"}, {"enum", {"none", "enforcer", "blocker"}}}}
+                        }}
+                    }},
+                    {"description", "Explicit ranges in plate mm, each with a filament (mode=color) or "
+                                    "a state. Ranges need not tile the object; facets outside them all "
+                                    "are left alone."}
+                }},
+                {"from", {{"type", "number"}, {"description", "Start of the even split in plate mm "
+                                                              "(default: the object's own extent)"}}},
+                {"to", {{"type", "number"}, {"description", "End of the even split in plate mm "
+                                                            "(default: the object's own extent)"}}},
+                {"box", {
+                    {"type", "object"},
+                    {"properties", {
+                        {"min", {{"type", "array"}, {"items", {{"type", "number"}}}}},
+                        {"max", {{"type", "array"}, {"items", {{"type", "number"}}}}}
+                    }},
+                    {"description", "Axis-aligned box in plate mm (selection=box)"}
+                }},
+                {"sphere", {
+                    {"type", "object"},
+                    {"properties", {
+                        {"center", {{"type", "array"}, {"items", {{"type", "number"}}}}},
+                        {"radius", {{"type", "number"}}}
+                    }},
+                    {"description", "Sphere in plate mm (selection=sphere)"}
+                }},
+                {"filament", {
+                    {"type", "integer"},
+                    {"description", "1-based filament slot for selection=box/sphere/all (mode=color). "
+                                    "0 means unpainted."}
+                }},
+                {"state", {
+                    {"type", "string"},
+                    {"enum", {"none", "enforcer", "blocker"}},
+                    {"description", "State for selection=box/sphere/all when mode is not color. "
+                                    "fuzzy_skin accepts none and enforcer only."}
+                }},
+                {"replace", {
+                    {"type", "boolean"},
+                    {"description", "true (default) discards this mode's existing paint first; "
+                                    "false paints on top of it"}
+                }}
+            }},
+            {"required", {"object_id", "selection"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            return run_on_main_thread([params]() -> nlohmann::json {
+                Plater*     plater = wxGetApp().plater();
+                PaintTarget target;
+                std::string error;
+                if (!resolve_paint_target(params, target, error))
+                    return nlohmann::json{{"status", "error"}, {"message", error}};
+
+                PaintMode mode = PaintMode::Color;
+                if (params.contains("mode") && !parse_paint_mode(params["mode"].get<std::string>(), mode))
+                    return nlohmann::json{{"status", "error"},
+                                          {"message", "Unknown mode; expected color, support, seam or fuzzy_skin"}};
+
+                PaintRequest request;
+                if (!parse_paint_request(params, mode, target, request, error))
+                    return nlohmann::json{{"status", "error"}, {"message", error}};
+
+                // Everything is validated -- only now touch the undo stack, the way
+                // set_object_filament does (OrcaMCPFilamentUtils.cpp:150-151).
+                plater->take_snapshot(_u8L("Paint Object"));
+
+                int            facets_painted    = 0;
+                int            facets_total      = 0;
+                int            facets_unassigned = 0;
+                std::vector<int> band_counts(request.bands.size(), 0);
+                bool           changed = false;
+
+                for (Slic3r::ModelVolume* mv : target.volumes) {
+                    const Slic3r::Transform3d to_plate =
+                        volume_to_plate(*target.object, *mv, target.instance_idx);
+                    const std::vector<Slic3r::Vec3d> centroids = facet_centroids(mv->mesh().its, to_plate);
+                    facets_total += int(centroids.size());
+
+                    FacetAssignment assignment;
+                    if (request.selection == "bands")
+                        assignment = assign_bands(centroids, request.axis, request.bands);
+                    else if (request.selection == "box")
+                        assignment = assign_box(centroids, request.box, request.state);
+                    else if (request.selection == "sphere")
+                        assignment = assign_sphere(centroids, request.sphere, request.state);
+                    else
+                        assignment = assign_all(centroids.size(), request.state);
+
+                    facets_unassigned += assignment.unassigned;
+                    for (std::size_t i = 0; i < assignment.band_counts.size() && i < band_counts.size(); ++i)
+                        band_counts[i] += assignment.band_counts[i];
+                    facets_painted += int(assignment.states.size()) - assignment.unassigned;
+
+                    changed |= apply_facet_states(*mv, mode, assignment.states, request.replace);
+                }
+
+                wxGetApp().obj_list()->update_info_items(std::size_t(target.object_id));
+                plater->get_partplate_list().notify_instance_update(target.object_id, int(target.instance_idx));
+                plater->update();
+
+                nlohmann::json volumes = nlohmann::json::array();
+                for (std::size_t i = 0; i < target.volumes.size(); ++i)
+                    volumes.push_back({{"volume_id", target.volume_ids[i]},
+                                       {"painted", painted_json(*target.volumes[i], mode)}});
+
+                nlohmann::json result = {
+                    {"status", "success"},
+                    {"object_id", target.object_id},
+                    {"object_name", target.object->name},
+                    {"mode", paint_mode_name(mode)},
+                    {"selection", request.selection},
+                    {"coordinate_frame", "plate"},
+                    {"instance_id", int(target.instance_idx)},
+                    {"replace", request.replace},
+                    {"annotation_changed", changed},
+                    {"facets_total", facets_total},
+                    {"facets_painted", facets_painted},
+                    {"facets_unassigned", facets_unassigned},
+                    {"volumes", volumes},
+                    {"active_warnings", get_active_warnings_json(plater)}
+                };
+
+                if (request.selection == "bands") {
+                    result["axis"] = paint_axis_name(request.axis);
+                    result["axis_range"] = {{"from", request.range_from}, {"to", request.range_to}};
+                    nlohmann::json bands = nlohmann::json::array();
+                    for (std::size_t i = 0; i < request.bands.size(); ++i) {
+                        nlohmann::json band = {{"from", request.bands[i].from},
+                                               {"to", request.bands[i].to},
+                                               {"state", request.bands[i].state},
+                                               {"label", paint_state_label(mode, request.bands[i].state)},
+                                               {"facet_count", band_counts[i]}};
+                        band["filament"] = mode == PaintMode::Color && request.bands[i].state > 0
+                                               ? nlohmann::json(request.bands[i].state)
+                                               : nlohmann::json(nullptr);
+                        bands.push_back(band);
+                    }
+                    result["bands"] = bands;
+                }
+
+                std::vector<std::string> messages = paint_prerequisite_messages(*target.object, mode);
+                if (facets_unassigned > 0 && request.selection != "bands")
+                    messages.push_back(std::to_string(facets_unassigned) +
+                                       " facets fell outside the selection and kept their previous state.");
+                if (facets_painted == 0)
+                    messages.push_back("Nothing was painted: no facet centroid fell inside the selection. "
+                                       "Check the coordinates against get_object_info's bounding_box, which "
+                                       "is in the same plate frame.");
+                if (!messages.empty())
+                    result["info_messages"] = messages;
+
+                return result;
+            });
+        }
+    });
+```
+
+- [ ] **Step 3: Build**
+
+Run: `cmake --build build/arm64 --config RelWithDebInfo --target OrcaSlicer slic3rutils_tests -- -j8`
+Expected: build succeeds.
+
+- [ ] **Step 4: Confirm the registration count**
+
+Run: `grep -hA1 -E '^\s*register_tool\(\{' src/slic3r/GUI/OrcaMCP/*.cpp | grep -coE '^\s*"[a-z0-9_]+",'`
+Expected: `72`
+
+- [ ] **Step 5: Run the test suite**
+
+Run: `build/arm64/tests/slic3rutils/RelWithDebInfo/slic3rutils_tests.app/Contents/MacOS/slic3rutils_tests`
+Expected: 0 failures.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/slic3r/GUI/OrcaMCP/OrcaMCPPaintTools.cpp
+git commit -m "$(cat <<'EOF'
+feat: an agent can now paint a model, which is the half of the colour feature that was missing
+
+suggest_color_mix and get_color_palette could propose a palette and nothing could apply
+it, so the user had to pick up the mouse for the one step the feature exists to automate
+(T5). paint_object closes that, and with it four of the missing gizmos at once:
+MmSegmentation, FdmSupports, Seam and FuzzySkin all write FacetsAnnotation members of
+identical type, so they are one tool with a mode parameter.
+
+Coordinates are plate millimetres, stated in the tool description rather than left to be
+inferred. get_object_info already reports a plate-frame bounding_box, so a caller can
+read min.y and max.y and hand them straight back; object-local would have required the
+caller to undo the instance transform first.
+
+The response reports facets_unassigned and per-band facet counts. Without them "the call
+succeeded" and "your coordinates missed the object" look identical, which is the failure
+mode a geometric selection actually has.
+
+Painted supports and painted fuzzy skin are inert unless enable_support / fuzzy_skin are
+set, which the gizmos warn about on screen; over MCP that becomes an info_messages line,
+or the caller paints, slices, and sees no difference with nothing to explain it.
+
+Related occurrences checked: set_object_filament (whole object or part) and
+set_object_layer_range (Z ranges) were both left alone -- they address different data and
+neither was wrong, they simply could not reach a single volume's surface.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+EOF
+)"
+```
+
+---
+
+### Task 10: `clear_object_paint`
+
+**Files:**
+- Modify: `src/slic3r/GUI/OrcaMCP/OrcaMCPPaintTools.cpp` (register after `paint_object`)
+
+**Interfaces:**
+- Consumes: `PaintTarget`, `resolve_paint_target` (Task 8); `clear_volume_paint`,
+  `parse_paint_mode`, `paint_mode_name` (Tasks 6-7).
+- Produces: the MCP tool `clear_object_paint`.
+
+- [ ] **Step 1: Register the tool**
+
+Add to `register_paint_tools()` in `src/slic3r/GUI/OrcaMCP/OrcaMCPPaintTools.cpp`, after the
+`paint_object` registration:
+
+```cpp
+    register_tool({
+        "clear_object_paint",
+        "Reset a paint annotation on an object back to unpainted -- the equivalent of the paint "
+        "gizmo's 'Remove all' button. mode picks which annotation; omit it to clear all four. "
+        "This resets the annotation outright, which is not the same as painting every facet with "
+        "state none: the reset leaves no data at all for the 3MF to carry.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"object_id", {{"type", "integer"}, {"description", "Object index (0-based)"}}},
+                {"volume_id", {
+                    {"type", "integer"},
+                    {"minimum", -1},
+                    {"description", "Part index within the object (0-based); omit, or pass -1, for every part"}
+                }},
+                {"mode", {
+                    {"type", "string"},
+                    {"enum", {"color", "support", "seam", "fuzzy_skin"}},
+                    {"description", "Which annotation to clear; omit to clear all four"}
+                }}
+            }},
+            {"required", {"object_id"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            return run_on_main_thread([params]() -> nlohmann::json {
+                Plater*     plater = wxGetApp().plater();
+                PaintTarget target;
+                std::string error;
+                if (!resolve_paint_target(params, target, error))
+                    return nlohmann::json{{"status", "error"}, {"message", error}};
+
+                std::vector<PaintMode> modes = {PaintMode::Color, PaintMode::Support,
+                                                PaintMode::Seam, PaintMode::FuzzySkin};
+                if (params.contains("mode")) {
+                    PaintMode one = PaintMode::Color;
+                    if (!parse_paint_mode(params["mode"].get<std::string>(), one))
+                        return nlohmann::json{{"status", "error"},
+                                              {"message", "Unknown mode; expected color, support, seam or fuzzy_skin"}};
+                    modes = {one};
+                }
+
+                // Snapshot before the first write, so one undo restores every mode this call cleared.
+                plater->take_snapshot(_u8L("Clear Object Paint"));
+
+                nlohmann::json cleared = nlohmann::json::array();
+                bool           changed = false;
+                for (PaintMode mode : modes) {
+                    int volumes_cleared = 0;
+                    for (Slic3r::ModelVolume* mv : target.volumes)
+                        if (clear_volume_paint(*mv, mode))
+                            ++volumes_cleared;
+                    changed |= volumes_cleared > 0;
+                    cleared.push_back({{"mode", paint_mode_name(mode)}, {"volumes_cleared", volumes_cleared}});
+                }
+
+                wxGetApp().obj_list()->update_info_items(std::size_t(target.object_id));
+                plater->get_partplate_list().notify_instance_update(target.object_id, int(target.instance_idx));
+                plater->update();
+
+                nlohmann::json result = {
+                    {"status", "success"},
+                    {"object_id", target.object_id},
+                    {"object_name", target.object->name},
+                    {"cleared", cleared},
+                    {"annotation_changed", changed},
+                    {"active_warnings", get_active_warnings_json(plater)}
+                };
+                if (!changed)
+                    result["info_messages"] = std::vector<std::string>{
+                        "Nothing was cleared: the requested annotations were already empty."};
+                return result;
+            });
+        }
+    });
+```
+
+- [ ] **Step 2: Build**
+
+Run: `cmake --build build/arm64 --config RelWithDebInfo --target OrcaSlicer -- -j8`
+Expected: build succeeds.
+
+- [ ] **Step 3: Confirm the registration count**
+
+Run: `grep -hA1 -E '^\s*register_tool\(\{' src/slic3r/GUI/OrcaMCP/*.cpp | grep -coE '^\s*"[a-z0-9_]+",'`
+Expected: `73`
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add src/slic3r/GUI/OrcaMCP/OrcaMCPPaintTools.cpp
+git commit -m "$(cat <<'EOF'
+feat: an agent can now undo its own painting without undo
+
+paint_object with replace:true already discards a mode's paint, but only as a side
+effect of painting something else -- there was no way to get back to an unpainted volume.
+clear_object_paint calls FacetsAnnotation::reset, which is what the gizmo's "Remove all"
+button does (GLGizmoMmuSegmentation.cpp:681-694).
+
+Resetting is deliberately not the same as painting every facet with state none. A reset
+leaves no annotation data for the 3MF writer to carry; painting state none leaves a full
+bitstream of zeroes. The tool description says so, because an agent reaching for one and
+getting the other would only find out on the next project load.
+
+The snapshot is taken once, before the first mode is cleared, so a single undo restores
+every mode a clear-all call touched rather than leaving three of four still cleared.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+EOF
+)"
+```
+
+---
+
+### Task 11: `set_brim_ears`
+
+**Files:**
+- Modify: `src/slic3r/GUI/OrcaMCP/OrcaMCPPaintTools.cpp` (register after `clear_object_paint`)
+
+**Interfaces:**
+- Consumes: `PaintTarget`, `resolve_paint_target`, `brim_ears_json` (Task 8).
+- Produces: the MCP tool `set_brim_ears`.
+
+- [ ] **Step 1: Register the tool**
+
+Add to `register_paint_tools()` in `src/slic3r/GUI/OrcaMCP/OrcaMCPPaintTools.cpp`, after the
+`clear_object_paint` registration:
+
+```cpp
+    register_tool({
+        "set_brim_ears",
+        "Place brim ears on an object -- the small tabs the brim adds at chosen points. Brim ears "
+        "are NOT facet paint: they are points on the object (ModelObject::brim_points), so they "
+        "have their own tool. Positions are PLATE millimetres, the same frame get_object_info's "
+        "bounding_box uses; only x and y matter, because an ear always sits on the bottom of the "
+        "object. Pass an empty points array to remove them all. They only produce brim unless "
+        "brim_type is 'painted'.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"object_id", {{"type", "integer"}, {"description", "Object index (0-based)"}}},
+                {"instance_id", {
+                    {"type", "integer"},
+                    {"description", "Which instance's transform reads your coordinates (default 0)"}
+                }},
+                {"points", {
+                    {"type", "array"},
+                    {"items", {
+                        {"type", "object"},
+                        {"properties", {
+                            {"x", {{"type", "number"}}},
+                            {"y", {{"type", "number"}}},
+                            {"radius", {{"type", "number"}, {"description", "Ear radius in mm, 0.1 to 100"}}}
+                        }},
+                        {"required", {"x", "y"}}
+                    }},
+                    {"description", "Ear positions in plate mm. An empty array removes every ear."}
+                }},
+                {"radius", {
+                    {"type", "number"},
+                    {"description", "Default radius for points that do not carry one (default 5.0 mm)"}
+                }},
+                {"append", {
+                    {"type", "boolean"},
+                    {"description", "false (default) replaces the object's ears; true adds to them"}
+                }}
+            }},
+            {"required", {"object_id", "points"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            return run_on_main_thread([params]() -> nlohmann::json {
+                Plater*     plater = wxGetApp().plater();
+                PaintTarget target;
+                std::string error;
+                if (!resolve_paint_target(params, target, error))
+                    return nlohmann::json{{"status", "error"}, {"message", error}};
+
+                if (!params["points"].is_array())
+                    return nlohmann::json{{"status", "error"},
+                                          {"message", "points must be an array of {x, y, radius?}"}};
+
+                // The gizmo's own bounds (GLGizmoBrimEars.cpp:18-19). Its default radius is derived
+                // from the initial layer line width; 5.0 mm is a printable stand-in for a tool that
+                // has no nozzle context of its own to lean on and states its default in the schema.
+                constexpr double k_radius_min = 0.1;
+                constexpr double k_radius_max = 100.0;
+                const double default_radius = params.value("radius", 5.0);
+
+                const Slic3r::Transform3d instance_matrix =
+                    target.object->instances.empty()
+                        ? Slic3r::Transform3d::Identity()
+                        : target.object->instances[target.instance_idx]->get_matrix();
+                const Slic3r::Transform3d to_object = instance_matrix.inverse();
+
+                Slic3r::BrimPoints points;
+                for (const nlohmann::json& entry : params["points"]) {
+                    if (!entry.contains("x") || !entry.contains("y"))
+                        return nlohmann::json{{"status", "error"},
+                                              {"message", "every point needs x and y in plate millimetres"}};
+                    const double radius = entry.value("radius", default_radius);
+                    if (radius < k_radius_min || radius > k_radius_max)
+                        return nlohmann::json{{"status", "error"},
+                                              {"message", "radius " + std::to_string(radius) + " out of range " +
+                                                          std::to_string(k_radius_min) + ".." +
+                                                          std::to_string(k_radius_max)}};
+                    // An ear always sits on the underside: the gizmo pins world z to -0.0001 and
+                    // converts to object-local (GLGizmoBrimEars.cpp:395-397), and Brim.cpp:373-374
+                    // skips any stored point whose world z is above 0.
+                    const Slic3r::Vec3d world(entry["x"].get<double>(), entry["y"].get<double>(), -0.0001);
+                    const Slic3r::Vec3d local = to_object * world;
+                    points.emplace_back(local.cast<float>(), float(radius));
+                }
+
+                const bool append = params.value("append", false);
+                plater->take_snapshot(_u8L("Set Brim Ears"));
+                if (!append)
+                    target.object->brim_points.clear();
+                target.object->brim_points.insert(target.object->brim_points.end(), points.begin(), points.end());
+
+                plater->set_plater_dirty(true);
+                wxGetApp().obj_list()->update_info_items(std::size_t(target.object_id));
+                plater->update();
+
+                nlohmann::json result = {
+                    {"status", "success"},
+                    {"object_id", target.object_id},
+                    {"object_name", target.object->name},
+                    {"coordinate_frame", "plate"},
+                    {"instance_id", int(target.instance_idx)},
+                    {"brim_ear_count", int(target.object->brim_points.size())},
+                    {"brim_ears", brim_ears_json(*target.object, target.instance_idx)},
+                    {"active_warnings", get_active_warnings_json(plater)}
+                };
+
+                // Painted ears are only produced when brim_type is btPainted (Brim.cpp:449 and
+                // Brim.cpp:530), so say so rather than let the caller slice and find no brim.
+                const Slic3r::DynamicPrintConfig& global =
+                    wxGetApp().preset_bundle->prints.get_edited_preset().config;
+                const Slic3r::DynamicPrintConfig& object_cfg = target.object->config.get();
+                const Slic3r::BrimType brim_type =
+                    object_cfg.option("brim_type") ? object_cfg.opt_enum<Slic3r::BrimType>("brim_type")
+                                                   : global.opt_enum<Slic3r::BrimType>("brim_type");
+                if (brim_type != Slic3r::BrimType::btPainted && !target.object->brim_points.empty())
+                    result["info_messages"] = std::vector<std::string>{
+                        "Brim ears are placed but will not be printed while brim_type is not 'painted'. "
+                        "Set brim_type to 'painted' with apply_config or set_object_config."};
+
+                return result;
+            });
+        }
+    });
+```
+
+- [ ] **Step 2: Build**
+
+Run: `cmake --build build/arm64 --config RelWithDebInfo --target OrcaSlicer -- -j8`
+Expected: build succeeds.
+
+- [ ] **Step 3: Confirm the registration count**
+
+Run: `grep -hA1 -E '^\s*register_tool\(\{' src/slic3r/GUI/OrcaMCP/*.cpp | grep -coE '^\s*"[a-z0-9_]+",'`
+Expected: `74`
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add src/slic3r/GUI/OrcaMCP/OrcaMCPPaintTools.cpp
+git commit -m "$(cat <<'EOF'
+feat: an agent can now place brim ears, the fifth gizmo the audit grouped with painting
+
+The toolbar audit listed BrimEars beside the four painting gizmos, and it is the one that
+does not share their mechanism: brim ears are BrimPoints on the ModelObject
+(Model.hpp:390), not per-triangle annotations, which is why they get their own tool
+rather than a fifth paint mode.
+
+They are also the one place this feature stores a converted coordinate. brim_points are
+object-local -- Brim.cpp:373 transforms each by the instance matrix and discards any whose
+world z is above 0 -- so the tool takes plate x/y like everything else and stores
+instance.inverse() * (x, y, -0.0001), which is what GLGizmoBrimEars.cpp:395-397 does when
+a user clicks. Storing the caller's plate coordinates raw would have put every ear at the
+wrong place on any object not sitting at the origin, and would have looked correct in the
+response.
+
+Ears only produce brim when brim_type is 'painted' (Brim.cpp:449), so the response says
+so instead of letting the caller slice and find no brim.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+EOF
+)"
+```
+
+---
+
+### Task 12: Documentation and the in-app tool catalog
+
+**Files:**
+- Modify: `docs/tools/reference.md:3` (the stale tool count), `:5-25` (Quick Reference Table),
+  and insert a new section after the `clear_adaptive_layer_height` entry (currently ending at
+  line 979, immediately before `## Printer Tools`)
+- Modify: `CLAUDE.md` (the `### MCP Tools (70 registered, 71 reachable)` heading, the sentence
+  under it, and the category table)
+- Modify: `src/slic3r/GUI/OrcaMCP/OrcaMCPServer.cpp` (`get_server_info`'s `tools_by_category`,
+  after the `per_object_settings` entry)
+
+**Interfaces:**
+- Consumes: the four tools registered in Tasks 8-11.
+- Produces: no code interface. This is the Global Constraints' docs requirement discharged.
+
+- [ ] **Step 1: Add the reference.md section**
+
+In `docs/tools/reference.md`, replace line 3:
+
+```markdown
+Complete reference for all 50 MCP tools available in OrcaMCP.
+```
+
+with:
+
+```markdown
+Complete reference for the MCP tools available in OrcaMCP. The authoritative tool count and
+the command that regenerates it live in `CLAUDE.md`; this file's Quick Reference Table is not
+yet exhaustive (the filament and printer-control families are documented in
+`docs/printers/` instead).
+```
+
+Add a row to the Quick Reference Table, after the `**Adaptive**` row:
+
+```markdown
+| **Painting** | `paint_object`, `get_object_paint`, `clear_object_paint`, `set_brim_ears` |
+```
+
+Insert this section immediately before `## Printer Tools`:
+
+```markdown
+## Painting Tools
+
+All four tools take and report **plate millimetres** — the same coordinate frame
+`get_object_info` reports its `bounding_box` and `position` in. They are never object-local.
+A facet belongs to the band or region containing its **centroid**, so a triangle is painted
+whole or not at all.
+
+Paint is stored on the *volume*, so it applies to every instance of an object. `instance_id`
+(default `0`) only decides which instance's transform your coordinates are read through; it
+does not restrict which instances are painted.
+
+### paint_object
+Write per-triangle paint — the same data the GUI paint gizmos write.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `object_id` | integer | Yes | Object index (0-based) |
+| `selection` | string | Yes | `bands`, `box`, `sphere` or `all` |
+| `mode` | string | No | `color` (default), `support`, `seam`, `fuzzy_skin` |
+| `volume_id` | integer | No | Part index (0-based); omit or `-1` for every model part |
+| `instance_id` | integer | No | Whose transform reads your coordinates (default 0) |
+| `axis` | string | `bands` | `x`, `y` or `z` — the plate axis the bands run along |
+| `filaments` | array | `bands` + `color` | One 1-based slot per band, split evenly. `0` = unpainted |
+| `bands` | array | `bands` | Explicit `[{from, to, filament\|state}]` in plate mm |
+| `from` / `to` | number | No | Even-split range; defaults to the painted volumes' own extent |
+| `box` | object | `box` | `{min: [x,y,z], max: [x,y,z]}` in plate mm |
+| `sphere` | object | `sphere` | `{center: [x,y,z], radius: n}` in plate mm |
+| `filament` | integer | `box`/`sphere`/`all` + `color` | 1-based slot; `0` = unpainted |
+| `state` | string | `box`/`sphere`/`all`, non-color | `none`, `enforcer`, `blocker` |
+| `replace` | boolean | No | `true` (default) discards this mode's existing paint first |
+
+**Notes:**
+- An even split (`filaments`) is colour-only. The other three modes take explicit `bands`
+  with a `state`, because alternating enforcer and blocker along an axis means nothing.
+- `fuzzy_skin` has no `blocker`: `EnforcerBlockerType::FUZZY_SKIN` is an alias of `ENFORCER`.
+- Explicit `bands` need not tile the object and may overlap; the first match wins, and
+  facets outside every band keep their previous state.
+- Painted supports need `enable_support: true`; painted fuzzy skin needs `fuzzy_skin` set to
+  something other than `disabled_fuzzy` (the default). The response says so in
+  `info_messages` when they are not.
+- Filament slots above 32 cannot be painted — a facet state stops at
+  `EnforcerBlockerType::ExtruderMax`. Use `set_object_filament` for those.
+
+**Example — 14 even bands along Y across mixed slots 5-18:**
+```json
+{"object_id": 0, "selection": "bands", "axis": "y",
+ "filaments": [5,6,7,8,9,10,11,12,13,14,15,16,17,18]}
+```
+
+**Example — support enforcers under a Z height:**
+```json
+{"object_id": 0, "mode": "support", "selection": "bands", "axis": "z",
+ "bands": [{"from": 0, "to": 12, "state": "enforcer"}]}
+```
+
+**Response includes:** `mode`, `selection`, `coordinate_frame` (always `"plate"`),
+`instance_id`, `axis_range`, per-band `facet_count`, `facets_painted`,
+`facets_unassigned`, per-volume `painted` totals, `info_messages`, `active_warnings`.
+
+---
+
+### get_object_paint
+Read back what is painted, plus the object's brim ears.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `object_id` | integer | Yes | Object index (0-based) |
+| `volume_id` | integer | No | Part index (0-based); omit or `-1` for every part |
+| `instance_id` | integer | No | Whose transform reports plate coordinates (default 0) |
+| `mode` | string | No | Report one mode; omit for all four |
+
+**Response includes:** per volume, `facets_total`, a plate-frame `bounding_box`, and per mode
+a list of `{state, label, filament, facet_count, coverage_percent}`. `coverage_percent` is
+area-weighted, not facet-count-weighted, because a facet an earlier gizmo stroke subdivided
+would otherwise count the same as a whole face. State `0` (unpainted) is included.
+
+---
+
+### clear_object_paint
+Reset an annotation, the equivalent of the gizmo's "Remove all".
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `object_id` | integer | Yes | Object index (0-based) |
+| `volume_id` | integer | No | Part index (0-based); omit or `-1` for every part |
+| `mode` | string | No | Which annotation; omit to clear all four |
+
+This resets the annotation, which is **not** the same as painting every facet with state
+`none`: a reset leaves no data for the 3MF to carry, while painting `none` leaves a full
+bitstream of zeroes.
+
+---
+
+### set_brim_ears
+Place the small brim tabs at chosen points. Brim ears are **not** facet paint — they are
+`BrimPoints` on the `ModelObject`, which is why they are a separate tool.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `object_id` | integer | Yes | Object index (0-based) |
+| `points` | array | Yes | `[{x, y, radius?}]` in plate mm. An empty array removes every ear |
+| `radius` | number | No | Default ear radius for points without one (default 5.0 mm, range 0.1-100) |
+| `append` | boolean | No | `false` (default) replaces the object's ears; `true` adds to them |
+| `instance_id` | integer | No | Whose transform reads your coordinates (default 0) |
+
+Only `x` and `y` matter: an ear always sits on the underside of the object. Ears produce
+brim only when `brim_type` is `painted`; the response says so in `info_messages` when it
+is not.
+
+---
+```
+
+- [ ] **Step 2: Update CLAUDE.md**
+
+Change the heading and the sentence under it:
+
+```markdown
+### MCP Tools (74 registered, 75 reachable)
+
+The server registers 74; the bridge adds `start_orca`, which launches OrcaSlicer and
+so cannot live inside it. To regenerate this count after adding a tool:
+```
+
+Add a row to the category table, immediately after the `**Filaments & colour**` row:
+
+```markdown
+| **Painting** | `paint_object`, `get_object_paint`, `clear_object_paint`, `set_brim_ears` |
+```
+
+- [ ] **Step 3: Add the tools to the in-app catalog**
+
+In `src/slic3r/GUI/OrcaMCP/OrcaMCPServer.cpp`, inside `get_server_info`'s `tools_by_category`
+object, add a new entry after the `per_object_settings` entry:
+
+```cpp
+                    {"painting", {
+                        {"paint_object", "Paint per-triangle annotations: mode=color (multi-material), "
+                                         "support, seam or fuzzy_skin. selection=bands along a plate axis "
+                                         "(even split over `filaments`, or explicit `bands`), box, sphere, "
+                                         "or all. ALL COORDINATES ARE PLATE MM, same frame as "
+                                         "get_object_info's bounding_box."},
+                        {"get_object_paint", "Read back what is painted per volume and per mode, plus brim ears"},
+                        {"clear_object_paint", "Reset one paint annotation, or all four, back to unpainted"},
+                        {"set_brim_ears", "Place brim ears at plate x/y points. Not facet paint - these are "
+                                          "points on the object, and need brim_type='painted' to print."}
+                    }},
+```
+
+- [ ] **Step 4: Verify the count command agrees with the docs**
+
+Run: `grep -hA1 -E '^\s*register_tool\(\{' src/slic3r/GUI/OrcaMCP/*.cpp | grep -coE '^\s*"[a-z0-9_]+",'`
+Expected: `74`, matching the number now written in `CLAUDE.md`.
+
+- [ ] **Step 5: Build and run the suite**
+
+Run:
+```
+cmake --build build/arm64 --config RelWithDebInfo --target OrcaSlicer slic3rutils_tests -- -j8
+build/arm64/tests/slic3rutils/RelWithDebInfo/slic3rutils_tests.app/Contents/MacOS/slic3rutils_tests
+```
+Expected: build succeeds; 0 failures.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add docs/tools/reference.md CLAUDE.md src/slic3r/GUI/OrcaMCP/OrcaMCPServer.cpp
+git commit -m "$(cat <<'EOF'
+docs: documented the painting tools, and stopped reference.md claiming a count it never had
+
+The four new tools are now in reference.md, in CLAUDE.md's table, and in the catalog
+get_server_info serves to an agent that has no other documentation to read. Each of the
+three says the same thing about coordinates -- plate millimetres, the frame
+get_object_info already reports -- because an agent that reads only one of them still has
+to get that right.
+
+reference.md's opening line claimed "all 50 MCP tools" while the server registered 70.
+Correcting the number to 74 would have been worse, not better: the file is missing the
+filament and printer-control families entirely, so a precise count above an incomplete
+list reads as a promise the page does not keep. The line now points at CLAUDE.md's count
+command, which is the one that regenerates.
+
+Left alone deliberately: the per-tool sections for the filament and printer families that
+reference.md still does not carry. Adding them is a documentation sweep of its own and
+belongs with whoever next audits that file, not smuggled into a painting change.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+EOF
+)"
+```
+
+---
+
+### Task 13: Acceptance — the scraper in 14 bands, end to end
+
+This is the **only** task that starts the application. It drives the running slicer, so run it
+with the user present. It must not send anything to a printer: `send_to_printer`,
+`printer_control` and `print_printer_file` are out of scope here.
+
+Per `CLAUDE.md`'s testing guidelines, every check below uses the `mcp__orca-slicer__*` tools,
+never `curl` — direct HTTP bypasses the bridge and does not exercise the integration.
+
+**Files:**
+- No source changes. If a step fails, fix the cause in the owning task's file and re-run
+  this task from Step 1.
+
+**Preconditions:**
+- `/Users/hanan/Downloads/printbed_scraper_hanging_hole.stl` exists (40 x 122 x 6 mm, flat,
+  length along Y).
+- A multi-filament printer profile is selected — the Flashforge Creator 5 Pro (`C5P`) profile
+  the 2026-09-10 session used. `set_mixed_filament` needs one.
+
+**Interfaces:**
+- Consumes: `paint_object`, `get_object_paint`, `clear_object_paint`, `set_brim_ears` from
+  Tasks 8-11.
+- Produces: the evidence that T5's original request now works.
+
+- [ ] **Step 1: Put the new build where the bridge looks for it, and restart the app**
+
+The bridge searches `build/arm64/src/Release/OrcaSlicer.app` (`scripts/orcamcp-bridge.py:88`),
+but the batch's build command produces `RelWithDebInfo`. Copy it across, and make sure no old
+instance is running:
+
+```bash
+cmake --build build/arm64 --config RelWithDebInfo --target OrcaSlicer -- -j8
+pkill -x OrcaSlicer || true
+rm -rf build/arm64/src/Release/OrcaSlicer.app
+cp -R build/arm64/src/RelWithDebInfo/OrcaSlicer.app build/arm64/src/Release/OrcaSlicer.app
+```
+
+Then start it with the MCP tool: `mcp__orca-slicer__start_orca` with `{}`.
+
+Expected: the tool reports the app started. Follow with `mcp__orca-slicer__get_server_info`
+`{}` and confirm `tools_by_category` now contains a `painting` entry — that is proof the
+running binary is the one just built, not a stale instance.
+
+- [ ] **Step 2: Load the scraper and confirm its plate extents**
+
+```
+mcp__orca-slicer__new_project   {}
+mcp__orca-slicer__load_model    {"file_path": "/Users/hanan/Downloads/printbed_scraper_hanging_hole.stl"}
+mcp__orca-slicer__get_object_info {"object_id": 0}
+```
+
+Expected: `bounding_box.size_x` ≈ 40, `size_y` ≈ 122, `size_z` ≈ 6 — the length is along Y,
+which is the whole reason `cut_object` and `set_object_layer_range` could not do this job.
+**Write down `bounding_box.min.y` and `max.y`**; every later check compares against them.
+
+- [ ] **Step 3: Make sure there are 18 filament slots**
+
+```
+mcp__orca-slicer__get_filaments {}
+```
+
+If the response lists fewer than 18 slots, create mixed slots from physical slots 1 and 2
+until there are 18, one call each, using these ratios in order so the bands render as a
+visible gradient rather than 14 identical colours:
+
+```
+95/5, 88/12, 81/19, 74/26, 67/33, 60/40, 53/47, 46/54, 39/61, 32/68, 25/75, 18/82, 11/89, 4/96
+```
+
+Each call is:
+
+```
+mcp__orca-slicer__set_mixed_filament {"components": [1, 2], "ratios": [95, 5]}
+```
+
+Expected: `get_filaments` finally reports at least 18 slots, with slots 5-18 marked as mixed.
+
+- [ ] **Step 4: Paint the 14 bands — the request that had no tool**
+
+```
+mcp__orca-slicer__paint_object {"object_id": 0, "selection": "bands", "axis": "y",
+                                "filaments": [5,6,7,8,9,10,11,12,13,14,15,16,17,18]}
+```
+
+Expected, all four in the same response:
+- `"status": "success"` and `"coordinate_frame": "plate"`.
+- `axis_range.from` and `axis_range.to` equal the `min.y` / `max.y` recorded in Step 2.
+- `facets_unassigned` is `0`. Anything else means facets fell through a band boundary.
+- `bands` has 14 entries, filaments 5 through 18 in Y order, each with a non-zero
+  `facet_count`.
+
+- [ ] **Step 5: Read the paint back**
+
+```
+mcp__orca-slicer__get_object_paint {"object_id": 0, "mode": "color"}
+```
+
+Expected: one volume, and its `modes.color` lists 14 entries with `filament` 5 through 18.
+`coverage_percent` is roughly 100/14 ≈ 7.1 for each; the two end bands may differ slightly
+because the scraper is not a uniform prism. State `0` should be absent or near zero.
+
+- [ ] **Step 6: Look at it**
+
+```
+mcp__orca-slicer__render_plate_view {"plate_index": 0, "save_to_file": true,
+                                     "views": [{"camera_position": [155, -150, 220], "target": [155, 155, 3]}]}
+```
+
+Read the returned image path with the Read tool. Expected: 14 distinct stripes running across
+the scraper's length, ordered from the scraping edge to the hanging hole. This is the picture
+the user asked for on 2026-09-10 and could not get.
+
+- [ ] **Step 7: Prove the paint reaches the slicer**
+
+```
+mcp__orca-slicer__slice_all         {}
+mcp__orca-slicer__get_slicing_status {}          # poll every 2-3 s until idle
+mcp__orca-slicer__get_print_estimate {}
+```
+
+Expected: slicing completes, and `get_print_estimate` reports per-filament usage for the
+painted slots — not a single filament. If only one filament appears, the annotation is not
+reaching `MultiMaterialSegmentation` and the write path in Task 7 is wrong.
+
+- [ ] **Step 8: Prove the paint survives a 3MF round trip**
+
+```
+mcp__orca-slicer__export_3mf  {"output_path": "/tmp/scraper_painted.3mf"}
+mcp__orca-slicer__new_project {}
+mcp__orca-slicer__load_project {"file_path": "/tmp/scraper_painted.3mf"}
+mcp__orca-slicer__get_object_paint {"object_id": 0, "mode": "color"}
+```
+
+Expected: the same 14 states with the same filament numbers as Step 5. This is what proves
+the MCP write produced gizmo-shaped data rather than something only this code can read.
+
+- [ ] **Step 9: Check undo, clear and brim ears**
+
+```
+mcp__orca-slicer__paint_object       {"object_id": 0, "selection": "box", "filament": 3,
+                                      "box": {"min": [0, 0, 0], "max": [400, 400, 400]}}
+mcp__orca-slicer__undo               {}
+mcp__orca-slicer__get_object_paint   {"object_id": 0, "mode": "color"}
+```
+Expected: after the undo, the 14 bands are back — the snapshot in `paint_object` works.
+
+```
+mcp__orca-slicer__clear_object_paint {"object_id": 0, "mode": "color"}
+mcp__orca-slicer__get_object_paint   {"object_id": 0, "mode": "color"}
+```
+Expected: `modes.color` reports a single entry at state `0` covering 100%.
+
+```
+mcp__orca-slicer__set_brim_ears {"object_id": 0, "points": [{"x": <min.x + 5>, "y": <min.y + 5>},
+                                                            {"x": <max.x - 5>, "y": <max.y - 5>}]}
+mcp__orca-slicer__get_object_paint {"object_id": 0}
+```
+(substituting the bounding-box numbers from Step 2). Expected: `brim_ear_count` is 2, and the
+`brim_ears` read back from `get_object_paint` report the same plate x/y that were sent —
+within a rounding tolerance, since they are stored as object-local floats. An
+`info_messages` line about `brim_type` is expected unless the profile already uses `painted`.
+
+- [ ] **Step 10: Report, and do not commit**
+
+Nothing in this task changes a tracked file. Report to the user:
+- the 14-band render from Step 6,
+- the per-filament usage from Step 7,
+- whether the 3MF round trip in Step 8 matched,
+- any step that did not match its expectation, with the response that did not match.
+
+---
+
+## Notes for whoever executes this
+
+**Two things this plan deliberately does not do.**
+
+1. **No seed fill, no angle-based selection, no brush.** The gizmos also select by surface
+   feature (`seed_fill_select_triangles`, `bucket_fill_select_triangles`,
+   `TriangleSelector.hpp:331-345`) and subdivide triangles under a circular cursor. Both need
+   a hit point on the mesh, which is a mouse concept; bands and regions are specifiable in
+   numbers an agent already has from `get_object_info`. Adding them would also mean writing
+   split triangles, which is a much larger correctness surface.
+2. **No per-band colour suggestion.** `suggest_color_mix` and `get_color_palette` already
+   produce slots; `paint_object` consumes slot numbers. Wiring them together belongs in a
+   workflow doc, not in the tool.
+
+**One thing that could not be turned into a task.** `docs/tools/workflows.md` would be the
+natural home for a "propose a palette, create the mixed slots, paint the bands, verify"
+recipe, but the Global Constraints only require `reference.md` and `CLAUDE.md`, and the
+acceptance run in Task 13 is the sequence that recipe would describe. If the user wants it
+written up, it is a follow-up of about one commit.
