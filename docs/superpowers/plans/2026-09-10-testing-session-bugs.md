@@ -242,3 +242,67 @@ surface feature. Bands are the 80% case and are unambiguous to specify.
 part on end so its length becomes Z makes layer ranges work, but turns a flat 6 mm
 part into a 122 mm tower on a 40x6 mm footprint. It slices, it demonstrates the
 banding, and it is not a print anyone would run.
+
+---
+
+## T6 — MCP tool coverage audit against the GUI toolbar
+
+Prompted by the user asking what else is missing besides painting. Enumerated from
+source, not from icons: `GLGizmosManager::EType`
+(`src/slic3r/GUI/Gizmos/GLGizmosManager.hpp`) and the top-toolbar item names in
+`GLCanvas3D.cpp`, checked against the 70 registered tool names.
+
+### Top toolbar
+
+| Item | MCP | Notes |
+|---|---|---|
+| add | `load_model` | covered |
+| addplate | `add_plate` | covered |
+| orient | `auto_orient` | covered |
+| arrange | `arrange_objects` | covered |
+| more / fewer | `clone_object` (partial) | adds copies; no "remove one instance" |
+| **splitobjects** | **none** | split a multi-body mesh into separate objects |
+| **splitvolumes** | **none** | split into parts — *this is what would have made the scraper paintable per part* |
+| layersediting | `apply_adaptive_layer_height` (partial) | automatic only; no manual variable-height painting |
+| assembly_view | none | view mode, low value for an agent |
+
+### Gizmos
+
+| Gizmo | MCP | Notes |
+|---|---|---|
+| Move / Rotate / Scale / Flatten | covered | `move_object`, `rotate_object`, `scale_object`, `flatten_object` |
+| Cut | `cut_object` (**partial**) | MCP cuts on a **Z plane only**. The gizmo does arbitrary planes, keep-both, and dovetail/connector joints |
+| **MeshBoolean** | **none** | union / difference / intersection |
+| **FdmSupports** | **none** | support painting |
+| **Seam** | **none** | seam painting |
+| **FuzzySkin** | **none** | fuzzy skin painting |
+| **MmSegmentation** | **none** | colour painting — see T5 |
+| **BrimEars** | **none** | brim ear placement |
+| **Emboss** | **none** | text on a model |
+| **Svg** | **none** | SVG emboss |
+| **Measure** | **none** | dimensions/distances between features |
+| Assembly | none | view mode |
+| **Simplify** | **none** | mesh decimation |
+
+### The efficient observation
+
+**Five of the missing gizmos are the same mechanism.** MmSegmentation, FdmSupports,
+Seam, FuzzySkin and BrimEars all write per-triangle facet annotations on a
+`ModelVolume` — different annotation, identical machinery. One `paint_object` tool
+with a `mode` parameter (`color` | `support` | `seam` | `fuzzy_skin` | `brim_ear`)
+closes five gaps at roughly the cost of one.
+
+That makes the build order fairly clear:
+
+1. **`paint_object`** — five gaps, and it completes the colour feature (T5).
+2. **`split_object`** (to objects / to parts) — cheap, and it unlocks per-part
+   filament assignment, which `set_object_filament` already supports but nothing can
+   currently produce parts to use it on.
+3. **`cut_object` arbitrary plane** — upgrade the existing tool rather than add one.
+4. **`simplify_object`**, **`boolean_object`** — mesh editing.
+5. **`measure`** — read-only, useful for an agent checking its own work.
+6. **`emboss_text`** / **`emboss_svg`** — creation, largest surface area, least
+   essential to the printing workflow.
+
+Assembly view and the manual layer-height painting are view/interaction features
+with little agent value; explicitly out of scope unless asked for.
