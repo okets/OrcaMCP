@@ -163,22 +163,27 @@ could not be answered.
 
 ---
 
-## Not a bug: the mix model averages, it does not mix like pigment
+## Not a bug: the mix model is neither ink nor an RGB average
 
 Worth recording because it looks like a bug and is not, and because it should be in
 the Creator 5 docs.
 
-A mixed slot **alternates layers** of its components, so the result is close to a
-weighted average of the RGB values — not subtractive pigment mixing. With cyan,
-magenta and yellow loaded:
+**Corrected 2026-09-11 (Plan 1 final fix wave).** The first version of this note
+said the mixer "averages RGB" and that a CMY set "cannot reach red or blue". Both
+were my inference from a handful of results, and both are wrong. `blend_color_multi`
+(`FilamentMixerModel.hpp`) is a fitted polynomial blend model. Measured over all 18
+pairwise mixes of cyan/magenta/yellow/gray (verified independently by the final
+re-reviewer from the code):
 
-- magenta + yellow at 40/60 predicts `#FA8B6C` (a salmon), because averaging
-  `#FF00FF` and `#FFFF00` gives roughly `#FF9966`. It cannot give red.
-- cyan + magenta gives lavender (`#BA44ED`), not blue.
+- magenta + yellow at 30/70 → `#F9A05A`, hue 26.4°, **inside the red sector**.
+- cyan + magenta at 50/50 → `#8077F0`, hue 244.5°, **inside the blue sector**.
+- the sectors no pairwise mix reaches are **orange (30–60°) and azure (210–240°)**;
+  with three-component mixes, no sector is empty.
 
-So a CMY set does **not** behave like printer inks, and the reds and blues of the
-colour wheel are outside the achievable gamut. Targets near cyan/green/magenta
-resolve well (ΔE 3.6–14); pure red was ΔE 54.
+What *is* true: the saturated primaries are out of reach — pure red is ΔE 54 from
+the nearest mix — and targets near cyan/green/magenta resolve well (ΔE 3.6–14). A
+sector being "reached" says nothing about how far a specific target is; that is what
+`suggest_color_mix`'s `gamut` / `delta_e` are for.
 
 Two consequences:
 

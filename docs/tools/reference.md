@@ -882,7 +882,9 @@ Set settings for a specific Z height range.
 }
 ```
 
-**Lists and failures:** identical to `apply_config` and `set_object_config` — a list-typed key takes
+**Lists and failures:** the same shape as `apply_config` and `set_object_config`, with two
+differences — a layer range reports no `duplicate_keys`, and a call where nothing applied returns
+`status: "error"` — otherwise a list-typed key takes
 a JSON array or the joined string, `unknown_keys` holds keys that do not exist, `rejected_values`
 holds `{"key", "reason", "expected"}` for values this key would not take, and `invalid_keys` is the
 union. `applied_count` counts only what was written, so `status` is `partial` when some keys applied
@@ -1149,8 +1151,9 @@ list is ordered by hue.
 `unreachable_hues` lists the 30-degree hue sectors that **no loaded filament and no enumerated mix
 reaches** — nothing this set can put on the plate lands anywhere near them. It is computed over the
 whole enumeration and over the loaded filaments themselves, so `max_count` never affects it and a
-colour already in the machine is never listed. With cyan, magenta, yellow and a gray loaded, orange
-and azure come back here.
+colour already in the machine is never listed. With cyan, magenta, yellow and a gray loaded and the
+default `max_components: 2`, orange and azure come back here; with `max_components: 3` every sector
+is reached and the list is empty.
 
 A sector is a coarse instrument: a colour can be far out of reach while its sector is not empty.
 Pure red from that set is ΔE 54 away, but the 0–30 sector still counts as reached because magenta

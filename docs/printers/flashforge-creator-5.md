@@ -166,11 +166,13 @@ filament — a half-mapped job never reaches the printer.
 
 You can override it by passing explicit `{tool_id, slot_id}` pairs.
 
-**Mixed slots average, they do not mix like pigment.** A mixed slot alternates layers of its
-components, so the printed result is close to a weighted average of their RGB values. Magenta +
-yellow at 40/60 gives a salmon (`#FA8B6C`), not red; cyan + magenta gives lavender (`#BA44ED`), not
-blue. A cyan/magenta/yellow set therefore does **not** behave like printer inks, and the reds and
-blues of the colour wheel are outside what it can reach at all.
+**Mixed slots do not mix like printer inks.** A mixed slot alternates layers of its components,
+and OrcaSlicer predicts the result with a fitted blend model — neither a plain RGB average nor
+subtractive pigment mixing. With cyan, magenta and yellow loaded, magenta + yellow at 30/70 gives
+an orange-red (`#F9A05A`) and cyan + magenta at 50/50 a periwinkle blue (`#8077F0`), so the red
+and blue *sectors* of the wheel are reached — but the saturated primaries are not: pure red is
+ΔE 54 from the nearest mix. With two-component mixes the sectors this set cannot reach at all are
+orange and azure; allow three-component mixes and every sector has something in it.
 
 `suggest_color_mix` marks that with `gamut: "outside"` past ΔE 20, and `get_color_palette` lists the
 hue sectors that no loaded filament and no enumerated mix reaches under `unreachable_hues` — a
