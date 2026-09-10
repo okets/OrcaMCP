@@ -22,7 +22,7 @@ Constraints section; the rest are this plan's, established by reading the code.
   **root cause**, not the symptom, and lists related occurrences checked — *including
   the ones deliberately left alone, and why*. Read `git log -5` for the bar. Every
   commit ends with:
-  `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`
+  `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`
 - **Threading:** every tool handler body runs inside `run_on_main_thread()`
   (`src/slic3r/GUI/OrcaMCP/OrcaMCPCommon.hpp:18`). Anything touching `Model`, `Plater`
   or the preset bundle must be inside it. A modal opened inside it hangs the GUI forever.
@@ -392,7 +392,7 @@ and was left alone -- it is not in src/slic3r/CMakeLists.txt and no longer compi
 neither of which exists). GLGizmoCut3D::get_cut_matrix itself was left alone: it reads
 the SLA shift off the selected GLVolume, which an HTTP worker has no business touching.
 
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 MSG
 )"
 ```
@@ -785,7 +785,7 @@ ObjectList::split() was not used either: it opens a native wxMessageBox for a
 non-splittable object (GUI_ObjectList.cpp:2905), which McpDialogSuppressionGuard cannot
 suppress because it is not a MsgDialog, and a modal inside run_on_main_thread never returns.
 
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 MSG
 )"
 ```
@@ -1010,7 +1010,7 @@ dialog is not a MsgDialog, so McpDialogSuppressionGuard cannot suppress it, and 
 inside run_on_main_thread hangs the GUI thread forever. The is_splittable() check is done
 here instead and returns an error the caller can read.
 
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 MSG
 )"
 ```
@@ -1200,7 +1200,7 @@ Related occurrences checked: get_scene_info was left alone. It reports every obj
 every plate and adding a per-part array there would grow a response that T2 already found
 too large for an MCP client; the per-object tool is the right place for per-part detail.
 
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 MSG
 )"
 ```
@@ -1430,7 +1430,7 @@ the same missing snapshot. set_object_printable takes one; the transform tools g
 Plater helpers that take their own; arrange_objects and auto_orient run through jobs that
 snapshot themselves. cut_object was the only one mutating the model directly without one.
 
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 MSG
 )"
 ```
@@ -1767,7 +1767,7 @@ on the bed and placing it on its cut face would invert it.
 Related occurrences checked: the same plane-from-normal maths is needed by the tongue-and-
 groove mode, so it went into OrcaMCPMeshUtils::cut_plane_matrix rather than inline here.
 
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 MSG
 )"
 ```
@@ -1937,7 +1937,7 @@ Related occurrences checked: split_object mode "parts" (already shipped in this 
 covers the other way to get parts -- separating bodies that were already disconnected.
 The two are complementary and neither subsumes the other.
 
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 MSG
 )"
 ```
@@ -2491,7 +2491,7 @@ ignored -- it is not compiled and calls ModelObject::get_connector_mesh, which d
 exist. Its style enum is also misspelled "Prizm"; the parser accepts only "prism" and says
 so when it sees the other.
 
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 MSG
 )"
 ```
@@ -2756,7 +2756,7 @@ Related occurrences checked: groove and connectors are refused together rather t
 silently winning, because the gizmo's modes are exclusive and perform_with_groove ignores
 cut_connectors entirely -- accepting both would have quietly discarded the connectors.
 
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 MSG
 )"
 ```
@@ -3191,7 +3191,7 @@ mcut reports a failed boolean by returning no mesh rather than by raising, so th
 result is checked and turned into status "error" with the target left untouched -- otherwise
 a non-overlapping difference would have silently emptied an object.
 
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 MSG
 )"
 ```
@@ -3638,7 +3638,7 @@ GLGizmoSimplify::apply_simplify exactly, including clear_before_change_mesh when
 not kept and changed_mesh afterwards -- skipping either leaves stale SLA support points and
 a stale error icon on the object.
 
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 MSG
 )"
 ```
@@ -3823,7 +3823,7 @@ Related occurrences checked: the tool count in CLAUDE.md was reconciled against 
 command in the same file (73 registered, 74 reachable with the bridge's start_orca), and the
 quick-reference table in docs/tools/reference.md against the per-tool sections.
 
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 MSG
 )"
 ```

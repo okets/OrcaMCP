@@ -16,7 +16,7 @@ Every task below inherits these. They are copied verbatim from the spec's Global
 
 - **Branch:** `sync-upstream-2.5`. Do not push. Do not create branches.
 - **Commit style:** `fix:` / `feat:` + what changed, past tense. The body names the **root cause**, not the symptom, and lists related occurrences checked — *including the ones deliberately left alone, and why*. Read `git log -5` for the bar. Every commit ends with:
-  `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`
+  `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`
 - **Threading:** every tool handler body runs inside `run_on_main_thread()` (`OrcaMCPCommon.hpp`). Anything touching `Model`, `Plater` or the preset bundle must be inside it. A modal opened inside it hangs the GUI forever.
 - **Dialogs:** never call `set_mcp_dialog_suppression()` directly. `McpDialogSuppressionGuard` (RAII, nest-safe) is the only sanctioned way.
 - **Pure logic goes in a free function with Catch2 coverage** under `tests/slic3rutils/`. This project tests logic without a printer wherever possible; geometry maths must be testable without a GUI.
@@ -433,7 +433,7 @@ would have produced one unparsable token.
 
 Pure and unwired in this commit; the two callers follow.
 
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -687,7 +687,7 @@ invalid_keys stays the union of both failures because
 OrcaMCPPrinterUtils::save_physical_printer_preset reads it that way; unknown_keys
 and rejected_values are additive.
 
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -841,7 +841,7 @@ config-file loaders (libslic3r) take text off disk, where the string IS the wire
 format and there is no JSON value to shape; OrcaMCPPrinterUtils builds its settings
 object in C++ with string literals only, so it cannot produce an array.
 
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -1231,7 +1231,7 @@ what fit, and a truncated response names the filters in a hint.
 The stale-schema half of T2 -- why those filters could not be sent at all from that
 session -- is the next commit; it is the bridge, not the client.
 
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -1643,7 +1643,7 @@ Related occurrence fixed in the same pass: send_request's URLError handler asked
 single-threaded design, which is correct given every handler needs the GUI thread --
 the client side is where the wrong conclusion was drawn.
 
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -1972,7 +1972,7 @@ Deliberately not changed: the snapshot stays a checked-in file. It is what makes
 tools visible while OrcaSlicer is closed, which is how start_orca is reachable at
 all.
 
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -2280,7 +2280,7 @@ therefore wx into any translation unit that includes it -- including a test one.
 
 Pure and unwired in this commit; suggest_color_mix and get_color_palette follow.
 
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -2513,7 +2513,7 @@ in docs/tools/reference.md -- there was no filament or colour section at all --
 including the fact that a mixed slot averages layers instead of mixing pigment, so
 nobody buys CMY filament expecting ink behaviour.
 
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -2783,7 +2783,7 @@ get_color_palette reports unreachable_hues -- the 30-degree hue sectors no entry
 reaches. The palette IS the achievable gamut, so its gaps are the answer; with CMY
 loaded, red and orange come back, which is the honest form of "this is not ink".
 
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 EOF
 )"
 ```
