@@ -634,6 +634,60 @@ TEST_CASE("volume_to_plate falls back to the volume matrix alone when the object
     CHECK(volume_to_plate(*object, *volume, 0).isApprox(volume->get_matrix()));
 }
 
+TEST_CASE("brim_point_to_object pins world z to the underside before converting to object-local",
+          "[orcamcp][paint]")
+{
+    // set_brim_ears's one rule: an ear always sits on the bottom of the object, the same z
+    // GLGizmoBrimEars.cpp (~395-397) assigns before converting a click to object-local.
+    Model model;
+    ModelObject* object = model.add_object();
+    ModelInstance* instance = object->add_instance();
+    instance->set_offset(Vec3d(100.0, 50.0, 0.0));
+
+    const Vec3f local = brim_point_to_object(*object, 110.0, 60.0, 0);
+    CHECK_THAT(double(local.x()), WithinAbs(10.0, 1e-6));
+    CHECK_THAT(double(local.y()), WithinAbs(10.0, 1e-6));
+    CHECK_THAT(double(local.z()), WithinAbs(-0.0001, 1e-9));
+}
+
+TEST_CASE("brim_point_to_object and brim_point_to_plate round-trip through a rotated, "
+          "translated instance",
+          "[orcamcp][paint]")
+{
+    // brim_point_to_object is set_brim_ears's write-side conversion; brim_point_to_plate is
+    // brim_ears_json's read-side conversion (Task 8). They have to invert each other exactly, or
+    // an ear placed at a plate coordinate would read back somewhere else.
+    Model model;
+    ModelObject* object = model.add_object();
+    ModelInstance* instance = object->add_instance();
+    instance->set_offset(Vec3d(150.0, 150.0, 0.0));
+    instance->set_rotation(Vec3d(0.0, 0.0, M_PI / 2.0));
+
+    const Vec3f local = brim_point_to_object(*object, 200.0, 130.0, 0);
+    const Vec3d back  = brim_point_to_plate(*object, local, 0);
+
+    CHECK_THAT(back.x(), WithinAbs(200.0, 1e-6));
+    CHECK_THAT(back.y(), WithinAbs(130.0, 1e-6));
+    CHECK_THAT(back.z(), WithinAbs(-0.0001, 1e-6));
+
+    // An out-of-range instance falls back to instance 0, the same way volume_to_plate does.
+    const Vec3f local_fallback = brim_point_to_object(*object, 200.0, 130.0, 99);
+    CHECK(local_fallback.isApprox(local));
+}
+
+TEST_CASE("brim_point_to_plate falls back to identity when the object has no instance at all",
+          "[orcamcp][paint]")
+{
+    Model model;
+    ModelObject* object = model.add_object();
+    const Vec3f local(1.0f, 2.0f, -0.0001f);
+
+    const Vec3d plate = brim_point_to_plate(*object, local, 0);
+    CHECK_THAT(plate.x(), WithinAbs(1.0, 1e-6));
+    CHECK_THAT(plate.y(), WithinAbs(2.0, 1e-6));
+    CHECK_THAT(plate.z(), WithinAbs(-0.0001, 1e-6));
+}
+
 TEST_CASE("apply_facet_states writes paint the gizmo's own read path can see", "[orcamcp][paint]")
 {
     HeadlessObject built = make_headless_object(two_triangle_rectangle(), Vec3d(0, 0, 0));

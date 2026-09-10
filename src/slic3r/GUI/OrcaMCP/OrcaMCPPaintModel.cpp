@@ -106,6 +106,34 @@ Transform3d volume_to_plate(const ModelObject& obj, const ModelVolume& mv, std::
     return obj.instances[idx]->get_matrix() * mv.get_matrix();
 }
 
+namespace {
+// The one piece both brim-ear conversions share: the instance transform, defaulting the same way
+// volume_to_plate does. Not folded into volume_to_plate itself -- that function composes a
+// volume matrix on top, which brim_points (stored on the ModelObject, not a ModelVolume) has none
+// of.
+Transform3d brim_instance_matrix(const ModelObject& obj, std::size_t instance_idx)
+{
+    if (obj.instances.empty())
+        return Transform3d::Identity();
+    const std::size_t idx = instance_idx < obj.instances.size() ? instance_idx : 0;
+    return obj.instances[idx]->get_matrix();
+}
+} // namespace
+
+Vec3d brim_point_to_plate(const ModelObject& obj, const Vec3f& local_pos, std::size_t instance_idx)
+{
+    return brim_instance_matrix(obj, instance_idx) * local_pos.cast<double>();
+}
+
+Vec3f brim_point_to_object(const ModelObject& obj, double plate_x, double plate_y, std::size_t instance_idx)
+{
+    // BBS brim ear position is placed on the bottom side (GLGizmoBrimEars.cpp ~395-397).
+    constexpr double k_underside_z = -0.0001;
+    const Vec3d world(plate_x, plate_y, k_underside_z);
+    const Vec3d local = brim_instance_matrix(obj, instance_idx).inverse() * world;
+    return local.cast<float>();
+}
+
 bool apply_facet_states(ModelVolume& mv, PaintMode mode, const std::vector<int>& states, bool replace)
 {
     // Validate before touching anything, so a rejected call is a no-op rather than a partial paint.

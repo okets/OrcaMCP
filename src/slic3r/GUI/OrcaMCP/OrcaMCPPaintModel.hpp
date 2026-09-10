@@ -66,6 +66,20 @@ std::string paint_state_label(PaintMode mode, int state);
 // instance 0; an object with no instance at all yields the volume matrix alone.
 Transform3d volume_to_plate(const ModelObject& obj, const ModelVolume& mv, std::size_t instance_idx);
 
+// Where a stored BrimPoint reads back in the plate frame the rest of this API speaks.
+// ModelObject::brim_points is stored object-local (Model.hpp ~390); Brim.cpp:373-374 transforms
+// each by the instance matrix to get a world position and discards any whose world z ends up
+// above 0. An out-of-range or absent instance falls back to instance 0, the same way
+// volume_to_plate does, so two halves of one response are never read in different frames.
+Vec3d brim_point_to_plate(const ModelObject& obj, const Vec3f& local_pos, std::size_t instance_idx);
+
+// The inverse of the above, carrying the one rule GLGizmoBrimEars.cpp (~395-402) applies when a
+// user places a point: an ear always sits on the object's underside, so world z is pinned to
+// -0.0001 -- just below 0, the side Brim.cpp:373-374 keeps -- before converting to the
+// object-local frame brim_points are stored in. Round-trips with brim_point_to_plate for the
+// same instance.
+Vec3f brim_point_to_object(const ModelObject& obj, double plate_x, double plate_y, std::size_t instance_idx);
+
 // Writes `states` (one raw EnforcerBlockerType value per facet of mv.mesh(), -1 = leave alone)
 // into the annotation `mode` selects, the same way GLGizmoMmuSegmentation::update_model_object
 // does (GLGizmoMmuSegmentation.cpp, update_model_object): drive a TriangleSelector with set_facet,

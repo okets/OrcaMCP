@@ -159,19 +159,14 @@ nlohmann::json painted_json(const Slic3r::ModelVolume& mv, PaintMode mode)
 }
 
 // The brim ears on an object, converted back into the plate coordinates the API speaks.
-// brim_points are stored object-local (Model.hpp:390; Brim.cpp:373 transforms them by the
-// instance matrix to get a world position), so the read-back has to transform them forward.
-// An out-of-range instance falls back to instance 0, the same way volume_to_plate does, so the
-// two halves of one response cannot end up in different frames.
+// brim_points are stored object-local (Model.hpp:390); the actual object-local -> plate
+// transform is brim_point_to_plate (OrcaMCPPaintModel), which is what set_brim_ears's write
+// path inverts, so this and that call cannot drift into different frames.
 nlohmann::json brim_ears_json(const Slic3r::ModelObject& obj, std::size_t instance_idx)
 {
     nlohmann::json ears = nlohmann::json::array();
-    const Slic3r::Transform3d to_plate =
-        obj.instances.empty()
-            ? Slic3r::Transform3d::Identity()
-            : obj.instances[instance_idx < obj.instances.size() ? instance_idx : 0]->get_matrix();
     for (const Slic3r::BrimPoint& point : obj.brim_points) {
-        const Slic3r::Vec3d plate_pos = to_plate * point.pos.cast<double>();
+        const Slic3r::Vec3d plate_pos = brim_point_to_plate(obj, point.pos, instance_idx);
         ears.push_back({{"x", plate_pos.x()},
                         {"y", plate_pos.y()},
                         {"z", plate_pos.z()},
@@ -469,6 +464,20 @@ std::vector<std::string> paint_prerequisite_messages(const Slic3r::ModelObject& 
                                "(the default). Set fuzzy_skin to 'none' to use painted regions only.");
     }
     return messages;
+}
+
+// No parse_double_param exists in OrcaMCPCommon -- a gap logged for the whole-branch review,
+// out of scope to fix in this file -- so this is the narrow, file-local equivalent for the one
+// tool that takes bare floats (x, y, radius). A non-number here reads as a message naming the
+// field, rather than the generic json::type_error the same mistake would otherwise surface as.
+bool parse_number_field(const nlohmann::json& value, const char* what, double& out, std::string& error)
+{
+    if (!value.is_number()) {
+        error = std::string(what) + " must be a number";
+        return false;
+    }
+    out = value.get<double>();
+    return true;
 }
 
 } // namespace
@@ -807,6 +816,147 @@ void OrcaMCPServer::register_paint_tools()
                 if (!changed)
                     result["info_messages"] = std::vector<std::string>{
                         "Nothing was cleared: the requested annotation(s) were already empty."};
+                return result;
+            });
+        }
+    });
+
+    register_tool({
+        "set_brim_ears",
+        "Place brim ears on an object -- the small tabs the brim adds at chosen points. Brim ears "
+        "are NOT facet paint: they are points on the object (ModelObject::brim_points), so they "
+        "have their own tool. Positions are PLATE millimetres, the same frame get_object_info's "
+        "bounding_box uses; only x and y matter, because an ear always sits on the bottom of the "
+        "object. Pass an empty points array to remove them all. They only produce brim unless "
+        "brim_type is 'painted'.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"object_id", {{"type", "integer"}, {"description", "Object index (0-based)"}}},
+                {"instance_id", {
+                    {"type", "integer"},
+                    {"description", "Which instance's transform reads your coordinates (default 0)"}
+                }},
+                {"points", {
+                    {"type", "array"},
+                    {"items", {
+                        {"type", "object"},
+                        {"properties", {
+                            {"x", {{"type", "number"}}},
+                            {"y", {{"type", "number"}}},
+                            {"radius", {{"type", "number"}, {"description", "Ear radius in mm, 0.1 to 100"}}}
+                        }},
+                        {"required", {"x", "y"}}
+                    }},
+                    {"description", "Ear positions in plate mm. An empty array removes every ear."}
+                }},
+                {"radius", {
+                    {"type", "number"},
+                    {"description", "Default radius for points that do not carry one (default 5.0 mm)"}
+                }},
+                {"append", {
+                    {"type", "boolean"},
+                    {"description", "false (default) replaces the object's ears; true adds to them"}
+                }}
+            }},
+            {"required", {"object_id", "points"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            return run_on_main_thread([params]() -> nlohmann::json {
+                Plater*     plater = wxGetApp().plater();
+                PaintTarget target;
+                std::string error;
+                if (!resolve_paint_target(params, target, error))
+                    return nlohmann::json{{"status", "error"}, {"message", error}};
+
+                if (!params["points"].is_array())
+                    return nlohmann::json{{"status", "error"},
+                                          {"message", "points must be an array of {x, y, radius?}"}};
+
+                // The gizmo's own bounds (GLGizmoBrimEars.cpp:18-19). Its default radius is derived
+                // from the initial layer line width; 5.0 mm is a printable stand-in for a tool that
+                // has no nozzle context of its own to lean on and states its default in the schema.
+                constexpr double k_radius_min = 0.1;
+                constexpr double k_radius_max = 100.0;
+                double default_radius = 5.0;
+                if (params.contains("radius") &&
+                    !parse_number_field(params["radius"], "radius", default_radius, error))
+                    return nlohmann::json{{"status", "error"}, {"message", error}};
+
+                Slic3r::BrimPoints points;
+                for (const nlohmann::json& entry : params["points"]) {
+                    if (!entry.is_object() || !entry.contains("x") || !entry.contains("y"))
+                        return nlohmann::json{{"status", "error"},
+                                              {"message", "every point needs x and y in plate millimetres"}};
+                    double x = 0.0, y = 0.0;
+                    if (!parse_number_field(entry["x"], "x", x, error) ||
+                        !parse_number_field(entry["y"], "y", y, error))
+                        return nlohmann::json{{"status", "error"}, {"message", error}};
+                    double radius = default_radius;
+                    if (entry.contains("radius") && !parse_number_field(entry["radius"], "radius", radius, error))
+                        return nlohmann::json{{"status", "error"}, {"message", error}};
+                    if (radius < k_radius_min || radius > k_radius_max)
+                        return nlohmann::json{{"status", "error"},
+                                              {"message", "radius " + std::to_string(radius) + " out of range " +
+                                                          std::to_string(k_radius_min) + ".." +
+                                                          std::to_string(k_radius_max)}};
+                    // An ear always sits on the underside: brim_point_to_object pins world z to
+                    // -0.0001 and converts to object-local, exactly what GLGizmoBrimEars.cpp
+                    // (~395-397) does on a click, and Brim.cpp:373-374 skips any stored point
+                    // whose world z is above 0.
+                    const Slic3r::Vec3f local = brim_point_to_object(*target.object, x, y, target.instance_idx);
+                    points.emplace_back(local, float(radius));
+                }
+
+                // append must come through parse_boolean_param, not a typed json::value default:
+                // a client with a stale cached schema sends "true"/"false" as a string, and
+                // json::value<bool> throws type_error.302 on that instead of reading it.
+                bool append = false;
+                if (params.contains("append") && !parse_boolean_param(params["append"], append))
+                    return nlohmann::json{{"status", "error"}, {"message", "append must be true or false"}};
+
+                plater->take_snapshot(_u8L("Set Brim Ears"));
+                if (!append)
+                    target.object->brim_points.clear();
+                target.object->brim_points.insert(target.object->brim_points.end(), points.begin(), points.end());
+
+                // Direct field mutation, not a paint annotation write: nothing else marks the
+                // project dirty for this change, so it is done explicitly here, the same way
+                // GLGizmoBrimEars::update_model_object does right after the same assignment.
+                plater->set_plater_dirty(true);
+                // brim_points carries no vertex and is not part of any mesh or convex hull, so
+                // this write leaves geometry untouched -- refresh_after_paint's one precondition
+                // (see its docblock above) -- and reusing it here covers the object-list refresh,
+                // every instance's plate notification and the reslice reschedule the gizmo's own
+                // update_model_object performs, without a second copy of that bookkeeping.
+                refresh_after_paint(target);
+
+                nlohmann::json result = {
+                    {"status", "success"},
+                    {"object_id", target.object_id},
+                    {"object_name", target.object->name},
+                    {"coordinate_frame", "plate"},
+                    {"instance_id", int(target.instance_idx)},
+                    {"brim_ear_count", int(target.object->brim_points.size())},
+                    {"brim_ears", brim_ears_json(*target.object, target.instance_idx)},
+                    {"active_warnings", get_active_warnings_json(plater)}
+                };
+
+                // Painted ears are only produced when brim_type is btPainted (Brim.cpp:449 and
+                // Brim.cpp:530), so say so rather than let the caller slice and find no brim.
+                const Slic3r::DynamicPrintConfig& global =
+                    wxGetApp().preset_bundle->prints.get_edited_preset().config;
+                const Slic3r::DynamicPrintConfig& object_cfg = target.object->config.get();
+                const Slic3r::ConfigOption* brim_type_option =
+                    effective_print_option(object_cfg, global, "brim_type");
+                const Slic3r::BrimType brim_type = brim_type_option
+                    ? static_cast<Slic3r::BrimType>(brim_type_option->getInt())
+                    : Slic3r::BrimType::btAutoBrim;
+                if (brim_type != Slic3r::BrimType::btPainted && !target.object->brim_points.empty())
+                    result["info_messages"] = std::vector<std::string>{
+                        "Brim ears are placed but will not be printed while brim_type is not 'painted'. "
+                        "Set brim_type to 'painted' with apply_config or set_object_config."};
+
                 return result;
             });
         }
