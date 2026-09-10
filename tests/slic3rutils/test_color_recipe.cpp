@@ -1,6 +1,7 @@
 #include <algorithm>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "slic3r/GUI/OrcaMCP/OrcaMCPColorRecipe.hpp"
 
@@ -8,8 +9,10 @@
 // recommend_from_physical_filaments result means, how far is too far, and which colours the loaded
 // filaments cannot reach at all.
 
+using Catch::Matchers::WithinAbs;
 using Slic3r::ColorDecomposeRecipeComponent;
 using Slic3r::ColorDecomposeRecipeResult;
+using Slic3r::GUI::OrcaMCP::chromatic_hue_degrees;
 using Slic3r::GUI::OrcaMCP::color_mix_recipe_from_result;
 using Slic3r::GUI::OrcaMCP::gamut_label;
 using Slic3r::GUI::OrcaMCP::kGamutDeltaEThreshold;
@@ -148,4 +151,47 @@ TEST_CASE("unreachable sectors are reported as names a person can act on", "[orc
     // Every sector the enumerator can produce has a name; nothing falls through to a number.
     for (int sector = 0; sector < 360; sector += 30)
         CHECK(std::string(hue_sector_name(sector)).empty() == false);
+}
+
+TEST_CASE("achromatic colours have no hue", "[orcamcp][colorrecipe]")
+{
+    // Gray, black and white have no hue at all. Reporting one as hue 0 would falsely claim the
+    // red sector is reached by a candidate that cannot actually make red.
+    CHECK_FALSE(chromatic_hue_degrees("#808080").has_value());
+    CHECK_FALSE(chromatic_hue_degrees("#000000").has_value());
+    CHECK_FALSE(chromatic_hue_degrees("#FFFFFF").has_value());
+}
+
+TEST_CASE("an unparsable colour has no hue", "[orcamcp][colorrecipe]")
+{
+    CHECK_FALSE(chromatic_hue_degrees("not-a-color").has_value());
+}
+
+TEST_CASE("saturated colours report their hue", "[orcamcp][colorrecipe]")
+{
+    const auto red = chromatic_hue_degrees("#FF0000");
+    REQUIRE(red.has_value());
+    CHECK_THAT(*red, WithinAbs(0.0, 0.5));
+
+    const auto green = chromatic_hue_degrees("#00FF00");
+    REQUIRE(green.has_value());
+    CHECK_THAT(*green, WithinAbs(120.0, 0.5));
+
+    const auto blue = chromatic_hue_degrees("#0000FF");
+    REQUIRE(blue.has_value());
+    CHECK_THAT(*blue, WithinAbs(240.0, 0.5));
+}
+
+TEST_CASE("a gray candidate cannot hide an unreachable red", "[orcamcp][colorrecipe]")
+{
+    // Cyan, magenta, yellow and a gray filament -- the scenario this task documents. The gray
+    // predicted colour must be excluded from the hue list entirely, not counted as hue 0, or it
+    // would wrongly mark red "reached".
+    std::vector<double> hues;
+    for (const char* hex : {"#00FFFF", "#FF00FF", "#FFFF00", "#808080"})
+        if (const auto hue = chromatic_hue_degrees(hex))
+            hues.push_back(*hue);
+
+    const auto unreachable = unreachable_hue_sectors(hues);
+    CHECK(std::find(unreachable.begin(), unreachable.end(), 0) != unreachable.end());
 }

@@ -1,5 +1,6 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPColorRecipe.hpp
 #pragma once
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -39,7 +40,18 @@ const char* gamut_label(double delta_e);
 // that reaches no colour in a sector cannot mix one: with cyan, magenta and yellow loaded, the red
 // and orange sectors come back empty, which is what "out of gamut" means for that machine.
 // `hues` are degrees in [0, 360); anything outside is wrapped.
+//
+// Callers must exclude achromatic colours from `hues` -- see chromatic_hue_degrees below. A gray
+// entry has no hue, and treating it as hue 0 would falsely mark the red sector "reached".
 std::vector<int> unreachable_hue_sectors(const std::vector<double>& hues);
+
+// Hue in degrees [0, 360) for a "#RRGGBB" colour, or no value if the string is unparsable or the
+// colour is achromatic (gray, black or white: max and min channel are equal). Achromatic colours
+// have no hue at all, so they must not be reported as "reaching" any sector -- a gray mixed
+// candidate must not hide a genuinely unreachable red from unreachable_hue_sectors. This is
+// deliberately a separate function from any hue-for-sort-order helper elsewhere, which may still
+// give gray a stable fallback hue for display ordering; that fallback is wrong for gamut decisions.
+std::optional<double> chromatic_hue_degrees(const std::string& hex);
 
 // A name for one of the sector boundaries unreachable_hue_sectors returns (0, 30, ... 330).
 // "the red and orange sectors are unreachable" is actionable; "sectors 0 and 30" is not.

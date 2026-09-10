@@ -1,6 +1,7 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPColorRecipe.cpp
 #include "OrcaMCPColorRecipe.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
@@ -47,6 +48,25 @@ std::vector<int> unreachable_hue_sectors(const std::vector<double>& hues)
         if (!reached[sector])
             unreachable.push_back(sector * kHueSectorDegrees);
     return unreachable;
+}
+
+std::optional<double> chromatic_hue_degrees(const std::string& hex)
+{
+    ColorDecomposeRgb rgb;
+    if (!color_decompose_hex_to_rgb(hex, rgb))
+        return std::nullopt;
+    const double r = rgb.r / 255.0, g = rgb.g / 255.0, b = rgb.b / 255.0;
+    const double max_c = std::max({r, g, b}), min_c = std::min({r, g, b});
+    const double delta = max_c - min_c;
+    if (delta < 1e-9)
+        return std::nullopt; // gray/black/white: no hue to report
+
+    double h;
+    if (max_c == r)      h = std::fmod((g - b) / delta, 6.0);
+    else if (max_c == g) h = (b - r) / delta + 2.0;
+    else                 h = (r - g) / delta + 4.0;
+    h *= 60.0;
+    return h < 0.0 ? h + 360.0 : h;
 }
 
 const char* hue_sector_name(int sector_degrees)

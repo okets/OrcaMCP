@@ -299,8 +299,11 @@ double color_delta_e_hex(const std::string& hex_a, const std::string& hex_b)
 namespace {
 
 // Hue angle in degrees [0, 360) from an "#RRGGBB" string; 0 (red) for unparsable/gray input.
-// Used only to order the palette -- matching MixedFilamentDialog's visual grouping is not a
-// goal, so a plain HSV hue (no Lab) is enough.
+// Used only to order the palette for display -- matching MixedFilamentDialog's visual grouping
+// is not a goal, so a plain HSV hue (no Lab) is enough, and a stable fallback for gray is fine
+// here because ties just settle by insertion order. Gamut decisions (unreachable_hue_sectors)
+// must NOT use this: use OrcaMCPColorRecipe.hpp's chromatic_hue_degrees() instead, which reports
+// "no hue" for achromatic input rather than silently claiming red.
 double hue_degrees(const std::string& hex)
 {
     ColorDecomposeRgb rgb;
@@ -435,11 +438,14 @@ nlohmann::json enumerate_mix_palette(int max_count, int max_components, const st
             {"predicted_color", c.predicted_color},
             {"measured", c.measured}
         });
-        hues.push_back(hue_degrees(c.predicted_color));
+        // An achromatic candidate (gray) has no hue and must not be counted as "reaching" red --
+        // it would hide a genuinely unreachable red from unreachable_hue_sectors below.
+        if (const auto hue = chromatic_hue_degrees(c.predicted_color))
+            hues.push_back(*hue);
     }
     // The palette IS the gamut: a hue no entry reaches cannot be mixed from these filaments. With
-    // cyan, magenta and yellow loaded the red and orange sectors come back empty, which is the
-    // honest form of "this set does not behave like printer inks".
+    // cyan, magenta, yellow and gray loaded the red and orange sectors come back empty, which is
+    // the honest form of "this set does not behave like printer inks".
     nlohmann::json unreachable = nlohmann::json::array();
     for (int sector : unreachable_hue_sectors(hues))
         unreachable.push_back({{"hue_degrees", sector}, {"name", hue_sector_name(sector)}});

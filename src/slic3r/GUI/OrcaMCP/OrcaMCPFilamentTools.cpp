@@ -8,6 +8,7 @@
 #include "libslic3r/ColorDecomposeRecipe.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <optional>
 
 using namespace Slic3r::GUI;
@@ -20,6 +21,15 @@ nlohmann::json with_filaments(nlohmann::json result)
     result["filaments"] = describe_filaments()["filaments"];
     result["active_warnings"] = get_active_warnings_json(wxGetApp().plater());
     return result;
+}
+
+// One decimal place, e.g. "54.0" -- so an out-of-gamut message never disagrees with the
+// "delta_e" field by up to 0.5 the way rounding to an int would.
+std::string format_one_decimal(double value)
+{
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.1f", value);
+    return std::string(buf);
 }
 
 } // namespace
@@ -326,9 +336,9 @@ void OrcaMCPServer::register_filament_tools()
                                      std::to_string(recipe.components.front()) +
                                      " (" + recipe.hexes.front() + "); no mix needed";
                 if (std::string(gamut_label(delta_e)) == "outside")
-                    out["message"] = "The closest mix is delta_e " + std::to_string(int(delta_e + 0.5)) +
+                    out["message"] = "The closest mix is delta_e " + format_one_decimal(delta_e) +
                                      " from target_color, past the delta_e " +
-                                     std::to_string(int(kGamutDeltaEThreshold)) +
+                                     format_one_decimal(kGamutDeltaEThreshold) +
                                      " gamut threshold. A mixed slot alternates layers, so it averages "
                                      "its components' colours rather than mixing them like pigment; this "
                                      "colour is not reachable from the loaded filaments. Load a filament "
