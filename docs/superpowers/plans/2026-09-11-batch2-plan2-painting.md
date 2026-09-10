@@ -30,7 +30,7 @@ Copied verbatim from the spec's Global Constraints section. Every task inherits 
 - **Commit style:** `fix:` / `feat:` + what changed, past tense. The body names the
   **root cause**, not the symptom, and lists related occurrences checked — *including the
   ones deliberately left alone, and why*. Read `git log -5` for the bar. Every commit ends with:
-  `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`
+  `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`
 - **Threading:** every tool handler body runs inside `run_on_main_thread()`
   (`OrcaMCPCommon.hpp`). Anything touching `Model`, `Plater` or the preset bundle must be
   inside it. A modal opened inside it hangs the GUI forever.
@@ -426,7 +426,7 @@ reports (OrcaMCPServer.cpp:3902-3918). Object-local was the alternative and was
 rejected: no MCP tool reports object-local extents, so a caller would have to undo the
 instance transform itself to name a band boundary.
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -572,7 +572,7 @@ overlaps resolved first-match rather than rejected. A caller painting two stripe
 leaving the rest alone is a legitimate request, and the response reports how many facets
 landed nowhere so the caller can tell the difference.
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -732,7 +732,7 @@ An inverted box is reported rather than treated as an empty selection, because "
 was painted" and "your min and max are the wrong way round" are different answers to a
 caller. A flat box is left legal -- it selects the facets whose centroid lies in a plane.
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -903,7 +903,7 @@ reports. Facet counts alone are misleading, because a triangle a gizmo split ear
 counts the same as one that covers a whole face; an area ratio is honest and, being a
 ratio, is unaffected by a scaled instance.
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -1172,7 +1172,7 @@ The acceptance case from the testing session is covered here as arithmetic: a
 asserting every band takes its facets and none fall through a boundary. That is the
 request that had no tool at all, now provable without starting the slicer.
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -1515,7 +1515,7 @@ volume_to_plate composes the same two matrices ModelObject::instance_bounding_bo
 (Model.cpp:1685-1697), so plate coordinates here mean exactly what get_object_info's
 bounding_box already means.
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -1790,7 +1790,7 @@ clear returns false on an already-empty annotation rather than reporting success
 resets only its own member -- the four annotations are siblings on the same volume and
 clearing colour must not take supports with it. The test asserts that directly.
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -2116,7 +2116,7 @@ resolve_paint_target rejects a volume that is not a model part rather than paint
 A modifier or a support blocker carries the same four annotation members, so painting
 one would have reported success and changed nothing the caller could observe.
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -2633,7 +2633,7 @@ Related occurrences checked: set_object_filament (whole object or part) and
 set_object_layer_range (Z ranges) were both left alone -- they address different data and
 neither was wrong, they simply could not reach a single volume's surface.
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -2762,7 +2762,7 @@ getting the other would only find out on the next project load.
 The snapshot is taken once, before the first mode is cleared, so a single undo restores
 every mode a clear-all call touched rather than leaving three of four still cleared.
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -2941,7 +2941,7 @@ response.
 Ears only produce brim when brim_type is 'painted' (Brim.cpp:449), so the response says
 so instead of letting the caller slice and find no brim.
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -3178,7 +3178,7 @@ Left alone deliberately: the per-tool sections for the filament and printer fami
 reference.md still does not carry. Adding them is a documentation sweep of its own and
 belongs with whoever next audits that file, not smuggled into a painting change.
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 EOF
 )"
 ```

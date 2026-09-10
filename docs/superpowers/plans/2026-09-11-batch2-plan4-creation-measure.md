@@ -16,7 +16,7 @@ Copied from the spec's Global Constraints section. Every task inherits these.
 
 - **Branch:** `sync-upstream-2.5`. Do not push. Do not create branches.
 - **Commit style:** `fix:` / `feat:` + what changed, past tense. The body names the **root cause**, not the symptom, and lists related occurrences checked — *including the ones deliberately left alone, and why*. Read `git log -5` for the bar. Every commit ends with:
-  `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`
+  `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`
 - **Threading:** every tool handler body runs inside `run_on_main_thread()` (`OrcaMCPCommon.hpp`). Anything touching `Model`, `Plater` or the preset bundle must be inside it. A modal opened inside it hangs the GUI forever.
 - **Dialogs:** never call `set_mcp_dialog_suppression()` directly. `McpDialogSuppressionGuard` (RAII, nest-safe) is the only sanctioned way.
 - **Pure logic goes in a free function with Catch2 coverage** under `tests/slic3rutils/`. This project tests logic without a printer wherever possible; geometry maths must be testable without a GUI.
@@ -415,7 +415,7 @@ resolve, plus the per-type JSON for a point, edge, circle and plane.
 parse_feature_id rejects a leading '+', a sign and trailing characters, so two spellings
 can never name the same feature; strtol would have accepted all three.
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -551,7 +551,7 @@ Both distances are reported, not just one: distance_infinite is what the GUI sho
 distance_strict is the segment-to-segment answer, and for a point past the end of an edge
 they are different numbers. Hiding either would make the tool disagree with the gizmo.
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -763,7 +763,7 @@ SurfaceFeature objects the gizmo hands out, minus the picking.
 The cap reports the true total rather than silently shortening the list, because a truncated
 list that claims to be complete is the get_presets failure (T2) in a new place.
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -948,7 +948,7 @@ Checked the sibling branches: Point-Plane and Plane-Plane read only the plane's 
 origin, so they were never at risk and are left alone. Circle-Circle reads
 world_plane_features only through the Circle-Plane path already covered.
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -1249,7 +1249,7 @@ so for a rotated object it is larger than the part. get_object_info is left alon
 its numbers would move a value callers already depend on -- and measure_object's description
 says which one is the measurement.
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -1663,7 +1663,7 @@ Emboss::get_font_list was deliberately not used: it is implemented for Windows o
 would have made get_fonts report zero fonts on two of three platforms. The gizmo does not
 use it either.
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -1902,7 +1902,7 @@ in the plane instead of tipping it off the face.
 It works from raw_mesh_bounding_box, not the instance box, so the placement is in the
 object's own frame and survives a later move_object or rotate_object.
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -2226,7 +2226,7 @@ of the four cases the gizmo shows a dialog for.
 The per-glyph branch of try_create_mesh was deliberately not copied: it needs TextLinesModel
 against the live Selection, and text-on-a-curve is out of scope for this batch.
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -2340,7 +2340,7 @@ Kept the cube-then-set_mesh sequence deliberately: ModelObject::add_volume re-ce
 mesh it is handed and folds the offset into the volume transform, which would discard the
 placement emboss_face_transform computed.
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -2614,7 +2614,7 @@ use_surface and per_glyph are left off for the same reason: both need the live S
 a slice of the parent. The volume still carries text_configuration and emboss_shape, so the
 GUI gizmo can select and edit anything this tool made.
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -2784,7 +2784,7 @@ Per-path volumes were deliberately left out: set_object_filament can already add
 volume, but splitting an SVG into one volume per path is a different feature and belongs
 with split_object.
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 EOF
 )"
 ```
@@ -3027,7 +3027,7 @@ category catalogue, reference.md, and CLAUDE.md's table.
 Also corrected reference.md's opening line, which claimed 50 tools while 70 were registered
 before this batch -- a count that had been stale for several releases, not just this one.
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 EOF
 )"
 ```
