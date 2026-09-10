@@ -349,3 +349,64 @@ TEST_CASE("assign_box, assign_sphere and assign_all report what they covered",
     CHECK(everything.states[1] == 0);
     CHECK(everything.unassigned == 0);
 }
+
+TEST_CASE("assign_bands, assign_box, assign_sphere and assign_all handle zero facets",
+          "[orcamcp][paint]")
+{
+    // No centroids at all -- an object with no facets, or a caller who filtered them all out
+    // upstream. None of the four should crash or report a spurious unassigned count.
+    const std::vector<Vec3d> none;
+
+    const std::vector<PaintBand> bands = {{5, 0.0, 10.0}, {6, 10.0, 20.0}};
+    const FacetAssignment        banded = assign_bands(none, PaintAxis::Y, bands);
+    CHECK(banded.states.empty());
+    REQUIRE(banded.band_counts.size() == 2);
+    CHECK(banded.band_counts[0] == 0);
+    CHECK(banded.band_counts[1] == 0);
+    CHECK(banded.unassigned == 0);
+
+    const FacetAssignment boxed = assign_box(none, {Vec3d(0, 0, 0), Vec3d(10, 10, 10)}, 3);
+    CHECK(boxed.states.empty());
+    CHECK(boxed.unassigned == 0);
+
+    const FacetAssignment sphered = assign_sphere(none, {Vec3d(0, 0, 0), 2.0}, 2);
+    CHECK(sphered.states.empty());
+    CHECK(sphered.unassigned == 0);
+
+    const FacetAssignment everything = assign_all(0, 1);
+    CHECK(everything.states.empty());
+    CHECK(everything.unassigned == 0);
+}
+
+TEST_CASE("assign_box and assign_sphere report every facet unassigned when the region misses",
+          "[orcamcp][paint]")
+{
+    const std::vector<Vec3d> centroids = {Vec3d(50.0, 50.0, 50.0), Vec3d(60.0, 60.0, 60.0)};
+
+    const FacetAssignment boxed = assign_box(centroids, {Vec3d(0, 0, 0), Vec3d(10, 10, 10)}, 3);
+    CHECK(boxed.states[0] == -1);
+    CHECK(boxed.states[1] == -1);
+    CHECK(boxed.unassigned == 2);
+
+    const FacetAssignment sphered = assign_sphere(centroids, {Vec3d(0, 0, 0), 2.0}, 2);
+    CHECK(sphered.states[0] == -1);
+    CHECK(sphered.states[1] == -1);
+    CHECK(sphered.unassigned == 2);
+}
+
+TEST_CASE("assign_bands puts a centroid exactly on an interior band edge in the upper band",
+          "[orcamcp][paint]")
+{
+    // Mirrors band_index_for_value's own boundary rule, but exercised through assign_bands so
+    // the whole-selection entry point is proven, not just the lookup it delegates to.
+    const std::vector<Vec3d>     centroids = {Vec3d(0.0, 10.0, 0.0)};
+    const std::vector<PaintBand> bands     = {{5, 0.0, 10.0}, {6, 10.0, 20.0}};
+
+    const FacetAssignment assignment = assign_bands(centroids, PaintAxis::Y, bands);
+
+    CHECK(assignment.states[0] == 6);
+    CHECK(assignment.unassigned == 0);
+    REQUIRE(assignment.band_counts.size() == 2);
+    CHECK(assignment.band_counts[0] == 0);
+    CHECK(assignment.band_counts[1] == 1);
+}
