@@ -14,6 +14,7 @@ Complete reference for all 50 MCP tools available in OrcaMCP.
 | **Object Ops** | `clone_object`, `cut_object`, `delete_object`, `rename_object`, `transform_objects` |
 | **Plates** | `add_plate`, `select_plate`, `delete_plate` |
 | **Presets** | `get_presets`, `get_edited_presets`, `select_preset`, `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset`, `get_valid_config_keys` |
+| **Filament & Colour** | `get_filaments`, `set_mixed_filament`, `delete_mixed_filament`, `set_object_filament`, `get_flush_volumes`, `set_flush_volumes`, `auto_calc_flush_volumes`, `get_toolchanger_config`, `suggest_color_mix`, `get_color_palette` |
 | **Per-Object** | `get_object_info`, `get_object_config`, `set_object_config`, `reset_object_config` |
 | **Layer Ranges** | `get_object_layer_ranges`, `set_object_layer_range`, `delete_object_layer_range` |
 | **Slicing** | `slice_all`, `export_gcode`, `get_print_estimate` |
@@ -1041,6 +1042,74 @@ Disable adaptive layer height.
 |-----------|------|----------|-------------|
 | `object_ids` | array | No | Objects to clear (omit for all) |
 | `include_preview` | boolean | No | Include preview |
+
+---
+
+## Filament & Colour Tools
+
+### suggest_color_mix
+Suggest the closest achievable 2–3 component filament mix for a target colour, from the printer's
+loaded physical filaments. Optionally create the mixed slot.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `target_color` | string | Yes | Target colour, exactly `#RRGGBB` |
+| `material_type` | string | No | Restrict components to this filament type (e.g. `PLA`). Default: the type of filament slot 1. |
+| `create` | boolean | No | Create the mixed slot. Default `false`. |
+
+**Returns:**
+```json
+{
+  "status": "success",
+  "target_color": "#BA44ED",
+  "recipe": {
+    "components": [1, 2],
+    "ratios": [50, 50],
+    "predicted_color": "#BC7FF7",
+    "measured": false
+  },
+  "delta_e": 8.4,
+  "exact_match": false,
+  "slot": null
+}
+```
+
+**Exact matches are successes.** When `target_color` is already one of the loaded filaments, the
+answer is "load that slot, no mix required" — a single-component recipe at ratio 100,
+`delta_e: 0`, `exact_match: true`, `status: "success"` and an explanatory `message`. `status:
+"error"` is reserved for calls that could not be answered. With `create: true` an exact match
+reports the matching slot and `created: false`; there is nothing to create.
+
+**How the mix actually works — read this before choosing filaments.** A mixed slot **alternates
+layers** of its components, so the result is close to a weighted average of the component RGB
+values, *not* subtractive pigment mixing. Cyan + magenta gives lavender, not blue; magenta + yellow
+gives salmon, not red. A CMY filament set does not behave like printer inks.
+
+### get_color_palette
+Enumerate an achievable palette of filament mixes (pairs, and optionally triples) from the loaded
+physical filaments — a shortlist to choose from before painting.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `max_count` | integer | No | Max entries. Default 12, cap 48. |
+| `max_components` | integer | No | `2` for pairs only, `3` to include triples. Default 2. |
+| `material_type` | string | No | Restrict to this filament type. |
+
+**Returns:**
+```json
+{
+  "status": "success",
+  "palette": [
+    {"components": [1, 2], "ratios": [70, 30], "predicted_color": "#5FC9E8", "measured": true}
+  ]
+}
+```
+
+`measured: true` means the colour came from the standard recipe table rather than the blend model.
+Entries within ΔE 5 of a loaded filament, or of an already-accepted entry, are dropped, and the
+list is ordered by hue.
 
 ---
 

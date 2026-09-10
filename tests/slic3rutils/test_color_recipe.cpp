@@ -61,6 +61,21 @@ TEST_CASE("a one-component result is an exact match, not a failure", "[orcamcp][
     CHECK(recipe.hexes == std::vector<std::string>{"#00FFFF"});
 }
 
+TEST_CASE("an exact match reports 100 even if the source said otherwise", "[orcamcp][colorrecipe]")
+{
+    // recommend_from_physical_filaments fills ratio from its recipe table; for a single component
+    // that number is not necessarily 100, and suggest_color_mix's response promises ratios that
+    // sum to 100 -- a caller feeds them straight to set_mixed_filament.
+    ColorDecomposeRecipeResult result;
+    result.valid = true;
+    result.components = {component(4, "#00FFFF", 70)};
+
+    const auto recipe = color_mix_recipe_from_result(result);
+
+    CHECK(recipe.exact_match);
+    CHECK(recipe.ratios == std::vector<int>{100});
+}
+
 TEST_CASE("an invalid or empty result stays invalid", "[orcamcp][colorrecipe]")
 {
     ColorDecomposeRecipeResult not_valid;

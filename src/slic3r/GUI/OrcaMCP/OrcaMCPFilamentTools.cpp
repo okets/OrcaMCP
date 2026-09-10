@@ -2,6 +2,7 @@
 #include "OrcaMCPServer.hpp"
 #include "OrcaMCPCommon.hpp"
 #include "OrcaMCPFilamentUtils.hpp"
+#include "OrcaMCPColorRecipe.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "libslic3r/ColorDecomposeRecipe.hpp"
@@ -288,57 +289,59 @@ void OrcaMCPServer::register_filament_tools()
 
                 const ColorDecomposeRecipeResult result =
                     recommend_from_physical_filaments(target, physicals, effective_material_type);
-                if (!result.valid)
+                const ColorMixRecipe recipe = color_mix_recipe_from_result(result);
+                if (!recipe.valid)
                     return nlohmann::json{{"status", "error"}, {"message", "no mixable recipe found for target_color"}};
-                if (result.components.size() < 2) {
-                    const auto& c = result.components.front();
-                    return nlohmann::json{{"status", "error"}, {"message",
-                        "target_color already matches physical filament " + std::to_string(c.filament_index) +
-                        " (" + c.color_hex + "); no mix needed"}};
-                }
 
-                std::vector<std::string> hexes;
-                std::vector<int> ratios;
-                std::vector<unsigned int> components;
-                for (const auto& c : result.components) {
-                    hexes.push_back(c.color_hex);
-                    ratios.push_back(c.ratio);
-                    components.push_back(c.filament_index);
-                }
-
-                // gui_mix_color (never the measured table) so predicted_color always matches the
-                // color Sidebar::apply_mixed_filament will actually give the slot below when
-                // create: true. This tool never consults the measured table, so "measured" is
-                // always reported false here (get_color_palette is the one that can be true).
-                const std::string predicted_color = gui_mix_color(hexes, ratios);
-                const double delta_e = color_delta_e_hex(target_color, predicted_color);
+                // An exact match is the useful answer "load that slot, no mix required" -- not a
+                // failure. It used to be returned as status: error, so an agent walking a set of
+                // target colours had to match on the message text to carry on. status: error is
+                // now reserved for calls that could not be answered at all.
+                const std::string predicted_color =
+                    recipe.exact_match ? recipe.hexes.front() : gui_mix_color(recipe.hexes, recipe.ratios);
+                const double delta_e =
+                    recipe.exact_match ? 0.0 : color_delta_e_hex(target_color, predicted_color);
 
                 nlohmann::json out = {
                     {"status", "success"},
                     {"target_color", target_color},
                     {"recipe", {
-                        {"components", components},
-                        {"ratios", ratios},
+                        {"components", recipe.components},
+                        {"ratios", recipe.ratios},
                         {"predicted_color", predicted_color},
                         {"measured", false}
                     }},
                     {"delta_e", delta_e},
+                    {"exact_match", recipe.exact_match},
                     {"slot", nullptr}
                 };
+                if (recipe.exact_match)
+                    out["message"] = "target_color already matches physical filament " +
+                                     std::to_string(recipe.components.front()) +
+                                     " (" + recipe.hexes.front() + "); no mix needed";
 
                 if (create) {
-                    // Route through the same params-shaped entry point set_mixed_filament uses,
-                    // rather than hand-building a MixedFilamentResult, so there is one place
-                    // (mixed_result_from_params) that turns {components, ratios} into a request.
-                    const nlohmann::json synthetic_params = {{"components", components}, {"ratios", ratios}};
-                    MixedFilamentResult req;
-                    std::string error;
-                    if (!mixed_result_from_params(synthetic_params, req, error))
-                        return nlohmann::json{{"status", "error"}, {"message", error}};
-                    const int idx = wxGetApp().sidebar().apply_mixed_filament(req, -1, error);
-                    if (idx < 0)
-                        return nlohmann::json{{"status", "error"}, {"message", error}};
-                    out["slot"] = idx + 1;
+                    // An exact match has nothing to create: apply_mixed_filament needs 2-3
+                    // components, and the slot the caller wants is already loaded.
+                    if (recipe.exact_match) {
+                        out["slot"] = recipe.components.front();
+                        out["created"] = false;
+                    } else {
+                        // Route through the same params-shaped entry point set_mixed_filament uses,
+                        // rather than hand-building a MixedFilamentResult, so there is one place
+                        // (mixed_result_from_params) that turns {components, ratios} into a request.
+                        const nlohmann::json synthetic_params = {{"components", recipe.components},
+                                                                 {"ratios", recipe.ratios}};
+                        MixedFilamentResult req;
+                        std::string error;
+                        if (!mixed_result_from_params(synthetic_params, req, error))
+                            return nlohmann::json{{"status", "error"}, {"message", error}};
+                        const int idx = wxGetApp().sidebar().apply_mixed_filament(req, -1, error);
+                        if (idx < 0)
+                            return nlohmann::json{{"status", "error"}, {"message", error}};
+                        out["slot"] = idx + 1;
+                        out["created"] = true;
+                    }
                     out["active_warnings"] = get_active_warnings_json(wxGetApp().plater());
                 }
                 return out;
