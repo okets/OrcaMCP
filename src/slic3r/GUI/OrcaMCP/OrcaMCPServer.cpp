@@ -871,8 +871,8 @@ void OrcaMCPServer::register_builtin_tools()
     register_tool({
         "get_presets",
         "List the printer, filament and print presets available for the selected printer. "
-        "Returns names and identifying fields only; pass summary:false for full configs "
-        "(large -- always narrow it with type/vendor/name_contains first).",
+        "Returns names and identifying fields only; pass summary:false for full configs. "
+        "Capped per type (default 25) -- narrow it with type/vendor/name_contains, or raise limit.",
         {
             {"type", "object"},
             {"properties", {
@@ -894,6 +894,13 @@ void OrcaMCPServer::register_builtin_tools()
                     {"default", true},
                     {"description", "true (default): name, vendor, filament_type/printer_model and flags. "
                                     "false: also every config key of every matching preset."}
+                }},
+                {"limit", {
+                    {"type", "integer"},
+                    {"minimum", 0},
+                    {"description", "Max presets per type. Default 25 with summary, 5 without. "
+                                    "0 = no cap (the unfiltered summary list is ~54,600 characters "
+                                    "and overflows most MCP clients)."}
                 }}
             }}
         },
@@ -903,6 +910,10 @@ void OrcaMCPServer::register_builtin_tools()
             query.name_contains = params.value("name_contains", std::string());
             if (params.contains("summary") && !parse_boolean_param(params["summary"], query.summary))
                 return nlohmann::json{{"status", "error"}, {"message", "summary must be a boolean"}};
+            if (params.contains("limit") && !parse_integer_param(params["limit"], query.limit))
+                return nlohmann::json{{"status", "error"}, {"message", "limit must be an integer"}};
+            if (query.limit < 0)
+                return nlohmann::json{{"status", "error"}, {"message", "limit must be 0 or more; 0 means no cap"}};
 
             std::string type = params.value("type", std::string());
             if (type == "all")
@@ -913,29 +924,45 @@ void OrcaMCPServer::register_builtin_tools()
 
             return run_on_main_thread([query, type]() -> nlohmann::json {
                 nlohmann::json result;
+                std::map<std::string, PresetListCount> counts;
                 if (type.empty()) {
-                    result = OrcaMCPPresetConfigUtils::GetAllPresetJson(query);
+                    result = OrcaMCPPresetConfigUtils::GetAllPresetJson(query, counts);
                 } else if (type == "printer") {
-                    result = {{"printerPresets", OrcaMCPPresetConfigUtils::GetPresetsJson(Preset::TYPE_PRINTER, query)}};
+                    result = {{"printerPresets", OrcaMCPPresetConfigUtils::GetPresetsJson(
+                                                     Preset::TYPE_PRINTER, query, counts["printerPresets"])}};
                 } else if (type == "filament") {
-                    result = {{"filamentPresets", OrcaMCPPresetConfigUtils::GetPresetsJson(Preset::TYPE_FILAMENT, query)}};
+                    result = {{"filamentPresets", OrcaMCPPresetConfigUtils::GetPresetsJson(
+                                                      Preset::TYPE_FILAMENT, query, counts["filamentPresets"])}};
                 } else {
-                    result = {{"printProcessPresets", OrcaMCPPresetConfigUtils::GetPresetsJson(Preset::TYPE_PRINT, query)}};
+                    result = {{"printProcessPresets", OrcaMCPPresetConfigUtils::GetPresetsJson(
+                                                          Preset::TYPE_PRINT, query, counts["printProcessPresets"])}};
                 }
                 // Say what was searched and how much of it came back, so a caller can tell an empty
                 // list from a filter that was too narrow, and knows the list is already restricted
-                // to presets compatible with the selected printer.
-                nlohmann::json counts = nlohmann::json::object();
-                for (const auto& [key, presets] : result.items())
-                    counts[key] = presets.size();
+                // to presets compatible with the selected printer. `counts` keeps its published
+                // meaning -- every preset that matched -- and `returned` says how many fit.
+                nlohmann::json matched_counts = nlohmann::json::object();
+                nlohmann::json returned_counts = nlohmann::json::object();
+                bool truncated = false;
+                for (const auto& [key, count] : counts) {
+                    matched_counts[key] = count.matched;
+                    returned_counts[key] = count.returned;
+                    truncated = truncated || count.returned < count.matched;
+                }
                 result["query"] = {
                     {"type", type.empty() ? nlohmann::json(nullptr) : nlohmann::json(type)},
                     {"vendor", query.vendor},
                     {"name_contains", query.name_contains},
                     {"summary", query.summary},
+                    {"limit", preset_query_effective_limit(query.limit, query.summary)},
                     {"compatible_with_selected_printer_only", true},
-                    {"counts", counts}
+                    {"counts", matched_counts},
+                    {"returned", returned_counts},
+                    {"truncated", truncated}
                 };
+                const std::string hint = preset_truncation_hint(counts);
+                if (!hint.empty())
+                    result["hint"] = hint;
                 return result;
             });
         }

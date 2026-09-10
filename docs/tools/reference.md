@@ -466,12 +466,17 @@ boxes show: visible presets compatible with the current printer, system and user
 | `vendor` | string | No | Only presets from this vendor (case-insensitive substring) |
 | `name_contains` | string | No | Only presets whose name contains this (case-insensitive) |
 | `summary` | boolean | No | Default `true`: identifying fields only. `false` adds every config key of every match. |
+| `limit` | integer | No | Max presets per type. Default 25 with `summary`, 5 without. `0` = no cap. |
 
-**Why `summary` defaults to true:** the unfiltered full-config response is ~1.9 MB, which no MCP
-client can accept - the tool was effectively unusable. The response shape is unchanged (the same
-`printerPresets` / `filamentPresets` / `printProcessPresets` arrays of preset objects, with the same
-`name` / `is_default` / `is_selected` fields); `summary` only decides whether each preset carries its
-`config` blob. Ask for `summary: false` **with** a filter when you need actual values.
+**Why it is capped and summarised:** the unfiltered full-config response is ~1.9 MB and the
+unfiltered `summary` response is still ~54,600 characters — both over an MCP client's per-result
+limit, so the tool could not be answered at all. `summary` decides whether each preset carries its
+`config` blob; `limit` decides how many presets of each type come back. The response shape is
+otherwise unchanged (the same `printerPresets` / `filamentPresets` / `printProcessPresets` arrays).
+
+When the cap dropped anything, the response carries a top-level `hint` naming the filters, and
+`query.truncated` is `true`. `query.counts` still reports **every** preset that matched;
+`query.returned` reports how many are in the arrays.
 
 **Example - find a PETG profile for the current printer in one call:**
 ```json
@@ -497,14 +502,36 @@ client can accept - the tool was effectively unusable. The response shape is unc
     "vendor": "Flashforge",
     "name_contains": "PETG",
     "summary": true,
+    "limit": 25,
     "compatible_with_selected_printer_only": true,
-    "counts": {"filamentPresets": 4}
+    "counts": {"filamentPresets": 4},
+    "returned": {"filamentPresets": 4},
+    "truncated": false
   }
 }
 ```
 
 `filament_type` (filaments) and `printer_model` (printers) are included whenever the preset has
 them, so material searches do not need the full config.
+
+**Returns (unfiltered, truncated):**
+```json
+{
+  "filamentPresets": ["... 25 presets ..."],
+  "query": {
+    "type": "filament",
+    "vendor": "",
+    "name_contains": "",
+    "summary": true,
+    "limit": 25,
+    "compatible_with_selected_printer_only": true,
+    "counts": {"filamentPresets": 318},
+    "returned": {"filamentPresets": 25},
+    "truncated": true
+  },
+  "hint": "Showing 25 of 318 filamentPresets. Narrow it with type, vendor or name_contains, raise limit, or pass limit: 0 for the whole list."
+}
+```
 
 ---
 

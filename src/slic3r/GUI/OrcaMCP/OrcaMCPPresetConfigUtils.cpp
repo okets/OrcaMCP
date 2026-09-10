@@ -82,6 +82,29 @@ bool preset_query_matches(const std::string& name, const std::string& vendor, co
     return true;
 }
 
+int preset_query_effective_limit(int requested_limit, bool summary)
+{
+    if (requested_limit >= 0)
+        return requested_limit;
+    return summary ? 25 : 5;
+}
+
+std::string preset_truncation_hint(const std::map<std::string, PresetListCount>& counts)
+{
+    std::string truncated;
+    for (const auto& [name, count] : counts) {
+        if (count.returned >= count.matched)
+            continue;
+        if (!truncated.empty())
+            truncated += ", ";
+        truncated += std::to_string(count.returned) + " of " + std::to_string(count.matched) + " " + name;
+    }
+    if (truncated.empty())
+        return {};
+    return "Showing " + truncated + ". Narrow it with type, vendor or name_contains, "
+           "raise limit, or pass limit: 0 for the whole list.";
+}
+
 namespace {
 
 // The text form of one array element. Booleans become "1"/"0" because ConfigOptionBools accepts
@@ -171,12 +194,20 @@ ConfigValueText config_value_to_string(const nlohmann::json& value, ConfigOption
 }
 
 nlohmann::json OrcaMCPPresetConfigUtils::PresetsToJson(const std::vector<std::pair<const Preset*, bool>>& presets,
-                                                      const PresetQuery& query)
+                                                       const PresetQuery& query, PresetListCount& count)
 {
+    const int limit = preset_query_effective_limit(query.limit, query.summary);
     nlohmann::json j_array = nlohmann::json::array();
+    count = {};
     for (const auto& [preset, is_selected] : presets) {
         if (!preset_query_matches(preset->name, preset_vendor(preset), query))
             continue;
+        // Every match is counted, whether or not it fits: a caller that is only told what it got
+        // back cannot tell "that is all of them" from "that is the first page".
+        ++count.matched;
+        if (limit > 0 && count.returned >= limit)
+            continue;
+        ++count.returned;
         j_array.push_back(PresetToJson(preset, is_selected, query));
     }
     return j_array;
@@ -213,7 +244,9 @@ nlohmann::json OrcaMCPPresetConfigUtils::PresetToJson(const Preset* preset, bool
     return j;
 }
 
-nlohmann::json OrcaMCPPresetConfigUtils::GetPresetsJson(Preset::Type type, const PresetQuery& query) {
+nlohmann::json OrcaMCPPresetConfigUtils::GetPresetsJson(Preset::Type type, const PresetQuery& query,
+                                                        PresetListCount& count) {
+    count = {};
     Tab* tab = wxGetApp().get_tab(type);
     if (!tab) {
         return nlohmann::json::array();
@@ -238,7 +271,7 @@ nlohmann::json OrcaMCPPresetConfigUtils::GetPresetsJson(Preset::Type type, const
         }
     }
 
-    return PresetsToJson(presets, query);
+    return PresetsToJson(presets, query, count);
 }
 
 nlohmann::json OrcaMCPPresetConfigUtils::GetEditedPresetJson(Preset::Type type) {
@@ -263,10 +296,11 @@ nlohmann::json OrcaMCPPresetConfigUtils::GetEditedPresetJson(Preset::Type type) 
 }
 
 
-nlohmann::json OrcaMCPPresetConfigUtils::GetAllPresetJson(const PresetQuery& query) {
-    nlohmann::json printerPresetsJson = GetPresetsJson(Preset::Type::TYPE_PRINTER, query);
-    nlohmann::json filamentPresetsJson = GetPresetsJson(Preset::Type::TYPE_FILAMENT, query);
-    nlohmann::json printPresetsJson = GetPresetsJson(Preset::Type::TYPE_PRINT, query);
+nlohmann::json OrcaMCPPresetConfigUtils::GetAllPresetJson(const PresetQuery& query,
+                                                          std::map<std::string, PresetListCount>& counts) {
+    nlohmann::json printerPresetsJson = GetPresetsJson(Preset::Type::TYPE_PRINTER, query, counts["printerPresets"]);
+    nlohmann::json filamentPresetsJson = GetPresetsJson(Preset::Type::TYPE_FILAMENT, query, counts["filamentPresets"]);
+    nlohmann::json printPresetsJson = GetPresetsJson(Preset::Type::TYPE_PRINT, query, counts["printProcessPresets"]);
 
     return {
         {"printerPresets", printerPresetsJson},

@@ -2,6 +2,7 @@
 #define slic3r_GUI_OrcaMCPPresetConfigUtils_hpp_
 
 #include <nlohmann/json.hpp>
+#include <map>
 #include <string>
 #include <vector>
 #include "libslic3r/Preset.hpp"
@@ -18,11 +19,33 @@ struct PresetQuery
     std::string vendor;        // case-insensitive substring of the preset's vendor, empty = any
     std::string name_contains; // case-insensitive substring of the preset name, empty = any
     bool        summary = true;
+    // Presets returned per type. Even at summary: true the unfiltered response was ~54,600
+    // characters -- over an MCP client's per-result limit, so the tool built to be answerable
+    // still could not be answered. -1 means "the default for this summary"; 0 means no cap.
+    int         limit = -1;
 };
 
 // Pure: the two text filters, applied the way a person means them (case-insensitive "contains").
 // An empty filter matches everything, including a preset with no vendor at all.
 bool preset_query_matches(const std::string& name, const std::string& vendor, const PresetQuery& query);
+
+// How many presets of one type the query matched, and how many of them the response carries.
+// They differ only when the cap truncated the list -- and the true total is the number a caller
+// needs to know its filter was too wide, which is exactly what a truncated array cannot tell it.
+struct PresetListCount
+{
+    int matched  = 0;
+    int returned = 0;
+};
+
+// The per-type cap actually applied: the caller's `limit` when it gave one (0 = no cap), else 25
+// summary rows or 5 full-config rows -- a full-config row is roughly 5.7 KB against a summary
+// row's 164 characters, so the same count is not the same response size.
+int preset_query_effective_limit(int requested_limit, bool summary);
+
+// The one-line hint a truncated response carries, naming the filters that would narrow it.
+// Empty when nothing was dropped.
+std::string preset_truncation_hint(const std::map<std::string, PresetListCount>& counts);
 
 // One JSON value from a tool call, turned into the text ConfigOption::deserialize expects.
 struct ConfigValueText
@@ -78,11 +101,12 @@ class OrcaMCPPresetConfigUtils {
 public:
     static nlohmann::json PresetToJson(const Preset* preset, bool is_selected, const PresetQuery& query);
     static nlohmann::json PresetsToJson(const std::vector<std::pair<const Preset*, bool>>& presets,
-                                        const PresetQuery& query);
+                                        const PresetQuery& query, PresetListCount& count);
     // Only presets the tab's combo box lists, i.e. the visible ones compatible with the selected
-    // printer, filtered by `query`.
-    static nlohmann::json GetPresetsJson(Preset::Type type, const PresetQuery& query = {});
-    static nlohmann::json GetAllPresetJson(const PresetQuery& query = {});
+    // printer, filtered by `query` and capped by its limit. `count` reports both totals.
+    static nlohmann::json GetPresetsJson(Preset::Type type, const PresetQuery& query, PresetListCount& count);
+    static nlohmann::json GetAllPresetJson(const PresetQuery& query,
+                                           std::map<std::string, PresetListCount>& counts);
     static nlohmann::json GetAllEditedPresetJson();
     static nlohmann::json GetEditedPresetJson(Preset::Type type);
     static void DiscardCurrentPresetChanges();
