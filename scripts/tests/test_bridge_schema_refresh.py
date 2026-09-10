@@ -11,9 +11,12 @@ whose running server had them.
 """
 
 import importlib.util
+import io
+import json
 import os
 import sys
 import unittest
+from contextlib import redirect_stdout
 from unittest import mock
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -21,7 +24,10 @@ BRIDGE_PATH = os.path.join(REPO_ROOT, "scripts", "orcamcp-bridge.py")
 
 
 def load_bridge():
-    sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
+    """The bridge's filename has a hyphen, so it cannot be imported by name."""
+    scripts_dir = os.path.join(REPO_ROOT, "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
     spec = importlib.util.spec_from_file_location("orcamcp_bridge", BRIDGE_PATH)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -39,8 +45,10 @@ class ListChangedCapabilityTests(unittest.TestCase):
 
 class RefreshNotificationTests(unittest.TestCase):
     def setUp(self):
+        # A freshly loaded module already starts with _served_static_tools/_live_contact/
+        # _notified_tools_changed all False and _connection_cache at its initial value, so there
+        # is nothing here to reset.
         self.bridge = load_bridge()
-        self.bridge._connection_cache = {"connected": None, "last_check": 0}
 
     def serve_static_tools_list(self):
         with mock.patch.object(self.bridge, "check_orcaslicer_connection", return_value=self.bridge.DOWN):
@@ -72,6 +80,89 @@ class StaticSchemaFreshnessTests(unittest.TestCase):
         self.assertEqual(
             set(properties), {"type", "vendor", "name_contains", "summary", "limit"}
         )
+
+
+class LiveResponse:
+    """Just enough of urlopen's context-manager result for check_orcaslicer_connection's probe."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+class StartOrcaAlreadyRunningNotifiesTests(unittest.TestCase):
+    """Regression for the hole in the fix's first cut: launch_orcamcp's own "already running"
+    probe is a place liveness is proven, but it used to bypass note_live_contact() entirely.
+    Concretely: client starts before OrcaSlicer -> snapshot served; the user starts OrcaSlicer by
+    hand; the client calls start_orca; the bridge's :146-style check sees LIVE and replies
+    "already running" -- that reply must be the trigger, not the client's next unrelated call.
+    """
+
+    def setUp(self):
+        self.bridge = load_bridge()
+
+    def test_already_running_probe_counts_as_live_contact(self):
+        with mock.patch.object(self.bridge, "check_orcaslicer_connection", return_value=self.bridge.DOWN):
+            self.bridge.handle_local_request({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+        self.assertTrue(self.bridge._served_static_tools)
+        self.assertFalse(self.bridge.tools_changed_notification_due())
+
+        # No mock of check_orcaslicer_connection here: this exercises the real probe, through
+        # launch_orcamcp's "already running" early return, down to urlopen.
+        with mock.patch.object(self.bridge.urllib.request, "urlopen", return_value=LiveResponse()):
+            result = self.bridge.launch_orcamcp()
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["message"], "OrcaMCP is already running")
+        self.assertTrue(self.bridge.tools_changed_notification_due())
+
+
+class ObservableNotificationTests(unittest.TestCase):
+    """The predicate alone (RefreshNotificationTests) does not prove the bridge ever prints
+    anything, or prints it correctly: the notification literal was duplicated at two call sites
+    in main(), and nothing asserted the emitted method name, the missing "id", or that the line
+    is emitted at all. This drives the real main() loop over fake stdin/stdout.
+    """
+
+    def setUp(self):
+        self.bridge = load_bridge()
+
+    def test_notification_follows_the_response_as_its_own_line_with_no_id(self):
+        # First request: OrcaSlicer is not up yet, so the static (possibly stale) list is served.
+        # Second request: OrcaSlicer has since answered, so the forwarded response must be
+        # followed by exactly one notifications/tools/list_changed line.
+        verdicts = iter([self.bridge.DOWN, self.bridge.LIVE])
+
+        def fake_check(*args, **kwargs):
+            verdict = next(verdicts)
+            if verdict == self.bridge.LIVE:
+                self.bridge.note_live_contact()
+            return verdict
+
+        forwarded_response = {"jsonrpc": "2.0", "id": 2, "result": {"ok": True}}
+        requests = [
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+            {"jsonrpc": "2.0", "id": 2, "method": "get_scene_info"},
+        ]
+        stdin = io.StringIO("\n".join(json.dumps(r) for r in requests) + "\n")
+        stdout = io.StringIO()
+
+        with mock.patch.object(self.bridge, "check_orcaslicer_connection", side_effect=fake_check), \
+             mock.patch.object(self.bridge, "send_request", return_value=forwarded_response), \
+             mock.patch.object(self.bridge.sys, "stdin", stdin), \
+             redirect_stdout(stdout):
+            self.bridge.main()
+
+        lines = [line for line in stdout.getvalue().splitlines() if line]
+        self.assertEqual(len(lines), 3, lines)
+        self.assertEqual(json.loads(lines[1]), forwarded_response)
+        # The exact line the bridge emits, byte for byte -- not just "a dict with the right keys".
+        self.assertEqual(lines[2], self.bridge.TOOLS_CHANGED_NOTIFICATION)
+        notification = json.loads(lines[2])
+        self.assertEqual(notification, {"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})
+        self.assertNotIn("id", notification)
 
 
 if __name__ == "__main__":
