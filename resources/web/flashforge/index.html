@@ -441,12 +441,35 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
 
   var pending = {}, seq = 0;
 
+  /* Every reply is evaluated back into this document by the host, so a request whose answer never
+     arrives - the web view was rebuilt, the handler is gone, a CallAfter was dropped on the way to
+     a closing frame - leaves its promise pending for ever and its control disabled for ever with
+     it. Two idle cadences (the host's POLL_IDLE is 5 s) is longer than any answer legitimately
+     takes and still expires inside WAIT_MS, so a lost reply says "OrcaSlicer did not answer" rather
+     than waiting to blame the printer for not changing. */
+  var CALL_TIMEOUT_MS = 10000;
+
+  /* Takes a pending call off the books, timer and all, whatever settles it. */
+  function takePending(id){
+    var p = pending[id];
+    if (!p) return null;
+    delete pending[id];
+    if (p.timer) clearTimeout(p.timer);
+    return p;
+  }
+
   function makeBridge(){
     window.orcaFlashforge = { receive: receive };
     return { call: function(method, params){
       var id = ++seq;
       return new Promise(function(resolve, reject){
-        pending[id] = { resolve: resolve, reject: reject };
+        var entry = { resolve: resolve, reject: reject };
+        entry.timer = setTimeout(function(){
+          if (pending[id] !== entry) return;
+          takePending(id);
+          reject(new Error("OrcaSlicer did not answer, so nothing was confirmed."));
+        }, CALL_TIMEOUT_MS);
+        pending[id] = entry;
         window.wx.postMessage(JSON.stringify({ id: id, method: method, params: params || {} }));
       });
     }};
@@ -465,7 +488,10 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
       suspended = true;
       waiting   = {};
       for (var id in pending)
-        if (pending.hasOwnProperty(id)) pending[id].reject(new Error("The console was parked."));
+        if (pending.hasOwnProperty(id)){
+          var dropped = takePending(id);
+          if (dropped) dropped.reject(new Error("The console was parked."));
+        }
       pending = {};
       disarmStop();
       repaint();
@@ -474,13 +500,12 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     if (msg.method === "resumed"){
       suspended    = false;
       lastStatusAt = Date.now();
-      askNow();
+      askAgainNow();
       return;
     }
 
-    var p = pending[msg.id];
+    var p = takePending(msg.id);
     if (p){
-      delete pending[msg.id];
       if (msg.ok) p.resolve(msg.result); else p.reject(new Error(msg.error || "failed"));
     }
     if (msg.method === "status")
@@ -531,9 +556,12 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
   function setHTML(node, html){ if (node && node.__h !== html){ node.__h = html; node.innerHTML = html; } }
   /* Markup that contains a temperature chip. Rebuilding it while one of those chips is an open
      editor would strand what the user is typing, so the rebuild waits for the next poll - by
-     which time the editor has almost certainly closed. */
+     which time the editor has almost certainly closed. The question is asked of this panel only:
+     an editor open on a tool card is no reason for the environment rows to stop redrawing. */
   function setStructure(node, html){
-    if (node && node.__h !== html && !document.querySelector(".tset-edit")) setHTML(node, html);
+    if (!node || node.__h === html) return;
+    if (node.querySelector(".tset-edit")) return;
+    setHTML(node, html);
   }
   function setText(node, text){ if (node && node.textContent !== text) node.textContent = text; }
   function show(node, on){ if (node) node.hidden = !on; }
@@ -740,7 +768,10 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
 
   function renderMachine(p, raw, pro){
     var shot = el("machineShot");
-    var src  = num(p.pid) === 40 ? "printer-c5.png" : (num(p.pid) === 41 ? "printer-c5pro.png" : "");
+    /* The remembered pid, not this snapshot's: which machine this is does not change when the
+       network hiccups, and reading p.pid directly blanked the photo on every blip while the badges
+       beside it - which do use the sticky value - correctly kept what they had. */
+    var src  = knownPid === 40 ? "printer-c5.png" : (knownPid === 41 ? "printer-c5pro.png" : "");
     if (src && shot.getAttribute("src") !== src){
       shot.setAttribute("src", src);
       shot.alt = (p.name || "Flashforge printer") + ", four-toolhead 3D printer";
@@ -1145,9 +1176,15 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     if (!opts.grouped) setFlag(node, "data-pending", !!w);
   }
 
-  var stopArmed = false, stopTimer = null, stopSafeUntil = 0;
-  function disarmStop(){
+  var stopArmed = false, stopTimer = null, stopSafeTimer = null, stopSafeUntil = 0;
+  /* Both of the confirmation's timers, together: an arm that left one of them running would have
+     an older timeout repaint - or disarm - the confirmation the latest click just put up. */
+  function clearStopTimers(){
     if (stopTimer){ clearTimeout(stopTimer); stopTimer = null; }
+    if (stopSafeTimer){ clearTimeout(stopSafeTimer); stopSafeTimer = null; }
+  }
+  function disarmStop(){
+    clearStopTimers();
     if (!stopArmed) return;
     stopArmed = false;
     repaint();
@@ -1155,14 +1192,17 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
   /* Focus goes to Keep printing, and Yes stays dead for a moment: a button fires on Enter, so
      arming under a held or doubled Enter must not be able to cancel a print by itself. */
   function armStop(){
+    clearStopTimers();
     stopArmed     = true;
     stopSafeUntil = Date.now() + STOP_SAFE_MS;
-    if (stopTimer) clearTimeout(stopTimer);
-    stopTimer = setTimeout(disarmStop, STOP_ARM_MS);
+    stopTimer     = setTimeout(disarmStop, STOP_ARM_MS);
     repaint();
     var no = ctlNode("stop-no");
     if (no) no.focus();
-    setTimeout(function(){ if (stopArmed) repaint(); }, STOP_SAFE_MS + 20);
+    stopSafeTimer = setTimeout(function(){
+      stopSafeTimer = null;
+      if (stopArmed) repaint();
+    }, STOP_SAFE_MS + 20);
   }
 
   function applyControls(s){
@@ -1613,9 +1653,12 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
   /* Which machine this is does not change when the network hiccups. Remembering it keeps the
      Environment panel's shape - and therefore its markup - stable across a blip, so the rows do
      not tear down and rebuild empty. */
-  var knownPro = false;
+  var knownPro = false, knownPid = 0;
   function isPro(p){
-    if (num(p.pid) > 0) knownPro = num(p.pid) === 41;
+    if (num(p.pid) > 0){
+      knownPid = num(p.pid);
+      knownPro = knownPid === 41;
+    }
     return knownPro;
   }
 
@@ -1669,13 +1712,34 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
      must not be able to leave the page with stale data nobody refreshes. */
   var everVisible = (typeof document.hidden === "boolean") ? !document.hidden : true;
 
+  /* Every `status` request restarts the host's poller, so an unanswered one is a request that
+     reached a printer nobody is talking to - and repeating it every watchdog tick for as long as
+     the page is open is how a detached console hammers a machine. Each unanswered ask doubles the
+     gap before the next, from three cadences up to a minute; one answer puts it straight back to
+     the cadence. The cap is the promise timeout's opposite number: long enough not to be traffic,
+     short enough that a printer coming back is noticed within a minute. */
+  var ASK_GAP_MAX_MS = 60000;
+  var askGapMs = 0, lastAskAt = 0;
+
+  function quietLimit(){ return Math.max(8000, lastPollMs * 3); }
+
   function askNow(){
-    if (bridge && !suspended) bridge.call("status").then(onStatus, function(){ /* the next tick tries again */ });
+    if (!bridge || suspended) return;
+    lastAskAt = Date.now();
+    askGapMs  = Math.min(askGapMs ? askGapMs * 2 : quietLimit(), ASK_GAP_MAX_MS);
+    bridge.call("status").then(onStatus, function(){ /* the next tick tries again, later */ });
+  }
+
+  /* A resume or a tab coming back is a fresh reason to ask, not another unanswered retry. */
+  function askAgainNow(){
+    askGapMs = 0;
+    askNow();
   }
 
   function onStatus(s){
     lastStatusAt = Date.now();
     lastPollMs   = num((s && s.poll_ms), 5000);
+    askGapMs     = 0; // answered: back to the cadence
     s = s || { connected:false, error:"Empty status" };
     /* Before painting: every control still waiting either gets what it asked for
        or, once the wait is up, says so and settles on what the printer reports. */
@@ -1688,14 +1752,15 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     // Parked, or nobody is looking: the host pushes when it has something to say,
     // and a page that keeps asking anyway is a page that undoes its own suspend.
     if (!bridge || suspended || (everVisible && document.hidden)) return;
-    if (Date.now() - lastStatusAt > Math.max(8000, lastPollMs * 3))
-      askNow();
+    if (Date.now() - lastStatusAt <= quietLimit()) return;
+    if (Date.now() - lastAskAt < askGapMs) return;
+    askNow();
   }, 2000);
 
   document.addEventListener("visibilitychange", function(){
     if (document.hidden) return;
     everVisible = true;
-    askNow();
+    askAgainNow();
   });
 
   /* ══ Start ════════════════════════════════════════════════════════════
@@ -1715,24 +1780,32 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
      opened in a browser" - and never shows sample figures inside the app. */
   var inApp = /BBL-Slicer/.test(navigator.userAgent);
 
+  /* Quick while the host is plausibly still wiring the bridge up, then slower for ever: inside the
+     app the bridge can also never arrive (a web view rebuilt without its handler), and a 250 ms
+     spin for the life of the app is not the way to wait for that. Backing off to a two-second look
+     still picks up a bridge that does turn up, within one look of it appearing. */
+  var BRIDGE_LOOK_MS = 250, BRIDGE_LOOK_MAX_MS = 2000, BRIDGE_SAMPLE_AFTER_MS = 1500;
+
   if (bridge){
     start();
   } else {
     render({ connected:false, connecting:true });
-    var waited = 0;
-    var wait = setInterval(function(){
+    var waited = 0, look = BRIDGE_LOOK_MS;
+    var lookForBridge = function(){
       if (window.wx && typeof window.wx.postMessage === "function"){
-        clearInterval(wait);
         bridge = makeBridge();
         start();
         return;
       }
-      waited += 250;
-      if (!inApp && waited >= 1500){
-        clearInterval(wait);
+      waited += look;
+      if (!inApp && waited >= BRIDGE_SAMPLE_AFTER_MS){
         render(SAMPLE);
+        return;
       }
-    }, 250);
+      if (waited >= BRIDGE_SAMPLE_AFTER_MS) look = BRIDGE_LOOK_MAX_MS;
+      setTimeout(lookForBridge, look);
+    };
+    setTimeout(lookForBridge, look);
   }
 })();
 </script>
