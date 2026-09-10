@@ -24,7 +24,9 @@ BRIDGE_PATH = os.path.join(REPO_ROOT, "scripts", "orcamcp-bridge.py")
 
 def load_bridge():
     """The bridge's filename has a hyphen, so it cannot be imported by name."""
-    sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
+    scripts_dir = os.path.join(REPO_ROOT, "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
     spec = importlib.util.spec_from_file_location("orcamcp_bridge", BRIDGE_PATH)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -56,6 +58,9 @@ class LivenessVerdictTests(unittest.TestCase):
 
     def test_an_http_error_is_live_because_something_answered(self):
         error = urllib.error.HTTPError(self.bridge.ORCAMCP_URL, 500, "boom", {}, None)
+        # HTTPError substitutes a BytesIO for fp even when constructed with fp=None; leaving it
+        # unclosed triggers a ResourceWarning at GC time ("Implicitly cleaning up <HTTPError ...>").
+        self.addCleanup(error.close)
         self.assertEqual(self.verdict(error), self.bridge.LIVE)
 
     def test_a_timeout_is_busy_not_down(self):
@@ -98,6 +103,13 @@ class VerdictCachingTests(unittest.TestCase):
         ):
             self.bridge.check_orcaslicer_connection(use_cache=True)
         self.assertEqual(self.bridge._connection_cache["connected"], self.bridge.LIVE)
+
+        # DOWN is cached too, so a dead app is not re-probed on every single call.
+        self.bridge._connection_cache = {"connected": None, "last_check": 0}
+        refused = urllib.error.URLError(ConnectionRefusedError(61, "Connection refused"))
+        with mock.patch.object(self.bridge.urllib.request, "urlopen", side_effect=refused):
+            self.bridge.check_orcaslicer_connection(use_cache=True)
+        self.assertEqual(self.bridge._connection_cache["connected"], self.bridge.DOWN)
 
 
 class NotRunningAdviceTests(unittest.TestCase):

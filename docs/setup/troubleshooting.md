@@ -4,11 +4,11 @@ Common issues and solutions when using OrcaMCP.
 
 ## Connection Issues
 
-### "Cannot connect to OrcaSlicer"
+### "Nothing is listening at http://localhost:13618/mcp"
 
 **Symptoms:**
 ```
-Error: Cannot connect to OrcaSlicer at localhost:13618
+Error: Nothing is listening at http://localhost:13618/mcp. OrcaMCP is not running -- use the 'start_orca' tool.
 ```
 
 **Causes & Solutions:**
@@ -33,6 +33,11 @@ Error: Cannot connect to OrcaSlicer at localhost:13618
 
 4. **Firewall blocking**
    - Shouldn't affect localhost, but check firewall if other solutions fail
+
+If instead you saw `OrcaSlicer is reachable but the request did not complete`, that is a
+different verdict (busy, not down) — see the `"OrcaMCP is not running" while it clearly
+is` section below; the fix is to retry or raise `ORCAMCP_TIMEOUT`, not to relaunch
+anything.
 
 ### "Connection refused"
 

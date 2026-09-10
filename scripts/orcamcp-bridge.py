@@ -302,9 +302,11 @@ def check_orcaslicer_connection(use_cache: bool = True, timeout: float = 0.3) ->
     try:
         req = urllib.request.Request(ORCAMCP_URL, method="GET")
         with urllib.request.urlopen(req, timeout=timeout) as response:
-            verdict = LIVE if response.status == 200 else BUSY
+            # Any response, not just a 200, proves something answered.
+            verdict = LIVE
     except Exception as exc:
         verdict = _verdict_for_exception(exc)
+        log_debug(f"Liveness probe verdict {verdict}: {exc!r}")
 
     # BUSY is a momentary state, so it is never cached: caching it is precisely how one timed-out
     # probe turned into three seconds of fabricated "not running" answers.
