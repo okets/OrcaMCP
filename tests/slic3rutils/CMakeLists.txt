@@ -28,6 +28,7 @@ add_executable(${_TEST_NAME}_tests
     test_hex_color.cpp
     test_color_recipe.cpp
     test_material_mapping.cpp
+    test_paint_geometry.cpp
     ../fff_print/test_helpers.cpp
     )
 
