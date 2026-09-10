@@ -435,6 +435,10 @@ HeadlessObject make_headless_object(const indexed_triangle_set& its, const Vec3d
     built.object = built.model.add_object();
     // modify_to_center_geometry = false: recentring would move the mesh under the volume
     // matrix and the hand-checked plate coordinates below would stop being hand-checkable.
+    // Building this from a flat mesh (e.g. two_triangle_rectangle()) logs
+    // "its_convex_hull: Unable to create convex hull" (TriangleMesh.cpp:1366): qhull can't build a
+    // 3-D hull from coplanar points. Expected here, not a bug -- fixtures that don't need a
+    // hand-checkable centroid use its_make_cube instead to keep the test output clean.
     const TriangleMesh mesh(its);
     built.volume = built.object->add_volume(mesh, false);
     ModelInstance* instance = built.object->add_instance();
@@ -467,8 +471,6 @@ TEST_CASE("parse_paint_mode covers the four FacetsAnnotation members", "[orcamcp
 TEST_CASE("every PaintMode round-trips through paint_mode_name and parse_paint_mode",
           "[orcamcp][paint]")
 {
-    // Unlike parse_paint_axis, mode names are exact-match (the header says so): these are tool
-    // parameter values, not single-letter axis input, so there is no case to normalize.
     for (PaintMode mode : {PaintMode::Color, PaintMode::Support, PaintMode::Seam, PaintMode::FuzzySkin}) {
         PaintMode parsed = PaintMode::Color;
         REQUIRE(parse_paint_mode(paint_mode_name(mode), parsed));
@@ -476,9 +478,24 @@ TEST_CASE("every PaintMode round-trips through paint_mode_name and parse_paint_m
     }
 }
 
+TEST_CASE("parse_paint_mode matches parse_paint_axis's case-insensitivity", "[orcamcp][paint]")
+{
+    // Both parsers are reached from the same MCP tool's parameters; disagreeing about case would
+    // cost a caller a wasted round trip on something like "Color".
+    PaintMode mode = PaintMode::Seam;
+    REQUIRE(parse_paint_mode("Color", mode));
+    CHECK(mode == PaintMode::Color);
+    REQUIRE(parse_paint_mode("FUZZY_SKIN", mode));
+    CHECK(mode == PaintMode::FuzzySkin);
+    REQUIRE(parse_paint_mode("SeAm", mode));
+    CHECK(mode == PaintMode::Seam);
+}
+
 TEST_CASE("annotation_for_mode selects the member the GUI gizmo writes", "[orcamcp][paint]")
 {
-    HeadlessObject built = make_headless_object(two_triangle_rectangle(), Vec3d(0, 0, 0));
+    // A closed cube, not the flat rectangle: this test checks addresses, not centroids, so there
+    // is no reason to pay for the convex-hull warning a coplanar mesh logs.
+    HeadlessObject built = make_headless_object(Slic3r::its_make_cube(1.0, 1.0, 1.0), Vec3d(0, 0, 0));
 
     // Identity by address: the four members are the same type, so a wrong mapping here would
     // compile, run, and quietly paint supports when the caller asked for colour.
@@ -507,10 +524,41 @@ TEST_CASE("parse_paint_state names the enforcer/blocker states, and refuses the 
     CHECK_FALSE(parse_paint_state(PaintMode::FuzzySkin, "blocker", state));
     REQUIRE(parse_paint_state(PaintMode::FuzzySkin, "enforcer", state));
     CHECK(state == 1);
+    // "fuzzy_skin" is a synonym for "enforcer" in this mode: it is the token
+    // paint_state_label(FuzzySkin, 1) hands back, and it has to parse to the same state or an
+    // agent that reads a facet's state and echoes it into a write gets rejected for it.
+    state = -99;
+    REQUIRE(parse_paint_state(PaintMode::FuzzySkin, "fuzzy_skin", state));
+    CHECK(state == 1);
+    // The synonym is FuzzySkin-only -- Support has no use for it.
+    CHECK_FALSE(parse_paint_state(PaintMode::Support, "fuzzy_skin", state));
 
     // Colour states are filament slot numbers, not names.
     CHECK_FALSE(parse_paint_state(PaintMode::Color, "enforcer", state));
     CHECK_FALSE(parse_paint_state(PaintMode::Support, "yes", state));
+}
+
+TEST_CASE("paint_state_label and parse_paint_state round-trip for every valid state",
+          "[orcamcp][paint]")
+{
+    // Color's states are filament-slot integers, not names: parse_paint_state rejects Color
+    // outright by design ("colour rejects every name" -- its states go through the tool layer as
+    // an int, never through this parser), so it has no name-based round trip to check here.
+    // Support and Seam accept none/enforcer/blocker; FuzzySkin's only valid states are none and
+    // its enforcer (state 2 -- "blocker" -- has no meaning for FuzzySkin).
+    const std::vector<PaintMode> enforcer_blocker_modes = {PaintMode::Support, PaintMode::Seam};
+    for (PaintMode mode : enforcer_blocker_modes) {
+        for (int state = 0; state <= 2; ++state) {
+            int parsed = -99;
+            REQUIRE(parse_paint_state(mode, paint_state_label(mode, state), parsed));
+            CHECK(parsed == state);
+        }
+    }
+    for (int state = 0; state <= 1; ++state) {
+        int parsed = -99;
+        REQUIRE(parse_paint_state(PaintMode::FuzzySkin, paint_state_label(PaintMode::FuzzySkin, state), parsed));
+        CHECK(parsed == state);
+    }
 }
 
 TEST_CASE("paint_state_label reads a raw state back the way its mode means it", "[orcamcp][paint]")
@@ -543,31 +591,40 @@ TEST_CASE("volume_to_plate composes the instance and volume transforms", "[orcam
     CHECK(volume_to_plate(*built.object, *built.volume, 99).isApprox(to_plate));
 }
 
-TEST_CASE("volume_to_plate composes a translated volume with a translated instance",
+TEST_CASE("volume_to_plate composes a translated volume with a rotated, translated instance",
           "[orcamcp][paint]")
 {
-    // The single-offset test above cannot tell instance.get_matrix() * volume.get_matrix() apart
-    // from either matrix alone, since the volume side was identity. Giving the volume its own
-    // offset too is what actually proves the composition, and its order.
+    // A pure-translation instance cannot tell instance.get_matrix() * volume.get_matrix() apart
+    // from the reverse order, or from either matrix alone: translations commute. Giving the
+    // instance a rotation makes the two orders diverge, so this assertion is load-bearing.
     HeadlessObject built = make_headless_object(two_triangle_rectangle(), Vec3d(150.0, 150.0, 0.0));
     built.volume->set_offset(Vec3d(10.0, 20.0, 0.0));
+    built.object->instances[0]->set_rotation(Vec3d(0.0, 0.0, M_PI / 2.0));
 
     const Transform3d to_plate = volume_to_plate(*built.object, *built.volume, 0);
     const std::vector<Vec3d> centroids = facet_centroids(built.volume->mesh().its, to_plate);
 
     REQUIRE(centroids.size() == 2);
-    CHECK_THAT(centroids[0].x(), WithinAbs(150.0 + 10.0 + 8.0 / 3.0, 1e-9));
-    CHECK_THAT(centroids[0].y(), WithinAbs(150.0 + 20.0 + 2.0, 1e-9));
+    // Facet 0's local centroid (8/3, 2, 0) plus the volume offset (10, 20, 0) is (10 + 8/3, 22, 0).
+    // The instance's 90 degree Z rotation sends (x, y, 0) to (-y, x, 0) (see
+    // "facet_centroids applies a rotation" above), giving (-22, 10 + 8/3, 0); its offset (150, 150,
+    // 0) then applies on top: (150 - 22, 150 + 10 + 8/3, 0).
+    // The other multiplication order -- volume.get_matrix() * instance.get_matrix() -- would
+    // rotate the local centroid first instead: (-2, 8/3, 0) + instance offset + volume offset =
+    // (158, 172 + 2/3, 0), a different answer, which is what makes this test prove the order.
+    CHECK_THAT(centroids[0].x(), WithinAbs(150.0 - 22.0, 1e-9));
+    CHECK_THAT(centroids[0].y(), WithinAbs(150.0 + 10.0 + 8.0 / 3.0, 1e-9));
 }
 
 TEST_CASE("volume_to_plate falls back to the volume matrix alone when the object has no instance",
           "[orcamcp][paint]")
 {
     // Documented in the header: an object with no instance at all yields the volume matrix alone,
-    // rather than indexing an empty instances vector.
+    // rather than indexing an empty instances vector. A cube stands in for the rectangle here
+    // since this test compares matrices, not a hand-checked centroid.
     Model model;
     ModelObject* object = model.add_object();
-    const TriangleMesh mesh(two_triangle_rectangle());
+    const TriangleMesh mesh(Slic3r::its_make_cube(1.0, 1.0, 1.0));
     ModelVolume* volume = object->add_volume(mesh, false);
     volume->set_offset(Vec3d(1.0, 2.0, 3.0));
 

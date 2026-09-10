@@ -1,14 +1,20 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPPaintModel.cpp
 #include "OrcaMCPPaintModel.hpp"
 
+#include <algorithm>
+#include <cctype>
+
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
 bool parse_paint_mode(const std::string& name, PaintMode& out)
 {
-    if (name == "color")      { out = PaintMode::Color;     return true; }
-    if (name == "support")    { out = PaintMode::Support;   return true; }
-    if (name == "seam")       { out = PaintMode::Seam;      return true; }
-    if (name == "fuzzy_skin") { out = PaintMode::FuzzySkin; return true; }
+    std::string lower = name;
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+                    [](unsigned char c) { return std::tolower(c); });
+    if (lower == "color")      { out = PaintMode::Color;     return true; }
+    if (lower == "support")    { out = PaintMode::Support;   return true; }
+    if (lower == "seam")       { out = PaintMode::Seam;      return true; }
+    if (lower == "fuzzy_skin") { out = PaintMode::FuzzySkin; return true; }
     return false;
 }
 
@@ -45,8 +51,13 @@ bool parse_paint_state(PaintMode mode, const std::string& name, int& out_state)
 {
     if (mode == PaintMode::Color)
         return false;
-    if (name == "none")     { out_state = int(EnforcerBlockerType::NONE);     return true; }
-    if (name == "enforcer") { out_state = int(EnforcerBlockerType::ENFORCER); return true; }
+    if (name == "none") { out_state = int(EnforcerBlockerType::NONE); return true; }
+    // "fuzzy_skin" is the token paint_state_label hands back for FuzzySkin's enforcer state, so it
+    // has to parse back to the same state or a caller who echoes a read into a write gets rejected.
+    if (name == "enforcer" || (mode == PaintMode::FuzzySkin && name == "fuzzy_skin")) {
+        out_state = int(EnforcerBlockerType::ENFORCER);
+        return true;
+    }
     if (name == "blocker" && mode != PaintMode::FuzzySkin) {
         out_state = int(EnforcerBlockerType::BLOCKER);
         return true;
@@ -56,8 +67,15 @@ bool parse_paint_state(PaintMode mode, const std::string& name, int& out_state)
 
 std::string paint_state_label(PaintMode mode, int state)
 {
-    if (mode == PaintMode::Color)
-        return state <= 0 ? std::string("unpainted") : "filament " + std::to_string(state);
+    if (mode == PaintMode::Color) {
+        if (state <= 0)
+            return "unpainted";
+        // Above max_paint_state() is a value the slicer could never have written (EnforcerBlockerType
+        // stops at ExtruderMax): report it as out of domain rather than as a plausible filament slot.
+        if (state > max_paint_state())
+            return "state " + std::to_string(state);
+        return "filament " + std::to_string(state);
+    }
     if (state == int(EnforcerBlockerType::NONE))
         return "none";
     if (state == int(EnforcerBlockerType::ENFORCER))

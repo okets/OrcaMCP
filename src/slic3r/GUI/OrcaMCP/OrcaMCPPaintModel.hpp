@@ -2,7 +2,6 @@
 #pragma once
 #include <cstddef>
 #include <string>
-#include <vector>
 
 #include "libslic3r/Model.hpp"
 #include "libslic3r/TriangleSelector.hpp"
@@ -17,9 +16,11 @@ namespace Slic3r { namespace GUI { namespace OrcaMCP {
 // which is why one tool with a mode parameter closes four gizmo-shaped gaps.
 enum class PaintMode { Color, Support, Seam, FuzzySkin };
 
-// "color" | "support" | "seam" | "fuzzy_skin", exactly. Returns false and leaves `out` alone
-// otherwise. Brim ears are deliberately not a mode: they are BrimPoints on the ModelObject
-// (Model.hpp:390), not facets, and have their own tool.
+// "color" | "support" | "seam" | "fuzzy_skin", any case. Returns false and leaves `out` alone
+// otherwise. Case-insensitive to match parse_paint_axis: both parsers are reached from the same
+// MCP tool's parameters, and having them disagree about case costs a caller a wasted round trip.
+// Brim ears are deliberately not a mode: they are BrimPoints on the ModelObject (Model.hpp:390),
+// not facets, and have their own tool.
 bool        parse_paint_mode(const std::string& name, PaintMode& out);
 const char* paint_mode_name(PaintMode mode);
 
@@ -33,14 +34,20 @@ const FacetsAnnotation& annotation_for_mode(const ModelVolume& mv, PaintMode mod
 int max_paint_state();
 
 // Raw EnforcerBlockerType value for a caller-supplied state name, for every mode except Color:
-// "none" -> 0, "enforcer" -> 1, "blocker" -> 2. FuzzySkin rejects "blocker" (TriangleSelector.hpp:19
-// aliases FUZZY_SKIN to ENFORCER, and GLGizmoFuzzySkin.hpp:29-30 paints only FUZZY_SKIN and NONE).
+// "none" -> 0, "enforcer" -> 1, "blocker" -> 2. FuzzySkin also accepts "fuzzy_skin" as a synonym
+// for "enforcer" (both -> 1) but rejects "blocker" (TriangleSelector.hpp:19 aliases FUZZY_SKIN to
+// ENFORCER, and GLGizmoFuzzySkin.hpp:29-30 paints only FUZZY_SKIN and NONE); the synonym exists
+// because paint_state_label(FuzzySkin, 1) reads back as "fuzzy_skin", and that token has to parse
+// back to the same state or a caller who echoes a read straight into a write gets rejected.
 // Color rejects every name: its states are filament slot numbers, which the tool takes as an
 // integer, so a name there is a caller mistake worth reporting.
 bool parse_paint_state(PaintMode mode, const std::string& name, int& out_state);
 
-// How a raw state reads back for a given mode. Color: "unpainted" / "filament <n>".
+// How a raw state reads back for a given mode. Color: "unpainted" / "filament <n>", or
+// "state <n>" for n above max_paint_state() -- a value the slicer could not have produced, so it
+// is reported as out of domain rather than as a plausible-looking filament slot.
 // Support and Seam: "none" / "enforcer" / "blocker". FuzzySkin: "none" / "fuzzy_skin".
+// Every label parse_paint_state can consume round-trips back to the same state for its mode.
 std::string paint_state_label(PaintMode mode, int state);
 
 // instance.get_matrix() * volume.get_matrix() (Model.hpp:1354 and Model.hpp:1013): volume-local
