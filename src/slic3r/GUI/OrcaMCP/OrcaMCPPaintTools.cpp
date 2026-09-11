@@ -834,6 +834,8 @@ void OrcaMCPServer::register_paint_tools()
             // loop's own pick_nearest_point would succeed on every part in scope and start a fill
             // on each. Resolved here into a facet seed on the nearest part, so the loop takes the
             // facet branch exactly once.
+            SurfacePick point_seed_pick;          // the pre-pass's own pick, kept for the report
+            bool        point_seed_resolved = false;
             if (request.selection == "connected" && request.seed_by_point && plan.volumes.size() > 1) {
                 const PaintPlanVolume* nearest = nullptr;
                 SurfacePick            nearest_pick;
@@ -851,6 +853,13 @@ void OrcaMCPServer::register_paint_tools()
                 request.seed_by_point  = false;
                 request.seed_volume_id = nearest->volume_id;
                 request.seed_facet     = nearest_pick.facet;
+                // The whole pick, not just its facet. The facet branch below would otherwise
+                // rebuild the seed from that facet's centroid and report snap_distance_mm 0, so
+                // the same call that reports a true snap on a one-part object would deny it on a
+                // two-part one -- and snap_distance_mm exists precisely to tell "my point was on
+                // the surface" from "my point was 40 mm into thin air".
+                point_seed_pick     = nearest_pick;
+                point_seed_resolved = true;
             }
 
             std::string    seed_error;     // set by the connected/component branches on failure
@@ -888,11 +897,21 @@ void OrcaMCPServer::register_paint_tools()
                                          std::to_string(facet_count) + " facets)";
                             break;
                         }
-                        seed.facet = request.seed_facet;
-                        const Slic3r::Vec3i32& f = pv.mesh->its.indices[std::size_t(seed.facet)];
-                        seed.point_local = ((pv.mesh->its.vertices[f[0]] + pv.mesh->its.vertices[f[1]] +
-                                             pv.mesh->its.vertices[f[2]]) / 3.f).cast<double>();
-                        seed.point_plate = pv.to_plate * seed.point_local;
+                        if (point_seed_resolved) {
+                            // The pre-pass already snapped the caller's point onto this volume;
+                            // its point and distance are the honest answer, and recomputing them
+                            // here could only lose them.
+                            seed = point_seed_pick;
+                        } else {
+                            seed.facet = request.seed_facet;
+                            // A facet the caller named carries no point of its own, so the fill
+                            // starts from its centroid -- and snap_distance_mm stays 0, which is
+                            // true: nothing was snapped.
+                            const Slic3r::Vec3i32& f = pv.mesh->its.indices[std::size_t(seed.facet)];
+                            seed.point_local = ((pv.mesh->its.vertices[f[0]] + pv.mesh->its.vertices[f[1]] +
+                                                 pv.mesh->its.vertices[f[2]]) / 3.f).cast<double>();
+                            seed.point_plate = pv.to_plate * seed.point_local;
+                        }
                     }
                     if (!seeds_here) {
                         assignments[i] = FacetAssignment{std::vector<int>(facet_count, -1), {}, int(facet_count)};
@@ -1109,19 +1128,29 @@ void OrcaMCPServer::register_paint_tools()
 
                 std::vector<std::string> messages = paint_prerequisite_messages(*target.object, mode);
                 if (facets_unassigned > 0) {
+                    // What "outside the selection" costs a facet depends entirely on `replace`:
+                    // with replace the write starts from a blank selector, so an unselected facet
+                    // does not keep its paint, it loses it. Saying "kept their previous state"
+                    // there is the opposite of what happened, and `connected` seeds exactly one
+                    // part by nature, so on a multi-part object that is the common case.
+                    const std::string fate = request.replace
+                                                 ? "; because replace was true, their " +
+                                                       std::string(paint_mode_name(mode)) +
+                                                       " paint was cleared."
+                                                 : " and kept their previous state.";
                     if (request.selection == "bands")
                         // The symptom of banding from too wide a range (e.g. get_object_info's
                         // looser bounding_box instead of this response's own): facets outside
-                        // axis_range are silently left at their previous state. Previously this
-                        // count was reported for every selection except bands -- the one where a
-                        // mistyped from/to is most likely (M9).
+                        // axis_range are not painted. Previously this count was reported for every
+                        // selection except bands -- the one where a mistyped from/to is most
+                        // likely (M9).
                         messages.push_back(std::to_string(facets_unassigned) +
-                                           " facets fell outside every band and kept their previous "
-                                           "state. If that number is unexpectedly high, check "
-                                           "axis_range against this response's own bounding_box.");
+                                           " facets fell outside every band" + fate +
+                                           " If that number is unexpectedly high, check axis_range "
+                                           "against this response's own bounding_box.");
                     else
                         messages.push_back(std::to_string(facets_unassigned) +
-                                           " facets fell outside the selection and kept their previous state.");
+                                           " facets fell outside the selection" + fate);
                 }
                 if (facets_selected == 0) {
                     // With replace this is not a no-op: the reset happened and the selection then
@@ -1719,7 +1748,16 @@ void OrcaMCPServer::register_paint_tools()
             // Hop 2: the pick, best over every target volume.
             const PaintPlanVolume* best_volume = nullptr;
             SurfacePick            best;
+            bool                   any_degenerate = false;
             for (const PaintPlanVolume& pv : plan.volumes) {
+                if (!plate_transform_is_invertible(pv.to_plate)) {
+                    // scale_object takes a scale of 0 without complaint, which flattens the volume
+                    // onto a plane or a point. Nothing on it has a plate position or a normal the
+                    // caller could act on, and the picks would hand back NaN -- which serialises
+                    // as null under status "success". Skipped, and said out loud below.
+                    any_degenerate = true;
+                    continue;
+                }
                 SurfacePick pick;
                 const bool  hit = by_point ? pick_nearest_point(*pv.mesh, pv.to_plate, point, pick)
                                            : pick_ray(*pv.mesh, pv.to_plate, origin, dir, pick);
@@ -1728,10 +1766,15 @@ void OrcaMCPServer::register_paint_tools()
                     best        = pick;
                 }
             }
-            if (best_volume == nullptr)
-                return nlohmann::json{{"status", "error"},
-                                      {"message", by_point ? "no surface found (empty meshes?)"
-                                                           : "the ray does not hit the object"}};
+            if (best_volume == nullptr) {
+                std::string message = by_point ? "no surface found (empty meshes?)"
+                                               : "the ray does not hit the object";
+                if (any_degenerate)
+                    message = "object " + std::to_string(plan.object_id) +
+                              " has a degenerate transform (a zero scale on some axis), so no point on it "
+                              "has a position or a normal to report; rescale it first";
+                return nlohmann::json{{"status", "error"}, {"message", message}};
+            }
 
             nlohmann::json result = {
                 {"status", "success"},

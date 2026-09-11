@@ -79,7 +79,7 @@ cd build && ctest --output-on-failure
                                                              │  OrcaMCPServer  │
                                                              │                 │
                                                              │ - JSON-RPC 2.0  │
-                                                             │ - 70 MCP Tools  │
+                                                             │ - 76 MCP Tools  │
                                                              │ - Thread-safe   │
                                                              └─────────────────┘
 ```

@@ -151,6 +151,40 @@ TEST_CASE("pick_nearest_point measures distance in plate millimetres under a sca
     CHECK_THAT(pick.distance, WithinAbs(5.0, 1e-6));                // 25 - 20, in plate mm
 }
 
+TEST_CASE("a pick refuses a transform it cannot invert, rather than answering NaN",
+          "[orcamcp][select]")
+{
+    // scale_object takes a scale of 0 without complaint, so an object really can be sitting on the
+    // plate under a rank-deficient transform. Its inverse is full of infinities, and every answer
+    // derived from it -- the local query point, the plate point, the normal -- comes back NaN,
+    // which nlohmann serialises as null under status "success". Refused instead, out loud.
+    const TriangleMesh mesh(Slic3r::its_make_cube(10.0, 10.0, 10.0));
+    Eigen::Matrix3d    flattened = Eigen::Matrix3d::Identity();
+    flattened(2, 2) = 0.0;
+    Transform3d flat = Transform3d::Identity();
+    flat.linear() = flattened;
+
+    CHECK_FALSE(plate_transform_is_invertible(flat));
+    CHECK(plate_transform_is_invertible(Transform3d::Identity()));
+
+    SurfacePick pick;
+    CHECK_FALSE(pick_nearest_point(mesh, flat, Vec3d(5.0, 5.0, 20.0), pick));
+    CHECK_FALSE(pick_ray(mesh, flat, Vec3d(5.0, 5.0, 50.0), Vec3d(0.0, 0.0, -1.0), pick));
+
+    // The normal is where the NaN was actually produced (the inverse transpose of the linear
+    // part), so it is guarded at its own door too: a caller reaching it directly gets the zero
+    // vector this function already returns for "no normal here".
+    CHECK(facet_normal_plate(mesh.its, 0, flat).isZero());
+
+    // A very small but uniform scale is not singular -- its inverse is perfectly well defined --
+    // and a fixed epsilon on the determinant would have thrown it out with the flattened one.
+    Transform3d tiny = Transform3d::Identity();
+    tiny.linear() = Eigen::Matrix3d::Identity() * 1e-6;
+    CHECK(plate_transform_is_invertible(tiny));
+    CHECK(pick_nearest_point(mesh, tiny, Vec3d(0.0, 0.0, 1.0), pick));
+    CHECK(pick.normal_plate.norm() > 0.5);
+}
+
 TEST_CASE("pick_nearest_point refuses an empty mesh", "[orcamcp][select]")
 {
     const TriangleMesh empty;

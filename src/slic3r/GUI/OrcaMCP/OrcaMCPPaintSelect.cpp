@@ -86,9 +86,17 @@ FacetAssignment assign_component(const std::vector<int>& ids, int component, int
     return out;
 }
 
+bool plate_transform_is_invertible(const Transform3d& to_plate)
+{
+    // FullPivLU rather than a fixed epsilon on the determinant: the threshold that decides
+    // "singular" has to be relative to the matrix's own magnitude, or a legitimately tiny uniform
+    // scale -- whose inverse is perfectly well defined -- would be refused along with a zero one.
+    return Eigen::FullPivLU<Eigen::Matrix3d>(to_plate.linear()).isInvertible();
+}
+
 Vec3d facet_normal_plate(const indexed_triangle_set& its, int facet, const Transform3d& to_plate)
 {
-    if (facet < 0 || facet >= int(its.indices.size()))
+    if (facet < 0 || facet >= int(its.indices.size()) || !plate_transform_is_invertible(to_plate))
         return Vec3d::Zero();
     const Vec3i32& face = its.indices[facet];
     const Vec3d a = its.vertices[face[0]].cast<double>();
@@ -108,7 +116,7 @@ bool pick_nearest_point(const TriangleMesh& mesh,
                         SurfacePick&        out)
 {
     out = SurfacePick{};
-    if (mesh.its.indices.empty())
+    if (mesh.its.indices.empty() || !plate_transform_is_invertible(to_plate))
         return false;
 
     const AABBMesh aabb(mesh.its);
@@ -135,7 +143,8 @@ bool pick_ray(const TriangleMesh& mesh,
               SurfacePick&        out)
 {
     out = SurfacePick{};
-    if (mesh.its.indices.empty() || dir_plate.squaredNorm() == 0.0)
+    if (mesh.its.indices.empty() || dir_plate.squaredNorm() == 0.0 ||
+        !plate_transform_is_invertible(to_plate))
         return false;
 
     const AABBMesh    aabb(mesh.its);

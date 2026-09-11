@@ -58,21 +58,31 @@ struct SurfacePick
     double distance     = 0.0;             // plate mm from the query point / ray origin
 };
 
+// True when `to_plate`'s linear part can be inverted, which every pick needs twice: once to carry
+// the caller's plate coordinates into the mesh frame, and once (as its inverse transpose) to carry
+// a facet normal back out. scale_object accepts a scale of 0, so an object really can be sitting
+// on the plate under a rank-deficient transform; without this test the inverse comes back full of
+// infinities and the pick reports a NaN point and normal -- which nlohmann serialises as null --
+// under status "success".
+bool plate_transform_is_invertible(const Transform3d& to_plate);
+
 // Unit normal of `facet`, mapped into the plate frame by the inverse-transpose of `to_plate`'s
 // linear part, so a non-uniformly scaled instance still reports a normal perpendicular to the
-// surface it actually has on the plate.
+// surface it actually has on the plate. Zero for a degenerate facet, and for a `to_plate`
+// plate_transform_is_invertible rejects.
 Vec3d facet_normal_plate(const indexed_triangle_set& its, int facet, const Transform3d& to_plate);
 
 // Closest point on the mesh to `plate_point`. Builds an AABBMesh over the mesh for this call;
 // on a multi-million-facet mesh that is the dominant cost, and it is pure CPU work the caller
-// may run off the GUI thread. False for an empty mesh.
+// may run off the GUI thread. False for an empty mesh, or a `to_plate`
+// plate_transform_is_invertible rejects.
 bool pick_nearest_point(const TriangleMesh& mesh,
                         const Transform3d&  to_plate,
                         const Vec3d&        plate_point,
                         SurfacePick&        out);
 
 // First hit of the ray `origin_plate + t * dir_plate`, t > 0. False for an empty mesh, a zero
-// direction, or a miss.
+// direction, a `to_plate` plate_transform_is_invertible rejects, or a miss.
 bool pick_ray(const TriangleMesh& mesh,
               const Transform3d&  to_plate,
               const Vec3d&        origin_plate,
