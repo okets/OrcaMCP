@@ -780,6 +780,38 @@ TEST_CASE("clear_volume_paint resets only the mode it was asked for", "[orcamcp]
     CHECK_FALSE(clear_volume_paint(*built.volume, PaintMode::Seam));
 }
 
+TEST_CASE("has_volume_paint answers, before any write, what clear_volume_paint would do",
+          "[orcamcp][paint]")
+{
+    // clear_object_paint asks this before it mutates, because an undo snapshot has to be taken
+    // before the write it protects and an unconditional one leaves an undo entry that restores
+    // nothing. The two must agree exactly, or a clear that does change something goes unprotected.
+    HeadlessObject built = make_headless_object(two_triangle_rectangle(), Vec3d(0, 0, 0));
+    for (PaintMode mode : {PaintMode::Color, PaintMode::Support, PaintMode::Seam, PaintMode::FuzzySkin})
+        CHECK_FALSE(has_volume_paint(*built.volume, mode));
+
+    REQUIRE(apply_facet_states(*built.volume, PaintMode::Color, {5, 6}, true));
+    CHECK(has_volume_paint(*built.volume, PaintMode::Color));
+    // Only the painted mode reports data; the other three are still empty.
+    CHECK_FALSE(has_volume_paint(*built.volume, PaintMode::Support));
+
+    CHECK(has_volume_paint(*built.volume, PaintMode::Color) ==
+          clear_volume_paint(*built.volume, PaintMode::Color));
+    CHECK_FALSE(has_volume_paint(*built.volume, PaintMode::Color));
+    CHECK(has_volume_paint(*built.volume, PaintMode::Color) ==
+          clear_volume_paint(*built.volume, PaintMode::Color));
+
+    // Painting every facet back to state 0 leaves no annotation at all, which is the same place a
+    // clear ends: TriangleSelector::serialize stores a triangle only when it is split or not NONE
+    // (TriangleSelector.cpp, the m_orig_size_indices loop), so an all-none paint serializes to
+    // nothing -- not the "full bitstream of zeroes" the clear_object_paint prose claims.
+    REQUIRE(apply_facet_states(*built.volume, PaintMode::Support, {1, 1}, true));
+    REQUIRE(has_volume_paint(*built.volume, PaintMode::Support));
+    CHECK(apply_facet_states(*built.volume, PaintMode::Support, {0, 0}, true));
+    CHECK_FALSE(has_volume_paint(*built.volume, PaintMode::Support));
+    CHECK_FALSE(clear_volume_paint(*built.volume, PaintMode::Support));
+}
+
 TEST_CASE("clear_volume_paint clears used_states, not just the bitstream (I1)", "[orcamcp][paint]")
 {
     // FacetsAnnotation::reset() (Model.cpp:3635-3640) clears triangles_to_split/bitstream but not

@@ -80,10 +80,14 @@ struct PaintTargetNeeds
     // whole (brim_points live on the ModelObject), so requiring it a surface to paint would refuse
     // an object it could serve perfectly well, over a parameter its schema does not even declare.
     bool volumes = true;
+    // Read instance_id: which instance's transform the caller's coordinates are read through. A
+    // tool whose request and response carry no coordinates at all has no frame to choose, and
+    // validating the parameter anyway lets it reject a call it could have served.
+    bool instance = true;
 };
 
-// Main thread only. Reads object_id (required), instance_id (optional, default 0) and, when
-// `needs.volumes`, volume_id (optional, -1 = every model part).
+// Main thread only. Reads object_id (required), and -- each only when the caller says it needs it
+// -- instance_id (optional, default 0) and volume_id (optional, -1 = every model part).
 //
 // A tool that writes paint validates through here first and only then takes its undo snapshot
 // (the set_object_printable / set_object_filament shape), and follows the write with
@@ -113,15 +117,17 @@ bool resolve_paint_target(const nlohmann::json&  params,
     out.object    = model.objects[std::size_t(object_id)];
     out.object_id = object_id;
 
-    int instance_id = 0;
-    if (!parse_integer_field(params, "instance_id", 0, instance_id, error))
-        return false;
-    if (instance_id < 0 || instance_id >= int(out.object->instances.size())) {
-        error = "Invalid instance_id " + std::to_string(instance_id) + ": the object has " +
-                std::to_string(out.object->instances.size()) + " instances";
-        return false;
+    if (needs.instance) {
+        int instance_id = 0;
+        if (!parse_integer_field(params, "instance_id", 0, instance_id, error))
+            return false;
+        if (instance_id < 0 || instance_id >= int(out.object->instances.size())) {
+            error = "Invalid instance_id " + std::to_string(instance_id) + ": the object has " +
+                    std::to_string(out.object->instances.size()) + " instances";
+            return false;
+        }
+        out.instance_idx = std::size_t(instance_id);
     }
-    out.instance_idx = std::size_t(instance_id);
 
     if (!needs.volumes)
         return true;
@@ -824,12 +830,6 @@ void OrcaMCPServer::register_paint_tools()
                     {"minimum", -1},
                     {"description", "Part index within the object (0-based); omit, or pass -1, for every part"}
                 }},
-                {"instance_id", {
-                    {"type", "integer"},
-                    {"minimum", 0},
-                    {"description", "Which instance's transform defines plate coordinates (default 0). "
-                                    "Paint is shared by every instance."}
-                }},
                 {"mode", {
                     {"type", "string"},
                     {"enum", {"color", "support", "seam", "fuzzy_skin"}},
@@ -843,28 +843,53 @@ void OrcaMCPServer::register_paint_tools()
                 Plater*     plater = wxGetApp().plater();
                 PaintTarget target;
                 std::string error;
-                if (!resolve_paint_target(params, target, error))
+                // No instance: clearing resets the annotation on the volume, which every instance
+                // shares, and this response carries no coordinate. Validating instance_id here
+                // rejected {object_id: 0, instance_id: 1} on a single-instance object over a value
+                // that could not have changed the outcome.
+                if (!resolve_paint_target(params, target, error,
+                                          PaintTargetNeeds{/*volumes=*/true, /*instance=*/false}))
                     return nlohmann::json{{"status", "error"}, {"message", error}};
 
                 std::vector<PaintMode> modes;
                 if (!resolve_paint_modes(params, modes, error))
                     return nlohmann::json{{"status", "error"}, {"message", error}};
 
-                // Snapshot before the first write, so one undo restores every mode this call cleared.
+                // Asked before the first write, because a snapshot has to precede the mutation it
+                // protects and this is the only order in which "will anything change" can still be
+                // answered. has_volume_paint is the same emptiness test clear_volume_paint makes,
+                // so the two cannot disagree.
+                bool will_change = false;
+                for (PaintMode mode : modes)
+                    for (Slic3r::ModelVolume* mv : target.volumes)
+                        if (has_volume_paint(*mv, mode))
+                            will_change = true;
+
+                // Snapshot before the first write, so one undo restores every mode this call
+                // cleared -- but only when there is a write to protect. Plater::priv::take_snapshot
+                // refreshes dirty_state from the undo stack (Plater.cpp:14316), so an unconditional
+                // one put an undo entry that restores nothing into the user's history and marked
+                // the project dirty for a call that changed nothing.
                 // Named per mode, the same reason paint_object is: a clear-all call would otherwise
                 // leave four identical "Clear Object Paint" entries in the undo menu.
-                plater->take_snapshot(_u8L("Clear Object Paint") + " (" +
-                                      (modes.size() == 1 ? paint_mode_name(modes.front()) : "all") + ")");
+                if (will_change)
+                    plater->take_snapshot(_u8L("Clear Object Paint") + " (" +
+                                          (modes.size() == 1 ? paint_mode_name(modes.front()) : "all") + ")");
 
                 // Same set of volumes for every mode this call touches, so it is reported once
-                // rather than repeated identically in each entry of `cleared`.
-                nlohmann::json volume_ids = nlohmann::json::array();
-                for (int id : target.volume_ids)
-                    volume_ids.push_back(id);
+                // rather than repeated identically in each entry of `cleared`. Per-volume objects,
+                // the shape paint_object and get_object_paint both report `volumes` in, rather than
+                // the flat id array this used to emit: one concept, one shape across the feature.
+                nlohmann::json volumes = nlohmann::json::array();
+                for (std::size_t i = 0; i < target.volumes.size(); ++i)
+                    volumes.push_back({{"volume_id", target.volume_ids[i]},
+                                       {"name", target.volumes[i]->name}});
 
                 nlohmann::json cleared = nlohmann::json::array();
                 bool           changed = false;
                 for (PaintMode mode : modes) {
+                    // Stays a flat id array: it is a subset reference back into `volumes` above,
+                    // not a second listing of the volumes themselves.
                     nlohmann::json cleared_volume_ids = nlohmann::json::array();
                     for (std::size_t i = 0; i < target.volumes.size(); ++i)
                         if (clear_volume_paint(*target.volumes[i], mode))
@@ -878,15 +903,16 @@ void OrcaMCPServer::register_paint_tools()
                 // clear_volume_paint never moves a vertex, so refresh_after_paint's constraint holds
                 // here exactly as it does for paint_object: reuse it rather than reimplement the GUI
                 // bookkeeping it owes (object-list refresh, every instance's plate notified, reslice).
-                refresh_after_paint(target);
+                // Skipped when nothing was written, for the same reason the snapshot is: a call that
+                // changed nothing has no reason to reschedule the background process.
+                if (changed)
+                    refresh_after_paint(target);
 
                 nlohmann::json result = {
                     {"status", "success"},
                     {"object_id", target.object_id},
                     {"object_name", target.object->name},
-                    {"coordinate_frame", "plate"},
-                    {"instance_id", int(target.instance_idx)},
-                    {"volume_ids", volume_ids},
+                    {"volumes", volumes},
                     {"cleared", cleared},
                     {"annotation_changed", changed},
                     {"active_warnings", get_active_warnings_json(plater)}
@@ -954,7 +980,7 @@ void OrcaMCPServer::register_paint_tools()
                 // ("Object N has no model parts to paint", from a tool that paints nothing) and
                 // read an undeclared volume_id, which could reject the call outright when it named
                 // a modifier.
-                if (!resolve_paint_target(params, target, error, PaintTargetNeeds{/*volumes=*/false}))
+                if (!resolve_paint_target(params, target, error, PaintTargetNeeds{/*volumes=*/false, /*instance=*/true}))
                     return nlohmann::json{{"status", "error"}, {"message", error}};
 
                 // brim_points is object-level data. Brim.cpp:368-374 hardcodes instances[0]'s

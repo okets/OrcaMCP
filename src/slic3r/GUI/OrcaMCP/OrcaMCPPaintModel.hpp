@@ -121,6 +121,12 @@ struct PaintedStateInfo
 // entry, {0, all facets, 1.0}.
 std::vector<PaintedStateInfo> read_volume_paint(const ModelVolume& mv, PaintMode mode);
 
+// True when the annotation `mode` selects carries data -- i.e. exactly when clear_volume_paint
+// would change something. Lets a caller decide whether a clear is worth an undo snapshot before
+// it mutates anything, which is the only order in which that question can be asked: a snapshot
+// has to be taken before the write it protects.
+bool has_volume_paint(const ModelVolume& mv, PaintMode mode);
+
 // FacetsAnnotation::reset() on the member `mode` selects, leaving the other three alone.
 // Returns false when the annotation was already empty, so a caller can tell "cleared" from
 // "there was nothing to clear".

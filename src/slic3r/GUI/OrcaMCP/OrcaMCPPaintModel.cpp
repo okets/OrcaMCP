@@ -207,6 +207,13 @@ std::vector<PaintedStateInfo> read_volume_paint(const ModelVolume& mv, PaintMode
     return painted;
 }
 
+bool has_volume_paint(const ModelVolume& mv, PaintMode mode)
+{
+    // The same test clear_volume_paint makes before it writes, so the two cannot disagree about
+    // whether a clear would change anything.
+    return !annotation_for_mode(mv, mode).empty();
+}
+
 bool clear_volume_paint(ModelVolume& mv, PaintMode mode)
 {
     FacetsAnnotation& annotation = annotation_for_mode(mv, mode);
