@@ -780,6 +780,29 @@ TEST_CASE("clear_volume_paint resets only the mode it was asked for", "[orcamcp]
     CHECK_FALSE(clear_volume_paint(*built.volume, PaintMode::Seam));
 }
 
+TEST_CASE("clear_volume_paint clears used_states, not just the bitstream (I1)", "[orcamcp][paint]")
+{
+    // FacetsAnnotation::reset() (Model.cpp:3635-3640) clears triangles_to_split/bitstream but not
+    // used_states. PrintApply.cpp then merges used_states across every volume of the object, so a
+    // stale bit here survives as a phantom entry in painting_extruders even though this volume no
+    // longer has a single facet at that state. clear_volume_paint must leave used_states clean.
+    HeadlessObject built = make_headless_object(two_triangle_rectangle(), Vec3d(0, 0, 0));
+    REQUIRE(apply_facet_states(*built.volume, PaintMode::Color, {5, 6}, true));
+
+    // Sanity: painting actually marked those two states used, so the check below is not vacuous.
+    REQUIRE(built.volume->mmu_segmentation_facets.get_data().used_states.at(5));
+    REQUIRE(built.volume->mmu_segmentation_facets.get_data().used_states.at(6));
+
+    CHECK(clear_volume_paint(*built.volume, PaintMode::Color));
+    CHECK(built.volume->mmu_segmentation_facets.empty());
+    for (bool used : built.volume->mmu_segmentation_facets.get_data().used_states)
+        CHECK_FALSE(used);
+
+    // Clearing the now-clean annotation again must still report "nothing changed": the fix must
+    // not make an already-empty volume look dirty every time.
+    CHECK_FALSE(clear_volume_paint(*built.volume, PaintMode::Color));
+}
+
 TEST_CASE("the scraper's 14 bands survive the round trip through FacetsAnnotation",
           "[orcamcp][paint]")
 {

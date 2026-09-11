@@ -212,8 +212,13 @@ bool clear_volume_paint(ModelVolume& mv, PaintMode mode)
     FacetsAnnotation& annotation = annotation_for_mode(mv, mode);
     if (annotation.empty())
         return false;
-    annotation.reset();
-    return true;
+    // FacetsAnnotation::reset() clears triangles_to_split/bitstream but not used_states, so a
+    // sibling volume that is still painted would make PrintApply merge a stale filament index
+    // into painting_extruders. Assign a freshly constructed selector instead, the same way the
+    // GUI gizmo's own clear-all does (GLGizmoMmuSegmentation -> selector.reset() ->
+    // annotation.set(selector)): its serialize() is clean by construction, used_states included.
+    TriangleSelector fresh_selector(mv.mesh());
+    return annotation.set(fresh_selector);
 }
 
 }}} // namespace Slic3r::GUI::OrcaMCP
