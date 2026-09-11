@@ -42,4 +42,38 @@ std::vector<ComponentInfo> summarize_components(const indexed_triangle_set& its,
 // no facet carries selects nothing -- reported through `unassigned`, never widened to "everything".
 FacetAssignment assign_component(const std::vector<int>& ids, int component, int state);
 
+// ---- Picking --------------------------------------------------------------------------------
+
+// Where a point or a ray met the surface. `facet` is the original facet index -- the index
+// TriangleSelector::set_facet and seed_fill_select_triangles take -- or -1 when nothing was hit.
+struct SurfacePick
+{
+    int    facet        = -1;
+    Vec3d  point_local  = Vec3d::Zero();   // mesh coordinates, the frame TriangleSelector wants
+    Vec3d  point_plate  = Vec3d::Zero();   // the same point in plate millimetres
+    Vec3d  normal_plate = Vec3d::Zero();   // unit facet normal in the plate frame
+    double distance     = 0.0;             // plate mm from the query point / ray origin
+};
+
+// Unit normal of `facet`, mapped into the plate frame by the inverse-transpose of `to_plate`'s
+// linear part, so a non-uniformly scaled instance still reports a normal perpendicular to the
+// surface it actually has on the plate.
+Vec3d facet_normal_plate(const indexed_triangle_set& its, int facet, const Transform3d& to_plate);
+
+// Closest point on the mesh to `plate_point`. Builds an AABBMesh over the mesh for this call;
+// on a multi-million-facet mesh that is the dominant cost, and it is pure CPU work the caller
+// may run off the GUI thread. False for an empty mesh.
+bool pick_nearest_point(const TriangleMesh& mesh,
+                        const Transform3d&  to_plate,
+                        const Vec3d&        plate_point,
+                        SurfacePick&        out);
+
+// First hit of the ray `origin_plate + t * dir_plate`, t > 0. False for an empty mesh, a zero
+// direction, or a miss.
+bool pick_ray(const TriangleMesh& mesh,
+              const Transform3d&  to_plate,
+              const Vec3d&        origin_plate,
+              const Vec3d&        dir_plate,
+              SurfacePick&        out);
+
 }}} // namespace Slic3r::GUI::OrcaMCP

@@ -113,3 +113,72 @@ TEST_CASE("assign_component selects exactly one shell and leaves the rest alone"
     CHECK(std::all_of(none.states.begin(), none.states.end(), [](int s) { return s == -1; }));
     CHECK(none.unassigned == 24);
 }
+
+TEST_CASE("pick_nearest_point snaps a plate point to the closest facet, in plate coordinates",
+          "[orcamcp][select]")
+{
+    // A 10 mm cube whose mesh-local origin is at a corner, placed with its min corner at plate
+    // (100, 100, 0) via the transform -- exactly how volume_to_plate positions a volume.
+    const TriangleMesh mesh(Slic3r::its_make_cube(10.0, 10.0, 10.0));
+    Transform3d to_plate = Transform3d::Identity();
+    to_plate.translation() = Vec3d(100.0, 100.0, 0.0);
+
+    SurfacePick pick;
+    // 3 mm above the middle of the top face.
+    REQUIRE(pick_nearest_point(mesh, to_plate, Vec3d(105.0, 105.0, 13.0), pick));
+    CHECK(pick.facet >= 0);
+    CHECK(pick.facet < int(mesh.its.indices.size()));
+    CHECK_THAT(pick.point_plate.x(), WithinAbs(105.0, 1e-6));
+    CHECK_THAT(pick.point_plate.y(), WithinAbs(105.0, 1e-6));
+    CHECK_THAT(pick.point_plate.z(), WithinAbs(10.0, 1e-6));       // on the top face
+    CHECK_THAT(pick.distance, WithinAbs(3.0, 1e-6));
+    CHECK_THAT(pick.normal_plate.z(), WithinAbs(1.0, 1e-6));       // top face points +Z
+    // point_local is the same point before the transform.
+    CHECK_THAT(pick.point_local.x(), WithinAbs(5.0, 1e-6));
+    CHECK_THAT(pick.point_local.z(), WithinAbs(10.0, 1e-6));
+}
+
+TEST_CASE("pick_nearest_point measures distance in plate millimetres under a scaled instance",
+          "[orcamcp][select]")
+{
+    const TriangleMesh mesh(Slic3r::its_make_cube(10.0, 10.0, 10.0));
+    Transform3d to_plate = Transform3d::Identity();
+    to_plate.scale(2.0);                                            // the cube is 20 mm on the plate
+
+    SurfacePick pick;
+    REQUIRE(pick_nearest_point(mesh, to_plate, Vec3d(10.0, 10.0, 25.0), pick));
+    CHECK_THAT(pick.point_plate.z(), WithinAbs(20.0, 1e-6));
+    CHECK_THAT(pick.distance, WithinAbs(5.0, 1e-6));                // 25 - 20, in plate mm
+}
+
+TEST_CASE("pick_nearest_point refuses an empty mesh", "[orcamcp][select]")
+{
+    const TriangleMesh empty;
+    SurfacePick        pick;
+    CHECK_FALSE(pick_nearest_point(empty, Transform3d::Identity(), Vec3d::Zero(), pick));
+    CHECK(pick.facet == -1);
+}
+
+TEST_CASE("pick_ray returns the first surface a plate-frame ray hits", "[orcamcp][select]")
+{
+    const TriangleMesh mesh(Slic3r::its_make_cube(10.0, 10.0, 10.0));
+    Transform3d to_plate = Transform3d::Identity();
+    to_plate.translation() = Vec3d(100.0, 100.0, 0.0);
+
+    SurfacePick pick;
+    // From high above the cube's centre, straight down: hits the top face at z = 10, not the
+    // bottom face at z = 0 behind it.
+    REQUIRE(pick_ray(mesh, to_plate, Vec3d(105.0, 105.0, 50.0), Vec3d(0.0, 0.0, -1.0), pick));
+    CHECK_THAT(pick.point_plate.z(), WithinAbs(10.0, 1e-6));
+    CHECK_THAT(pick.distance, WithinAbs(40.0, 1e-6));
+    CHECK_THAT(pick.normal_plate.z(), WithinAbs(1.0, 1e-6));
+
+    // A ray that misses.
+    SurfacePick miss;
+    CHECK_FALSE(pick_ray(mesh, to_plate, Vec3d(200.0, 200.0, 50.0), Vec3d(0.0, 0.0, -1.0), miss));
+    CHECK(miss.facet == -1);
+
+    // A zero direction is a caller mistake, not a hit.
+    SurfacePick zero;
+    CHECK_FALSE(pick_ray(mesh, to_plate, Vec3d(105.0, 105.0, 50.0), Vec3d::Zero(), zero));
+}

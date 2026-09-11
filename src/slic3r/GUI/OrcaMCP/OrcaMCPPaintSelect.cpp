@@ -1,6 +1,9 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPPaintSelect.cpp
 #include "OrcaMCPPaintSelect.hpp"
 
+#include "libslic3r/AABBMesh.hpp"
+
+#include <algorithm>
 #include <vector>
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
@@ -72,6 +75,74 @@ FacetAssignment assign_component(const std::vector<int>& ids, int component, int
             --out.unassigned;
         }
     return out;
+}
+
+Vec3d facet_normal_plate(const indexed_triangle_set& its, int facet, const Transform3d& to_plate)
+{
+    if (facet < 0 || facet >= int(its.indices.size()))
+        return Vec3d::Zero();
+    const Vec3i32& face = its.indices[facet];
+    const Vec3d a = its.vertices[face[0]].cast<double>();
+    const Vec3d b = its.vertices[face[1]].cast<double>();
+    const Vec3d c = its.vertices[face[2]].cast<double>();
+    const Vec3d n_local = (b - a).cross(c - a);
+    if (n_local.squaredNorm() == 0.0)
+        return Vec3d::Zero();
+    // Normals transform by the inverse transpose of the linear part, not by the matrix itself.
+    const Eigen::Matrix3d normal_matrix = to_plate.linear().inverse().transpose();
+    return (normal_matrix * n_local).normalized();
+}
+
+bool pick_nearest_point(const TriangleMesh& mesh,
+                        const Transform3d&  to_plate,
+                        const Vec3d&        plate_point,
+                        SurfacePick&        out)
+{
+    out = SurfacePick{};
+    if (mesh.its.indices.empty())
+        return false;
+
+    const AABBMesh aabb(mesh.its);
+    const Vec3d    local_point = to_plate.inverse() * plate_point;
+    int            face        = -1;
+    Vec3d          closest     = Vec3d::Zero();
+    aabb.squared_distance(local_point, face, closest);
+    if (face < 0 || face >= int(mesh.its.indices.size()))
+        return false;
+
+    out.facet        = face;
+    out.point_local  = closest;
+    out.point_plate  = to_plate * closest;
+    out.normal_plate = facet_normal_plate(mesh.its, face, to_plate);
+    // Measured in the plate frame, so a scaled instance reports millimetres the caller can use.
+    out.distance     = (out.point_plate - plate_point).norm();
+    return true;
+}
+
+bool pick_ray(const TriangleMesh& mesh,
+              const Transform3d&  to_plate,
+              const Vec3d&        origin_plate,
+              const Vec3d&        dir_plate,
+              SurfacePick&        out)
+{
+    out = SurfacePick{};
+    if (mesh.its.indices.empty() || dir_plate.squaredNorm() == 0.0)
+        return false;
+
+    const AABBMesh    aabb(mesh.its);
+    const Transform3d to_local = to_plate.inverse();
+    const Vec3d       origin   = to_local * origin_plate;
+    const Vec3d       dir      = (to_local.linear() * dir_plate).normalized();
+    const AABBMesh::hit_result hit = aabb.query_ray_hit(origin, dir);
+    if (!hit.is_hit())
+        return false;
+
+    out.facet        = hit.face();
+    out.point_local  = hit.position();
+    out.point_plate  = to_plate * out.point_local;
+    out.normal_plate = facet_normal_plate(mesh.its, out.facet, to_plate);
+    out.distance     = (out.point_plate - origin_plate).norm();
+    return true;
 }
 
 }}} // namespace Slic3r::GUI::OrcaMCP
