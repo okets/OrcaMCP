@@ -188,6 +188,17 @@ Slic3r::BoundingBoxf3 target_plate_bbox(const PaintTarget& target)
     return bbox;
 }
 
+// The union of boxes already computed per volume. Same result as target_plate_bbox over the same
+// volumes, without a second pass over their vertices -- which is the point: paint_object computes
+// the per-volume boxes on its worker thread and must not redo the work on the GUI thread.
+Slic3r::BoundingBoxf3 merged_bbox(const std::vector<Slic3r::BoundingBoxf3>& boxes)
+{
+    Slic3r::BoundingBoxf3 bbox;
+    for (const Slic3r::BoundingBoxf3& box : boxes)
+        bbox.merge(box);
+    return bbox;
+}
+
 // The plate-frame bounding box of every model part on an object, at one instance's transform.
 // set_brim_ears needs this rather than target_plate_bbox above because it resolves no volumes
 // of its own (PaintTargetNeeds::volumes is false for it -- brim ears are object-level, not tied
@@ -207,11 +218,13 @@ nlohmann::json bbox_json(const Slic3r::BoundingBoxf3& bbox)
             {"max", {{"x", bbox.max.x()}, {"y", bbox.max.y()}, {"z", bbox.max.z()}}}};
 }
 
-// One mode's paint on one volume, as the response reports it.
-nlohmann::json painted_json(const Slic3r::ModelVolume& mv, PaintMode mode)
+// One mode's paint on one volume, as the response reports it. Takes the report rather than the
+// volume so that paint_object -- which computes it on a worker thread from the data it is about to
+// write -- and the tools that read it back off the Model share one formatter.
+nlohmann::json painted_json(PaintMode mode, const std::vector<PaintedStateInfo>& painted)
 {
     nlohmann::json states = nlohmann::json::array();
-    for (const PaintedStateInfo& info : read_volume_paint(mv, mode)) {
+    for (const PaintedStateInfo& info : painted) {
         nlohmann::json entry = {{"state", info.state},
                                 {"label", paint_state_label(mode, info.state)},
                                 {"facet_count", info.facet_count},
@@ -222,6 +235,11 @@ nlohmann::json painted_json(const Slic3r::ModelVolume& mv, PaintMode mode)
         states.push_back(entry);
     }
     return states;
+}
+
+nlohmann::json painted_json(const Slic3r::ModelVolume& mv, PaintMode mode)
+{
+    return painted_json(mode, read_volume_paint(mv, mode));
 }
 
 // The brim ears on an object, converted back into the plate coordinates the API speaks.
@@ -759,12 +777,19 @@ void OrcaMCPServer::register_paint_tools()
             // write actually touch the Model; the arithmetic between them does not, and doing it
             // inside run_on_main_thread made the whole MCP server unreachable for the duration.
             //
-            // Hop 1 -- main thread: validate everything, take nothing, capture the plan.
-            PaintPlan    plan;
-            PaintRequest request;
-            PaintMode    mode = PaintMode::Color;
+            // Hop 1 -- main thread: validate everything, take nothing, capture the plan and the
+            // paint it will be built on.
+            PaintPlan              plan;
+            PaintRequest           request;
+            PaintMode              mode = PaintMode::Color;
+            // What each volume already carries for `mode`. The worker needs it to build a
+            // replace: false write on top of it, and reading the Model there is exactly what this
+            // three-hop shape exists to avoid; copying it here, where the Model is already ours,
+            // costs a bitstream memcpy.
+            std::vector<PaintData> paint_base;
             {
-                nlohmann::json gate = run_on_main_thread([&params, &plan, &request, &mode]() -> nlohmann::json {
+                nlohmann::json gate = run_on_main_thread([&params, &plan, &request, &mode,
+                                                          &paint_base]() -> nlohmann::json {
                     PaintTarget target;
                     std::string error;
                     if (!resolve_paint_target(params, target, error))
@@ -781,17 +806,19 @@ void OrcaMCPServer::register_paint_tools()
                     if (!parse_paint_request(params, mode, target, request, error))
                         return nlohmann::json{{"status", "error"}, {"message", error}};
 
-                    // apply_facet_states rejects a mesh with no facets, and its bool cannot be told
-                    // apart from "the annotation already held this". Caught here, before the
-                    // snapshot, so the call fails instead of reporting success over a volume it
-                    // never touched.
+                    // build_paint_write refuses a mesh with no facets too, but only with a
+                    // message about states not fitting it. Caught here instead, where the volume
+                    // that has no facets can be named, and before anything else is computed.
                     for (std::size_t i = 0; i < target.volumes.size(); ++i)
                         if (target.volumes[i]->mesh().its.indices.empty())
                             return nlohmann::json{{"status", "error"},
                                                   {"message", "volume_id " + std::to_string(target.volume_ids[i]) +
                                                               " has an empty mesh, so it has no facets to paint"}};
 
-                    plan = capture_paint_plan(target);
+                    plan       = capture_paint_plan(target);
+                    // One loop over target.volumes each, so the two vectors are the same length
+                    // and the same order -- which is what lets hop 2 index one by the other's i.
+                    paint_base = capture_paint_base(target, mode);
                     return nlohmann::json{{"status", "success"}};
                 });
                 if (gate.value("status", "") != "success")
@@ -909,9 +936,32 @@ void OrcaMCPServer::register_paint_tools()
                                                   " is not in scope: this call addresses volume_id " + ids}};
             }
 
+            // Still hop 2: turning the states into the bitstream the annotation stores, and
+            // reading back what that bitstream paints. Both are per-facet work -- a
+            // TriangleSelector constructor runs a serial its_face_neighbors over the whole mesh
+            // before it touches a single state -- and both used to run inside hop 3, where they
+            // held the GUI thread for tens of seconds per volume on the mesh this was written for.
+            // Nothing here is a Model access: the write is a value, handed over in hop 3.
+            const PaintData                    empty_base;
+            std::vector<PaintWrite>            writes(plan.volumes.size());
+            std::vector<Slic3r::BoundingBoxf3> volume_bbox(plan.volumes.size());
+            for (std::size_t i = 0; i < plan.volumes.size(); ++i) {
+                const PaintPlanVolume& pv = plan.volumes[i];
+                if (!build_paint_write(*pv.mesh, mode, assignments[i].states, request.replace,
+                                       request.replace ? empty_base : paint_base[i], writes[i]))
+                    return nlohmann::json{{"status", "error"},
+                                          {"message", "volume_id " + std::to_string(pv.volume_id) +
+                                                      ": the computed selection does not fit that volume's "
+                                                      "mesh, so nothing was painted"}};
+                // Through the plan's transform, which hop 3's plan_still_valid confirms is still
+                // the volume's own -- so the box describes the frame the states were computed in,
+                // and the vertex loop that produces it is one more thing the GUI thread never runs.
+                volume_bbox[i] = pv.mesh->transformed_bounding_box(pv.to_plate);
+            }
+
             // Hop 3 -- main thread: confirm the scene is unchanged, then snapshot, write, refresh.
-            return run_on_main_thread([&params, &plan, &request, &mode, &assignments,
-                                       &resolved_seed]() -> nlohmann::json {
+            return run_on_main_thread([&params, &plan, &request, &mode, &assignments, &writes,
+                                       &volume_bbox, &paint_base, &resolved_seed]() -> nlohmann::json {
                 Plater*     plater = wxGetApp().plater();
                 PaintTarget target;
                 std::string error;
@@ -920,6 +970,23 @@ void OrcaMCPServer::register_paint_tools()
                 // is the one the states were computed against.
                 if (!resolve_paint_target(params, target, error) || !plan_still_valid(target, plan, error))
                     return nlohmann::json{{"status", "error"}, {"message", error}};
+
+                // A replace: false write was built on top of the paint the volume carried in hop 1.
+                // If a gizmo stroke landed on it while hop 2 ran, applying that write would discard
+                // the stroke and report success. Every volume is checked before the snapshot, so a
+                // refusal leaves nothing half-written. replace: true reads no base and is exempt:
+                // discarding this mode's paint is what the caller asked for.
+                if (!request.replace)
+                    for (std::size_t i = 0; i < plan.volumes.size(); ++i) {
+                        const Slic3r::ModelVolume* mv = target.volumes[std::size_t(plan.volumes[i].index)];
+                        if (!paint_base_unchanged(*mv, mode, paint_base[i]))
+                            return nlohmann::json{
+                                {"status", "error"},
+                                {"message", std::string("the ") + paint_mode_name(mode) + " paint on volume " +
+                                            std::to_string(plan.volumes[i].volume_id) +
+                                            " changed while the selection was being computed, and replace was "
+                                            "false, so writing it now would discard that change; retry"}};
+                    }
 
                 // Everything is validated -- only now touch the undo stack, the way
                 // set_object_filament does (OrcaMCPFilamentUtils.cpp, set_object_filament).
@@ -945,10 +1012,10 @@ void OrcaMCPServer::register_paint_tools()
                         band_counts[b] += assignment.band_counts[b];
                     facets_selected += int(assignment.states.size()) - assignment.unassigned;
 
-                    // False here can only mean "the annotation already held exactly this": every
-                    // other reason apply_facet_states rejects a write was ruled out in hop 1, and
-                    // plan_still_valid just proved the mesh it was ruled out on is still this one.
-                    changed |= apply_facet_states(*mv, mode, assignment.states, request.replace);
+                    // A compare and a move: the serialize this used to run here happened on the
+                    // worker. False means only "the annotation already held exactly this" -- every
+                    // reason a write can be rejected was ruled out by build_paint_write in hop 2.
+                    changed |= apply_paint_data(*mv, mode, std::move(writes[i].data));
                 }
 
                 refresh_after_paint(target);
@@ -963,7 +1030,10 @@ void OrcaMCPServer::register_paint_tools()
                 for (std::size_t i = 0; i < plan.volumes.size(); ++i) {
                     Slic3r::ModelVolume* mv = target.volumes[std::size_t(plan.volumes[i].index)];
                     nlohmann::json by_mode = nlohmann::json::object();
-                    by_mode[paint_mode_name(mode)] = painted_json(*mv, mode);
+                    // Read off the data this call just wrote, computed on the worker beside it --
+                    // not read back through a second TriangleSelector over the whole mesh, which
+                    // is what reading it off the Model here would cost.
+                    by_mode[paint_mode_name(mode)] = painted_json(mode, writes[i].painted);
                     volumes.push_back({
                         {"volume_id", plan.volumes[i].volume_id},
                         {"name", mv->name},
@@ -974,7 +1044,7 @@ void OrcaMCPServer::register_paint_tools()
                         // Through the plan's transform, which plan_still_valid has just confirmed
                         // is still the volume's own, so the box describes the frame the states
                         // were computed in rather than a second, separately-read one.
-                        {"bounding_box", bbox_json(mv->mesh().transformed_bounding_box(plan.volumes[i].to_plate))},
+                        {"bounding_box", bbox_json(volume_bbox[i])},
                         {"modes", by_mode}
                     });
                 }
@@ -993,7 +1063,10 @@ void OrcaMCPServer::register_paint_tools()
                     // agrees with this one only for a single unrotated instance. Reported here so
                     // an agent bands from the box these tools themselves use, never from the other
                     // one.
-                    {"bounding_box", bbox_json(target_plate_bbox(target))},
+                    // The union of the per-volume boxes hop 2 computed, which is what
+                    // target_plate_bbox would recompute here over the same volumes in the same
+                    // order -- another whole-mesh vertex loop the GUI thread does not need to run.
+                    {"bounding_box", bbox_json(merged_bbox(volume_bbox))},
                     {"instance_id", int(target.instance_idx)},
                     {"replace", request.replace},
                     {"annotation_changed", changed},

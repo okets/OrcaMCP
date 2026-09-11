@@ -1259,6 +1259,11 @@ Write per-triangle paint — the same data the GUI paint gizmos write.
 - If the scene changes while the fill is being computed (an object added, removed, or moved,
   or a mesh replaced), the call fails with a message that says the scene changed and asks you
   to retry — this is a retry signal, not a rejected request; the selection was never applied.
+  With `replace: false` the same applies to the paint itself: the new facets are computed on
+  top of the paint the volume carried when the call started, so if that paint is edited (in
+  the gizmo, or by another call) while the fill runs, the call is refused rather than writing
+  a result that would silently drop the edit. `replace: true` has no base to lose and is never
+  refused for this reason — it discards this mode's paint by definition.
 - On meshes of millions of facets the geometry takes seconds to minutes. It runs off the GUI
   thread, so other tools keep answering meanwhile, but the bridge's `ORCAMCP_TIMEOUT`
   (default 120 s) may need raising for the paint call itself.

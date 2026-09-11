@@ -189,49 +189,16 @@ Vec3f brim_point_to_object(const ModelObject& obj, double plate_x, double plate_
     return local.cast<float>();
 }
 
-bool apply_facet_states(ModelVolume& mv, PaintMode mode, const std::vector<int>& states, bool replace)
+namespace {
+
+// The per-state report for a selector that already holds the paint. Shared by the write path --
+// which has a selector in hand and must not build a second one over a multi-million-facet mesh --
+// and by the read path, which builds one from stored data.
+//
+// Scanned over the whole scheme's range, not max_paint_state_for(mode): a report has to show
+// whatever is actually on the volume, including a state some other tool put there.
+std::vector<PaintedStateInfo> summarize_selector(const TriangleSelector& selector, double total_area)
 {
-    // Validate before touching anything, so a rejected call is a no-op rather than a partial paint.
-    // set_facet only accepts original triangles (TriangleSelector.hpp, "Only works for original
-    // triangles", and its assert in TriangleSelector::set_facet), so one entry per original facet
-    // is the only shape that means anything here.
-    const std::size_t facet_count = mv.mesh().its.indices.size();
-    if (facet_count == 0 || states.size() != facet_count)
-        return false;
-    const int max_state = max_paint_state_for(mode);
-    for (int state : states)
-        if (state < -1 || state > max_state)
-            return false;
-
-    FacetsAnnotation& annotation = annotation_for_mode(mv, mode);
-
-    TriangleSelector selector(mv.mesh());
-    if (!replace) {
-        // needs_reset = false: the TriangleSelector constructor already reset, exactly as the
-        // gizmo relies on (GLGizmoMmuSegmentation::init_model_triangle_selectors passes false for
-        // the same reason).
-        selector.deserialize(annotation.get_data(), false);
-    }
-
-    // No bounds clamp on the loop: the guard above already proved states.size() == facet_count.
-    for (std::size_t i = 0; i < states.size(); ++i)
-        if (states[i] >= 0)
-            selector.set_facet(int(i), EnforcerBlockerType(states[i]));
-
-    return annotation.set(selector);
-}
-
-std::vector<PaintedStateInfo> read_volume_paint(const ModelVolume& mv, PaintMode mode)
-{
-    const FacetsAnnotation& annotation = annotation_for_mode(mv, mode);
-
-    TriangleSelector selector(mv.mesh());
-    selector.deserialize(annotation.get_data(), false);
-
-    const double total_area = its_surface_area(mv.mesh().its);
-
-    // Scanned over the whole scheme's range, not max_paint_state_for(mode): a report has to show
-    // whatever is actually on the volume, including a state some other tool put there.
     std::vector<PaintedStateInfo> painted;
     for (int state = int(EnforcerBlockerType::NONE); state <= max_paint_state(); ++state) {
         const int count = selector.num_facets(EnforcerBlockerType(state));
@@ -246,6 +213,93 @@ std::vector<PaintedStateInfo> read_volume_paint(const ModelVolume& mv, PaintMode
         painted.push_back(info);
     }
     return painted;
+}
+
+} // namespace
+
+bool build_paint_write(const TriangleMesh&     mesh,
+                       PaintMode               mode,
+                       const std::vector<int>& states,
+                       bool                    replace,
+                       const PaintData&        base,
+                       PaintWrite&             out)
+{
+    // Validate before building anything, so a rejected call costs nothing and leaves `out` alone.
+    // set_facet only accepts original triangles (TriangleSelector.hpp, "Only works for original
+    // triangles", and its assert in TriangleSelector::set_facet), so one entry per original facet
+    // is the only shape that means anything here.
+    const std::size_t facet_count = mesh.its.indices.size();
+    if (facet_count == 0 || states.size() != facet_count)
+        return false;
+    const int max_state = max_paint_state_for(mode);
+    for (int state : states)
+        if (state < -1 || state > max_state)
+            return false;
+
+    TriangleSelector selector(mesh);
+    if (!replace) {
+        // needs_reset = false: the TriangleSelector constructor already reset, exactly as the
+        // gizmo relies on (GLGizmoMmuSegmentation::init_model_triangle_selectors passes false for
+        // the same reason).
+        selector.deserialize(base, false);
+    }
+
+    // No bounds clamp on the loop: the guard above already proved states.size() == facet_count.
+    for (std::size_t i = 0; i < states.size(); ++i)
+        if (states[i] >= 0)
+            selector.set_facet(int(i), EnforcerBlockerType(states[i]));
+
+    out.data    = selector.serialize();
+    out.painted = summarize_selector(selector, its_surface_area(mesh.its));
+    return true;
+}
+
+bool apply_paint_data(ModelVolume& mv, PaintMode mode, PaintData&& data)
+{
+    FacetsAnnotation& annotation = annotation_for_mode(mv, mode);
+    // FacetsAnnotation::set's own body (Model.cpp, FacetsAnnotation::set) with its serialize()
+    // already done on the worker: compare, move, and touch() only on a real change, so an
+    // unchanged write still leaves the undo stack alone.
+    if (data == annotation.get_data())
+        return false;
+    annotation.set_data(std::move(data));
+    return true;
+}
+
+std::vector<PaintData> capture_paint_base(const PaintTarget& target, PaintMode mode)
+{
+    std::vector<PaintData> base;
+    base.reserve(target.volumes.size());
+    for (ModelVolume* mv : target.volumes)
+        base.push_back(annotation_for_mode(*mv, mode).get_data());
+    return base;
+}
+
+bool paint_base_unchanged(const ModelVolume& mv, PaintMode mode, const PaintData& base)
+{
+    return annotation_for_mode(mv, mode).get_data() == base;
+}
+
+bool apply_facet_states(ModelVolume& mv, PaintMode mode, const std::vector<int>& states, bool replace)
+{
+    PaintWrite write;
+    if (!build_paint_write(mv.mesh(), mode, states, replace, annotation_for_mode(mv, mode).get_data(), write))
+        return false;
+    return apply_paint_data(mv, mode, std::move(write.data));
+}
+
+std::vector<PaintedStateInfo> summarize_paint_data(const TriangleMesh& mesh, const PaintData& data)
+{
+    if (mesh.its.indices.empty())
+        return {};
+    TriangleSelector selector(mesh);
+    selector.deserialize(data, false);
+    return summarize_selector(selector, its_surface_area(mesh.its));
+}
+
+std::vector<PaintedStateInfo> read_volume_paint(const ModelVolume& mv, PaintMode mode)
+{
+    return summarize_paint_data(mv.mesh(), annotation_for_mode(mv, mode).get_data());
 }
 
 bool has_volume_paint(const ModelVolume& mv, PaintMode mode)

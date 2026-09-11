@@ -981,6 +981,189 @@ TEST_CASE("apply_facet_states refuses a volume with no facets", "[orcamcp][paint
     CHECK(read_volume_paint(*built.volume, PaintMode::Color).empty());
 }
 
+// apply_facet_states above is the convenience wrapper for a caller already on the main thread.
+// What paint_object actually runs is its two halves, split apart so that the expensive one -- a
+// TriangleSelector over the whole mesh, whose constructor alone runs a serial its_face_neighbors
+// -- happens on the HTTP worker, and the GUI thread is left with a comparison and a move. The
+// cases below hold each half to the wrapper's behaviour, because the bytes they produce are what
+// 3MF stores and what the gizmo reads back.
+
+TEST_CASE("build_paint_write produces exactly the data the one-shot write would have",
+          "[orcamcp][paint]")
+{
+    HeadlessObject    split  = make_headless_object(Slic3r::its_make_cube(1.0, 1.0, 1.0), Vec3d(0, 0, 0));
+    HeadlessObject    whole  = make_headless_object(Slic3r::its_make_cube(1.0, 1.0, 1.0), Vec3d(0, 0, 0));
+    const std::size_t facets = split.volume->mesh().its.indices.size();
+    REQUIRE(facets > 1);
+
+    std::vector<int> states(facets, 5);
+    states[1] = 6;
+
+    // The worker's half: a mesh and a states vector, with no ModelVolume anywhere in the signature.
+    PaintWrite write;
+    REQUIRE(build_paint_write(split.volume->mesh(), PaintMode::Color, states, true, PaintData{}, write));
+    // The main thread's half: a comparison and a move.
+    CHECK(apply_paint_data(*split.volume, PaintMode::Color, std::move(write.data)));
+
+    REQUIRE(apply_facet_states(*whole.volume, PaintMode::Color, states, true));
+
+    // Byte-identical, not merely equivalent: this is the data 3MF round-trips and the gizmo
+    // renders, so "close enough" is not something it is allowed to be.
+    CHECK(split.volume->mmu_segmentation_facets.get_data() ==
+          whole.volume->mmu_segmentation_facets.get_data());
+    CHECK(split.volume->get_extruders() == whole.volume->get_extruders());
+}
+
+TEST_CASE("build_paint_write's report is the one the annotation reads back afterwards",
+          "[orcamcp][paint]")
+{
+    HeadlessObject built = make_headless_object(two_triangle_rectangle(), Vec3d(0, 0, 0));
+
+    PaintWrite write;
+    REQUIRE(build_paint_write(built.volume->mesh(), PaintMode::Color, {5, 6}, true, PaintData{}, write));
+    REQUIRE(apply_paint_data(*built.volume, PaintMode::Color, std::move(write.data)));
+
+    // paint_object reports write.painted instead of re-reading the volume on the GUI thread, which
+    // is only honest if the two agree on all three fields.
+    const std::vector<PaintedStateInfo> read_back = read_volume_paint(*built.volume, PaintMode::Color);
+    REQUIRE(read_back.size() == write.painted.size());
+    for (std::size_t i = 0; i < read_back.size(); ++i) {
+        CHECK(read_back[i].state == write.painted[i].state);
+        CHECK(read_back[i].facet_count == write.painted[i].facet_count);
+        CHECK_THAT(read_back[i].area_ratio, WithinAbs(write.painted[i].area_ratio, 1e-12));
+    }
+    REQUIRE(write.painted.size() == 2);
+    CHECK(write.painted[0].state == 5);
+    CHECK_THAT(write.painted[0].area_ratio, WithinAbs(0.5, 1e-9));
+}
+
+TEST_CASE("build_paint_write reads its base only when replace is false", "[orcamcp][paint]")
+{
+    HeadlessObject built = make_headless_object(two_triangle_rectangle(), Vec3d(0, 0, 0));
+    REQUIRE(apply_facet_states(*built.volume, PaintMode::Color, {5, 6}, true));
+
+    // Captured on the main thread exactly as hop 1 does it, then read where there is no Model.
+    const std::vector<PaintData> base =
+        capture_paint_base(whole_object_target(*built.object), PaintMode::Color);
+    REQUIRE(base.size() == 1);
+
+    PaintWrite merged;
+    REQUIRE(build_paint_write(built.volume->mesh(), PaintMode::Color, {7, -1}, false, base[0], merged));
+    REQUIRE(merged.painted.size() == 2);
+    CHECK(merged.painted[0].state == 6);   // the -1 facet kept what the base gave it
+    CHECK(merged.painted[1].state == 7);
+
+    // The same call with replace starts from a blank selector, so the base's 6 is gone whether it
+    // was handed over or not -- which is the behaviour paint_object's info_messages now describes.
+    PaintWrite replaced;
+    REQUIRE(build_paint_write(built.volume->mesh(), PaintMode::Color, {7, -1}, true, base[0], replaced));
+    REQUIRE(replaced.painted.size() == 2);
+    CHECK(replaced.painted[0].state == 0);
+    CHECK(replaced.painted[1].state == 7);
+}
+
+TEST_CASE("build_paint_write rejects what it cannot honour and leaves its output alone",
+          "[orcamcp][paint]")
+{
+    HeadlessObject    built  = make_headless_object(Slic3r::its_make_cube(1.0, 1.0, 1.0), Vec3d(0, 0, 0));
+    const std::size_t facets = built.volume->mesh().its.indices.size();
+    REQUIRE(facets > 1);
+
+    PaintWrite write;
+    REQUIRE(build_paint_write(built.volume->mesh(), PaintMode::Color, std::vector<int>(facets, 5),
+                              true, PaintData{}, write));
+    const PaintData good = write.data;
+
+    // Every rejection apply_facet_states makes, made now on the worker -- which is the point of the
+    // split: hop 2 can refuse the call before hop 3 has taken an undo snapshot for it.
+    CHECK_FALSE(build_paint_write(built.volume->mesh(), PaintMode::Color, {9}, true, PaintData{}, write));
+    CHECK_FALSE(build_paint_write(built.volume->mesh(), PaintMode::Color,
+                                  std::vector<int>(facets + 1, 9), true, PaintData{}, write));
+    std::vector<int> too_high(facets, 5);
+    too_high.back() = max_paint_state() + 1;
+    CHECK_FALSE(build_paint_write(built.volume->mesh(), PaintMode::Color, too_high, true, PaintData{}, write));
+    std::vector<int> bad_sentinel(facets, 5);
+    bad_sentinel.back() = -2;
+    CHECK_FALSE(build_paint_write(built.volume->mesh(), PaintMode::Color, bad_sentinel, true,
+                                  PaintData{}, write));
+    // A mesh with no triangles has no facet to address, so every states vector is the wrong size
+    // for it, the empty one included.
+    const TriangleMesh empty{indexed_triangle_set()};
+    CHECK_FALSE(build_paint_write(empty, PaintMode::Color, {}, true, PaintData{}, write));
+
+    // Not one of them touched the output, so a rejected call cannot leave a half-built paint
+    // behind for the next hop to write.
+    CHECK(write.data == good);
+}
+
+TEST_CASE("apply_paint_data touches the annotation only when the data differs", "[orcamcp][paint]")
+{
+    HeadlessObject built = make_headless_object(two_triangle_rectangle(), Vec3d(0, 0, 0));
+
+    PaintWrite write;
+    REQUIRE(build_paint_write(built.volume->mesh(), PaintMode::Color, {5, 6}, true, PaintData{}, write));
+    PaintData first = write.data;
+    CHECK(apply_paint_data(*built.volume, PaintMode::Color, std::move(first)));
+    const auto stamped = built.volume->mmu_segmentation_facets.timestamp();
+
+    // The same data again. FacetsAnnotation::set's contract is that an unchanged write does not
+    // touch(), and this half has to keep it: a bumped timestamp is a modified project and an undo
+    // entry for a paint that painted nothing.
+    PaintData again = write.data;
+    CHECK_FALSE(apply_paint_data(*built.volume, PaintMode::Color, std::move(again)));
+    CHECK(built.volume->mmu_segmentation_facets.timestamp() == stamped);
+    CHECK(built.volume->mmu_segmentation_facets.get_data() == write.data);
+}
+
+TEST_CASE("paint_base_unchanged catches a stroke that landed while the worker was computing",
+          "[orcamcp][paint]")
+{
+    HeadlessObject built = make_headless_object(two_triangle_rectangle(), Vec3d(0, 0, 0));
+    REQUIRE(apply_facet_states(*built.volume, PaintMode::Color, {5, 6}, true));
+
+    const std::vector<PaintData> base =
+        capture_paint_base(whole_object_target(*built.object), PaintMode::Color);
+    REQUIRE(base.size() == 1);
+    CHECK(paint_base_unchanged(*built.volume, PaintMode::Color, base[0]));
+
+    // A replace: false write is built on top of that base, so anything that repaints the volume in
+    // between would be discarded by it without a word. plan_still_valid cannot see this: the mesh
+    // pointer and the plate transform are both exactly what they were.
+    REQUIRE(apply_facet_states(*built.volume, PaintMode::Color, {8, -1}, false));
+    CHECK_FALSE(paint_base_unchanged(*built.volume, PaintMode::Color, base[0]));
+
+    // Per mode, like every other accessor here: painting colour says nothing about the support
+    // base a support call was built on, and refusing that call would be a false alarm.
+    const std::vector<PaintData> support_base =
+        capture_paint_base(whole_object_target(*built.object), PaintMode::Support);
+    REQUIRE(apply_facet_states(*built.volume, PaintMode::Color, {9, 9}, true));
+    CHECK(paint_base_unchanged(*built.volume, PaintMode::Support, support_base[0]));
+}
+
+TEST_CASE("summarize_paint_data reads a report out of stored data with no ModelVolume",
+          "[orcamcp][paint]")
+{
+    HeadlessObject built = make_headless_object(two_triangle_rectangle(), Vec3d(0, 0, 0));
+    REQUIRE(apply_facet_states(*built.volume, PaintMode::Color, {5, 6}, true));
+
+    // The same mesh and the same bytes the annotation holds, read by a function that never sees a
+    // Model -- which is what lets the report be built where it blocks nothing.
+    const std::vector<PaintedStateInfo> direct =
+        summarize_paint_data(built.volume->mesh(), built.volume->mmu_segmentation_facets.get_data());
+    const std::vector<PaintedStateInfo> through = read_volume_paint(*built.volume, PaintMode::Color);
+    REQUIRE(direct.size() == through.size());
+    for (std::size_t i = 0; i < direct.size(); ++i) {
+        CHECK(direct[i].state == through[i].state);
+        CHECK(direct[i].facet_count == through[i].facet_count);
+        CHECK_THAT(direct[i].area_ratio, WithinAbs(through[i].area_ratio, 1e-12));
+    }
+
+    // A volume with no facets reports nothing at all, rather than one entry claiming zero facets
+    // are unpainted.
+    const TriangleMesh empty{indexed_triangle_set()};
+    CHECK(summarize_paint_data(empty, PaintData{}).empty());
+}
+
 TEST_CASE("facet_centroids gives the same answer for a mesh large enough to be split across threads",
           "[orcamcp][paint]")
 {

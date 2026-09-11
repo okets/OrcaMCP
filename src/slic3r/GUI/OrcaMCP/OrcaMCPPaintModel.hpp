@@ -140,31 +140,6 @@ Vec3d brim_point_to_plate(const ModelObject& obj, const Vec3f& local_pos, std::s
 // same instance.
 Vec3f brim_point_to_object(const ModelObject& obj, double plate_x, double plate_y, std::size_t instance_idx);
 
-// Writes `states` (one raw EnforcerBlockerType value per facet of mv.mesh(), -1 = leave alone)
-// into the annotation `mode` selects, the same way GLGizmoMmuSegmentation::update_model_object
-// does (GLGizmoMmuSegmentation.cpp, update_model_object): drive a TriangleSelector with set_facet,
-// then hand it to FacetsAnnotation::set. Going through the selector rather than writing the
-// bitstream directly is what makes MCP-painted data byte-identical to gizmo-painted data, so it
-// renders in the gizmo and round-trips through 3MF unchanged.
-// `replace` starts from a blank selector, discarding whatever the volume already carried for
-// this mode; otherwise the existing paint is the base and only the listed facets move.
-//
-// Returns false for two unrelated reasons, which the bool alone cannot tell apart:
-//   * the call was rejected and the annotation was not touched at all -- `states` is not exactly
-//     one entry per facet, the mesh has no facets, or some entry is outside
-//     [-1, max_paint_state_for(mode)];
-//   * the call was applied but the annotation already held exactly this (FacetsAnnotation::set's
-//     own return).
-// A caller that must distinguish the two validates the size and the range itself first; the tool
-// layer does, so that it can report which entry was wrong.
-//
-// Rejecting rather than clamping is deliberate. `states` comes from a FacetAssignment, which is
-// sized to the facet count by construction, so a short vector is always a caller bug; painting
-// its prefix would leave a half-painted model that looks deliberate. And EnforcerBlockerType is
-// an int8_t whose values are bit-packed by the serializer, so an out-of-range state is stored raw
-// here and silently clamped much later, far from the call that caused it.
-bool apply_facet_states(ModelVolume& mv, PaintMode mode, const std::vector<int>& states, bool replace);
-
 // One state present on one volume.
 struct PaintedStateInfo
 {
@@ -176,9 +151,81 @@ struct PaintedStateInfo
     double area_ratio  = 0.0;
 };
 
-// Every state carrying at least one facet, ascending by state, state 0 (unpainted) included so a
-// caller can see how much of the volume is still bare. An unpainted volume returns exactly one
-// entry, {0, all facets, 1.0}.
+// The serialised form of a paint annotation: exactly what FacetsAnnotation stores and what 3MF
+// round-trips. A value of this type carries between threads, so the expensive half of a paint can
+// be computed where it blocks nothing and the main thread only has to hand it over.
+using PaintData = TriangleSelector::TriangleSplittingData;
+
+// Everything a paint needs computed before any Model is touched: the data apply_paint_data hands
+// the annotation, and the per-state report the response carries. One struct because both come out
+// of one TriangleSelector, and building that selector -- a serial its_face_neighbors over the mesh
+// plus a node per facet -- is the dominant cost on the meshes this was written for. Doing it
+// twice, or on the GUI thread, is what made the whole MCP server unreachable for minutes.
+struct PaintWrite
+{
+    PaintData                     data;
+    std::vector<PaintedStateInfo> painted;
+};
+
+// Any thread: turn `states` (one raw EnforcerBlockerType value per facet of `mesh`, -1 = leave
+// alone) into the annotation data that paints them, the same way
+// GLGizmoMmuSegmentation::update_model_object does -- drive a TriangleSelector with set_facet,
+// then serialize it. Going through the selector rather than writing the bitstream directly is what
+// makes MCP-painted data byte-identical to gizmo-painted data, so it renders in the gizmo and
+// round-trips through 3MF unchanged.
+// `replace` starts from a blank selector, discarding whatever the volume already carried for this
+// mode; otherwise `base` -- the annotation's current data -- is the base and only the listed facets
+// move. `base` is unread when `replace`.
+//
+// Returns false and leaves `out` alone when the call cannot be honoured: `states` is not exactly
+// one entry per facet, the mesh has no facets, or some entry is outside
+// [-1, max_paint_state_for(mode)].
+//
+// Rejecting rather than clamping is deliberate. `states` comes from a FacetAssignment, which is
+// sized to the facet count by construction, so a short vector is always a caller bug; painting its
+// prefix would leave a half-painted model that looks deliberate. And EnforcerBlockerType is an
+// int8_t whose values are bit-packed by the serializer, so an out-of-range state would be stored
+// raw and silently clamped much later, far from the call that caused it.
+bool build_paint_write(const TriangleMesh&     mesh,
+                       PaintMode               mode,
+                       const std::vector<int>& states,
+                       bool                    replace,
+                       const PaintData&        base,
+                       PaintWrite&             out);
+
+// Main thread: write `data` into the annotation `mode` selects. FacetsAnnotation::set's own
+// contract minus the serialize it would have run here -- compare, and touch() only when something
+// actually changed -- so this costs a comparison rather than a pass over every facet, and an
+// unchanged write still does not dirty the undo stack. True when the annotation changed.
+bool apply_paint_data(ModelVolume& mv, PaintMode mode, PaintData&& data);
+
+// Main thread: what each targeted volume currently carries for `mode`, copied so a worker can
+// build a `replace: false` write on top of it. Only the paint path needs this, which is why the
+// plan itself is captured without it.
+std::vector<PaintData> capture_paint_base(const PaintTarget& target, PaintMode mode);
+
+// Main thread: true when `mv` still carries exactly the paint `base` was captured from. A
+// `replace: false` write is computed on top of that base while the GUI thread is free, so a gizmo
+// stroke landing on the volume in between would be silently discarded by it. Asked before the
+// write, which is the last point at which that loss can still be refused instead.
+bool paint_base_unchanged(const ModelVolume& mv, PaintMode mode, const PaintData& base);
+
+// Any thread: every state carrying at least one facet in `data`, ascending by state, state 0
+// (unpainted) included so a caller can see how much of the volume is still bare. An unpainted
+// volume returns exactly one entry, {0, all facets, 1.0}; a volume with no facets returns none.
+std::vector<PaintedStateInfo> summarize_paint_data(const TriangleMesh& mesh, const PaintData& data);
+
+// build_paint_write followed by apply_paint_data, for a caller already on the main thread whose
+// mesh is small enough not to care that both halves run there.
+//
+// Returns false for two unrelated reasons, which the bool alone cannot tell apart:
+//   * the call was rejected and the annotation was not touched at all (see build_paint_write);
+//   * the call was applied but the annotation already held exactly this.
+// A caller that must distinguish the two validates the size and the range itself first; the tool
+// layer does, so that it can report which entry was wrong.
+bool apply_facet_states(ModelVolume& mv, PaintMode mode, const std::vector<int>& states, bool replace);
+
+// summarize_paint_data over the annotation `mode` selects.
 std::vector<PaintedStateInfo> read_volume_paint(const ModelVolume& mv, PaintMode mode);
 
 // True when the annotation `mode` selects carries data -- i.e. exactly when clear_volume_paint
