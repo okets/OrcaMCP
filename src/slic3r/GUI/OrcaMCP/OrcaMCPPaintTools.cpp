@@ -71,13 +71,27 @@ struct PaintTarget
     int                               object_id    = -1;
 };
 
-// Main thread only. Reads object_id (required), volume_id (optional, -1 = every model part)
-// and instance_id (optional, default 0).
+// What a tool needs resolved out of its parameters. Defaulted to the paint tools' needs, which
+// three of the four have; the one exception states itself at its call site.
+struct PaintTargetNeeds
+{
+    // Read volume_id, collect the object's model parts, and fail an object that has none. Only a
+    // tool that writes or reads facet paint needs that -- set_brim_ears addresses the object as a
+    // whole (brim_points live on the ModelObject), so requiring it a surface to paint would refuse
+    // an object it could serve perfectly well, over a parameter its schema does not even declare.
+    bool volumes = true;
+};
+
+// Main thread only. Reads object_id (required), instance_id (optional, default 0) and, when
+// `needs.volumes`, volume_id (optional, -1 = every model part).
 //
 // A tool that writes paint validates through here first and only then takes its undo snapshot
 // (the set_object_printable / set_object_filament shape), and follows the write with
 // refresh_after_paint below, which carries the GUI bookkeeping every such write owes.
-bool resolve_paint_target(const nlohmann::json& params, PaintTarget& out, std::string& error)
+bool resolve_paint_target(const nlohmann::json&  params,
+                          PaintTarget&           out,
+                          std::string&           error,
+                          const PaintTargetNeeds needs = {})
 {
     Plater*        plater = wxGetApp().plater();
     Slic3r::Model& model  = plater->model();
@@ -108,6 +122,9 @@ bool resolve_paint_target(const nlohmann::json& params, PaintTarget& out, std::s
         return false;
     }
     out.instance_idx = std::size_t(instance_id);
+
+    if (!needs.volumes)
+        return true;
 
     int volume_id = -1;
     if (!parse_integer_field(params, "volume_id", -1, volume_id, error))
@@ -931,7 +948,13 @@ void OrcaMCPServer::register_paint_tools()
                 Plater*     plater = wxGetApp().plater();
                 PaintTarget target;
                 std::string error;
-                if (!resolve_paint_target(params, target, error))
+                // No volumes: brim ears are BrimPoints on the ModelObject, not facets on a volume,
+                // so this tool neither declares volume_id in its schema nor needs the object to
+                // own a model part. Resolving them anyway refused an object with no model part
+                // ("Object N has no model parts to paint", from a tool that paints nothing) and
+                // read an undeclared volume_id, which could reject the call outright when it named
+                // a modifier.
+                if (!resolve_paint_target(params, target, error, PaintTargetNeeds{/*volumes=*/false}))
                     return nlohmann::json{{"status", "error"}, {"message", error}};
 
                 // brim_points is object-level data. Brim.cpp:368-374 hardcodes instances[0]'s
