@@ -97,7 +97,6 @@ using Slic3r::Vec3d;
 using Slic3r::Vec3f;
 using Slic3r::Vec3i32;
 using Slic3r::Transform3d;
-using Slic3r::indexed_triangle_set;
 using Slic3r::TriangleMesh;
 using Catch::Matchers::WithinAbs;
 
