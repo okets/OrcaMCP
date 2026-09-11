@@ -1,9 +1,11 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPPaintSelect.hpp
 #pragma once
 #include <array>
+#include <string>
 #include <vector>
 
 #include <Eigen/Dense>
+#include <nlohmann/json.hpp>
 
 #include "libslic3r/BoundingBox.hpp"
 #include "libslic3r/Point.hpp"
@@ -81,7 +83,7 @@ bool pick_ray(const TriangleMesh& mesh,
 
 // What render_plate_view reports per view and pick_facet takes back: the two 4x4 matrices the
 // thumbnail was drawn with and the viewport {x, y, width, height} in pixels. Pixel (0, 0) is the
-// TOP-left of the saved image: OrcaMCPPlateUtils.cpp:44,63 flip the GL buffer row-wise when
+// TOP-left of the saved image: OrcaMCPPlateUtils.cpp:63,105 flip the GL buffer row-wise when
 // writing it, so the convention here is the image's, not OpenGL's.
 struct CameraFrame
 {
@@ -93,6 +95,29 @@ struct CameraFrame
 // The world-space ray through pixel (px, py). `origin` lies on the near plane and `dir` is a unit
 // vector. False when the viewport has no area or projection * view cannot be inverted.
 bool unproject_pixel_to_ray(const CameraFrame& camera, double px, double py, Vec3d& origin, Vec3d& dir);
+
+// ---- The camera JSON, both directions --------------------------------------------------------
+//
+// render_plate_view emits this object per view; pick_facet reads the same object back. The two
+// directions live together deliberately: if one of them renamed a key or transposed a matrix,
+// nothing would fail -- the caller would get a confident answer about the wrong triangle. The
+// round-trip test in tests/slic3rutils/test_paint_select.cpp is what holds them to each other.
+
+// `m`'s sixteen elements, row-major: out[r * 4 + c] is m(r, c). Exactly what parse_matrix4 reads.
+nlohmann::json matrix4_to_json(const Eigen::Matrix4d& m);
+
+// The three keys parse_camera_frame requires: view_matrix, projection_matrix, viewport.
+// render_plate_view adds informational keys of its own (type, pixel_origin, camera_position,
+// target); the parser ignores everything it does not require, so those are free to change.
+nlohmann::json camera_frame_to_json(const CameraFrame& camera);
+
+// Sixteen row-major numbers into `out`. `what` names the field in `error`, since a caller that
+// mistyped one element needs to be told which field, not just that a matrix was wrong.
+bool parse_matrix4(const nlohmann::json& value, const char* what, Eigen::Matrix4d& out, std::string& error);
+
+// A `camera` object as camera_frame_to_json wrote it. Extra keys are tolerated; a missing
+// required key is refused with a message naming all three.
+bool parse_camera_frame(const nlohmann::json& value, CameraFrame& out, std::string& error);
 
 // ---- Seed fill ------------------------------------------------------------------------------
 

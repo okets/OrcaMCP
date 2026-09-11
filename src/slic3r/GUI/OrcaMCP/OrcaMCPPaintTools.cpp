@@ -370,52 +370,6 @@ bool read_vec3(const nlohmann::json& value, Slic3r::Vec3d& out, const std::strin
     return true;
 }
 
-// The `camera` object render_plate_view returns, read back. Both matrices are 16 numbers,
-// row-major, exactly as emitted; the viewport is {x, y, width, height} in pixels.
-bool parse_matrix4(const nlohmann::json& value, const char* what, Eigen::Matrix4d& out, std::string& error)
-{
-    if (!value.is_array() || value.size() != 16) {
-        error = std::string(what) + " must be an array of 16 numbers, row-major";
-        return false;
-    }
-    for (int i = 0; i < 16; ++i) {
-        double v = 0.0;
-        if (!parse_double_param(value[i], v)) {
-            error = std::string(what) + "[" + std::to_string(i) + "] is not a finite number";
-            return false;
-        }
-        out(i / 4, i % 4) = v;
-    }
-    return true;
-}
-
-bool parse_camera_frame(const nlohmann::json& value, CameraFrame& out, std::string& error)
-{
-    if (!value.is_object() || !value.contains("view_matrix") || !value.contains("projection_matrix") ||
-        !value.contains("viewport")) {
-        error = "camera needs view_matrix, projection_matrix and viewport -- pass the `camera` object a "
-                "render_plate_view result contains, unchanged";
-        return false;
-    }
-    if (!parse_matrix4(value["view_matrix"], "camera.view_matrix", out.view, error) ||
-        !parse_matrix4(value["projection_matrix"], "camera.projection_matrix", out.projection, error))
-        return false;
-    const nlohmann::json& vp = value["viewport"];
-    if (!vp.is_array() || vp.size() != 4) {
-        error = "camera.viewport must be [x, y, width, height]";
-        return false;
-    }
-    for (int i = 0; i < 4; ++i) {
-        int v = 0;
-        if (!parse_integer_param(vp[i], v)) {
-            error = "camera.viewport[" + std::to_string(i) + "] is not an integer";
-            return false;
-        }
-        out.viewport[std::size_t(i)] = v;
-    }
-    return true;
-}
-
 bool parse_paint_request(const nlohmann::json& params,
                          PaintMode             mode,
                          const PaintTarget&    target,

@@ -5,9 +5,17 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string>
 #include <vector>
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
+
+// The two scalar guards every MCP parameter is read through, declared rather than included:
+// OrcaMCPCommon.hpp pulls wxWidgets in through GUI_App.hpp, and this translation unit stays
+// libslic3r-only so the camera codec below can be exercised headlessly. They are the same
+// namespace, so a signature that drifts is a link error rather than a second definition.
+bool parse_integer_param(const nlohmann::json& value, int& out);
+bool parse_double_param(const nlohmann::json& value, double& out);
 
 std::vector<int> facet_component_ids(const indexed_triangle_set& its, int& component_count)
 {
@@ -181,6 +189,67 @@ bool unproject_pixel_to_ray(const CameraFrame& camera, double px, double py, Vec
 
     origin = near_point;
     dir    = d.normalized();
+    return true;
+}
+
+nlohmann::json matrix4_to_json(const Eigen::Matrix4d& m)
+{
+    nlohmann::json out = nlohmann::json::array();
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c)
+            out.push_back(m(r, c));
+    return out;
+}
+
+nlohmann::json camera_frame_to_json(const CameraFrame& camera)
+{
+    return {{"view_matrix", matrix4_to_json(camera.view)},
+            {"projection_matrix", matrix4_to_json(camera.projection)},
+            {"viewport", {camera.viewport[0], camera.viewport[1], camera.viewport[2], camera.viewport[3]}}};
+}
+
+bool parse_matrix4(const nlohmann::json& value, const char* what, Eigen::Matrix4d& out, std::string& error)
+{
+    if (!value.is_array() || value.size() != 16) {
+        error = std::string(what) + " must be an array of 16 numbers, row-major";
+        return false;
+    }
+    for (int i = 0; i < 16; ++i) {
+        double v = 0.0;
+        if (!parse_double_param(value[i], v)) {
+            error = std::string(what) + "[" + std::to_string(i) + "] is not a finite number";
+            return false;
+        }
+        // Row-major, the order matrix4_to_json writes: element i is row i / 4, column i % 4.
+        out(i / 4, i % 4) = v;
+    }
+    return true;
+}
+
+bool parse_camera_frame(const nlohmann::json& value, CameraFrame& out, std::string& error)
+{
+    if (!value.is_object() || !value.contains("view_matrix") || !value.contains("projection_matrix") ||
+        !value.contains("viewport")) {
+        error = "camera needs view_matrix, projection_matrix and viewport -- pass the `camera` object a "
+                "render_plate_view result contains, unchanged";
+        return false;
+    }
+    if (!parse_matrix4(value["view_matrix"], "camera.view_matrix", out.view, error) ||
+        !parse_matrix4(value["projection_matrix"], "camera.projection_matrix", out.projection, error))
+        return false;
+    const nlohmann::json& vp = value["viewport"];
+    if (!vp.is_array() || vp.size() != 4) {
+        error = "camera.viewport must be [x, y, width, height]";
+        return false;
+    }
+    for (int i = 0; i < 4; ++i) {
+        int v = 0;
+        if (!parse_integer_param(vp[i], v)) {
+            error = "camera.viewport[" + std::to_string(i) + "] is not an integer";
+            return false;
+        }
+        out.viewport[std::size_t(i)] = v;
+    }
     return true;
 }
 

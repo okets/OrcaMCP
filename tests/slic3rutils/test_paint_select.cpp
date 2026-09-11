@@ -247,6 +247,129 @@ TEST_CASE("unproject_pixel_to_ray refuses a degenerate viewport or a singular ca
 
 namespace {
 
+// Deliberately asymmetric: every one of the sixteen elements is a different number, and m(r, c)
+// != m(c, r) for every off-diagonal pair. That is the whole point -- a symmetric matrix, or the
+// pretty ones above with their handful of non-zero entries, would survive a transposed emitter or
+// a transposed parser unchanged and the round trip would pass while the contract was broken.
+Eigen::Matrix4d counting_matrix(double base)
+{
+    Eigen::Matrix4d m;
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c)
+            m(r, c) = base + r * 4 + c;   // row-major counting order, so 1,2,3... reads across rows
+    return m;
+}
+
+// The object render_plate_view builds: the three required keys from the shared emitter, plus the
+// informational keys it adds on top. Written here the way the renderer writes it
+// (OrcaMCPPlateUtils.cpp, RenderPlateView) so the extras are exercised too.
+nlohmann::json render_plate_view_camera_json(const CameraFrame& cam)
+{
+    nlohmann::json out     = camera_frame_to_json(cam);
+    out["type"]            = "perspective";
+    out["pixel_origin"]    = "top_left";
+    out["camera_position"] = {10.0, 20.0, 30.0};
+    out["target"]          = {1.0, 2.0, 3.0};
+    return out;
+}
+
+} // namespace
+
+// The contract between the two halves of see -> point: render_plate_view emits the camera it drew
+// a view with, pick_facet reads that object back. Nothing errors when the two disagree about key
+// names or row order -- the agent just gets a confident answer about the wrong triangle -- so this
+// round trip is the only thing that can catch a mismatch.
+TEST_CASE("a rendered camera survives the trip out to JSON and back unchanged", "[orcamcp][select]")
+{
+    CameraFrame sent;
+    sent.view       = counting_matrix(1.0);    // 1 .. 16
+    sent.projection = counting_matrix(101.0);  // 101 .. 116, so the two cannot be swapped unseen
+    sent.viewport   = {7, 11, 640, 480};       // x != y and width != height, for the same reason
+
+    const nlohmann::json emitted = render_plate_view_camera_json(sent);
+
+    // The wire shape itself, not just the round trip: 16 numbers in row-major order. A parser that
+    // agreed with a column-major emitter would still round-trip, and would still be wrong.
+    REQUIRE(emitted["view_matrix"].is_array());
+    REQUIRE(emitted["view_matrix"].size() == 16);
+    for (int i = 0; i < 16; ++i)
+        CHECK(emitted["view_matrix"][i].get<double>() == 1.0 + i);
+    CHECK(emitted["viewport"] == nlohmann::json({7, 11, 640, 480}));
+
+    CameraFrame received;
+    std::string error;
+    REQUIRE(parse_camera_frame(emitted, received, error));
+    CHECK(error.empty());
+
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c) {
+            CHECK(received.view(r, c) == sent.view(r, c));
+            CHECK(received.projection(r, c) == sent.projection(r, c));
+        }
+    CHECK(received.viewport == sent.viewport);
+
+    // And the unprojection agrees, which is what the round trip is for: the same pixel of the same
+    // view must give the same ray on both sides.
+    CameraFrame real_sent = test_camera();
+    real_sent.viewport    = {0, 0, 200, 200};
+    CameraFrame real_received;
+    REQUIRE(parse_camera_frame(render_plate_view_camera_json(real_sent), real_received, error));
+    Vec3d o1, d1, o2, d2;
+    REQUIRE(unproject_pixel_to_ray(real_sent, 37.0, 149.0, o1, d1));
+    REQUIRE(unproject_pixel_to_ray(real_received, 37.0, 149.0, o2, d2));
+    CHECK_THAT((o1 - o2).norm(), WithinAbs(0.0, 1e-12));
+    CHECK_THAT((d1 - d2).norm(), WithinAbs(0.0, 1e-12));
+}
+
+// The emitter adds keys the parser never asked for, and is free to add more. A parser that
+// rejected an unknown key would break every caller the moment the renderer gained a field.
+TEST_CASE("parse_camera_frame ignores the keys render_plate_view adds for the reader",
+          "[orcamcp][select]")
+{
+    nlohmann::json camera = render_plate_view_camera_json(test_camera());
+    REQUIRE(camera.contains("type"));
+    REQUIRE(camera.contains("pixel_origin"));
+    REQUIRE(camera.contains("camera_position"));
+    REQUIRE(camera.contains("target"));
+    camera["something_a_later_version_adds"] = 42;
+
+    CameraFrame out;
+    std::string error;
+    CHECK(parse_camera_frame(camera, out, error));
+}
+
+TEST_CASE("parse_camera_frame refuses a camera missing any of the three keys it needs",
+          "[orcamcp][select]")
+{
+    CameraFrame out;
+    std::string error;
+
+    for (const char* key : {"view_matrix", "projection_matrix", "viewport"}) {
+        nlohmann::json camera = camera_frame_to_json(test_camera());
+        camera.erase(key);
+        CHECK_FALSE(parse_camera_frame(camera, out, error));
+        // One message naming all three, so a caller that dropped a key is told what to send back.
+        CHECK(error.find("view_matrix") != std::string::npos);
+    }
+
+    // Present but the wrong shape -- a 9-element matrix, a 3-element viewport -- is refused too,
+    // and named, since a silently zero-filled matrix would point the pick anywhere at all.
+    nlohmann::json short_matrix        = camera_frame_to_json(test_camera());
+    short_matrix["projection_matrix"]  = {1, 2, 3, 4, 5, 6, 7, 8, 9};
+    CHECK_FALSE(parse_camera_frame(short_matrix, out, error));
+    CHECK(error.find("camera.projection_matrix") != std::string::npos);
+
+    nlohmann::json short_viewport    = camera_frame_to_json(test_camera());
+    short_viewport["viewport"]       = {0, 0, 200};
+    CHECK_FALSE(parse_camera_frame(short_viewport, out, error));
+    CHECK(error.find("camera.viewport") != std::string::npos);
+
+    // Not an object at all.
+    CHECK_FALSE(parse_camera_frame(nlohmann::json::array(), out, error));
+}
+
+namespace {
+
 Vec3f facet_centroid_local(const indexed_triangle_set& its, int facet)
 {
     const Vec3i32& f = its.indices[facet];
