@@ -5,6 +5,8 @@
 #include <cctype>
 #include <cmath>
 
+#include <tbb/parallel_for.h>
+
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
 bool parse_paint_axis(const std::string& name, PaintAxis& out)
@@ -91,16 +93,22 @@ bool point_in_sphere(const PaintSphere& sphere, const Vec3d& p)
 
 std::vector<Vec3d> facet_centroids(const indexed_triangle_set& its, const Transform3d& to_plate)
 {
-    std::vector<Vec3d> centroids;
-    centroids.reserve(its.indices.size());
-    for (const Vec3i32& face : its.indices) {
-        const Vec3d a = its.vertices[face[0]].cast<double>();
-        const Vec3d b = its.vertices[face[1]].cast<double>();
-        const Vec3d c = its.vertices[face[2]].cast<double>();
-        // Transform the centroid rather than the three vertices: the transform is affine, so
-        // the two agree, and this is one matrix multiply per facet instead of three.
-        centroids.push_back(to_plate * ((a + b + c) / 3.0));
-    }
+    std::vector<Vec3d> centroids(its.indices.size());
+    // One matrix multiply per facet, embarrassingly parallel. On the 4.3-million-facet meshes a
+    // generated figurine arrives with (T10), the serial loop was a measurable part of a
+    // three-minute paint; the idiom is CutSurface.cpp:811-818.
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, its.indices.size()),
+        [&its, &to_plate, &centroids](const tbb::blocked_range<size_t>& range) {
+            for (size_t i = range.begin(); i < range.end(); ++i) {
+                const Vec3i32& face = its.indices[i];
+                const Vec3d a = its.vertices[face[0]].cast<double>();
+                const Vec3d b = its.vertices[face[1]].cast<double>();
+                const Vec3d c = its.vertices[face[2]].cast<double>();
+                // Transform the centroid rather than the three vertices: the transform is affine,
+                // so the two agree, and this is one matrix multiply per facet instead of three.
+                centroids[i] = to_plate * ((a + b + c) / 3.0);
+            }
+        });
     return centroids;
 }
 

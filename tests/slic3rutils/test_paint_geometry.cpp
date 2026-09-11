@@ -963,3 +963,24 @@ TEST_CASE("apply_facet_states refuses a volume with no facets", "[orcamcp][paint
     CHECK(built.volume->mmu_segmentation_facets.empty());
     CHECK(read_volume_paint(*built.volume, PaintMode::Color).empty());
 }
+
+TEST_CASE("facet_centroids gives the same answer for a mesh large enough to be split across threads",
+          "[orcamcp][paint]")
+{
+    // Big enough that tbb::parallel_for actually partitions it. The serial reference is computed
+    // inline so the test does not depend on the implementation staying serial.
+    indexed_triangle_set its = Slic3r::its_make_sphere(20.0, 0.02);
+    REQUIRE(its.indices.size() > 10000);
+    Transform3d to_plate = Transform3d::Identity();
+    to_plate.translation() = Vec3d(50.0, 60.0, 70.0);
+
+    const std::vector<Vec3d> got = facet_centroids(its, to_plate);
+    REQUIRE(got.size() == its.indices.size());
+    for (std::size_t i = 0; i < its.indices.size(); i += 997) {
+        const Vec3i32& f = its.indices[i];
+        const Vec3d expected = to_plate * ((its.vertices[f[0]].cast<double>() +
+                                            its.vertices[f[1]].cast<double>() +
+                                            its.vertices[f[2]].cast<double>()) / 3.0);
+        CHECK_THAT((got[i] - expected).norm(), WithinAbs(0.0, 1e-9));
+    }
+}

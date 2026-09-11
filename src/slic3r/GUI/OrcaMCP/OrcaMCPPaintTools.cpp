@@ -716,18 +716,23 @@ void OrcaMCPServer::register_paint_tools()
                 for (Slic3r::ModelVolume* mv : target.volumes) {
                     const Slic3r::Transform3d to_plate =
                         volume_to_plate(*target.object, *mv, target.instance_idx);
-                    const std::vector<Slic3r::Vec3d> centroids = facet_centroids(mv->mesh().its, to_plate);
-                    original_facets_total += int(centroids.size());
+                    const std::size_t facet_count = mv->mesh().its.indices.size();
+                    original_facets_total += int(facet_count);
 
                     FacetAssignment assignment;
-                    if (request.selection == "bands")
-                        assignment = assign_bands(centroids, request.axis, request.bands);
-                    else if (request.selection == "box")
-                        assignment = assign_box(centroids, request.box, request.state);
-                    else if (request.selection == "sphere")
-                        assignment = assign_sphere(centroids, request.sphere, request.state);
-                    else
-                        assignment = assign_all(centroids.size(), request.state);
+                    if (request.selection == "all") {
+                        // Every facet, no geometry: computing 4 million centroids to then ignore
+                        // them was the whole-branch review's M11.
+                        assignment = assign_all(facet_count, request.state);
+                    } else {
+                        const std::vector<Slic3r::Vec3d> centroids = facet_centroids(mv->mesh().its, to_plate);
+                        if (request.selection == "bands")
+                            assignment = assign_bands(centroids, request.axis, request.bands);
+                        else if (request.selection == "box")
+                            assignment = assign_box(centroids, request.box, request.state);
+                        else
+                            assignment = assign_sphere(centroids, request.sphere, request.state);
+                    }
 
                     facets_unassigned += assignment.unassigned;
                     for (std::size_t i = 0; i < assignment.band_counts.size() && i < band_counts.size(); ++i)
