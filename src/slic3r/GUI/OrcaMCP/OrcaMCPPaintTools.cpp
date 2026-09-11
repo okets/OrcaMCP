@@ -782,10 +782,11 @@ void OrcaMCPServer::register_paint_tools()
             PaintPlan              plan;
             PaintRequest           request;
             PaintMode              mode = PaintMode::Color;
-            // What each volume already carries for `mode`. The worker needs it to build a
-            // replace: false write on top of it, and reading the Model there is exactly what this
-            // three-hop shape exists to avoid; copying it here, where the Model is already ours,
-            // costs a bitstream memcpy.
+            // What each volume already carries for `mode`, needed only for a replace: false write.
+            // The worker needs it to build that write on top of, and reading the Model there is
+            // exactly what this three-hop shape exists to avoid; copying it here, where the Model
+            // is already ours, costs a bitstream memcpy per volume -- so it is captured below only
+            // when request.replace is false. Left empty otherwise.
             std::vector<PaintData> paint_base;
             {
                 nlohmann::json gate = run_on_main_thread([&params, &plan, &request, &mode,
@@ -818,7 +819,17 @@ void OrcaMCPServer::register_paint_tools()
                     plan       = capture_paint_plan(target);
                     // One loop over target.volumes each, so the two vectors are the same length
                     // and the same order -- which is what lets hop 2 index one by the other's i.
-                    paint_base = capture_paint_base(target, mode);
+                    // request.replace is already known here: when it is true, hop 2 passes
+                    // build_paint_write an empty_base and hop 3's paint_base_unchanged check is
+                    // skipped entirely (both guarded on !request.replace below), so paint_base is
+                    // never read. Capturing it anyway would copy every targeted volume's
+                    // triangles_to_split and bitstream on the GUI thread for nothing -- on a
+                    // multi-million-facet mesh, tens of megabytes the very hop this change exists
+                    // to keep cheap. Left empty (not resized) for replace: true; every reader of
+                    // paint_base[i] is reached only under !request.replace, so the shorter vector
+                    // never gets indexed.
+                    if (!request.replace)
+                        paint_base = capture_paint_base(target, mode);
                     return nlohmann::json{{"status", "success"}};
                 });
                 if (gate.value("status", "") != "success")
