@@ -988,12 +988,18 @@ TEST_CASE("apply_facet_states refuses a volume with no facets", "[orcamcp][paint
 // cases below hold each half to the wrapper's behaviour, because the bytes they produce are what
 // 3MF stores and what the gizmo reads back.
 
-TEST_CASE("build_paint_write produces exactly the data the one-shot write would have",
+// The two cases below compare build_paint_write + apply_paint_data against a hand-driven
+// TriangleSelector committed with FacetsAnnotation::set -- the same two calls
+// GLGizmoMmuSegmentation::update_model_object makes (construct, set_facet per stroke, ::set).
+// This is deliberately NOT apply_facet_states: apply_facet_states is itself build_paint_write +
+// apply_paint_data, so comparing against it is f(x) == f(x) and cannot fail no matter what the
+// split does. The reference path here shares no code with build_paint_write.
+TEST_CASE("build_paint_write matches the gizmo's own TriangleSelector write when replace is true",
           "[orcamcp][paint]")
 {
-    HeadlessObject    split  = make_headless_object(Slic3r::its_make_cube(1.0, 1.0, 1.0), Vec3d(0, 0, 0));
-    HeadlessObject    whole  = make_headless_object(Slic3r::its_make_cube(1.0, 1.0, 1.0), Vec3d(0, 0, 0));
-    const std::size_t facets = split.volume->mesh().its.indices.size();
+    HeadlessObject     split  = make_headless_object(Slic3r::its_make_cube(1.0, 1.0, 1.0), Vec3d(0, 0, 0));
+    HeadlessObject     gizmo  = make_headless_object(Slic3r::its_make_cube(1.0, 1.0, 1.0), Vec3d(0, 0, 0));
+    const std::size_t  facets = split.volume->mesh().its.indices.size();
     REQUIRE(facets > 1);
 
     std::vector<int> states(facets, 5);
@@ -1005,13 +1011,65 @@ TEST_CASE("build_paint_write produces exactly the data the one-shot write would 
     // The main thread's half: a comparison and a move.
     CHECK(apply_paint_data(*split.volume, PaintMode::Color, std::move(write.data)));
 
-    REQUIRE(apply_facet_states(*whole.volume, PaintMode::Color, states, true));
+    // The golden path: a fresh selector (the constructor already resets), set_facet per facet,
+    // committed with FacetsAnnotation::set -- exactly GLGizmoMmuSegmentation::update_model_object.
+    TriangleSelector reference(gizmo.volume->mesh());
+    for (std::size_t i = 0; i < states.size(); ++i)
+        if (states[i] >= 0)
+            reference.set_facet(int(i), EnforcerBlockerType(states[i]));
+    gizmo.volume->mmu_segmentation_facets.set(reference);
 
     // Byte-identical, not merely equivalent: this is the data 3MF round-trips and the gizmo
     // renders, so "close enough" is not something it is allowed to be.
     CHECK(split.volume->mmu_segmentation_facets.get_data() ==
-          whole.volume->mmu_segmentation_facets.get_data());
-    CHECK(split.volume->get_extruders() == whole.volume->get_extruders());
+          gizmo.volume->mmu_segmentation_facets.get_data());
+    CHECK(split.volume->get_extruders() == gizmo.volume->get_extruders());
+}
+
+TEST_CASE("build_paint_write matches the gizmo's own TriangleSelector write when replace is false",
+          "[orcamcp][paint]")
+{
+    HeadlessObject     split  = make_headless_object(Slic3r::its_make_cube(1.0, 1.0, 1.0), Vec3d(0, 0, 0));
+    HeadlessObject     gizmo  = make_headless_object(Slic3r::its_make_cube(1.0, 1.0, 1.0), Vec3d(0, 0, 0));
+    const std::size_t  facets = split.volume->mesh().its.indices.size();
+    REQUIRE(facets > 1);
+
+    // Both objects start from the same pre-existing paint, written the golden way on both sides.
+    // This is exactly the case a replace:true-only comparison hides: a build_paint_write that
+    // silently ignored `base` (e.g. deserialized a blank selector, or skipped the deserialize
+    // altogether) would still match a fresh reference under replace:true, because there is nothing
+    // to inherit there.
+    std::vector<int> initial(facets, 3);
+    for (HeadlessObject* obj : {&split, &gizmo}) {
+        TriangleSelector seed(obj->volume->mesh());
+        for (std::size_t i = 0; i < initial.size(); ++i)
+            seed.set_facet(int(i), EnforcerBlockerType(initial[i]));
+        obj->volume->mmu_segmentation_facets.set(seed);
+    }
+
+    std::vector<int> states(facets, -1);
+    states[0] = 5;
+    states[1] = 6;
+
+    PaintWrite write;
+    REQUIRE(build_paint_write(split.volume->mesh(), PaintMode::Color, states, false,
+                              split.volume->mmu_segmentation_facets.get_data(), write));
+    CHECK(apply_paint_data(*split.volume, PaintMode::Color, std::move(write.data)));
+
+    // The golden path for replace:false: deserialize the volume's current annotation into a fresh
+    // selector first -- exactly what GLGizmoMmuSegmentation::init_model_triangle_selectors does
+    // before a stroke (needs_reset=false because the constructor already reset) -- then set_facet,
+    // then commit with FacetsAnnotation::set.
+    TriangleSelector reference(gizmo.volume->mesh());
+    reference.deserialize(gizmo.volume->mmu_segmentation_facets.get_data(), false);
+    for (std::size_t i = 0; i < states.size(); ++i)
+        if (states[i] >= 0)
+            reference.set_facet(int(i), EnforcerBlockerType(states[i]));
+    gizmo.volume->mmu_segmentation_facets.set(reference);
+
+    CHECK(split.volume->mmu_segmentation_facets.get_data() ==
+          gizmo.volume->mmu_segmentation_facets.get_data());
+    CHECK(split.volume->get_extruders() == gizmo.volume->get_extruders());
 }
 
 TEST_CASE("build_paint_write's report is the one the annotation reads back afterwards",
