@@ -795,11 +795,17 @@ TEST_CASE("has_volume_paint answers, before any write, what clear_volume_paint w
     // Only the painted mode reports data; the other three are still empty.
     CHECK_FALSE(has_volume_paint(*built.volume, PaintMode::Support));
 
-    CHECK(has_volume_paint(*built.volume, PaintMode::Color) ==
-          clear_volume_paint(*built.volume, PaintMode::Color));
+    // Sequenced through named locals on purpose: clear_volume_paint mutates, and the operands of
+    // == are unsequenced, so writing the two calls either side of it lets the compiler clear the
+    // paint before asking whether there was any. Clang happened to evaluate left to right and
+    // passed; MSVC evaluated the clear first and read back false == true.
+    const bool had_paint     = has_volume_paint(*built.volume, PaintMode::Color);
+    const bool clear_changed = clear_volume_paint(*built.volume, PaintMode::Color);
+    CHECK(had_paint == clear_changed);
     CHECK_FALSE(has_volume_paint(*built.volume, PaintMode::Color));
-    CHECK(has_volume_paint(*built.volume, PaintMode::Color) ==
-          clear_volume_paint(*built.volume, PaintMode::Color));
+    const bool had_paint_again     = has_volume_paint(*built.volume, PaintMode::Color);
+    const bool clear_changed_again = clear_volume_paint(*built.volume, PaintMode::Color);
+    CHECK(had_paint_again == clear_changed_again);
 
     // Painting every facet back to state 0 leaves no annotation at all, which is the same place a
     // clear ends: TriangleSelector::serialize stores a triangle only when it is split or not NONE
