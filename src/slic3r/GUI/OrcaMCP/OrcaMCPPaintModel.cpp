@@ -6,11 +6,24 @@
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
+namespace {
+
+// Both parse_paint_mode and parse_paint_state fold case before comparing: they read two
+// parameters of the same MCP tool, and a caller whose `mode` is accepted in capitals while its
+// `state` is rejected pays a round trip for a distinction that means nothing.
+std::string to_lower_copy(const std::string& s)
+{
+    std::string lower = s;
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+    return lower;
+}
+
+} // namespace
+
 bool parse_paint_mode(const std::string& name, PaintMode& out)
 {
-    std::string lower = name;
-    std::transform(lower.begin(), lower.end(), lower.begin(),
-                    [](unsigned char c) { return std::tolower(c); });
+    const std::string lower = to_lower_copy(name);
     if (lower == "color")      { out = PaintMode::Color;     return true; }
     if (lower == "support")    { out = PaintMode::Support;   return true; }
     if (lower == "seam")       { out = PaintMode::Seam;      return true; }
@@ -64,14 +77,15 @@ bool parse_paint_state(PaintMode mode, const std::string& name, int& out_state)
 {
     if (mode == PaintMode::Color)
         return false;
-    if (name == "none") { out_state = int(EnforcerBlockerType::NONE); return true; }
+    const std::string lower = to_lower_copy(name);
+    if (lower == "none") { out_state = int(EnforcerBlockerType::NONE); return true; }
     // "fuzzy_skin" is the token paint_state_label hands back for FuzzySkin's enforcer state, so it
     // has to parse back to the same state or a caller who echoes a read into a write gets rejected.
-    if (name == "enforcer" || (mode == PaintMode::FuzzySkin && name == "fuzzy_skin")) {
+    if (lower == "enforcer" || (mode == PaintMode::FuzzySkin && lower == "fuzzy_skin")) {
         out_state = int(EnforcerBlockerType::ENFORCER);
         return true;
     }
-    if (name == "blocker" && mode != PaintMode::FuzzySkin) {
+    if (lower == "blocker" && mode != PaintMode::FuzzySkin) {
         out_state = int(EnforcerBlockerType::BLOCKER);
         return true;
     }

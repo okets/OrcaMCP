@@ -536,6 +536,22 @@ TEST_CASE("parse_paint_state names the enforcer/blocker states, and refuses the 
     // The synonym is FuzzySkin-only -- Support has no use for it.
     CHECK_FALSE(parse_paint_state(PaintMode::Support, "fuzzy_skin", state));
 
+    // Case is folded, the same as parse_paint_mode and parse_paint_axis. All three read
+    // parameters of one MCP tool, so accepting "Support" for mode while rejecting "Enforcer"
+    // for state would cost a caller a round trip over a distinction that means nothing.
+    state = -99;
+    REQUIRE(parse_paint_state(PaintMode::Support, "ENFORCER", state));
+    CHECK(state == 1);
+    REQUIRE(parse_paint_state(PaintMode::Support, "Blocker", state));
+    CHECK(state == 2);
+    REQUIRE(parse_paint_state(PaintMode::Support, "NoNe", state));
+    CHECK(state == 0);
+    REQUIRE(parse_paint_state(PaintMode::FuzzySkin, "Fuzzy_Skin", state));
+    CHECK(state == 1);
+    // Folding case does not widen what is accepted.
+    CHECK_FALSE(parse_paint_state(PaintMode::FuzzySkin, "BLOCKER", state));
+    CHECK_FALSE(parse_paint_state(PaintMode::Support, "ENFORCE", state));
+
     // Colour states are filament slot numbers, not names.
     CHECK_FALSE(parse_paint_state(PaintMode::Color, "enforcer", state));
     CHECK_FALSE(parse_paint_state(PaintMode::Support, "yes", state));
