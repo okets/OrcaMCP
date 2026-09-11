@@ -709,11 +709,17 @@ void OrcaMCPServer::register_builtin_tools()
                                          "support, seam or fuzzy_skin. selection=bands along a plate axis "
                                          "(even split over `filaments`, or explicit `bands`), box, sphere, "
                                          "or all. ALL COORDINATES ARE PLATE MM, same frame as "
-                                         "get_object_info's bounding_box."},
+                                         "get_object_info's bounding_box. selection=connected fills a "
+                                         "feature from a seed (see pick_facet); selection=component paints "
+                                         "one shell."},
                         {"get_object_paint", "Read back what is painted per volume and per mode, plus brim ears"},
                         {"clear_object_paint", "Reset one paint annotation, or all four, back to unpainted"},
                         {"set_brim_ears", "Place brim ears at plate x/y points. Not facet paint - these are "
-                                          "points on the object, and need brim_type='painted' to print."}
+                                          "points on the object, and need brim_type='painted' to print."},
+                        {"get_object_components", "List a part's connected shells: id, facet count, area, plate bbox. "
+                                                  "Paint one with paint_object selection=component."},
+                        {"pick_facet", "Point, ray, or render pixel + camera -> the facet it lands on, with its plate "
+                                       "point and normal. Feed the point to paint_object selection=connected."}
                     }},
                     {"variable_layer_height", {
                         {"apply_adaptive_layer_height", "Apply VLH to object based on geometry. Quality 0.0-1.0 controls layer variation."},

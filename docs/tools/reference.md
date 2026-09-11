@@ -28,7 +28,7 @@ printer tools entirely (`get_printer_status`, `printer_control`, `discover_print
 | **Slicing** | `slice_all`, `export_gcode`, `get_print_estimate` |
 | **Visualization** | `render_plate_view`, `get_preview_base64` |
 | **Adaptive** | `apply_adaptive_layer_height`, `clear_adaptive_layer_height` |
-| **Painting** | `paint_object`, `get_object_paint`, `clear_object_paint`, `set_brim_ears` |
+| **Painting** | `paint_object`, `get_object_paint`, `clear_object_paint`, `set_brim_ears`, `get_object_components`, `pick_facet` |
 | **Printers** | `get_printers`, `select_printer`, `send_to_printer` |
 | **History** | `undo`, `redo` |
 
@@ -1021,6 +1021,12 @@ Capture plate images from specified camera angles.
 
 **Important:** Always use `save_to_file: true` to avoid large base64-encoded responses.
 
+Each entry in `images` also carries a `camera` object: `view_matrix` and `projection_matrix`
+(16 numbers each, row-major), `viewport` (`[x, y, width, height]`), `type`
+(`"perspective"` or `"orthographic"`), `pixel_origin` (always `"top_left"`),
+`camera_position`, and `target`. Pass it to `pick_facet` unchanged, along with the `[u, v]`
+pixel you read off the image, to turn a point in the render back into the facet it shows.
+
 ---
 
 ### get_preview_base64
@@ -1208,7 +1214,7 @@ Write per-triangle paint — the same data the GUI paint gizmos write.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `object_id` | integer | Yes | Object index (0-based) |
-| `selection` | string | Yes | `bands`, `box`, `sphere` or `all` |
+| `selection` | string | Yes | `bands`, `box`, `sphere`, `all`, `connected` or `component` |
 | `mode` | string | No | `color` (default), `support`, `seam`, `fuzzy_skin` |
 | `volume_id` | integer | No | Part index (0-based); omit or `-1` for every model part |
 | `instance_id` | integer | No | Whose transform reads your coordinates (default 0) |
@@ -1218,8 +1224,11 @@ Write per-triangle paint — the same data the GUI paint gizmos write.
 | `from` / `to` | number | No | Even-split range; defaults to the painted volumes' own extent. Ignored when explicit `bands` are given |
 | `box` | object | `box` | `{min: [x,y,z], max: [x,y,z]}` in plate mm |
 | `sphere` | object | `sphere` | `{center: [x,y,z], radius: n}` in plate mm |
-| `filament` | integer | `box`/`sphere`/`all` + `color` | 1-based slot; `0` = unpainted |
-| `state` | string | `box`/`sphere`/`all`, non-color | `none`, `enforcer`, `blocker`; in `fuzzy_skin` mode, `fuzzy_skin` is also accepted as a synonym for `enforcer` (there is no `blocker`) |
+| `seed` | object | `connected` | `{point: [x,y,z]}` in plate mm (snapped to the nearest surface), or `{volume_id, facet}` from `pick_facet` |
+| `angle` | number | No | `connected` only: stop the fill at edges sharper than this many degrees. Default 30 — the gizmo's smart-fill default |
+| `component` | integer | `component` | A shell id from `get_object_components`. Needs `volume_id` when the object has several parts |
+| `filament` | integer | `box`/`sphere`/`all`/`connected`/`component` + `color` | 1-based slot; `0` = unpainted |
+| `state` | string | `box`/`sphere`/`all`/`connected`/`component`, non-color | `none`, `enforcer`, `blocker`; in `fuzzy_skin` mode, `fuzzy_skin` is also accepted as a synonym for `enforcer` (there is no `blocker`) |
 | `replace` | boolean | No | `true` (default) discards this mode's existing paint first |
 
 **Notes:**
@@ -1231,11 +1240,50 @@ Write per-triangle paint — the same data the GUI paint gizmos write.
   box or sphere region is inclusive on every face / at the surface (`<=`/`>=`, not `<`/`>`).
 - Explicit `bands` need not tile the object and may overlap; the first match wins, and
   facets outside every band keep their previous state.
+- `connected` is the GUI's smart fill: the region reachable from the seed without crossing
+  an edge whose dihedral angle exceeds `angle`. It is how to paint a *feature* — a bag, a
+  sleeve, a wheel — without knowing its coordinates. The response carries `seed` as
+  resolved: `volume_id`, `facet`, `point`, `snap_distance_mm`, `angle`.
+- A `seed: {point: [...], volume_id: N}` ignores `volume_id`: a point seed always resolves
+  to the nearest surface across every part in scope, and the response's `seed.volume_id`
+  reports which part actually won. Pass `{volume_id, facet}` (from `pick_facet`) instead if
+  you need to name the part explicitly.
+- `component` ids are per volume and deterministic for a given mesh (discovery order by
+  lowest facet index).
+- **On a multi-part object, `connected` seeds exactly one part — the one the seed point or
+  facet resolved to.** With `replace: true` (the default), every *other* part in scope has
+  its existing paint for this mode cleared, the same behaviour `box` and `sphere` selections
+  have always had. Because a seed inherently touches one part, this is the common case for
+  `connected`, not a corner case: pass `replace: false` to paint on top instead of resetting
+  the rest of the object.
+- If the scene changes while the fill is being computed (an object added, removed, or moved,
+  or a mesh replaced), the call fails with a message that says the scene changed and asks you
+  to retry — this is a retry signal, not a rejected request; the selection was never applied.
+- On meshes of millions of facets the geometry takes seconds to minutes. It runs off the GUI
+  thread, so other tools keep answering meanwhile, but the bridge's `ORCAMCP_TIMEOUT`
+  (default 120 s) may need raising for the paint call itself.
 - Painted supports need `enable_support: true`; painted fuzzy skin needs `fuzzy_skin` set to
   something other than `disabled_fuzzy` (the default). The response says so in
   `info_messages` when they are not.
 - Filament slots above 32 cannot be painted — a facet state stops at
   `EnforcerBlockerType::ExtruderMax`. Use `set_object_filament` for those.
+
+**Example — find a feature by eye, then fill it:**
+```json
+render_plate_view {"plate_index": 0, "views": [{"camera_position": [300, -200, 150], "target": [155, 155, 30]}]}
+→ {"images": [{"file_path": "...", "camera": {...}}]}
+// read the image, pick a pixel on the feature you want painted
+pick_facet    {"object_id": 0, "pixel": [212, 134], "camera": {...}}
+→ {"volume_id": 0, "facet": 1180231, "point": [129.4, 141.9, 68.2], "normal": [...], ...}
+paint_object  {"object_id": 0, "selection": "connected",
+               "seed": {"point": [129.4, 141.9, 68.2]}, "filament": 16}
+```
+A seed given directly in plate mm works the same way without a render:
+```json
+pick_facet    {"object_id": 0, "point": [129.5, 144, 68]}
+→ {"volume_id": 0, "facet": 1180231, "point": [129.4, 141.9, 68.2], ...}
+paint_object  {"object_id": 0, "selection": "connected", "seed": {"point": [129.4, 141.9, 68.2]}, "filament": 16}
+```
 
 **Example — 14 even bands along Y across mixed slots 5-18:**
 ```json
@@ -1264,8 +1312,11 @@ Here `modes` carries only the one mode this call painted — painting `color` pr
 about `support`, `seam` or `fuzzy_skin`, so the other three are left out rather than
 fabricated — but `modes.<mode>` reads the same way every other painting tool's does. For
 `selection: bands` only: `axis`, `axis_range`, and per-band `from`, `to`, `state`, `label`,
-`filament`, `facet_count`. `info_messages` also flags when a `bands` call left facets
-outside every band, the usual symptom of banding from too wide a range.
+`filament`, `facet_count`. `selection: connected` only: `seed` — the resolved
+`{volume_id, facet, point, snap_distance_mm, angle}` the fill actually started from, so a
+point seed's snap and the part it landed on are both visible without a second call.
+`info_messages` also flags when a `bands` call left facets outside every band, the usual
+symptom of banding from too wide a range.
 
 ---
 
@@ -1361,6 +1412,56 @@ always instance 0's, the same instance brim ears themselves resolve through.
 `0`), `bounding_box` (the object's model-part footprint through instance 0, same field name
 and shape `paint_object` and `get_object_paint` use), `brim_ear_count`, `brim_ears`
 (`{x, y, z, radius}` per ear, in plate mm), `info_messages`, `active_warnings`.
+
+---
+
+### get_object_components
+List the connected shells of each part's mesh — the pieces `paint_object
+{selection: "component"}` can paint individually. A generated or assembled model often has a
+feature (a bag, a wheel) as its own shell.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `object_id` | integer | Yes | Object index (0-based) |
+| `volume_id` | integer | No | Part index (0-based); omit or `-1` for every part |
+| `instance_id` | integer | No | Whose transform defines plate coordinates (default 0) |
+
+**Response includes:** `coordinate_frame` (`"plate"`), `instance_id`, and `volumes` — one
+entry per volume, each `{volume_id, name, original_facets, bounding_box, component_count,
+components}`, where `bounding_box` is that volume's own plate-frame box and each component is
+`{component, facet_count, area_mm2, bounding_box}`, largest first. Component ids are stable
+for a given mesh (discovery order by lowest facet index), so
+`paint_object {selection: "component", component: <id>, volume_id}` reliably paints exactly
+that shell. On a mesh of millions of facets this takes seconds; it runs off the GUI thread,
+so other tools keep answering meanwhile.
+
+---
+
+### pick_facet
+Turn a point, a ray, or a pixel of a render into the facet it lands on.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `object_id` | integer | Yes | Object index (0-based) |
+| `volume_id` | integer | No | Restrict to one part; omit or `-1` to search every part |
+| `instance_id` | integer | No | Whose transform defines plate coordinates (default 0) |
+| `point` | array | one of three | `[x, y, z]` plate mm; the nearest surface point is picked |
+| `ray` | object | one of three | `{origin: [x,y,z], direction: [x,y,z]}` plate mm; first hit along the ray |
+| `pixel` | array | one of three | `[u, v]` in a render's pixels, `(0,0)` top-left; needs `camera` |
+| `camera` | object | with `pixel` | The `camera` object a `render_plate_view` view returned, unchanged |
+| `include_component` | boolean | No | Also report the shell id (default `false`; costs a pass over the mesh) |
+
+Give exactly one of `point`, `ray`, or `pixel` (+ `camera`).
+
+**Response includes:** `volume_id`, `volume_name`, `facet`, `point` (plate mm, on the
+surface), `normal` (unit vector, plate frame), `distance_mm` (from the query point or ray
+origin), `query` (which of `point`/`ray`/`pixel` was used), `coordinate_frame` (`"plate"`),
+`instance_id`; with `include_component`: `component` (the shell id) and `component_count`.
+
+The loop this closes: `render_plate_view` → read the image → `pick_facet {pixel, camera}` →
+`paint_object {selection: "connected", seed: {point}}`.
 
 ---
 
