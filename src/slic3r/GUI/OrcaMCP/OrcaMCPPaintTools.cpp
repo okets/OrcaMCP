@@ -360,6 +360,52 @@ bool read_vec3(const nlohmann::json& value, Slic3r::Vec3d& out, const std::strin
     return true;
 }
 
+// The `camera` object render_plate_view returns, read back. Both matrices are 16 numbers,
+// row-major, exactly as emitted; the viewport is {x, y, width, height} in pixels.
+bool parse_matrix4(const nlohmann::json& value, const char* what, Eigen::Matrix4d& out, std::string& error)
+{
+    if (!value.is_array() || value.size() != 16) {
+        error = std::string(what) + " must be an array of 16 numbers, row-major";
+        return false;
+    }
+    for (int i = 0; i < 16; ++i) {
+        double v = 0.0;
+        if (!parse_double_param(value[i], v)) {
+            error = std::string(what) + "[" + std::to_string(i) + "] is not a finite number";
+            return false;
+        }
+        out(i / 4, i % 4) = v;
+    }
+    return true;
+}
+
+bool parse_camera_frame(const nlohmann::json& value, CameraFrame& out, std::string& error)
+{
+    if (!value.is_object() || !value.contains("view_matrix") || !value.contains("projection_matrix") ||
+        !value.contains("viewport")) {
+        error = "camera needs view_matrix, projection_matrix and viewport -- pass the `camera` object a "
+                "render_plate_view result contains, unchanged";
+        return false;
+    }
+    if (!parse_matrix4(value["view_matrix"], "camera.view_matrix", out.view, error) ||
+        !parse_matrix4(value["projection_matrix"], "camera.projection_matrix", out.projection, error))
+        return false;
+    const nlohmann::json& vp = value["viewport"];
+    if (!vp.is_array() || vp.size() != 4) {
+        error = "camera.viewport must be [x, y, width, height]";
+        return false;
+    }
+    for (int i = 0; i < 4; ++i) {
+        int v = 0;
+        if (!parse_integer_param(vp[i], v)) {
+            error = "camera.viewport[" + std::to_string(i) + "] is not an integer";
+            return false;
+        }
+        out.viewport[std::size_t(i)] = v;
+    }
+    return true;
+}
+
 bool parse_paint_request(const nlohmann::json& params,
                          PaintMode             mode,
                          const PaintTarget&    target,
@@ -1366,6 +1412,133 @@ void OrcaMCPServer::register_paint_tools()
                                   {"coordinate_frame", "plate"},
                                   {"instance_id", int(plan.instance_idx)},
                                   {"volumes", volumes}};
+        }
+    });
+
+    register_tool({
+        "pick_facet",
+        "Find the facet a point, a ray, or a pixel of a render lands on. Give ONE of: point "
+        "[x,y,z] (plate mm; snaps to the nearest surface), ray {origin, direction} (plate mm; "
+        "first hit), or pixel [u,v] plus the `camera` object from a render_plate_view result "
+        "(u right, v down, (0,0) top-left). Returns the volume, facet, plate point and normal -- "
+        "feed `point` straight into paint_object {selection: \"connected\", seed: {point}}. "
+        "include_component adds the shell id for paint_object {selection: \"component\"}; it "
+        "costs a pass over the mesh.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"object_id", {{"type", "integer"}, {"minimum", 0}, {"description", "Object index (0-based)"}}},
+                {"volume_id", {{"type", "integer"}, {"minimum", -1},
+                               {"description", "Restrict to one part (0-based); omit, or pass -1, to search every part"}}},
+                {"instance_id", {{"type", "integer"}, {"minimum", 0},
+                                 {"description", "Which instance's transform defines plate coordinates (default 0)"}}},
+                {"point", {{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 3}, {"maxItems", 3},
+                           {"description", "Plate mm; the nearest surface point is picked"}}},
+                {"ray", {{"type", "object"},
+                         {"properties", {{"origin", {{"type", "array"}, {"items", {{"type", "number"}}}}},
+                                         {"direction", {{"type", "array"}, {"items", {{"type", "number"}}}}}}},
+                         {"description", "Plate mm; the first surface along the ray is picked"}}},
+                {"pixel", {{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 2}, {"maxItems", 2},
+                           {"description", "[u, v] in the render's pixels, (0,0) top-left; needs `camera`"}}},
+                {"camera", {{"type", "object"},
+                            {"description", "The `camera` object a render_plate_view view returned, unchanged"}}},
+                {"include_component", {{"type", "boolean"},
+                                       {"description", "Also report the shell id of the hit facet (default false)"}}}
+            }},
+            {"required", {"object_id"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            // Resolve the query first: it needs no Model, and a bad query should fail before any hop.
+            const int given = int(params.contains("point")) + int(params.contains("ray")) + int(params.contains("pixel"));
+            if (given != 1)
+                return nlohmann::json{{"status", "error"},
+                                      {"message", "give exactly one of point, ray, or pixel (+ camera)"}};
+
+            std::string error;
+            bool        by_point = false;
+            Slic3r::Vec3d point = Slic3r::Vec3d::Zero(), origin = Slic3r::Vec3d::Zero(), dir = Slic3r::Vec3d::Zero();
+            if (params.contains("point")) {
+                by_point = true;
+                if (!read_vec3(params["point"], point, "point", error))
+                    return nlohmann::json{{"status", "error"}, {"message", error}};
+            } else if (params.contains("ray")) {
+                const nlohmann::json& ray = params["ray"];
+                if (!ray.is_object() || !ray.contains("origin") || !ray.contains("direction") ||
+                    !read_vec3(ray["origin"], origin, "ray.origin", error) ||
+                    !read_vec3(ray["direction"], dir, "ray.direction", error))
+                    return nlohmann::json{{"status", "error"},
+                                          {"message", error.empty() ? "ray needs origin and direction" : error}};
+                if (dir.squaredNorm() == 0.0)
+                    return nlohmann::json{{"status", "error"}, {"message", "ray.direction must not be zero"}};
+            } else {
+                if (!params.contains("camera"))
+                    return nlohmann::json{{"status", "error"},
+                                          {"message", "pixel needs the `camera` object from the render it came from"}};
+                CameraFrame camera;
+                if (!parse_camera_frame(params["camera"], camera, error))
+                    return nlohmann::json{{"status", "error"}, {"message", error}};
+                const nlohmann::json& px = params["pixel"];
+                double u = 0.0, v = 0.0;
+                if (!px.is_array() || px.size() != 2 || !parse_double_param(px[0], u) || !parse_double_param(px[1], v))
+                    return nlohmann::json{{"status", "error"}, {"message", "pixel must be [u, v]"}};
+                if (!unproject_pixel_to_ray(camera, u, v, origin, dir))
+                    return nlohmann::json{{"status", "error"},
+                                          {"message", "camera cannot be inverted (degenerate viewport or matrices)"}};
+            }
+            bool include_component = false;
+            if (params.contains("include_component") && !parse_boolean_param(params["include_component"], include_component))
+                return nlohmann::json{{"status", "error"}, {"message", "include_component must be true or false"}};
+
+            // Hop 1: the plan.
+            PaintPlan plan;
+            nlohmann::json gate = run_on_main_thread([&params, &plan]() -> nlohmann::json {
+                PaintTarget target;
+                std::string err;
+                if (!resolve_paint_target(params, target, err))
+                    return nlohmann::json{{"status", "error"}, {"message", err}};
+                plan = capture_paint_plan(target);
+                return nlohmann::json{{"status", "success"}};
+            });
+            if (gate.value("status", "") != "success")
+                return gate;
+
+            // Hop 2: the pick, best over every target volume.
+            const PaintPlanVolume* best_volume = nullptr;
+            SurfacePick            best;
+            for (const PaintPlanVolume& pv : plan.volumes) {
+                SurfacePick pick;
+                const bool  hit = by_point ? pick_nearest_point(*pv.mesh, pv.to_plate, point, pick)
+                                           : pick_ray(*pv.mesh, pv.to_plate, origin, dir, pick);
+                if (hit && (best_volume == nullptr || pick.distance < best.distance)) {
+                    best_volume = &pv;
+                    best        = pick;
+                }
+            }
+            if (best_volume == nullptr)
+                return nlohmann::json{{"status", "error"},
+                                      {"message", by_point ? "no surface found (empty meshes?)"
+                                                           : "the ray does not hit the object"}};
+
+            nlohmann::json result = {
+                {"status", "success"},
+                {"object_id", plan.object_id},
+                {"coordinate_frame", "plate"},
+                {"instance_id", int(plan.instance_idx)},
+                {"volume_id", best_volume->volume_id},
+                {"volume_name", best_volume->name},
+                {"facet", best.facet},
+                {"point", {best.point_plate.x(), best.point_plate.y(), best.point_plate.z()}},
+                {"normal", {best.normal_plate.x(), best.normal_plate.y(), best.normal_plate.z()}},
+                {"distance_mm", best.distance},
+                {"query", by_point ? "point" : (params.contains("ray") ? "ray" : "pixel")}
+            };
+            if (include_component) {
+                int count = 0;
+                const std::vector<int> ids = facet_component_ids(best_volume->mesh->its, count);
+                result["component"]       = ids[std::size_t(best.facet)];
+                result["component_count"] = count;
+            }
+            return result;
         }
     });
 }
