@@ -522,10 +522,13 @@ void OrcaMCPServer::register_paint_tools()
         "fuzzy_skin. selection selects where: bands along a plate axis (an even split across a "
         "list of filaments, or explicit ranges), a box, a sphere, or the whole volume. "
         "ALL COORDINATES ARE PLATE MILLIMETRES -- the same frame get_object_info reports its "
-        "bounding_box and position in, not object-local coordinates. A facet belongs to the band "
-        "or region containing its centroid. Paint lives on the volume, so it applies to every "
-        "instance; instance_id only says whose transform reads your coordinates. Verify with "
-        "get_object_paint, undo with undo, reset with clear_object_paint.",
+        "bounding_box and position in, not object-local coordinates. But for the numbers, use "
+        "THIS call's own bounding_box in the response (or get_object_paint's), not "
+        "get_object_info's: that one is a looser box (untransformed-AABB corners, unioned over "
+        "every instance) and only matches this tool's for a single unrotated instance. A facet "
+        "belongs to the band or region containing its centroid. Paint lives on the volume, so it "
+        "applies to every instance; instance_id only says whose transform reads your "
+        "coordinates. Verify with get_object_paint, undo with undo, reset with clear_object_paint.",
         {
             {"type", "object"},
             {"properties", {
@@ -708,6 +711,14 @@ void OrcaMCPServer::register_paint_tools()
                     {"mode", paint_mode_name(mode)},
                     {"selection", request.selection},
                     {"coordinate_frame", "plate"},
+                    // The same field name and shape get_object_paint reports (its per-volume
+                    // "bounding_box"): the snug AABB of this call's actually-transformed volumes,
+                    // for this instance -- not get_object_info's looser bounding_box_approx
+                    // (corners of the untransformed AABB, unioned over every instance), which
+                    // agrees with this one only for a single unrotated instance. Reported here so
+                    // an agent bands from the box these tools themselves use, never from the other
+                    // one.
+                    {"bounding_box", bbox_json(target_plate_bbox(target))},
                     {"instance_id", int(target.instance_idx)},
                     {"replace", request.replace},
                     {"annotation_changed", changed},
@@ -740,16 +751,29 @@ void OrcaMCPServer::register_paint_tools()
                 }
 
                 std::vector<std::string> messages = paint_prerequisite_messages(*target.object, mode);
-                if (facets_unassigned > 0 && request.selection != "bands")
-                    messages.push_back(std::to_string(facets_unassigned) +
-                                       " facets fell outside the selection and kept their previous state.");
+                if (facets_unassigned > 0) {
+                    if (request.selection == "bands")
+                        // The symptom of banding from too wide a range (e.g. get_object_info's
+                        // looser bounding_box instead of this response's own): facets outside
+                        // axis_range are silently left at their previous state. Previously this
+                        // count was reported for every selection except bands -- the one where a
+                        // mistyped from/to is most likely (M9).
+                        messages.push_back(std::to_string(facets_unassigned) +
+                                           " facets fell outside every band and kept their previous "
+                                           "state. If that number is unexpectedly high, check "
+                                           "axis_range against this response's own bounding_box.");
+                    else
+                        messages.push_back(std::to_string(facets_unassigned) +
+                                           " facets fell outside the selection and kept their previous state.");
+                }
                 if (facets_selected == 0) {
                     // With replace this is not a no-op: the reset happened and the selection then
                     // wrote nothing back, so the volume came out bare. Saying only "nothing was
                     // painted" would read as "nothing happened".
                     std::string message = "Nothing was painted: no facet centroid fell inside the "
-                                          "selection. Check the coordinates against get_object_info's "
-                                          "bounding_box, which is in the same plate frame.";
+                                          "selection. Check the coordinates against this response's "
+                                          "own bounding_box -- same plate frame as get_object_info, "
+                                          "but a different (tighter, per-instance) computation.";
                     if (request.replace && changed)
                         message += " Because replace was true, this mode's existing paint was cleared.";
                     messages.push_back(message);

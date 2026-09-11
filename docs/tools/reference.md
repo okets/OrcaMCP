@@ -1173,10 +1173,15 @@ and yellow at 30/70 land on the orange-red `#F9A05A`. Use `suggest_color_mix`’
 
 ## Painting Tools
 
-All four tools take and report **plate millimetres** — the same coordinate frame
+All four tools take and report **plate millimetres** — the same coordinate *frame*
 `get_object_info` reports its `bounding_box` and `position` in. They are never object-local.
-A facet belongs to the band or region containing its **centroid**, so a triangle is painted
-whole or not at all.
+But for the *numbers*, use `paint_object`'s or `get_object_paint`'s own `bounding_box` in
+their responses, not `get_object_info`'s: that one is a looser box (the untransformed AABB's
+corners, transformed, then unioned over every instance) and matches these tools' snug,
+single-instance box only for one unrotated instance — under rotation it is strictly larger,
+and with more than one instance it spans all of them. Band from the box these tools report,
+not from `get_object_info`. A facet belongs to the band or region containing its
+**centroid**, so a triangle is painted whole or not at all.
 
 Paint is stored on the *volume*, so it applies to every instance of an object. `instance_id`
 (default `0`) only decides which instance's transform your coordinates are read through; it
@@ -1241,11 +1246,15 @@ Write per-triangle paint — the same data the GUI paint gizmos write.
 ```
 
 **Response includes:** `mode`, `selection`, `coordinate_frame` (always `"plate"`),
-`instance_id`, `replace`, `annotation_changed`, `original_facets`, `facets_selected` (facets
-the selection covered, including ones set to state `0` — not "how much is painted"),
-`facets_unassigned`, per-volume `painted` lists (`state`, `label`, `filament`, `facet_count`,
-`coverage_percent`), `info_messages`, `active_warnings`. For `selection: bands` only: `axis`,
-`axis_range`, and per-band `from`, `to`, `state`, `label`, `filament`, `facet_count`.
+`bounding_box` (the plate-frame box of exactly the volumes this call addressed, for
+`instance_id` — the same field name and shape `get_object_paint` reports; band from this,
+not from `get_object_info`'s), `instance_id`, `replace`, `annotation_changed`,
+`original_facets`, `facets_selected` (facets the selection covered, including ones set to
+state `0` — not "how much is painted"), `facets_unassigned`, per-volume `painted` lists
+(`state`, `label`, `filament`, `facet_count`, `coverage_percent`), `info_messages`,
+`active_warnings`. For `selection: bands` only: `axis`, `axis_range`, and per-band `from`,
+`to`, `state`, `label`, `filament`, `facet_count`. `info_messages` also flags when a `bands`
+call left facets outside every band, the usual symptom of banding from too wide a range.
 
 ---
 
