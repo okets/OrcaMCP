@@ -120,6 +120,47 @@ Transform3d volume_to_plate(const ModelObject& obj, const ModelVolume& mv, std::
     return obj.instances[idx]->get_matrix() * mv.get_matrix();
 }
 
+PaintPlan capture_paint_plan(const PaintTarget& target)
+{
+    PaintPlan plan;
+    plan.object_id       = target.object_id;
+    plan.instance_idx    = target.instance_idx;
+    plan.object_identity = target.object->id();
+    for (std::size_t i = 0; i < target.volumes.size(); ++i) {
+        ModelVolume* mv = target.volumes[i];
+        // mesh_ptr(), not mesh(): a copy of the shared_ptr, not of the mesh. On the figurine this
+        // was written for that is the difference between a pointer copy and 4.3 million facets.
+        plan.volumes.push_back({int(i), target.volume_ids[i], mv->name, mv->mesh_ptr(),
+                                volume_to_plate(*target.object, *mv, target.instance_idx), mv->id()});
+    }
+    return plan;
+}
+
+bool plan_still_valid(const PaintTarget& target, const PaintPlan& plan, std::string& error)
+{
+    if (target.object == nullptr || target.object->id() != plan.object_identity ||
+        target.volumes.size() != plan.volumes.size()) {
+        error = "the scene changed while the selection was being computed (object " +
+                std::to_string(plan.object_id) + " is not the one the call started on); retry";
+        return false;
+    }
+    for (const PaintPlanVolume& pv : plan.volumes) {
+        ModelVolume* mv = target.volumes[std::size_t(pv.index)];
+        if (mv->id() != pv.volume_identity || mv->mesh_ptr().get() != pv.mesh.get()) {
+            error = "the scene changed while the selection was being computed (volume " +
+                    std::to_string(pv.volume_id) + "'s mesh was replaced); retry";
+            return false;
+        }
+        if (!volume_to_plate(*target.object, *mv, target.instance_idx).isApprox(pv.to_plate)) {
+            error = "the scene changed while the selection was being computed (object " +
+                    std::to_string(plan.object_id) +
+                    " moved, so the plate coordinates no longer name the same facets); retry";
+            return false;
+        }
+    }
+    return true;
+}
+
 namespace {
 // The one piece both brim-ear conversions share: the instance transform, defaulting the same way
 // volume_to_plate does. Not folded into volume_to_plate itself -- that function composes a

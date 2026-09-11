@@ -1,6 +1,7 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPPaintModel.hpp
 #pragma once
 #include <cstddef>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -65,6 +66,65 @@ std::string paint_state_label(PaintMode mode, int state);
 // with the bounding_box get_object_info reports. An out-of-range or absent instance falls back to
 // instance 0; an object with no instance at all yields the volume matrix alone.
 Transform3d volume_to_plate(const ModelObject& obj, const ModelVolume& mv, std::size_t instance_idx);
+
+// The volumes one call addresses, and the instance whose transform defines plate coordinates.
+// Paint lives on the ModelVolume, so it applies to every instance of the object; `instance_idx`
+// only decides which instance's frame the caller's coordinates are read in.
+//
+// Resolving one out of an MCP call's parameters needs the Plater and stays in the tool layer;
+// everything below reads only the Model, which is why it lives here where a headless test can
+// reach it.
+struct PaintTarget
+{
+    ModelObject*              object   = nullptr;
+    std::vector<ModelVolume*> volumes;
+    std::vector<int>          volume_ids;
+    std::size_t               instance_idx = 0;
+    int                       object_id    = -1;
+};
+
+// What a worker thread needs to do a volume's geometry with no Model in reach: the mesh, which
+// ModelVolume holds as a shared_ptr<const TriangleMesh> (Model.hpp:861) and never mutates in
+// place -- an edit replaces the pointer -- the transform that puts it on the plate, and enough
+// identity to check on return that the scene is still the one the plan was made from.
+struct PaintPlanVolume
+{
+    int                                 index     = 0;   // position in PaintTarget::volumes
+    int                                 volume_id = -1;  // caller-facing id
+    std::string                         name;
+    std::shared_ptr<const TriangleMesh> mesh;
+    Transform3d                         to_plate = Transform3d::Identity();
+    ObjectID                            volume_identity;
+};
+
+struct PaintPlan
+{
+    int                          object_id    = -1;
+    std::size_t                  instance_idx = 0;
+    ObjectID                     object_identity;
+    std::vector<PaintPlanVolume> volumes;
+};
+
+// Main thread only: snapshot the immutable parts of a resolved target so the geometry can run on
+// the HTTP worker thread. Copying a shared_ptr is the whole cost -- no mesh is duplicated, and
+// the copy is what keeps the mesh alive if the Model drops it while the worker is still reading.
+PaintPlan capture_paint_plan(const PaintTarget& target);
+
+// Main thread only: true when `target`, freshly re-resolved, is still the scene `plan` was made
+// from. Two things are checked, because the geometry computed between the two is computed from
+// two inputs and either can move while the GUI thread is free:
+//
+//  * the mesh pointer. Any edit that touches geometry (cut, split, simplify, a re-import) replaces
+//    the shared mesh rather than mutating it, so a stale pointer means the states computed on the
+//    worker no longer line up with the facets they would be written to.
+//  * the plate transform. The states were computed from plate-millimetre coordinates read through
+//    the instance's transform at the time of the call; if the object was moved, rotated or scaled
+//    since, writing them would paint the region the caller asked for at a position that no longer
+//    exists, and the response's own bounding_box would describe neither.
+//
+// Writing either anyway would paint the wrong triangles and look deliberate. On false, `error`
+// carries the message the tool layer returns to the caller; on true it is left alone.
+bool plan_still_valid(const PaintTarget& target, const PaintPlan& plan, std::string& error);
 
 // Where a stored BrimPoint reads back in the plate frame the rest of this API speaks.
 // ModelObject::brim_points is stored object-local (Model.hpp ~390); Brim.cpp:373-374 transforms

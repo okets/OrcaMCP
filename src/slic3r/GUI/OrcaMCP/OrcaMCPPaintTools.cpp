@@ -17,7 +17,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
-#include <memory>
 #include <string>
 #include <vector>
 
@@ -59,18 +58,6 @@ bool parse_integer_field(const nlohmann::json& params, const char* key, int fall
     }
     return true;
 }
-
-// The volumes one call addresses, and the instance whose transform defines plate coordinates.
-// Paint lives on the ModelVolume, so it applies to every instance of the object; `instance_idx`
-// only decides which instance's frame the caller's coordinates are read in.
-struct PaintTarget
-{
-    Slic3r::ModelObject*              object   = nullptr;
-    std::vector<Slic3r::ModelVolume*> volumes;
-    std::vector<int>                  volume_ids;
-    std::size_t                       instance_idx = 0;
-    int                               object_id    = -1;
-};
 
 // What a tool needs resolved out of its parameters. Defaulted to the paint tools' needs, which
 // three of the four have; the one exception states itself at its call site.
@@ -287,82 +274,6 @@ void refresh_after_paint(const PaintTarget& target)
     if (canvas && canvas->is_initialized())
         canvas->post_event(SimpleEvent(EVT_GLCANVAS_SCHEDULE_BACKGROUND_PROCESS));
     plater->update();
-}
-
-// What a worker thread needs to do a volume's geometry with no Model in reach: the mesh, which
-// ModelVolume holds as a shared_ptr<const TriangleMesh> (Model.hpp:861) and never mutates in
-// place -- an edit replaces the pointer -- the transform that puts it on the plate, and enough
-// identity to check on return that the scene is still the one the plan was made from.
-struct PaintPlanVolume
-{
-    int                                         index     = 0;   // position in PaintTarget::volumes
-    int                                         volume_id = -1;  // caller-facing id
-    std::string                                 name;
-    std::shared_ptr<const Slic3r::TriangleMesh> mesh;
-    Slic3r::Transform3d                         to_plate = Slic3r::Transform3d::Identity();
-    Slic3r::ObjectID                            volume_identity;
-};
-
-struct PaintPlan
-{
-    int                          object_id    = -1;
-    std::size_t                  instance_idx = 0;
-    Slic3r::ObjectID             object_identity;
-    std::vector<PaintPlanVolume> volumes;
-};
-
-// Main thread only: snapshot the immutable parts of a resolved target so the geometry can run on
-// the HTTP worker thread. Copying a shared_ptr is the whole cost -- no mesh is duplicated.
-PaintPlan capture_paint_plan(const PaintTarget& target)
-{
-    PaintPlan plan;
-    plan.object_id       = target.object_id;
-    plan.instance_idx    = target.instance_idx;
-    plan.object_identity = target.object->id();
-    for (std::size_t i = 0; i < target.volumes.size(); ++i) {
-        Slic3r::ModelVolume* mv = target.volumes[i];
-        plan.volumes.push_back({int(i), target.volume_ids[i], mv->name, mv->mesh_ptr(),
-                                volume_to_plate(*target.object, *mv, target.instance_idx), mv->id()});
-    }
-    return plan;
-}
-
-// Main thread only: true when `target`, freshly re-resolved, is still the scene `plan` was made
-// from. Two things are checked, because the geometry between the two hops is computed from two
-// inputs and either can move while the GUI thread is free:
-//
-//  * the mesh pointer. Any edit that touches geometry (cut, split, simplify, a re-import) replaces
-//    the shared mesh rather than mutating it, so a stale pointer means the states computed on the
-//    worker no longer line up with the facets they would be written to.
-//  * the plate transform. The states were computed from plate-millimetre coordinates read through
-//    the instance's transform at the time of the call; if the object was moved, rotated or scaled
-//    since, writing them would paint the region the caller asked for at a position that no longer
-//    exists, and the response's own bounding_box would describe neither.
-//
-// Writing either anyway would paint the wrong triangles and look deliberate.
-bool plan_still_valid(const PaintTarget& target, const PaintPlan& plan, std::string& error)
-{
-    if (target.object == nullptr || target.object->id() != plan.object_identity ||
-        target.volumes.size() != plan.volumes.size()) {
-        error = "the scene changed while the selection was being computed (object " +
-                std::to_string(plan.object_id) + " is not the one the call started on); retry";
-        return false;
-    }
-    for (const PaintPlanVolume& pv : plan.volumes) {
-        Slic3r::ModelVolume* mv = target.volumes[std::size_t(pv.index)];
-        if (mv->id() != pv.volume_identity || mv->mesh_ptr().get() != pv.mesh.get()) {
-            error = "the scene changed while the selection was being computed (volume " +
-                    std::to_string(pv.volume_id) + "'s mesh was replaced); retry";
-            return false;
-        }
-        if (!volume_to_plate(*target.object, *mv, target.instance_idx).isApprox(pv.to_plate)) {
-            error = "the scene changed while the selection was being computed (object " +
-                    std::to_string(plan.object_id) +
-                    " moved, so the plate coordinates no longer name the same facets); retry";
-            return false;
-        }
-    }
-    return true;
 }
 
 // A filament slot a caller asked to paint with. 0 means "unpainted" -- back to whatever filament

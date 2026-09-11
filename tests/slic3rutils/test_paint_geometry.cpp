@@ -449,6 +449,23 @@ HeadlessObject make_headless_object(const indexed_triangle_set& its, const Vec3d
     return built;
 }
 
+// What resolve_paint_target produces for `volume_id: -1` (every model part), minus the parameter
+// parsing and the Plater it needs to read the Model out of. Building it by hand is what lets the
+// plan helpers be tested headlessly: they read only the ModelObject and its volumes.
+PaintTarget whole_object_target(ModelObject& object, std::size_t instance_idx = 0)
+{
+    PaintTarget target;
+    target.object       = &object;
+    target.object_id    = 0;
+    target.instance_idx = instance_idx;
+    for (int i = 0; i < int(object.volumes.size()); ++i)
+        if (object.volumes[std::size_t(i)]->is_model_part()) {
+            target.volumes.push_back(object.volumes[std::size_t(i)]);
+            target.volume_ids.push_back(i);
+        }
+    return target;
+}
+
 } // namespace
 
 TEST_CASE("parse_paint_mode covers the four FacetsAnnotation members", "[orcamcp][paint]")
@@ -983,4 +1000,149 @@ TEST_CASE("facet_centroids gives the same answer for a mesh large enough to be s
                                             its.vertices[f[2]].cast<double>()) / 3.0);
         CHECK_THAT((got[i] - expected).norm(), WithinAbs(0.0, 1e-9));
     }
+}
+
+// paint_object runs in three hops -- validate and capture on the GUI thread, compute the
+// selection on the HTTP worker, write back on the GUI thread -- because the middle hop takes
+// minutes on a multi-million-facet mesh and used to hold the GUI thread for all of it. The price
+// of freeing that thread is that the scene can move while the worker computes, and the two
+// functions below are the whole defence: capture_paint_plan takes the snapshot the worker reads,
+// plan_still_valid refuses the write if the scene the states were computed against is gone.
+// Getting this wrong paints the wrong triangles and reports success, so each case here asserts
+// both the refusal and the message the caller is given.
+
+TEST_CASE("capture_paint_plan snapshots the mesh pointer, not the mesh", "[orcamcp][paint]")
+{
+    HeadlessObject built = make_headless_object(Slic3r::its_make_cube(10.0, 10.0, 10.0),
+                                                Vec3d(150.0, 150.0, 0.0));
+    const PaintTarget target = whole_object_target(*built.object);
+    const PaintPlan   plan   = capture_paint_plan(target);
+
+    REQUIRE(plan.volumes.size() == 1);
+    CHECK(plan.object_id == 0);
+    CHECK(plan.instance_idx == 0);
+    CHECK(plan.object_identity == built.object->id());
+    CHECK(plan.volumes[0].index == 0);
+    CHECK(plan.volumes[0].volume_id == 0);
+    CHECK(plan.volumes[0].volume_identity == built.volume->id());
+    CHECK(plan.volumes[0].to_plate.isApprox(volume_to_plate(*built.object, *built.volume, 0)));
+
+    // The point of the whole snapshot: the plan holds the very mesh the volume holds, by pointer.
+    // A deep copy here would mean duplicating 4.3 million facets on the GUI thread, which is the
+    // cost the three hops exist to avoid.
+    CHECK(plan.volumes[0].mesh.get() == built.volume->mesh_ptr().get());
+
+    // And it owns it. Once the Model drops the mesh, the worker thread is still reading a live
+    // one -- which is what makes it safe to compute off the GUI thread at all.
+    const std::size_t captured_facets = plan.volumes[0].mesh->its.indices.size();
+    built.volume->set_mesh(Slic3r::its_make_cube(2.0, 2.0, 2.0));
+    CHECK(plan.volumes[0].mesh->its.indices.size() == captured_facets);
+    CHECK(plan.volumes[0].mesh.get() != built.volume->mesh_ptr().get());
+}
+
+TEST_CASE("plan_still_valid accepts a scene nothing touched", "[orcamcp][paint]")
+{
+    HeadlessObject built = make_headless_object(Slic3r::its_make_cube(10.0, 10.0, 10.0),
+                                                Vec3d(150.0, 150.0, 0.0));
+    const PaintTarget target = whole_object_target(*built.object);
+    const PaintPlan   plan   = capture_paint_plan(target);
+
+    std::string error = "untouched";
+    CHECK(plan_still_valid(target, plan, error));
+    // On success the message is left exactly as the caller had it: the tool layer reuses one
+    // `error` string across resolve_paint_target and this call, and a valid plan must not
+    // overwrite what the earlier step put there.
+    CHECK(error == "untouched");
+}
+
+TEST_CASE("plan_still_valid refuses a volume whose mesh was replaced", "[orcamcp][paint]")
+{
+    // A cut, a split, a simplify or a re-import all replace the shared mesh rather than mutating
+    // it (Model.hpp:862-867, every set_mesh overload assigns a fresh shared_ptr). So a pointer
+    // that no longer matches means the facet the worker computed a state for is not the facet the
+    // write would land on.
+    HeadlessObject built = make_headless_object(Slic3r::its_make_cube(10.0, 10.0, 10.0),
+                                                Vec3d(150.0, 150.0, 0.0));
+    const PaintPlan plan = capture_paint_plan(whole_object_target(*built.object));
+
+    built.volume->set_mesh(Slic3r::its_make_cube(10.0, 10.0, 10.0));   // same shape, new pointer
+
+    const PaintTarget after = whole_object_target(*built.object);
+    std::string       error;
+    CHECK_FALSE(plan_still_valid(after, plan, error));
+    CHECK(error == "the scene changed while the selection was being computed (volume 0's mesh was "
+                   "replaced); retry");
+}
+
+TEST_CASE("plan_still_valid refuses an object that moved under the selection", "[orcamcp][paint]")
+{
+    // The failure the mesh-pointer check cannot see, and the one freeing the GUI thread newly
+    // makes possible: a move leaves the mesh pointer alone, so without this check the states --
+    // computed from plate millimetres read through the old instance transform -- would be written
+    // to facets that have since travelled somewhere else, and reported as a success.
+    HeadlessObject built = make_headless_object(Slic3r::its_make_cube(10.0, 10.0, 10.0),
+                                                Vec3d(150.0, 150.0, 0.0));
+    const PaintPlan plan = capture_paint_plan(whole_object_target(*built.object));
+
+    built.object->instances[0]->set_offset(Vec3d(180.0, 150.0, 0.0));
+
+    const PaintTarget after = whole_object_target(*built.object);
+    REQUIRE(after.volumes[0]->mesh_ptr().get() == plan.volumes[0].mesh.get());   // mesh untouched
+    std::string error;
+    CHECK_FALSE(plan_still_valid(after, plan, error));
+    CHECK(error == "the scene changed while the selection was being computed (object 0 moved, so "
+                   "the plate coordinates no longer name the same facets); retry");
+
+    // A rotation is caught the same way, and is the case where writing anyway would be most
+    // visibly wrong: the same plate coordinates name entirely different facets after it.
+    built.object->instances[0]->set_offset(Vec3d(150.0, 150.0, 0.0));
+    REQUIRE(plan_still_valid(whole_object_target(*built.object), plan, error));
+    built.object->instances[0]->set_rotation(Vec3d(0.0, 0.0, M_PI / 2.0));
+    CHECK_FALSE(plan_still_valid(whole_object_target(*built.object), plan, error));
+}
+
+TEST_CASE("plan_still_valid refuses an object that lost a volume", "[orcamcp][paint]")
+{
+    // The count check guards the indexing that follows it: PaintPlanVolume::index is a position
+    // in PaintTarget::volumes, and a shorter vector would make every one of them read past the
+    // end. Checked before the loop, so this can never be an out-of-bounds read.
+    HeadlessObject built = make_headless_object(Slic3r::its_make_cube(10.0, 10.0, 10.0),
+                                                Vec3d(150.0, 150.0, 0.0));
+    built.object->add_volume(TriangleMesh(Slic3r::its_make_cube(4.0, 4.0, 4.0)), false);
+    const PaintPlan plan = capture_paint_plan(whole_object_target(*built.object));
+    REQUIRE(plan.volumes.size() == 2);
+
+    built.object->delete_volume(1);
+
+    const PaintTarget after = whole_object_target(*built.object);
+    REQUIRE(after.volumes.size() == 1);
+    std::string error;
+    CHECK_FALSE(plan_still_valid(after, plan, error));
+    CHECK(error == "the scene changed while the selection was being computed (object 0 is not the "
+                   "one the call started on); retry");
+}
+
+TEST_CASE("plan_still_valid refuses volumes that changed places", "[orcamcp][paint]")
+{
+    // Two volumes reordered: the count still matches and both meshes are still alive, so only the
+    // per-volume ObjectID tells them apart. Without it the states computed for part 0 would be
+    // written to part 1 -- the quietest way to paint the wrong triangles, because every count in
+    // the response would still add up.
+    HeadlessObject built = make_headless_object(Slic3r::its_make_cube(10.0, 10.0, 10.0),
+                                                Vec3d(150.0, 150.0, 0.0));
+    built.object->add_volume(TriangleMesh(Slic3r::its_make_cube(4.0, 4.0, 4.0)), false);
+    const PaintPlan plan = capture_paint_plan(whole_object_target(*built.object));
+    REQUIRE(plan.volumes.size() == 2);
+    REQUIRE(plan.volumes[0].volume_identity != plan.volumes[1].volume_identity);
+
+    std::swap(built.object->volumes[0], built.object->volumes[1]);
+
+    const PaintTarget after = whole_object_target(*built.object);
+    REQUIRE(after.volumes.size() == 2);
+    std::string error;
+    CHECK_FALSE(plan_still_valid(after, plan, error));
+    // Reported against the plan's volume_id, which is what the caller passed and what the tool's
+    // response names -- not the index it now happens to sit at.
+    CHECK(error == "the scene changed while the selection was being computed (volume 0's mesh was "
+                   "replaced); retry");
 }
