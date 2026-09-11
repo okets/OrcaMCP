@@ -1189,13 +1189,17 @@ does not restrict which instances are painted. **Brim ears are the one exception
 object-level data, not per-volume, and slicing resolves them through instance 0 only — see
 `set_brim_ears` and `get_object_paint` below.
 
-Three fields decide whether you read these responses correctly. `original_facets`, reported by
-both tools, is the mesh's own triangle count. `facets_selected`, reported by `paint_object`
-only, counts facets the selection *covered* — including ones covered but set to state `0`
-(unpainted) — so neither of those is "how much of the object is painted". `coverage_percent`,
-reported per state by both tools, is the honest measure: it is area-weighted, and a paint
-stroke can subdivide a triangle into several leaf triangles, so a state's `facet_count` can
-exceed `original_facets` and the two must never be divided one by the other.
+Four fields decide whether you read these responses correctly. `original_facets`, reported
+**per volume** by both `paint_object` and `get_object_paint`, is that volume's own mesh
+triangle count; `original_facets_total`, reported at the top level by both, is the sum over
+the volumes the call addressed. (They are two names because they are two numbers: on a
+single-part object they agree, on a multi-part one they do not.) `facets_selected`, reported
+by `paint_object` only, counts facets the selection *covered* — including ones covered but
+set to state `0` (unpainted) — so none of those is "how much of the object is painted".
+`coverage_percent`, reported per state by both tools, is the honest measure: it is
+area-weighted, and a paint stroke can subdivide a triangle into several leaf triangles, so a
+state's `facet_count` can exceed `original_facets` and the two must never be divided one by
+the other.
 
 ### paint_object
 Write per-triangle paint — the same data the GUI paint gizmos write.
@@ -1249,8 +1253,10 @@ Write per-triangle paint — the same data the GUI paint gizmos write.
 `bounding_box` (the plate-frame box of exactly the volumes this call addressed, for
 `instance_id` — the same field name and shape `get_object_paint` reports; band from this,
 not from `get_object_info`'s), `instance_id`, `replace`, `annotation_changed`,
-`original_facets`, `facets_selected` (facets the selection covered, including ones set to
-state `0` — not "how much is painted"), `facets_unassigned`, per-volume `painted` lists
+`original_facets_total` (summed over the volumes this call addressed), `facets_selected`
+(facets the selection covered, including ones set to state `0` — not "how much is painted"),
+`facets_unassigned`, and per volume `volume_id`, `original_facets` (that volume's own
+triangle count) and a `painted` list
 (`state`, `label`, `filament`, `facet_count`, `coverage_percent`), `info_messages`,
 `active_warnings`. For `selection: bands` only: `axis`, `axis_range`, and per-band `from`,
 `to`, `state`, `label`, `filament`, `facet_count`. `info_messages` also flags when a `bands`
@@ -1269,9 +1275,10 @@ Read back what is painted, plus the object's brim ears.
 | `instance_id` | integer | No | Whose transform reports plate coordinates for paint (default 0). Brim ears always report through instance 0 regardless — see below |
 | `mode` | string | No | Report one mode; omit for all four |
 
-**Response includes:** per volume, `original_facets`, a plate-frame `bounding_box`, and per
-mode a list of `{state, label, filament, facet_count, coverage_percent}` (state `0`,
-unpainted, is included). `coverage_percent` is area-weighted, not facet-count-weighted,
+**Response includes:** the object's plate-frame `bounding_box` and `original_facets_total`,
+then per volume `original_facets`, a plate-frame `bounding_box`, and per mode a list of
+`{state, label, filament, facet_count, coverage_percent}` (state `0`, unpainted, is
+included). `coverage_percent` is area-weighted, not facet-count-weighted,
 because a facet an earlier gizmo stroke subdivided would otherwise count the same as a whole
 face. Brim ears are reported through instance 0 regardless of the requested `instance_id` —
 `Brim.cpp` resolves stored points through instance 0 only, so any other frame would silently
@@ -1289,14 +1296,19 @@ Reset an annotation, the equivalent of the gizmo's "Remove all".
 | `volume_id` | integer | No | Part index (0-based); omit or `-1` for every part |
 | `mode` | string | No | Which annotation; omit to clear all four |
 
-This resets the annotation, which is **not** the same as painting every facet with state
-`none`: a reset leaves no data for the 3MF to carry, while painting `none` leaves a full
-bitstream of zeroes.
+There is no `instance_id`: paint lives on the volume and every instance shares it, so
+clearing is instance-independent and this response carries no coordinates. What this tool
+gives you over `paint_object` is clearing **all four** annotations in one call, and not
+having to name a selection. (Painting every facet with state `none` ends in the same stored
+data — `TriangleSelector::serialize` stores a triangle only when it is split or not `NONE`,
+so an all-`none` paint serialises to nothing at all.)
 
-**Response includes:** `coordinate_frame` (`"plate"`), `instance_id`, `volume_ids` (every
-volume this call addressed), `cleared` (one entry per mode: `mode`, `volumes_cleared`,
-`cleared_volume_ids`), `annotation_changed`, `info_messages` (only when nothing was cleared),
-`active_warnings`.
+A call that clears nothing takes no undo snapshot and leaves the project's dirty state
+alone, so an undo after it steps back past this call, not onto it.
+
+**Response includes:** `volumes` (every volume this call addressed, as `{volume_id, name}`),
+`cleared` (one entry per mode: `mode`, `volumes_cleared`, `cleared_volume_ids`),
+`annotation_changed`, `info_messages` (only when nothing was cleared), `active_warnings`.
 
 ---
 
@@ -1307,7 +1319,7 @@ Place the small brim tabs at chosen points. Brim ears are **not** facet paint �
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `object_id` | integer | Yes | Object index (0-based) |
+| `object_id` | integer | Yes | Object index (0-based). No `volume_id`: ears are object-level, and the object need not have a model part |
 | `points` | array | Yes | `[{x, y, radius?}]` in plate mm. An empty array removes every ear, when `append` is left `false` |
 | `radius` | number | No | Default ear radius for points without one (default 5.0 mm, range 0.1-100) |
 | `append` | boolean | No | `false` (default) replaces the object's ears; `true` adds to them |

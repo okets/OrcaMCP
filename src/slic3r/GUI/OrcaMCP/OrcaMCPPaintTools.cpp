@@ -695,7 +695,7 @@ void OrcaMCPServer::register_paint_tools()
                 // Facets the selection COVERED, which is not the same as facets given a paint:
                 // `filament: 0` covers a facet and unpaints it. Named for what it counts.
                 int              facets_selected   = 0;
-                int              original_facets   = 0;
+                int              original_facets_total = 0;
                 int              facets_unassigned = 0;
                 std::vector<int> band_counts(request.bands.size(), 0);
                 bool             changed = false;
@@ -704,7 +704,7 @@ void OrcaMCPServer::register_paint_tools()
                     const Slic3r::Transform3d to_plate =
                         volume_to_plate(*target.object, *mv, target.instance_idx);
                     const std::vector<Slic3r::Vec3d> centroids = facet_centroids(mv->mesh().its, to_plate);
-                    original_facets += int(centroids.size());
+                    original_facets_total += int(centroids.size());
 
                     FacetAssignment assignment;
                     if (request.selection == "bands")
@@ -731,6 +731,11 @@ void OrcaMCPServer::register_paint_tools()
                 nlohmann::json volumes = nlohmann::json::array();
                 for (std::size_t i = 0; i < target.volumes.size(); ++i)
                     volumes.push_back({{"volume_id", target.volume_ids[i]},
+                                       // Per volume, the way get_object_paint reports it, so the
+                                       // name means one thing across the feature: this volume's own
+                                       // mesh triangle count. The top-level original_facets_total
+                                       // is the sum, and says so in its name.
+                                       {"original_facets", int(target.volumes[i]->mesh().its.indices.size())},
                                        {"painted", painted_json(*target.volumes[i], mode)}});
 
                 nlohmann::json result = {
@@ -751,10 +756,13 @@ void OrcaMCPServer::register_paint_tools()
                     {"instance_id", int(target.instance_idx)},
                     {"replace", request.replace},
                     {"annotation_changed", changed},
-                    // Original triangles, named as get_object_paint names them: the per-state
-                    // facet_count counts leaf triangles and can exceed this, so the two are not a
-                    // part and a whole. coverage_percent is the ratio to read.
-                    {"original_facets", original_facets},
+                    // The sum over the volumes this call addressed, which is why it is not called
+                    // original_facets: that name means one volume's own mesh triangle count, here
+                    // and in get_object_paint, and a field that means the count on one tool and a
+                    // sum on the other is a field an agent cannot read. Either way the per-state
+                    // facet_count counts leaf triangles and can exceed it, so the two are not a
+                    // part and a whole; coverage_percent is the ratio to read.
+                    {"original_facets_total", original_facets_total},
                     {"facets_selected", facets_selected},
                     {"facets_unassigned", facets_unassigned},
                     {"volumes", volumes},
@@ -818,9 +826,9 @@ void OrcaMCPServer::register_paint_tools()
     register_tool({
         "clear_object_paint",
         "Reset a paint annotation on an object back to unpainted -- the equivalent of the paint "
-        "gizmo's 'Remove all' button. mode picks which annotation; omit it to clear all four. "
-        "This resets the annotation outright, which is not the same as painting every facet with "
-        "state none: the reset leaves no data at all for the 3MF to carry.",
+        "gizmo's 'Remove all' button. mode picks which annotation; omit it to clear all four, "
+        "which paint_object cannot do in one call. Clearing is instance-independent: paint lives "
+        "on the volume, so there is no instance_id here.",
         {
             {"type", "object"},
             {"properties", {
@@ -1149,6 +1157,7 @@ void OrcaMCPServer::register_paint_tools()
                 // Merged as the per-volume boxes are computed rather than by a second pass through
                 // target_plate_bbox, which would walk every vertex of every volume twice.
                 Slic3r::BoundingBoxf3 object_bbox;
+                int                   original_facets_total = 0;
                 for (std::size_t i = 0; i < target.volumes.size(); ++i) {
                     Slic3r::ModelVolume* mv = target.volumes[i];
                     nlohmann::json by_mode = nlohmann::json::object();
@@ -1157,6 +1166,7 @@ void OrcaMCPServer::register_paint_tools()
                     const Slic3r::BoundingBoxf3 volume_bbox = mv->mesh().transformed_bounding_box(
                         volume_to_plate(*target.object, *mv, target.instance_idx));
                     object_bbox.merge(volume_bbox);
+                    original_facets_total += int(mv->mesh().its.indices.size());
                     volumes.push_back({
                         {"volume_id", target.volume_ids[i]},
                         {"name", mv->name},
@@ -1183,6 +1193,9 @@ void OrcaMCPServer::register_paint_tools()
                     {"coordinate_frame", "plate"},
                     {"instance_id", int(target.instance_idx)},
                     {"bounding_box", bbox_json(object_bbox)},
+                    // The same sum paint_object reports under the same name, so a caller comparing
+                    // a write against a read is comparing two fields that mean the same thing.
+                    {"original_facets_total", original_facets_total},
                     {"volumes", volumes},
                     {"brim_ears_instance_id", 0},
                     {"brim_ears", brim_ears_json(*target.object, 0)}
