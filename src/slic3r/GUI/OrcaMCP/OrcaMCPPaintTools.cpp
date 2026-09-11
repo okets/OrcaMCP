@@ -741,15 +741,29 @@ void OrcaMCPServer::register_paint_tools()
 
                 refresh_after_paint(target);
 
+                // The same per-volume shape get_object_paint and clear_object_paint report
+                // `volumes` in: volume_id, name, original_facets, bounding_box, modes. Only this
+                // call's one mode is populated in `modes` -- painting color proves nothing about
+                // support, seam or fuzzy_skin, so this does not fabricate a read of the other
+                // three -- but an agent that learned modes.<mode> from get_object_paint reads the
+                // identical accessor here.
                 nlohmann::json volumes = nlohmann::json::array();
-                for (std::size_t i = 0; i < target.volumes.size(); ++i)
-                    volumes.push_back({{"volume_id", target.volume_ids[i]},
-                                       // Per volume, the way get_object_paint reports it, so the
-                                       // name means one thing across the feature: this volume's own
-                                       // mesh triangle count. The top-level original_facets_total
-                                       // is the sum, and says so in its name.
-                                       {"original_facets", int(target.volumes[i]->mesh().its.indices.size())},
-                                       {"painted", painted_json(*target.volumes[i], mode)}});
+                for (std::size_t i = 0; i < target.volumes.size(); ++i) {
+                    Slic3r::ModelVolume* mv = target.volumes[i];
+                    nlohmann::json by_mode = nlohmann::json::object();
+                    by_mode[paint_mode_name(mode)] = painted_json(*mv, mode);
+                    volumes.push_back({
+                        {"volume_id", target.volume_ids[i]},
+                        {"name", mv->name},
+                        // Per volume, the way get_object_paint reports it, so the name means one
+                        // thing across the feature: this volume's own mesh triangle count. The
+                        // top-level original_facets_total is the sum, and says so in its name.
+                        {"original_facets", int(mv->mesh().its.indices.size())},
+                        {"bounding_box", bbox_json(mv->mesh().transformed_bounding_box(
+                            volume_to_plate(*target.object, *mv, target.instance_idx)))},
+                        {"modes", by_mode}
+                    });
+                }
 
                 nlohmann::json result = {
                     {"status", "success"},
@@ -897,20 +911,11 @@ void OrcaMCPServer::register_paint_tools()
                     plater->take_snapshot(_u8L("Clear Object Paint") + " (" +
                                           (modes.size() == 1 ? paint_mode_name(modes.front()) : "all") + ")");
 
-                // Same set of volumes for every mode this call touches, so it is reported once
-                // rather than repeated identically in each entry of `cleared`. Per-volume objects,
-                // the shape paint_object and get_object_paint both report `volumes` in, rather than
-                // the flat id array this used to emit: one concept, one shape across the feature.
-                nlohmann::json volumes = nlohmann::json::array();
-                for (std::size_t i = 0; i < target.volumes.size(); ++i)
-                    volumes.push_back({{"volume_id", target.volume_ids[i]},
-                                       {"name", target.volumes[i]->name}});
-
                 nlohmann::json cleared = nlohmann::json::array();
                 bool           changed = false;
                 for (PaintMode mode : modes) {
-                    // Stays a flat id array: it is a subset reference back into `volumes` above,
-                    // not a second listing of the volumes themselves.
+                    // A subset reference into `volumes` below, not a second listing of the volumes
+                    // themselves.
                     nlohmann::json cleared_volume_ids = nlohmann::json::array();
                     for (std::size_t i = 0; i < target.volumes.size(); ++i)
                         if (clear_volume_paint(*target.volumes[i], mode))
@@ -928,6 +933,31 @@ void OrcaMCPServer::register_paint_tools()
                 // changed nothing has no reason to reschedule the background process.
                 if (changed)
                     refresh_after_paint(target);
+
+                // Same set of volumes for every mode this call touched, so it is reported once
+                // rather than repeated identically in each entry of `cleared` above. Built after
+                // the clearing loop so `modes` reflects the result, not the pre-clear state: an
+                // agent can confirm the clear from this response alone, without a second
+                // get_object_paint call. The same per-volume shape paint_object and
+                // get_object_paint report `volumes` in (volume_id, name, original_facets,
+                // bounding_box, modes) -- one concept, one shape across the feature.
+                nlohmann::json volumes = nlohmann::json::array();
+                for (std::size_t i = 0; i < target.volumes.size(); ++i) {
+                    Slic3r::ModelVolume* mv = target.volumes[i];
+                    nlohmann::json by_mode = nlohmann::json::object();
+                    for (PaintMode mode : modes)
+                        by_mode[paint_mode_name(mode)] = painted_json(*mv, mode);
+                    volumes.push_back({
+                        {"volume_id", target.volume_ids[i]},
+                        {"name", mv->name},
+                        {"original_facets", int(mv->mesh().its.indices.size())},
+                        // No instance_id parameter on this tool, so always instance 0's -- the
+                        // same convention set_brim_ears uses for the same reason.
+                        {"bounding_box", bbox_json(mv->mesh().transformed_bounding_box(
+                            volume_to_plate(*target.object, *mv, target.instance_idx)))},
+                        {"modes", by_mode}
+                    });
+                }
 
                 nlohmann::json result = {
                     {"status", "success"},

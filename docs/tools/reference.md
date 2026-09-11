@@ -1255,12 +1255,17 @@ Write per-triangle paint — the same data the GUI paint gizmos write.
 not from `get_object_info`'s), `instance_id`, `replace`, `annotation_changed`,
 `original_facets_total` (summed over the volumes this call addressed), `facets_selected`
 (facets the selection covered, including ones set to state `0` — not "how much is painted"),
-`facets_unassigned`, and per volume `volume_id`, `original_facets` (that volume's own
-triangle count) and a `painted` list
-(`state`, `label`, `filament`, `facet_count`, `coverage_percent`), `info_messages`,
-`active_warnings`. For `selection: bands` only: `axis`, `axis_range`, and per-band `from`,
-`to`, `state`, `label`, `filament`, `facet_count`. `info_messages` also flags when a `bands`
-call left facets outside every band, the usual symptom of banding from too wide a range.
+`facets_unassigned`, `info_messages`, `active_warnings`, and `volumes` — one entry per volume
+this call addressed, in the shape all three painting tools that report `volumes` agree on:
+`volume_id`, `name`, `original_facets` (that volume's own triangle count), a plate-frame
+`bounding_box`, and `modes` (an object keyed by mode name, each value the same
+`{state, label, filament, facet_count, coverage_percent}` list `get_object_paint` reports).
+Here `modes` carries only the one mode this call painted — painting `color` proves nothing
+about `support`, `seam` or `fuzzy_skin`, so the other three are left out rather than
+fabricated — but `modes.<mode>` reads the same way every other painting tool's does. For
+`selection: bands` only: `axis`, `axis_range`, and per-band `from`, `to`, `state`, `label`,
+`filament`, `facet_count`. `info_messages` also flags when a `bands` call left facets
+outside every band, the usual symptom of banding from too wide a range.
 
 ---
 
@@ -1276,7 +1281,10 @@ Read back what is painted, plus the object's brim ears.
 | `mode` | string | No | Report one mode; omit for all four |
 
 **Response includes:** the object's plate-frame `bounding_box` and `original_facets_total`,
-then per volume `original_facets`, a plate-frame `bounding_box`, and per mode a list of
+then `volumes` — one entry per volume, in the shape all three painting tools that report
+`volumes` agree on: `volume_id`, `name`, `original_facets` (that volume's own triangle
+count), a plate-frame `bounding_box`, and `modes`, an object keyed by mode name (all four,
+or just the requested one), each value a list of
 `{state, label, filament, facet_count, coverage_percent}` (state `0`, unpainted, is
 included). `coverage_percent` is area-weighted, not facet-count-weighted,
 because a facet an earlier gizmo stroke subdivided would otherwise count the same as a whole
@@ -1297,18 +1305,27 @@ Reset an annotation, the equivalent of the gizmo's "Remove all".
 | `mode` | string | No | Which annotation; omit to clear all four |
 
 There is no `instance_id`: paint lives on the volume and every instance shares it, so
-clearing is instance-independent and this response carries no coordinates. What this tool
-gives you over `paint_object` is clearing **all four** annotations in one call, and not
-having to name a selection. (Painting every facet with state `none` ends in the same stored
-data — `TriangleSelector::serialize` stores a triangle only when it is split or not `NONE`,
-so an all-`none` paint serialises to nothing at all.)
+clearing itself is instance-independent. The response's `bounding_box` still needs *some*
+instance to read plate coordinates through, so — with no `instance_id` to pick one — it is
+always instance 0's, the same convention `set_brim_ears` uses. What this tool gives you over
+`paint_object` is clearing **all four** annotations in one call, and not having to name a
+selection. (Painting every facet with state `none` ends in the same stored data —
+`TriangleSelector::serialize` stores a triangle only when it is split or not `NONE`, so an
+all-`none` paint serialises to nothing at all.)
 
 A call that clears nothing takes no undo snapshot and leaves the project's dirty state
 alone, so an undo after it steps back past this call, not onto it.
 
-**Response includes:** `volumes` (every volume this call addressed, as `{volume_id, name}`),
-`cleared` (one entry per mode: `mode`, `volumes_cleared`, `cleared_volume_ids`),
-`annotation_changed`, `info_messages` (only when nothing was cleared), `active_warnings`.
+**Response includes:** `volumes` — one entry per volume this call addressed, in the shape
+all three painting tools that report `volumes` agree on: `volume_id`, `name`,
+`original_facets`, a plate-frame `bounding_box` (instance 0's, see above), and `modes` (an
+object keyed by mode name, for the mode(s) this call cleared, each value the same
+`{state, label, filament, facet_count, coverage_percent}` list `get_object_paint` reports —
+read *after* the clear, so it shows the result rather than requiring a second
+`get_object_paint` call to confirm it); `cleared` (one entry per mode: `mode`,
+`volumes_cleared`, `cleared_volume_ids` — a subset reference back into `volumes` by id, not
+a second listing of the volumes themselves); `annotation_changed`; `info_messages` (only
+when nothing was cleared); `active_warnings`.
 
 ---
 
