@@ -199,6 +199,19 @@ Slic3r::BoundingBoxf3 target_plate_bbox(const PaintTarget& target)
     return bbox;
 }
 
+// The plate-frame bounding box of every model part on an object, at one instance's transform.
+// set_brim_ears needs this rather than target_plate_bbox above because it resolves no volumes
+// of its own (PaintTargetNeeds::volumes is false for it -- brim ears are object-level, not tied
+// to a model part): the box it reports has to come from the object directly.
+Slic3r::BoundingBoxf3 object_plate_bbox(const Slic3r::ModelObject& object, std::size_t instance_idx)
+{
+    Slic3r::BoundingBoxf3 bbox;
+    for (Slic3r::ModelVolume* mv : object.volumes)
+        if (mv->is_model_part())
+            bbox.merge(mv->mesh().transformed_bounding_box(volume_to_plate(object, *mv, instance_idx)));
+    return bbox;
+}
+
 nlohmann::json bbox_json(const Slic3r::BoundingBoxf3& bbox)
 {
     return {{"min", {{"x", bbox.min.x()}, {"y", bbox.min.y()}, {"z", bbox.min.z()}}},
@@ -937,12 +950,16 @@ void OrcaMCPServer::register_paint_tools()
         "set_brim_ears",
         "Place brim ears on an object -- the small tabs the brim adds at chosen points. Brim ears "
         "are NOT facet paint: they are points on the object (ModelObject::brim_points), so they "
-        "have their own tool. Positions are PLATE millimetres, the same frame get_object_info's "
-        "bounding_box uses; only x and y matter, because an ear always sits on the bottom of the "
-        "object. Brim ears are stored per object, not per instance, and slicing resolves them "
-        "through instance 0 only, so instance_id must be 0 (or omitted). Pass an empty points "
-        "array with append left false to remove them all. They only produce brim unless "
-        "brim_type is 'painted'.",
+        "have their own tool. Positions are PLATE millimetres, the same frame get_object_info "
+        "reports its bounding_box in -- but for the numbers, use THIS call's own bounding_box in "
+        "the response (or get_object_paint's), not get_object_info's: that one is a looser box "
+        "(untransformed-AABB corners, unioned over every instance) and only matches this tool's "
+        "for a single unrotated instance. Only x and y matter, because an ear always sits on the "
+        "bottom of the object. Brim ears are stored per object, not per instance, and slicing "
+        "resolves them through instance 0 only, so instance_id must be 0 (or omitted), and this "
+        "response's bounding_box is always instance 0's regardless. Pass an empty points array "
+        "with append left false to remove them all. They only produce brim unless brim_type is "
+        "'painted'.",
         {
             {"type", "object"},
             {"properties", {
@@ -1092,6 +1109,13 @@ void OrcaMCPServer::register_paint_tools()
                     {"object_name", target.object->name},
                     {"coordinate_frame", "plate"},
                     {"instance_id", int(target.instance_idx)},
+                    // The same field name and shape paint_object and get_object_paint report
+                    // (bbox_json of a plate-frame BoundingBoxf3), so an agent placing ears near an
+                    // edge reads it from the box these tools actually use, not from
+                    // get_object_info's looser one (untransformed-AABB corners, unioned over every
+                    // instance). Always instance 0's, the same instance brim_points resolve
+                    // through -- target.instance_idx is already guaranteed 0 above.
+                    {"bounding_box", bbox_json(object_plate_bbox(*target.object, target.instance_idx))},
                     {"brim_ear_count", int(target.object->brim_points.size())},
                     {"brim_ears", brim_ears_json(*target.object, target.instance_idx)},
                     {"active_warnings", get_active_warnings_json(plater)}

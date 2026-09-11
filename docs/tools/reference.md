@@ -1334,9 +1334,16 @@ instance 0 only when slicing, so writing through any other instance's frame woul
 point that prints somewhere else than this call's own response would suggest. Rather than
 accept that with a caveat, `instance_id != 0` is rejected outright.
 
+Positions are plate millimetres, the same frame `get_object_info` reports its `bounding_box`
+in — but for the numbers, use *this* response's own `bounding_box` (or `get_object_paint`'s),
+not `get_object_info`'s: that one is a looser box (untransformed-AABB corners, unioned over
+every instance) and only matches this tool's for a single unrotated instance. This one is
+always instance 0's, the same instance brim ears themselves resolve through.
+
 **Response includes:** `object_id`, `coordinate_frame` (`"plate"`), `instance_id` (always
-`0`), `brim_ear_count`, `brim_ears` (`{x, y, z, radius}` per ear, in plate mm),
-`info_messages`, `active_warnings`.
+`0`), `bounding_box` (the object's model-part footprint through instance 0, same field name
+and shape `paint_object` and `get_object_paint` use), `brim_ear_count`, `brim_ears`
+(`{x, y, z, radius}` per ear, in plate mm), `info_messages`, `active_warnings`.
 
 ---
 
