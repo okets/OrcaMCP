@@ -302,15 +302,25 @@ bool validate_color_slot(int slot, std::string& error)
 struct PaintRequest
 {
     PaintMode              mode      = PaintMode::Color;
-    std::string            selection;                 // "bands" | "box" | "sphere" | "all"
+    // "bands" | "box" | "sphere" | "all" | "connected" | "component"
+    std::string            selection;
     PaintAxis              axis      = PaintAxis::Z;
     std::vector<PaintBand> bands;                     // resolved, even split already expanded
     double                 range_from = 0.0;
     double                 range_to   = 0.0;
     PaintBox               box;
     PaintSphere            sphere;
-    int                    state     = 0;             // box / sphere / all
+    int                    state     = 0;             // box / sphere / all / connected / component
     bool                   replace   = true;
+    // selection == "connected". A point seed is resolved to a facet before the fill runs, so the
+    // fill itself always starts from (seed_volume_id, seed_facet).
+    bool                   seed_by_point  = true;
+    Slic3r::Vec3d          seed_point     = Slic3r::Vec3d::Zero();   // plate mm
+    int                    seed_volume_id = -1;
+    int                    seed_facet     = -1;
+    double                 angle_deg      = kDefaultSeedFillAngleDeg;
+    // selection == "component"
+    int                    component      = -1;
 };
 
 // Reads the one state a non-band selection paints with: `filament` in colour mode, `state` in
@@ -425,7 +435,7 @@ bool parse_paint_request(const nlohmann::json& params,
 
     out.selection = params.value("selection", std::string());
     if (out.selection.empty()) {
-        error = "selection is required: bands, box, sphere or all";
+        error = "selection is required: bands, box, sphere, all, connected or component";
         return false;
     }
 
@@ -548,7 +558,65 @@ bool parse_paint_request(const nlohmann::json& params,
     if (out.selection == "all")
         return parse_single_state(params, mode, out.state, error);
 
-    error = "Unknown selection '" + out.selection + "': expected bands, box, sphere or all";
+    if (out.selection == "connected") {
+        if (!params.contains("seed") || !params["seed"].is_object()) {
+            error = "selection 'connected' needs seed: {point: [x,y,z]} in plate millimetres, or "
+                    "seed: {volume_id, facet} from pick_facet";
+            return false;
+        }
+        const nlohmann::json& seed = params["seed"];
+        if (seed.contains("point")) {
+            out.seed_by_point = true;
+            if (!read_vec3(seed["point"], out.seed_point, "seed.point", error))
+                return false;
+        } else if (seed.contains("facet")) {
+            out.seed_by_point = false;
+            if (!parse_integer_param(seed["facet"], out.seed_facet) || out.seed_facet < 0) {
+                error = "seed.facet must be a non-negative integer";
+                return false;
+            }
+            // With exactly one part in scope the caller needs only the facet, so the part it
+            // already named through volume_id is the seed's. Taking its real id rather than a
+            // flat 0 is what makes `volume_id: 2` + `seed: {facet: n}` paint part 2 instead of
+            // matching no part at all and reporting a success that painted nothing.
+            out.seed_volume_id = target.volume_ids.size() == 1 ? target.volume_ids.front() : 0;
+            if (seed.contains("volume_id") &&
+                (!parse_integer_param(seed["volume_id"], out.seed_volume_id) || out.seed_volume_id < 0)) {
+                error = "seed.volume_id must be a non-negative integer";
+                return false;
+            }
+        } else {
+            error = "seed needs either point or facet";
+            return false;
+        }
+        if (params.contains("angle")) {
+            if (!parse_number_field(params["angle"], "angle", out.angle_deg, error))
+                return false;
+            if (out.angle_deg <= 0.0 || out.angle_deg >= 180.0) {
+                error = "angle must be between 0 and 180 degrees (exclusive); the gizmo's default is 30";
+                return false;
+            }
+        }
+        return parse_single_state(params, mode, out.state, error);
+    }
+
+    if (out.selection == "component") {
+        if (!params.contains("component") || !parse_integer_param(params["component"], out.component) ||
+            out.component < 0) {
+            error = "selection 'component' needs component: <id> from get_object_components";
+            return false;
+        }
+        // Component ids are per volume; with several parts in scope the id is ambiguous.
+        if (target.volumes.size() != 1) {
+            error = "selection 'component' needs exactly one part in scope: pass volume_id (the "
+                    "object has " + std::to_string(target.volumes.size()) + " parts)";
+            return false;
+        }
+        return parse_single_state(params, mode, out.state, error);
+    }
+
+    error = "Unknown selection '" + out.selection +
+            "': expected bands, box, sphere, all, connected or component";
     return false;
 }
 
@@ -598,6 +666,11 @@ void OrcaMCPServer::register_paint_tools()
         "mode selects which: color (multi-material / MMU segmentation), support, seam or "
         "fuzzy_skin. selection selects where: bands along a plate axis (an even split across a "
         "list of filaments, or explicit ranges), a box, a sphere, or the whole volume. "
+        "connected fills the surface region around a seed without crossing an edge sharper than "
+        "`angle` -- the way to paint a feature such as a bag or a sleeve; component paints one "
+        "shell by id. Very large meshes (millions of facets) take seconds to minutes; the work "
+        "runs off the GUI thread, but the bridge's ORCAMCP_TIMEOUT (default 120 s) may still need "
+        "raising. "
         "ALL COORDINATES ARE PLATE MILLIMETRES -- the same frame get_object_info reports its "
         "bounding_box and position in, not object-local coordinates. But for the numbers, use "
         "THIS call's own bounding_box in the response (or get_object_paint's), not "
@@ -631,8 +704,24 @@ void OrcaMCPServer::register_paint_tools()
                 }},
                 {"selection", {
                     {"type", "string"},
-                    {"enum", {"bands", "box", "sphere", "all"}},
+                    {"enum", {"bands", "box", "sphere", "all", "connected", "component"}},
                     {"description", "Where to paint"}
+                }},
+                {"seed", {
+                    {"type", "object"},
+                    {"description", "selection=connected: {point: [x,y,z]} in plate mm (snapped to the "
+                                    "surface), or {volume_id, facet} from pick_facet"}
+                }},
+                {"angle", {
+                    {"type", "number"},
+                    {"description", "selection=connected: stop at edges sharper than this many degrees "
+                                    "(default 30, the gizmo's smart-fill default)"}
+                }},
+                {"component", {
+                    {"type", "integer"},
+                    {"minimum", 0},
+                    {"description", "selection=component: a shell id from get_object_components; "
+                                    "needs volume_id when the object has several parts"}
                 }},
                 {"axis", {
                     {"type", "string"},
@@ -687,7 +776,8 @@ void OrcaMCPServer::register_paint_tools()
                 }},
                 {"filament", {
                     {"type", "integer"},
-                    {"description", "1-based filament slot for selection=box/sphere/all (mode=color). "
+                    {"description", "1-based filament slot for selection=box/sphere/all/connected/component "
+                                    "(mode=color). "
                                     "0 means unpainted."}
                 }},
                 {"state", {
@@ -696,7 +786,8 @@ void OrcaMCPServer::register_paint_tools()
                     // enforcer state, so it has to be accepted here or the round-trip we built
                     // is blocked for a client that validates against this schema.
                     {"enum", {"none", "enforcer", "blocker", "fuzzy_skin"}},
-                    {"description", "State for selection=box/sphere/all when mode is not color. "
+                    {"description", "State for selection=box/sphere/all/connected/component when mode "
+                                    "is not color. "
                                     "fuzzy_skin accepts none and enforcer (spelled either "
                                     "'enforcer' or 'fuzzy_skin'), never blocker."}
                 }},
@@ -757,6 +848,32 @@ void OrcaMCPServer::register_paint_tools()
             // here touches the Model: the meshes are shared_ptr<const> snapshots that outlive any
             // concurrent edit, and the transforms are copies.
             std::vector<FacetAssignment> assignments(plan.volumes.size());
+
+            // A point seed has to resolve to exactly ONE volume before the loop below runs, or the
+            // loop's own pick_nearest_point would succeed on every part in scope and start a fill
+            // on each. Resolved here into a facet seed on the nearest part, so the loop takes the
+            // facet branch exactly once.
+            if (request.selection == "connected" && request.seed_by_point && plan.volumes.size() > 1) {
+                const PaintPlanVolume* nearest = nullptr;
+                SurfacePick            nearest_pick;
+                for (const PaintPlanVolume& pv : plan.volumes) {
+                    SurfacePick pick;
+                    if (pick_nearest_point(*pv.mesh, pv.to_plate, request.seed_point, pick) &&
+                        (nearest == nullptr || pick.distance < nearest_pick.distance)) {
+                        nearest      = &pv;
+                        nearest_pick = pick;
+                    }
+                }
+                if (nearest == nullptr)
+                    return nlohmann::json{{"status", "error"},
+                                          {"message", "seed.point found no surface on any part"}};
+                request.seed_by_point  = false;
+                request.seed_volume_id = nearest->volume_id;
+                request.seed_facet     = nearest_pick.facet;
+            }
+
+            std::string    seed_error;     // set by the connected/component branches on failure
+            nlohmann::json resolved_seed;  // reported back so the caller sees what was filled from
             for (std::size_t i = 0; i < plan.volumes.size(); ++i) {
                 const PaintPlanVolume& pv          = plan.volumes[i];
                 const std::size_t      facet_count = pv.mesh->its.indices.size();
@@ -764,6 +881,52 @@ void OrcaMCPServer::register_paint_tools()
                     // Every facet, no geometry: computing 4 million centroids to then ignore
                     // them was the whole-branch review's M11.
                     assignments[i] = assign_all(facet_count, request.state);
+                } else if (request.selection == "component") {
+                    int                    count = 0;
+                    const std::vector<int> ids   = facet_component_ids(pv.mesh->its, count);
+                    if (request.component >= count) {
+                        seed_error = "component " + std::to_string(request.component) +
+                                     " does not exist: volume " + std::to_string(pv.volume_id) + " has " +
+                                     std::to_string(count) + " components";
+                        break;
+                    }
+                    assignments[i] = assign_component(ids, request.component, request.state);
+                } else if (request.selection == "connected") {
+                    // The seed lives on exactly one volume; every other volume is left alone.
+                    SurfacePick seed;
+                    bool        seeds_here = false;
+                    if (request.seed_by_point) {
+                        // Only reachable with a single volume in scope: the pre-pass above has
+                        // already collapsed a point seed to a facet whenever there are several.
+                        seeds_here = pick_nearest_point(*pv.mesh, pv.to_plate, request.seed_point, seed);
+                    } else if (pv.volume_id == request.seed_volume_id) {
+                        seeds_here = request.seed_facet < int(facet_count);
+                        if (!seeds_here) {
+                            seed_error = "seed.facet " + std::to_string(request.seed_facet) +
+                                         " is out of range for volume " + std::to_string(pv.volume_id) + " (" +
+                                         std::to_string(facet_count) + " facets)";
+                            break;
+                        }
+                        seed.facet = request.seed_facet;
+                        const Slic3r::Vec3i32& f = pv.mesh->its.indices[std::size_t(seed.facet)];
+                        seed.point_local = ((pv.mesh->its.vertices[f[0]] + pv.mesh->its.vertices[f[1]] +
+                                             pv.mesh->its.vertices[f[2]]) / 3.f).cast<double>();
+                        seed.point_plate = pv.to_plate * seed.point_local;
+                    }
+                    if (!seeds_here) {
+                        assignments[i] = FacetAssignment{std::vector<int>(facet_count, -1), {}, int(facet_count)};
+                        continue;
+                    }
+                    // point_local is a Vec3d; assign_connected takes the Vec3f TriangleSelector
+                    // works in, so the narrowing cast is the conversion, not a loss of meaning.
+                    assignments[i] = assign_connected(*pv.mesh, pv.to_plate, seed.facet,
+                                                      seed.point_local.cast<float>(), request.angle_deg,
+                                                      request.state);
+                    resolved_seed = {{"volume_id", pv.volume_id},
+                                     {"facet", seed.facet},
+                                     {"point", {seed.point_plate.x(), seed.point_plate.y(), seed.point_plate.z()}},
+                                     {"snap_distance_mm", seed.distance},
+                                     {"angle", request.angle_deg}};
                 } else {
                     const std::vector<Slic3r::Vec3d> centroids = facet_centroids(pv.mesh->its, pv.to_plate);
                     if (request.selection == "bands")
@@ -774,9 +937,27 @@ void OrcaMCPServer::register_paint_tools()
                         assignments[i] = assign_sphere(centroids, request.sphere, request.state);
                 }
             }
+            if (!seed_error.empty())
+                return nlohmann::json{{"status", "error"}, {"message", seed_error}};
+
+            // A seed.volume_id naming a part that is not in scope would otherwise seed nothing,
+            // and the call would report success over a selection that covered no facet -- with
+            // the "check your coordinates" message, which a facet seed has none of. Named as the
+            // mistake it is, with the ids that would have worked.
+            // Only the facet form can miss: a point seed either resolved to a real volume_id in
+            // the pre-pass above, or (single volume) has no id to get wrong.
+            if (request.selection == "connected" && !request.seed_by_point && resolved_seed.is_null()) {
+                std::string ids;
+                for (const PaintPlanVolume& pv : plan.volumes)
+                    ids += (ids.empty() ? "" : ", ") + std::to_string(pv.volume_id);
+                return nlohmann::json{{"status", "error"},
+                                      {"message", "seed.volume_id " + std::to_string(request.seed_volume_id) +
+                                                  " is not in scope: this call addresses volume_id " + ids}};
+            }
 
             // Hop 3 -- main thread: confirm the scene is unchanged, then snapshot, write, refresh.
-            return run_on_main_thread([&params, &plan, &request, &mode, &assignments]() -> nlohmann::json {
+            return run_on_main_thread([&params, &plan, &request, &mode, &assignments,
+                                       &resolved_seed]() -> nlohmann::json {
                 Plater*     plater = wxGetApp().plater();
                 PaintTarget target;
                 std::string error;
@@ -892,6 +1073,12 @@ void OrcaMCPServer::register_paint_tools()
                     }
                     result["bands"] = bands;
                 }
+
+                // What the fill actually started from, after a point seed was snapped to the
+                // surface: an agent that passed a point can read back the facet it hit and how far
+                // the point was from the mesh, and reuse the facet for a follow-up call.
+                if (request.selection == "connected")
+                    result["seed"] = resolved_seed;
 
                 std::vector<std::string> messages = paint_prerequisite_messages(*target.object, mode);
                 if (facets_unassigned > 0) {
