@@ -1033,6 +1033,20 @@ void OrcaMCPServer::register_paint_tools()
                     if (!parse_number_field(entry["x"], "x", x, error) ||
                         !parse_number_field(entry["y"], "y", y, error))
                         return nlohmann::json{{"status", "error"}, {"message", error}};
+                    // Brim.cpp:385 scales a stored ear into an int32_t (`scale_(pos.x())`), so a
+                    // coordinate past 2^31 microns overflows it during slicing -- undefined
+                    // behaviour reached from a plain MCP call. parse_number_field already refuses
+                    // NaN and infinity; this is the magnitude half of the same guard. The bound is
+                    // below the 2147.48 mm hard limit so the arithmetic never reaches it, and it is
+                    // far outside any real build plate, so it rejects only mistakes (microns passed
+                    // where millimetres were meant is the usual one).
+                    constexpr double k_brim_xy_max = 2000.0;
+                    if (std::abs(x) > k_brim_xy_max || std::abs(y) > k_brim_xy_max)
+                        return nlohmann::json{{"status", "error"},
+                                              {"message", "brim ear x/y must be within +/-" +
+                                                          std::to_string(k_brim_xy_max) +
+                                                          " mm of the plate origin; got x=" +
+                                                          std::to_string(x) + ", y=" + std::to_string(y)}};
                     double radius = default_radius;
                     if (entry.contains("radius") && !parse_number_field(entry["radius"], "radius", radius, error))
                         return nlohmann::json{{"status", "error"}, {"message", error}};
