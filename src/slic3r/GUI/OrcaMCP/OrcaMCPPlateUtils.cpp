@@ -184,23 +184,32 @@ nlohmann::json OrcaMCPPlateUtils::RenderPlateView(const nlohmann::json& params) 
             );
         }
 
-        ThumbnailData data;
+        ThumbnailData    data;
         data.set(resolution, resolution);
-        RenderThumbnail(data, camera_position, target, plate_index);
+        RenderCameraInfo cam;
+        RenderThumbnail(data, camera_position, target, plate_index, &cam);
 
+        // Everything pick_facet needs to turn a pixel of this image back into a ray. The three
+        // required keys are written by the same function pick_facet parses with, so the two halves
+        // cannot disagree about names or row order; the rest is for the reader. Pixel row 0 is the
+        // top of the image -- save_thumbnail_to_file and encode_thumbnail_to_base64 write the GL
+        // buffer bottom-up (this file, :63 and :105) -- and unproject_pixel_to_ray assumes that.
+        nlohmann::json camera_json     = OrcaMCP::camera_frame_to_json(cam.frame);
+        camera_json["type"]            = cam.perspective ? "perspective" : "orthographic";
+        camera_json["pixel_origin"]    = "top_left";
+        camera_json["camera_position"] = {camera_position.x(), camera_position.y(), camera_position.z()};
+        camera_json["target"]          = {target.x(), target.y(), target.z()};
+
+        nlohmann::json entry;
         if (save_to_file) {
             // Save to file and return path
-            std::string file_path = save_thumbnail_to_file(data, view_index);
-            result.push_back({
-                {"file_path", file_path}
-            });
+            entry["file_path"] = save_thumbnail_to_file(data, view_index);
         } else {
             // Convert to base64-encoded image
-            std::string base64_image = encode_thumbnail_to_base64(data, false);
-            result.push_back({
-                {"base64", base64_image}
-            });
+            entry["base64"] = encode_thumbnail_to_base64(data, false);
         }
+        entry["camera"] = camera_json;
+        result.push_back(entry);
         view_index++;
     }
 
@@ -208,7 +217,8 @@ nlohmann::json OrcaMCPPlateUtils::RenderPlateView(const nlohmann::json& params) 
 }
 
 void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
-    const Vec3d& camera_position, const Vec3d& target, int plate_index)
+    const Vec3d& camera_position, const Vec3d& target, int plate_index,
+    RenderCameraInfo* out_camera)
 {
     const Camera::EType camera_type = Camera::EType::Perspective;  // Fixed camera type
     const ThumbnailsParams thumbnail_params = { {}, false, true, true, true, 0};  // Fixed params
@@ -287,6 +297,15 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
     const Transform3d& view_matrix = camera.get_view_matrix();
     camera.apply_projection(plate_build_volume);
     const Transform3d& projection_matrix = camera.get_projection_matrix();
+
+    // Copied out here, not returned by reference: `camera` is a local and both matrices above are
+    // references into it. This is also the only point at which the projection is final.
+    if (out_camera != nullptr) {
+        out_camera->frame.view       = view_matrix.matrix();
+        out_camera->frame.projection = projection_matrix.matrix();
+        out_camera->frame.viewport   = camera.get_viewport();
+        out_camera->perspective      = camera_type == Camera::EType::Perspective;
+    }
 
     // Clear background
     glsafe(::glClearColor(0.f, 0.f, 0.f, 0.f));
