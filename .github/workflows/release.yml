@@ -109,7 +109,12 @@ jobs:
       - name: Download Windows artifact
         uses: actions/download-artifact@v4
         with:
-          name: ${{ steps.version.outputs.app_name }}_Windows_V${{ steps.version.outputs.version }}
+          # _x64 is not optional: build_orca.yml suffixes every Windows artifact with ARCH_SUFFIX
+          # (:394-397) because x64 and arm64 both upload, and two artifacts cannot share a name.
+          # macOS and Linux carry no suffix, which is why only this one needs it. The arm64
+          # installer is built and uploaded as OrcaMCP_Windows_V<ver>_arm64 but is deliberately
+          # not published here -- the release notes below offer x64 only.
+          name: ${{ steps.version.outputs.app_name }}_Windows_V${{ steps.version.outputs.version }}_x64
           path: artifacts/windows
 
       - name: List artifacts
