@@ -2,6 +2,7 @@
 #include "OrcaMCPServer.hpp"
 #include "OrcaMCPCommon.hpp"
 #include "OrcaMCPPaintModel.hpp"
+#include "OrcaMCPPaintSelect.hpp"
 
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Plater.hpp"
@@ -1301,6 +1302,70 @@ void OrcaMCPServer::register_paint_tools()
                     {"brim_ears", brim_ears_json(*target.object, 0)}
                 };
             });
+        }
+    });
+
+    register_tool({
+        "get_object_components",
+        "List the connected shells of each part's mesh -- component id, facet count, area and a "
+        "plate-frame bounding box. A generated or assembled model often has a feature (a bag, a "
+        "wheel) as its own shell; paint_object {selection: \"component\", component: <id>} paints "
+        "exactly that shell. Ids are stable for a given mesh: discovery order by lowest facet "
+        "index. Coordinates are PLATE millimetres. On a mesh of millions of facets this takes "
+        "seconds; it runs off the GUI thread, so other tools keep answering meanwhile.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"object_id", {{"type", "integer"}, {"minimum", 0}, {"description", "Object index (0-based)"}}},
+                {"volume_id", {{"type", "integer"}, {"minimum", -1},
+                               {"description", "Part index within the object (0-based); omit, or pass -1, for every part"}}},
+                {"instance_id", {{"type", "integer"}, {"minimum", 0},
+                                 {"description", "Which instance's transform defines plate coordinates (default 0)"}}}
+            }},
+            {"required", {"object_id"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            PaintPlan plan;
+            nlohmann::json gate = run_on_main_thread([&params, &plan]() -> nlohmann::json {
+                PaintTarget target;
+                std::string error;
+                if (!resolve_paint_target(params, target, error))
+                    return nlohmann::json{{"status", "error"}, {"message", error}};
+                plan = capture_paint_plan(target);
+                return nlohmann::json{{"status", "success"}, {"object_name", target.object->name}};
+            });
+            if (gate.value("status", "") != "success")
+                return gate;
+
+            // Worker thread: the flood fill over the neighbour index, per volume.
+            nlohmann::json volumes = nlohmann::json::array();
+            for (const PaintPlanVolume& pv : plan.volumes) {
+                int                    count = 0;
+                const std::vector<int> ids   = facet_component_ids(pv.mesh->its, count);
+                std::vector<ComponentInfo> summary = summarize_components(pv.mesh->its, ids, count, pv.to_plate);
+                // Largest first: the shell a caller is looking for is rarely the smallest sliver.
+                std::stable_sort(summary.begin(), summary.end(),
+                                 [](const ComponentInfo& a, const ComponentInfo& b) { return a.facet_count > b.facet_count; });
+                nlohmann::json components = nlohmann::json::array();
+                for (const ComponentInfo& c : summary)
+                    components.push_back({{"component", c.component},
+                                          {"facet_count", c.facet_count},
+                                          {"area_mm2", c.area},
+                                          {"bounding_box", bbox_json(c.bbox)}});
+                volumes.push_back({{"volume_id", pv.volume_id},
+                                   {"name", pv.name},
+                                   {"original_facets", int(pv.mesh->its.indices.size())},
+                                   {"bounding_box", bbox_json(pv.mesh->transformed_bounding_box(pv.to_plate))},
+                                   {"component_count", count},
+                                   {"components", components}});
+            }
+
+            return nlohmann::json{{"status", "success"},
+                                  {"object_id", plan.object_id},
+                                  {"object_name", gate.value("object_name", "")},
+                                  {"coordinate_frame", "plate"},
+                                  {"instance_id", int(plan.instance_idx)},
+                                  {"volumes", volumes}};
         }
     });
 }
