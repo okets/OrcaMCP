@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -286,6 +287,82 @@ void refresh_after_paint(const PaintTarget& target)
     if (canvas && canvas->is_initialized())
         canvas->post_event(SimpleEvent(EVT_GLCANVAS_SCHEDULE_BACKGROUND_PROCESS));
     plater->update();
+}
+
+// What a worker thread needs to do a volume's geometry with no Model in reach: the mesh, which
+// ModelVolume holds as a shared_ptr<const TriangleMesh> (Model.hpp:861) and never mutates in
+// place -- an edit replaces the pointer -- the transform that puts it on the plate, and enough
+// identity to check on return that the scene is still the one the plan was made from.
+struct PaintPlanVolume
+{
+    int                                         index     = 0;   // position in PaintTarget::volumes
+    int                                         volume_id = -1;  // caller-facing id
+    std::string                                 name;
+    std::shared_ptr<const Slic3r::TriangleMesh> mesh;
+    Slic3r::Transform3d                         to_plate = Slic3r::Transform3d::Identity();
+    Slic3r::ObjectID                            volume_identity;
+};
+
+struct PaintPlan
+{
+    int                          object_id    = -1;
+    std::size_t                  instance_idx = 0;
+    Slic3r::ObjectID             object_identity;
+    std::vector<PaintPlanVolume> volumes;
+};
+
+// Main thread only: snapshot the immutable parts of a resolved target so the geometry can run on
+// the HTTP worker thread. Copying a shared_ptr is the whole cost -- no mesh is duplicated.
+PaintPlan capture_paint_plan(const PaintTarget& target)
+{
+    PaintPlan plan;
+    plan.object_id       = target.object_id;
+    plan.instance_idx    = target.instance_idx;
+    plan.object_identity = target.object->id();
+    for (std::size_t i = 0; i < target.volumes.size(); ++i) {
+        Slic3r::ModelVolume* mv = target.volumes[i];
+        plan.volumes.push_back({int(i), target.volume_ids[i], mv->name, mv->mesh_ptr(),
+                                volume_to_plate(*target.object, *mv, target.instance_idx), mv->id()});
+    }
+    return plan;
+}
+
+// Main thread only: true when `target`, freshly re-resolved, is still the scene `plan` was made
+// from. Two things are checked, because the geometry between the two hops is computed from two
+// inputs and either can move while the GUI thread is free:
+//
+//  * the mesh pointer. Any edit that touches geometry (cut, split, simplify, a re-import) replaces
+//    the shared mesh rather than mutating it, so a stale pointer means the states computed on the
+//    worker no longer line up with the facets they would be written to.
+//  * the plate transform. The states were computed from plate-millimetre coordinates read through
+//    the instance's transform at the time of the call; if the object was moved, rotated or scaled
+//    since, writing them would paint the region the caller asked for at a position that no longer
+//    exists, and the response's own bounding_box would describe neither.
+//
+// Writing either anyway would paint the wrong triangles and look deliberate.
+bool plan_still_valid(const PaintTarget& target, const PaintPlan& plan, std::string& error)
+{
+    if (target.object == nullptr || target.object->id() != plan.object_identity ||
+        target.volumes.size() != plan.volumes.size()) {
+        error = "the scene changed while the selection was being computed (object " +
+                std::to_string(plan.object_id) + " is not the one the call started on); retry";
+        return false;
+    }
+    for (const PaintPlanVolume& pv : plan.volumes) {
+        Slic3r::ModelVolume* mv = target.volumes[std::size_t(pv.index)];
+        if (mv->id() != pv.volume_identity || mv->mesh_ptr().get() != pv.mesh.get()) {
+            error = "the scene changed while the selection was being computed (volume " +
+                    std::to_string(pv.volume_id) + "'s mesh was replaced); retry";
+            return false;
+        }
+        if (!volume_to_plate(*target.object, *mv, target.instance_idx).isApprox(pv.to_plate)) {
+            error = "the scene changed while the selection was being computed (object " +
+                    std::to_string(plan.object_id) +
+                    " moved, so the plate coordinates no longer name the same facets); retry";
+            return false;
+        }
+    }
+    return true;
 }
 
 // A filament slot a caller asked to paint with. 0 means "unpainted" -- back to whatever filament
@@ -674,30 +751,82 @@ void OrcaMCPServer::register_paint_tools()
             {"required", {"object_id", "selection"}}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
-            return run_on_main_thread([params]() -> nlohmann::json {
+            // Three hops, because painting a multi-million-facet mesh takes minutes and the GUI
+            // thread is the only one every other tool also needs. Only the validation and the
+            // write actually touch the Model; the arithmetic between them does not, and doing it
+            // inside run_on_main_thread made the whole MCP server unreachable for the duration.
+            //
+            // Hop 1 -- main thread: validate everything, take nothing, capture the plan.
+            PaintPlan    plan;
+            PaintRequest request;
+            PaintMode    mode = PaintMode::Color;
+            {
+                nlohmann::json gate = run_on_main_thread([&params, &plan, &request, &mode]() -> nlohmann::json {
+                    PaintTarget target;
+                    std::string error;
+                    if (!resolve_paint_target(params, target, error))
+                        return nlohmann::json{{"status", "error"}, {"message", error}};
+
+                    // is_string first: get<std::string>() on a number throws nlohmann's
+                    // type_error.302, which the dispatcher forwards verbatim in place of the
+                    // message below. Same leniency the scalar parameters already get in this file.
+                    if (params.contains("mode") &&
+                        !(params["mode"].is_string() && parse_paint_mode(params["mode"].get<std::string>(), mode)))
+                        return nlohmann::json{{"status", "error"},
+                                              {"message", "Unknown mode; expected color, support, seam or fuzzy_skin"}};
+
+                    if (!parse_paint_request(params, mode, target, request, error))
+                        return nlohmann::json{{"status", "error"}, {"message", error}};
+
+                    // apply_facet_states rejects a mesh with no facets, and its bool cannot be told
+                    // apart from "the annotation already held this". Caught here, before the
+                    // snapshot, so the call fails instead of reporting success over a volume it
+                    // never touched.
+                    for (std::size_t i = 0; i < target.volumes.size(); ++i)
+                        if (target.volumes[i]->mesh().its.indices.empty())
+                            return nlohmann::json{{"status", "error"},
+                                                  {"message", "volume_id " + std::to_string(target.volume_ids[i]) +
+                                                              " has an empty mesh, so it has no facets to paint"}};
+
+                    plan = capture_paint_plan(target);
+                    return nlohmann::json{{"status", "success"}};
+                });
+                if (gate.value("status", "") != "success")
+                    return gate;
+            }
+
+            // Hop 2 -- this HTTP worker thread: the geometry, which is all of the cost. Nothing
+            // here touches the Model: the meshes are shared_ptr<const> snapshots that outlive any
+            // concurrent edit, and the transforms are copies.
+            std::vector<FacetAssignment> assignments(plan.volumes.size());
+            for (std::size_t i = 0; i < plan.volumes.size(); ++i) {
+                const PaintPlanVolume& pv          = plan.volumes[i];
+                const std::size_t      facet_count = pv.mesh->its.indices.size();
+                if (request.selection == "all") {
+                    // Every facet, no geometry: computing 4 million centroids to then ignore
+                    // them was the whole-branch review's M11.
+                    assignments[i] = assign_all(facet_count, request.state);
+                } else {
+                    const std::vector<Slic3r::Vec3d> centroids = facet_centroids(pv.mesh->its, pv.to_plate);
+                    if (request.selection == "bands")
+                        assignments[i] = assign_bands(centroids, request.axis, request.bands);
+                    else if (request.selection == "box")
+                        assignments[i] = assign_box(centroids, request.box, request.state);
+                    else
+                        assignments[i] = assign_sphere(centroids, request.sphere, request.state);
+                }
+            }
+
+            // Hop 3 -- main thread: confirm the scene is unchanged, then snapshot, write, refresh.
+            return run_on_main_thread([&params, &plan, &request, &mode, &assignments]() -> nlohmann::json {
                 Plater*     plater = wxGetApp().plater();
                 PaintTarget target;
                 std::string error;
-                if (!resolve_paint_target(params, target, error))
+                // Re-resolved rather than remembered: the pointers hop 1 held could have been
+                // freed while hop 2 ran. plan_still_valid then proves the freshly resolved scene
+                // is the one the states were computed against.
+                if (!resolve_paint_target(params, target, error) || !plan_still_valid(target, plan, error))
                     return nlohmann::json{{"status", "error"}, {"message", error}};
-
-                PaintMode mode = PaintMode::Color;
-                if (params.contains("mode") && !parse_paint_mode(params["mode"].get<std::string>(), mode))
-                    return nlohmann::json{{"status", "error"},
-                                          {"message", "Unknown mode; expected color, support, seam or fuzzy_skin"}};
-
-                PaintRequest request;
-                if (!parse_paint_request(params, mode, target, request, error))
-                    return nlohmann::json{{"status", "error"}, {"message", error}};
-
-                // apply_facet_states rejects a mesh with no facets, and its bool cannot be told
-                // apart from "the annotation already held this". Caught here, before the snapshot,
-                // so the call fails instead of reporting success over a volume it never touched.
-                for (std::size_t i = 0; i < target.volumes.size(); ++i)
-                    if (target.volumes[i]->mesh().its.indices.empty())
-                        return nlohmann::json{{"status", "error"},
-                                              {"message", "volume_id " + std::to_string(target.volume_ids[i]) +
-                                                          " has an empty mesh, so it has no facets to paint"}};
 
                 // Everything is validated -- only now touch the undo stack, the way
                 // set_object_filament does (OrcaMCPFilamentUtils.cpp, set_object_filament).
@@ -713,34 +842,19 @@ void OrcaMCPServer::register_paint_tools()
                 std::vector<int> band_counts(request.bands.size(), 0);
                 bool             changed = false;
 
-                for (Slic3r::ModelVolume* mv : target.volumes) {
-                    const Slic3r::Transform3d to_plate =
-                        volume_to_plate(*target.object, *mv, target.instance_idx);
-                    const std::size_t facet_count = mv->mesh().its.indices.size();
-                    original_facets_total += int(facet_count);
-
-                    FacetAssignment assignment;
-                    if (request.selection == "all") {
-                        // Every facet, no geometry: computing 4 million centroids to then ignore
-                        // them was the whole-branch review's M11.
-                        assignment = assign_all(facet_count, request.state);
-                    } else {
-                        const std::vector<Slic3r::Vec3d> centroids = facet_centroids(mv->mesh().its, to_plate);
-                        if (request.selection == "bands")
-                            assignment = assign_bands(centroids, request.axis, request.bands);
-                        else if (request.selection == "box")
-                            assignment = assign_box(centroids, request.box, request.state);
-                        else
-                            assignment = assign_sphere(centroids, request.sphere, request.state);
-                    }
+                for (std::size_t i = 0; i < plan.volumes.size(); ++i) {
+                    Slic3r::ModelVolume*   mv         = target.volumes[std::size_t(plan.volumes[i].index)];
+                    const FacetAssignment& assignment = assignments[i];
+                    original_facets_total += int(mv->mesh().its.indices.size());
 
                     facets_unassigned += assignment.unassigned;
-                    for (std::size_t i = 0; i < assignment.band_counts.size() && i < band_counts.size(); ++i)
-                        band_counts[i] += assignment.band_counts[i];
+                    for (std::size_t b = 0; b < assignment.band_counts.size() && b < band_counts.size(); ++b)
+                        band_counts[b] += assignment.band_counts[b];
                     facets_selected += int(assignment.states.size()) - assignment.unassigned;
 
                     // False here can only mean "the annotation already held exactly this": every
-                    // other reason apply_facet_states rejects a write was ruled out above.
+                    // other reason apply_facet_states rejects a write was ruled out in hop 1, and
+                    // plan_still_valid just proved the mesh it was ruled out on is still this one.
                     changed |= apply_facet_states(*mv, mode, assignment.states, request.replace);
                 }
 
@@ -753,19 +867,21 @@ void OrcaMCPServer::register_paint_tools()
                 // three -- but an agent that learned modes.<mode> from get_object_paint reads the
                 // identical accessor here.
                 nlohmann::json volumes = nlohmann::json::array();
-                for (std::size_t i = 0; i < target.volumes.size(); ++i) {
-                    Slic3r::ModelVolume* mv = target.volumes[i];
+                for (std::size_t i = 0; i < plan.volumes.size(); ++i) {
+                    Slic3r::ModelVolume* mv = target.volumes[std::size_t(plan.volumes[i].index)];
                     nlohmann::json by_mode = nlohmann::json::object();
                     by_mode[paint_mode_name(mode)] = painted_json(*mv, mode);
                     volumes.push_back({
-                        {"volume_id", target.volume_ids[i]},
+                        {"volume_id", plan.volumes[i].volume_id},
                         {"name", mv->name},
                         // Per volume, the way get_object_paint reports it, so the name means one
                         // thing across the feature: this volume's own mesh triangle count. The
                         // top-level original_facets_total is the sum, and says so in its name.
                         {"original_facets", int(mv->mesh().its.indices.size())},
-                        {"bounding_box", bbox_json(mv->mesh().transformed_bounding_box(
-                            volume_to_plate(*target.object, *mv, target.instance_idx)))},
+                        // Through the plan's transform, which plan_still_valid has just confirmed
+                        // is still the volume's own, so the box describes the frame the states
+                        // were computed in rather than a second, separately-read one.
+                        {"bounding_box", bbox_json(mv->mesh().transformed_bounding_box(plan.volumes[i].to_plate))},
                         {"modes", by_mode}
                     });
                 }
