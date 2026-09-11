@@ -182,3 +182,65 @@ TEST_CASE("pick_ray returns the first surface a plate-frame ray hits", "[orcamcp
     SurfacePick zero;
     CHECK_FALSE(pick_ray(mesh, to_plate, Vec3d(105.0, 105.0, 50.0), Vec3d::Zero(), zero));
 }
+
+namespace {
+
+// A camera at (0, 0, 100) looking down -Z with +Y up, 90-degree vertical FOV, 1:1 aspect,
+// near 1, far 1000, over a 200 x 200 viewport. Built by hand so the expected rays are hand-checkable.
+CameraFrame test_camera()
+{
+    CameraFrame cam;
+    cam.view = Eigen::Matrix4d::Identity();
+    cam.view(2, 3) = -100.0;                       // translate world so the eye is at the origin
+    const double f = 1.0;                          // cot(45 deg)
+    const double n = 1.0, fa = 1000.0;
+    cam.projection = Eigen::Matrix4d::Zero();
+    cam.projection(0, 0) = f;
+    cam.projection(1, 1) = f;
+    cam.projection(2, 2) = (fa + n) / (n - fa);
+    cam.projection(2, 3) = 2.0 * fa * n / (n - fa);
+    cam.projection(3, 2) = -1.0;
+    cam.viewport = {0, 0, 200, 200};
+    return cam;
+}
+
+} // namespace
+
+TEST_CASE("unproject_pixel_to_ray sends the centre pixel straight down the view axis",
+          "[orcamcp][select]")
+{
+    Vec3d origin, dir;
+    REQUIRE(unproject_pixel_to_ray(test_camera(), 100.0, 100.0, origin, dir));
+    CHECK_THAT(origin.x(), WithinAbs(0.0, 1e-6));
+    CHECK_THAT(origin.y(), WithinAbs(0.0, 1e-6));
+    CHECK_THAT(dir.x(), WithinAbs(0.0, 1e-6));
+    CHECK_THAT(dir.y(), WithinAbs(0.0, 1e-6));
+    CHECK_THAT(dir.z(), WithinAbs(-1.0, 1e-6));
+    CHECK_THAT(dir.norm(), WithinAbs(1.0, 1e-9));
+}
+
+TEST_CASE("unproject_pixel_to_ray treats pixel row 0 as the top of the image", "[orcamcp][select]")
+{
+    // Top-centre pixel: with +Y up in the view, the ray must tilt towards +Y.
+    Vec3d origin, dir;
+    REQUIRE(unproject_pixel_to_ray(test_camera(), 100.0, 0.0, origin, dir));
+    CHECK(dir.y() > 0.5);
+    CHECK(dir.z() < 0.0);
+
+    // Right-centre pixel tilts towards +X.
+    REQUIRE(unproject_pixel_to_ray(test_camera(), 200.0, 100.0, origin, dir));
+    CHECK(dir.x() > 0.5);
+}
+
+TEST_CASE("unproject_pixel_to_ray refuses a degenerate viewport or a singular camera",
+          "[orcamcp][select]")
+{
+    CameraFrame bad = test_camera();
+    bad.viewport = {0, 0, 0, 200};
+    Vec3d origin, dir;
+    CHECK_FALSE(unproject_pixel_to_ray(bad, 0.0, 0.0, origin, dir));
+
+    CameraFrame singular = test_camera();
+    singular.projection = Eigen::Matrix4d::Zero();
+    CHECK_FALSE(unproject_pixel_to_ray(singular, 100.0, 100.0, origin, dir));
+}

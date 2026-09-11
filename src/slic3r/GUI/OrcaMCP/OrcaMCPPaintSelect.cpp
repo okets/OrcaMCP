@@ -4,6 +4,7 @@
 #include "libslic3r/AABBMesh.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
@@ -142,6 +143,44 @@ bool pick_ray(const TriangleMesh& mesh,
     out.point_plate  = to_plate * out.point_local;
     out.normal_plate = facet_normal_plate(mesh.its, out.facet, to_plate);
     out.distance     = (out.point_plate - origin_plate).norm();
+    return true;
+}
+
+bool unproject_pixel_to_ray(const CameraFrame& camera, double px, double py, Vec3d& origin, Vec3d& dir)
+{
+    const int vx = camera.viewport[0], vy = camera.viewport[1];
+    const int vw = camera.viewport[2], vh = camera.viewport[3];
+    if (vw <= 0 || vh <= 0)
+        return false;
+
+    const Eigen::Matrix4d pv = camera.projection * camera.view;
+    Eigen::FullPivLU<Eigen::Matrix4d> lu(pv);
+    if (!lu.isInvertible())
+        return false;
+    const Eigen::Matrix4d inv = lu.inverse();
+
+    // Normalised device coordinates. Image row 0 is the top, so y is flipped relative to NDC.
+    const double nx = 2.0 * (px - vx) / vw - 1.0;
+    const double ny = 1.0 - 2.0 * (py - vy) / vh;
+
+    auto unproject = [&inv](double x, double y, double z, Vec3d& out) -> bool {
+        const Eigen::Vector4d clip(x, y, z, 1.0);
+        const Eigen::Vector4d world = inv * clip;
+        if (std::abs(world.w()) < 1e-12)
+            return false;
+        out = world.head<3>() / world.w();
+        return true;
+    };
+
+    Vec3d near_point, far_point;
+    if (!unproject(nx, ny, -1.0, near_point) || !unproject(nx, ny, 1.0, far_point))
+        return false;
+    const Vec3d d = far_point - near_point;
+    if (d.squaredNorm() == 0.0)
+        return false;
+
+    origin = near_point;
+    dir    = d.normalized();
     return true;
 }
 

@@ -76,4 +76,21 @@ bool pick_ray(const TriangleMesh& mesh,
               const Vec3d&        dir_plate,
               SurfacePick&        out);
 
+// ---- Camera ---------------------------------------------------------------------------------
+
+// What render_plate_view reports per view and pick_facet takes back: the two 4x4 matrices the
+// thumbnail was drawn with and the viewport {x, y, width, height} in pixels. Pixel (0, 0) is the
+// TOP-left of the saved image: OrcaMCPPlateUtils.cpp:44,63 flip the GL buffer row-wise when
+// writing it, so the convention here is the image's, not OpenGL's.
+struct CameraFrame
+{
+    Eigen::Matrix4d    view       = Eigen::Matrix4d::Identity();
+    Eigen::Matrix4d    projection = Eigen::Matrix4d::Identity();
+    std::array<int, 4> viewport   = {0, 0, 1, 1};
+};
+
+// The world-space ray through pixel (px, py). `origin` lies on the near plane and `dir` is a unit
+// vector. False when the viewport has no area or projection * view cannot be inverted.
+bool unproject_pixel_to_ray(const CameraFrame& camera, double px, double py, Vec3d& origin, Vec3d& dir);
+
 }}} // namespace Slic3r::GUI::OrcaMCP
