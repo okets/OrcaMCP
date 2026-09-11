@@ -426,3 +426,72 @@ volumes into one. Real APIs exist. They belong in the same tool family as
 
 Not added to any batch-2 plan — raise with the user, since scope for this batch was
 agreed as "the twelve missing tools" and this is a thirteenth and fourteenth.
+
+---
+
+## T10 — painting a high-poly mesh blocks the whole MCP server past the bridge timeout
+
+Found 2026-09-11 while painting a ComfyUI-generated figurine, live, with the user.
+
+The model carries **4,319,160 facets** (the print-bed scraper used for the Plan 2 acceptance run
+has 1,898 — about 2,300x smaller). On it:
+
+- `paint_object` with 12 bands along Z took roughly **three minutes**.
+- The bridge gave up at its 120 s default and returned *"OrcaSlicer did not answer within 120s"*.
+- The operation had **not** failed. It completed, correctly, after the error was reported.
+- While it ran, `OrcaSlicer` sat at **97.5% CPU** and the HTTP port accepted no connection at all:
+  a bare `curl` to `/mcp` timed out. Every other tool was unreachable for the duration, because
+  handler bodies run inside `run_on_main_thread()` and the server serves one request at a time.
+
+So the agent is told the call failed, cannot poll to find out otherwise, and cannot do anything
+else until it finishes. An agent that retries on that error will queue a second three-minute paint
+behind the first.
+
+Three separable problems:
+
+1. **The work is too slow for the mesh size.** The whole-branch review already logged the shape of
+   this as M10 and M11 (`get_object_paint` with no `mode` builds four `TriangleSelector`s;
+   `paint_object` computes `facet_centroids` even for `selection: "all"`, which needs none). Neither
+   was investigated for cost at this scale, because nothing tested at this scale.
+2. **A long operation is indistinguishable from a dead one.** There is no progress, and no way to
+   ask "is a paint still running?" — `get_slicing_status` covers slicing only.
+3. **The timeout is not the operation's to know.** `ORCAMCP_TIMEOUT` is a bridge-side default of
+   120 s and nothing in the tool description warns that a large mesh will exceed it.
+
+Worth noting what did **not** go wrong: the result was correct, the response was correct once it
+arrived, and a later `box` selection on the same 4.3 M-facet mesh completed inside the timeout. It
+is the band path over millions of facets that is slow, not painting in general.
+
+## T11 — nothing can select a feature, so "paint her bag" needs a ruler and three renders
+
+Same session. The user asked for the figurine's backpack to be painted blue.
+
+`paint_object` selects by band, box, sphere, or the whole volume. None of those name a *feature*.
+Finding the bag took:
+
+1. four renders to see which way the figure faced and where the bag sat,
+2. a **12-band paint used purely as a measuring ruler**, rendered and read back to convert image
+   pixels into plate millimetres,
+3. a cross-check of that reading against the object's bounding box from a second view,
+4. a box paint, and a render to confirm it landed.
+
+It worked — the bag came out blue with no spill onto the skirt or hair — but it cost about ten
+minutes and five renders for what the GUI does with one click.
+
+**The tools that would collapse this to a single call**, in order of value:
+
+- **Seed / bucket fill from a 3D point.** `TriangleSelector` already implements it
+  (`seed_fill_select_triangles`, `bucket_fill_select_triangles`, `TriangleSelector.hpp:331-345`);
+  it selects a connected region bounded by a sharp-edge angle, which is exactly what a bag,
+  a sleeve or a shoe is. Plan 2 excluded it because it needs a hit point on the mesh, reasoning
+  that a hit point is a mouse concept. That reasoning was wrong in one direction: an agent cannot
+  click, but it can supply a 3D point or a facet index, and the gizmo's own entry point takes a
+  facet index, not a pixel.
+- **A picking tool** — "what facet, and what connected component, is at this point / along this
+  ray". Without it an agent can see a feature in a render and still not address it.
+- **Render metadata.** `render_plate_view` auto-frames and returns no camera matrix, so a picture
+  cannot be converted back to coordinates. Returning the projection, or offering an orthographic
+  mode with a stated scale, is cheap and would have removed step 2 entirely.
+
+Also relevant, both already planned: `split_object` (Plan 3) would address the bag directly if it
+is a separate shell, and `measure_object` (Plan 4) would replace the ruler with a query.
