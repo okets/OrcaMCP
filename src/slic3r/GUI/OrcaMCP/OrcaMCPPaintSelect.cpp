@@ -184,4 +184,58 @@ bool unproject_pixel_to_ray(const CameraFrame& camera, double px, double py, Vec
     return true;
 }
 
+namespace {
+
+// TriangleSelector keeps its per-triangle seed-fill flag protected. This reads it back for the
+// original (unsplit) facets, which is all a fresh selector has: nothing is split until something
+// paints with a cursor, and this code never does. The same subclassing move the GUI makes
+// (TriangleSelectorGUI, GLGizmoPainterBase.hpp:33).
+class SeedFillReader : public TriangleSelector
+{
+public:
+    explicit SeedFillReader(const TriangleMesh& mesh) : TriangleSelector(mesh) {}
+
+    std::vector<int> selected_original_facets() const
+    {
+        std::vector<int> out;
+        for (int i = 0; i < m_orig_size_indices; ++i)
+            if (!m_triangles[i].is_split() && m_triangles[i].is_selected_by_seed_fill())
+                out.push_back(i);
+        return out;
+    }
+};
+
+} // namespace
+
+FacetAssignment assign_connected(const TriangleMesh& mesh,
+                                 const Transform3d&  to_plate,
+                                 int                 seed_facet,
+                                 const Vec3f&        seed_point_local,
+                                 double              angle_deg,
+                                 int                 state)
+{
+    FacetAssignment out;
+    out.states.assign(mesh.its.indices.size(), -1);
+    out.unassigned = int(out.states.size());
+    if (mesh.its.indices.empty() || seed_facet < 0 || seed_facet >= int(mesh.its.indices.size()))
+        return out;
+
+    SeedFillReader selector(mesh);
+    // The fill only reads the transform when painting overhangs only (highlight_by_angle_deg
+    // != 0), which this never does; passed anyway, without translation, as the signature asks.
+    Transform3d no_translate = to_plate;
+    no_translate.translation() = Vec3d::Zero();
+    // force_reselection = true: a fresh selector has nothing selected, but the early-return in
+    // seed_fill_select_triangles is keyed on the start facet's flag, and asking for a recompute
+    // is what a one-shot call means.
+    selector.seed_fill_select_triangles(seed_point_local, seed_facet, no_translate,
+                                        TriangleSelector::ClippingPlane(), float(angle_deg), 0.f, true);
+
+    for (int facet : selector.selected_original_facets()) {
+        out.states[facet] = state;
+        --out.unassigned;
+    }
+    return out;
+}
+
 }}} // namespace Slic3r::GUI::OrcaMCP

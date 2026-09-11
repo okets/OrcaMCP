@@ -244,3 +244,69 @@ TEST_CASE("unproject_pixel_to_ray refuses a degenerate viewport or a singular ca
     singular.projection = Eigen::Matrix4d::Zero();
     CHECK_FALSE(unproject_pixel_to_ray(singular, 100.0, 100.0, origin, dir));
 }
+
+namespace {
+
+Vec3f facet_centroid_local(const indexed_triangle_set& its, int facet)
+{
+    const Vec3i32& f = its.indices[facet];
+    return (its.vertices[f[0]] + its.vertices[f[1]] + its.vertices[f[2]]) / 3.f;
+}
+
+} // namespace
+
+TEST_CASE("assign_connected at the gizmo's default angle fills one face of a cube and stops at its edges",
+          "[orcamcp][select]")
+{
+    // its_make_cube: 12 facets, two per face, adjacent faces meet at 90 degrees.
+    const TriangleMesh mesh(Slic3r::its_make_cube(10.0, 10.0, 10.0));
+    const int          seed = 0;
+
+    const FacetAssignment a = assign_connected(mesh, Transform3d::Identity(), seed,
+                                               facet_centroid_local(mesh.its, seed),
+                                               kDefaultSeedFillAngleDeg, 5);
+    REQUIRE(a.states.size() == 12);
+    CHECK(a.states[seed] == 5);
+    // A 90-degree edge is sharper than 30 degrees, so the fill covers only the seed's own face:
+    // the seed facet and the coplanar facet sharing its diagonal.
+    const int painted = int(std::count(a.states.begin(), a.states.end(), 5));
+    CHECK(painted == 2);
+    CHECK(a.unassigned == 10);
+    CHECK(a.band_counts.empty());
+}
+
+TEST_CASE("assign_connected with an angle wider than the fold covers the whole cube", "[orcamcp][select]")
+{
+    const TriangleMesh mesh(Slic3r::its_make_cube(10.0, 10.0, 10.0));
+    const FacetAssignment a = assign_connected(mesh, Transform3d::Identity(), 0,
+                                               facet_centroid_local(mesh.its, 0), 100.0, 5);
+    CHECK(std::all_of(a.states.begin(), a.states.end(), [](int s) { return s == 5; }));
+    CHECK(a.unassigned == 0);
+}
+
+TEST_CASE("assign_connected does not leak across a gap between two shells", "[orcamcp][select]")
+{
+    const TriangleMesh mesh(two_cubes());
+    // Seed in cube B (facets 12..23) with a permissive angle: fills all of B, none of A.
+    const FacetAssignment a = assign_connected(mesh, Transform3d::Identity(), 12,
+                                               facet_centroid_local(mesh.its, 12), 179.0, 3);
+    for (std::size_t i = 0; i < 12; ++i)
+        CHECK(a.states[i] == -1);
+    for (std::size_t i = 12; i < 24; ++i)
+        CHECK(a.states[i] == 3);
+}
+
+TEST_CASE("assign_connected refuses a seed facet the mesh does not have", "[orcamcp][select]")
+{
+    const TriangleMesh mesh(Slic3r::its_make_cube(10.0, 10.0, 10.0));
+    const FacetAssignment a = assign_connected(mesh, Transform3d::Identity(), 12, Vec3f::Zero(),
+                                               kDefaultSeedFillAngleDeg, 5);
+    CHECK(std::all_of(a.states.begin(), a.states.end(), [](int s) { return s == -1; }));
+    CHECK(a.unassigned == 12);
+
+    const TriangleMesh empty;
+    const FacetAssignment none = assign_connected(empty, Transform3d::Identity(), 0, Vec3f::Zero(),
+                                                  kDefaultSeedFillAngleDeg, 5);
+    CHECK(none.states.empty());
+    CHECK(none.unassigned == 0);
+}

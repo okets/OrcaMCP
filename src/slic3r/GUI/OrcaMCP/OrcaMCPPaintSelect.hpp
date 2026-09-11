@@ -8,6 +8,7 @@
 #include "libslic3r/BoundingBox.hpp"
 #include "libslic3r/Point.hpp"
 #include "libslic3r/TriangleMesh.hpp"
+#include "libslic3r/TriangleSelector.hpp"
 
 #include "OrcaMCPPaintGeometry.hpp"
 
@@ -92,5 +93,23 @@ struct CameraFrame
 // The world-space ray through pixel (px, py). `origin` lies on the near plane and `dir` is a unit
 // vector. False when the viewport has no area or projection * view cannot be inverted.
 bool unproject_pixel_to_ray(const CameraFrame& camera, double px, double py, Vec3d& origin, Vec3d& dir);
+
+// ---- Seed fill ------------------------------------------------------------------------------
+
+// The gizmo's own default (GLGizmoPainterBase.hpp:279, m_smart_fill_angle = 30.f).
+constexpr double kDefaultSeedFillAngleDeg = 30.0;
+
+// The connected region reachable from `seed_facet` without crossing an edge whose dihedral angle
+// exceeds `angle_deg` -- TriangleSelector::seed_fill_select_triangles (TriangleSelector.hpp:332),
+// the same traversal the GUI's smart-fill mode runs, read back per original facet. `state` is
+// written to every facet the fill reached, -1 to every other. `seed_point_local` is the mesh-local
+// point the fill starts from (SurfacePick::point_local); it need only lie on `seed_facet`.
+// Out-of-range `seed_facet`, or an empty mesh, selects nothing.
+FacetAssignment assign_connected(const TriangleMesh& mesh,
+                                 const Transform3d&  to_plate,
+                                 int                 seed_facet,
+                                 const Vec3f&        seed_point_local,
+                                 double              angle_deg,
+                                 int                 state);
 
 }}} // namespace Slic3r::GUI::OrcaMCP
