@@ -36,6 +36,15 @@ nlohmann::json run_on_main_thread(Func&& func)
 bool parse_integer_param(const nlohmann::json& value, int& out);
 bool parse_boolean_param(const nlohmann::json& value, bool& out);
 
+// The same contract for a real-valued parameter, with two rejections a bare get<double>() does not
+// make. A non-finite value is refused on both branches: JSON's grammar has no NaN or Infinity token,
+// but std::stod parses "nan" and "inf" as fully-consumed valid numbers, and a NaN that reaches a
+// coordinate defeats every range check written as a comparison (each one is false against NaN) and
+// ends in an undefined scaled() conversion. A hexadecimal spelling is refused for the same class of
+// reason: std::stod reads "0x10" as 16 and "0x1p4" as 16 too, and a coordinate nobody meant to write
+// in base 16 is a caller mistake worth reporting rather than silently giving a different number.
+bool parse_double_param(const nlohmann::json& value, double& out);
+
 // True for "#RRGGBB" -- and, with allow_alpha, also "#RRGGBBAA". Upstream's parsers are lenient in
 // ways that turn a typo into a wrong colour rather than an error: can_decode_color only checks the
 // length and the '#' (so "#GGGGGG" decodes as black) and color_decompose_hex_to_rgb accepts any

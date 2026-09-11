@@ -65,6 +65,41 @@ bool parse_integer_param(const nlohmann::json& value, int& out)
     return false;
 }
 
+bool parse_double_param(const nlohmann::json& value, double& out)
+{
+    if (value.is_number()) {
+        const double parsed = value.get<double>();
+        // Belt and braces: a JSON number literal cannot spell NaN or Infinity, so this can only
+        // fire for a value built by something other than parsing the wire text. The string branch
+        // below rejects the same spellings, which std::stod does accept.
+        if (!std::isfinite(parsed))
+            return false;
+        out = parsed;
+        return true;
+    }
+    if (value.is_string()) {
+        const std::string str = value.get<std::string>();
+        // Refused before std::stod sees it: "0x10" is a fully-consumed, finite parse of 16, and
+        // "0x1p4" of 16 as well, so neither pos nor isfinite below can tell the caller's mistake
+        // apart from a deliberate value. No decimal spelling of a number contains an 'x'.
+        if (str.find('x') != std::string::npos || str.find('X') != std::string::npos)
+            return false;
+        try {
+            size_t       pos    = 0;
+            const double parsed = std::stod(str, &pos);
+            // std::stod accepts "nan" and "inf" (any case, either sign) as valid, fully-consumed
+            // parses; isfinite is what rejects them.
+            if (pos == str.size() && std::isfinite(parsed)) {
+                out = parsed;
+                return true;
+            }
+        } catch (const std::exception&) {
+            // out of range, or nothing numeric at all -- both are "not a number" to the caller
+        }
+    }
+    return false;
+}
+
 bool parse_boolean_param(const nlohmann::json& value, bool& out)
 {
     if (value.is_boolean()) {

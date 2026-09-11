@@ -25,6 +25,40 @@ using namespace Slic3r::GUI::OrcaMCP;
 
 namespace {
 
+// Every number and every integer id in this file is read through one of these two, so a caller
+// gets the same kind of message wherever it mistypes a scalar. The alternative -- a bare
+// get<double>() or a typed json::value -- throws nlohmann's type_error.302 ("type must be number,
+// but is string"), which the dispatcher catches and forwards verbatim: safe, but it names neither
+// the field nor what would have been accepted, and this batch exists to give agents actionable
+// errors. parse_double_param/parse_integer_param also accept the stringified spelling a client
+// with a cached older schema sends ("110", "2"), which is the same leniency parse_boolean_param
+// already applied to `replace` and `append` in this file.
+bool parse_number_field(const nlohmann::json& value, const std::string& what, double& out, std::string& error)
+{
+    if (parse_double_param(value, out))
+        return true;
+    // One message for every rejection parse_double_param makes -- not a number at all, a
+    // non-finite one, or a hex spelling -- because "finite number" describes what is wanted in
+    // all three cases and the field name is what the caller actually needs here.
+    error = what + " must be a finite number";
+    return false;
+}
+
+// Optional integer parameter: absent leaves `fallback`. Kept integral -- parse_integer_param
+// refuses 1.5 -- because every caller of this reads an index, and rounding an index is how a
+// caller ends up painting a different object than it asked for.
+bool parse_integer_field(const nlohmann::json& params, const char* key, int fallback, int& out, std::string& error)
+{
+    out = fallback;
+    if (!params.contains(key))
+        return true;
+    if (!parse_integer_param(params[key], out)) {
+        error = std::string(key) + " must be a whole number";
+        return false;
+    }
+    return true;
+}
+
 // The volumes one call addresses, and the instance whose transform defines plate coordinates.
 // Paint lives on the ModelVolume, so it applies to every instance of the object; `instance_idx`
 // only decides which instance's frame the caller's coordinates are read in.
@@ -54,7 +88,9 @@ bool resolve_paint_target(const nlohmann::json& params, PaintTarget& out, std::s
         error = "object_id is required: pass the 0-based index of the object to paint";
         return false;
     }
-    const int object_id = params.value("object_id", -1);
+    int object_id = -1;
+    if (!parse_integer_field(params, "object_id", -1, object_id, error))
+        return false;
     if (object_id < 0 || object_id >= int(model.objects.size())) {
         error = "Invalid object_id " + std::to_string(object_id) + ": the scene has " +
                 std::to_string(model.objects.size()) + " objects";
@@ -63,7 +99,9 @@ bool resolve_paint_target(const nlohmann::json& params, PaintTarget& out, std::s
     out.object    = model.objects[std::size_t(object_id)];
     out.object_id = object_id;
 
-    const int instance_id = params.value("instance_id", 0);
+    int instance_id = 0;
+    if (!parse_integer_field(params, "instance_id", 0, instance_id, error))
+        return false;
     if (instance_id < 0 || instance_id >= int(out.object->instances.size())) {
         error = "Invalid instance_id " + std::to_string(instance_id) + ": the object has " +
                 std::to_string(out.object->instances.size()) + " instances";
@@ -71,7 +109,9 @@ bool resolve_paint_target(const nlohmann::json& params, PaintTarget& out, std::s
     }
     out.instance_idx = std::size_t(instance_id);
 
-    const int volume_id = params.value("volume_id", -1);
+    int volume_id = -1;
+    if (!parse_integer_field(params, "volume_id", -1, volume_id, error))
+        return false;
     if (volume_id < -1) {
         error = "Invalid volume_id " + std::to_string(volume_id) +
                 ": use a 0-based part index, or omit it (or pass -1) for every part of the object";
@@ -281,13 +321,17 @@ bool parse_single_state(const nlohmann::json& params, PaintMode mode, int& out, 
     return true;
 }
 
-bool read_vec3(const nlohmann::json& value, Slic3r::Vec3d& out, const char* what, std::string& error)
+bool read_vec3(const nlohmann::json& value, Slic3r::Vec3d& out, const std::string& what, std::string& error)
 {
     if (!value.is_array() || value.size() != 3) {
-        error = std::string(what) + " must be an array of three numbers [x, y, z] in plate millimetres";
+        error = what + " must be an array of three numbers [x, y, z] in plate millimetres";
         return false;
     }
-    out = Slic3r::Vec3d(value[0].get<double>(), value[1].get<double>(), value[2].get<double>());
+    // Per component, so a caller that mistyped one of the three is told which: the whole-array
+    // message above cannot say that, and a bare get<double>() would name nothing at all.
+    for (int i = 0; i < 3; ++i)
+        if (!parse_number_field(value[std::size_t(i)], what + "[" + std::to_string(i) + "]", out[i], error))
+            return false;
     return true;
 }
 
@@ -323,8 +367,12 @@ bool parse_paint_request(const nlohmann::json& params,
 
         const Slic3r::BoundingBoxf3 bbox = target_plate_bbox(target);
         const int                   row  = int(out.axis);
-        out.range_from = params.contains("from") ? params["from"].get<double>() : bbox.min[row];
-        out.range_to   = params.contains("to") ? params["to"].get<double>() : bbox.max[row];
+        out.range_from = bbox.min[row];
+        out.range_to   = bbox.max[row];
+        if (params.contains("from") && !parse_number_field(params["from"], "from", out.range_from, error))
+            return false;
+        if (params.contains("to") && !parse_number_field(params["to"], "to", out.range_to, error))
+            return false;
 
         if (params.contains("bands")) {
             const nlohmann::json& raw = params["bands"];
@@ -338,8 +386,9 @@ bool parse_paint_request(const nlohmann::json& params,
                     error = "every band needs `from` and `to` in plate millimetres";
                     return false;
                 }
-                band.from = entry["from"].get<double>();
-                band.to   = entry["to"].get<double>();
+                if (!parse_number_field(entry["from"], "band.from", band.from, error) ||
+                    !parse_number_field(entry["to"], "band.to", band.to, error))
+                    return false;
                 if (!(band.to > band.from)) {
                     error = "band from " + std::to_string(band.from) + " to " + std::to_string(band.to) +
                             " is empty: `to` must exceed `from`";
@@ -416,7 +465,8 @@ bool parse_paint_request(const nlohmann::json& params,
         }
         if (!read_vec3(params["sphere"]["center"], out.sphere.center, "sphere.center", error))
             return false;
-        out.sphere.radius = params["sphere"]["radius"].get<double>();
+        if (!parse_number_field(params["sphere"]["radius"], "sphere.radius", out.sphere.radius, error))
+            return false;
         if (!(out.sphere.radius > 0.0)) {
             error = "sphere.radius must be greater than zero";
             return false;
@@ -465,50 +515,6 @@ std::vector<std::string> paint_prerequisite_messages(const Slic3r::ModelObject& 
                                "(the default). Set fuzzy_skin to 'none' to use painted regions only.");
     }
     return messages;
-}
-
-// No parse_double_param exists in OrcaMCPCommon -- a gap logged for the whole-branch review,
-// out of scope to fix in this file -- so this is the narrow, file-local equivalent for the one
-// tool that takes bare floats (x, y, radius). Mirrors parse_integer_param's string handling
-// (OrcaMCPCommon.cpp) rather than only accepting a JSON number: the same stale-schema client
-// that sends append as "true" sends a coordinate as "110", and rejecting that here while
-// parse_boolean_param accepts its own stringified value would be a needless inconsistency
-// within the same tool. Anything else reads as a message naming the field, rather than the
-// generic json::type_error the same mistake would otherwise surface as.
-bool parse_number_field(const nlohmann::json& value, const char* what, double& out, std::string& error)
-{
-    if (value.is_number()) {
-        const double parsed = value.get<double>();
-        // A JSON number literal cannot itself spell NaN or Infinity (the grammar has no token for
-        // either), so this is belt-and-braces for a value built by something other than parsing
-        // the wire text -- cheap, and consistent with the string branch below rejecting the same.
-        if (!std::isfinite(parsed)) {
-            error = std::string(what) + " must be a finite number";
-            return false;
-        }
-        out = parsed;
-        return true;
-    }
-    if (value.is_string()) {
-        const std::string str = value.get<std::string>();
-        try {
-            size_t       pos    = 0;
-            const double parsed = std::stod(str, &pos);
-            // std::stod accepts "nan"/"inf" (and their sign/case variants) as valid, fully-consumed
-            // parses; isfinite is what rejects them. A NaN here would clear the radius bounds check
-            // below (every comparison against NaN is false) and, for x/y, reach brim_point_to_object
-            // and then Brim.cpp's own z > 0 test -- also false for NaN -- ending in a NaN -> coord_t
-            // scaled() conversion, which is undefined behaviour.
-            if (pos == str.size() && std::isfinite(parsed)) {
-                out = parsed;
-                return true;
-            }
-        } catch (const std::exception&) {
-            // falls through to the shared error below
-        }
-    }
-    error = std::string(what) + " must be a number";
-    return false;
 }
 
 } // namespace
