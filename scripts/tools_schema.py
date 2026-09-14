@@ -164,6 +164,36 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                   'required': [],
                   'type': 'object'},
   'name': 'clear_adaptive_layer_height'},
+ {'description': 'Reset a paint annotation on an object back to unpainted -- '
+                 "the equivalent of the paint gizmo's 'Remove all' button. "
+                 'mode picks which annotation; omit it to clear all four, '
+                 'which paint_object cannot do in one call. Clearing is '
+                 'instance-independent: paint lives on the volume, so there is '
+                 'no instance_id here.',
+  'inputSchema': {'additionalProperties': False,
+                  'properties': {'mode': {'description': 'Which annotation to '
+                                                         'clear; omit to clear '
+                                                         'all four',
+                                          'enum': ['color',
+                                                   'support',
+                                                   'seam',
+                                                   'fuzzy_skin'],
+                                          'type': 'string'},
+                                 'object_id': {'description': 'Object index '
+                                                              '(0-based)',
+                                               'type': 'integer'},
+                                 'volume_id': {'description': 'Part index '
+                                                              'within the '
+                                                              'object '
+                                                              '(0-based); '
+                                                              'omit, or pass '
+                                                              '-1, for every '
+                                                              'part',
+                                               'minimum': -1,
+                                               'type': 'integer'}},
+                  'required': ['object_id'],
+                  'type': 'object'},
+  'name': 'clear_object_paint'},
  {'description': 'Clone object. duplicate=true for independent copies.',
   'inputSchema': {'additionalProperties': False,
                   'properties': {'count': {'description': 'Number of copies '
@@ -394,6 +424,40 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                   'required': [],
                   'type': 'object'},
   'name': 'get_flush_volumes'},
+ {'description': "List the connected shells of each part's mesh -- component "
+                 'id, facet count, area and a plate-frame bounding box. A '
+                 'generated or assembled model often has a feature (a bag, a '
+                 'wheel) as its own shell; paint_object {selection: '
+                 '"component", component: <id>} paints exactly that shell. Ids '
+                 'are stable for a given mesh: discovery order by lowest facet '
+                 'index. Coordinates are PLATE millimetres. On a mesh of '
+                 'millions of facets this takes seconds; it runs off the GUI '
+                 'thread, so other tools keep answering meanwhile.',
+  'inputSchema': {'additionalProperties': False,
+                  'properties': {'instance_id': {'description': 'Which '
+                                                                "instance's "
+                                                                'transform '
+                                                                'defines plate '
+                                                                'coordinates '
+                                                                '(default 0)',
+                                                 'minimum': 0,
+                                                 'type': 'integer'},
+                                 'object_id': {'description': 'Object index '
+                                                              '(0-based)',
+                                               'minimum': 0,
+                                               'type': 'integer'},
+                                 'volume_id': {'description': 'Part index '
+                                                              'within the '
+                                                              'object '
+                                                              '(0-based); '
+                                                              'omit, or pass '
+                                                              '-1, for every '
+                                                              'part',
+                                               'minimum': -1,
+                                               'type': 'integer'}},
+                  'required': ['object_id'],
+                  'type': 'object'},
+  'name': 'get_object_components'},
  {'description': 'Get per-object setting overrides.',
   'inputSchema': {'additionalProperties': False,
                   'properties': {'object_id': {'description': 'Object index '
@@ -418,27 +482,95 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                   'required': ['object_id'],
                   'type': 'object'},
   'name': 'get_object_layer_ranges'},
- {'description': 'List the printer, filament and print presets available for the '
-                 'selected printer. Returns names and identifying fields only; '
-                 'pass summary:false for full configs. Capped per type (default '
-                 '25) -- narrow it with type/vendor/name_contains, or raise limit.',
+ {'description': 'Read what is currently painted on an object: per-volume '
+                 'facet counts and surface coverage for each of the four paint '
+                 'modes (color, support, seam, fuzzy_skin), plus its brim '
+                 'ears. Coordinates are PLATE millimetres, the same frame '
+                 'get_object_info reports its bounding_box in. Use it to '
+                 'verify a paint_object call did what you asked. '
+                 'coverage_percent is how much of the surface a state covers '
+                 '-- use that. Do not divide facet_count by original_facets: '
+                 'facet_count counts the leaf triangles a paint stroke '
+                 'subdivided the mesh into, so on a painted volume it can '
+                 'exceed the original count.',
   'inputSchema': {'additionalProperties': False,
-                  'properties': {'limit': {'description': 'Max presets per type. '
-                                                          'Default 25 with '
-                                                          'summary, 5 without. 0 '
-                                                          '= no cap (the '
-                                                          'unfiltered summary '
-                                                          'list is ~54,600 '
-                                                          'characters and '
-                                                          'overflows most MCP '
-                                                          'clients).',
+                  'properties': {'instance_id': {'description': 'Which '
+                                                                "instance's "
+                                                                'transform '
+                                                                'defines plate '
+                                                                'coordinates '
+                                                                '(default 0). '
+                                                                'Paint is '
+                                                                'shared by '
+                                                                'every '
+                                                                'instance. '
+                                                                'Brim ears are '
+                                                                'reported '
+                                                                'through '
+                                                                'instance 0 '
+                                                                'regardless of '
+                                                                'this value '
+                                                                '(see '
+                                                                'brim_ears_instance_id '
+                                                                'in the '
+                                                                'response): '
+                                                                'slicing '
+                                                                'resolves '
+                                                                'brim_points '
+                                                                'through '
+                                                                'instance 0 '
+                                                                'only, unlike '
+                                                                'paint.',
+                                                 'minimum': 0,
+                                                 'type': 'integer'},
+                                 'mode': {'description': 'Omit to report all '
+                                                         'four modes',
+                                          'enum': ['color',
+                                                   'support',
+                                                   'seam',
+                                                   'fuzzy_skin'],
+                                          'type': 'string'},
+                                 'object_id': {'description': 'Object index '
+                                                              '(0-based)',
+                                               'minimum': 0,
+                                               'type': 'integer'},
+                                 'volume_id': {'description': 'Part index '
+                                                              'within the '
+                                                              'object '
+                                                              '(0-based); '
+                                                              'omit, or pass '
+                                                              '-1, for every '
+                                                              'part',
+                                               'minimum': -1,
+                                               'type': 'integer'}},
+                  'required': ['object_id'],
+                  'type': 'object'},
+  'name': 'get_object_paint'},
+ {'description': 'List the printer, filament and print presets available for '
+                 'the selected printer. Returns names and identifying fields '
+                 'only; pass summary:false for full configs. Capped per type '
+                 '(default 25) -- narrow it with type/vendor/name_contains, or '
+                 'raise limit.',
+  'inputSchema': {'additionalProperties': False,
+                  'properties': {'limit': {'description': 'Max presets per '
+                                                          'type. Default 25 '
+                                                          'with summary, 5 '
+                                                          'without. 0 = no cap '
+                                                          '(the unfiltered '
+                                                          'summary list is '
+                                                          '~54,600 characters '
+                                                          'and overflows most '
+                                                          'MCP clients).',
                                            'minimum': 0,
                                            'type': 'integer'},
-                                 'name_contains': {'description': 'Only presets '
+                                 'name_contains': {'description': 'Only '
+                                                                  'presets '
                                                                   'whose name '
-                                                                  'contains this '
+                                                                  'contains '
+                                                                  'this '
                                                                   '(case-insensitive, '
-                                                                  'e.g. "PETG")',
+                                                                  'e.g. '
+                                                                  '"PETG")',
                                                    'type': 'string'},
                                  'summary': {'default': True,
                                              'description': 'true (default): '
@@ -449,8 +581,9 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                                                             'key of every '
                                                             'matching preset.',
                                              'type': 'boolean'},
-                                 'type': {'description': 'Only this preset type. '
-                                                         'Omit (or "all") for all '
+                                 'type': {'description': 'Only this preset '
+                                                         'type. Omit (or '
+                                                         '"all") for all '
                                                          'three.',
                                           'enum': ['printer',
                                                    'filament',
@@ -475,7 +608,9 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                   'required': ['path'],
                   'type': 'object'},
   'name': 'get_preview_base64'},
- {'description': 'Get print time and filament estimates.',
+ {'description': 'Get print time and filament estimates for the current plate. '
+                 'Requires a valid slice result (get_slicing_status state '
+                 '"done").',
   'inputSchema': {'additionalProperties': False,
                   'properties': {},
                   'required': [],
@@ -528,7 +663,9 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                   'required': [],
                   'type': 'object'},
   'name': 'get_server_info'},
- {'description': 'Get the current slicing status and progress',
+ {'description': 'Get the current slicing state: idle (not sliced), slicing '
+                 '(in progress) or done (the current plate has a valid slice '
+                 'result). Poll until state is done, then get_print_estimate.',
   'inputSchema': {'additionalProperties': False,
                   'properties': {},
                   'required': [],
@@ -682,6 +819,262 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                   'required': [],
                   'type': 'object'},
   'name': 'new_project'},
+ {'description': 'Paint per-triangle annotations on an object, the same data '
+                 'the GUI paint gizmos write. mode selects which: color '
+                 '(multi-material / MMU segmentation), support, seam or '
+                 'fuzzy_skin. selection selects where: bands along a plate '
+                 'axis (an even split across a list of filaments, or explicit '
+                 'ranges), a box, a sphere, or the whole volume. connected '
+                 'fills the surface region around a seed without crossing an '
+                 'edge sharper than `angle` -- the way to paint a feature such '
+                 'as a bag or a sleeve; component paints one shell by id. Very '
+                 'large meshes (millions of facets) take seconds to minutes; '
+                 "the work runs off the GUI thread, but the bridge's "
+                 'ORCAMCP_TIMEOUT (default 120 s) may still need raising. ALL '
+                 'COORDINATES ARE PLATE MILLIMETRES -- the same frame '
+                 'get_object_info reports its bounding_box and position in, '
+                 'not object-local coordinates. But for the numbers, use THIS '
+                 "call's own bounding_box in the response (or "
+                 "get_object_paint's), not get_object_info's: that one is a "
+                 'looser box (untransformed-AABB corners, unioned over every '
+                 "instance) and only matches this tool's for a single "
+                 'unrotated instance. A facet belongs to the band or region '
+                 'containing its centroid. Paint lives on the volume, so it '
+                 'applies to every instance; instance_id only says whose '
+                 'transform reads your coordinates. Verify with '
+                 'get_object_paint, undo with undo, reset with '
+                 'clear_object_paint.',
+  'inputSchema': {'additionalProperties': False,
+                  'properties': {'angle': {'description': 'selection=connected: '
+                                                          'stop at edges '
+                                                          'sharper than this '
+                                                          'many degrees '
+                                                          '(default 30, the '
+                                                          "gizmo's smart-fill "
+                                                          'default)',
+                                           'type': 'number'},
+                                 'axis': {'description': 'Plate axis the bands '
+                                                         'run along '
+                                                         '(selection=bands)',
+                                          'enum': ['x', 'y', 'z'],
+                                          'type': 'string'},
+                                 'bands': {'description': 'Explicit ranges in '
+                                                          'plate mm, each with '
+                                                          'a filament '
+                                                          '(mode=color) or a '
+                                                          'state. Ranges need '
+                                                          'not tile the '
+                                                          'object; facets '
+                                                          'outside them all '
+                                                          'are left alone.',
+                                           'items': {'properties': {'filament': {'type': 'integer'},
+                                                                    'from': {'type': 'number'},
+                                                                    'state': {'enum': ['none',
+                                                                                       'enforcer',
+                                                                                       'blocker',
+                                                                                       'fuzzy_skin'],
+                                                                              'type': 'string'},
+                                                                    'to': {'type': 'number'}},
+                                                     'type': 'object'},
+                                           'type': 'array'},
+                                 'box': {'description': 'Axis-aligned box in '
+                                                        'plate mm '
+                                                        '(selection=box)',
+                                         'properties': {'max': {'items': {'type': 'number'},
+                                                                'type': 'array'},
+                                                        'min': {'items': {'type': 'number'},
+                                                                'type': 'array'}},
+                                         'type': 'object'},
+                                 'component': {'description': 'selection=component: '
+                                                              'a shell id from '
+                                                              'get_object_components; '
+                                                              'needs volume_id '
+                                                              'when the object '
+                                                              'has several '
+                                                              'parts',
+                                               'minimum': 0,
+                                               'type': 'integer'},
+                                 'filament': {'description': '1-based filament '
+                                                             'slot for '
+                                                             'selection=box/sphere/all/connected/component '
+                                                             '(mode=color). 0 '
+                                                             'means unpainted.',
+                                              'type': 'integer'},
+                                 'filaments': {'description': 'One 1-based '
+                                                              'filament slot '
+                                                              'per band, split '
+                                                              'evenly along '
+                                                              'the axis '
+                                                              '(selection=bands, '
+                                                              'mode=color). 0 '
+                                                              'means '
+                                                              'unpainted.',
+                                               'items': {'type': 'integer'},
+                                               'type': 'array'},
+                                 'from': {'description': 'Start of the even '
+                                                         'split in plate mm '
+                                                         '(default: the '
+                                                         "object's own "
+                                                         'extent). Ignored '
+                                                         'when explicit '
+                                                         '`bands` are given, '
+                                                         'which carry their '
+                                                         'own ranges.',
+                                          'type': 'number'},
+                                 'instance_id': {'description': 'Which '
+                                                                "instance's "
+                                                                'transform '
+                                                                'reads your '
+                                                                'coordinates '
+                                                                '(default 0)',
+                                                 'minimum': 0,
+                                                 'type': 'integer'},
+                                 'mode': {'description': 'Which annotation to '
+                                                         'write (default: '
+                                                         'color)',
+                                          'enum': ['color',
+                                                   'support',
+                                                   'seam',
+                                                   'fuzzy_skin'],
+                                          'type': 'string'},
+                                 'object_id': {'description': 'Object index '
+                                                              '(0-based)',
+                                               'minimum': 0,
+                                               'type': 'integer'},
+                                 'replace': {'description': 'true (default) '
+                                                            'discards this '
+                                                            "mode's existing "
+                                                            'paint first; '
+                                                            'false paints on '
+                                                            'top of it',
+                                             'type': 'boolean'},
+                                 'seed': {'description': 'selection=connected: '
+                                                         '{point: [x,y,z]} in '
+                                                         'plate mm (snapped to '
+                                                         'the surface), or '
+                                                         '{volume_id, facet} '
+                                                         'from pick_facet',
+                                          'type': 'object'},
+                                 'selection': {'description': 'Where to paint',
+                                               'enum': ['bands',
+                                                        'box',
+                                                        'sphere',
+                                                        'all',
+                                                        'connected',
+                                                        'component'],
+                                               'type': 'string'},
+                                 'sphere': {'description': 'Sphere in plate mm '
+                                                           '(selection=sphere)',
+                                            'properties': {'center': {'items': {'type': 'number'},
+                                                                      'type': 'array'},
+                                                           'radius': {'type': 'number'}},
+                                            'type': 'object'},
+                                 'state': {'description': 'State for '
+                                                          'selection=box/sphere/all/connected/component '
+                                                          'when mode is not '
+                                                          'color. fuzzy_skin '
+                                                          'accepts none and '
+                                                          'enforcer (spelled '
+                                                          "either 'enforcer' "
+                                                          "or 'fuzzy_skin'), "
+                                                          'never blocker.',
+                                           'enum': ['none',
+                                                    'enforcer',
+                                                    'blocker',
+                                                    'fuzzy_skin'],
+                                           'type': 'string'},
+                                 'to': {'description': 'End of the even split '
+                                                       'in plate mm (default: '
+                                                       "the object's own "
+                                                       'extent). Ignored when '
+                                                       'explicit `bands` are '
+                                                       'given, which carry '
+                                                       'their own ranges.',
+                                        'type': 'number'},
+                                 'volume_id': {'description': 'Part index '
+                                                              'within the '
+                                                              'object '
+                                                              '(0-based); '
+                                                              'omit, or pass '
+                                                              '-1, for every '
+                                                              'part',
+                                               'minimum': -1,
+                                               'type': 'integer'}},
+                  'required': ['object_id', 'selection'],
+                  'type': 'object'},
+  'name': 'paint_object'},
+ {'description': 'Find the facet a point, a ray, or a pixel of a render lands '
+                 'on. Give ONE of: point [x,y,z] (plate mm; snaps to the '
+                 'nearest surface), ray {origin, direction} (plate mm; first '
+                 'hit), or pixel [u,v] plus the `camera` object from a '
+                 'render_plate_view result (u right, v down, (0,0) top-left). '
+                 'Returns the volume, facet, plate point and normal -- feed '
+                 '`point` straight into paint_object {selection: "connected", '
+                 'seed: {point}}. include_component adds the shell id for '
+                 'paint_object {selection: "component"}; it costs a pass over '
+                 'the mesh.',
+  'inputSchema': {'additionalProperties': False,
+                  'properties': {'camera': {'description': 'The `camera` '
+                                                           'object a '
+                                                           'render_plate_view '
+                                                           'view returned, '
+                                                           'unchanged',
+                                            'type': 'object'},
+                                 'include_component': {'description': 'Also '
+                                                                      'report '
+                                                                      'the '
+                                                                      'shell '
+                                                                      'id of '
+                                                                      'the hit '
+                                                                      'facet '
+                                                                      '(default '
+                                                                      'false)',
+                                                       'type': 'boolean'},
+                                 'instance_id': {'description': 'Which '
+                                                                "instance's "
+                                                                'transform '
+                                                                'defines plate '
+                                                                'coordinates '
+                                                                '(default 0)',
+                                                 'minimum': 0,
+                                                 'type': 'integer'},
+                                 'object_id': {'description': 'Object index '
+                                                              '(0-based)',
+                                               'minimum': 0,
+                                               'type': 'integer'},
+                                 'pixel': {'description': '[u, v] in the '
+                                                          "render's pixels, "
+                                                          '(0,0) top-left; '
+                                                          'needs `camera`',
+                                           'items': {'type': 'number'},
+                                           'maxItems': 2,
+                                           'minItems': 2,
+                                           'type': 'array'},
+                                 'point': {'description': 'Plate mm; the '
+                                                          'nearest surface '
+                                                          'point is picked',
+                                           'items': {'type': 'number'},
+                                           'maxItems': 3,
+                                           'minItems': 3,
+                                           'type': 'array'},
+                                 'ray': {'description': 'Plate mm; the first '
+                                                        'surface along the ray '
+                                                        'is picked',
+                                         'properties': {'direction': {'items': {'type': 'number'},
+                                                                      'type': 'array'},
+                                                        'origin': {'items': {'type': 'number'},
+                                                                   'type': 'array'}},
+                                         'type': 'object'},
+                                 'volume_id': {'description': 'Restrict to one '
+                                                              'part (0-based); '
+                                                              'omit, or pass '
+                                                              '-1, to search '
+                                                              'every part',
+                                               'minimum': -1,
+                                               'type': 'integer'}},
+                  'required': ['object_id'],
+                  'type': 'object'},
+  'name': 'pick_facet'},
  {'description': 'Start printing a G-code file already stored on the '
                  'Flashforge printer, with optional material station mapping.',
   'inputSchema': {'additionalProperties': False,
@@ -904,19 +1297,29 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                   'required': ['type'],
                   'type': 'object'},
   'name': 'save_preset'},
- {'description': 'Save current project.',
+ {'description': 'Save the current project. Saves in place once the project '
+                 'has a file name; pass output_path to name it (or to save a '
+                 'copy under a new name).',
   'inputSchema': {'additionalProperties': False,
-                  'properties': {'save_as': {'description': 'Ignored for a '
-                                                            'project that '
-                                                            'already has a '
-                                                            'file name (it is '
-                                                            'saved in place). '
-                                                            'A project with no '
-                                                            'file name cannot '
-                                                            'be saved from '
-                                                            'MCP, because that '
-                                                            'needs a file '
-                                                            'dialog.',
+                  'properties': {'output_path': {'description': 'Path of the '
+                                                                '.3mf to save '
+                                                                'to. Required '
+                                                                'while the '
+                                                                'project has '
+                                                                'no file name; '
+                                                                'naming it any '
+                                                                'other way '
+                                                                'needs a file '
+                                                                'dialog, which '
+                                                                'MCP cannot '
+                                                                'open. Also '
+                                                                'acts as Save '
+                                                                'As.',
+                                                 'type': 'string'},
+                                 'save_as': {'description': 'Legacy, ignored: '
+                                                            'use output_path '
+                                                            'to save under a '
+                                                            'new name.',
                                              'type': 'boolean'}},
                   'required': [],
                   'type': 'object'},
@@ -1125,6 +1528,70 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                   'required': [],
                   'type': 'object'},
   'name': 'send_to_printer'},
+ {'description': 'Place brim ears on an object -- the small tabs the brim adds '
+                 'at chosen points. Brim ears are NOT facet paint: they are '
+                 'points on the object (ModelObject::brim_points), so they '
+                 'have their own tool. Positions are PLATE millimetres, the '
+                 'same frame get_object_info reports its bounding_box in -- '
+                 "but for the numbers, use THIS call's own bounding_box in the "
+                 "response (or get_object_paint's), not get_object_info's: "
+                 'that one is a looser box (untransformed-AABB corners, '
+                 "unioned over every instance) and only matches this tool's "
+                 'for a single unrotated instance. Only x and y matter, '
+                 'because an ear always sits on the bottom of the object. Brim '
+                 'ears are stored per object, not per instance, and slicing '
+                 'resolves them through instance 0 only, so instance_id must '
+                 "be 0 (or omitted), and this response's bounding_box is "
+                 "always instance 0's regardless. Pass an empty points array "
+                 'with append left false to remove them all. They only produce '
+                 "brim unless brim_type is 'painted'.",
+  'inputSchema': {'additionalProperties': False,
+                  'properties': {'append': {'description': 'false (default) '
+                                                           'replaces the '
+                                                           "object's ears; "
+                                                           'true adds to them',
+                                            'type': 'boolean'},
+                                 'instance_id': {'description': 'Must be 0 (or '
+                                                                'omitted): '
+                                                                'brim ears are '
+                                                                'object-level '
+                                                                'data and '
+                                                                'slicing '
+                                                                'resolves them '
+                                                                'through '
+                                                                'instance 0 '
+                                                                'only',
+                                                 'type': 'integer'},
+                                 'object_id': {'description': 'Object index '
+                                                              '(0-based)',
+                                               'type': 'integer'},
+                                 'points': {'description': 'Ear positions in '
+                                                           'plate mm. An empty '
+                                                           'array removes '
+                                                           'every ear, when '
+                                                           'append is left '
+                                                           'false.',
+                                            'items': {'properties': {'radius': {'description': 'Ear '
+                                                                                               'radius '
+                                                                                               'in '
+                                                                                               'mm, '
+                                                                                               '0.1 '
+                                                                                               'to '
+                                                                                               '100',
+                                                                                'type': 'number'},
+                                                                     'x': {'type': 'number'},
+                                                                     'y': {'type': 'number'}},
+                                                      'required': ['x', 'y'],
+                                                      'type': 'object'},
+                                            'type': 'array'},
+                                 'radius': {'description': 'Default radius for '
+                                                           'points that do not '
+                                                           'carry one (default '
+                                                           '5.0 mm)',
+                                            'type': 'number'}},
+                  'required': ['object_id', 'points'],
+                  'type': 'object'},
+  'name': 'set_brim_ears'},
  {'description': "Overwrite one extruder's full flush-volume matrix (NxN, N = "
                  "physical filament count) and, optionally, that extruder's "
                  'flush multiplier.',
@@ -1265,9 +1732,12 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                                  'object_id': {'type': 'integer'},
                                  'volume_id': {'description': 'Part index '
                                                               'within the '
-                                                              'object; omit '
-                                                              'for the whole '
-                                                              'object',
+                                                              'object '
+                                                              '(0-based); '
+                                                              'omit, or pass '
+                                                              '-1, for the '
+                                                              'whole object',
+                                               'minimum': -1,
                                                'type': 'integer'}},
                   'required': ['object_id', 'filament'],
                   'type': 'object'},
