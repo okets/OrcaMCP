@@ -683,56 +683,79 @@ shows a clear band where a tower is standing is its own trap.
 
 ---
 
-## T14 — a second slice started while `slice_all` is running segfaults the slicer
+## T14 — slicing a plate that was already sliced segfaulted the slicer (fixed)
 
-Found 2026-09-15 preparing a real four-plate ABS print. **Diagnosed by the user, who knew what
-they had done; the agent's own first theory was wrong.**
+Found 2026-09-15 preparing a real four-plate ABS print. The user sliced one plate by hand in the
+GUI while an MCP `slice_all` walk was running; OrcaSlicer died with `SIGSEGV` and the unsaved
+project — four plates, the per-object filament assignments, the user's own plate-2 arrangement —
+was lost. Only a `.3mf` saved earlier made it recoverable.
 
-`slice_all` was running across four plates. The user sliced one plate manually in the GUI while
-it ran. OrcaSlicer died with `SIGSEGV`:
+**Root cause: an unguarded null pointer, not a data race.** My first write-up of this finding
+called it a re-entrancy race between the GUI slice and the MCP one. That was wrong, and the crash
+report says so plainly.
 
+`GCode::do_export` (`GCode.cpp:2440`) returns early — and reports success — when the G-code export
+step is already done and the file is still on disk:
+
+```cpp
+if (print->is_step_done(psGCodeExport) && boost::filesystem::exists(boost::filesystem::path(path)))
+    return;
 ```
-Slic3r::GCode::export_layer_filaments(GCodeProcessorResult*)
-Slic3r::Print::export_gcode(...)
-Slic3r::BackgroundSlicingProcess::process_fff()
-Slic3r::BackgroundSlicingProcess::thread_proc()
+
+On that path `_do_export` never runs, so `GCode::m_print` (declared `Print *m_print{nullptr}`,
+assigned only at `GCode.cpp:2892`) stays null. `Print::export_gcode` then calls
+`gcode.export_layer_filaments(result)` unconditionally on the next line (`Print.cpp:2931`), and
+that function read:
+
+```cpp
+result->used_mixed_filaments = m_print->get_slice_used_mixed_filaments();
 ```
 
-`EXC_BAD_ACCESS ... at 0x0000000000004878` — a near-null dereference inside the background
-slicing thread while it was exporting G-code. The signature is consistent with the second
-request resetting or reassigning the `Print` while the first was still writing through it.
+with no null check. `get_slice_used_mixed_filaments()` returns a reference to a member of `*m_print`,
+so through a null `m_print` it yields the constant address `offsetof(Print, m_slice_used_mixed_filaments)`,
+and `std::vector<unsigned int>::operator=` then reads through it.
 
-The whole unsaved project was lost: four plates, the per-object filament assignments and the
-user's own plate-2 arrangement. Only a `.3mf` saved earlier made it recoverable.
+**The crash report matches that chain exactly.** From
+`~/Library/Logs/DiagnosticReports/OrcaSlicer-2026-09-15-004703.ips`:
 
-**Evidence that it is re-entrancy, not `slice_all` itself:**
+- Fault: `EXC_BAD_ACCESS`, `KERN_INVALID_ADDRESS at 0x0000000000004878` — a small constant, i.e. a
+  member offset from a null base, not a wild or freed pointer.
+- Faulting thread 25, named `bbl_BgSlcPcs`:
+  `vector<unsigned int>::operator=` ← `GCode::export_layer_filaments` ← `Print::export_gcode` ←
+  `BackgroundSlicingProcess::process_fff`.
+- That assignment is the **only** `vector<unsigned int>` assignment in the function.
 
-- Slicing the same four plates **one at a time** (`slice_all` with `all_plates: false`, selecting
-  each plate first) completed cleanly, four for four, no crash.
-- Re-running `slice_all` afterwards on an already-valid project completed in 15 s, no crash.
-- An earlier crash the same evening (`20:58`) is a *different* signature — `GLCanvas3D::~GLCanvas3D`
-  → `Plater::get_notification_manager` during app teardown — so it is unrelated and not evidence
-  either way.
+The earlier crash the same evening (`20:58`) is an unrelated signature — `GLCanvas3D::~GLCanvas3D`
+during app teardown — and is not evidence for anything here.
 
-**Why this batch made it worse.** Before, `slice_all` sliced only the current plate and returned
-in seconds (that was T12's sibling defect, fixed in `a72d2fa45d`). It now genuinely walks every
-plate, so on this project it runs for **five minutes**. The window in which a human can touch the
-Slice button and kill the application went from seconds to minutes. The underlying weakness looks
-upstream; our fix widened the exposure enormously.
+**Why the user's action triggered it.** A plate that has just finished slicing is left in exactly
+the state the early return tests for: `psGCodeExport` done, file present. Slicing that plate again
+before anything invalidates the step takes the early return, and the crash follows
+deterministically. The `slice_all` walk had already exported the plate the user then sliced by
+hand. Nothing about two threads was required; the same input crashes single-threaded.
 
-**What to do, in order of value:**
+**Confirmed by reproduction, not by inference.** `tests/fff_print/test_mixed_filament.cpp` now
+exports one print twice to the same path. With the guard removed the test dies with
+`SIGSEGV - Segmentation violation signal` at the second export; with the guard it passes.
 
-1. **Refuse to start a second slice while one is running**, from the MCP side at minimum —
-   `slice_all` already checks `is_background_process_slicing()` in one branch; it needs to hold
-   for the whole multi-plate walk, not just at entry.
-2. **Say so in the tool description.** A caller driving a five-minute operation should be told
-   that the GUI must not be touched meanwhile, because nothing currently warns them.
-3. **Investigate the upstream re-entrancy properly.** A GUI click should never be able to
-   segfault the slicer regardless of what an API is doing; whether `BackgroundSlicingProcess`
-   can be made to reject or queue an overlapping request is the real fix, and it is not
-   MCP-specific.
-4. Consider whether a long multi-plate run should checkpoint the project, given a crash loses
-   everything unsaved.
+**The fix** (`GCode.cpp`) returns early when there was no export. That is the correct answer and
+not merely the safe one: without an export `m_sorted_layer_filaments` is empty, so continuing would
+have cleared `result`'s filament- and nozzle-change sequences and rebuilt them empty — silently
+blanking bookkeeping the caller already held. The three sibling accessors directly below
+(`get_extruder_id`, `get_filament_config_index`, `get_nozzle_config_index`) already guard `m_print`
+for the same reason; this one site had been missed.
 
-**Not reproduced deliberately.** Reproducing means crashing the user's slicer on purpose during
-a real job; the reproduction above is from the one occurrence, plus the two negative controls.
+**Related occurrences checked.** `export_layer_filaments` has exactly one caller
+(`Print.cpp:2931`), and it is the only `GCode` method `Print::export_gcode` calls after `do_export`
+— every other `m_print->` dereference in `GCode.cpp` sits inside the `_do_export` pipeline, where
+`m_print` is assigned on entry. `Print::export_gcode_from_previous_file` reaches the same
+"step already done" state via `set_gcode_file_ready()` but drives a `GCodeProcessor` and never
+calls this function, so it is unaffected.
+
+**Left alone deliberately.** `slice_all` still has no entry guard against being called while a
+slice is in flight. With the null dereference fixed, a second slice is no longer a crash, and
+adding a guard for a hazard that no longer exists would be speculative scope. Worth revisiting only
+if overlapping slices produce a wrong result rather than a dead application.
+
+**Still true regardless:** `slice_all` now runs for minutes on a multi-plate project, and a crash
+during it loses everything unsaved. Checkpointing a long run is worth considering on its own merits.

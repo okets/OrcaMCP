@@ -4133,6 +4133,20 @@ void GCode::export_layer_filaments(GCodeProcessorResult* result)
     if (result == nullptr)
         return;
 
+    // do_export() returns early -- and successfully -- when psGCodeExport is already done and the
+    // G-code file is still on disk, so _do_export() never runs and m_print stays null. Print::export_gcode
+    // calls us unconditionally right after it, which is how that path reached the unguarded
+    // m_print->get_slice_used_mixed_filaments() below and segfaulted. The three sibling accessors under
+    // this function (get_extruder_id, get_filament_config_index, get_nozzle_config_index) already guard
+    // m_print for the same reason.
+    //
+    // Returning is also the correct answer, not merely the safe one: without an export
+    // m_sorted_layer_filaments is empty, so continuing would clear result's filament- and
+    // nozzle-change sequences and rebuild them empty, discarding the bookkeeping the caller
+    // already holds from the export that did run.
+    if (m_print == nullptr)
+        return;
+
     const std::vector<int>filament_map = m_config.filament_map.values; // 1 based
     std::vector<int>prev_filament(m_config.nozzle_diameter.size(), -1);
     for (size_t idx = 0; idx < m_sorted_layer_filaments.size(); ++idx) {

@@ -3,8 +3,12 @@
 #include "libslic3r/GCode/ToolOrdering.hpp"
 #include "libslic3r/MultiNozzleUtils.hpp"
 #include "libslic3r/Print.hpp"
+#include "libslic3r/GCode/GCodeProcessor.hpp"
 
 #include "test_helpers.hpp"
+#include "../test_utils.hpp"
+
+#include <boost/filesystem.hpp>
 
 using namespace Slic3r;
 using namespace Slic3r::Test;
@@ -321,4 +325,45 @@ TEST_CASE("Print::validate warns when a gradient mixed filament is used without 
         init_print(std::vector<TriangleMesh>{cube(20)}, print, model, config, &overrides);
         CHECK(count_opt(print, "enable_mixed_color_sublayer") == 0);
     }
+}
+
+TEST_CASE("Re-exporting an already exported plate keeps its filament bookkeeping", "[MixedFilament]")
+{
+    // GCode::do_export returns early -- and reports success -- when psGCodeExport is already done
+    // and the G-code file is still on disk. That is precisely the state a plate is left in the
+    // instant it finishes slicing, and it is reachable in the application by slicing a plate that
+    // was just sliced. _do_export never runs on that path, so GCode::m_print stays null, and
+    // Print::export_gcode calls GCode::export_layer_filaments straight afterwards regardless.
+    //
+    // export_layer_filaments then read m_print->get_slice_used_mixed_filaments() with no null check
+    // and took the whole application down with SIGSEGV from the background slicing thread, losing
+    // the unsaved project. Exporting the same print twice to the same path reproduces it exactly;
+    // before the fix this test crashes the runner rather than failing.
+    //
+    // A mixed slot is used so used_mixed_filaments is genuinely non-empty: the second export must
+    // leave the first export's bookkeeping alone, not merely survive.
+    Print print;
+    Model model;
+    init_print({cube(20)}, print, model, mixed_config(false));
+    print.set_status_silent();
+    print.process();
+
+    ScopedTemporaryFile temp(".gcode");
+    GCodeProcessorResult first;
+    print.export_gcode(temp.string(), &first, nullptr);
+
+    // The preconditions for do_export's early return, asserted rather than assumed: if either of
+    // these ever stops holding, the second export below is no longer exercising that path.
+    REQUIRE(print.is_step_done(psGCodeExport));
+    REQUIRE(boost::filesystem::exists(temp.path()));
+    CHECK(first.used_mixed_filaments == std::vector<unsigned int>{2});
+    REQUIRE_FALSE(first.filament_change_sequence.empty());
+
+    GCodeProcessorResult second;
+    second = first;
+    print.export_gcode(temp.string(), &second, nullptr);
+
+    CHECK(second.used_mixed_filaments == first.used_mixed_filaments);
+    CHECK(second.filament_change_sequence == first.filament_change_sequence);
+    CHECK(second.nozzle_change_sequence == first.nozzle_change_sequence);
 }
