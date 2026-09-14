@@ -13,6 +13,7 @@
 #include "slic3r/GUI/DeviceManager.hpp"
 #include "slic3r/GUI/DeviceCore/DevManager.h"
 #include "slic3r/GUI/GLCanvas3D.hpp"
+#include "slic3r/GUI/GLToolbar.hpp"
 #include "slic3r/GUI/NotificationManager.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/CutUtils.hpp"
@@ -97,6 +98,18 @@ bool mcp_gui_ready(std::string& reason)
     }
     return true;
 }
+
+// The plate slice_all was asked to come back to, or -1 when nothing is pending.
+//
+// Slicing every plate walks the plate selection from the first plate to the last: upstream's own
+// chaining selects the next plate each time one finishes (Plater::priv::on_process_completed). Every
+// per-plate tool -- get_print_estimate, export_gcode, get_preview_base64 -- answers about the
+// *selected* plate, so leaving the caller on a plate they never chose is how an agent ends up
+// reading plate 4's estimate believing it is plate 1's. get_slicing_status puts the selection back
+// when the run ends, and says so in its response.
+//
+// Only ever read or written on the GUI thread, from inside run_on_main_thread.
+int s_slice_all_restore_plate = -1;
 
 } // namespace
 
@@ -653,7 +666,7 @@ void OrcaMCPServer::register_builtin_tools()
                         {"get_presets", "List presets for the selected printer. Narrow with type/vendor/name_contains; "
                                         "summary:false adds full configs (large)"},
                         {"get_edited_presets", "Get currently active presets with their config values and dirty_options"},
-                        {"get_slicing_status", "Check if slicing is in progress"}
+                        {"get_slicing_status", "Check slicing progress, per plate"}
                     }},
                     {"configuration", {
                         {"select_preset", "Switch to a different preset by name. type=filament + slot (1-based) sets one filament slot."},
@@ -686,7 +699,7 @@ void OrcaMCPServer::register_builtin_tools()
                         {"transform_objects", "Batch transform multiple objects in one call"}
                     }},
                     {"slicing_export", {
-                        {"slice_all", "Start slicing (async, poll get_slicing_status)"},
+                        {"slice_all", "Slice every plate (async, poll get_slicing_status). all_plates=false slices only the selected plate."},
                         {"get_print_estimate", "Get print time and filament usage after slicing"},
                         {"export_gcode", "Export sliced G-code to file"},
                         {"export_3mf", "Export project as 3MF file"},
@@ -2514,24 +2527,76 @@ void OrcaMCPServer::register_builtin_tools()
     // slice_all - Start slicing
     register_tool({
         "slice_all",
-        "Start slicing all plates. Poll get_slicing_status until done.",
+        "Slice every plate in the project, the way the GUI's Slice All button does: one plate at a "
+        "time until all are sliced. Pass all_plates=false to slice only the plate that is currently "
+        "selected. Poll get_slicing_status until state is \"done\"; its plates array says which "
+        "plates have a result. The plate selection walks from the first plate to the last while the "
+        "run is in progress, and get_slicing_status puts back the plate that was selected here once "
+        "it ends.",
         {
             {"type", "object"},
-            {"properties", nlohmann::json::object()}
+            {"properties", {
+                {"all_plates", {
+                    {"type", "boolean"},
+                    {"description", "true (default)=slice every plate, false=only the selected plate"}
+                }}
+            }}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
-            return run_on_main_thread([]() {
-                Plater* plater = wxGetApp().plater();
+            bool all_plates = true;
+            if (params.contains("all_plates") && !parse_boolean_param(params["all_plates"], all_plates)) {
+                return nlohmann::json{
+                    {"status", "error"},
+                    {"message", "all_plates must be a boolean"}
+                };
+            }
+            return run_on_main_thread([all_plates]() {
+                Plater*        plater       = wxGetApp().plater();
+                PartPlateList& plate_list   = plater->get_partplate_list();
+                const int      plate_count  = plate_list.get_plate_count();
+                const int      plate_at_call = plate_list.get_curr_plate_index();
 
                 // Suppress any dialogs during slicing initiation
                 McpDialogSuppressionGuard suppression_guard;
-                plater->reslice();
+                const bool slice_every_plate = all_plates && plate_count > 1;
+                if (slice_every_plate) {
+                    // Plater::reslice() slices the *current* plate and nothing else, which is what
+                    // this tool used to do under the name slice_all: with four plates and plate 4
+                    // selected it left plates 1-3 with no slice result and reported success.
+                    //
+                    // The per-plate chaining lives behind Plater::priv::m_slice_all, which only
+                    // on_action_slice_all sets, so the plate walk is driven by dispatching the same
+                    // event the Slice All button posts (MainFrame.cpp). Dispatched rather than
+                    // posted, so the kick-off still happens inside the suppression guard, exactly as
+                    // the reslice() call it replaces did.
+                    const bool was_preview_shown = plater->is_preview_shown();
+                    s_slice_all_restore_plate    = plate_at_call;
+                    SimpleEvent slice_all_event(EVT_GLTOOLBAR_SLICE_ALL);
+                    plater->GetEventHandler()->ProcessEvent(slice_all_event);
+                    // on_action_slice_all also switches the app to the G-code preview. The plate
+                    // renderers read whichever canvas is showing, so a caller that was looking at the
+                    // 3D scene is put back there; a caller already in the preview is left alone.
+                    if (!was_preview_shown)
+                        plater->select_view_3D("3D");
+                } else {
+                    s_slice_all_restore_plate = -1;
+                    plater->reslice();
+                }
                 auto info_messages = suppression_guard.messages();
 
                 nlohmann::json result = {
                     {"status", "slicing_started"},
+                    {"scope", slice_every_plate ? "all_plates" : "current_plate"},
+                    {"plates_to_slice", slice_every_plate ? plate_count : 1},
+                    {"selected_plate_at_call", plate_at_call},
                     {"active_warnings", get_active_warnings_json(plater)}
                 };
+                if (slice_every_plate) {
+                    result["note"] = "Slicing all " + std::to_string(plate_count) +
+                                     " plates. The plate selection walks to the last plate while it "
+                                     "runs; get_slicing_status restores plate " +
+                                     std::to_string(plate_at_call) + " when the run ends.";
+                }
                 if (!info_messages.empty()) {
                     result["info_messages"] = info_messages;
                 }
@@ -2803,29 +2868,66 @@ void OrcaMCPServer::register_builtin_tools()
     register_tool({
         "get_slicing_status",
         "Get the current slicing state: idle (not sliced), slicing (in progress) or done (the "
-        "current plate has a valid slice result). Poll until state is done, then get_print_estimate.",
+        "current plate has a valid slice result). Poll until state is done, then get_print_estimate. "
+        "The plates array reports every plate's slice result, so a slice_all run can be followed "
+        "plate by plate. When a slice_all run over every plate ends, this restores the plate that "
+        "was selected when slice_all was called and reports it as restored_selected_plate.",
         {
             {"type", "object"},
             {"properties", nlohmann::json::object()}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
             return run_on_main_thread([]() {
-                Plater* plater = wxGetApp().plater();
-                PartPlate* plate = plater->get_partplate_list().get_curr_plate();
-                const bool is_running = plater->is_background_process_slicing();
+                Plater*        plater     = wxGetApp().plater();
+                PartPlateList& plate_list = plater->get_partplate_list();
+                const bool     is_running = plater->is_background_process_slicing();
+
+                nlohmann::json result;
+
+                // Plater::is_background_process_slicing() reports Plater::priv::m_is_slicing, which
+                // the plate walk holds true from the first plate to the last and clears only when the
+                // run finishes or stops. So "not running" here means the whole slice_all run is over,
+                // not merely that one plate finished, and this is the first moment it is safe to put
+                // the caller's plate back. See s_slice_all_restore_plate.
+                if (!is_running && s_slice_all_restore_plate >= 0) {
+                    const int restore_to      = s_slice_all_restore_plate;
+                    s_slice_all_restore_plate = -1;
+                    if (restore_to >= 0 && restore_to < plate_list.get_plate_count() &&
+                        restore_to != plate_list.get_curr_plate_index()) {
+                        plater->select_plate(restore_to);
+                        result["restored_selected_plate"] = restore_to;
+                    }
+                }
+
+                PartPlate* plate = plate_list.get_curr_plate();
                 // "not running" is not "finished": before the first slice, and after any edit
                 // invalidates the result, the background process is equally idle. The plate's own
                 // slice-result validity is what the GUI's Print/Export buttons use, so use it here.
                 const bool has_result = plate != nullptr && plate->is_slice_result_valid();
 
-                nlohmann::json result = {
-                    {"is_slicing", is_running},
-                    {"state", is_running ? "slicing" : (has_result ? "done" : "idle")},
-                    {"status", is_running ? "slicing" : "idle"},  // kept for older callers
-                    {"plate_index", plater->get_partplate_list().get_curr_plate_index()},
-                    {"slice_result_valid", has_result},
-                    {"active_warnings", get_active_warnings_json(plater)}
-                };
+                // Per-plate progress. Without it the only readable answer is about the selected
+                // plate, and a slice_all run over four plates has no way to say it is three quarters
+                // done -- or which plate failed.
+                nlohmann::json plates       = nlohmann::json::array();
+                int            plates_sliced = 0;
+                const int      plate_count  = plate_list.get_plate_count();
+                for (int i = 0; i < plate_count; ++i) {
+                    PartPlate* p     = plate_list.get_plate(i);
+                    const bool valid = p != nullptr && p->is_slice_result_valid();
+                    if (valid)
+                        ++plates_sliced;
+                    plates.push_back({{"index", i}, {"slice_result_valid", valid}});
+                }
+
+                result["is_slicing"]         = is_running;
+                result["state"]              = is_running ? "slicing" : (has_result ? "done" : "idle");
+                result["status"]             = is_running ? "slicing" : "idle";  // kept for older callers
+                result["plate_index"]        = plate_list.get_curr_plate_index();
+                result["slice_result_valid"] = has_result;
+                result["plates"]             = plates;
+                result["plates_sliced"]      = plates_sliced;
+                result["plates_total"]       = plate_count;
+                result["active_warnings"]    = get_active_warnings_json(plater);
 
                 return result;
             });

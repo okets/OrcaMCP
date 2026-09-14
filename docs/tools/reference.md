@@ -88,7 +88,7 @@ Get current project state including plates, objects, and positions.
 ---
 
 ### get_slicing_status
-Check whether the current plate has been sliced.
+Check slicing progress, for the selected plate and for every plate.
 
 **Parameters:** None
 
@@ -100,6 +100,12 @@ Check whether the current plate has been sliced.
   "status": "idle",
   "plate_index": 0,
   "slice_result_valid": true,
+  "plates": [
+    {"index": 0, "slice_result_valid": true},
+    {"index": 1, "slice_result_valid": true}
+  ],
+  "plates_sliced": 2,
+  "plates_total": 2,
   "active_warnings": {"count": 0, "warnings": []}
 }
 ```
@@ -107,13 +113,17 @@ Check whether the current plate has been sliced.
 | Field | Meaning |
 |-------|---------|
 | `state` | `idle` (never sliced, or the result was invalidated by an edit), `slicing` (in progress), `done` (the current plate has a valid slice result) |
-| `is_slicing` | Background process running right now |
+| `is_slicing` | Background process running right now. During a `slice_all` run over every plate it stays true from the first plate to the last |
 | `status` | Legacy field, `slicing` or `idle` only - use `state` |
 | `slice_result_valid` | The current plate's own slice-result flag, the same one the GUI's Print/Export buttons use |
+| `plates` | Every plate's slice-result flag, so a multi-plate run can be followed plate by plate (and a plate that failed can be identified) |
+| `plates_sliced` / `plates_total` | How many of the plates have a valid result |
+| `restored_selected_plate` | Present only on the poll that ends a `slice_all` run over every plate: the plate that was selected when `slice_all` was called has been selected again |
 
 **Usage:** Poll every 2-3 seconds after `slice_all` until `state` is `done`, then call
 `get_print_estimate`. `is_slicing: false` on its own does **not** mean the slice finished - it is
-also false before slicing ever started.
+also false before slicing ever started. `state` is about the *selected* plate; for a multi-plate
+run read `plates_sliced` / `plates`.
 
 ---
 
@@ -974,11 +984,37 @@ Remove a layer range configuration.
 ## Slicing Tools
 
 ### slice_all
-Start slicing the current plate.
+Slice every plate in the project, one after another, exactly as the GUI's **Slice All** button does.
 
-**Parameters:** None
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `all_plates` | boolean | No | `true` (default) slices every plate; `false` slices only the currently selected plate |
 
-**Note:** Async operation. Poll `get_slicing_status` until `is_slicing` is false.
+**Returns:**
+```json
+{
+  "status": "slicing_started",
+  "scope": "all_plates",
+  "plates_to_slice": 4,
+  "selected_plate_at_call": 0,
+  "note": "Slicing all 4 plates. The plate selection walks to the last plate while it runs; get_slicing_status restores plate 0 when the run ends.",
+  "active_warnings": {"count": 0, "warnings": []}
+}
+```
+
+**Note:** Async operation. Poll `get_slicing_status` until `state` is `done` (or until
+`plates_sliced` equals `plates_total` for a multi-plate run).
+
+**Plate selection.** Slicing every plate is driven by the slicer's own per-plate chaining, which
+selects each plate in turn, so the selection moves while the run is in progress. The first
+`get_slicing_status` poll after the run ends selects the plate that was current when `slice_all`
+was called again and reports it as `restored_selected_plate`. This matters because
+`get_print_estimate`, `export_gcode` and `get_preview_base64` all answer about the *selected*
+plate.
+
+Until v2.3.2, `slice_all` sliced only the current plate despite its name: a four-plate project was
+left with three unsliced plates and no error.
 
 ---
 
