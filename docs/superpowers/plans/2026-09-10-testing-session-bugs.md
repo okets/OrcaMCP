@@ -680,3 +680,59 @@ brim is a configured width and is exact.
 The renderer now draws the tower too, in a fixed light grey. The structured data is the fix — a
 picture an agent has to eyeball is a weaker answer than exact rectangles — but a plan view that
 shows a clear band where a tower is standing is its own trap.
+
+---
+
+## T14 — a second slice started while `slice_all` is running segfaults the slicer
+
+Found 2026-09-15 preparing a real four-plate ABS print. **Diagnosed by the user, who knew what
+they had done; the agent's own first theory was wrong.**
+
+`slice_all` was running across four plates. The user sliced one plate manually in the GUI while
+it ran. OrcaSlicer died with `SIGSEGV`:
+
+```
+Slic3r::GCode::export_layer_filaments(GCodeProcessorResult*)
+Slic3r::Print::export_gcode(...)
+Slic3r::BackgroundSlicingProcess::process_fff()
+Slic3r::BackgroundSlicingProcess::thread_proc()
+```
+
+`EXC_BAD_ACCESS ... at 0x0000000000004878` — a near-null dereference inside the background
+slicing thread while it was exporting G-code. The signature is consistent with the second
+request resetting or reassigning the `Print` while the first was still writing through it.
+
+The whole unsaved project was lost: four plates, the per-object filament assignments and the
+user's own plate-2 arrangement. Only a `.3mf` saved earlier made it recoverable.
+
+**Evidence that it is re-entrancy, not `slice_all` itself:**
+
+- Slicing the same four plates **one at a time** (`slice_all` with `all_plates: false`, selecting
+  each plate first) completed cleanly, four for four, no crash.
+- Re-running `slice_all` afterwards on an already-valid project completed in 15 s, no crash.
+- An earlier crash the same evening (`20:58`) is a *different* signature — `GLCanvas3D::~GLCanvas3D`
+  → `Plater::get_notification_manager` during app teardown — so it is unrelated and not evidence
+  either way.
+
+**Why this batch made it worse.** Before, `slice_all` sliced only the current plate and returned
+in seconds (that was T12's sibling defect, fixed in `a72d2fa45d`). It now genuinely walks every
+plate, so on this project it runs for **five minutes**. The window in which a human can touch the
+Slice button and kill the application went from seconds to minutes. The underlying weakness looks
+upstream; our fix widened the exposure enormously.
+
+**What to do, in order of value:**
+
+1. **Refuse to start a second slice while one is running**, from the MCP side at minimum —
+   `slice_all` already checks `is_background_process_slicing()` in one branch; it needs to hold
+   for the whole multi-plate walk, not just at entry.
+2. **Say so in the tool description.** A caller driving a five-minute operation should be told
+   that the GUI must not be touched meanwhile, because nothing currently warns them.
+3. **Investigate the upstream re-entrancy properly.** A GUI click should never be able to
+   segfault the slicer regardless of what an API is doing; whether `BackgroundSlicingProcess`
+   can be made to reject or queue an overlapping request is the real fix, and it is not
+   MCP-specific.
+4. Consider whether a long multi-plate run should checkpoint the project, given a crash loses
+   everything unsaved.
+
+**Not reproduced deliberately.** Reproducing means crashing the user's slicer on purpose during
+a real job; the reproduction above is from the one occurrence, plus the two negative controls.
