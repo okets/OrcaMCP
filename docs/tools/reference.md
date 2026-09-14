@@ -278,7 +278,24 @@ Move an object to a new position.
 
 // Absolute position: center of bed
 {"name": "move_object", "arguments": {"object_id": 0, "x": 155, "y": 155, "relative": false}}
+
+// Move onto plate 4 (whose area is x[307,563] y[-307,-51]): the object is re-homed onto plate 4
+// and the response reports "plate_index": 3
+{"name": "move_object", "arguments": {"object_id": 15, "x": 462, "y": -105, "relative": false}}
 ```
+
+**Placement in the response.** Every transform re-homes the object onto the plate whose area now
+contains it, then answers about *that* plate:
+
+| Field | Meaning |
+|-------|---------|
+| `plate_index` | The plate the object is on after the transform, or `null` when it is on no plate |
+| `on_bed` | Whether the object fits inside that plate's printable area |
+| `placement_warning` | Present only when `on_bed` is false, and it names the plate |
+
+Before v2.3.2 `on_bed` was measured against whichever plate happened to be *selected*, so a correct
+move into another plate's area was reported as "outside printable area"; `move_object` also left the
+object registered on its old plate, which sliced it onto the wrong plate with no error.
 
 ---
 

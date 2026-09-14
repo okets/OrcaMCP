@@ -5,6 +5,7 @@
 #include <vector>
 #include <string>
 #include <nlohmann/json.hpp>
+#include "libslic3r/BoundingBox.hpp"
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 
@@ -58,6 +59,33 @@ bool is_hex_color(const std::string& value, bool allow_alpha = false);
 // treatment, which flattens a gradient. Anything that is not a hex colour -- an empty slot, a name
 // this code cannot interpret -- is compared exactly, since nothing here can say what it means.
 bool color_changed(const std::string& before, const std::string& after);
+
+// Pure geometry: true when `object_bbox` sits inside `plate_box` in X and Y, and is not sunk more
+// than `z_tolerance` below the bed. Z is only checked downwards: an object taller than the plate's
+// box is a height problem the slicer reports itself, not a placement one.
+bool object_within_plate(const BoundingBoxf3& object_bbox, const BoundingBoxf3& plate_box, double z_tolerance = 0.1);
+
+// The plate bookkeeping an instance transform owes, and the answer a caller needs afterwards.
+// It lives here, once, because move/rotate/scale/mirror/transform_objects all owe exactly the same
+// and a copy per tool is how they drift apart (move_object had neither half; the others had the
+// second half wrong).
+//
+// Sets on `result`: "plate_index" (the plate the object is on afterwards, null when it is on none),
+// "on_bed", and "placement_warning" when it is not. Measuring against the *selected* plate, which is
+// what these tools used to do, calls a correct cross-plate move "outside printable area".
+//
+// Every instance is notified, not just the first: a multi-instance object can have its instances on
+// different plates, and a plate that keeps an instance it no longer holds slices the wrong thing.
+//
+// The third argument to notify_instance_update is `is_new`, and it must stay true here. With
+// is_new=false the re-homing branch that adds an instance to a spiral-mode plate opens
+// show_spiral_mode_settings_dialog (PartPlate.cpp, the add_instance branch) -- a MessageDialog, and a
+// modal opened inside run_on_main_thread blocks the GUI thread forever, so the MCP call never
+// returns. With is_new=true that branch applies the vase-mode object config directly instead, which
+// is the same outcome the dialog produces: under is_object_config the dialog is OK-only and its
+// answer is forced to wxID_YES regardless (ConfigManipulation::show_spiral_mode_settings_dialog).
+// clone_object already passes true for the same reason.
+void rehome_and_report_placement(nlohmann::json& result, int object_id);
 
 // Always returns {"count": N, "warnings": [{level, message, type}...]}.
 nlohmann::json get_active_warnings_json(Plater* plater);

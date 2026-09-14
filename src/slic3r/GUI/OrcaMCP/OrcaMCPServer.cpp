@@ -674,7 +674,7 @@ void OrcaMCPServer::register_builtin_tools()
                         {"redo", "Redo last undone operation"}
                     }},
                     {"object_transforms", {
-                        {"move_object", "Move/translate an object (relative offset or absolute position)"},
+                        {"move_object", "Move/translate an object (relative offset or absolute position). Moving it into another plate's area re-homes it onto that plate."},
                         {"rotate_object", "Rotate an object around X, Y, Z axes (degrees)"},
                         {"scale_object", "Scale an object (uniform or per-axis factors)"},
                         {"mirror_object", "Mirror an object across X, Y, or Z axis"},
@@ -3206,7 +3206,9 @@ void OrcaMCPServer::register_builtin_tools()
     // move_object - Move/translate an object
     register_tool({
         "move_object",
-        "Move object by offset (relative) or to position (relative=false).",
+        "Move object by offset (relative) or to position (relative=false). Moving an object into "
+        "another plate's area re-homes it onto that plate; the response reports the resulting "
+        "plate_index and measures on_bed against that plate.",
         {
             {"type", "object"},
             {"properties", {
@@ -3293,15 +3295,6 @@ void OrcaMCPServer::register_builtin_tools()
                 Vec3d rotation = obj->instances[0]->get_rotation();
                 Vec3d scale = obj->instances[0]->get_scaling_factor();
 
-                // Check if object is within printable area
-                auto plate = plater->get_partplate_list().get_curr_plate();
-                BoundingBoxf3 bed_box = plate->get_plate_box();
-                bool on_bed = new_bbox.min.x() >= bed_box.min.x() &&
-                              new_bbox.min.y() >= bed_box.min.y() &&
-                              new_bbox.max.x() <= bed_box.max.x() &&
-                              new_bbox.max.y() <= bed_box.max.y() &&
-                              new_bbox.min.z() >= -0.1;  // Allow tiny tolerance for bed contact
-
                 // Build enhanced response with context
                 nlohmann::json result = {
                     {"status", "success"},
@@ -3316,19 +3309,18 @@ void OrcaMCPServer::register_builtin_tools()
                         {"z", Geometry::rad2deg(rotation.z())}
                     }},
                     {"scale", {{"x", scale.x()}, {"y", scale.y()}, {"z", scale.z()}}},
-                    {"on_bed", on_bed},
                     {"active_warnings", get_active_warnings_json(plater)}
                 };
+
+                // Move the object onto the plate its new position sits in, and report which one that
+                // is. A move across a plate boundary that leaves the instance registered on its old
+                // plate slices onto the old plate, in that plate's filaments, with no error.
+                rehome_and_report_placement(result, object_id);
 
                 // Add movement delta for clarity
                 Vec3d delta = new_center - current_center;
                 if (delta.norm() > 0.001) {
                     result["movement_delta"] = {{"x", delta.x()}, {"y", delta.y()}, {"z", delta.z()}};
-                }
-
-                // Add local warning if off bed
-                if (!on_bed) {
-                    result["placement_warning"] = "Object positioned outside printable area";
                 }
 
                 // Add turntable preview if requested

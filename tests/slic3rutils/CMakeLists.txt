@@ -31,6 +31,7 @@ add_executable(${_TEST_NAME}_tests
     test_paint_geometry.cpp
     test_scalar_params.cpp
     test_paint_select.cpp
+    test_object_placement.cpp
     ../fff_print/test_helpers.cpp
     )
 

@@ -1,7 +1,9 @@
 #include "OrcaMCPCommon.hpp"
 #include "OrcaMCPPlateUtils.hpp"
 #include "slic3r/GUI/Plater.hpp"
+#include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/GUI/NotificationManager.hpp"
+#include "libslic3r/Model.hpp"
 
 #include <cctype>
 #include <cmath>
@@ -125,6 +127,47 @@ bool parse_boolean_param(const nlohmann::json& value, bool& out)
         }
     }
     return false;
+}
+
+bool object_within_plate(const BoundingBoxf3& object_bbox, const BoundingBoxf3& plate_box, double z_tolerance)
+{
+    return object_bbox.min.x() >= plate_box.min.x() &&
+           object_bbox.min.y() >= plate_box.min.y() &&
+           object_bbox.max.x() <= plate_box.max.x() &&
+           object_bbox.max.y() <= plate_box.max.y() &&
+           object_bbox.min.z() >= -z_tolerance;
+}
+
+void rehome_and_report_placement(nlohmann::json& result, int object_id)
+{
+    Plater* plater = wxGetApp().plater();
+    if (plater == nullptr)
+        return;
+    Model& model = plater->model();
+    if (object_id < 0 || object_id >= int(model.objects.size()))
+        return;
+
+    PartPlateList& plate_list = plater->get_partplate_list();
+    ModelObject*   object     = model.objects[object_id];
+    for (size_t i = 0; i < object->instances.size(); ++i)
+        plate_list.notify_instance_update(object_id, int(i), /*is_new=*/true);
+
+    // Which plate holds instance 0 afterwards. find_instance answers from the plate's own instance
+    // list, which is what get_scene_info reports from, so the two agree by construction.
+    const int  plate_index = plate_list.find_instance(object_id, 0);
+    PartPlate* plate       = plate_index >= 0 ? plate_list.get_plate(plate_index) : nullptr;
+
+    result["plate_index"] = plate_index >= 0 ? nlohmann::json(plate_index) : nlohmann::json(nullptr);
+
+    const BoundingBoxf3 object_bbox = object->bounding_box_approx();
+    const bool on_bed = plate != nullptr && object_within_plate(object_bbox, plate->get_plate_box());
+    result["on_bed"]  = on_bed;
+    if (!on_bed)
+        result["placement_warning"] = plate == nullptr
+            ? "Object is not on any plate"
+            : "Object positioned outside the printable area of plate " + std::to_string(plate_index);
+    else
+        result.erase("placement_warning");
 }
 
 // Helper to get active warnings as JSON object (always includes count, even if 0)
