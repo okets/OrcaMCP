@@ -2938,7 +2938,10 @@ void OrcaMCPServer::register_builtin_tools()
     register_tool({
         "get_print_estimate",
         "Get print time and filament estimates for the current plate. Requires a valid slice "
-        "result (get_slicing_status state \"done\").",
+        "result (get_slicing_status state \"done\"). Tool/filament changes are reported as two "
+        "separate counters: extruder_changes (the printer switched physical extruder/tool head) and "
+        "filament_changes (a nozzle was loaded with a different filament). A toolchanger reports the "
+        "former, a single-nozzle AMS/MMU printer the latter.",
         {
             {"type", "object"},
             {"properties", nlohmann::json::object()}
@@ -3023,7 +3026,19 @@ void OrcaMCPServer::register_builtin_tools()
                         {"total_cost", number_or_null(estimate.cost)},
                         {"per_filament", per_filament}
                     }},
-                    {"total_toolchanges", ps.total_filament_changes},
+                    // Two distinct counters, reported under the names they actually mean. They are
+                    // the same two the G-code preview's legend shows as "Filament change times" and
+                    // "Tool changes" (GCodeViewer.cpp), and GCodeProcessor keeps them apart:
+                    // process_filament_change increments filament_changes only when a nozzle is
+                    // loaded with a *different* filament, and extruder_changes only when the printer
+                    // switches to a *different* physical extruder. On a toolchanger whose heads each
+                    // keep their own filament, filament_changes is legitimately 0 while every tool
+                    // change is counted in extruder_changes; on a single-nozzle AMS/MMU machine it is
+                    // the other way round. This used to report filament_changes as
+                    // "total_toolchanges", which is why a 4-head toolchanger interleaving ABS and a
+                    // PETG interface was told it made no tool changes at all.
+                    {"filament_changes", ps.total_filament_changes},
+                    {"extruder_changes", ps.total_extruder_changes},
                     {"active_warnings", get_active_warnings_json(plater)}
                 };
             });

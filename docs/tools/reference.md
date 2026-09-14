@@ -1053,7 +1053,8 @@ Get print time and material estimates for the current plate. Requires a valid sl
       {"filament": 1, "volume_mm3": 10795.3, "length_mm": 4553.2, "weight_grams": 13.71, "cost": 0.34}
     ]
   },
-  "total_toolchanges": 0,
+  "filament_changes": 0,
+  "extruder_changes": 128,
   "active_warnings": {"count": 0, "warnings": []}
 }
 ```
@@ -1063,6 +1064,20 @@ The numbers are read from the plate's own slice result, so they match the G-code
 entries are `null`, never `0`, when the slicer did not record the property they need (a filament
 with no configured density has an unknown weight). `filament` is 1-based, as in every other
 filament tool.
+
+**Tool changes are two counters, not one.** They are the same pair the G-code preview's legend
+shows, and they mean different things:
+
+| Field | GUI label | Counts |
+|-------|-----------|--------|
+| `extruder_changes` | Tool changes | The printer switched to a different physical extruder / tool head |
+| `filament_changes` | Filament change times | A nozzle was loaded with a *different* filament |
+
+On a toolchanger whose heads each keep their own filament, `filament_changes` is legitimately `0`
+while every tool change is counted in `extruder_changes`. On a single-nozzle AMS/MMU printer it is
+the other way round. Before v2.3.2 this tool reported `filament_changes` under the name
+`total_toolchanges`, which is why a four-head toolchanger interleaving ABS with a PETG support
+interface was told it made no tool changes at all; the `total_toolchanges` key is gone.
 
 **Other statuses:**
 
