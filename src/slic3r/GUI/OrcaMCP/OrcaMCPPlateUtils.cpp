@@ -1,9 +1,13 @@
 #include "OrcaMCPPlateUtils.hpp"
+#include "OrcaMCPPlateOccupancy.hpp"
 #include "slic3r/GUI/GLCanvas3D.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/Camera.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
+#include "libslic3r/Preset.hpp"
+#include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/PrintConfig.hpp"
 #include <wx/mstream.h>
 #include <wx/dcmemory.h>
 #include <boost/beast/core/detail/base64.hpp>
@@ -30,6 +34,42 @@ namespace {
                 {"z", bbox.max.z()}
             }}
         };
+    }
+
+    // One shape for every rectangle on the bed, so an agent comparing a tower against an object
+    // against an exclusion area is comparing four numbers of the same kind in the same frame.
+    nlohmann::json rect_to_json(const BoundingBoxf& box) {
+        return {
+            {"min_x", box.min.x()}, {"min_y", box.min.y()},
+            {"max_x", box.max.x()}, {"max_y", box.max.y()},
+            {"size_x", box.max.x() - box.min.x()}, {"size_y", box.max.y() - box.min.y()}
+        };
+    }
+
+    BoundingBoxf translated(const BoundingBoxf& box, const Vec2d& offset) {
+        BoundingBoxf out;
+        out.min = box.min + offset;
+        out.max = box.max + offset;
+        out.defined = box.defined;
+        return out;
+    }
+
+    // A per-object override if the object carries one, the global print setting otherwise. The two
+    // differ far more often than not for brim keys -- brim_width is exactly the kind of thing set
+    // per object -- and reading only the global one would report the wrong printed area for the
+    // object most likely to have a brim at all.
+    double object_or_global_float(const ModelObject& obj, const DynamicPrintConfig& print_cfg,
+                                  const char* key, double fallback) {
+        if (obj.config.has(key)) return obj.config.opt_float(key);
+        if (const auto* opt = print_cfg.option<ConfigOptionFloat>(key)) return opt->value;
+        return fallback;
+    }
+
+    std::string object_or_global_enum(const ModelObject& obj, const DynamicPrintConfig& print_cfg,
+                                      const char* key, const std::string& fallback) {
+        if (obj.config.has(key)) return obj.config.opt_serialize(key);
+        if (print_cfg.has(key)) return print_cfg.opt_serialize(key);
+        return fallback;
     }
 }
 
@@ -258,8 +298,13 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
         return ret;
     };
 
+    // The prime tower is drawn, not skipped. It is printed plastic occupying bed area, and leaving
+    // it out of the picture is the same blindness the structured report had: a plan view used to
+    // check a layout showed a clear band where the tower was standing. Each plate's tower is a
+    // separate volume (obj_idx 1000 + plate_id) and is_visible's containment test against this
+    // plate's build volume is what keeps the other plates' towers out.
     for (const GLVolume* vol : volumes.volumes) {
-        if (!vol->is_modifier && !vol->is_wipe_tower && (!thumbnail_params.parts_only || vol->composite_id.volume_id >= 0)) {
+        if (!vol->is_modifier && (!thumbnail_params.parts_only || vol->composite_id.volume_id >= 0)) {
             if (is_visible(*vol)) {
                 visible_volumes.emplace_back(const_cast<GLVolume*>(vol));
             }
@@ -324,7 +369,11 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
     shader->set_uniform("ban_light", false);
 
     for (GLVolume* vol : visible_volumes) {
-        curr_color = vol->color;
+        // GLWipeTowerVolume keeps its per-filament colours in members this file cannot reach, and
+        // its own render() is not the one called here -- simple_render draws the plain shell mesh.
+        // A fixed light grey reads unmistakably as "the tower" next to the objects' filament
+        // colours, which is what a caller checking a layout needs it to do.
+        curr_color = vol->is_wipe_tower ? ColorRGBA(0.75f, 0.76f, 0.80f, 1.0f) : vol->color;
         ColorRGBA new_color = adjust_color_for_rendering(curr_color);
         vol->model.set_color(new_color);
 
@@ -361,17 +410,161 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
 }
 
 
+ObjectFootprint OrcaMCPPlateUtils::GetObjectFootprint(const ModelObject& object, const DynamicPrintConfig& print_cfg)
+{
+    ObjectFootprint out;
+    out.brim_type = object_or_global_enum(object, print_cfg, "brim_type", "no_brim");
+    out.brim      = OrcaMCP::object_brim_extent(out.brim_type,
+                                                object_or_global_float(object, print_cfg, "brim_width", 0.0),
+                                                object_or_global_float(object, print_cfg, "brim_object_gap", 0.0));
+    out.body = OrcaMCP::footprint_of(object.bounding_box_approx());
+    out.rect = OrcaMCP::expand_footprint(out.body, out.brim.extent_mm);
+    return out;
+}
+
+PrimeTowerState OrcaMCPPlateUtils::GetPrimeTowerState(int plate_index, const DynamicPrintConfig& full_config)
+{
+    PrimeTowerState state;
+
+    Plater*        plater = wxGetApp().plater();
+    PartPlateList& ppl    = plater->get_partplate_list();
+    if (plate_index < 0 || plate_index >= ppl.get_plate_count()) return state;
+
+    PartPlate*    plate = ppl.get_plate(plate_index);
+    PresetBundle* pb    = wxGetApp().preset_bundle;
+
+    const DynamicPrintConfig& print_cfg = pb->prints.get_edited_preset().config;
+    const DynamicPrintConfig& proj_cfg  = pb->project_config;
+
+    state.plate_origin = plate->get_origin();
+    state.plate_size   = plate->get_size();
+
+    // The same conditions GLCanvas3D::reload_scene decides by when it builds (or does not build) a
+    // wipe-tower volume for a plate, so "no tower here" means the same thing in this report as in
+    // the 3D view. Mirrored into a pure predicate rather than re-derived; see OrcaMCPPlateOccupancy.
+    OrcaMCP::PrimeTowerConditions conditions;
+    conditions.is_fff = plater->printer_technology() == ptFFF;
+    if (const auto* opt = print_cfg.option<ConfigOptionBool>("enable_prime_tower"))
+        conditions.enable_prime_tower = opt->value;
+    if (const auto* opt = print_cfg.option<ConfigOptionEnum<TimelapseType>>("timelapse_type"))
+        conditions.timelapse_smooth = opt->value == TimelapseType::tlSmooth;
+    if (const auto* opt = print_cfg.option<ConfigOptionBool>("enable_wrapping_detection"))
+        conditions.wrapping_detection = opt->value;
+    if (const auto* opt = proj_cfg.option<ConfigOptionStrings>("filament_colour"))
+        conditions.project_filament_count = int(opt->values.size());
+    conditions.gcode_only_mode = plater->only_gcode_mode() || plater->is_gcode_3mf();
+
+    conditions.plate_has_objects         = !plate->get_objects_on_this_plate().empty();
+    conditions.plate_filament_count      = int(plate->get_extruders(true).size());
+    conditions.plate_printable_instances = plate->printable_instance_size();
+
+    const PrintSequence plate_seq = plate->get_print_seq();
+    if (plate_seq == PrintSequence::ByObject) {
+        conditions.plate_sequential = true;
+    } else if (plate_seq == PrintSequence::ByDefault) {
+        const auto* global_seq = print_cfg.option<ConfigOptionEnum<PrintSequence>>("print_sequence");
+        conditions.plate_sequential = global_seq != nullptr && global_seq->value == PrintSequence::ByObject;
+    }
+
+    state.verdict = OrcaMCP::prime_tower_verdict(conditions);
+    state.printed = state.verdict == OrcaMCP::PrimeTowerVerdict::Printed;
+
+    // The stored position, straight out of the project config, before any clamping. Reported even
+    // when no tower is printed, because set_prime_tower_position writes exactly this pair and a
+    // caller has to be able to read back what it wrote.
+    if (const auto* x_opt = proj_cfg.option<ConfigOptionFloats>("wipe_tower_x")) {
+        if (size_t(plate_index) < x_opt->values.size()) state.stored_position.x() = x_opt->values[plate_index];
+    }
+    if (const auto* y_opt = proj_cfg.option<ConfigOptionFloats>("wipe_tower_y")) {
+        if (size_t(plate_index) < y_opt->values.size()) state.stored_position.y() = y_opt->values[plate_index];
+    }
+
+    // estimate_wipe_tower_polygon is the slicer's own answer for both the position (clamped onto the
+    // bed) and the size, and its returned contour is the brim-inclusive rectangle. Taking the brim
+    // from that contour rather than re-resolving prime_tower_brim_width keeps this from disagreeing
+    // with the arranger about where the tower ends -- the automatic brim is negative in the config
+    // and resolved from the tower's height, which is not a calculation worth having twice.
+    Vec3d wt_pos = Vec3d::Zero();
+    Vec3d wt_size = Vec3d::Zero();
+    const int nozzle_count = pb->get_printer_extruder_count();
+    const arrangement::ArrangePolygon ap =
+        plate->estimate_wipe_tower_polygon(full_config, plate_index, wt_pos, wt_size, nozzle_count, 0, false);
+
+    state.size = wt_size;
+
+    const BoundingBox contour_bb = ap.poly.contour.bounding_box();
+    BoundingBoxf      local_footprint;
+    local_footprint.min = Vec2d(unscale_(contour_bb.min.x()), unscale_(contour_bb.min.y()));
+    local_footprint.max = Vec2d(unscale_(contour_bb.max.x()), unscale_(contour_bb.max.y()));
+    local_footprint.defined = true;
+
+    state.brim_width = std::max(0.0, wt_pos.x() - local_footprint.min.x());
+
+    const Vec2d origin_2d(state.plate_origin.x(), state.plate_origin.y());
+    state.corner    = Vec2d(wt_pos.x(), wt_pos.y()) + origin_2d;
+    state.body      = OrcaMCP::prime_tower_footprint(state.corner, Vec2d(wt_size.x(), wt_size.y()), 0.0);
+    state.footprint = translated(local_footprint, origin_2d);
+
+    double raw_brim = 0.0;
+    if (const auto* opt = full_config.option<ConfigOptionFloat>("prime_tower_brim_width")) raw_brim = opt->value;
+    state.legal_range = OrcaMCP::prime_tower_position_range(state.plate_size.x(), state.plate_size.y(),
+                                                            wt_size.x(), wt_size.y(),
+                                                            WIPE_TOWER_MARGIN + raw_brim, state.brim_width);
+    return state;
+}
+
+PrimeTowerState OrcaMCPPlateUtils::GetPrimeTowerState(int plate_index)
+{
+    return GetPrimeTowerState(plate_index, wxGetApp().preset_bundle->full_config());
+}
+
+nlohmann::json OrcaMCPPlateUtils::PrimeTowerJson(const PrimeTowerState& state)
+{
+    nlohmann::json j;
+    j["printed"] = state.printed;
+    j["reason"]  = OrcaMCP::prime_tower_verdict_token(state.verdict);
+    j["reason_detail"] = OrcaMCP::prime_tower_verdict_explanation(state.verdict);
+    j["frame"] = "plate_mm";
+    j["stored_position"] = {{"x", state.stored_position.x()}, {"y", state.stored_position.y()},
+                            {"frame", "plate_local_mm"}};
+
+    if (!state.printed) return j;
+
+    j["position"] = {{"x", state.corner.x()}, {"y", state.corner.y()}};
+    j["position_is"] = "front_left_corner_of_tower_body";
+    j["size"] = {{"x", state.size.x()}, {"y", state.size.y()}, {"z", state.size.z()}};
+    j["brim_width_mm"] = state.brim_width;
+    j["body"] = rect_to_json(state.body);
+    j["footprint"] = rect_to_json(state.footprint);
+    j["footprint_includes_brim"] = true;
+    j["note"] = "footprint is the bed area the tower occupies, brim included; body is the tower "
+                "alone. Both are in plate millimetres, the frame object bounding boxes use. Place "
+                "parts clear of footprint, not of body.";
+    return j;
+}
+
 nlohmann::json OrcaMCPPlateUtils::GetPlates(bool with_model_object_features) {
     nlohmann::json j = nlohmann::json::array();
 
     Plater* plater = wxGetApp().plater();  // Get plater instance
     const Model& model = plater->model();
 
+    // Built once, not per plate: assembling the full config is the expensive half of reading the
+    // prime tower's size, and every plate's tower is measured from the same one.
+    const DynamicPrintConfig  full_config = wxGetApp().preset_bundle->full_config();
+    const DynamicPrintConfig& print_cfg   = wxGetApp().preset_bundle->prints.get_edited_preset().config;
+
     for (const auto& plate : plater->get_partplate_list().get_plate_list()) {
         nlohmann::json plate_info;
         plate_info["name"] = plate->get_plate_name();
         plate_info["index"] = plate->get_index();
         plate_info["bounding_box"] = bbox_to_json(plate->get_plate_box());
+
+        // Everything standing on this plate, in one list and one frame: the model objects, the
+        // prime tower, and the printer's own excluded bed areas. An agent looking for free space
+        // reads this; reading model_objects alone is what left one placing parts around an obstacle
+        // it could not see.
+        nlohmann::json occupancy = nlohmann::json::array();
 
         // Loop through each ModelObject (now deduplicated)
         nlohmann::json objects_info = nlohmann::json::array();
@@ -429,6 +622,19 @@ nlohmann::json OrcaMCPPlateUtils::GetPlates(bool with_model_object_features) {
                 {"max", {{"x", bbox.max.x()}, {"y", bbox.max.y()}, {"z", bbox.max.z()}}}
             };
 
+            // The bounding box is the model; the brim is printed plastic beyond it. A neighbour
+            // placed flush against the bounding box collides with the brim, so the printed extent
+            // is reported alongside it rather than left for the caller to work out.
+            const ObjectFootprint footprint = GetObjectFootprint(*obj, print_cfg);
+            object_info["brim"] = {
+                {"type", footprint.brim_type},
+                {"extent_mm", footprint.brim.extent_mm},
+                {"extent_upper_bound_mm", footprint.brim.upper_bound_mm},
+                {"extent_is_exact", footprint.brim.exact}
+            };
+            object_info["printed_footprint"] = rect_to_json(footprint.rect);
+            object_info["printed_footprint_includes_brim"] = footprint.brim.extent_mm > 0.0;
+
             // Variable Layer Height status
             object_info["vlh_enabled"] = !obj->layer_height_profile.empty();
             object_info["vlh_profile_points"] = obj->layer_height_profile.empty() ? 0 :
@@ -447,8 +653,55 @@ nlohmann::json OrcaMCPPlateUtils::GetPlates(bool with_model_object_features) {
             object_info["extruder_id"] = extruder_id;
 
             objects_info.push_back(object_info);
+
+            occupancy.push_back({
+                {"kind", "object"},
+                {"name", obj->name},
+                {"object_index", object_index},
+                {"footprint", rect_to_json(footprint.rect)},
+                {"includes_brim", footprint.brim.extent_mm > 0.0},
+                {"footprint_is_exact", footprint.brim.exact},
+                {"height_mm", size.z()}
+            });
         }
         plate_info["model_objects"] = objects_info;
+
+        // The prime tower. It is printed plastic standing on the bed exactly as the objects above
+        // are, and until this was reported an agent enumerating the plate's occupants simply did
+        // not know it was there.
+        const PrimeTowerState tower = GetPrimeTowerState(plate->get_index(), full_config);
+        plate_info["prime_tower"] = PrimeTowerJson(tower);
+        if (tower.printed) {
+            occupancy.push_back({
+                {"kind", "prime_tower"},
+                {"name", "Prime tower"},
+                {"footprint", rect_to_json(tower.footprint)},
+                {"includes_brim", tower.brim_width > 0.0},
+                {"footprint_is_exact", true},
+                {"height_mm", tower.size.z()}
+            });
+        }
+
+        // Bed exclusion areas: not plastic, but bed an object may not stand on either, and just as
+        // invisible to a caller reading only the object list. Empty on most printers; real on the
+        // ones that cut filament in a corner of the bed.
+        nlohmann::json excluded = nlohmann::json::array();
+        for (const BoundingBoxf3& area : plate->get_exclude_areas()) {
+            const BoundingBoxf rect = OrcaMCP::footprint_of(area);
+            if (!rect.defined) continue;
+            excluded.push_back(rect_to_json(rect));
+            occupancy.push_back({
+                {"kind", "excluded_area"},
+                {"name", "Excluded bed area"},
+                {"footprint", rect_to_json(rect)},
+                {"includes_brim", false},
+                {"footprint_is_exact", true}
+            });
+        }
+        plate_info["excluded_areas"] = excluded;
+
+        plate_info["occupancy"] = occupancy;
+        plate_info["occupancy_frame"] = "plate_mm";
 
         j.push_back(plate_info);
     }

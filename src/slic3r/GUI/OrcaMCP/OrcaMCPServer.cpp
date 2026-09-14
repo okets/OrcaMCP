@@ -622,6 +622,9 @@ void OrcaMCPServer::register_builtin_tools()
                         {"valid_range", "X: 0 to max_x, Y: 0 to max_y. Negative coordinates are OFF the bed."},
                         {"z_axis", "Z=0 is the bed surface. Object bottoms rest at Z=0. Object center Z = half the object height."},
                         {"get_bed_bounds", "Call get_scene_info and read bed.min_x, bed.max_x, bed.min_y, bed.max_y"},
+                        {"find_free_space", "Call get_scene_info and subtract plates[].occupancy footprints from the "
+                                            "plate's bounding box. The occupancy list includes the prime tower and "
+                                            "excluded bed areas, which model_objects does not."},
                         {"transform_response", "All transforms return position, rotation_degrees, scale, on_bed. Use on_bed to verify placement."},
                         {"rotation_degrees_note", "rotation_degrees reflects UI/initial rotation only. MCP rotate_object applies rotation directly to mesh geometry, so the field may not update. Use bounding_box dimensions to verify rotation was applied."},
                         {"recommendation", "Read bed bounds first. Use arrange_objects to auto-place, or relative=true with offsets."}
@@ -663,7 +666,8 @@ void OrcaMCPServer::register_builtin_tools()
                 {"tools_by_category", {
                     {"information", {
                         {"get_server_info", "This documentation"},
-                        {"get_scene_info", "Get current project state: plates, objects, positions"},
+                        {"get_scene_info", "Get current project state: plates, objects, positions, and each plate's "
+                                           "full occupancy list (objects with brim, prime tower, excluded bed areas)"},
                         {"get_object_info", "Get single object info. Faster than get_scene_info for targeted queries."},
                         {"get_presets", "List presets for the selected printer. Narrow with type/vendor/name_contains; "
                                         "summary:false adds full configs (large)"},
@@ -849,7 +853,11 @@ void OrcaMCPServer::register_builtin_tools()
     // get_scene_info - Get current project state
     register_tool({
         "get_scene_info",
-        "Get current project state: plates, objects, positions. Call first to get object_ids.",
+        "Get current project state: plates, objects, positions. Call first to get object_ids. Each "
+        "plate also carries `occupancy`, the complete list of what stands on it in plate "
+        "millimetres -- every object's printed footprint (brim included), the prime tower's "
+        "footprint (brim included) when one is printed, and the printer's excluded bed areas. Use "
+        "`occupancy`, not `model_objects`, to work out where there is free space.",
         {
             {"type", "object"},
             {"properties", {

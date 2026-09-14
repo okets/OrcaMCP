@@ -79,11 +79,85 @@ Get current project state including plates, objects, and positions.
       "rotation_degrees": [0, 0, 0],
       "scale": [1, 1, 1],
       "bounding_box": {"min": [...], "max": [...], "size": [...]},
+      "brim": {"type": "auto_brim", "extent_mm": 0.0, "extent_upper_bound_mm": 18.0, "extent_is_exact": false},
+      "printed_footprint": {"min_x": 145, "min_y": 145, "max_x": 165, "max_y": 165, "size_x": 20, "size_y": 20},
+      "printed_footprint_includes_brim": false,
       "instance_count": 1
-    }]
+    }],
+    "prime_tower": {
+      "printed": true,
+      "reason": "printed",
+      "reason_detail": "A prime tower is printed on this plate and occupies the reported footprint.",
+      "frame": "plate_mm",
+      "stored_position": {"x": 165.0, "y": 250.0, "frame": "plate_local_mm"},
+      "position": {"x": 165.0, "y": 250.0},
+      "position_is": "front_left_corner_of_tower_body",
+      "size": {"x": 60.0, "y": 42.5, "z": 31.2},
+      "brim_width": 3.0,
+      "body": {"min_x": 165, "min_y": 250, "max_x": 225, "max_y": 292.5, "size_x": 60, "size_y": 42.5},
+      "footprint": {"min_x": 162, "min_y": 247, "max_x": 228, "max_y": 295.5, "size_x": 66, "size_y": 48.5},
+      "footprint_includes_brim": true
+    },
+    "excluded_areas": [],
+    "occupancy_frame": "plate_mm",
+    "occupancy": [
+      {"kind": "object", "name": "benchy.stl", "object_index": 0, "footprint": {...},
+       "includes_brim": false, "footprint_is_exact": false, "height_mm": 48.0},
+      {"kind": "prime_tower", "name": "Prime tower", "footprint": {...},
+       "includes_brim": true, "footprint_is_exact": true, "height_mm": 31.2}
+    ]
   }]
 }
 ```
+
+#### Occupancy: everything standing on the plate
+
+`model_objects` lists the models. It is **not** the list of what occupies the bed. `occupancy` is:
+it carries one entry per occupant, in **plate millimetres** — the same frame `bounding_box` and
+`get_object_info` use — with the same four numbers for each. Use it, not `model_objects`, to work
+out where there is free space.
+
+| `kind` | What it is |
+|--------|------------|
+| `object` | A model object, its footprint grown by the brim its settings will print |
+| `prime_tower` | The prime tower, its footprint grown by `prime_tower_brim_width`. Present only when a tower is actually printed on that plate |
+| `excluded_area` | Bed the printer will not print on (`bed_exclude_area` in the printer config — the filament-cutting corner on an X1, for instance). Empty on most printers |
+
+Every `footprint` in `occupancy` **includes the brim**, because the brim is printed plastic and a
+part placed flush against a bounding box collides with it. `includes_brim` says whether the entry
+actually has one, and `footprint_is_exact` is `false` when the slicer decides the real brim width
+itself at slice time.
+
+**Brim, and why it is sometimes an estimate.** `brim_type` `auto_brim` (the default), `brim_ears`
+and `painted` do not have a width until the object is sliced — `auto_brim` recomputes it per volume
+group, capped at 18 mm. Each object therefore reports both `brim.extent_mm` (the best estimate
+before slicing, from the configured `brim_width`) and `brim.extent_upper_bound_mm` (the worst case).
+`printed_footprint` uses `extent_mm`; a caller that would rather over-reserve bed than collide can
+expand by `extent_upper_bound_mm` itself. `outer_only` and `outer_and_inner` are exact;
+`no_brim` and `inner_only` reach 0 mm past the object. Per-object overrides win over the print
+preset's values.
+
+**The prime tower.** `position` is the **front-left corner of the tower body** (not its centre —
+model objects report their bounding-box centre, the tower reports a corner, because that is what
+the `wipe_tower_x` / `wipe_tower_y` config keys are). `body` is the tower alone; `footprint` is
+`body` plus the brim on all four sides, and is what a part must stay clear of. `stored_position` is
+the same corner in plate-**local** millimetres, which is what those two config keys hold.
+
+When no tower is printed, `printed` is `false` and no geometry is reported — only `reason`, one of:
+
+| `reason` | Meaning |
+|----------|---------|
+| `printed` | There is a tower; the geometry is reported |
+| `not_fff` | Not an FFF printer |
+| `disabled` | `enable_prime_tower` is off in the print preset |
+| `single_filament_project` | The project has one filament, so nothing needs priming |
+| `gcode_only_mode` | A G-code-only project |
+| `sequential_multi_object` | This plate prints by object and has more than one |
+| `single_filament_plate` | This plate uses one filament, even though the project is multi-filament |
+| `empty_plate` | Nothing on this plate |
+
+A smooth timelapse or wrapping detection forces a tower even on a single-filament plate; the
+reasons above account for that.
 
 ---
 

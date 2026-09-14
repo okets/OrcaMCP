@@ -633,3 +633,34 @@ reported under their own names, `filament_changes` and `extruder_changes`; `tota
 gone rather than redefined, since summing them double-counts under the multi-nozzle model.
 
 Still open from this session: **T13** (degenerate view matrix from a straight-down camera).
+
+## T16 — nothing reported the prime tower, so an agent placed parts around an invisible obstacle
+
+Found 2026-09-15, from the same four-plate session. An agent read `get_scene_info`, got exact
+bounding boxes for every object, computed the free bands on a plate correctly, moved a part into one
+of them and was told "Prime Tower is too close to others". It moved the part again and got the same
+answer. The tower was in none of the three places it could have looked: `get_scene_info` listed only
+model objects, no tool could move the tower, and `OrcaMCPPlateUtils.cpp` deliberately skipped
+`vol->is_wipe_tower` when rendering, so it was absent from `render_plate_view` too.
+
+A "find me free space" query was considered and rejected: an agent holding the complete occupancy
+list can compute free space itself, and packing policy belongs in the agent. The fix is to make the
+occupancy list complete.
+
+Each plate in `get_scene_info` now carries `occupancy` — one entry per thing standing on the bed, in
+plate millimetres, the same frame the object bounding boxes beside it use. It holds the model
+objects (footprint grown by the brim their settings will print), the prime tower (footprint grown by
+`prime_tower_brim_width`) when one is printed on that plate, and the printer's `bed_exclude_area`
+rectangles. `plates[].prime_tower` carries the detail, including a `reason` token when no tower is
+printed, so "no tower here" is distinguishable from "tower at X". `set_prime_tower_position` writes
+the per-plate `wipe_tower_x` / `wipe_tower_y`, validating that the tower plus its brim stays inside
+the range the arranger clamps to, and reporting overlaps rather than refusing them.
+
+Two of the three occupants report an *estimate* rather than an exact number, and say so:
+`brim_type: auto_brim` (the default) has no width until the object is sliced, so each object carries
+both `brim.extent_mm` and `brim.extent_upper_bound_mm` and an `extent_is_exact` flag. The tower's
+brim is a configured width and is exact.
+
+The renderer now draws the tower too, in a fixed light grey. The structured data is the fix — a
+picture an agent has to eyeball is a weaker answer than exact rectangles — but a plan view that
+shows a clear band where a tower is standing is its own trap.
