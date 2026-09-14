@@ -649,7 +649,13 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                   'type': 'object'},
   'name': 'get_printers'},
  {'description': 'Get current project state: plates, objects, positions. Call '
-                 'first to get object_ids.',
+                 'first to get object_ids. Each plate also carries '
+                 '`occupancy`, the complete list of what stands on it in plate '
+                 "millimetres -- every object's printed footprint (brim "
+                 "included), the prime tower's footprint (brim included) when "
+                 "one is printed, and the printer's excluded bed areas. Use "
+                 '`occupancy`, not `model_objects`, to work out where there is '
+                 'free space.',
   'inputSchema': {'additionalProperties': False,
                   'properties': {'include_preview': {'description': 'Return '
                                                                     'turntable '
@@ -1867,6 +1873,36 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                   'required': ['object_id', 'printable'],
                   'type': 'object'},
   'name': 'set_object_printable'},
+ {'description': 'Move the prime tower on a plate. x/y are the front-left '
+                 'corner (min x, min y) of the tower BODY in plate millimetres '
+                 '-- the same frame get_object_info and get_scene_info report '
+                 'object bounding boxes in, and exactly what get_scene_info '
+                 'reports as plates[].prime_tower.position. The brim prints '
+                 'outside the body on all four sides; the position is '
+                 'validated so that the body plus its brim stays inside the '
+                 'printable area. Objects the new footprint lands on are '
+                 'reported as conflicts rather than refused.',
+  'inputSchema': {'additionalProperties': False,
+                  'properties': {'plate_index': {'description': 'Plate to move '
+                                                                'the tower on '
+                                                                '(0-based). '
+                                                                'Default: the '
+                                                                'selected '
+                                                                'plate.',
+                                                 'type': 'integer'},
+                                 'x': {'description': 'Tower body front-left '
+                                                      'corner X, plate '
+                                                      'millimetres (world '
+                                                      'frame, not plate-local)',
+                                       'type': 'number'},
+                                 'y': {'description': 'Tower body front-left '
+                                                      'corner Y, plate '
+                                                      'millimetres (world '
+                                                      'frame, not plate-local)',
+                                       'type': 'number'}},
+                  'required': ['x', 'y'],
+                  'type': 'object'},
+  'name': 'set_prime_tower_position'},
  {'description': "Slice every plate in the project, the way the GUI's Slice "
                  'All button does: one plate at a time until all are sliced. '
                  'Pass all_plates=false to slice only the plate that is '

@@ -99,9 +99,9 @@ cd build && ctest --output-on-failure
 
 **Status**: Complete & Tested ✓
 
-### MCP Tools (76 registered, 77 reachable)
+### MCP Tools (77 registered, 78 reachable)
 
-The server registers 76; the bridge adds `start_orca`, which launches OrcaSlicer and
+The server registers 77; the bridge adds `start_orca`, which launches OrcaSlicer and
 so cannot live inside it. To regenerate this count after adding a tool:
 
 ```bash
@@ -113,7 +113,7 @@ grep -hA1 -E '^\s*register_tool\(\{' src/slic3r/GUI/OrcaMCP/*.cpp | grep -coE '^
 | **Scene** | `get_scene_info` (plates, objects, and each plate's full occupancy: object footprints with brim, the prime tower, excluded bed areas), `new_project`, `load_project`, `save_project`, `export_3mf` |
 | **Models** | `load_model`, `auto_orient`, `arrange_objects`, `get_object_info`, `rename_object`, `set_object_printable` |
 | **Transforms** | `move_object`, `rotate_object`, `scale_object`, `mirror_object`, `flatten_object`, `clone_object`, `cut_object`, `delete_object`, `transform_objects` |
-| **Plates** | `add_plate`, `select_plate`, `delete_plate` |
+| **Plates** | `add_plate`, `select_plate`, `delete_plate`, `set_prime_tower_position` |
 | **Config** | `get_presets`, `get_edited_presets`, `select_preset`, `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset`, `get_valid_config_keys` |
 | **Per-Object** | `get_object_config`, `set_object_config`, `reset_object_config` |
 | **Layer Ranges** | `get_object_layer_ranges`, `set_object_layer_range`, `delete_object_layer_range` |

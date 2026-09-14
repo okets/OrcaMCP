@@ -747,7 +747,10 @@ void OrcaMCPServer::register_builtin_tools()
                     {"plate_management", {
                         {"add_plate", "Create a new plate"},
                         {"select_plate", "Switch to a plate by index"},
-                        {"delete_plate", "Delete a plate. Cannot delete last plate. Objects moved to another plate."}
+                        {"delete_plate", "Delete a plate. Cannot delete last plate. Objects moved to another plate."},
+                        {"set_prime_tower_position", "Move a plate's prime tower. x/y are the tower body's front-left "
+                                                     "corner in plate millimetres; read the current one from "
+                                                     "get_scene_info plates[].prime_tower.position."}
                     }},
                     {"printer_management", {
                         {"get_printers", "List printers: Bambu (local/cloud) and printer presets with a print host"},
@@ -3328,6 +3331,170 @@ void OrcaMCPServer::register_builtin_tools()
                 }
 
                 return response;
+            });
+        }
+    });
+
+    // set_prime_tower_position - Move the prime tower on a plate
+    //
+    // Without this an agent can see the tower and still not resolve a conflict with it: OrcaSlicer
+    // refuses to arrange it and the only way to move it was to drag it in the GUI. The position
+    // lives in the per-plate project config keys wipe_tower_x / wipe_tower_y, which are PLATE-LOCAL;
+    // this tool speaks plate millimetres like every other tool here and converts.
+    register_tool({
+        "set_prime_tower_position",
+        "Move the prime tower on a plate. x/y are the front-left corner (min x, min y) of the "
+        "tower BODY in plate millimetres -- the same frame get_object_info and get_scene_info "
+        "report object bounding boxes in, and exactly what get_scene_info reports as "
+        "plates[].prime_tower.position. The brim prints outside the body on all four sides; the "
+        "position is validated so that the body plus its brim stays inside the printable area. "
+        "Objects the new footprint lands on are reported as conflicts rather than refused.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"x", {
+                    {"type", "number"},
+                    {"description", "Tower body front-left corner X, plate millimetres (world frame, not plate-local)"}
+                }},
+                {"y", {
+                    {"type", "number"},
+                    {"description", "Tower body front-left corner Y, plate millimetres (world frame, not plate-local)"}
+                }},
+                {"plate_index", {
+                    {"type", "integer"},
+                    {"description", "Plate to move the tower on (0-based). Default: the selected plate."}
+                }}
+            }},
+            {"required", {"x", "y"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            // Schema `required` is not enforced server-side, so every read is guarded.
+            if (!params.contains("x") || !params.contains("y"))
+                return nlohmann::json{{"status", "error"},
+                                      {"message", "x and y are required, in plate millimetres"}};
+            double x = 0.0, y = 0.0;
+            if (!parse_double_param(params["x"], x) || !parse_double_param(params["y"], y))
+                return nlohmann::json{{"status", "error"},
+                                      {"message", "x and y must be finite numbers, in plate millimetres"}};
+
+            bool has_plate_index = params.contains("plate_index");
+            int  plate_index     = 0;
+            if (has_plate_index && !parse_integer_param(params["plate_index"], plate_index))
+                return nlohmann::json{{"status", "error"}, {"message", "plate_index must be an integer"}};
+
+            return run_on_main_thread([x, y, has_plate_index, plate_index]() -> nlohmann::json {
+                Plater*        plater     = wxGetApp().plater();
+                PartPlateList& plate_list = plater->get_partplate_list();
+                const int      plate_count = plate_list.get_plate_count();
+                const int      index = has_plate_index ? plate_index : plate_list.get_curr_plate_index();
+
+                if (index < 0 || index >= plate_count)
+                    return nlohmann::json{{"status", "error"},
+                                          {"message", "Invalid plate_index: " + std::to_string(index) +
+                                                      ". Valid range: 0 to " + std::to_string(plate_count - 1)}};
+
+                const PrimeTowerState before = OrcaMCPPlateUtils::GetPrimeTowerState(index);
+                const Vec2d origin(before.plate_origin.x(), before.plate_origin.y());
+                const double local_x = x - origin.x();
+                const double local_y = y - origin.y();
+
+                // The range is the one PartPlate::estimate_wipe_tower_polygon clamps into. Accepting
+                // a position outside it would silently store a number the slicer then moves, and the
+                // caller would read back a position it never asked for.
+                const OrcaMCP::PrimeTowerRange& range = before.legal_range;
+                auto range_json = [&]() {
+                    return nlohmann::json{
+                        {"min_x", range.min_x + origin.x()}, {"max_x", range.max_x + origin.x()},
+                        {"min_y", range.min_y + origin.y()}, {"max_y", range.max_y + origin.y()},
+                        {"frame", "plate_mm"}};
+                };
+
+                if (!range.fits)
+                    return nlohmann::json{
+                        {"status", "error"},
+                        {"message", "The prime tower (" + std::to_string(before.size.x()) + " x " +
+                                    std::to_string(before.size.y()) + " mm plus brim) does not fit inside "
+                                    "plate " + std::to_string(index) + "'s printable area, so there is no "
+                                    "position to move it to. Reduce prime_tower_width or use a larger plate."},
+                        {"plate_index", index},
+                        {"prime_tower", OrcaMCPPlateUtils::PrimeTowerJson(before)}};
+
+                constexpr double kEdgeTolerance = 1e-6;  // let a caller pass back a limit verbatim
+                if (local_x < range.min_x - kEdgeTolerance || local_x > range.max_x + kEdgeTolerance ||
+                    local_y < range.min_y - kEdgeTolerance || local_y > range.max_y + kEdgeTolerance)
+                    return nlohmann::json{
+                        {"status", "error"},
+                        {"message", "Position is outside the range the tower plus its brim fits in on plate " +
+                                    std::to_string(index) + ". See allowed_range, in plate millimetres."},
+                        {"plate_index", index},
+                        {"requested", {{"x", x}, {"y", y}}},
+                        {"allowed_range", range_json()},
+                        {"prime_tower", OrcaMCPPlateUtils::PrimeTowerJson(before)}};
+
+                DynamicConfig& proj_cfg = wxGetApp().preset_bundle->project_config;
+                auto* x_opt = proj_cfg.option<ConfigOptionFloats>("wipe_tower_x", true);
+                auto* y_opt = proj_cfg.option<ConfigOptionFloats>("wipe_tower_y", true);
+                if (x_opt == nullptr || y_opt == nullptr)
+                    return nlohmann::json{{"status", "error"},
+                                          {"message", "wipe_tower_x / wipe_tower_y are missing from the project config"}};
+
+                // Validated; only now is anything mutated, and the snapshot is taken first so `undo`
+                // puts the tower back. Plater::take_snapshot copies wipe_tower_x/y into
+                // model.wipe_tower.positions on its way, which is the state undo actually restores.
+                plater->take_snapshot(_u8L("Move Prime Tower"));
+
+                // These vectors are per plate and are grown lazily elsewhere, so a project that has
+                // never had a tower on a later plate can still be shorter than the plate list.
+                if (x_opt->values.size() <= size_t(index))
+                    x_opt->values.resize(size_t(index) + 1, x_opt->values.empty() ? 0.0 : x_opt->values.front());
+                if (y_opt->values.size() <= size_t(index))
+                    y_opt->values.resize(size_t(index) + 1, y_opt->values.empty() ? 0.0 : y_opt->values.front());
+
+                ConfigOptionFloat new_x(local_x);
+                ConfigOptionFloat new_y(local_y);
+                x_opt->set_at(&new_x, index, 0);
+                y_opt->set_at(&new_y, index, 0);
+
+                OrcaMCPPresetConfigUtils::RefreshAfterProjectConfigChange();
+                plater->update();
+
+                const PrimeTowerState after = OrcaMCPPlateUtils::GetPrimeTowerState(index);
+
+                nlohmann::json result = {
+                    {"status", "success"},
+                    {"plate_index", index},
+                    {"previous_position", {{"x", before.corner.x()}, {"y", before.corner.y()}}},
+                    {"position", {{"x", after.corner.x()}, {"y", after.corner.y()}}},
+                    {"allowed_range", range_json()},
+                    {"prime_tower", OrcaMCPPlateUtils::PrimeTowerJson(after)}
+                };
+
+                // Landing on an object is a warning, not a refusal: an agent re-arranging a plate
+                // moves things through each other's way on purpose. Refusing here would make the
+                // intermediate steps of a legitimate rearrangement impossible.
+                nlohmann::json conflicts = nlohmann::json::array();
+                if (after.printed) {
+                    PartPlate* plate = plate_list.get_plate(index);
+                    const DynamicPrintConfig& print_cfg = wxGetApp().preset_bundle->prints.get_edited_preset().config;
+                    for (ModelObject* obj : plate->get_objects_on_this_plate()) {
+                        const ObjectFootprint fp = OrcaMCPPlateUtils::GetObjectFootprint(*obj, print_cfg);
+                        if (OrcaMCP::footprints_overlap(after.footprint, fp.rect))
+                            conflicts.push_back({{"kind", "object"}, {"name", obj->name}});
+                    }
+                    for (const BoundingBoxf3& area : plate->get_exclude_areas()) {
+                        if (OrcaMCP::footprints_overlap(after.footprint, OrcaMCP::footprint_of(area)))
+                            conflicts.push_back({{"kind", "excluded_area"}, {"name", "Excluded bed area"}});
+                    }
+                }
+                result["conflicts"] = conflicts;
+                if (!conflicts.empty())
+                    result["conflict_note"] = "The tower's footprint (brim included) overlaps " +
+                                              std::to_string(conflicts.size()) +
+                                              " other occupant(s) of this plate. The move was applied; slicing "
+                                              "will report a prime-tower clearance error until it is resolved.";
+
+                result["active_warnings"] = get_active_warnings_json(plater);
+                return result;
             });
         }
     });

@@ -20,7 +20,7 @@ printer tools entirely (`get_printer_status`, `printer_control`, `discover_print
 | **Models** | `load_model`, `auto_orient`, `arrange_objects` |
 | **Transforms** | `move_object`, `rotate_object`, `scale_object`, `mirror_object`, `flatten_object` |
 | **Object Ops** | `clone_object`, `cut_object`, `delete_object`, `rename_object`, `transform_objects` |
-| **Plates** | `add_plate`, `select_plate`, `delete_plate` |
+| **Plates** | `add_plate`, `select_plate`, `delete_plate`, `set_prime_tower_position` |
 | **Presets** | `get_presets`, `get_edited_presets`, `select_preset`, `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset`, `get_valid_config_keys` |
 | **Filament & Colour** | `get_filaments`, `set_mixed_filament`, `delete_mixed_filament`, `set_object_filament`, `get_flush_volumes`, `set_flush_volumes`, `auto_calc_flush_volumes`, `get_toolchanger_config`, `suggest_color_mix`, `get_color_palette` |
 | **Per-Object** | `get_object_info`, `get_object_config`, `set_object_config`, `reset_object_config` |
@@ -672,6 +672,56 @@ Remove a plate from the project.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `plate_index` | integer | Yes | Plate to delete |
+
+---
+
+### set_prime_tower_position
+Move a plate's prime tower. The tower is printed plastic occupying bed area; without this tool an
+agent could see a prime-tower collision and had no way to resolve it except asking the user to drag
+the tower in the GUI.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `x` | number | Yes | Tower body front-left corner X, **plate millimetres** |
+| `y` | number | Yes | Tower body front-left corner Y, **plate millimetres** |
+| `plate_index` | integer | No | Plate to move the tower on (0-based). Default: the selected plate |
+
+`x` / `y` are in the same frame `get_object_info` and `get_scene_info` report object bounding boxes
+in, and are exactly what `get_scene_info` returns as `plates[].prime_tower.position`: read it,
+adjust it, write it back. They are a **corner**, not a centre — see the note under `get_scene_info`.
+The tool converts to the plate-local `wipe_tower_x` / `wipe_tower_y` project keys itself.
+
+**Validation.** The position is refused when the tower **plus its brim** would not fit inside the
+plate's printable area; the error carries `allowed_range` in plate millimetres. That range is the
+one OrcaSlicer's own arranger clamps to, so a position this tool accepts is one the slicer keeps.
+A tower too large for the plate at all is refused with a message saying so.
+
+Overlapping an object or an excluded area is **not** refused — an agent rearranging a plate moves
+things through each other's way on purpose. The move is applied and the overlaps come back in
+`conflicts`, with `conflict_note` warning that slicing will report a clearance error until it is
+resolved.
+
+`undo` puts the tower back: the tool takes a snapshot after validating and before writing.
+
+**Example:**
+```json
+{"name": "set_prime_tower_position", "arguments": {"plate_index": 2, "x": 40.0, "y": 210.0}}
+```
+
+**Returns:**
+```json
+{
+  "status": "success",
+  "plate_index": 2,
+  "previous_position": {"x": 165.0, "y": 250.0},
+  "position": {"x": 40.0, "y": 210.0},
+  "allowed_range": {"min_x": 4.0, "max_x": 189.0, "min_y": 4.0, "max_y": 209.0, "frame": "plate_mm"},
+  "prime_tower": { "...": "the same object get_scene_info reports" },
+  "conflicts": [],
+  "active_warnings": {"count": 0, "warnings": []}
+}
+```
 
 ---
 
