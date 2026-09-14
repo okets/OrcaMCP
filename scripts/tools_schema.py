@@ -610,7 +610,11 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
   'name': 'get_preview_base64'},
  {'description': 'Get print time and filament estimates for the current plate. '
                  'Requires a valid slice result (get_slicing_status state '
-                 '"done").',
+                 '"done"). Tool/filament changes are reported as two separate '
+                 'counters: extruder_changes (the printer switched physical '
+                 'extruder/tool head) and filament_changes (a nozzle was '
+                 'loaded with a different filament). A toolchanger reports the '
+                 'former, a single-nozzle AMS/MMU printer the latter.',
   'inputSchema': {'additionalProperties': False,
                   'properties': {},
                   'required': [],
@@ -665,7 +669,12 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
   'name': 'get_server_info'},
  {'description': 'Get the current slicing state: idle (not sliced), slicing '
                  '(in progress) or done (the current plate has a valid slice '
-                 'result). Poll until state is done, then get_print_estimate.',
+                 'result). Poll until state is done, then get_print_estimate. '
+                 "The plates array reports every plate's slice result, so a "
+                 'slice_all run can be followed plate by plate. When a '
+                 'slice_all run over every plate ends, this restores the plate '
+                 'that was selected when slice_all was called and reports it '
+                 'as restored_selected_plate.',
   'inputSchema': {'additionalProperties': False,
                   'properties': {},
                   'required': [],
@@ -752,7 +761,9 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                   'required': [],
                   'type': 'object'},
   'name': 'match_project_to_printer'},
- {'description': 'Mirror an object across the specified axis',
+ {'description': 'Mirror an object across the specified axis. The response '
+                 'reports the plate the object is on afterwards (plate_index) '
+                 'and measures on_bed against that plate.',
   'inputSchema': {'additionalProperties': False,
                   'properties': {'axis': {'description': 'Axis: x, y, or z',
                                           'enum': ['x', 'y', 'z'],
@@ -779,7 +790,10 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                   'type': 'object'},
   'name': 'mirror_object'},
  {'description': 'Move object by offset (relative) or to position '
-                 '(relative=false).',
+                 "(relative=false). Moving an object into another plate's area "
+                 're-homes it onto that plate; the response reports the '
+                 'resulting plate_index and measures on_bed against that '
+                 'plate.',
   'inputSchema': {'additionalProperties': False,
                   'properties': {'include_preview': {'description': 'Return '
                                                                     'turntable '
@@ -1251,7 +1265,9 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                   'required': ['type'],
                   'type': 'object'},
   'name': 'reset_preset'},
- {'description': 'Rotate object around X, Y, Z axes (degrees).',
+ {'description': 'Rotate object around X, Y, Z axes (degrees). The response '
+                 'reports the plate the object is on afterwards (plate_index) '
+                 'and measures on_bed against that plate.',
   'inputSchema': {'additionalProperties': False,
                   'properties': {'include_preview': {'description': 'Return '
                                                                     'turntable '
@@ -1324,7 +1340,9 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                   'required': [],
                   'type': 'object'},
   'name': 'save_project'},
- {'description': 'Scale object by axis factors. uniform=true uses x for all.',
+ {'description': 'Scale object by axis factors. uniform=true uses x for all. '
+                 'The response reports the plate the object is on afterwards '
+                 '(plate_index) and measures on_bed against that plate.',
   'inputSchema': {'additionalProperties': False,
                   'properties': {'include_preview': {'description': 'Return '
                                                                     'turntable '
@@ -1787,10 +1805,21 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                   'required': ['object_id', 'printable'],
                   'type': 'object'},
   'name': 'set_object_printable'},
- {'description': 'Start slicing all plates. Poll get_slicing_status until '
-                 'done.',
+ {'description': "Slice every plate in the project, the way the GUI's Slice "
+                 'All button does: one plate at a time until all are sliced. '
+                 'Pass all_plates=false to slice only the plate that is '
+                 'currently selected. Poll get_slicing_status until state is '
+                 '"done"; its plates array says which plates have a result. '
+                 'The plate selection walks from the first plate to the last '
+                 'while the run is in progress, and get_slicing_status puts '
+                 'back the plate that was selected here once it ends.',
   'inputSchema': {'additionalProperties': False,
-                  'properties': {},
+                  'properties': {'all_plates': {'description': 'true '
+                                                               '(default)=slice '
+                                                               'every plate, '
+                                                               'false=only the '
+                                                               'selected plate',
+                                                'type': 'boolean'}},
                   'required': [],
                   'type': 'object'},
   'name': 'slice_all'},
@@ -1821,7 +1850,9 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                   'required': ['target_color'],
                   'type': 'object'},
   'name': 'suggest_color_mix'},
- {'description': 'Batch transform multiple objects.',
+ {'description': 'Batch transform multiple objects. Each result reports the '
+                 'plate that object is on afterwards (plate_index) and '
+                 'measures on_bed against that plate.',
   'inputSchema': {'additionalProperties': False,
                   'properties': {'transforms': {'description': 'Transform '
                                                                'operations',
