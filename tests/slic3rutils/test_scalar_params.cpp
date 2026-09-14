@@ -8,6 +8,7 @@
 // different number rather than an error.
 
 using Slic3r::GUI::OrcaMCP::parse_double_param;
+using Slic3r::GUI::OrcaMCP::parse_integer_param;
 
 TEST_CASE("parse_double_param takes a JSON number or its string spelling", "[orcamcp][params]")
 {
@@ -57,4 +58,57 @@ TEST_CASE("parse_double_param refuses what is not a number at all", "[orcamcp][p
     CHECK_FALSE(parse_double_param(nlohmann::json(nullptr), out));
     CHECK_FALSE(parse_double_param(nlohmann::json::array({1, 2}), out));
     CHECK_FALSE(parse_double_param(nlohmann::json::object(), out));
+}
+
+// parse_integer_param is the reason a tool accepts the parameter its caller actually sent. Two
+// clients in normal use do not send a plain JSON integer: one whose JSON layer widens every number
+// to a double sends 3 as 3.0, and one working from a cached tool schema sends "3". A handler that
+// tests nlohmann's is_number_integer() directly refuses both -- which is what a newly added
+// plate_index parameter did to the very first live call it ever received.
+TEST_CASE("parse_integer_param takes the spellings real clients send", "[orcamcp][params]")
+{
+    int out = -1;
+    REQUIRE(parse_integer_param(nlohmann::json(3), out));
+    CHECK(out == 3);
+    REQUIRE(parse_integer_param(nlohmann::json(3.0), out)); // the number-widening client
+    CHECK(out == 3);
+    REQUIRE(parse_integer_param(nlohmann::json("3"), out)); // the stale-schema client
+    CHECK(out == 3);
+    REQUIRE(parse_integer_param(nlohmann::json(0), out));
+    CHECK(out == 0);
+    REQUIRE(parse_integer_param(nlohmann::json(-7.0), out));
+    CHECK(out == -7);
+}
+
+// Accepting 3.0 must not slide into accepting 3.5. A fractional value is not a widened integer, it
+// is a different value, and silently truncating it would pick a plate or a filament slot the
+// caller never named.
+TEST_CASE("parse_integer_param refuses a value that is not whole", "[orcamcp][params]")
+{
+    int out = -1;
+    CHECK_FALSE(parse_integer_param(nlohmann::json(3.5), out));
+    CHECK_FALSE(parse_integer_param(nlohmann::json("3.5"), out));
+    CHECK_FALSE(parse_integer_param(nlohmann::json("3 "), out));  // trailing text is not consumed
+    CHECK_FALSE(parse_integer_param(nlohmann::json("3abc"), out));
+}
+
+// A whole double far outside int's range would wrap on the cast, turning a nonsense argument into
+// a plausible small number rather than an error.
+TEST_CASE("parse_integer_param refuses a magnitude int cannot hold", "[orcamcp][params]")
+{
+    int out = -1;
+    CHECK_FALSE(parse_integer_param(nlohmann::json(1e18), out));
+    CHECK_FALSE(parse_integer_param(nlohmann::json(-1e18), out));
+    CHECK_FALSE(parse_integer_param(nlohmann::json("99999999999999"), out));
+}
+
+TEST_CASE("parse_integer_param refuses what is not a number at all", "[orcamcp][params]")
+{
+    int out = -1;
+    CHECK_FALSE(parse_integer_param(nlohmann::json("abc"), out));
+    CHECK_FALSE(parse_integer_param(nlohmann::json(""), out));
+    CHECK_FALSE(parse_integer_param(nlohmann::json(true), out));
+    CHECK_FALSE(parse_integer_param(nlohmann::json(nullptr), out));
+    CHECK_FALSE(parse_integer_param(nlohmann::json::array({1}), out));
+    CHECK_FALSE(parse_integer_param(nlohmann::json::object(), out));
 }

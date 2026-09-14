@@ -728,11 +728,14 @@ void OrcaMCPServer::register_printer_tools()
                     for (const auto& entry : params.at("nozzles")) {
                         if (!entry.is_object() || !entry.contains("tool") || !entry.contains("temp"))
                             return error_response("Each entry in nozzles requires 'tool' and 'temp'");
-                        if (!entry.at("tool").is_number_integer())
+                        // parse_integer_param, not is_number_integer(): a client whose JSON layer
+                        // widens numbers sends 0 as 0.0. The sibling temp check below is already
+                        // permissive, so the strict one here refused entries its own pair accepted.
+                        int tool = 0;
+                        if (!parse_integer_param(entry.at("tool"), tool))
                             return error_response("nozzles[].tool must be an integer");
                         if (!entry.at("temp").is_number())
                             return error_response("nozzles[].temp must be a number");
-                        const int tool = entry.at("tool").get<int>();
                         if (tool < 0 || tool > 3)
                             return error_response("nozzles[].tool must be between 0 and 3");
                         nozzles[tool] = entry.at("temp").get<double>();

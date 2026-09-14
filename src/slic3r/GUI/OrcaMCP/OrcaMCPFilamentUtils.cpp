@@ -1,6 +1,7 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPFilamentUtils.cpp
 #include "OrcaMCPFilamentUtils.hpp"
 #include "OrcaMCPColorRecipe.hpp"
+#include "OrcaMCPCommon.hpp"
 #include "OrcaMCPConfigKeys.hpp"
 #include "OrcaMCPPresetConfigUtils.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
@@ -87,20 +88,30 @@ bool mixed_result_from_params(const nlohmann::json& params, MixedFilamentResult&
         error = "ratios must be an array of the same length as components, in percent";
         return false;
     }
+    // Parsed once and kept, rather than validated here and re-read with get<int>() below: two
+    // spellings of the same rule drift, and only one of them is the one that decides the answer.
+    //
+    // parse_integer_param, not is_number_integer(): a client whose JSON layer widens numbers sends
+    // 1 as 1.0 and a cached-schema client can send "1". Both name the slot the caller meant, and
+    // refusing them rejects a correctly formed call.
+    out.components.clear();
+    out.ratios.clear();
     for (const auto& c : params["components"]) {
-        if (!c.is_number_integer()) { error = "components must be integers"; return false; }
+        int slot = 0;
+        if (!parse_integer_param(c, slot) || slot < 0) {
+            error = "components must be integers";
+            return false;
+        }
+        out.components.push_back(static_cast<unsigned int>(slot));
     }
     int sum = 0;
     for (const auto& r : params["ratios"]) {
-        if (!r.is_number_integer()) { error = "ratios must be integers (percent)"; return false; }
-        sum += r.get<int>();
+        int percent = 0;
+        if (!parse_integer_param(r, percent)) { error = "ratios must be integers (percent)"; return false; }
+        sum += percent;
+        out.ratios.push_back(percent);
     }
     if (sum != 100) { error = "ratios must sum to 100"; return false; }
-
-    out.components.clear();
-    out.ratios.clear();
-    for (const auto& c : params["components"]) out.components.push_back(c.get<unsigned int>());
-    for (const auto& r : params["ratios"])     out.ratios.push_back(r.get<int>());
 
     out.gradient_enabled   = params.value("gradient", false);
     out.gradient_direction = params.value("gradient_direction", std::string("a_to_b")) == "b_to_a" ? 1 : 0;

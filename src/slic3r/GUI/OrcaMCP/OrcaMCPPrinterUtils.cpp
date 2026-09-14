@@ -182,14 +182,18 @@ bool build_explicit_material_mappings(const nlohmann::json&                     
 {
     mappings_out = nlohmann::json::array();
     for (const auto& entry : requested) {
+        // parse_integer_param, not is_number_integer(): a client whose JSON layer widens numbers
+        // sends 0 as 0.0 and a cached-schema client can send "0". Both name the tool and slot the
+        // caller meant, and refusing them rejects a correctly formed call.
+        int tool_id = 0;
+        int slot_id = 0;
         if (!entry.is_object() || !entry.contains("tool_id") || !entry.contains("slot_id") ||
-            !entry.at("tool_id").is_number_integer() || !entry.at("slot_id").is_number_integer()) {
+            !parse_integer_param(entry.at("tool_id"), tool_id) ||
+            !parse_integer_param(entry.at("slot_id"), slot_id)) {
             error = "Each material_mappings entry requires integer 'tool_id' and 'slot_id'";
             return false;
         }
 
-        const int  tool_id = entry.at("tool_id").get<int>();
-        const int  slot_id = entry.at("slot_id").get<int>();
         const auto slot_it = std::find_if(slots.begin(), slots.end(),
                                           [&](const FlashforgeApi::MaterialSlot& s) { return s.slot_id == slot_id; });
 

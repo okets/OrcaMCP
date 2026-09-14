@@ -2976,10 +2976,13 @@ void OrcaMCPServer::register_builtin_tools()
             // label. Parse it here, and reject a bad value rather than falling back to the selection.
             bool requested_plate = params.contains("plate_index") && !params["plate_index"].is_null();
             int  wanted_plate    = -1;
-            if (requested_plate) {
-                if (!params["plate_index"].is_number_integer())
-                    return nlohmann::json{{"status", "error"}, {"message", "plate_index must be an integer"}};
-                wanted_plate = params["plate_index"].get<int>();
+            // Through parse_integer_param, not is_number_integer(): a client whose JSON layer
+            // widens numbers sends 3 as 3.0, and a cached-schema client can send "3". Rejecting
+            // those spellings refuses a call the caller made correctly -- which is exactly what
+            // the first cut of this parameter did to the very first live call it received.
+            if (requested_plate && !parse_integer_param(params["plate_index"], wanted_plate)) {
+                return nlohmann::json{{"status", "error"},
+                                      {"message", "plate_index must be an integer"}};
             }
             return run_on_main_thread([requested_plate, wanted_plate]() -> nlohmann::json {
                 Plater* plater = wxGetApp().plater();

@@ -833,3 +833,51 @@ query tool gets the correct answer without the write. `get_object_info` addition
 **Still true, and separate:** `on_bed` only tests "within XY and not sunk below Z". It says nothing
 about collisions with other objects or the prime tower, and a part floating 84 mm above the bed
 still passes. That limitation is unchanged by this fix and remains on the deferred list.
+
+---
+
+## T17 — strict integer checks rejected calls the caller made correctly
+
+Found 2026-09-15, immediately, by the first live call to the parameter added in **T15**:
+
+```
+get_print_estimate {"plate_index": 7}
+  -> {"status": "error", "message": "plate_index must be an integer"}
+```
+
+The handler used `nlohmann::json::is_number_integer()`. That is false for `7.0`, and a client whose
+JSON layer widens numbers — or one working from a cached tool schema that sends `"7"` — hands the
+server exactly those spellings. The caller named the plate correctly and was refused.
+
+**This one is mine, introduced in the T15 fix an hour earlier.** The project already has
+`parse_integer_param` (`OrcaMCPCommon.cpp:42`) for precisely this: it accepts the integer, the
+whole-valued float, and the decimal string, and rejects everything else. `paint_object` carries a
+comment saying so, and `select_plate` uses it — which is why `select_plate` worked with the same
+client that `get_print_estimate` refused. I wrote a new check instead of using the existing one.
+
+**Related occurrences checked.** Five other sites test caller input with `is_number_integer()`; four
+are the same defect and are now fixed:
+
+| Site | Parameter | Tool |
+|---|---|---|
+| `OrcaMCPFilamentUtils.cpp:91` | `components[]` | `set_mixed_filament` |
+| `OrcaMCPFilamentUtils.cpp:95` | `ratios[]` | `set_mixed_filament` |
+| `OrcaMCPPrinterUtils.cpp:186` | `material_mappings[].tool_id` / `.slot_id` | `send_to_printer`, `match_project_to_printer` |
+| `OrcaMCPPrinterTools.cpp:731` | `nozzles[].tool` | `printer_control` `set_temperature` |
+
+The `printer_control` case is the clearest evidence it was an oversight rather than a decision: the
+sibling `nozzles[].temp` in the *same entry* is checked with the permissive `is_number()`, so one
+half of a pair accepted a spelling the other half refused.
+
+`OrcaMCPPrinterUtils.cpp:104` (`filament_tool_id`) is **left alone deliberately**: it reads the
+`tool_id` the slicer itself wrote into the project-filament payload a few lines above, not caller
+input, so widening it would only hide a malformed internal payload.
+
+**A second defect found while fixing the first.** `set_mixed_filament` validated `components` and
+`ratios` in one loop and then re-read them with `get<unsigned int>()` / `get<int>()` in another. Two
+spellings of the same rule, only one of which decides the answer — and after the fix they would have
+disagreed about what a float means. The parse now happens once and the parsed values are kept.
+
+**Lesson worth keeping.** When adding a parameter, use the codebase's existing parameter parser.
+Writing a fresh type check produces a tool that is stricter than its neighbours in a way no schema
+documents, and the failure lands on a caller who did nothing wrong.
