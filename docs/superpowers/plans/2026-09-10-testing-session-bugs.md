@@ -580,3 +580,56 @@ convention is +Y), or refusing the view with a message telling the caller to til
 `unproject_pixel_to_ray` already rejects a non-invertible matrix, so the failure is at least
 loud at the pick, not silent — but the render that produced it looks fine, which makes the
 diagnosis confusing.
+
+---
+
+## T12 resolved — 2026-09-14
+
+Both halves fixed. `move_object` now calls `notify_instance_update` for every instance (with
+`is_new=true`, which is what keeps the spiral-mode `MessageDialog` out of `run_on_main_thread`),
+resolves the plate the object actually landed on, measures `on_bed` against *that* plate, and
+reports it as `plate_index`. Both halves live in `rehome_and_report_placement()` in
+`OrcaMCPCommon.cpp`, beside the pure `object_within_plate()` that decides the fit
+(`tests/slic3rutils/test_object_placement.cpp`).
+
+The related occurrences named above were swept in the same batch: `rotate_object`, `scale_object`,
+`transform_objects` and `mirror_object` all shared the wrong-plate measurement and none of them
+re-homed; all four call the same helper now. `arrange_objects`, `auto_orient` and `flatten_object`
+were deliberately left alone — they hand the work to ArrangeJob/OrientJob, which re-home through
+`rebuild_plates_after_arrangement` themselves, and the tools reply before the job has run, so there
+is no placement to report truthfully at reply time. `cut_object` was left alone too: it adds and
+removes objects rather than transforming an instance, so its plate bookkeeping is an object-index
+question and needs its own reproduction.
+
+## T14 — `slice_all` sliced only the current plate
+
+Found 2026-09-14, same session. With four plates and plate 4 selected, `slice_all` returned
+`slicing_started` and left plates 1-3 with no slice result and no error; each had to be selected and
+sliced by hand. The handler called `Plater::reslice()`, which slices the plate the background
+process is pointed at.
+
+Fixed by dispatching `EVT_GLTOOLBAR_SLICE_ALL` — the event the GUI's Slice All button posts, and the
+only way to reach the per-plate chaining behind the private `Plater::priv::m_slice_all`.
+`all_plates=false` keeps the single-plate behaviour. The chain walks the plate selection to the last
+plate and switches the app to the G-code preview, so `slice_all` now records the plate that was
+selected, `get_slicing_status` restores it when the run ends (`restored_selected_plate`), and the
+previously visible view is put back. `get_slicing_status` also reports every plate's result
+(`plates`, `plates_sliced`, `plates_total`), which a multi-plate run had no way to express before.
+
+## T15 — `get_print_estimate` reported `total_toolchanges: 0` on a plate that changes tools
+
+Found 2026-09-14, same session; also seen days earlier on an unrelated multi-filament print, so it
+was never project-specific. 85 g of ABS plus 1 g of PETG support interface, interleaved, on a 4-head
+toolchanger: `total_toolchanges: 0`.
+
+Not a missing value — the wrong field. `GCodeProcessor::process_filament_change` keeps two counters
+and increments them on different conditions: `total_filament_changes` only when a nozzle is loaded
+with a *different* filament, `total_extruder_changes` only when the printer switches to a different
+physical extruder. The G-code preview's legend shows them as "Filament change times" and "Tool
+changes" (`GCodeViewer.cpp`). We reported the first under the name of the second. On a toolchanger
+whose heads each keep their own filament, `total_filament_changes` is legitimately 0; on a
+single-nozzle AMS/MMU machine `total_extruder_changes` is legitimately 0 instead. Both are now
+reported under their own names, `filament_changes` and `extruder_changes`; `total_toolchanges` is
+gone rather than redefined, since summing them double-counts under the multi-nozzle model.
+
+Still open from this session: **T13** (degenerate view matrix from a straight-down camera).
