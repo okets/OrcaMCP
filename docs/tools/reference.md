@@ -1056,6 +1056,22 @@ Get detailed information about an object.
 |-----------|------|----------|-------------|
 | `object_id` | integer | Yes | Object index |
 
+**Placement fields:** alongside `position`, `bounding_box`, `rotation_degrees` and `scale`, the
+response carries the same three placement fields the transform tools return:
+
+| Field | Meaning |
+|-------|---------|
+| `plate_index` | The plate this object is on, or `null` if it is on none |
+| `on_bed` | Whether the object fits inside **that** plate's printable area |
+| `placement_warning` | Present only when `on_bed` is false, and it names the plate |
+
+Before v2.3.2 `on_bed` here was measured against whichever plate happened to be *selected*, and
+`plate_index` was not reported at all. Plates do not share a coordinate range, so an object sitting
+correctly on plate 4 read as off the bed whenever another plate was selected.
+
+`on_bed` still only means "inside the plate in XY, and not sunk below Z". It does not check for
+collisions with other objects or the prime tower, and a part floating above the bed passes it.
+
 ---
 
 ### get_object_config
@@ -1206,8 +1222,9 @@ Slice every plate in the project, one after another, exactly as the GUI's **Slic
 selects each plate in turn, so the selection moves while the run is in progress. The first
 `get_slicing_status` poll after the run ends selects the plate that was current when `slice_all`
 was called again and reports it as `restored_selected_plate`. This matters because
-`get_print_estimate`, `export_gcode` and `get_preview_base64` all answer about the *selected*
-plate.
+`export_gcode` and `get_preview_base64` all answer about the *selected* plate.
+`get_print_estimate` takes an optional `plate_index` and answers about the selected plate only when
+that is omitted.
 
 Until v2.3.2, `slice_all` sliced only the current plate despite its name: a four-plate project was
 left with three unsliced plates and no error.
@@ -1225,10 +1242,17 @@ Export sliced G-code to file.
 ---
 
 ### get_print_estimate
-Get print time and material estimates for the current plate. Requires a valid slice result
+Get print time and material estimates for one plate. Requires a valid slice result for that plate
 (`get_slicing_status` reporting `state: "done"`).
 
-**Parameters:** None
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `plate_index` | integer | No | Which plate to report, 0-based. Omitted = the currently selected plate. Reading another plate does not change the selection. |
+
+An out-of-range `plate_index` is an error naming the valid range, never a silent fall back to the
+selection. `plate_index` in the response is always the plate actually read, so it can be compared
+against what was asked for.
 
 **Returns:**
 ```json

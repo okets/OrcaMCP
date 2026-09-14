@@ -759,3 +759,77 @@ if overlapping slices produce a wrong result rather than a dead application.
 
 **Still true regardless:** `slice_all` now runs for minutes on a multi-plate project, and a crash
 during it loses everything unsaved. Checkpointing a long run is worth considering on its own merits.
+
+---
+
+## T15 — `get_print_estimate` silently ignored `plate_index` and answered about a different plate
+
+Found 2026-09-15 while collecting the four plates' estimates for the ABS print. Asking for plate 1:
+
+```
+get_print_estimate {"plate_index": 1}
+  -> {"plate_index": 0, "estimated_time": "7h 26m 37s", ...}
+```
+
+The tool declared **no parameters at all** (`{"properties", nlohmann::json::object()}`) and read
+`plate_list.get_curr_plate()`. Schema `required` is not enforced server-side and an unknown key was
+dropped in silence, so the call succeeded and returned the *selected* plate's numbers.
+
+**Why this is worse than a plain missing feature.** The response is not obviously wrong. It carries
+`status: "success"` and a full, internally consistent set of figures. The only tell is the
+`plate_index` field echoing back a different number than the one asked for — which an agent
+comparing four plates has no particular reason to re-read. Quoting a 7-hour plate as a 5-hour one
+is the kind of error that reaches a human as a confident wrong answer.
+
+**Fixed.** `plate_index` is now a real optional parameter: omitted it reports the selected plate, as
+before; given, it reports that plate without changing the selection; out of range it returns an
+error naming the valid range rather than falling back. A non-integer is rejected rather than
+coerced. The reported `plate_index` is now the plate actually read, and the "no valid slice result"
+error names the plate too.
+
+**Related occurrences checked.** Six call sites read `get_curr_plate()`:
+
+- `get_object_info` — genuinely wrong, see **T16** below.
+- `get_slicing_status` — uses it only for the top-level `slice_result_valid`, and also reports every
+  plate in `plates[]`, each labelled. Not misleading; left alone.
+- `OrcaMCPPlateUtils::GetCurrentProject` — reads the plate only for bed dimensions, which every
+  plate shares. Left alone.
+- `OrcaMCPPrinterUtils:473` and `OrcaMCPPrinterTools:445` — the send/match paths, where "the plate
+  you are looking at" is the intended subject and `send_to_printer` has its own `all_plates`. Left
+  alone.
+
+---
+
+## T16 — `on_bed` was computed against the selected plate, not the object's own plate
+
+Found in the same audit as T15, and it is the more dangerous of the two.
+
+`get_object_info` reported:
+
+```cpp
+auto plate = plater->get_partplate_list().get_curr_plate();   // the SELECTED plate
+BoundingBoxf3 bed_box = plate->get_plate_box();
+bool on_bed = bbox.min.x() >= bed_box.min.x() && ... ;
+```
+
+Plates do not share a coordinate range — in this project plate 1 spans x 0..256 and plate 2 spans
+x 307..563. So asking about an object that sits perfectly on plate 4 while plate 1 is selected
+returned `on_bed: false`, and an object dangling off plate 1 could read `true` from plate 2's box.
+The answer depended on the GUI selection, which the asking agent may never have set.
+
+This matters because `get_server_info` explicitly instructs agents to *"use on_bed to verify
+placement"*. It is the documented placement check, and it was answering about the wrong plate.
+
+**Same family as T12.** The transform tools had this bug and it was fixed there by
+`rehome_and_report_placement`, which finds the object's own plate via
+`PartPlateList::find_instance` and tests against that. `get_object_info` was never updated, because
+it is a query tool and could not call that helper — the helper also *mutates*, re-homing instances.
+
+**Fixed** by splitting the helper: `report_placement` does the read-only reporting (plate_index,
+on_bed, placement_warning) and `rehome_and_report_placement` now re-homes and then calls it. The
+query tool gets the correct answer without the write. `get_object_info` additionally now reports
+`plate_index` and `placement_warning`, matching what the transform tools already return.
+
+**Still true, and separate:** `on_bed` only tests "within XY and not sunk below Z". It says nothing
+about collisions with other objects or the prime tower, and a part floating 84 mm above the bed
+still passes. That limitation is unchanged by this fix and remains on the deferred list.

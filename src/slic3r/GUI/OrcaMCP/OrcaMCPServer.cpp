@@ -2954,17 +2954,34 @@ void OrcaMCPServer::register_builtin_tools()
     // get_print_estimate - Get print time and filament estimates after slicing
     register_tool({
         "get_print_estimate",
-        "Get print time and filament estimates for the current plate. Requires a valid slice "
-        "result (get_slicing_status state \"done\"). Tool/filament changes are reported as two "
-        "separate counters: extruder_changes (the printer switched physical extruder/tool head) and "
-        "filament_changes (a nozzle was loaded with a different filament). A toolchanger reports the "
-        "former, a single-nozzle AMS/MMU printer the latter.",
+        "Get print time and filament estimates for one plate. Pass plate_index to ask about a "
+        "specific plate; omitted, it reports the plate that is currently selected. Requires a valid "
+        "slice result for that plate (get_slicing_status state \"done\"). Tool/filament changes are "
+        "reported as two separate counters: extruder_changes (the printer switched physical "
+        "extruder/tool head) and filament_changes (a nozzle was loaded with a different filament). A "
+        "toolchanger reports the former, a single-nozzle AMS/MMU printer the latter.",
         {
             {"type", "object"},
-            {"properties", nlohmann::json::object()}
+            {"properties", {
+                {"plate_index", {
+                    {"type", "integer"},
+                    {"description", "Which plate to report, 0-based. Omitted = the currently selected "
+                                    "plate. Reading another plate does not change the selection."}
+                }}
+            }}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
-            return run_on_main_thread([]() -> nlohmann::json {
+            // Schema "required" is not enforced server-side and an unknown key used to be ignored in
+            // silence, so an agent asking for plate 2 was handed plate 1's numbers under plate 1's
+            // label. Parse it here, and reject a bad value rather than falling back to the selection.
+            bool requested_plate = params.contains("plate_index") && !params["plate_index"].is_null();
+            int  wanted_plate    = -1;
+            if (requested_plate) {
+                if (!params["plate_index"].is_number_integer())
+                    return nlohmann::json{{"status", "error"}, {"message", "plate_index must be an integer"}};
+                wanted_plate = params["plate_index"].get<int>();
+            }
+            return run_on_main_thread([requested_plate, wanted_plate]() -> nlohmann::json {
                 Plater* plater = wxGetApp().plater();
 
                 // Check if slicing is actively running
@@ -2981,8 +2998,19 @@ void OrcaMCPServer::register_builtin_tools()
                 // pointed at it by PartPlate::update_slice_context. Asking the Plater's copy
                 // whether it finished the G-code export therefore always answered "no", which is
                 // what left this tool reporting in_progress forever after a completed slice.
-                PartPlateList& plate_list = plater->get_partplate_list();
-                PartPlate*     plate      = plate_list.get_curr_plate();
+                PartPlateList& plate_list  = plater->get_partplate_list();
+                const int      plate_count = plate_list.get_plate_count();
+                const int      plate_index = requested_plate ? wanted_plate : plate_list.get_curr_plate_index();
+                if (requested_plate && (wanted_plate < 0 || wanted_plate >= plate_count)) {
+                    return nlohmann::json{
+                        {"status", "error"},
+                        {"state", "idle"},
+                        {"message", "plate_index " + std::to_string(wanted_plate) + " is out of range: the "
+                                    "project has " + std::to_string(plate_count) + " plate(s), 0.." +
+                                    std::to_string(plate_count - 1) + "."}
+                    };
+                }
+                PartPlate* plate = plate_list.get_plate(plate_index);
                 if (plate == nullptr) {
                     return nlohmann::json{{"status", "error"}, {"state", "idle"}, {"message", "No current plate"}};
                 }
@@ -2991,8 +3019,9 @@ void OrcaMCPServer::register_builtin_tools()
                     return nlohmann::json{
                         {"status", "error"},
                         {"state", "idle"},
-                        {"message", "The current plate has no valid slice result. Run slice_all and poll "
-                                    "get_slicing_status until state is \"done\"."},
+                        {"plate_index", plate_index},
+                        {"message", "Plate " + std::to_string(plate_index) + " has no valid slice result. Run "
+                                    "slice_all and poll get_slicing_status until state is \"done\"."},
                         {"active_warnings", get_active_warnings_json(plater)}
                     };
                 }
@@ -3030,7 +3059,7 @@ void OrcaMCPServer::register_builtin_tools()
                 return nlohmann::json{
                     {"status", "success"},
                     {"state", "done"},
-                    {"plate_index", plate_list.get_curr_plate_index()},
+                    {"plate_index", plate_index},
                     {"estimated_time", get_time_dhms(static_cast<float>(normal_time))},
                     {"estimated_time_seconds", normal_time},
                     {"estimated_time_silent", silent_time > 0.0 ? nlohmann::json(get_time_dhms(static_cast<float>(silent_time)))
@@ -4445,15 +4474,11 @@ void OrcaMCPServer::register_builtin_tools()
                     };
                 }
 
-                // Check if on bed
-                auto plate = plater->get_partplate_list().get_curr_plate();
-                BoundingBoxf3 bed_box = plate->get_plate_box();
-                bool on_bed = bbox.min.x() >= bed_box.min.x() &&
-                              bbox.min.y() >= bed_box.min.y() &&
-                              bbox.max.x() <= bed_box.max.x() &&
-                              bbox.max.y() <= bed_box.max.y() &&
-                              bbox.min.z() >= -0.1;
-                result["on_bed"] = on_bed;
+                // Which plate this object is on, and whether it fits that plate. This used to test
+                // against whichever plate happened to be selected, so asking about an object on
+                // plate 4 while plate 1 was selected reported it off the bed -- and get_server_info
+                // tells agents to read on_bed to verify placement.
+                report_placement(result, object_id);
 
                 return result;
             });

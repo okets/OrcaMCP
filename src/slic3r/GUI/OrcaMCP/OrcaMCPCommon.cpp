@@ -139,7 +139,7 @@ bool object_within_plate(const BoundingBoxf3& object_bbox, const BoundingBoxf3& 
            object_bbox.min.z() >= -z_tolerance;
 }
 
-void rehome_and_report_placement(nlohmann::json& result, int object_id)
+void report_placement(nlohmann::json& result, int object_id)
 {
     Plater* plater = wxGetApp().plater();
     if (plater == nullptr)
@@ -150,11 +150,11 @@ void rehome_and_report_placement(nlohmann::json& result, int object_id)
 
     PartPlateList& plate_list = plater->get_partplate_list();
     ModelObject*   object     = model.objects[object_id];
-    for (size_t i = 0; i < object->instances.size(); ++i)
-        plate_list.notify_instance_update(object_id, int(i), /*is_new=*/true);
 
-    // Which plate holds instance 0 afterwards. find_instance answers from the plate's own instance
-    // list, which is what get_scene_info reports from, so the two agree by construction.
+    // Which plate holds instance 0. find_instance answers from the plate's own instance list, which
+    // is what get_scene_info reports from, so the two agree by construction. Testing against the
+    // *selected* plate instead would answer about a plate the object is not on: with plate 1
+    // selected, an object sitting correctly on plate 4 reads as outside the printable area.
     const int  plate_index = plate_list.find_instance(object_id, 0);
     PartPlate* plate       = plate_index >= 0 ? plate_list.get_plate(plate_index) : nullptr;
 
@@ -169,6 +169,25 @@ void rehome_and_report_placement(nlohmann::json& result, int object_id)
             : "Object positioned outside the printable area of plate " + std::to_string(plate_index);
     else
         result.erase("placement_warning");
+}
+
+void rehome_and_report_placement(nlohmann::json& result, int object_id)
+{
+    Plater* plater = wxGetApp().plater();
+    if (plater == nullptr)
+        return;
+    Model& model = plater->model();
+    if (object_id < 0 || object_id >= int(model.objects.size()))
+        return;
+
+    // Re-home first: a transform can have carried the object onto a different plate, and the plate
+    // lists only learn that from notify_instance_update. report_placement then reads the result.
+    PartPlateList& plate_list = plater->get_partplate_list();
+    ModelObject*   object     = model.objects[object_id];
+    for (size_t i = 0; i < object->instances.size(); ++i)
+        plate_list.notify_instance_update(object_id, int(i), /*is_new=*/true);
+
+    report_placement(result, object_id);
 }
 
 void transform_instances_in_plate_frame(ModelObject& object, const Transform3d& world_transform)

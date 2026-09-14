@@ -87,6 +87,11 @@ bool object_within_plate(const BoundingBoxf3& object_bbox, const BoundingBoxf3& 
 // is the same outcome the dialog produces: under is_object_config the dialog is OK-only and its
 // answer is forced to wxID_YES regardless (ConfigManipulation::show_spiral_mode_settings_dialog).
 // clone_object already passes true for the same reason.
+// Report which plate holds the object and whether it sits inside that plate's printable area,
+// writing plate_index / on_bed / placement_warning into `result`. Read-only: use this from query
+// tools. A tool that has just moved geometry wants rehome_and_report_placement instead.
+void report_placement(nlohmann::json& result, int object_id);
+
 void rehome_and_report_placement(nlohmann::json& result, int object_id);
 
 // Applies `world_transform` -- a rotation, a scale or a mirror written in *plate* axes -- to every
