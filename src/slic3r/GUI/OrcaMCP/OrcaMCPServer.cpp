@@ -3334,7 +3334,8 @@ void OrcaMCPServer::register_builtin_tools()
     // rotate_object - Rotate an object
     register_tool({
         "rotate_object",
-        "Rotate object around X, Y, Z axes (degrees).",
+        "Rotate object around X, Y, Z axes (degrees). The response reports the plate the object is "
+        "on afterwards (plate_index) and measures on_bed against that plate.",
         {
             {"type", "object"},
             {"properties", {
@@ -3411,15 +3412,6 @@ void OrcaMCPServer::register_builtin_tools()
                 Vec3d rotation = obj->instances[0]->get_rotation();
                 Vec3d scale = obj->instances[0]->get_scaling_factor();
 
-                // Check if object is within printable area
-                auto plate = plater->get_partplate_list().get_curr_plate();
-                BoundingBoxf3 bed_box = plate->get_plate_box();
-                bool on_bed = new_bbox.min.x() >= bed_box.min.x() &&
-                              new_bbox.min.y() >= bed_box.min.y() &&
-                              new_bbox.max.x() <= bed_box.max.x() &&
-                              new_bbox.max.y() <= bed_box.max.y() &&
-                              new_bbox.min.z() >= -0.1;
-
                 nlohmann::json result = {
                     {"status", "success"},
                     {"object_id", object_id},
@@ -3430,14 +3422,12 @@ void OrcaMCPServer::register_builtin_tools()
                         {"z", Geometry::rad2deg(rotation.z())}
                     }},
                     {"scale", {{"x", scale.x()}, {"y", scale.y()}, {"z", scale.z()}}},
-                    {"on_bed", on_bed},
                     {"active_warnings", get_active_warnings_json(plater)}
                 };
 
-                // Add local warning if off bed
-                if (!on_bed) {
-                    result["placement_warning"] = "Object positioned outside printable area";
-                }
+                // A rotation changes the convex hull, so it can push an instance over a plate
+                // boundary or off the bed; re-home it and measure against the plate it is on now.
+                rehome_and_report_placement(result, object_id);
 
                 // Add turntable preview if requested
                 add_turntable_preview_if_requested(result, include_preview, preview_views, preview_resolution);
@@ -3450,7 +3440,8 @@ void OrcaMCPServer::register_builtin_tools()
     // scale_object - Scale an object
     register_tool({
         "scale_object",
-        "Scale object by axis factors. uniform=true uses x for all.",
+        "Scale object by axis factors. uniform=true uses x for all. The response reports the plate "
+        "the object is on afterwards (plate_index) and measures on_bed against that plate.",
         {
             {"type", "object"},
             {"properties", {
@@ -3525,15 +3516,6 @@ void OrcaMCPServer::register_builtin_tools()
                 Vec3d rotation = obj->instances[0]->get_rotation();
                 Vec3d scale_result = obj->instances[0]->get_scaling_factor();
 
-                // Check if object is within printable area
-                auto plate = plater->get_partplate_list().get_curr_plate();
-                BoundingBoxf3 bed_box = plate->get_plate_box();
-                bool on_bed = new_bbox.min.x() >= bed_box.min.x() &&
-                              new_bbox.min.y() >= bed_box.min.y() &&
-                              new_bbox.max.x() <= bed_box.max.x() &&
-                              new_bbox.max.y() <= bed_box.max.y() &&
-                              new_bbox.min.z() >= -0.1;
-
                 nlohmann::json result = {
                     {"status", "success"},
                     {"object_id", object_id},
@@ -3544,14 +3526,12 @@ void OrcaMCPServer::register_builtin_tools()
                         {"z", Geometry::rad2deg(rotation.z())}
                     }},
                     {"scale", {{"x", scale_result.x()}, {"y", scale_result.y()}, {"z", scale_result.z()}}},
-                    {"on_bed", on_bed},
                     {"active_warnings", get_active_warnings_json(plater)}
                 };
 
-                // Add local warning if off bed
-                if (!on_bed) {
-                    result["placement_warning"] = "Object positioned outside printable area";
-                }
+                // Scaling grows the convex hull about the object centre, so it can spill over a plate
+                // boundary or off the bed; re-home it and measure against the plate it is on now.
+                rehome_and_report_placement(result, object_id);
 
                 // Add turntable preview if requested
                 add_turntable_preview_if_requested(result, include_preview, preview_views, preview_resolution);
@@ -3564,7 +3544,8 @@ void OrcaMCPServer::register_builtin_tools()
     // transform_objects - Batch transform multiple objects
     register_tool({
         "transform_objects",
-        "Batch transform multiple objects.",
+        "Batch transform multiple objects. Each result reports the plate that object is on "
+        "afterwards (plate_index) and measures on_bed against that plate.",
         {
             {"type", "object"},
             {"properties", {
@@ -3681,10 +3662,10 @@ void OrcaMCPServer::register_builtin_tools()
                 // Single UI update for all transforms
                 plater->update();
 
-                // Build results for each object
-                auto plate = plater->get_partplate_list().get_curr_plate();
-                BoundingBoxf3 bed_box = plate->get_plate_box();
-
+                // Build results for each object. Each transform applied above is one the single-
+                // object tools also apply, so each owes the same plate re-homing, and each object is
+                // measured against the plate it landed on rather than the one that happens to be
+                // selected.
                 for (const auto& t : transforms) {
                     int object_id = t["object_id"];
                     if (object_id < 0 || object_id >= static_cast<int>(model.objects.size())) {
@@ -3695,18 +3676,13 @@ void OrcaMCPServer::register_builtin_tools()
                     BoundingBoxf3 bbox = obj->bounding_box_approx();
                     Vec3d center = bbox.center();
 
-                    bool on_bed = bbox.min.x() >= bed_box.min.x() &&
-                                  bbox.min.y() >= bed_box.min.y() &&
-                                  bbox.max.x() <= bed_box.max.x() &&
-                                  bbox.max.y() <= bed_box.max.y() &&
-                                  bbox.min.z() >= -0.1;
-
-                    results.push_back({
+                    nlohmann::json entry = {
                         {"object_id", object_id},
                         {"status", "success"},
-                        {"position", {{"x", center.x()}, {"y", center.y()}, {"z", center.z()}}},
-                        {"on_bed", on_bed}
-                    });
+                        {"position", {{"x", center.x()}, {"y", center.y()}, {"z", center.z()}}}
+                    };
+                    rehome_and_report_placement(entry, object_id);
+                    results.push_back(entry);
                 }
 
                 nlohmann::json response = {
@@ -3722,7 +3698,8 @@ void OrcaMCPServer::register_builtin_tools()
     // mirror_object - Mirror an object across an axis
     register_tool({
         "mirror_object",
-        "Mirror an object across the specified axis",
+        "Mirror an object across the specified axis. The response reports the plate the object is "
+        "on afterwards (plate_index) and measures on_bed against that plate.",
         {
             {"type", "object"},
             {"properties", {
@@ -3785,6 +3762,11 @@ void OrcaMCPServer::register_builtin_tools()
                     {"axis", axis_str},
                     {"active_warnings", get_active_warnings_json(plater)}
                 };
+
+                // Mirroring reflects the mesh about the instance origin, not about the object's own
+                // centre, so an asymmetric object's convex hull lands somewhere else and can cross a
+                // plate boundary. This tool reported no placement at all before; it does now.
+                rehome_and_report_placement(result, object_id);
 
                 // Add turntable preview if requested
                 add_turntable_preview_if_requested(result, include_preview, preview_views, preview_resolution);

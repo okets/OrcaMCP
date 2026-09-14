@@ -317,6 +317,19 @@ Rotate an object.
 {"name": "rotate_object", "arguments": {"object_id": 0, "z": 45}}
 ```
 
+**Placement in the response.** Every transform re-homes the object onto the plate whose area now
+contains it, then answers about *that* plate:
+
+| Field | Meaning |
+|-------|---------|
+| `plate_index` | The plate the object is on after the transform, or `null` when it is on no plate |
+| `on_bed` | Whether the object fits inside that plate's printable area |
+| `placement_warning` | Present only when `on_bed` is false, and it names the plate |
+
+Before v2.3.2 `on_bed` was measured against whichever plate happened to be *selected*, so a correct
+move into another plate's area was reported as "outside printable area"; `move_object` also left the
+object registered on its old plate, which sliced it onto the wrong plate with no error.
+
 ---
 
 ### scale_object
@@ -341,6 +354,19 @@ Scale an object.
 {"name": "scale_object", "arguments": {"object_id": 0, "z": 2.0}}
 ```
 
+**Placement in the response.** Every transform re-homes the object onto the plate whose area now
+contains it, then answers about *that* plate:
+
+| Field | Meaning |
+|-------|---------|
+| `plate_index` | The plate the object is on after the transform, or `null` when it is on no plate |
+| `on_bed` | Whether the object fits inside that plate's printable area |
+| `placement_warning` | Present only when `on_bed` is false, and it names the plate |
+
+Before v2.3.2 `on_bed` was measured against whichever plate happened to be *selected*, so a correct
+move into another plate's area was reported as "outside printable area"; `move_object` also left the
+object registered on its old plate, which sliced it onto the wrong plate with no error.
+
 ---
 
 ### mirror_object
@@ -352,6 +378,19 @@ Mirror an object along an axis.
 | `object_id` | integer | Yes | Object index |
 | `axis` | string | Yes | "x", "y", or "z" |
 | `include_preview` | boolean | No | Include preview |
+
+**Placement in the response.** Every transform re-homes the object onto the plate whose area now
+contains it, then answers about *that* plate:
+
+| Field | Meaning |
+|-------|---------|
+| `plate_index` | The plate the object is on after the transform, or `null` when it is on no plate |
+| `on_bed` | Whether the object fits inside that plate's printable area |
+| `placement_warning` | Present only when `on_bed` is false, and it names the plate |
+
+Before v2.3.2 `on_bed` was measured against whichever plate happened to be *selected*, so a correct
+move into another plate's area was reported as "outside printable area"; `move_object` also left the
+object registered on its old plate, which sliced it onto the wrong plate with no error.
 
 ---
 
@@ -446,6 +485,9 @@ Apply transforms to multiple objects in batch.
   }
 }
 ```
+
+Each entry of `results` carries the same `plate_index` / `on_bed` / `placement_warning` fields the
+single-object transforms return, measured against the plate that object landed on.
 
 ---
 
