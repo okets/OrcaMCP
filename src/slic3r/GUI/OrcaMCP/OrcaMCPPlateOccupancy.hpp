@@ -146,6 +146,21 @@ constexpr double kAutoBrimWidthCapMm = 18.0;
 
 ObjectBrimExtent object_brim_extent(const std::string& brim_type, double brim_width, double brim_object_gap);
 
+// ---- Camera ------------------------------------------------------------------------------------
+
+// The up vector to hand Camera::look_at for this view direction.
+//
+// look_at builds its basis as up.cross(view_direction).normalized(). Eigen's normalized() returns
+// the vector unchanged when its norm is zero, so a camera looking straight down with up = +Z does
+// not fail -- it produces an all-zero 3x3 basis and a view matrix that still renders a perfectly
+// normal-looking image. The damage shows up later: pick_facet cannot invert that matrix, so the
+// see-then-point loop silently breaks for the plan view an agent asks for first.
+//
+// Returns `preferred_up` unless the view direction is within a hair of parallel to it, and a
+// perpendicular axis otherwise (+Y for a vertical view, the usual convention; +Z for the rest). A
+// camera sitting exactly on its target has no view direction at all and gets `preferred_up` back.
+Vec3d stable_camera_up(const Vec3d& camera_position, const Vec3d& target, const Vec3d& preferred_up = Vec3d::UnitZ());
+
 }}} // namespace Slic3r::GUI::OrcaMCP
 
 #endif // slic3r_GUI_OrcaMCPPlateOccupancy_hpp_

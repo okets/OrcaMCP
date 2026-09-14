@@ -632,7 +632,23 @@ single-nozzle AMS/MMU machine `total_extruder_changes` is legitimately 0 instead
 reported under their own names, `filament_changes` and `extruder_changes`; `total_toolchanges` is
 gone rather than redefined, since summing them double-counts under the multi-nozzle model.
 
-Still open from this session: **T13** (degenerate view matrix from a straight-down camera).
+## T13 resolved — 2026-09-15
+
+`RenderThumbnail` no longer passes a bare `Vec3d::UnitZ()` to `Camera::look_at`. It passes
+`OrcaMCP::stable_camera_up(camera_position, target)`, which returns +Z for every view whose
+direction is not parallel to it and falls back to +Y when it is. A plan view now comes back with an
+invertible view matrix, so `pick_facet` works on the image `render_plate_view` returned alongside it.
+
+The choice was a fallback rather than a refusal because a plan view is the obvious thing to ask for
+when checking a plate layout, and answering "tilt the camera" to the most natural request would have
+been a worse API than quietly picking the conventional up vector. The threshold is on the length of
+`up × view` rather than on exact parallelism: the basis is untrustworthy well before that cross
+product reaches exactly zero, and Eigen's `normalized()` returns a zero vector unchanged instead of
+failing, which is why the original bug was silent.
+
+Covered by `tests/slic3rutils/test_plate_occupancy.cpp`, including an assertion that the old up
+vector really does produce a zero-length cross product for the reported camera, and assertions that
+every oblique view — the turntable previews among them — still gets +Z, so no existing render moved.
 
 ## T16 — nothing reported the prime tower, so an agent placed parts around an invisible obstacle
 

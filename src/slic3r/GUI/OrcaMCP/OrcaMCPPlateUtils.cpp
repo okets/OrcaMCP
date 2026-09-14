@@ -337,7 +337,13 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
     BoundingBoxf3 zoom_box = (!visible_volumes.empty() && volumes_box.defined) ? volumes_box : plate_build_volume;
     zoom_box.min.z() = zoom_box.max.z() = 0.0;
     camera.zoom_to_box(zoom_box, 1.0);
-    camera.look_at(camera_position, target, Vec3d::UnitZ());
+    // Not a plain Vec3d::UnitZ(): look_at builds its basis from up.cross(view_direction), and for a
+    // camera directly above its target that cross product is zero. Eigen's normalized() hands a
+    // zero vector back unchanged rather than failing, so the plan view an agent asks for first used
+    // to render a perfectly ordinary image alongside a view matrix whose 3x3 basis was all zeros --
+    // which pick_facet then could not invert. stable_camera_up falls back to +Y for exactly that
+    // case and returns +Z for every other view, so no existing render changes.
+    camera.look_at(camera_position, target, OrcaMCP::stable_camera_up(camera_position, target));
 
     const Transform3d& view_matrix = camera.get_view_matrix();
     camera.apply_projection(plate_build_volume);

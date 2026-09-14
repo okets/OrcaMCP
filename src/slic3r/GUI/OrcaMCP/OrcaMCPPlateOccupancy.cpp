@@ -152,4 +152,25 @@ ObjectBrimExtent object_brim_extent(const std::string& brim_type, double brim_wi
     return out;
 }
 
+Vec3d stable_camera_up(const Vec3d& camera_position, const Vec3d& target, const Vec3d& preferred_up)
+{
+    const Vec3d view_direction = camera_position - target;
+    const double view_norm = view_direction.norm();
+    const double up_norm   = preferred_up.norm();
+    if (view_norm <= 0.0 || up_norm <= 0.0) return preferred_up;
+
+    const Vec3d view_unit = view_direction / view_norm;
+    const Vec3d up_unit   = preferred_up / up_norm;
+
+    // sin of the angle between them. Below this the cross product is too short to normalize into a
+    // trustworthy basis, long before it is exactly zero.
+    constexpr double kParallelEpsilon = 1e-6;
+    if (up_unit.cross(view_unit).norm() > kParallelEpsilon) return preferred_up;
+
+    // Parallel: pick an axis that is not. +Y for the vertical view a plan render asks for, which is
+    // the usual convention and puts plate +Y at the top of the image; +Z for anything else.
+    const Vec3d fallback = (std::abs(view_unit.z()) > 0.5) ? Vec3d::UnitY() : Vec3d::UnitZ();
+    return fallback;
+}
+
 }}} // namespace Slic3r::GUI::OrcaMCP
