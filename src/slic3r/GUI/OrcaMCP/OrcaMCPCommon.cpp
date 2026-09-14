@@ -4,6 +4,7 @@
 #include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/GUI/NotificationManager.hpp"
 #include "libslic3r/Model.hpp"
+#include "libslic3r/Geometry.hpp"
 
 #include <cctype>
 #include <cmath>
@@ -168,6 +169,34 @@ void rehome_and_report_placement(nlohmann::json& result, int object_id)
             : "Object positioned outside the printable area of plate " + std::to_string(plate_index);
     else
         result.erase("placement_warning");
+}
+
+void transform_instances_in_plate_frame(ModelObject& object, const Transform3d& world_transform)
+{
+    for (size_t i = 0; i < object.instances.size(); ++i) {
+        ModelInstance* instance = object.instances[i];
+        if (instance == nullptr)
+            continue;
+
+        // The pivot keeps the operation in place: composing the transform about the world origin
+        // instead would fling an object standing at x=430 across the bed. instance_bounding_box is
+        // read before this instance is touched, and only this instance is touched, so the pivot is
+        // always the pre-transform centre. An object with no model-part volumes has no bounding box
+        // at all (min = +inf), and center() on that is not a number -- fall back to the instance's
+        // own origin rather than writing a NaN matrix.
+        const BoundingBoxf3 bbox  = object.instance_bounding_box(i);
+        const Vec3d         pivot = bbox.defined ? bbox.center() : instance->get_offset();
+
+        const Transform3d about_pivot = Geometry::translation_transform(pivot) * world_transform *
+                                        Geometry::translation_transform(-pivot);
+
+        // Left-multiplied, so `world_transform` is read in plate axes; right-multiplying would read
+        // it in the instance's own axes, which is the bug this function exists to avoid.
+        Geometry::Transformation transformation;
+        transformation.set_matrix(about_pivot * instance->get_transformation().get_matrix());
+        instance->set_transformation(transformation);
+    }
+    object.invalidate_bounding_box();
 }
 
 // Helper to get active warnings as JSON object (always includes count, even if 0)

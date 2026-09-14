@@ -9,7 +9,9 @@
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 
-namespace Slic3r { namespace GUI {
+namespace Slic3r {
+class ModelObject;
+namespace GUI {
 class Plater;
 namespace OrcaMCP {
 
@@ -86,6 +88,24 @@ bool object_within_plate(const BoundingBoxf3& object_bbox, const BoundingBoxf3& 
 // answer is forced to wxID_YES regardless (ConfigManipulation::show_spiral_mode_settings_dialog).
 // clone_object already passes true for the same reason.
 void rehome_and_report_placement(nlohmann::json& result, int object_id);
+
+// Applies `world_transform` -- a rotation, a scale or a mirror written in *plate* axes -- to every
+// instance of `object`, each about its own world bounding-box centre, and invalidates the object's
+// cached bounding boxes.
+//
+// This is the instrument the transform tools owe their callers. The ModelObject::rotate/scale/mirror
+// family loops over `this->volumes` and transforms the *mesh*, which sits beneath the instance
+// transform: on an instance already rotated 90 degrees about X, a request phrased in plate axes
+// comes out along a different world axis entirely, and the instance's own rotation/scale -- which is
+// what every response and get_object_info report -- never changes at all. Transforming the instance
+// is also what the GUI's gizmos do (Selection::transform_instance_relative composes exactly this
+// T(pivot) * world_transform * T(-pivot) * instance_matrix), and it leaves the shared mesh alone,
+// which matters because painting, the 3MF and every facet index are written against that mesh.
+//
+// The pivot is per instance, so a multi-instance object turns each copy in place rather than
+// swinging the constellation about a shared centre -- the same thing the GUI's
+// synchronize_unselected_instances does.
+void transform_instances_in_plate_frame(ModelObject& object, const Transform3d& world_transform);
 
 // Always returns {"count": N, "warnings": [{level, message, type}...]}.
 nlohmann::json get_active_warnings_json(Plater* plater);

@@ -15,6 +15,7 @@
 #include "slic3r/GUI/GLCanvas3D.hpp"
 #include "slic3r/GUI/GLToolbar.hpp"
 #include "slic3r/GUI/NotificationManager.hpp"
+#include "slic3r/GUI/I18N.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/CutUtils.hpp"
 #include "libslic3r/Geometry.hpp"
@@ -27,6 +28,7 @@
 #include <boost/log/trivial.hpp>
 #include <cmath>
 #include <future>
+#include <set>
 
 namespace Slic3r { namespace GUI {
 
@@ -2044,7 +2046,8 @@ void OrcaMCPServer::register_builtin_tools()
     // get_object_layer_ranges - Get layer-range-specific configs
     register_tool({
         "get_object_layer_ranges",
-        "Get layer-range settings for an object.",
+        "Get layer-range settings for an object. Range Z is measured from the object's own base, "
+        "not from the bed, so it equals plate Z only while the object sits on the bed.",
         {
             {"type", "object"},
             {"properties", {
@@ -2094,7 +2097,9 @@ void OrcaMCPServer::register_builtin_tools()
     // set_object_layer_range - Set layer-range-specific settings
     register_tool({
         "set_object_layer_range",
-        "Set settings for a Z height range.",
+        "Set settings for a Z height range. z_min/z_max are measured from the object's own base, "
+        "not from the bed, so they equal plate Z only while the object sits on the bed -- moving the "
+        "object up does not move its ranges.",
         {
             {"type", "object"},
             {"properties", {
@@ -2104,11 +2109,11 @@ void OrcaMCPServer::register_builtin_tools()
                 }},
                 {"z_min", {
                     {"type", "number"},
-                    {"description", "Min Z height (mm)"}
+                    {"description", "Min Z height (mm) above the object's own base"}
                 }},
                 {"z_max", {
                     {"type", "number"},
-                    {"description", "Max Z height (mm)"}
+                    {"description", "Max Z height (mm) above the object's own base"}
                 }},
                 {"settings", {
                     {"type", "array"},
@@ -2211,7 +2216,8 @@ void OrcaMCPServer::register_builtin_tools()
     // delete_object_layer_range - Remove layer-range config
     register_tool({
         "delete_object_layer_range",
-        "Remove layer range config. If z_min/z_max omitted, removes ALL ranges.",
+        "Remove layer range config. If z_min/z_max omitted, removes ALL ranges. Range Z is measured "
+        "from the object's own base, not from the bed.",
         {
             {"type", "object"},
             {"properties", {
@@ -2221,11 +2227,11 @@ void OrcaMCPServer::register_builtin_tools()
                 }},
                 {"z_min", {
                     {"type", "number"},
-                    {"description", "Min Z height (mm). Omit both to delete all ranges."}
+                    {"description", "Min Z height (mm) above the object's own base. Omit both to delete all ranges."}
                 }},
                 {"z_max", {
                     {"type", "number"},
-                    {"description", "Max Z height (mm). Omit both to delete all ranges."}
+                    {"description", "Max Z height (mm) above the object's own base. Omit both to delete all ranges."}
                 }}
             }},
             {"required", {"object_id"}}
@@ -3323,9 +3329,12 @@ void OrcaMCPServer::register_builtin_tools()
     // move_object - Move/translate an object
     register_tool({
         "move_object",
-        "Move object by offset (relative) or to position (relative=false). Moving an object into "
-        "another plate's area re-homes it onto that plate; the response reports the resulting "
-        "plate_index and measures on_bed against that plate.",
+        "Move object by offset (relative) or to position (relative=false). X/Y/Z are plate "
+        "millimetres along the plate's own axes -- the same frame get_object_info and this tool's "
+        "own \"position\" report, and independent of how the object is rotated. Moving an object "
+        "into another plate's area re-homes it onto that plate; the response reports the resulting "
+        "plate_index and measures on_bed against that plate. Every instance of the object moves by "
+        "the same amount, so a multi-instance object keeps its arrangement.",
         {
             {"type", "object"},
             {"properties", {
@@ -3335,15 +3344,16 @@ void OrcaMCPServer::register_builtin_tools()
                 }},
                 {"x", {
                     {"type", "number"},
-                    {"description", "X in mm"}
+                    {"description", "Plate X in mm: a displacement along the plate's X axis when "
+                                    "relative, else the X the bounding-box centre ends at"}
                 }},
                 {"y", {
                     {"type", "number"},
-                    {"description", "Y in mm"}
+                    {"description", "Plate Y in mm, same convention as x"}
                 }},
                 {"z", {
                     {"type", "number"},
-                    {"description", "Z in mm"}
+                    {"description", "Plate Z in mm (height above the bed), same convention as x"}
                 }},
                 {"relative", {
                     {"type", "boolean"},
@@ -3389,17 +3399,25 @@ void OrcaMCPServer::register_builtin_tools()
                 BoundingBoxf3 bbox = obj->bounding_box_approx();
                 Vec3d current_center = bbox.center();
 
-                if (relative) {
-                    // Relative: only apply offset for specified axes (unspecified = 0 offset)
-                    obj->translate(Vec3d(x, y, z));
-                } else {
-                    // Absolute: only change specified axes, preserve others
-                    Vec3d target(
-                        has_x ? x : current_center.x(),
-                        has_y ? y : current_center.y(),
-                        has_z ? z : current_center.z()
-                    );
-                    obj->translate(target - current_center);
+                // Relative: the offset for the specified axes (unspecified = 0 offset).
+                // Absolute: whatever gets the bounding-box centre to the specified axes' values,
+                // leaving the unspecified ones where they are.
+                const Vec3d target(has_x ? x : current_center.x(),
+                                   has_y ? y : current_center.y(),
+                                   has_z ? z : current_center.z());
+                const Vec3d requested_delta = relative ? Vec3d(x, y, z) : Vec3d(target - current_center);
+
+                // translate_instances, not translate: translate() moves the *volumes*, beneath the
+                // instance transform, so the instance's rotation is applied on top of the caller's
+                // displacement and turns it into a move along some other world axis. On an instance
+                // rotated 90 degrees about X, a -84 mm Y request came out as a +84 mm Z move and
+                // left the part floating above the bed. The instance offset is already in plate
+                // coordinates, which is the frame every response here reports. Every instance moves
+                // by the same amount, so a multi-instance object keeps its arrangement and the
+                // object-level position this tool reports is the one that was asked for.
+                if (!requested_delta.isZero()) {
+                    plater->take_snapshot(_u8L("Move Object"));
+                    obj->translate_instances(requested_delta);
                 }
 
                 // Notify UI of changes
@@ -3451,8 +3469,12 @@ void OrcaMCPServer::register_builtin_tools()
     // rotate_object - Rotate an object
     register_tool({
         "rotate_object",
-        "Rotate object around X, Y, Z axes (degrees). The response reports the plate the object is "
-        "on afterwards (plate_index) and measures on_bed against that plate.",
+        "Rotate object around the plate's X, Y and Z axes (degrees), not the object's own axes: a "
+        "z=90 turns the object about the vertical whatever its current rotation is. Applied in the "
+        "order X, then Y, then Z, about the object's bounding-box centre so it turns in place. The "
+        "resulting rotation_degrees are the instance's, the same numbers get_object_info reports. "
+        "The response reports the plate the object is on afterwards (plate_index) and measures "
+        "on_bed against that plate.",
         {
             {"type", "object"},
             {"properties", {
@@ -3462,15 +3484,15 @@ void OrcaMCPServer::register_builtin_tools()
                 }},
                 {"x", {
                     {"type", "number"},
-                    {"description", "X rotation (degrees)"}
+                    {"description", "Rotation about the plate's X axis (degrees)"}
                 }},
                 {"y", {
                     {"type", "number"},
-                    {"description", "Y rotation (degrees)"}
+                    {"description", "Rotation about the plate's Y axis (degrees)"}
                 }},
                 {"z", {
                     {"type", "number"},
-                    {"description", "Z rotation (degrees)"}
+                    {"description", "Rotation about the plate's Z axis, the vertical (degrees)"}
                 }},
                 {"relative", {
                     {"type", "boolean"},
@@ -3512,12 +3534,22 @@ void OrcaMCPServer::register_builtin_tools()
 
                 ModelObject* obj = model.objects[object_id];
 
-                // Convert degrees to radians
+                // Plate axes, not the object's own. ModelObject::rotate() turns the *volumes*,
+                // beneath the instance transform, so on an instance already rotated 90 degrees
+                // about X a "rotate about Z" was a rotation about a horizontal world axis; it also
+                // left instances[0]'s rotation untouched, so the rotation_degrees reported below
+                // never changed, and its center_around_origin() re-centred the mesh as a side
+                // effect nothing in this tool's contract mentions.
+                // Geometry::rotation_transform assembles X, then Y, then Z -- the order the
+                // sequence of obj->rotate() calls it replaces applied them in.
                 const double deg_to_rad = M_PI / 180.0;
+                const Transform3d world_rotation =
+                    Geometry::rotation_transform(Vec3d(x_deg, y_deg, z_deg) * deg_to_rad);
 
-                if (x_deg != 0.0) obj->rotate(x_deg * deg_to_rad, Axis::X);
-                if (y_deg != 0.0) obj->rotate(y_deg * deg_to_rad, Axis::Y);
-                if (z_deg != 0.0) obj->rotate(z_deg * deg_to_rad, Axis::Z);
+                if (!world_rotation.isApprox(Transform3d::Identity())) {
+                    plater->take_snapshot(_u8L("Rotate Object"));
+                    transform_instances_in_plate_frame(*obj, world_rotation);
+                }
 
                 // Notify UI of changes
                 obj->invalidate_bounding_box();
@@ -3557,8 +3589,13 @@ void OrcaMCPServer::register_builtin_tools()
     // scale_object - Scale an object
     register_tool({
         "scale_object",
-        "Scale object by axis factors. uniform=true uses x for all. The response reports the plate "
-        "the object is on afterwards (plate_index) and measures on_bed against that plate.",
+        "Scale object along the plate's X, Y and Z axes, not the object's own: with uniform=false, "
+        "z is the object's height above the bed whatever its rotation. uniform=true uses x for all "
+        "axes and is frame-independent. Scaling is about the object's bounding-box centre, so it "
+        "grows in place. Factors must be positive; use mirror_object to flip an axis. A non-uniform "
+        "scale along plate axes on an object whose rotation is not a multiple of 90 degrees is a "
+        "shear -- it is applied, and the response says so in skew_warning. The response reports the "
+        "plate the object is on afterwards (plate_index) and measures on_bed against that plate.",
         {
             {"type", "object"},
             {"properties", {
@@ -3568,15 +3605,15 @@ void OrcaMCPServer::register_builtin_tools()
                 }},
                 {"x", {
                     {"type", "number"},
-                    {"description", "X scale factor"}
+                    {"description", "Scale factor along the plate's X axis (must be > 0)"}
                 }},
                 {"y", {
                     {"type", "number"},
-                    {"description", "Y scale factor"}
+                    {"description", "Scale factor along the plate's Y axis (must be > 0)"}
                 }},
                 {"z", {
                     {"type", "number"},
-                    {"description", "Z scale factor"}
+                    {"description", "Scale factor along the plate's Z axis, the vertical (> 0)"}
                 }},
                 {"uniform", {
                     {"type", "boolean"},
@@ -3617,11 +3654,34 @@ void OrcaMCPServer::register_builtin_tools()
 
                 ModelObject* obj = model.objects[object_id];
 
-                if (uniform) {
-                    obj->scale(x);  // Uniform scale
-                } else {
-                    obj->scale(Vec3d(x, y, z));
+                const Vec3d factors = uniform ? Vec3d(x, x, x) : Vec3d(x, y, z);
+                // A zero factor collapses the instance matrix to a singular one, which every later
+                // decomposition of it (rotation, scaling factor, the slicer's own) reads as
+                // nonsense; a negative one is a mirror wearing a scale's name. Both are refused
+                // here rather than written into the model. ModelObject::scale() accepted them.
+                if (!std::isfinite(factors.x()) || !std::isfinite(factors.y()) || !std::isfinite(factors.z()) ||
+                    factors.x() <= 0.0 || factors.y() <= 0.0 || factors.z() <= 0.0) {
+                    throw std::runtime_error("Scale factors must be positive; use mirror_object to flip an axis");
                 }
+
+                // Plate axes, not the object's own. ModelObject::scale() scaled the *volumes*,
+                // beneath the instance transform, so a non-uniform scale ran along the object's
+                // local axes -- and left instances[0]'s scaling factor at 1, so the "scale" this
+                // tool reports never moved. On a multi-volume object it was worse still: each
+                // volume was scaled along its own axes, which pulls an assembly apart.
+                const bool had_skew = !obj->instances.empty() &&
+                                      obj->instances[0]->get_transformation().has_skew();
+
+                if (!factors.isApprox(Vec3d::Ones())) {
+                    plater->take_snapshot(_u8L("Scale Object"));
+                    transform_instances_in_plate_frame(*obj, Geometry::scale_transform(factors));
+                }
+
+                // Plate-axis scaling of a tilted object cannot be anything but a shear. The GUI
+                // sidesteps this by refusing world coordinates for such an object; an MCP caller
+                // has no such gate, so the result is reported rather than silently produced.
+                const bool skew_introduced = !had_skew && !obj->instances.empty() &&
+                                             obj->instances[0]->get_transformation().has_skew();
 
                 // Notify UI of changes
                 obj->invalidate_bounding_box();
@@ -3646,6 +3706,11 @@ void OrcaMCPServer::register_builtin_tools()
                     {"active_warnings", get_active_warnings_json(plater)}
                 };
 
+                if (skew_introduced)
+                    result["skew_warning"] = "A non-uniform scale along plate axes on an object whose "
+                                             "rotation is not a multiple of 90 degrees sheared it. Use "
+                                             "uniform=true, or unrotate the object first.";
+
                 // Scaling grows the convex hull about the object centre, so it can spill over a plate
                 // boundary or off the bed; re-home it and measure against the plate it is on now.
                 rehome_and_report_placement(result, object_id);
@@ -3661,8 +3726,10 @@ void OrcaMCPServer::register_builtin_tools()
     // transform_objects - Batch transform multiple objects
     register_tool({
         "transform_objects",
-        "Batch transform multiple objects. Each result reports the plate that object is on "
-        "afterwards (plate_index) and measures on_bed against that plate.",
+        "Batch transform multiple objects. Position, rotation and scale are all in the plate's own "
+        "frame -- the same frame get_object_info reports -- not the object's local axes, and match "
+        "move_object, rotate_object and scale_object exactly. Each result reports the plate that "
+        "object is on afterwards (plate_index) and measures on_bed against that plate.",
         {
             {"type", "object"},
             {"properties", {
@@ -3675,7 +3742,8 @@ void OrcaMCPServer::register_builtin_tools()
                             {"object_id", {{"type", "integer"}, {"description", "Object index (0-based)"}}},
                             {"position", {
                                 {"type", "object"},
-                                {"description", "Absolute position {x, y, z} - unspecified axes preserved"},
+                                {"description", "Absolute position in plate mm {x, y, z}, the bounding-box "
+                                                "centre - unspecified axes preserved"},
                                 {"properties", {
                                     {"x", {{"type", "number"}}},
                                     {"y", {{"type", "number"}}},
@@ -3685,7 +3753,9 @@ void OrcaMCPServer::register_builtin_tools()
                             }},
                             {"rotation", {
                                 {"type", "object"},
-                                {"description", "Rotation in degrees {x, y, z} - applied incrementally"},
+                                {"description", "Rotation about the plate's axes in degrees {x, y, z} - "
+                                                "applied incrementally, X then Y then Z, about the "
+                                                "object's centre"},
                                 {"properties", {
                                     {"x", {{"type", "number"}}},
                                     {"y", {{"type", "number"}}},
@@ -3695,7 +3765,8 @@ void OrcaMCPServer::register_builtin_tools()
                             }},
                             {"scale", {
                                 {"type", "object"},
-                                {"description", "Scale factors {x, y, z} or {uniform: value}"},
+                                {"description", "Scale factors along the plate's axes {x, y, z}, or "
+                                                "{uniform: value}; all must be positive"},
                                 {"properties", {
                                     {"x", {{"type", "number"}}},
                                     {"y", {{"type", "number"}}},
@@ -3718,9 +3789,25 @@ void OrcaMCPServer::register_builtin_tools()
                 Plater* plater = wxGetApp().plater();
                 Model& model = plater->model();
                 nlohmann::json results = nlohmann::json::array();
+                std::set<int> rejected;  // object_ids already reported as an error below
 
                 const double deg_to_rad = M_PI / 180.0;
 
+                // One snapshot for the batch, taken when the first entry has passed validation, so
+                // undo steps back over the whole call and a batch that applied nothing leaves no
+                // empty step behind.
+                bool snapshot_taken = false;
+                auto ensure_snapshot = [&plater, &snapshot_taken]() {
+                    if (!snapshot_taken) {
+                        plater->take_snapshot(_u8L("Transform Objects"));
+                        snapshot_taken = true;
+                    }
+                };
+
+                // Every branch below is the plate-frame version of what the single-object tool
+                // applies, for the reasons spelled out there: ModelObject's translate/rotate/scale
+                // all act on the volumes, beneath the instance transform, so on a rotated instance
+                // each of them ran along an axis the caller never named.
                 // Apply all transforms
                 for (const auto& t : transforms) {
                     int object_id = t["object_id"];
@@ -3736,6 +3823,31 @@ void OrcaMCPServer::register_builtin_tools()
 
                     ModelObject* obj = model.objects[object_id];
 
+                    // Validated before anything is applied, so a rejected entry leaves the object
+                    // exactly as it was rather than moved and rotated but not scaled.
+                    Vec3d factors = Vec3d::Ones();
+                    if (t.contains("scale")) {
+                        auto sc = t["scale"];
+                        factors = sc.contains("uniform") ? Vec3d::Constant(sc["uniform"].get<double>())
+                                                         : Vec3d(sc.value("x", 1.0), sc.value("y", 1.0),
+                                                                 sc.value("z", 1.0));
+                        // Same refusal as scale_object: a zero factor makes the instance matrix
+                        // singular and a negative one is an unannounced mirror.
+                        if (!std::isfinite(factors.x()) || !std::isfinite(factors.y()) ||
+                            !std::isfinite(factors.z()) ||
+                            factors.x() <= 0.0 || factors.y() <= 0.0 || factors.z() <= 0.0) {
+                            results.push_back({
+                                {"object_id", object_id},
+                                {"status", "error"},
+                                {"message", "Scale factors must be positive; use mirror_object to flip an axis"}
+                            });
+                            rejected.insert(object_id);
+                            continue;
+                        }
+                    }
+
+                    ensure_snapshot();
+
                     // Apply position (absolute, unspecified axes preserved)
                     if (t.contains("position")) {
                         auto pos = t["position"];
@@ -3746,32 +3858,21 @@ void OrcaMCPServer::register_builtin_tools()
                             pos.contains("y") ? pos["y"].get<double>() : current_center.y(),
                             pos.contains("z") ? pos["z"].get<double>() : current_center.z()
                         );
-                        obj->translate(target - current_center);
+                        obj->translate_instances(target - current_center);
                     }
 
                     // Apply rotation (incremental)
                     if (t.contains("rotation")) {
                         auto rot = t["rotation"];
-                        if (rot.contains("x") && rot["x"].get<double>() != 0.0)
-                            obj->rotate(rot["x"].get<double>() * deg_to_rad, Axis::X);
-                        if (rot.contains("y") && rot["y"].get<double>() != 0.0)
-                            obj->rotate(rot["y"].get<double>() * deg_to_rad, Axis::Y);
-                        if (rot.contains("z") && rot["z"].get<double>() != 0.0)
-                            obj->rotate(rot["z"].get<double>() * deg_to_rad, Axis::Z);
+                        const Vec3d degrees(rot.value("x", 0.0), rot.value("y", 0.0), rot.value("z", 0.0));
+                        const Transform3d world_rotation = Geometry::rotation_transform(degrees * deg_to_rad);
+                        if (!world_rotation.isApprox(Transform3d::Identity()))
+                            transform_instances_in_plate_frame(*obj, world_rotation);
                     }
 
                     // Apply scale
-                    if (t.contains("scale")) {
-                        auto sc = t["scale"];
-                        if (sc.contains("uniform")) {
-                            obj->scale(sc["uniform"].get<double>());
-                        } else {
-                            double sx = sc.value("x", 1.0);
-                            double sy = sc.value("y", 1.0);
-                            double sz = sc.value("z", 1.0);
-                            obj->scale(Vec3d(sx, sy, sz));
-                        }
-                    }
+                    if (t.contains("scale"))
+                        transform_instances_in_plate_frame(*obj, Geometry::scale_transform(factors));
 
                     obj->invalidate_bounding_box();
                 }
@@ -3785,7 +3886,8 @@ void OrcaMCPServer::register_builtin_tools()
                 // selected.
                 for (const auto& t : transforms) {
                     int object_id = t["object_id"];
-                    if (object_id < 0 || object_id >= static_cast<int>(model.objects.size())) {
+                    if (object_id < 0 || object_id >= static_cast<int>(model.objects.size()) ||
+                        rejected.count(object_id) > 0) {
                         continue;  // Already reported error
                     }
 
@@ -3815,8 +3917,10 @@ void OrcaMCPServer::register_builtin_tools()
     // mirror_object - Mirror an object across an axis
     register_tool({
         "mirror_object",
-        "Mirror an object across the specified axis. The response reports the plate the object is "
-        "on afterwards (plate_index) and measures on_bed against that plate.",
+        "Mirror an object across a plate axis, not the object's own: axis=z flips it top to bottom "
+        "on the bed whatever its rotation. Mirroring is about the object's bounding-box centre, so "
+        "it stays where it is. The response reports the plate the object is on afterwards "
+        "(plate_index) and measures on_bed against that plate.",
         {
             {"type", "object"},
             {"properties", {
@@ -3827,7 +3931,7 @@ void OrcaMCPServer::register_builtin_tools()
                 {"axis", {
                     {"type", "string"},
                     {"enum", {"x", "y", "z"}},
-                    {"description", "Axis: x, y, or z"}
+                    {"description", "Plate axis to mirror across: x, y, or z"}
                 }},
                 {"include_preview", {
                     {"type", "boolean"},
@@ -3867,7 +3971,17 @@ void OrcaMCPServer::register_builtin_tools()
                 else if (axis_str == "z" || axis_str == "Z") axis = Axis::Z;
                 else throw std::runtime_error("Invalid axis: " + axis_str);
 
-                obj->mirror(axis);
+                // Plate axis, not the object's own. ModelObject::mirror() flipped the *volumes*,
+                // beneath the instance transform, so on a rotated instance "mirror z" reflected
+                // across some other world plane -- and it reflected about the volume origin rather
+                // than the object's centre, which is what moved an asymmetric object somewhere
+                // else. A mirror is a scale of -1 on one axis, which is how the GUI expresses it
+                // too (Selection::mirror).
+                Vec3d mirror_factors = Vec3d::Ones();
+                mirror_factors[axis]  = -1.0;
+
+                plater->take_snapshot(_u8L("Mirror Object"));
+                transform_instances_in_plate_frame(*obj, Geometry::scale_transform(mirror_factors));
 
                 // Notify UI of changes
                 obj->invalidate_bounding_box();
@@ -3880,9 +3994,9 @@ void OrcaMCPServer::register_builtin_tools()
                     {"active_warnings", get_active_warnings_json(plater)}
                 };
 
-                // Mirroring reflects the mesh about the instance origin, not about the object's own
-                // centre, so an asymmetric object's convex hull lands somewhere else and can cross a
-                // plate boundary. This tool reported no placement at all before; it does now.
+                // A mirror about the object's centre keeps its bounding box, but a left-handed
+                // instance re-homes and re-slices like any other change, and this tool reported no
+                // placement at all before.
                 rehome_and_report_placement(result, object_id);
 
                 // Add turntable preview if requested
@@ -4379,7 +4493,9 @@ void OrcaMCPServer::register_builtin_tools()
     // cut_object - Cut an object at a specified Z height
     register_tool({
         "cut_object",
-        "Cut object at Z height. keep: below, above, or both.",
+        "Cut object at a Z height measured in plate mm (height above the bed), the same frame "
+        "get_object_info reports -- the object's own rotation is accounted for. keep: below, above, "
+        "or both.",
         {
             {"type", "object"},
             {"properties", {
@@ -4389,7 +4505,7 @@ void OrcaMCPServer::register_builtin_tools()
                 }},
                 {"z_height", {
                     {"type", "number"},
-                    {"description", "Cut height in mm"}
+                    {"description", "Cut height in plate mm, measured from the bed"}
                 }},
                 {"keep", {
                     {"type", "string"},
@@ -4421,6 +4537,11 @@ void OrcaMCPServer::register_builtin_tools()
                 // Get instance offset to calculate cut position relative to object
                 const Vec3d instance_offset = obj->instances[0]->get_offset();
 
+                // Subtracting only the offset is the whole conversion, rotation included: Cut brings
+                // each mesh into the frame the cut matrix lives in with get_matrix_no_offset()
+                // (CutUtils.cpp:332, used at :77), so the instance's rotation and scale are already
+                // applied there and the only difference left from plate coordinates is the
+                // translation. A rotated instance does not break this.
                 // For horizontal cut at z_height (world coords), the cut plane offset
                 // relative to instance is (0, 0, z_height - instance_offset.z)
                 // Since objects on bed have z_offset=0, this simplifies to (0, 0, z_height)

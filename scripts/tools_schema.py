@@ -238,7 +238,10 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                   'required': ['type', 'source_name', 'new_name'],
                   'type': 'object'},
   'name': 'clone_preset'},
- {'description': 'Cut object at Z height. keep: below, above, or both.',
+ {'description': 'Cut object at a Z height measured in plate mm (height above '
+                 'the bed), the same frame get_object_info reports -- the '
+                 "object's own rotation is accounted for. keep: below, above, "
+                 'or both.',
   'inputSchema': {'additionalProperties': False,
                   'properties': {'include_preview': {'description': 'Return '
                                                                     'turntable '
@@ -252,7 +255,10 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                                  'object_id': {'description': 'Object index '
                                                               '(0-based)',
                                                'type': 'integer'},
-                                 'z_height': {'description': 'Cut height in mm',
+                                 'z_height': {'description': 'Cut height in '
+                                                             'plate mm, '
+                                                             'measured from '
+                                                             'the bed',
                                               'type': 'number'}},
                   'required': ['object_id', 'z_height'],
                   'type': 'object'},
@@ -278,18 +284,23 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                   'type': 'object'},
   'name': 'delete_object'},
  {'description': 'Remove layer range config. If z_min/z_max omitted, removes '
-                 'ALL ranges.',
+                 "ALL ranges. Range Z is measured from the object's own base, "
+                 'not from the bed.',
   'inputSchema': {'additionalProperties': False,
                   'properties': {'object_id': {'description': 'Object index '
                                                               '(0-based)',
                                                'type': 'integer'},
-                                 'z_max': {'description': 'Max Z height (mm). '
-                                                          'Omit both to delete '
-                                                          'all ranges.',
+                                 'z_max': {'description': 'Max Z height (mm) '
+                                                          "above the object's "
+                                                          'own base. Omit both '
+                                                          'to delete all '
+                                                          'ranges.',
                                            'type': 'number'},
-                                 'z_min': {'description': 'Min Z height (mm). '
-                                                          'Omit both to delete '
-                                                          'all ranges.',
+                                 'z_min': {'description': 'Min Z height (mm) '
+                                                          "above the object's "
+                                                          'own base. Omit both '
+                                                          'to delete all '
+                                                          'ranges.',
                                            'type': 'number'}},
                   'required': ['object_id'],
                   'type': 'object'},
@@ -474,7 +485,9 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                   'required': ['object_id'],
                   'type': 'object'},
   'name': 'get_object_info'},
- {'description': 'Get layer-range settings for an object.',
+ {'description': 'Get layer-range settings for an object. Range Z is measured '
+                 "from the object's own base, not from the bed, so it equals "
+                 'plate Z only while the object sits on the bed.',
   'inputSchema': {'additionalProperties': False,
                   'properties': {'object_id': {'description': 'Object index '
                                                               '(0-based)',
@@ -761,11 +774,15 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                   'required': [],
                   'type': 'object'},
   'name': 'match_project_to_printer'},
- {'description': 'Mirror an object across the specified axis. The response '
-                 'reports the plate the object is on afterwards (plate_index) '
-                 'and measures on_bed against that plate.',
+ {'description': "Mirror an object across a plate axis, not the object's own: "
+                 'axis=z flips it top to bottom on the bed whatever its '
+                 "rotation. Mirroring is about the object's bounding-box "
+                 'centre, so it stays where it is. The response reports the '
+                 'plate the object is on afterwards (plate_index) and measures '
+                 'on_bed against that plate.',
   'inputSchema': {'additionalProperties': False,
-                  'properties': {'axis': {'description': 'Axis: x, y, or z',
+                  'properties': {'axis': {'description': 'Plate axis to mirror '
+                                                         'across: x, y, or z',
                                           'enum': ['x', 'y', 'z'],
                                           'type': 'string'},
                                  'include_preview': {'description': 'Return '
@@ -790,10 +807,14 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                   'type': 'object'},
   'name': 'mirror_object'},
  {'description': 'Move object by offset (relative) or to position '
-                 "(relative=false). Moving an object into another plate's area "
-                 're-homes it onto that plate; the response reports the '
+                 '(relative=false). X/Y/Z are plate millimetres along the '
+                 "plate's own axes -- the same frame get_object_info and this "
+                 'tool\'s own "position" report, and independent of how the '
+                 "object is rotated. Moving an object into another plate's "
+                 'area re-homes it onto that plate; the response reports the '
                  'resulting plate_index and measures on_bed against that '
-                 'plate.',
+                 'plate. Every instance of the object moves by the same '
+                 'amount, so a multi-instance object keeps its arrangement.',
   'inputSchema': {'additionalProperties': False,
                   'properties': {'include_preview': {'description': 'Return '
                                                                     'turntable '
@@ -818,11 +839,19 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                                                              'false=absolute '
                                                              'position',
                                               'type': 'boolean'},
-                                 'x': {'description': 'X in mm',
+                                 'x': {'description': 'Plate X in mm: a '
+                                                      'displacement along the '
+                                                      "plate's X axis when "
+                                                      'relative, else the X '
+                                                      'the bounding-box centre '
+                                                      'ends at',
                                        'type': 'number'},
-                                 'y': {'description': 'Y in mm',
+                                 'y': {'description': 'Plate Y in mm, same '
+                                                      'convention as x',
                                        'type': 'number'},
-                                 'z': {'description': 'Z in mm',
+                                 'z': {'description': 'Plate Z in mm (height '
+                                                      'above the bed), same '
+                                                      'convention as x',
                                        'type': 'number'}},
                   'required': ['object_id'],
                   'type': 'object'},
@@ -1265,9 +1294,15 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                   'required': ['type'],
                   'type': 'object'},
   'name': 'reset_preset'},
- {'description': 'Rotate object around X, Y, Z axes (degrees). The response '
-                 'reports the plate the object is on afterwards (plate_index) '
-                 'and measures on_bed against that plate.',
+ {'description': "Rotate object around the plate's X, Y and Z axes (degrees), "
+                 "not the object's own axes: a z=90 turns the object about the "
+                 'vertical whatever its current rotation is. Applied in the '
+                 "order X, then Y, then Z, about the object's bounding-box "
+                 'centre so it turns in place. The resulting rotation_degrees '
+                 "are the instance's, the same numbers get_object_info "
+                 'reports. The response reports the plate the object is on '
+                 'afterwards (plate_index) and measures on_bed against that '
+                 'plate.',
   'inputSchema': {'additionalProperties': False,
                   'properties': {'include_preview': {'description': 'Return '
                                                                     'turntable '
@@ -1290,11 +1325,17 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                                  'relative': {'description': 'true=add, '
                                                              'false=absolute',
                                               'type': 'boolean'},
-                                 'x': {'description': 'X rotation (degrees)',
+                                 'x': {'description': 'Rotation about the '
+                                                      "plate's X axis "
+                                                      '(degrees)',
                                        'type': 'number'},
-                                 'y': {'description': 'Y rotation (degrees)',
+                                 'y': {'description': 'Rotation about the '
+                                                      "plate's Y axis "
+                                                      '(degrees)',
                                        'type': 'number'},
-                                 'z': {'description': 'Z rotation (degrees)',
+                                 'z': {'description': 'Rotation about the '
+                                                      "plate's Z axis, the "
+                                                      'vertical (degrees)',
                                        'type': 'number'}},
                   'required': ['object_id'],
                   'type': 'object'},
@@ -1340,8 +1381,16 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                   'required': [],
                   'type': 'object'},
   'name': 'save_project'},
- {'description': 'Scale object by axis factors. uniform=true uses x for all. '
-                 'The response reports the plate the object is on afterwards '
+ {'description': "Scale object along the plate's X, Y and Z axes, not the "
+                 "object's own: with uniform=false, z is the object's height "
+                 'above the bed whatever its rotation. uniform=true uses x for '
+                 'all axes and is frame-independent. Scaling is about the '
+                 "object's bounding-box centre, so it grows in place. Factors "
+                 'must be positive; use mirror_object to flip an axis. A '
+                 'non-uniform scale along plate axes on an object whose '
+                 'rotation is not a multiple of 90 degrees is a shear -- it is '
+                 'applied, and the response says so in skew_warning. The '
+                 'response reports the plate the object is on afterwards '
                  '(plate_index) and measures on_bed against that plate.',
   'inputSchema': {'additionalProperties': False,
                   'properties': {'include_preview': {'description': 'Return '
@@ -1366,11 +1415,17 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                                                             'for all axes '
                                                             '(default: false)',
                                              'type': 'boolean'},
-                                 'x': {'description': 'X scale factor',
+                                 'x': {'description': 'Scale factor along the '
+                                                      "plate's X axis (must be "
+                                                      '> 0)',
                                        'type': 'number'},
-                                 'y': {'description': 'Y scale factor',
+                                 'y': {'description': 'Scale factor along the '
+                                                      "plate's Y axis (must be "
+                                                      '> 0)',
                                        'type': 'number'},
-                                 'z': {'description': 'Z scale factor',
+                                 'z': {'description': 'Scale factor along the '
+                                                      "plate's Z axis, the "
+                                                      'vertical (> 0)',
                                        'type': 'number'}},
                   'required': ['object_id'],
                   'type': 'object'},
@@ -1760,7 +1815,10 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                   'required': ['object_id', 'filament'],
                   'type': 'object'},
   'name': 'set_object_filament'},
- {'description': 'Set settings for a Z height range.',
+ {'description': 'Set settings for a Z height range. z_min/z_max are measured '
+                 "from the object's own base, not from the bed, so they equal "
+                 'plate Z only while the object sits on the bed -- moving the '
+                 'object up does not move its ranges.',
   'inputSchema': {'additionalProperties': False,
                   'properties': {'object_id': {'description': 'Object index '
                                                               '(0-based)',
@@ -1784,9 +1842,13 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                                                                      'value'],
                                                         'type': 'object'},
                                               'type': 'array'},
-                                 'z_max': {'description': 'Max Z height (mm)',
+                                 'z_max': {'description': 'Max Z height (mm) '
+                                                          "above the object's "
+                                                          'own base',
                                            'type': 'number'},
-                                 'z_min': {'description': 'Min Z height (mm)',
+                                 'z_min': {'description': 'Min Z height (mm) '
+                                                          "above the object's "
+                                                          'own base',
                                            'type': 'number'}},
                   'required': ['object_id', 'z_min', 'z_max', 'settings'],
                   'type': 'object'},
@@ -1850,9 +1912,12 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                   'required': ['target_color'],
                   'type': 'object'},
   'name': 'suggest_color_mix'},
- {'description': 'Batch transform multiple objects. Each result reports the '
-                 'plate that object is on afterwards (plate_index) and '
-                 'measures on_bed against that plate.',
+ {'description': 'Batch transform multiple objects. Position, rotation and '
+                 "scale are all in the plate's own frame -- the same frame "
+                 "get_object_info reports -- not the object's local axes, and "
+                 'match move_object, rotate_object and scale_object exactly. '
+                 'Each result reports the plate that object is on afterwards '
+                 '(plate_index) and measures on_bed against that plate.',
   'inputSchema': {'additionalProperties': False,
                   'properties': {'transforms': {'description': 'Transform '
                                                                'operations',
@@ -1864,9 +1929,15 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                                                                          'position': {'additionalProperties': False,
                                                                                       'description': 'Absolute '
                                                                                                      'position '
+                                                                                                     'in '
+                                                                                                     'plate '
+                                                                                                     'mm '
                                                                                                      '{x, '
                                                                                                      'y, '
-                                                                                                     'z} '
+                                                                                                     'z}, '
+                                                                                                     'the '
+                                                                                                     'bounding-box '
+                                                                                                     'centre '
                                                                                                      '- '
                                                                                                      'unspecified '
                                                                                                      'axes '
@@ -1877,6 +1948,10 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                                                                                       'type': 'object'},
                                                                          'rotation': {'additionalProperties': False,
                                                                                       'description': 'Rotation '
+                                                                                                     'about '
+                                                                                                     'the '
+                                                                                                     "plate's "
+                                                                                                     'axes '
                                                                                                      'in '
                                                                                                      'degrees '
                                                                                                      '{x, '
@@ -1884,7 +1959,16 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                                                                                                      'z} '
                                                                                                      '- '
                                                                                                      'applied '
-                                                                                                     'incrementally',
+                                                                                                     'incrementally, '
+                                                                                                     'X '
+                                                                                                     'then '
+                                                                                                     'Y '
+                                                                                                     'then '
+                                                                                                     'Z, '
+                                                                                                     'about '
+                                                                                                     'the '
+                                                                                                     "object's "
+                                                                                                     'centre',
                                                                                       'properties': {'x': {'type': 'number'},
                                                                                                      'y': {'type': 'number'},
                                                                                                      'z': {'type': 'number'}},
@@ -1892,12 +1976,20 @@ FULL_TOOLS_LIST = [{'description': 'Configure a print host on the current printe
                                                                          'scale': {'additionalProperties': False,
                                                                                    'description': 'Scale '
                                                                                                   'factors '
+                                                                                                  'along '
+                                                                                                  'the '
+                                                                                                  "plate's "
+                                                                                                  'axes '
                                                                                                   '{x, '
                                                                                                   'y, '
-                                                                                                  'z} '
+                                                                                                  'z}, '
                                                                                                   'or '
                                                                                                   '{uniform: '
-                                                                                                  'value}',
+                                                                                                  'value}; '
+                                                                                                  'all '
+                                                                                                  'must '
+                                                                                                  'be '
+                                                                                                  'positive',
                                                                                    'properties': {'uniform': {'type': 'number'},
                                                                                                   'x': {'type': 'number'},
                                                                                                   'y': {'type': 'number'},

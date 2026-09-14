@@ -275,11 +275,23 @@ Move an object to a new position.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `object_id` | integer | Yes | Object index |
-| `x` | number | No | X position/offset |
-| `y` | number | No | Y position/offset |
-| `z` | number | No | Z position/offset |
+| `x` | number | No | Plate X position/offset (mm) |
+| `y` | number | No | Plate Y position/offset (mm) |
+| `z` | number | No | Plate Z position/offset (mm), height above the bed |
 | `relative` | boolean | No | Relative move (default: true) |
 | `include_preview` | boolean | No | Include preview |
+
+**Coordinate frame.** `x`, `y` and `z` are plate millimetres along the *plate's* axes — the same
+frame `get_object_info` reports `position` and `bounding_box` in, and the frame this tool's own
+`position` comes back in. They are not the object's local axes, so a rotated object still moves,
+turns and scales along the plate's X, Y and Z. Before v2.3.2 these tools transformed the object's
+*mesh*, beneath the instance transform, so on an object whose instance carried a 90° X rotation a
+−84 mm Y move came out as a +84 mm Z move and left the part floating 84 mm above the bed, sliced
+that way with no error.
+
+Every instance of the object moves by the same amount, so a multi-instance object keeps its
+arrangement and the reported `position` — the whole object's bounding-box centre — is the one the
+caller asked for.
 
 **Examples:**
 ```json
@@ -316,9 +328,9 @@ Rotate an object.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `object_id` | integer | Yes | Object index |
-| `x` | number | No | X rotation (degrees) |
-| `y` | number | No | Y rotation (degrees) |
-| `z` | number | No | Z rotation (degrees) |
+| `x` | number | No | Rotation about the plate's X axis (degrees) |
+| `y` | number | No | Rotation about the plate's Y axis (degrees) |
+| `z` | number | No | Rotation about the plate's Z axis, the vertical (degrees) |
 | `relative` | boolean | No | Relative rotation (default: true) |
 | `include_preview` | boolean | No | Include preview |
 
@@ -326,6 +338,19 @@ Rotate an object.
 ```json
 {"name": "rotate_object", "arguments": {"object_id": 0, "z": 45}}
 ```
+
+**Coordinate frame.** `x`, `y` and `z` are plate millimetres along the *plate's* axes — the same
+frame `get_object_info` reports `position` and `bounding_box` in, and the frame this tool's own
+`position` comes back in. They are not the object's local axes, so a rotated object still moves,
+turns and scales along the plate's X, Y and Z. Before v2.3.2 these tools transformed the object's
+*mesh*, beneath the instance transform, so on an object whose instance carried a 90° X rotation a
+−84 mm Y move came out as a +84 mm Z move and left the part floating 84 mm above the bed, sliced
+that way with no error.
+
+Rotations are applied X, then Y, then Z, about the object's bounding-box centre, so the object turns
+in place. The `rotation_degrees` in the response are the instance's own — the same numbers
+`get_object_info` reports — and now change to reflect what was asked; before v2.3.2 they never moved,
+because the rotation went into the mesh instead.
 
 **Placement in the response.** Every transform re-homes the object onto the plate whose area now
 contains it, then answers about *that* plate:
@@ -349,9 +374,9 @@ Scale an object.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `object_id` | integer | Yes | Object index |
-| `x` | number | No | X scale factor |
-| `y` | number | No | Y scale factor |
-| `z` | number | No | Z scale factor |
+| `x` | number | No | Scale factor along the plate's X axis (must be > 0) |
+| `y` | number | No | Scale factor along the plate's Y axis (must be > 0) |
+| `z` | number | No | Scale factor along the plate's Z axis, the vertical (must be > 0) |
 | `uniform` | boolean | No | Apply X scale to all axes |
 | `include_preview` | boolean | No | Include preview |
 
@@ -360,9 +385,27 @@ Scale an object.
 // Uniform scale: 150%
 {"name": "scale_object", "arguments": {"object_id": 0, "x": 1.5, "uniform": true}}
 
-// Non-uniform: double height only
+// Non-uniform: double the height above the bed, whatever the object's rotation
 {"name": "scale_object", "arguments": {"object_id": 0, "z": 2.0}}
 ```
+
+**Coordinate frame.** `x`, `y` and `z` are plate millimetres along the *plate's* axes — the same
+frame `get_object_info` reports `position` and `bounding_box` in, and the frame this tool's own
+`position` comes back in. They are not the object's local axes, so a rotated object still moves,
+turns and scales along the plate's X, Y and Z. Before v2.3.2 these tools transformed the object's
+*mesh*, beneath the instance transform, so on an object whose instance carried a 90° X rotation a
+−84 mm Y move came out as a +84 mm Z move and left the part floating 84 mm above the bed, sliced
+that way with no error.
+
+Scaling is about the object's bounding-box centre, so it grows in place, and the `scale` in the
+response is the instance's own factor — the number `get_object_info` reports. Factors must be
+positive: zero makes the instance transform singular, and a negative factor is a mirror, which
+`mirror_object` does properly.
+
+A *non-uniform* scale along plate axes on an object whose rotation is not a multiple of 90° is a
+shear, and nothing can make it otherwise. It is applied, and the response carries a `skew_warning`
+saying so. The GUI avoids this by refusing world coordinates for such an object; use `uniform: true`,
+or unrotate the object first. Uniform scale is frame-independent and always exact.
 
 **Placement in the response.** Every transform re-homes the object onto the plate whose area now
 contains it, then answers about *that* plate:
@@ -386,8 +429,21 @@ Mirror an object along an axis.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `object_id` | integer | Yes | Object index |
-| `axis` | string | Yes | "x", "y", or "z" |
+| `axis` | string | Yes | Plate axis to mirror across: "x", "y", or "z" |
 | `include_preview` | boolean | No | Include preview |
+
+**Coordinate frame.** `x`, `y` and `z` are plate millimetres along the *plate's* axes — the same
+frame `get_object_info` reports `position` and `bounding_box` in, and the frame this tool's own
+`position` comes back in. They are not the object's local axes, so a rotated object still moves,
+turns and scales along the plate's X, Y and Z. Before v2.3.2 these tools transformed the object's
+*mesh*, beneath the instance transform, so on an object whose instance carried a 90° X rotation a
+−84 mm Y move came out as a +84 mm Z move and left the part floating 84 mm above the bed, sliced
+that way with no error.
+
+The reflection is across a plate plane through the object's bounding-box centre, so the object stays
+where it is. Before v2.3.2 it reflected the mesh about the volume origin, which moved an asymmetric
+object by its own width — and about the object's local axis, so on a rotated object "mirror z" was
+not a vertical flip at all.
 
 **Placement in the response.** Every transform re-homes the object onto the plate whose area now
 contains it, then answers about *that* plate:
@@ -443,13 +499,18 @@ Cut an object at a specified Z height.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `object_id` | integer | Yes | Object index |
-| `z_height` | number | Yes | Cut height in mm |
+| `z_height` | number | Yes | Cut height in plate mm, measured from the bed |
 | `keep` | string | No | "below", "above", or "both" (default: "both") |
 
 **Example:**
 ```json
 {"name": "cut_object", "arguments": {"object_id": 0, "z_height": 25, "keep": "below"}}
 ```
+
+`z_height` is in plate millimetres, the same frame `get_object_info` reports, and the object's own
+rotation is accounted for: `Cut` brings each mesh into the cut plane's frame with
+`get_matrix_no_offset()`, so the instance's rotation and scale are already applied there and the
+handler only has to subtract the instance's Z offset.
 
 ---
 
@@ -482,19 +543,27 @@ Apply transforms to multiple objects in batch.
 |-----------|------|----------|-------------|
 | `transforms` | array | Yes | Array of transform operations |
 
+Each entry takes `object_id` plus any of `position` (absolute, unspecified axes preserved), `rotation`
+(degrees, incremental) and `scale` (factors, or `{"uniform": v}`).
+
 **Example:**
 ```json
 {
   "name": "transform_objects",
   "arguments": {
     "transforms": [
-      {"object_id": 0, "move": {"x": 10, "y": 0}},
-      {"object_id": 1, "rotate": {"z": 90}},
-      {"object_id": 2, "scale": {"x": 1.5, "uniform": true}}
+      {"object_id": 0, "position": {"x": 10, "y": 0}},
+      {"object_id": 1, "rotation": {"z": 90}},
+      {"object_id": 2, "scale": {"uniform": 1.5}}
     ]
   }
 }
 ```
+
+All three are in the plate's frame, exactly as `move_object`, `rotate_object` and `scale_object`
+apply them — see the coordinate-frame note on `move_object`. An entry whose scale factors are not
+all positive is reported as an error against its own `object_id` and nothing in that entry is
+applied; the rest of the batch still runs.
 
 Each entry of `results` carries the same `plate_index` / `on_bed` / `placement_warning` fields the
 single-object transforms return, measured against the plate that object landed on.
@@ -916,7 +985,8 @@ Clear per-object configuration overrides.
 ## Layer Range Tools
 
 ### get_object_layer_ranges
-Get layer-specific settings for an object.
+Get layer-specific settings for an object. Range Z is measured from the object's own base, not from
+the bed, so it equals plate Z only while the object sits on the bed.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
@@ -926,14 +996,16 @@ Get layer-specific settings for an object.
 ---
 
 ### set_object_layer_range
-Set settings for a specific Z height range.
+Set settings for a specific Z height range. `z_min`/`z_max` are measured from the object's own base,
+not from the bed, so they equal plate Z only while the object sits on the bed — moving the object up
+does not move its ranges.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `object_id` | integer | Yes | Object index |
-| `z_min` | number | Yes | Range start (mm) |
-| `z_max` | number | Yes | Range end (mm) |
+| `z_min` | number | Yes | Range start (mm above the object's own base) |
+| `z_max` | number | Yes | Range end (mm above the object's own base) |
 | `settings` | array | Yes | Array of `{key, value}` pairs |
 
 **Example:**
@@ -971,7 +1043,7 @@ and `error` when none did.
 ---
 
 ### delete_object_layer_range
-Remove a layer range configuration.
+Remove a layer range configuration. Range Z is measured from the object's own base, not from the bed.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
