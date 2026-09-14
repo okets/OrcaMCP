@@ -303,6 +303,38 @@ gh release upload v2.3.2.10 ./path/to/new/artifact.exe -R okets/OrcaMCP
 | `src/slic3r/GUI/GUI_App.cpp` | MCP route registration, HTTP server startup |
 | `scripts/orcamcp-bridge.py` | stdio-to-HTTP bridge for Claude Code |
 
+### Where the app's data lives
+
+This fork's data directory is named after the fork, **not** after OrcaSlicer:
+
+| Platform | Path |
+|----------|------|
+| macOS | `~/Library/Application Support/OrcaMCP/` |
+| Windows | `%APPDATA%\OrcaMCP\` |
+| Linux | `~/.config/OrcaMCP/` |
+
+Physical printers (print host, serial, API key) live in `user/default/machine/<name>.json`
+there — `C5P.json` for the Creator 5 Pro. Searching the `OrcaSlicer` directory instead finds
+nothing and looks like the printer was never saved.
+
+### Running the live printer test
+
+`tests/slic3rutils/test_flashforge_live.cpp` talks to a real Flashforge over the LAN. It skips
+itself unless `FF_HOST`, `FF_SERIAL` and `FF_CHECK_CODE` are set, and is excluded from CI by
+its `[flashforge-live]` tag. The three values are the `print_host`,
+`flashforge_serial_number` and `printhost_apikey` of the physical printer preset above.
+
+**`FF_CHECK_CODE` is a printer access credential — never echo it, never commit it, and never
+paste it into a conversation.** Read it out of the preset and hand it straight to the test.
+
+The test is safe to run on an idle machine with an operator present: it toggles the chamber
+light, sets one nozzle to 40 °C and the bed to 30 °C, then returns every target to 0. It
+deliberately never starts, pauses or cancels a print.
+
+```bash
+build/arm64/tests/slic3rutils/RelWithDebInfo/slic3rutils_tests.app/Contents/MacOS/slic3rutils_tests "[flashforge-live]"
+```
+
 ---
 
 ## Adding New Tools
