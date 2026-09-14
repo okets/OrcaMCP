@@ -495,3 +495,88 @@ minutes and five renders for what the GUI does with one click.
 
 Also relevant, both already planned: `split_object` (Plan 3) would address the bag directly if it
 is a separate shell, and `measure_object` (Plan 4) would replace the ruler with a query.
+
+---
+
+## T12 — `move_object` moves the object but not its plate membership, and then measures it against the wrong plate
+
+Found 2026-09-14 during a real four-plate ABS print, with the user.
+
+A clasp was on plate 1. It belonged on plate 4, whose region is x[307,563] y[-307,-51], so:
+
+```
+move_object {"object_id": 15, "relative": false, "x": 462, "y": -105}
+```
+
+The object landed at exactly those coordinates — squarely inside plate 4's area. But:
+
+- `get_scene_info` still listed it under **plate 1**, and
+- the response claimed `"placement_warning": "Object positioned outside printable area"` and
+  `"on_bed": false`, for a position that is not outside anything.
+
+Left alone this slices the part onto the plate it used to be on, with no error. On a multi-plate
+job that is a part printed in the wrong colour, on the wrong plate, discovered after the print.
+
+**Two distinct defects, one call.**
+
+**1. The plate is never re-homed.** `OrcaMCPServer.cpp:3268-3287` translates the object,
+calls `invalidate_bounding_box()` and `plater->update()`, and stops. It never calls
+`PartPlateList::notify_instance_update(object_idx, instance_idx)`, which is what moves an
+instance onto the plate whose area now contains it.
+
+Everything else that moves geometry does call it:
+
+- The GUI's own drag: `Selection.cpp:552` → `Selection::notify_instance_update` (`:1833`) →
+  `plate_list.notify_instance_update` (`:1856`, `:1864`, `:1878`, `:1882`).
+- Our own `clone_object`: `OrcaMCPServer.cpp:3966`, for each new instance, with the third
+  argument `true`.
+
+So `move_object` is the outlier, and the fix is the call the neighbouring endpoint already makes.
+
+**2. `on_bed` is computed against the wrong plate.** `OrcaMCPServer.cpp:3296-3297` fetches
+`get_partplate_list().get_curr_plate()` — *the currently selected plate* — and compares the
+moved object's bounding box to that plate's box. When the caller moves an object to a plate that
+is not the selected one, the check is against a region the object was never meant to be in, so a
+correct move reports `outside printable area` and an incorrect one could report success. The
+comparison has to be against the plate the object actually landed on, which is only knowable
+after defect 1 is fixed.
+
+**Shape of the fix (not applied).** After the translate, call
+`notify_instance_update` for every instance of the object, then resolve the object's plate from
+the plate list and compute `on_bed` against *that* plate's box. Report the resolved plate index
+in the response — a caller that moved an object across plates needs to be told where it ended up,
+and right now nothing in the response carries it.
+
+**Related occurrences to check when fixing:** every endpoint that changes an instance transform
+without re-homing. `rotate_object` and `scale_object` change the convex hull and can push an
+object across a plate boundary the same way; `transform_objects` likewise. `clone_object` is
+already correct and is the reference. `paint_object` deliberately does call
+`notify_instance_update` (`OrcaMCPPaintTools.cpp:287`) even though paint never moves a vertex,
+so the pattern is already established in this codebase.
+
+**Workaround used during the session:** delete the object and re-load it with the destination
+plate selected, since a newly loaded model lands on the current plate. That is not a fix; it
+loses per-object settings and is not available for an object that was edited after loading.
+
+## T13 — a straight-down camera makes `render_plate_view` return a degenerate view matrix
+
+Same session, minor. Rendering a plate from directly overhead:
+
+```
+render_plate_view {"views": [{"camera_position": [128, 128, 620], "target": [128, 128, 20]}]}
+```
+
+returns `view_matrix` `[0,0,0,-0, 0,0,0,-0, 0,0,1,-620, 0,0,0,1]` — the upper-left 3x3 is all
+zeros. The view direction is straight down -Z and `Camera::look_at` is called with up = +Z
+(`OrcaMCPPlateUtils.cpp`, `camera.look_at(camera_position, target, Vec3d::UnitZ())`), so the
+cross product of view and up is zero and the basis collapses.
+
+The image still renders, but the camera reported alongside it is unusable: `pick_facet` fed that
+matrix cannot invert it into a meaningful ray, so the see → point → fill loop silently breaks for
+exactly the top-down view an agent is most likely to ask for first.
+
+Worth either choosing a fallback up vector when the view direction is parallel to it (the usual
+convention is +Y), or refusing the view with a message telling the caller to tilt the camera.
+`unproject_pixel_to_ray` already rejects a non-invertible matrix, so the failure is at least
+loud at the pick, not silent — but the render that produced it looks fine, which makes the
+diagnosis confusing.
