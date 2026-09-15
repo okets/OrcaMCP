@@ -492,9 +492,8 @@ PrimeTowerState OrcaMCPPlateUtils::GetPrimeTowerState(int plate_index, const Dyn
     // and resolved from the tower's height, which is not a calculation worth having twice.
     Vec3d wt_pos = Vec3d::Zero();
     Vec3d wt_size = Vec3d::Zero();
-    const int nozzle_count = pb->get_printer_extruder_count();
     const arrangement::ArrangePolygon ap =
-        plate->estimate_wipe_tower_polygon(full_config, plate_index, wt_pos, wt_size, nozzle_count, 0, false);
+        plate->estimate_wipe_tower_polygon(full_config, plate_index, wt_pos, wt_size);
 
     state.size = wt_size;
 
