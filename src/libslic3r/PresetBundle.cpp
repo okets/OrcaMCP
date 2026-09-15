@@ -4305,14 +4305,10 @@ DynamicPrintConfig PresetBundle::full_config(bool apply_extruder, std::optional<
 DynamicPrintConfig PresetBundle::full_config_secure(std::optional<std::vector<int>>filament_maps) const
 {
     DynamicPrintConfig config = this->full_fff_config(false, filament_maps);
-    //FIXME legacy, the keys should not be there after conversion to a Physical Printer profile.
-    config.erase("print_host");
-    config.erase("print_host_webui");
-    config.erase("printhost_apikey");
-    config.erase("printhost_cafile");    
-    config.erase("printhost_user");    
-    config.erase("printhost_password");    
-    config.erase("printhost_port");
+    // Connection settings and credentials stay on this machine; a project file is shared.
+    for (const std::string& key : config.keys())
+        if (Preset::is_print_host_connection_key(key))
+            config.erase(key);
     return config;
 }
 

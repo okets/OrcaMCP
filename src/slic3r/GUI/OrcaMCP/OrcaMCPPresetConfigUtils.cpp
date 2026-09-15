@@ -257,6 +257,12 @@ nlohmann::json OrcaMCPPresetConfigUtils::PresetToJson(const Preset* preset, bool
         nlohmann::json config_json = nlohmann::json::object();
         const DynamicPrintConfig& config = preset->config;
         for (const std::string& key : config.keys()) {
+            // A credential is reported as present or empty, never by value: tool output ends up in
+            // transcripts and logs.
+            if (Preset::is_print_host_secret_key(key)) {
+                config_json[key] = config.opt_serialize(key).empty() ? "" : "<redacted>";
+                continue;
+            }
             config_json[key] = config.opt_serialize(key);
         }
         j["config"] = config_json;

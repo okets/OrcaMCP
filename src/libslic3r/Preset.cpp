@@ -1,3 +1,4 @@
+#include <set>
 #include <cassert>
 
 #include "Config.hpp"
@@ -1544,6 +1545,21 @@ static std::vector<std::string> s_Preset_sla_printer_options {
     "inherits"
 };
 
+bool Preset::is_print_host_connection_key(const std::string& key)
+{
+    static const std::set<std::string> keys = {
+        "print_host", "print_host_webui", "printhost_apikey", "printhost_cafile", "printhost_user",
+        "printhost_password", "printhost_port",
+        "flashforge_serial_number", "flashforge_obico_url", "flashforge_obico_token",
+    };
+    return keys.count(key) != 0;
+}
+
+bool Preset::is_print_host_secret_key(const std::string& key)
+{
+    return key == "printhost_apikey" || key == "printhost_password" || key == "flashforge_obico_token";
+}
+
 const std::vector<std::string>& Preset::print_options()          { return s_Preset_print_options; }
 const std::vector<std::string>& Preset::filament_options()       { return s_Preset_filament_options; }
 const std::vector<std::string>& Preset::machine_limits_options() { return s_Preset_machine_limits_options; }
@@ -2575,13 +2591,10 @@ std::pair<Preset*, bool> PresetCollection::load_external_preset(
 {
     // Load the preset over a default preset, so that the missing fields are filled in from the default preset.
     DynamicPrintConfig cfg(this->default_preset_for(combined_config).config);
-    // SoftFever: ignore print connection info from project
+    // SoftFever: ignore print connection info from project. The project may have been saved by a
+    // build that did not know some of these keys; applying its defaults would blank the user's.
     auto        keys = cfg.keys();
-    keys.erase(std::remove_if(keys.begin(), keys.end(),
-                              [](std::string &val) {
-                                return val == "print_host" || val == "print_host_webui" || val == "printhost_apikey" ||
-                                       val == "printhost_cafile" || val == "printhost_user" || val == "printhost_password" || val == "printhost_port";
-                              }),
+    keys.erase(std::remove_if(keys.begin(), keys.end(), [](const std::string& val) { return Preset::is_print_host_connection_key(val); }),
                keys.end());
     cfg.apply_only(combined_config, keys, true);
     std::string                 &inherits = Preset::inherits(cfg);

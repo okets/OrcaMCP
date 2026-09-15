@@ -340,6 +340,13 @@ public:
     void                set_dirty(bool dirty = true) { this->is_dirty = dirty; }
     void                reset_dirty() { this->is_dirty = false; }
 
+    // Print-host connection settings belong to the user's machine, not to a project: a 3MF must
+    // never carry them out (full_config_secure) and must never overwrite them on load. One list,
+    // so a key added for one host (the Flashforge serial, the Obico link) is covered everywhere.
+    static bool is_print_host_connection_key(const std::string& key);
+    // The subset that is a credential and must never be echoed by a tool or written to a log.
+    static bool is_print_host_secret_key(const std::string& key);
+
     // Returns the name of the preset, from which this preset inherits.
     static std::string& inherits(DynamicPrintConfig &cfg) { return cfg.option<ConfigOptionString>("inherits", true)->value; }
     std::string&        inherits() { return Preset::inherits(this->config); }

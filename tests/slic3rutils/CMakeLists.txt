@@ -22,6 +22,7 @@ add_executable(${_TEST_NAME}_tests
     test_flashforge_console.cpp
     test_flashforge_live.cpp
     test_obico_link.cpp
+    test_print_host_keys.cpp
     test_project_match.cpp
     test_slice_estimate.cpp
     test_preset_query.cpp
