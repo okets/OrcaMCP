@@ -626,9 +626,18 @@ jobs:
         timeout-minutes: 20
         shell: bash
         run: |
+          # Pinned, not tracked. An unpinned --depth 1 clone meant this job could go red
+          # overnight with no commit on our side: on 2026-09-14 upstream flipped seven
+          # mixed-filament and zero-fill cases from expected-failure to must-pass because
+          # upstream OrcaSlicer had fixed them, and this branch had not yet taken those fixes.
+          # A red build has to be attributable to a commit in *this* repo -- either a code
+          # change or a deliberate bump of this SHA. Bump it when syncing with upstream.
           test_repo_dir="${{ runner.temp }}/orca-test-repo"
+          test_repo_sha="d7b53ac"   # OrcaSlicer/orca-test-repo, 2026-09-15
           rm -rf "$test_repo_dir"
-          git clone --depth 1 https://github.com/OrcaSlicer/orca-test-repo.git "$test_repo_dir"
+          git clone --filter=blob:none https://github.com/OrcaSlicer/orca-test-repo.git "$test_repo_dir"
+          git -C "$test_repo_dir" checkout --quiet "$test_repo_sha"
+          echo "external regression suite: OrcaSlicer/orca-test-repo @ $(git -C "$test_repo_dir" rev-parse HEAD)"
           python3 "$test_repo_dir/run_test.py" "${{ github.workspace }}/build/package/bin/${{ env.app_cmd }}"
 
       - name: Build orca_custom_preset_tests
