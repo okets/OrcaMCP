@@ -881,3 +881,95 @@ disagreed about what a float means. The parse now happens once and the parsed va
 **Lesson worth keeping.** When adding a parameter, use the codebase's existing parameter parser.
 Writing a fresh type check produces a tool that is stricter than its neighbours in a way no schema
 documents, and the failure lands on a caller who did nothing wrong.
+
+---
+
+## T18 — ABS printed with the chamber heater switched off (fixed)
+
+Found 2026-09-15 by the user, seconds after the first real ABS print started: *"we are printing
+ABS. are we heating the chanber?"* We were not. The printer reported `chamberTargetTemp: 0` while
+printing ABS, and it would have run all four plates — 26 hours — that way.
+
+**Root cause.** The shipped Creator 5 machine profile's `machine_start_gcode` contained a literal
+
+```gcode
+M191 S0 ; Chamber temp. max65C
+```
+
+That is harmful twice over. It commands the chamber to 0 and waits, and — the non-obvious half —
+`GCode.cpp:3639` only emits the slicer's own `M191` when `custom_gcode_sets_temperature()` finds no
+`M141`/`M191` already in the start G-code:
+
+```cpp
+if (activate_chamber_temp_control && max_chamber_temp > 0){
+    int temp_out = 0;
+    if(!custom_gcode_sets_temperature(machine_start_gcode, 141, 191, false, temp_out))
+        file.write(m_writer.set_chamber_temperature(max_chamber_temp, true));
+}
+```
+
+So a literal `M191` in the profile silently suppresses the correct command as well as overriding
+the outcome.
+
+**The filament side was never wrong.** `Flashforge ABS Basic @FF C5P` — and every ABS/ASA variant
+for the Pro — ships `chamber_temperature: 60` with `activate_chamber_temp_control: 1`. The evidence
+that the slicer knew all along: `M141 S0;set chamber_temperature` was present at the end of the
+exported G-code the whole time, and that line is gated on *exactly the same*
+`activate_chamber_temp_control && max_chamber_temp > 0` condition as the start-of-print `M191` that
+never appeared. The chamber was being switched off at the end of a print it was never switched on
+for.
+
+**Fix.** `M191 S[overall_chamber_temperature]` in all six Creator 5 / 5 Pro profiles.
+`overall_chamber_temperature` is set at `GCode.cpp:3541` to `max_chamber_temp`, the maximum
+`chamber_temperature` across the extruders **actually used in this print** — the right quantity for
+one shared chamber.
+
+**Verified in exported G-code, not by reading the profile.** Plate 1 (gray ABS, tool 1) and plate 4
+(red ABS, tool 2) both now emit:
+
+```gcode
+M140 S110                              ; bed commanded, no wait
+M191 S60 ; Chamber temp. max65C        ; chamber heats in parallel, waits
+...
+M141 S0;set chamber_temperature        ; chamber off at end of print
+```
+
+The ordering matters and is why the line stays *inside* the start G-code rather than being deleted:
+`M140` (no wait) precedes `M191` (waits), so bed and chamber come up together. Deleting the line
+would have let the slicer emit its own `M191` *before* `machine_start_gcode`, heat-soaking the
+chamber against a cold bed.
+
+**A wrong fix that looks right, recorded so nobody repeats it.**
+`M191 S{chamber_temperature[initial_extruder]}` resolves to **0**. The config block of that very
+export shows `chamber_temperature = 0,60,60,0` and `T1` selected, so the value was present and the
+index should have been 1. Indexing a per-filament vector by that variable did not evaluate as
+expected. `overall_chamber_temperature` is a scalar, is what the slicer itself uses, and is already
+the idiom in other shipped profiles.
+
+**Low-temperature materials are unaffected.** A PLA or PETG print has `max_chamber_temp` 0, so the
+line still emits `M191 S0` and the chamber is still explicitly turned off. Deleting the line would
+have lost that safety.
+
+### T18a — a profile fix does not reach projects that already exist
+
+Found while verifying T18, and it wasted two full slice-and-export cycles: after fixing the six
+profiles and restarting the app, the exported G-code was **byte-for-byte identical** and still said
+`M191 S0`.
+
+A 3MF carries its own complete configuration in `Metadata/project_settings.config`, and
+`load_project` restores that **over** the system profile. Confirmed by unzipping the project:
+
+```
+Metadata/project_settings.config:M191 S0 ; Chamber temp. max65C
+```
+
+So a shipped-profile fix helps every *new* project and every user who starts fresh, and does
+nothing at all for a project saved before the fix. Existing projects need the value re-applied
+(`apply_config`) and the project re-saved.
+
+**This generalises well beyond the chamber:** any vendor profile correction we ship is invisible to
+already-saved projects. Worth remembering before concluding "the profile is fixed, therefore the
+problem is gone" — and worth telling users at release time.
+
+The byte-identical export size was the tell. Two exports of a supposedly changed configuration
+producing exactly 23,255,835 bytes is not a subtle hint.
