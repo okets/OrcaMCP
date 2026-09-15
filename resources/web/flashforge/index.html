@@ -303,6 +303,18 @@ footer.foot .sep{width:1px;height:12px;background:var(--edge)}
 .viewport img.cam{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;background:#0a0d12}
 .camoff{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:18px;
   color:#8A94A4;font-size:12px;line-height:1.6}
+/* Obico: more than one camera gets a strip of live thumbnails; a click swaps it into the viewport. */
+.camstrip{display:flex;gap:8px;padding:8px 12px 0;overflow-x:auto}
+.camstrip .thumb{position:relative;flex:0 0 auto;width:96px;aspect-ratio:16/10;border-radius:6px;overflow:hidden;
+  border:1px solid var(--edge);cursor:pointer;opacity:.72;background:#0a0d12}
+.camstrip .thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.camstrip .thumb span{position:absolute;left:0;right:0;bottom:0;padding:2px 6px;font-size:10px;color:#E9EDF3;
+  background:rgba(8,11,15,.62);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.camstrip .thumb[data-selected="1"]{opacity:1;border-color:var(--brass)}
+.watch{padding:8px 12px 10px;font-size:11.5px;line-height:1.45;color:var(--muted)}
+.watch[data-kind="warn"]{color:var(--warn)}
+.camtag{position:absolute;right:12px;bottom:12px;padding:4px 8px;border-radius:6px;background:rgba(8,11,15,.62);
+  border:1px solid rgba(233,237,243,.14);color:#C8D0DC;font-size:10.5px}
 /* A reading nobody is refreshing any more - the page is parked, so what it holds is the last thing
    the printer said before the user looked away. Shown, because it is still the truth about a moment;
    dimmed the way a control that cannot act is dimmed, so it is never mistaken for a live one. The
@@ -410,6 +422,8 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
         <span class="badge" data-kind="standby" id="camBadge" hidden></span>
         <button class="mini" type="button" disabled id="timelapseBtn">Time-lapse</button>
       </div>
+      <div class="camstrip" id="camStrip" hidden></div>
+      <div class="watch" id="camWatch" hidden></div>
       <div class="controlbar" id="controlbar"></div>
     </div>
 
@@ -499,6 +513,7 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
         }
       pending = {};
       disarmStop();
+      obicoLink.close();
       /* A full pass rather than repaint(): what the page is holding has just become a reading
          nobody will refresh, and saying so is the footer's job as much as the controls'. */
       if (lastState) render(lastState); else repaint();
@@ -520,6 +535,75 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
   }
 
   var bridge = (window.wx && typeof window.wx.postMessage === "function") ? makeBridge() : null;
+
+  /* ══ Obico ════════════════════════════════════════════════════════════
+     A Flashforge preset may name an Obico server (flashforge_obico_url/_token). Obico is where the
+     cameras come from once the flashforge-obico agent owns the printer's single-client stream: the
+     agent advertises each camera's re-served address in Obico's webcam list, and Obico pushes that
+     list, the latest snapshot and its watch state over a websocket that authenticates with the
+     printer's token alone. The page opens that socket itself; the slicer only hands over the link.
+     `suspended` and `lastState` are declared further down and only read at call time.          */
+  var obicoLink = (function(){
+    var link = null, ws = null, doc = null, state = "off", timer = null;
+    var backoffMs = 2000, closesBeforeDoc = 0;
+    var BACKOFF_MAX_MS = 60000, REJECTED_AFTER_CLOSES = 2;
+
+    function wsUrl(l){
+      return l.url.replace(/^http/i, "ws").replace(/\/+$/, "") + "/ws/token/web/" + encodeURIComponent(l.token) + "/";
+    }
+    function sameLink(a, b){ return !!a && !!b && a.url === b.url && a.token === b.token; }
+    function repaint(){ if (lastState) render(lastState); }
+
+    function open(){
+      if (ws || !link) return;
+      if (!doc) state = "connecting";
+      var socket;
+      try { socket = new WebSocket(wsUrl(link)); }
+      catch (e){ onClosed(); return; }
+      ws = socket;
+      socket.onmessage = function(ev){
+        var parsed;
+        try { parsed = JSON.parse(ev.data); } catch (e){ return; }
+        if (!parsed || typeof parsed !== "object") return;
+        doc = parsed; state = "connected"; backoffMs = 2000; closesBeforeDoc = 0;
+        repaint();
+      };
+      socket.onclose = function(ev){ if (ws === socket) onClosed(ev); };
+      socket.onerror = function(){ /* onclose follows */ };
+    }
+    /* A clean close before any document is Obico turning the token away (its consumer closes the
+       socket on an unknown token); a failed connection closes unclean (code 1006) and just means the
+       server is not there. The retry timer is armed before the repaint, so the render's sync() does
+       not open a second socket in between. */
+    function onClosed(ev){
+      ws = null;
+      if (!link) return;
+      var clean = !!(ev && ev.wasClean);
+      if (!doc && clean && ++closesBeforeDoc >= REJECTED_AFTER_CLOSES){
+        state = "rejected";
+        repaint();
+        return;
+      }
+      state = doc ? "unreachable" : "connecting";   /* a cached document keeps serving its webcam list */
+      timer = setTimeout(function(){ timer = null; open(); }, backoffMs);
+      backoffMs = Math.min(backoffMs * 2, BACKOFF_MAX_MS);
+      repaint();
+    }
+    function close(){
+      if (timer){ clearTimeout(timer); timer = null; }
+      var socket = ws; ws = null;
+      if (socket){ try { socket.close(); } catch (e){} }
+      doc = null; state = "off"; backoffMs = 2000; closesBeforeDoc = 0;
+    }
+    function sync(s){
+      var wanted = (s && s.obico && s.obico.url && s.obico.token && !suspended) ? s.obico : null;
+      if (!wanted){ if (link){ link = null; close(); } return; }
+      if (sameLink(link, wanted)){ if (!ws && !timer && state !== "rejected") open(); return; }
+      close(); link = wanted; open();
+    }
+    return { sync: sync, close: function(){ link = null; close(); },
+             doc: function(){ return doc; }, state: function(){ return state; } };
+  })();
 
   /* ══ Sample state ═════════════════════════════════════════════════════
      The exact shape the bridge delivers, so there is one render path.
@@ -782,10 +866,14 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
   }
 
   function renderBanner(s){
-    setHTML(el("banner"), (s.connected || s.connecting) ? "" :
+    var doc = obicoLink.doc(), cp = doc && doc.current_print;
+    var alert = (cp && cp.alerted_at && !cp.alert_muted) ?
+      '<div class="banner"><b>Obico has flagged a possible failure.</b>&nbsp;Check the camera; pause from Obico or from the controls below.</div>' : "";
+    var offline = (s.connected || s.connecting) ? "" :
       '<div class="banner"><b>Printer not reachable.</b>&nbsp;'+
       esc(s.error || "No answer from the printer's local API.")+
-      ' OrcaSlicer keeps trying; the page fills in as soon as the printer answers.</div>');
+      ' OrcaSlicer keeps trying; the page fills in as soon as the printer answers.</div>';
+    setHTML(el("banner"), alert + offline);
   }
 
   function renderMachine(p, raw, pro){
@@ -955,30 +1043,118 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     setStructure(el("envRows"), html);
   }
 
-  /* The MJPEG stream is an ordinary <img>; it is created once and only its
-     src is touched, so a re-render never restarts the stream. */
-  var camSrc = null;
+  /* Where the picture can come from, in the order it is tried. Each entry is {kind, url, name,
+     primary}. With Obico configured the agent's re-served streams come first (full frame rate), then
+     Obico's own snapshot (about one a second, primary camera only), then the printer's stream - which
+     is what the page shows when no Obico is configured at all. */
+  function cameraSources(s, p, doc){
+    var out = [];
+    var cams = (doc && doc.settings && Array.isArray(doc.settings.webcams)) ? doc.settings.webcams : [];
+    cams.filter(function(w){ return w && w.stream_url; })
+        .sort(function(a, b){ return (b.is_primary_camera ? 1 : 0) - (a.is_primary_camera ? 1 : 0); })
+        .forEach(function(w){
+          out.push({ kind:"obico-stream", url:w.stream_url, name:w.name || "Primary", primary:!!w.is_primary_camera });
+        });
+    if (doc && doc.pic && doc.pic.img_url)
+      out.push({ kind:"obico-snapshot", url:doc.pic.img_url, name:"Snapshot via Obico", primary:true });
+    if (s.connected && p.camera_stream_url)
+      out.push({ kind:"printer", url:p.camera_stream_url, name:"Printer", primary:true });
+    return out;
+  }
+
+  /* The selected Obico camera if it is still offered and has not failed, else the first source that
+     has not failed. `failed` is keyed by URL. */
+  function chooseCamera(sources, selectedName, failed){
+    if (selectedName){
+      var chosen = sources.filter(function(c){ return c.kind === "obico-stream" && c.name === selectedName && !failed[c.url]; })[0];
+      if (chosen) return chosen;
+    }
+    return sources.filter(function(c){ return !failed[c.url]; })[0] || null;
+  }
+
+  /* One line under the camera saying what Obico is doing. Null when no Obico is configured. */
+  function obicoWatch(doc, state, sourceKind){
+    if (state === "off") return null;
+    if (state === "connecting") return { kind:"", text:"Obico: connecting…" };
+    if (state === "rejected")
+      return { kind:"warn", text:"Obico rejected the printer token. Check the Obico printer token in the printer settings." };
+    if (state === "unreachable"){
+      var showing = sourceKind === "obico-stream"   ? "the camera stream" :
+                    sourceKind === "obico-snapshot" ? "the last snapshot" :
+                    sourceKind === "printer"        ? "the printer's own camera" : "no camera";
+      return { kind:"warn", text:"Obico unreachable — showing " + showing + "." };
+    }
+    var cp = doc && doc.current_print;
+    if (cp && cp.alerted_at && !cp.alert_muted) return { kind:"warn", text:"Obico has flagged a possible failure." };
+    if (!cp) return { kind:"", text:"Obico: watching, idle" };
+    var prob  = num(doc.normalized_p, 0);
+    var level = prob < 0.33 ? "low" : prob < 0.66 ? "medium" : "high";
+    return { kind: level === "high" ? "warn" : "", text:"Obico: watching · failure confidence " + level };
+  }
+
+  /* The MJPEG stream is an ordinary <img>; it is created once and only its src is touched, so a
+     re-render never restarts the stream. A source whose <img> errors is skipped; failures are
+     forgiven when Obico's camera list changes and every half minute, so a re-server that was down
+     gets another try without the viewport flickering on every push. */
+  var CAM_RETRY_MS = 30000;
+  var camSrc = null, camSelected = null, camFailed = {}, camFailedFor = null, camFailedAt = 0, stripHtml = null;
   function renderCamera(s, p, raw, pro, printing){
-    var url   = s.connected ? (p.camera_stream_url || "") : "";
-    var scene = el("camScene");
+    var doc = obicoLink.doc(), ostate = obicoLink.state();
+    var camsKey = doc ? JSON.stringify(doc.settings && doc.settings.webcams) : null;
+    if (camsKey !== camFailedFor || Date.now() - camFailedAt > CAM_RETRY_MS){
+      camFailed = {}; camFailedFor = camsKey; camFailedAt = Date.now();
+    }
+
+    var sources = cameraSources(s, p, doc);
+    var chosen  = chooseCamera(sources, camSelected, camFailed);
+    var url     = chosen ? chosen.url : "";
+    var scene   = el("camScene");
     if (url !== camSrc){
       camSrc = url;
       if (url){
-        scene.innerHTML = '<img class="cam" alt="Live camera view of the build plate">';
+        scene.innerHTML = '<img class="cam" alt="Live camera view of the build plate">' +
+          (chosen.kind === "obico-snapshot" ? '<span class="camtag">Snapshot via Obico</span>' : "");
         var img = scene.firstChild;
-        show(el("camLive"), true);
+        show(el("camLive"), chosen.kind !== "obico-snapshot");
         img.onerror = function(){
-          show(el("camLive"), false);
-          scene.innerHTML = '<div class="camoff">Camera stream unavailable.<br>' +
-            'The printer serves it at ' + esc(url) + '.</div>';
+          camFailed[url] = true;
+          if (chosen.kind === "obico-stream" && chosen.name === camSelected) camSelected = null;
+          camSrc = null;                       /* the next pass picks the next source */
+          if (lastState) render(lastState);
         };
         img.src = url;
       } else {
         show(el("camLive"), false);
+        var tried = sources.length ? "<br>Tried: " + sources.map(function(c){ return esc(c.name); }).join(", ") + "." : "";
         scene.innerHTML = '<div class="camoff">' +
-          (s.connected ? "This printer reports no camera stream." : "Waiting for the printer…") + '</div>';
+          (!s.connected && !doc ? "Waiting for the printer…" :
+           sources.length ? "Camera stream unavailable." + tried : "This printer reports no camera stream.") + '</div>';
       }
     }
+
+    var streams = sources.filter(function(c){ return c.kind === "obico-stream"; });
+    var strip   = el("camStrip");
+    show(strip, streams.length > 1);
+    var html = streams.length > 1 ? streams.map(function(c){
+      return '<div class="thumb" data-name="' + esc(c.name) + '" data-selected="0">' +
+             '<img alt="" src="' + esc(c.url) + '"><span>' + esc(c.name) + '</span></div>';
+    }).join("") : "";
+    if (html !== stripHtml){
+      stripHtml = html;
+      strip.innerHTML = html;
+      Array.prototype.forEach.call(strip.querySelectorAll(".thumb"), function(t){
+        t.onclick = function(){ camSelected = t.getAttribute("data-name"); if (lastState) render(lastState); };
+      });
+    }
+    Array.prototype.forEach.call(strip.querySelectorAll(".thumb"), function(t){
+      var selected = !!chosen && chosen.kind === "obico-stream" && chosen.name === t.getAttribute("data-name");
+      t.setAttribute("data-selected", selected ? "1" : "0");
+    });
+
+    var watch   = obicoWatch(doc, ostate, chosen ? chosen.kind : null);
+    var watchEl = el("camWatch");
+    show(watchEl, !!watch);
+    if (watch){ setText(watchEl, watch.text); watchEl.setAttribute("data-kind", watch.kind); }
 
     setText(el("camFile"), printing ? (p.print_file || "Printing") : (p.name || ""));
     var badge = el("camBadge");
@@ -1692,6 +1868,7 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
 
   function render(s){
     lastState = s;
+    obicoLink.sync(s);
     var p   = s.printer || {};
     var raw = p.raw || {};
     var ms  = raw.matlStationInfo || {};
