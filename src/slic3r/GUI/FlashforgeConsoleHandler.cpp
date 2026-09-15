@@ -11,6 +11,7 @@
 #include "slic3r/GUI/Widgets/WebView.hpp"
 #include "slic3r/Utils/Flashforge.hpp"
 #include "slic3r/Utils/FlashforgeApi.hpp"
+#include "slic3r/Utils/ObicoLink.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/Utils.hpp"
 
@@ -523,6 +524,10 @@ private:
 
         auto session       = std::make_shared<PollSession>();
         session->identity  = json{{"preset", preset}, {"host", config.opt_string("print_host")}};
+        // The page opens Obico's websocket itself; this is the only place the token leaves the preset,
+        // and it goes to our own file:// page, the same way other vendors' device pages get their keys.
+        if (const json obico = obico_link_json(config); !obico.is_null())
+            session->identity["obico"] = obico;
         session->last_status = session->offline(std::string(), /*connecting*/ true);
         m_session          = session;
 

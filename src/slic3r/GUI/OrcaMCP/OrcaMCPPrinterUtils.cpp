@@ -13,6 +13,7 @@
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/PrintHostDialogs.hpp"
 #include "slic3r/GUI/Tab.hpp"
+#include "slic3r/Utils/ObicoLink.hpp"
 #include "slic3r/Utils/PrintHost.hpp"
 
 #include <algorithm>
@@ -588,7 +589,9 @@ std::string save_print_host_preset(const std::string&                name,
                                    const std::string&                host_type,
                                    const std::optional<std::string>& serial_number,
                                    const std::optional<std::string>& api_key,
-                                   const std::string&                printer_preset)
+                                   const std::string&                printer_preset,
+                                   const std::optional<std::string>& obico_url,
+                                   const std::optional<std::string>& obico_token)
 {
     PrinterPresetCollection& printers = wxGetApp().preset_bundle->printers;
 
@@ -621,6 +624,10 @@ std::string save_print_host_preset(const std::string&                name,
         settings["flashforge_serial_number"] = *serial_number;
     if (api_key.has_value())
         settings["printhost_apikey"] = *api_key;
+    if (obico_url.has_value())
+        settings[OBICO_URL_KEY] = *obico_url;
+    if (obico_token.has_value())
+        settings[OBICO_TOKEN_KEY] = *obico_token;
 
     const ApplyConfigResult applied = OrcaMCPPresetConfigUtils::ApplyConfig({{"type", "printer"}, {"settings", settings}});
     if (!applied.error.empty())

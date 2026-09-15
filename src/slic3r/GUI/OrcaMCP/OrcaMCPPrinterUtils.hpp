@@ -132,13 +132,15 @@ nlohmann::json select_print_host_preset(const std::string& name);
 
 // Main thread, caller holds a McpDialogSuppressionGuard. Writes the print host settings into the
 // edited printer preset and saves it as the user preset `name`, the way PhysicalPrinterDialog does.
-// `serial_number`/`api_key` are left untouched when not supplied. Returns an empty string on success,
-// otherwise the error message.
+// `serial_number`/`api_key`/`obico_url`/`obico_token` are left untouched when not supplied. Returns an
+// empty string on success, otherwise the error message.
 std::string save_print_host_preset(const std::string&                name,
                                    const std::string&                host,
                                    const std::string&                host_type,
                                    const std::optional<std::string>& serial_number,
                                    const std::optional<std::string>& api_key,
-                                   const std::string&                printer_preset);
+                                   const std::string&                printer_preset,
+                                   const std::optional<std::string>& obico_url   = std::nullopt,
+                                   const std::optional<std::string>& obico_token = std::nullopt);
 
 }}} // namespace Slic3r::GUI::OrcaMCP

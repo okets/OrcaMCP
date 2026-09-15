@@ -10,6 +10,7 @@
 #include "slic3r/GUI/DeviceCore/DevManager.h"
 #include "slic3r/Utils/Flashforge.hpp"
 #include "slic3r/Utils/FlashforgeApi.hpp"
+#include "slic3r/Utils/ObicoLink.hpp"
 #include "slic3r/Utils/PrintHost.hpp"
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/PresetBundle.hpp"
@@ -591,6 +592,15 @@ void OrcaMCPServer::register_printer_tools()
                     {"type", "string"},
                     {"description", "API key, or the Flashforge LAN check code. Omit to keep the stored one."}
                 }},
+                {"obico_url", {
+                    {"type", "string"},
+                    {"description", "Flashforge only: base URL of a self-hosted Obico server that watches this printer "
+                                    "(e.g. http://10.0.0.2:3334). Give it together with obico_token; pass \"\" for both to clear."}
+                }},
+                {"obico_token", {
+                    {"type", "string"},
+                    {"description", "Flashforge only: the printer's Obico auth token. Never returned by any tool."}
+                }},
                 {"printer_preset", {
                     {"type", "string"},
                     {"description", "Printer preset to base it on (default: the edited printer preset). "
@@ -608,16 +618,23 @@ void OrcaMCPServer::register_printer_tools()
             // Omitted credentials keep whatever the preset already stores.
             const std::optional<std::string> serial_number = optional_string(params, "serial_number");
             const std::optional<std::string> api_key       = optional_string(params, "api_key");
+            const std::optional<std::string> obico_url     = optional_string(params, "obico_url");
+            const std::optional<std::string> obico_token   = optional_string(params, "obico_token");
 
             if (name.empty() || host.empty() || host_type.empty())
                 return error_response("name, host and host_type are required");
+            if (obico_url.has_value() != obico_token.has_value() ||
+                (obico_url.has_value() && obico_url->empty() != obico_token->empty()))
+                return error_response("obico_url and obico_token go together: give both, or pass \"\" for both to clear");
             if (std::find(kSupportedHostTypes.begin(), kSupportedHostTypes.end(), host_type) == kSupportedHostTypes.end())
                 return error_response("Unsupported host_type '" + host_type + "'. Supported: " +
                                       boost::algorithm::join(kSupportedHostTypes, ", "));
 
-            return run_on_main_thread([name, host, host_type, serial_number, api_key, printer_preset]() -> nlohmann::json {
+            return run_on_main_thread([name, host, host_type, serial_number, api_key, printer_preset, obico_url,
+                                       obico_token]() -> nlohmann::json {
                 McpDialogSuppressionGuard suppression;
-                const std::string error = save_print_host_preset(name, host, host_type, serial_number, api_key, printer_preset);
+                const std::string error = save_print_host_preset(name, host, host_type, serial_number, api_key,
+                                                                 printer_preset, obico_url, obico_token);
                 if (!error.empty())
                     return error_response(error);
                 return select_print_host_preset(name);
@@ -653,6 +670,7 @@ void OrcaMCPServer::register_printer_tools()
                         {"print_host", print_host_value},
                         {"online", online},
                         {"printer", nullptr},
+                        {"obico", obico_status_json(cfg)},
                         {"note", "Status details are only implemented for Flashforge hosts"}};
             }
 
@@ -668,6 +686,7 @@ void OrcaMCPServer::register_printer_tools()
                     {"host_type", host_type},
                     {"print_host", print_host_value},
                     {"online", true},
+                    {"obico", obico_status_json(cfg)},
                     {"printer", status_to_json(status)}};
         }
     });
