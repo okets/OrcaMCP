@@ -279,10 +279,14 @@ material-mapping array pairing project tools to material-station slots.
 `cameraStreamUrl` in `detail` — on this machine `http://<ip>:8080/?action=stream`, a plain MJPEG
 stream served over the LAN with no cloud in the path and no credential of its own.
 
-**Test this before you design around it.** Many embedded MJPEG servers accept only **one**
-concurrent client. If the printer's own console, the vendor app, or your Obico agent are competing
-for it, one of them loses. If it turns out to be single-client, the bridge has to be the sole
-consumer and re-serve frames onward.
+**It is single-client, and it has no snapshot action.** Verified 2026-09-15 on firmware 1.9.9,
+three trials of three: while one client is streaming, a second connection to `?action=stream` is
+reset by the printer within about 10 ms (`Connection reset by peer`, no HTTP response at all), and
+`?action=snapshot` gets an empty reply even with no other client connected. So a bridge has to be
+the **sole consumer** of this URL and re-serve frames onward to anything else that wants them; the
+reference implementation is the [flashforge-obico](https://github.com/okets/flashforge-obico)
+agent, which exposes `/cameras/<i>/stream` and `/cameras/<i>/snapshot` on port 8081 and advertises
+those URLs to Obico in the printer's webcam list.
 
 ---
 

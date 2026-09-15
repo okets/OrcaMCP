@@ -122,6 +122,30 @@ entirely when you switch away from the tab.
 - Z offset
 - Material slot contents: the material type and colour of each of the four slots
 
+### Failure detection with Obico
+
+The printer's own cloud detection is unavailable in LAN mode, and its camera serves exactly one
+viewer at a time. The companion [flashforge-obico](https://github.com/okets/flashforge-obico) agent
+owns that stream, feeds a self-hosted [Obico](https://www.obico.io/) server, and re-serves every
+camera at full frame rate on the LAN.
+
+To let the console use it, fill in two more fields in the printer connection dialog (FlashForge
+host type, Advanced mode): **Obico server URL** (e.g. `http://10.0.0.2:3334`) and **Obico printer
+token** (the token the agent uses). Both or neither; the dialog refuses to save half a link. The
+console then:
+
+- shows every camera Obico lists for the printer, played from the agent's re-served stream; with
+  more than one camera a thumbnail strip appears under the picture and a click swaps cameras;
+- shows a line under the camera with Obico's state: connecting, watching with a low/medium/high
+  failure confidence, or a warning (and a banner) when Obico has flagged a failure;
+- falls back in order: advertised stream → Obico's latest snapshot → the printer's own stream.
+
+Clear both fields and the console draws the camera straight from the printer as before.
+
+Internally these are the preset keys `flashforge_obico_url` and `flashforge_obico_token`;
+`add_physical_printer` takes them as `obico_url` / `obico_token`, and `get_printer_status` reports
+`obico.configured` and `obico.url` (never the token).
+
 ### Limits of the printer, not of this slicer
 
 Two things you cannot do from a computer at all with a Creator 5. Neither is
@@ -204,8 +228,10 @@ no model picker: it reads the printer.
 
 ## Known limitations
 
-- The camera is shown in the console. It is not available through the Bambu-style
-  live-view player, which speaks a protocol these printers do not.
+- The camera is shown in the console. The printer serves it to **one viewer at a time**, so
+  while an Obico agent holds the stream, configure Obico here (above) and the console reads the
+  re-served stream instead. It is not available through the Bambu-style live-view player, which
+  speaks a protocol these printers do not.
 - Print-speed changes only apply while a job is running.
 - Z-offset granularity cannot be determined while the printer is idle, because the
   printer accepts the command and does not move.

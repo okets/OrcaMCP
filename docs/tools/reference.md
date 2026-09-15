@@ -1830,6 +1830,43 @@ Select a printer by device ID.
 
 ---
 
+### add_physical_printer
+Create or update a physical printer preset with its print host settings.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | Yes | Preset name to save under, e.g. `"C5P"` |
+| `host` | string | Yes | Printer IP or hostname |
+| `host_type` | string | Yes | Print host type (`flashforge`, `octoprint`, …) |
+| `serial_number` | string | No | Flashforge serial number; omit to keep the stored one |
+| `api_key` | string | No | API key, or the Flashforge LAN check code; omit to keep the stored one |
+| `obico_url` | string | No | Flashforge only: self-hosted Obico server base URL, e.g. `http://10.0.0.2:3334`. Give with `obico_token`; `""` for both clears the link |
+| `obico_token` | string | No | Flashforge only: the printer's Obico auth token. Never returned by any tool |
+| `printer_preset` | string | No | Printer preset to base it on (default: the edited one) |
+
+---
+
+### get_printer_status
+Live status from the configured print host. Full detail for Flashforge hosts.
+
+**Parameters:** None
+
+**Returns (Flashforge):**
+```json
+{
+  "status": "success",
+  "host_type": "flashforge",
+  "print_host": "10.0.0.10",
+  "online": true,
+  "obico": {"configured": true, "url": "http://10.0.0.2:3334"},
+  "printer": {"state": "ready", "camera_stream_url": "http://10.0.0.10:8080/?action=stream", "...": "..."}
+}
+```
+`obico.configured` says whether the preset names an Obico server; the token is never included.
+
+---
+
 ### send_to_printer
 Send sliced G-code to printer.
 
