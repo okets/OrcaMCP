@@ -973,3 +973,54 @@ problem is gone" — and worth telling users at release time.
 
 The byte-identical export size was the tell. Two exports of a supposedly changed configuration
 producing exactly 23,255,835 bytes is not a subtle hint.
+
+---
+
+## T19 — CI went red without us changing anything: the external test suite is not pinned
+
+Run `34969491326` ("Build all", commit `fe606d65a7`) failed. **18 jobs passed, 10 skipped, 1
+failed** — every platform built successfully. The single failure was the Linux-only step
+*"Run external slicer regression tests"*: `11 failed, 71 passed, 4 skipped, 7 xfailed`.
+
+**Not our regression.** The failing cases are all mixed-filament and filament zero-fill:
+
+```
+mixed-filament-defined-on-cli-slices
+mixed-filament-filament-colour-leaves-mixed-flush-cells-empty
+mixed-filament-prime-tower-kept-with-identical-presets
+mixed-filament-slot-without-filament-rejected
+mixed-filament-type-mismatch-rejected
+partial-load-filaments-variant-key-zero-filled
+variant-key-zero-filled-on-full-filament-load
+vector-override-single-value-multi-filament
+```
+
+`build_orca.yml:631` clones the suite fresh on every run, unpinned:
+
+```bash
+git clone --depth 1 https://github.com/OrcaSlicer/orca-test-repo.git "$test_repo_dir"
+```
+
+Upstream commit `7d417de` (2026-09-14, *"Mark the Mixed Filament and Zero-Fill Cases Fixed"*)
+flipped exactly these cases from expected-failure to `status: fixed` — seven `+status: fixed` lines
+across the same YAML files whose names match the failures one for one. They had been passing here
+only because they were *tolerated as expected failures*. Upstream fixed the underlying bugs in
+OrcaSlicer, marked the cases as must-pass, and our fork has not merged those fixes — so they now
+fail hard.
+
+**Two separate things follow, and they should not be conflated.**
+
+1. **The CI design is fragile.** An unpinned `--depth 1` clone means this branch can go red
+   overnight with no commit on our side, and the failure looks like ours. Pin the suite to a known
+   SHA and bump it deliberately, or at minimum print the cloned SHA into the log so a red build can
+   be attributed in seconds rather than by cloning the repo and reading its history.
+
+2. **The gaps are real.** Upstream fixed mixed-filament CLI rules and per-filament variant
+   zero-fill; we are behind on both. Mixed filament is not a peripheral feature here — agent-driven
+   colour mixing is a headline capability of this fork. These want an upstream sync, not a
+   suppression.
+
+**Not a release blocker by itself** — nothing built or tested on our side regressed, and the
+failures predate tonight's work (the run tested `fe606d65a7`, before the chamber fix landed). But
+"CI is green" cannot be the release gate until the suite is pinned, because today it measures
+upstream's test repo as much as it measures us.
