@@ -130,16 +130,38 @@ POST http://<ip>:8898/detail
 
 ### About `status`
 
-Normalise by lowercasing, and map `cancel` to `cancelled`. This implementation anticipates the
-set:
+Normalise by lowercasing. Verified on firmware 1.9.9 (2026-09-15), the machine reports these
+strings — note the **short forms** for pause and cancel:
 
-```
-ready | busy | heating | printing | paused | completed | error | cancelled | unknown
-```
+| `status` | Meaning |
+|---|---|
+| `ready` | Idle. |
+| `printing` | A job has been accepted. **This includes the warm-up phase**, before anything is extruded: `printDuration` and `printLayer` stay `0` until the first layer starts. Use `printDuration > 0` (or `printLayer > 0`) to tell "warming up" from "really printing". |
+| `pause` | Paused. **Not** `paused`. |
+| `cancel` | Cancelled. **Not** `cancelled`. |
 
-**Only `ready` has been directly observed on this machine.** The rest come from this
-implementation's expectations, not from a vendor document. Treat any value you do not recognise as
-unknown and keep going — do not assume a state means "not printing" just because it is unfamiliar.
+Map `pause` → `paused` and `cancel` → `cancelled` if the rest of your code speaks the long forms,
+and keep accepting the long forms in case a future firmware changes. `completed`, `error`, `busy`
+and `heating` were anticipated by this implementation but have **not** been observed; treat any
+value you do not recognise as unknown and keep going — do not assume an unfamiliar state means
+"not printing".
+
+### Job control is ignored during warm-up
+
+Observed 2026-09-15 on firmware 1.9.9, one occurrence plus one control: a `pause` sent while
+`status` was `printing` with `printDuration = 0` (bed climbing to 110 °C) was **acknowledged with
+`code: 0` and never happened** — the print went on to layer 3. The same payload sent ~20 s later,
+once extruding, took effect within 16 s. So the reply code is an acknowledgement, not a
+confirmation. Consequences for a bridge:
+
+- Never fire-and-forget a job-control command. Send it, poll `detail`, and only treat it as done
+  when `status` actually changed. Retry a few times; surface a real failure otherwise.
+- During warm-up, either keep re-sending the pause until it takes (the flashforge-obico agent
+  keeps it pending and re-issues it as soon as `printDuration` moves off zero), or tell the user
+  the printer cannot be paused yet. "I changed my mind during warm-up" is exactly when people press
+  pause, so this is worth handling deliberately.
+- Whether the firmware *queues or drops* the command has not been settled by a deliberate
+  reproduction; the observed behaviour (still printing at layer 3, 21 s later) says drop.
 
 ### There is no failure detection here
 

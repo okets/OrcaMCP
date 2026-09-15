@@ -142,6 +142,15 @@ console then:
 
 Clear both fields and the console draws the camera straight from the printer as before.
 
+Like every other print-host connection setting, the Obico fields, the serial number and the
+check code never leave this machine: they are stripped from the printer config embedded in
+saved projects, and a project you open never overwrites them.
+
+Pause from Obico has one printer-side quirk: the Creator 5 ignores job control while it is still
+heating (status `printing` with no layer started yet). The agent keeps such a pause pending and
+sends it again the moment the first layer starts, and Obico shows a "Pause deferred" event so you
+know. See the LAN API document for the observation behind this.
+
 Internally these are the preset keys `flashforge_obico_url` and `flashforge_obico_token`;
 `add_physical_printer` takes them as `obico_url` / `obico_token`, and `get_printer_status` reports
 `obico.configured` and `obico.url` (never the token).
