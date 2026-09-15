@@ -27,6 +27,24 @@ TEST_CASE("parse_detail reads a Creator 5 Pro status", "[flashforge]") {
     CHECK(s.raw["nozzleCnt"] == 4);
 }
 
+TEST_CASE("parse_detail normalises the firmware's short state names", "[flashforge]") {
+    // Firmware 1.9.9 says "pause" and "cancel"; the console, the MCP tools and the Bambu-shaped
+    // payload all look for "paused" and "cancelled". Verified on hardware 2026-09-15: a pause that
+    // succeeded was reported as "pause" and went unrecognised until this mapping existed.
+    for (const auto& [raw, expected] : {std::pair<const char*, const char*>{"pause", "paused"},
+                                        {"Pause", "paused"},
+                                        {"cancel", "cancelled"},
+                                        {"paused", "paused"},
+                                        {"cancelled", "cancelled"},
+                                        {"printing", "printing"}}) {
+        nlohmann::json detail = nlohmann::json::parse(kDetail);
+        (detail.contains("detail") ? detail["detail"] : detail)["status"] = raw;
+        PrinterStatus s; std::string err;
+        REQUIRE(parse_detail(detail.dump(), s, err));
+        CHECK(s.state == expected);
+    }
+}
+
 TEST_CASE("parse_detail falls back to rightTemp for single nozzle printers", "[flashforge]") {
     PrinterStatus s; std::string err;
     REQUIRE(parse_detail(R"({"code":0,"detail":{"status":"ready","rightTemp":25,"rightTargetTemp":0,"platTemp":24,"platTargetTemp":0}})", s, err));

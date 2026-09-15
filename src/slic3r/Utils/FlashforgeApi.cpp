@@ -243,9 +243,13 @@ bool parse_detail(const std::string& body, PrinterStatus& out, std::string& erro
     const nlohmann::json& detail = (parsed.contains("detail") && parsed["detail"].is_object()) ? parsed["detail"] : parsed;
 
     PrinterStatus result;
+    // Firmware 1.9.9 reports the short forms "pause" and "cancel" (verified on hardware 2026-09-15);
+    // everything downstream speaks the long forms, so normalise here and nowhere else.
     result.state = to_lower(get_string(detail, "status", "unknown"));
     if (result.state == "cancel")
         result.state = "cancelled";
+    else if (result.state == "pause")
+        result.state = "paused";
 
     result.print_file   = get_string(detail, "printFileName");
     result.progress     = get_number(detail, "printProgress");
