@@ -1024,3 +1024,57 @@ fail hard.
 failures predate tonight's work (the run tested `fe606d65a7`, before the chamber fix landed). But
 "CI is green" cannot be the release gate until the suite is pinned, because today it measures
 upstream's test repo as much as it measures us.
+
+---
+
+## T20 — the last red CI case: X1C filament-change purges land 1 mm outside the plate check (open)
+
+Found 2026-09-16 while making CI green for the release. Of the eight cases upstream flipped to must-pass
+(T19), seven are fixed by porting #15636, #15438 and #15639 — confirmed by Linux CI run `35005568253`:
+**1 failed, 81 passed**. This entry is the one that is left.
+
+**Case:** `mixed-filament-defined-on-cli-slices` — bare STL, CLI, mixed filament of two identical PLA
+presets, X1C profile. Exit 154 = `CLI_GCODE_PATH_IN_UNPRINTABLE_AREA`, `error_code = 4` (plate-area bit).
+
+**What it was not, in the order I eliminated them — each by measurement of the produced G-code:**
+
+1. *The tower off the back edge* (Y 276.9 on a 256 mm plate). Real, and fixed by porting the wipe-tower
+   estimator chain in upstream's order — `f88fa6bfc7`, `bebd54362b`, `ca0becfbc0`, `f844a64850`,
+   `4def1a09a8` — after which the clamp places a tower ending at Y 254.6, inside tolerance. Porting the
+   placement commit *before* the estimator refactor segfaults (`get_extruders(bool)` → `wxGetApp()` null in
+   the CLI); the crash report named it, and it is why upstream's own order matters.
+2. *Y 265 travels.* The X1C macro parks at the back; those are travels and the check only counts extrusions.
+   A grep for `Y265` also matched the config block's comments — 406 hits, almost none of them moves.
+3. *A missing Custom role tag on sub-layer swaps.* The swap sits inside the wipe-tower block like any other,
+   and `GCode.cpp` writes the Custom tag only around start/end G-code in *both* trees.
+
+**What it is:** a replica of the processor's check, run over the G-code, finds exactly one class of
+offending positions — **1188 extruding moves per tool at X 20, Y −3**, role Prime tower, once per filament
+change. They are the X1C `change_filament_gcode` macro's own front-edge purge:
+
+```gcode
+G1 X20 Y50 F21000
+G1 Y-3
+M620.1 E F523.843 T240
+T0
+...
+G1 E18 F523.843
+```
+
+Y −3 is one millimetre past the check's +2 mm tolerance. That macro, the filament profiles and the process
+profile the test datadir is generated from are **byte-identical to upstream's** (md5). `GCode.cpp` differs
+from upstream by 33 lines and `GCodeProcessor.cpp` by 15, none touching role tagging or this check. Neither
+tree treats `M620…M621` as a custom region.
+
+**So the open question is precise but unanswered:** upstream's build must exclude (or not emit) these purge
+extrusions on this case, and the mechanism is not in any diff small enough to read. The next step is to build
+`upstream/main` and slice the identical case, then diff what the processor records. Not started: it is an
+investigation, not a port, and it was 3 a.m. before a release.
+
+**Impact if shipped open:** CLI-only (`-102` is the CLI's post-slice check; GUI and MCP never run it), and only
+for mixed-filament plates on Bambu profiles whose change macro purges off-plate. The Creator 5 path is not
+involved.
+
+**Also learned, expensively:** the external suite is meaningless on macOS. `record_exit_reson` is compiled
+`#if defined(__linux__)`, so `result.json` never exists and ten of eleven local "failures" were that. Only the
+Linux CI step is authoritative for this suite.
