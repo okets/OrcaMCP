@@ -1043,6 +1043,110 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     setStructure(el("envRows"), html);
   }
 
+  /* ══ MJPEG reader ═════════════════════════════════════════════════════
+     An <img> pointed at an MJPEG stream shows its last frame for ever once the stream ends: the
+     browser fires no event for a dropped connection. Reading the stream here instead gives the page
+     a frame clock and an end-of-stream, which is what honest fallback needs. Frames reach the <img>
+     as blob URLs. Parts normally carry a Content-Length (mjpg-streamer and the agent both send one);
+     when one does not, the frame ends at the JPEG end-of-image marker.                          */
+  var STREAM_STALL_MS = 15000;
+  function playMjpeg(img, url, handlers){
+    var controller = new AbortController(), stopped = false, gotFrame = false;
+    var lastFrameAt = Date.now(), previousBlob = null;
+    var buf = new Uint8Array(0), contentLength = -1, inBody = false;
+    var CRLF2 = [13, 10, 13, 10], EOI = [0xFF, 0xD9];
+
+    function indexOf(hay, needle){
+      outer: for (var i = 0; i <= hay.length - needle.length; i++){
+        for (var j = 0; j < needle.length; j++) if (hay[i + j] !== needle[j]) continue outer;
+        return i;
+      }
+      return -1;
+    }
+    function append(chunk){
+      var joined = new Uint8Array(buf.length + chunk.length);
+      joined.set(buf); joined.set(chunk, buf.length);
+      buf = joined;
+    }
+    function emit(frame){
+      if (!frame.length) return;
+      var next = URL.createObjectURL(new Blob([frame], { type:"image/jpeg" }));
+      img.src = next;
+      if (previousBlob) URL.revokeObjectURL(previousBlob);
+      previousBlob = next;
+      lastFrameAt = Date.now(); gotFrame = true;
+      if (handlers.onFrame) handlers.onFrame();
+    }
+    function drain(){
+      for (;;){
+        if (!inBody){
+          var end = indexOf(buf, CRLF2);
+          if (end < 0) return;
+          var head = String.fromCharCode.apply(null, buf.subarray(0, Math.min(end, 2000))).toLowerCase();
+          var m = /content-length:\s*(\d+)/.exec(head);
+          contentLength = m ? parseInt(m[1], 10) : -1;
+          buf = buf.subarray(end + 4); inBody = true;
+        }
+        if (contentLength >= 0){
+          if (buf.length < contentLength) return;
+          emit(buf.subarray(0, contentLength)); buf = buf.subarray(contentLength);
+        } else {
+          var eoi = indexOf(buf, EOI);
+          if (eoi < 0) return;
+          emit(buf.subarray(0, eoi + 2)); buf = buf.subarray(eoi + 2);
+        }
+        inBody = false;
+      }
+    }
+    function stop(){
+      if (stopped) return;
+      stopped = true; clearInterval(watchdog); controller.abort();
+      if (previousBlob) URL.revokeObjectURL(previousBlob);
+    }
+    /* The stall clock starts at connect, so a stream that opens and never delivers ends too. */
+    var watchdog = setInterval(function(){
+      if (!stopped && Date.now() - lastFrameAt > STREAM_STALL_MS){ stop(); handlers.onEnd("stalled"); }
+    }, 1000);
+
+    var RETRY_AFTER_MS = 1500;
+    function connect(attempt){
+      return fetch(url, { mode:"cors", cache:"no-store", signal: controller.signal }).then(function(res){
+        if (!res.ok || !res.body) throw new Error("http " + res.status);
+        var reader = res.body.getReader();
+        function pump(){
+          return reader.read().then(function(r){
+            if (stopped) return;
+            if (r.done){ stop(); handlers.onEnd("ended"); return; }
+            append(r.value); drain();
+            return pump();
+          });
+        }
+        return pump();
+      }).catch(function(e){
+        if (stopped) return;
+        if (gotFrame){ stop(); handlers.onEnd("error"); return; }      /* dropped after frames */
+        /* Nothing arrived. A single-client camera refuses for a moment after its previous viewer
+           lets go, so one more try after a pause; then it is CORS or a server that is not there,
+           and the caller may still take the plain <img> route, which has no frame clock. */
+        if (attempt === 0) return new Promise(function(r){ setTimeout(r, RETRY_AFTER_MS); }).then(function(){
+          if (!stopped) return connect(1);
+        });
+        stop(); handlers.onUnsupported(e);
+      });
+    }
+    connect(0);
+    return { stop: stop };
+  }
+
+  /* Obico's document is only as current as the agent behind it. `status._ts` is the agent's
+     clock at its last report; past this age the snapshot is history, not a picture of now. */
+  var OBICO_STALE_S = 90;
+  function obicoDocAge(doc){
+    var ts = doc && doc.status && doc.status._ts;
+    return (typeof ts === "number") ? Date.now() / 1000 - ts : null;
+  }
+  function obicoDocStale(doc){ var age = obicoDocAge(doc); return age !== null && age > OBICO_STALE_S; }
+
   /* Where the picture can come from, in the order it is tried. Each entry is {kind, url, name,
      primary}. With Obico configured the agent's re-served streams come first (full frame rate), then
      Obico's own snapshot (about one a second, primary camera only), then the printer's stream - which
@@ -1055,9 +1159,13 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
         .forEach(function(w){
           out.push({ kind:"obico-stream", url:w.stream_url, name:w.name || "Primary", primary:!!w.is_primary_camera });
         });
-    if (doc && doc.pic && doc.pic.img_url)
+    var agentSilent = !doc || obicoDocStale(doc);
+    if (doc && doc.pic && doc.pic.img_url && !agentSilent)
       out.push({ kind:"obico-snapshot", url:doc.pic.img_url, name:"Snapshot via Obico", primary:true });
-    if (s.connected && p.camera_stream_url)
+    /* The printer serves one viewer. While the agent is reporting, that viewer must stay the agent,
+       so the direct stream is only offered when the agent has gone quiet - and released again the
+       moment it is back. */
+    if (s.connected && p.camera_stream_url && agentSilent)
       out.push({ kind:"printer", url:p.camera_stream_url, name:"Printer", primary:true });
     return out;
   }
@@ -1086,6 +1194,9 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     }
     var cp = doc && doc.current_print;
     if (cp && cp.alerted_at && !cp.alert_muted) return { kind:"warn", text:"Obico has flagged a possible failure." };
+    if (obicoDocStale(doc))
+      return { kind:"warn", text:"Obico: the printer agent has not reported for " + Math.round(obicoDocAge(doc)) + " s" +
+                                 (sourceKind === "printer" ? " — showing the printer's own camera." : ".") };
     if (!cp) return { kind:"", text:"Obico: watching, idle" };
     var prob  = num(doc.normalized_p, 0);
     var level = prob < 0.33 ? "low" : prob < 0.66 ? "medium" : "high";
@@ -1098,10 +1209,15 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
      gets another try without the viewport flickering on every push. */
   var CAM_RETRY_MS = 30000;
   var camSrc = null, camSelected = null, camFailed = {}, camFailedFor = null, camFailedAt = 0, stripHtml = null;
+  var camPlayer = null, camPlaying = false;
+  function stopCamPlayer(){ if (camPlayer){ camPlayer.stop(); camPlayer = null; } camPlaying = false; }
   function renderCamera(s, p, raw, pro, printing){
     var doc = obicoLink.doc(), ostate = obicoLink.state();
-    var camsKey = doc ? JSON.stringify(doc.settings && doc.settings.webcams) : null;
-    if (camsKey !== camFailedFor || Date.now() - camFailedAt > CAM_RETRY_MS){
+    /* Failures are forgiven when the camera list changes or the agent comes back or goes quiet -
+       the moment the ranking may have changed - and otherwise every half minute, but never while
+       a stream is actually playing: probing a better source would mean tearing down the good one. */
+    var camsKey = (doc ? JSON.stringify(doc.settings && doc.settings.webcams) : "none") + "|" + (!doc || obicoDocStale(doc));
+    if (camsKey !== camFailedFor || (!camPlaying && Date.now() - camFailedAt > CAM_RETRY_MS)){
       camFailed = {}; camFailedFor = camsKey; camFailedAt = Date.now();
     }
 
@@ -1111,18 +1227,33 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     var scene   = el("camScene");
     if (url !== camSrc){
       camSrc = url;
+      stopCamPlayer();
       if (url){
         scene.innerHTML = '<img class="cam" alt="Live camera view of the build plate">' +
           (chosen.kind === "obico-snapshot" ? '<span class="camtag">Snapshot via Obico</span>' : "");
         var img = scene.firstChild;
-        show(el("camLive"), chosen.kind !== "obico-snapshot");
-        img.onerror = function(){
+        show(el("camLive"), false);
+        var giveUp = function(){
           camFailed[url] = true;
           if (chosen.kind === "obico-stream" && chosen.name === camSelected) camSelected = null;
           camSrc = null;                       /* the next pass picks the next source */
+          show(el("camLive"), false);
           if (lastState) render(lastState);
         };
-        img.src = url;
+        if (chosen.kind === "obico-snapshot"){
+          img.onerror = giveUp;
+          img.src = url;                       /* one picture; the next Obico push brings a new URL */
+        } else {
+          camPlayer = playMjpeg(img, url, {
+            onFrame: function(){ camPlaying = true; show(el("camLive"), true); },
+            onEnd: giveUp,
+            onUnsupported: function(){         /* no frame clock on this route, but it is what worked before */
+              img.onload  = function(){ show(el("camLive"), true); };
+              img.onerror = giveUp;
+              img.src = url;
+            }
+          });
+        }
       } else {
         show(el("camLive"), false);
         var tried = sources.length ? "<br>Tried: " + sources.map(function(c){ return esc(c.name); }).join(", ") + "." : "";
