@@ -1024,6 +1024,23 @@ void PrintConfigDef::init_common_params()
     def->cli = ConfigOptionDef::nocli;
     def->set_default_value(new ConfigOptionString());
 
+    def = this->add("flashforge_obico_url", coString);
+    def->label = L("Obico server URL");
+    def->tooltip = L("Optional. A self-hosted Obico server that watches this printer through the flashforge-obico "
+                     "agent, e.g. http://10.0.0.2:3334. When set, the device console shows the cameras Obico "
+                     "advertises and Obico's failure-detection state. Leave empty to view the printer's camera directly.");
+    def->mode = comAdvanced;
+    def->cli = ConfigOptionDef::nocli;
+    def->set_default_value(new ConfigOptionString());
+
+    def = this->add("flashforge_obico_token", coString);
+    def->label = L("Obico printer token");
+    def->tooltip = L("The printer's auth token in Obico (the same one the flashforge-obico agent uses). "
+                     "Required together with the Obico server URL.");
+    def->mode = comAdvanced;
+    def->cli = ConfigOptionDef::nocli;
+    def->set_default_value(new ConfigOptionString());
+
     def = this->add("printhost_port", coString);
     def->label = L("Printer");
     def->tooltip = L("Name of the printer.");
