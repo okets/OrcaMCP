@@ -332,6 +332,15 @@ void PhysicalPrinterDialog::build_printhost_settings(ConfigOptionsGroup* m_optgr
     option.opt.width = Field::def_width_wider();
     m_optgroup->append_single_option_line(option);
 
+    // Optional Obico link for Flashforge hosts: both fields or neither (checked in OnOK).
+    option = m_optgroup->get_option("flashforge_obico_url");
+    option.opt.width = Field::def_width_wider();
+    m_optgroup->append_single_option_line(option);
+
+    option = m_optgroup->get_option("flashforge_obico_token");
+    option.opt.width = Field::def_width_wider();
+    m_optgroup->append_single_option_line(option);
+
     option = m_optgroup->get_option("printhost_port");
     option.opt.width = Field::def_width_wider();
     Line port_line = m_optgroup->create_single_option_line(option);
@@ -699,16 +708,16 @@ void PhysicalPrinterDialog::update(bool printer_change)
         
         if (opt->value == htFlashforge) {
             m_optgroup->show_field("printhost_apikey");
-            m_optgroup->show_field("flashforge_serial_number");
+            show_flashforge_fields(true);
             m_optgroup->hide_field("printhost_authorization_type");
         } else {
-            m_optgroup->hide_field("flashforge_serial_number");
+            show_flashforge_fields(false);
         }
     }
     else {
         m_optgroup->set_value("host_type", int(PrintHostType::htOctoPrint), false);
         m_optgroup->hide_field("host_type");
-        m_optgroup->hide_field("flashforge_serial_number");
+        show_flashforge_fields(false);
 
         m_optgroup->show_field("printhost_authorization_type");
 
@@ -801,7 +810,9 @@ void PhysicalPrinterDialog::on_dpi_changed(const wxRect& suggested_rect)
 
 void PhysicalPrinterDialog::check_host_key_valid()
 {
-    std::vector<std::string> keys = {"print_host", "print_host_webui", "printhost_apikey", "flashforge_serial_number", "printhost_cafile", "printhost_user", "printhost_password", "printhost_port"};
+    std::vector<std::string> keys = {"print_host", "print_host_webui", "printhost_apikey", "flashforge_serial_number",
+                                     "flashforge_obico_url", "flashforge_obico_token", "printhost_cafile",
+                                     "printhost_user", "printhost_password", "printhost_port"};
     for (auto &key : keys) {
         auto it = m_config->option<ConfigOptionString>(key);
         if (!it) m_config->set_key_value(key, new ConfigOptionString(""));
@@ -809,8 +820,21 @@ void PhysicalPrinterDialog::check_host_key_valid()
     return;
 }
 
+void PhysicalPrinterDialog::show_flashforge_fields(bool show)
+{
+    for (const char* key : {"flashforge_serial_number", "flashforge_obico_url", "flashforge_obico_token"})
+        m_optgroup->show_field(key, show);
+}
+
 void PhysicalPrinterDialog::OnOK(wxEvent& event)
 {
+    // Half an Obico link is worse than none: the console would try to connect and could never succeed.
+    const bool has_obico_url   = !m_config->opt_string("flashforge_obico_url").empty();
+    const bool has_obico_token = !m_config->opt_string("flashforge_obico_token").empty();
+    if (has_obico_url != has_obico_token) {
+        show_error(this, _L("Obico needs both a server URL and a printer token. Fill in both, or clear both."));
+        return;
+    }
     wxGetApp().get_tab(Preset::TYPE_PRINTER)->save_preset("", false, false, true, m_preset_name);
     event.Skip();
 }
