@@ -1,7 +1,7 @@
 <div align="center">
 
 <picture>
-  <img alt="OrcaMCP logo" src="resources/images/OrcaSlicer.png" width="15%" height="15%">
+  <img alt="OrcaMCP logo" src="resources/images/OrcaMCP.png" width="15%" height="15%">
 </picture>
 
 # OrcaMCP
@@ -38,11 +38,12 @@ tower. Create mixed-filament slots and set flush volumes. If the GUI has a gizmo
 a tool for it, and the tool writes the same data the gizmo does.
 
 <div align="center">
-<img alt="Two renders of the same plate; in the second the letter o is red" src="docs/images/render-pick-paint.jpg" width="80%">
+<img alt="Two renders of the same plate; in the second the small bracket is red and the prime tower is larger" src="docs/images/render-pick-paint.jpg" width="80%">
 
 *Same camera, two renders. Between them the agent asked `pick_facet` what lay under a pixel of the
-grey "o", got back that letter's mesh and facet, and painted the shell with filament slot 3.
-Rendered by `render_plate_view` on a Creator 5 Pro profile. Nothing here was touched by hand.*
+gold bracket, got back that part's mesh and facet, and painted the connected shell with filament
+slot 3. The prime tower grew on its own because a third filament joined the plate. Rendered by
+`render_plate_view` on a Creator 5 Pro profile. Nothing here was touched by hand.*
 </div>
 
 ## Who it is for
@@ -89,20 +90,19 @@ examples describe the tools as documented in the [tools reference](docs/tools/re
 
 ---
 
-> Show me the badges on plate 5 from the front, then make the first letter of "orca" red.
+> Show me the plate from the front right, then make the small bracket red.
 
-The agent rendered the plate, then asked which facet sat under a pixel of the "o". The first ray
-went straight through the hole in the letter and hit the badge base beneath it, one millimetre
-down. It picked again on the letter's stroke, got the letter's own mesh at 1.6 mm, and painted
-that shell with slot 3: 2,050 triangles, two thirds of the letter's surface area, out of 33,682
-across the badge's seventeen parts.
+The agent rendered the plate, handed the render's camera back with the pixel it meant, and got
+the bracket's mesh, facet 3094, the surface point in plate millimetres and the normal there. It
+seeded a connected fill from that facet and painted the shell with slot 3: 2,508 of the part's
+3,586 triangles, 77% of its surface area. The second render is the same camera again.
 
-Painting made the plate multi-filament, so the slicer generated a prime tower, and the paint
-response came back with the slicer's own error: the tower was partly outside the printable area.
-The agent moved it to a free corner, the response listed the allowed range and reported no
-conflicts, and the warning count was zero on the next slice.
+Painting put a third filament on the plate, so the slicer generated a prime tower at its default
+spot on the plate's edge, and the next response carried the slicer's own error: the tower was
+partly outside the printable area. The agent moved it beside the parts. The response listed the
+allowed range and reported no conflicts, and the warning count was zero on the next call.
 
-`render_plate_view` · `pick_facet` · `paint_object` · `set_prime_tower_position` · `get_slicing_status`
+`render_plate_view` · `pick_facet` · `paint_object` · `set_prime_tower_position`
 
 ---
 
@@ -140,9 +140,12 @@ name; the agent can list the valid keys for any category before it guesses.
 
 > Slice it, tell me how long it takes, and if it is under an hour send it to the C5P.
 
-Slice the current plate, poll until done, read back the estimate. The badge plate above came back
-as 54 minutes, 12 layers, 13 grams across four filaments and 27 tool changes. Sending opens the slicer's own send dialog with the file already selected; the
-last click is yours.
+Slice the current plate, poll until done, read back the estimate. The two parts above came back
+as 3 h 20 min, 315 layers, 34 g over three filaments and 506 tool changes, so the agent did not
+send, and could say why: three colours share most layers, so the tool changes dominate. The
+status response also carried the slicer's warning that the bracket has floating regions and wants
+supports. When the answer is yes, sending opens the slicer's own send dialog with the file
+already selected; the last click is yours.
 
 `slice_all` · `get_slicing_status` · `get_print_estimate` · `send_to_printer`
 
