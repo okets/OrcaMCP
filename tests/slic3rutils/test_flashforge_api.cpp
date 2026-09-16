@@ -228,6 +228,54 @@ TEST_CASE("flashforge_status_to_bambu_payload publishes a fully known nozzle", "
     CHECK_FALSE(p.contains("nozzle_type"));
 }
 
+TEST_CASE("flashforge_status_to_bambu_payload publishes the material station as one AMS unit", "[flashforge]") {
+    PrinterStatus s; std::string err;
+    REQUIRE(parse_detail(kDetail, s, err));
+
+    const auto ams = flashforge_status_to_bambu_payload(s)["print"]["ams"];
+
+    // Without this block MachineObject has no filament identity: the Send dialog falls back to the
+    // external spool, calls its type unknown, and names no filament in the high-temperature warning.
+    REQUIRE(ams["ams"].size() == 1);
+    CHECK(ams["ams_exist_bits"] == "1");
+    CHECK(ams["ams"][0]["id"] == "0");
+
+    const auto trays = ams["ams"][0]["tray"];
+    REQUIRE(trays.size() == 1);            // the fixture reports one slot
+    CHECK(trays[0]["id"] == "0");          // slot 1 on the wire is tray 0 in the unit
+    CHECK(trays[0]["tray_type"] == "PLA");
+    CHECK(trays[0]["tray_color"] == "FF0000FF");
+    CHECK(ams["tray_exist_bits"] == "1");
+}
+
+TEST_CASE("flashforge_status_to_bambu_payload marks empty station slots", "[flashforge]") {
+    PrinterStatus s = make_status("ready");
+    s.slots = {{1, false, "", ""},
+               {2, true, "ABS", "#8C8C89"},
+               {3, false, "", ""},
+               {4, false, "", ""}};
+
+    const auto ams   = flashforge_status_to_bambu_payload(s)["print"]["ams"];
+    const auto trays = ams["ams"][0]["tray"];
+    REQUIRE(trays.size() == 4);
+
+    // Only the loaded slot sets its existence bit; tray 1 is slot 2, so bit 1 -> "2".
+    CHECK(ams["tray_exist_bits"] == "2");
+    CHECK(trays[1]["tray_type"] == "ABS");
+    CHECK(trays[1]["tray_color"] == "8C8C89FF");
+
+    // An empty slot carries the placeholder the parser expects, not a fabricated filament.
+    CHECK(trays[0]["tray_type"] == "");
+    CHECK(trays[0]["tray_color"] == "00000000");
+    CHECK(trays[0]["tray_slot_placeholder"] == "1");
+}
+
+TEST_CASE("flashforge_status_to_bambu_payload omits the AMS when there is no station", "[flashforge]") {
+    // A printer with no material station keeps the external-spool path it had before.
+    const auto p = flashforge_status_to_bambu_payload(make_status("ready"))["print"];
+    CHECK_FALSE(p.contains("ams"));
+}
+
 TEST_CASE("flashforge_status_to_bambu_payload picks the first heated nozzle", "[flashforge]") {
     PrinterStatus s = make_status("printing");
     s.nozzles = {{25, 0}, {30, 0}, {240, 245}, {28, 0}};

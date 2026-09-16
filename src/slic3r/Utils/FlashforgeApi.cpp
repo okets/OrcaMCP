@@ -6,6 +6,7 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -218,6 +219,75 @@ double parse_nozzle_model_diameter(const nlohmann::json& detail)
     return 0.0;
 }
 
+/// A Bambu tray colour: RRGGBBAA hex, uppercase, no leading '#'. Flashforge reports "#RRGGBB".
+/// Anything unreadable becomes the fully transparent value an empty slot carries.
+std::string tray_color_of(const std::string& material_color)
+{
+    std::string hex = material_color;
+    if (!hex.empty() && hex.front() == '#')
+        hex.erase(0, 1);
+    if (hex.size() == 6)
+        hex += "FF"; // Flashforge reports no alpha; the station's spools are opaque
+    if (hex.size() != 8 || hex.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos)
+        return "00000000";
+
+    std::transform(hex.begin(), hex.end(), hex.begin(), [](unsigned char c) { return std::toupper(c); });
+    return hex;
+}
+
+/// The material station, translated into the single AMS unit the Device tab and the Send print job
+/// dialog know how to read. Without it MachineObject carries no filament identity at all: the
+/// dialog falls back to the external spool, warns that its type is unknown, and prints the
+/// high-chamber-temperature warning with an empty filament name where the type should be.
+void fill_material_station(const PrinterStatus& status, nlohmann::json& print)
+{
+    if (status.slots.empty())
+        return;
+
+    unsigned int   tray_exist_bits = 0;
+    nlohmann::json trays           = nlohmann::json::array();
+
+    for (const MaterialSlot& slot : status.slots) {
+        // The local API numbers slots from 1; Bambu tray ids are 0-based within their unit.
+        const int tray_id = slot.slot_id > 0 ? slot.slot_id - 1 : static_cast<int>(trays.size());
+
+        nlohmann::json tray;
+        tray["id"]      = std::to_string(tray_id);
+        tray["tag_uid"] = "0000000000000000"; // no RFID on this station
+
+        if (slot.has_filament && !slot.material_name.empty()) {
+            tray_exist_bits |= (1u << tray_id);
+            // No Bambu filament id exists for a Flashforge spool; `tray_type` is what the dialog
+            // reads for the filament name and the high-temperature check.
+            tray["tray_info_idx"] = "";
+            tray["tray_type"]     = slot.material_name;
+            tray["tray_color"]    = tray_color_of(slot.material_color);
+        } else {
+            tray["tray_info_idx"]         = "";
+            tray["tray_type"]             = "";
+            tray["tray_color"]            = "00000000";
+            tray["tray_slot_placeholder"] = "1";
+        }
+
+        trays.push_back(std::move(tray));
+    }
+
+    nlohmann::json unit;
+    unit["id"]   = "0";
+    unit["info"] = "0002"; // AMS Lite: a fixed station, with no humidity or drying to report
+    unit["tray"] = std::move(trays);
+
+    std::ostringstream tray_bits;
+    tray_bits << std::hex << std::uppercase << tray_exist_bits;
+
+    nlohmann::json ams;
+    ams["ams"]             = nlohmann::json::array({std::move(unit)});
+    ams["ams_exist_bits"]  = "1";
+    ams["tray_exist_bits"] = tray_bits.str();
+
+    print["ams"] = std::move(ams);
+}
+
 } // namespace
 
 bool try_parse_json_int(const nlohmann::json& value, int& out)
@@ -415,6 +485,8 @@ nlohmann::json flashforge_status_to_bambu_payload(const PrinterStatus& status)
     // outside the studio command range [START_SEQ_ID, END_SEQ_ID) = [20000, 30000), so it can never
     // match a pending command's callback (DeviceManager.hpp:54-55) or read as a studio reply.
     print["sequence_id"] = "0";
+
+    fill_material_station(status, print);
 
     print["lights_report"] = nlohmann::json::array({
         nlohmann::json{{"node", "chamber_light"}, {"mode", status.light_on ? "on" : "off"}}});
