@@ -896,6 +896,15 @@ void SelectMachineDialog::show_print_failed_info(bool show, int code, wxString d
             m_st_txt_error_code->Wrap(FromDIP(500));
             m_st_txt_error_desc->Wrap(FromDIP(500));
             m_st_txt_extra_info->Wrap(FromDIP(500));
+
+            // Wrapping changes how tall these labels are, and this panel is a scrolled window with a
+            // fixed height. Without laying it out again its children keep their old positions and
+            // draw on top of each other -- the error code ends up printed over the link beneath it,
+            // which is exactly the text the panel exists to show. FitInside resizes the scrollable
+            // area to the wrapped content so anything past the fixed height can be scrolled to
+            // rather than lost.
+            m_sw_print_failed_info->Layout();
+            m_sw_print_failed_info->FitInside();
         }
         else {
             m_sw_print_failed_info->Show(false);

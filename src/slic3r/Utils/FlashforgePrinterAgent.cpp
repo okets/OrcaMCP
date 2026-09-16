@@ -494,7 +494,17 @@ int FlashforgePrinterAgent::upload_gcode(const PrintParams& params,
         return BAMBU_NETWORK_ERR_CANCELED;
     if (!ok) {
         BOOST_LOG_TRIVIAL(error) << "FlashforgePrinterAgent: upload failed: " << error_msg.ToUTF8().data();
-        return start_print ? BAMBU_NETWORK_ERR_PRINT_LP_UPLOAD_FTP_FAILED : BAMBU_NETWORK_ERR_PRINT_SG_UPLOAD_FTP_FAILED;
+
+        const int code = start_print ? BAMBU_NETWORK_ERR_PRINT_LP_UPLOAD_FTP_FAILED : BAMBU_NETWORK_ERR_PRINT_SG_UPLOAD_FTP_FAILED;
+
+        // The codes above are Bambu's and the only ones the print job understands, but their text
+        // talks about FTP, which this printer does not speak. Hand the refusal itself up so the user
+        // reads why -- "Printer is busy" when a dialog is still open on the machine, for instance --
+        // instead of a transport that was never involved.
+        if (update_fn && !error_msg.empty())
+            update_fn(PrintingStageERROR, code, error_msg.ToUTF8().data());
+
+        return code;
     }
 
     if (update_fn)

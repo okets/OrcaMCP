@@ -397,13 +397,25 @@ void PrintJob::process(Ctl &ctl)
     bool is_try_lan_mode = false;
     bool is_try_lan_mode_failed = false;
 
+    // What the printer said, when it said anything. The error strings below are Bambu's, keyed off
+    // Bambu's own result codes, so a third-party agent's failure reads as the nearest Bambu code
+    // rather than the truth: a Flashforge refusing an upload because it still had a dialog open on
+    // its screen reported "Failed to upload file to ftp", to a printer that speaks no FTP at all.
+    // An agent that knows better reports it here and it is preferred over the generic text.
+    std::string printer_reported_error;
+
     auto update_fn = [this, &ctl,
         &is_try_lan_mode,
         &is_try_lan_mode_failed,
         &msg,
         &curr_percent,
+        &printer_reported_error,
         StagePercentPoint
     ](int stage, int code, std::string info) {
+
+                        if (stage == SendingPrintJobStage::PrintingStageERROR && !info.empty())
+                            printer_reported_error = info;
+
 
                         if (stage == SendingPrintJobStage::PrintingStageCreate && !is_try_lan_mode_failed) {
                             if (this->connection_type == "lan") {
@@ -661,6 +673,10 @@ void PrintJob::process(Ctl &ctl)
         } else {
             msg_text = send_print_failed_str;
         }
+
+        // The printer's own words beat a guess made from a result code.
+        if (result != BAMBU_NETWORK_ERR_CANCELED && !printer_reported_error.empty())
+            msg_text = printer_reported_error;
 
         if (result != BAMBU_NETWORK_ERR_CANCELED) {
             ctl.show_error_info(msg_text, 0, "", "");
