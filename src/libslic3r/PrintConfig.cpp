@@ -12693,6 +12693,13 @@ Polygon get_shared_poly(const std::vector<Pointfs>& extruder_polys)
             Polygon extruer_poly;
             extruer_poly.points = to_points(extruder_area);
             Polygons result_polygon = intersection(extruer_poly, result);
+            // Extruder areas that do not overlap -- or a group carrying no points at all --
+            // share no region, and intersection() then returns nothing. Indexing [0] read off
+            // the end of an empty vector and segfaulted; an empty shared area is the answer.
+            if (result_polygon.empty()) {
+                result.points.clear();
+                break;
+            }
             result = result_polygon[0];
         }
     }

@@ -1249,7 +1249,18 @@ GLCanvas3D::~GLCanvas3D()
     }
     m_plate_shadow_mask_key.clear();
 
-    reset_volumes();
+    // Deliberately not reset_volumes(): it ends by clearing the ObjectOutside warning, which
+    // reads wxGetApp().plater()->get_notification_manager(). By the time a canvas is destroyed as
+    // a child of the Plater, the Plater's pimpl is already gone -- members are destroyed before
+    // the wxWindow base destroys its children -- so that read is a use-after-free, and it
+    // segfaults intermittently on exit. A window that is going away has no notification to
+    // update, so do the volume reset itself and skip the notification.
+    if (m_initialized && !m_volumes.empty()) {
+        _set_current();
+        m_selection.clear();
+        m_volumes.clear();
+        m_dirty = true;
+    }
 
     m_sel_plate_toolbar.del_all_item();
     m_sel_plate_toolbar.del_stats_item();
