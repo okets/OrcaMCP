@@ -829,10 +829,10 @@ void FlashforgePrinterAgent::sync_machine_object(const std::string& dev_id) cons
         obj->m_full_msg_count = 1;
     obj->last_push_time = std::chrono::system_clock::now();
 
-    // Flashforge printers print from their own internal storage, which is always there. Without this
-    // SelectMachineDialog/PrintJob refuse with "A Storage needs to be inserted before printing via
-    // LAN." (PrintJob.cpp:614-618).
-    obj->GetStorage()->set_sdcard_state(DevStorage::HAS_SDCARD_NORMAL);
+    // Storage state is deliberately NOT set here. It used to be, and it never survived: this call
+    // precedes the payload, and DevStorage::ParseV1_0 resets the state to NO_SDCARD whenever the
+    // payload carries no `sdcard` key. The key now travels in the payload itself
+    // (flashforge_status_to_bambu_payload), which is the only place the parser cannot overwrite.
 }
 
 void FlashforgePrinterAgent::dispatch_local_connect(int state, const std::string& dev_id, const std::string& msg)

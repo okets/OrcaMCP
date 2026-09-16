@@ -17,6 +17,9 @@ struct PrinterStatus {
     double bed_temp{0}, bed_target{0}, chamber_temp{0}, chamber_target{0};
     std::vector<NozzleTemp> nozzles;
     bool light_on{false}; std::string door; std::string error_code;
+    // Installed nozzle bore in mm, from the printer's own `nozzleModel` ("0.4mm;0.4mm;..."). 0 when
+    // the firmware does not report it -- the UI already renders an unknown diameter as "Unknown".
+    double nozzle_diameter{0};
     std::string name, model, firmware, ip, camera_stream_url; int pid{0};
     bool has_material_station{false}; std::vector<MaterialSlot> slots;
     nlohmann::json raw;                // the untouched `detail` object

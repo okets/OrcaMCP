@@ -3,6 +3,7 @@ add_executable(${_TEST_NAME}_tests
     ${_TEST_NAME}_tests_main.cpp
     test_bambu_filament_ids.cpp
     test_creality_cfs_match.cpp
+    test_agent_storage_state.cpp
     test_dev_mapping.cpp
     test_filament_bitmap_utils.cpp
     test_network_versions.cpp

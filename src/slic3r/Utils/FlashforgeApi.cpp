@@ -187,6 +187,37 @@ void fill_material_slots(const nlohmann::json& detail, PrinterStatus& out)
     out.slots = parse_material_slots(detail["matlStationInfo"].value("slotInfos", nlohmann::json()));
 }
 
+// The printer reports its installed nozzles in `nozzleModel`: one entry per tool, semicolon
+// separated, each like "0.4mm" -- "0.4mm;0.4mm;0.4mm;0.4mm" on a four-tool Creator 5. Only the
+// first entry is used, because the Device tab models one nozzle per machine and a printer with
+// mixed bores would still have to pick one. Returns 0 for a missing or unparseable field, which
+// the UI already renders as "Unknown" rather than as a fabricated bore.
+double parse_nozzle_model_diameter(const nlohmann::json& detail)
+{
+    const std::string model = get_string(detail, "nozzleModel");
+    if (model.empty())
+        return 0.0;
+
+    std::string first = model.substr(0, model.find(';'));
+    boost::trim(first);
+
+    // Drop a trailing unit whatever its case, so "0.4mm", "0.4MM" and a bare "0.4" all read alike.
+    const std::string lowered = to_lower(first);
+    if (lowered.size() > 2 && lowered.compare(lowered.size() - 2, 2, "mm") == 0)
+        first.erase(first.size() - 2);
+    boost::trim(first);
+
+    try {
+        size_t pos = 0;
+        const double diameter = std::stod(first, &pos);
+        // A bore outside this range is a field we have misread, not a nozzle anyone ships.
+        if (pos == first.size() && diameter > 0.0 && diameter < 10.0)
+            return diameter;
+    } catch (...) {
+    }
+    return 0.0;
+}
+
 } // namespace
 
 bool try_parse_json_int(const nlohmann::json& value, int& out)
@@ -273,6 +304,7 @@ bool parse_detail(const std::string& body, PrinterStatus& out, std::string& erro
     result.pid      = static_cast<int>(get_number(detail, "pid"));
     result.ip       = get_string(detail, "ipAddr");
     result.camera_stream_url = get_string(detail, "cameraStreamUrl");
+    result.nozzle_diameter   = parse_nozzle_model_diameter(detail);
 
     fill_material_slots(detail, result);
     result.has_material_station = get_bool(detail, "hasMatlStation") || !result.slots.empty();
@@ -348,6 +380,23 @@ nlohmann::json flashforge_status_to_bambu_payload(const PrinterStatus& status)
         for (const NozzleTemp& nozzle : status.nozzles)
             extruders.push_back(nlohmann::json{{"temp", nozzle.current}, {"target", nozzle.target}});
         print["extruder"] = std::move(extruders);
+    }
+
+    // A Flashforge prints from its own internal storage, which is always present. This has to travel
+    // in the payload rather than being poked onto the MachineObject afterwards: DevStorage::ParseV1_0
+    // (DevStorage.cpp:24-30) treats a *missing* `sdcard` key as positive proof of no card and resets
+    // the state to NO_SDCARD, so any value set outside the payload is wiped by the very next poll.
+    // That is what made the Send print job dialog refuse with "Storage needs to be inserted".
+    print["sdcard"] = true;
+
+    // Likewise for the bore. Reported as `nozzle_diameter` + `nozzle_type` because
+    // MachineObject::parse_json only reaches DevNozzleSystemParser when *both* keys are present
+    // (DeviceManager.cpp:3667), and DevExtderSystem exposes no setter -- the parser is the only way
+    // in. The type is honestly "undefine": the local API gives us a bore, never a nozzle material,
+    // and the hardness check treats an undefined type as matching (SelectMachine.cpp:2583).
+    if (status.nozzle_diameter > 0.0) {
+        print["nozzle_diameter"] = status.nozzle_diameter;
+        print["nozzle_type"]     = "undefine";
     }
 
     print["mc_percent"]        = scale_progress_to_percent(status.progress);

@@ -563,9 +563,8 @@ void MoonrakerPrinterAgent::build_ams_payload(int ams_count, int max_lane_index,
     }
     obj->last_push_time = std::chrono::system_clock::now();
 
-    // Set storage state - Moonraker printers use virtual_sdcard, storage is always available.
-    // This is required for SelectMachineDialog to allow printing (otherwise it blocks with "No SD card").
-    obj->GetStorage()->set_sdcard_state(DevStorage::HAS_SDCARD_NORMAL);
+    // Storage state is deliberately NOT set here -- the next status push would undo it. It rides in
+    // build_print_payload_locked's `sdcard` key instead, where the parser cannot overwrite it.
 
     // Populate module_vers so is_info_ready() passes the version check.
     // Moonraker printers don't have BBL-style version info, but we need a non-empty map.
@@ -1824,6 +1823,12 @@ nlohmann::json MoonrakerPrinterAgent::build_print_payload_locked() const
     payload["print"]["bed_temp_range"]    = {0, 120};   // Typical bed range
 
     payload["print"]["support_send_to_sd"] = true;
+
+    // Klipper prints from its virtual_sdcard, so storage is always available. This must ride in the
+    // payload, not be poked onto the MachineObject: DevStorage::ParseV1_0 reads a missing `sdcard`
+    // key as proof of no card and resets the state to NO_SDCARD on every status push, which made the
+    // Send print job dialog refuse with "Storage needs to be inserted before printing."
+    payload["print"]["sdcard"] = true;
     // Detect bed_leveling support from available objects (bed_mesh or probe)
     // Default to 0 (not supported) if neither object exists
     bool has_bed_leveling                    = (available_objects.count("bed_mesh") != 0 || available_objects.count("probe") != 0);

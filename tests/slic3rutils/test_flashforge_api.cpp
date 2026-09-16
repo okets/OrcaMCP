@@ -6,7 +6,7 @@ using namespace Slic3r::FlashforgeApi;
 static const char* kDetail = R"({"code":0,"message":"Success","detail":{
   "status":"printing","printFileName":"benchy.gcode","printProgress":0.42,"printDuration":600,"estimatedTime":1400,
   "platTemp":60.2,"platTargetTemp":60,"chamberTemp":35,"chamberTargetTemp":0,
-  "nozzleTemps":[215,30,30,210],"nozzleTargetTemps":[215,0,0,210],"nozzleCnt":4,
+  "nozzleTemps":[215,30,30,210],"nozzleTargetTemps":[215,0,0,210],"nozzleCnt":4,"nozzleModel":"0.4mm;0.4mm;0.4mm;0.4mm",
   "lightStatus":"open","doorStatus":"close","errorCode":"","firmwareVersion":"1.9.2","name":"C5P","model":"Creator 5 Pro","pid":41,
   "ipAddr":"192.168.1.50","cameraStreamUrl":"http://192.168.1.50:8080/?action=stream",
   "hasMatlStation":true,"matlStationInfo":{"slotCnt":4,"slotInfos":[{"slotId":1,"hasFilament":true,"materialName":"PLA","materialColor":"#FF0000"}]}}})";
@@ -25,6 +25,34 @@ TEST_CASE("parse_detail reads a Creator 5 Pro status", "[flashforge]") {
     CHECK(s.slots.size() == 1);
     CHECK(s.slots[0].material_color == "#FF0000");
     CHECK(s.raw["nozzleCnt"] == 4);
+    CHECK(s.nozzle_diameter == Catch::Approx(0.4));
+}
+
+TEST_CASE("parse_detail reads the bore out of nozzleModel", "[flashforge]") {
+    auto bore_of = [](const std::string& nozzle_model) {
+        PrinterStatus s; std::string err;
+        REQUIRE(parse_detail(R"({"code":0,"detail":{"status":"ready","nozzleModel":")" + nozzle_model + R"("}})", s, err));
+        return s.nozzle_diameter;
+    };
+
+    // One entry per tool, semicolon separated; the first is the one the Device tab shows.
+    CHECK(bore_of("0.4mm;0.4mm;0.4mm;0.4mm") == Catch::Approx(0.4));
+    CHECK(bore_of("0.6mm") == Catch::Approx(0.6));
+    CHECK(bore_of("0.8MM") == Catch::Approx(0.8));   // unit case is not load bearing
+    CHECK(bore_of("0.4") == Catch::Approx(0.4));     // nor is the unit being present at all
+    CHECK(bore_of(" 0.25mm ; 0.4mm ") == Catch::Approx(0.25));
+
+    // Anything we cannot read stays 0, which the UI renders as "Unknown" rather than inventing a bore.
+    CHECK(bore_of("") == 0.0);
+    CHECK(bore_of("standard") == 0.0);
+    CHECK(bore_of("0.4mm extra") == 0.0);
+    CHECK(bore_of("-0.4mm") == 0.0);
+    CHECK(bore_of("400mm") == 0.0);
+
+    // A detail with no nozzleModel at all must not throw.
+    PrinterStatus s; std::string err;
+    REQUIRE(parse_detail(R"({"code":0,"detail":{"status":"ready"}})", s, err));
+    CHECK(s.nozzle_diameter == 0.0);
 }
 
 TEST_CASE("parse_detail normalises the firmware's short state names", "[flashforge]") {
@@ -152,6 +180,41 @@ TEST_CASE("flashforge_status_to_bambu_payload maps the whole Creator 5 Pro detai
     // Present so the push is not logged as a malformed command reply, and outside the studio
     // command id range so it can never be taken for one.
     CHECK(p["sequence_id"] == "0");
+
+    // Storage is always present on a Flashforge, and the bore comes from the printer's own report.
+    CHECK(p["sdcard"] == true);
+    CHECK(p["nozzle_diameter"] == Catch::Approx(0.4));
+    CHECK(p["nozzle_type"] == "undefine");
+}
+
+TEST_CASE("flashforge_status_to_bambu_payload always reports storage present", "[flashforge]") {
+    // Regression: the key used to be absent and the state poked onto the MachineObject instead.
+    // DevStorage::ParseV1_0 reads a missing `sdcard` as proof of no card and resets the state to
+    // NO_SDCARD on every poll, so the Send print job dialog refused with "Storage needs to be
+    // inserted before printing." A Flashforge prints from internal storage that is always there.
+    for (const char* state : {"ready", "printing", "paused", "error", "unknown"}) {
+        const auto p = flashforge_status_to_bambu_payload(make_status(state))["print"];
+        INFO("state = " << state);
+        REQUIRE(p.contains("sdcard"));
+        CHECK(p["sdcard"] == true);
+    }
+}
+
+TEST_CASE("flashforge_status_to_bambu_payload publishes a known nozzle bore", "[flashforge]") {
+    PrinterStatus s = make_status("ready");
+
+    // Both keys or neither: MachineObject::parse_json only reaches the nozzle parser when the
+    // payload carries `nozzle_diameter` *and* `nozzle_type`.
+    s.nozzle_diameter = 0.4;
+    auto p = flashforge_status_to_bambu_payload(s)["print"];
+    CHECK(p["nozzle_diameter"] == Catch::Approx(0.4));
+    CHECK(p["nozzle_type"] == "undefine");   // the local API reports a bore, never a material
+
+    // Unknown bore: say nothing rather than publish a 0 that reads as a real measurement.
+    s.nozzle_diameter = 0.0;
+    p = flashforge_status_to_bambu_payload(s)["print"];
+    CHECK_FALSE(p.contains("nozzle_diameter"));
+    CHECK_FALSE(p.contains("nozzle_type"));
 }
 
 TEST_CASE("flashforge_status_to_bambu_payload picks the first heated nozzle", "[flashforge]") {
