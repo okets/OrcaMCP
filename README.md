@@ -25,6 +25,9 @@ tools that do what you do with the mouse: load and cut models, paint them, chang
 slice, look at the result, and send it to the printer. It runs on your machine and talks to your
 printers over your own network. Nothing goes to a cloud.
 
+It is free software. There are no credits, no subscription and no account. It is designed to
+work with the agent you already use; you bring that, and OrcaMCP gives it the slicer.
+
 Two things separate this from wrapping a command-line slicer.
 
 **The agent can see.** It renders the plate from any camera it likes, reads the image, and can ask
@@ -80,78 +83,73 @@ Ask the agent to open it, lay it on its best face, check it fits your bed, and s
 printer and the material you actually have loaded. It shows you the plate before you commit, and
 the slicer's warnings reach it before the print starts.
 
-## What a session looks like
+## Things people ask it
 
-The first two conversations below were run exactly as written, against a Creator 5 Pro profile,
-while this README was being written. The numbers are what the tools returned. The remaining
-examples describe the tools as documented in the [tools reference](docs/tools/reference.md).
+Every one of these maps onto tools the server has today. Plain requests first, then the ones
+that used to mean an afternoon in menus.
 
----
+**Getting a model onto the plate**
 
-> Show me the plate from the front right, then make the small bracket red.
+- "What's on the plate right now?"
+- "Load ~/Downloads/bracket.step and show me it from the front and from above."
+- "Lay it on its biggest flat face, then orient it for the fewest supports."
+- "It's 300 mm tall and my bed is 256. Cut it at the waist and put both halves on the plate."
+- "Make three copies and arrange everything."
+- "Mirror it so I get a left-hand version too."
+- "Scale it to exactly 80 mm wide."
 
-The agent rendered the plate, handed the render's camera back with the pixel it meant, and got
-the bracket's mesh, facet 3094, the surface point in plate millimetres and the normal there. It
-seeded a connected fill from that facet and painted the shell with slot 3: 2,508 of the part's
-3,586 triangles, 77% of its surface area. The second render is the same camera again.
+**Painting**
 
-Painting put a third filament on the plate, so the slicer generated a prime tower at its default
-spot on the plate's edge, and the next response carried the slicer's own error: the tower was
-partly outside the printable area. The agent moved it beside the parts. The response listed the
-allowed range and reported no conflicts, and the warning count was zero on the next call.
+- "Paint the roof terracotta, the walls cream and the chimney dark gray."
+- "Paint the part at the top left of this render red."
+- "Supports only under the arch, nowhere else."
+- "Put the seam on the back edge where nobody will see it."
+- "Fuzzy skin on the grip, smooth everywhere else."
+- "Which parts of this model are painted, and with what?"
 
-`render_plate_view` · `pick_facet` · `paint_object` · `set_prime_tower_position`
+**Color and multi-material**
 
----
+- "What colors can I mix from the four spools that are loaded?"
+- "Give me the closest thing to #B7410E from these spools and add it as a slot."
+- "Add the eight best mixes as new slots."
+- "Match the project's filaments to what is actually in the material station."
+- "Raise the flush volume from red to white, it's still pink."
+- "Move the prime tower to the front left corner, out of the way."
 
-> What colors can I mix from what is loaded?
+**Settings**
 
-Loaded: gold PETG, dark grey ABS, red ABS, translucent grey PLA. The palette tool found three
-reachable mixes, all from the two ABS spools, from a deep maroon at 70/30 to a brick red at
-30/70. It also named ten hues you cannot get from these spools, red through magenta. It did not
-pretend otherwise. Ask for one of the three by name and it becomes a new filament slot, with the
-flush volumes recalculated.
+- "It's a load-bearing PETG bracket. Set it up properly and tell me what you chose."
+- "Three walls, 40% gyroid, and make the first 10 mm solid."
+- "0.12 mm layers between 20 and 35 mm, where the text is. 0.28 everywhere else."
+- "Adaptive layer height on the curved top."
+- "Supports for the figure only, not the base."
+- "Switch to the 0.6 mm nozzle profile."
+- "Clone my PETG profile as 'PETG fast', raise the speeds 20%, and save it."
+- "Brim ears on the four corners, 8 mm."
 
-`get_filaments` · `get_color_palette` · `suggest_color_mix` · `set_mixed_filament` · `auto_calc_flush_volumes`
+**Slicing and checking**
 
----
+- "Slice it. How long, how much filament, how many tool changes?"
+- "Which of my four plates prints fastest?"
+- "Is anything wrong with this plate?"
+- "Why is the prime tower outside the printable area?"
+- "Show me the sliced preview colored by speed."
+- "Save this as ~/Prints/bracket-v3.3mf."
+- "Export the G-code to my desktop."
 
-> This figure is 300 mm tall. Cut it at the waist, lay both halves flat, and arrange them.
+**Printers**
 
-Cut at a Z height keeping both pieces, flatten each onto its best face, orient for the fewest
-supports, arrange, render. Every transform reports the object's new position and whether it is
-on the bed, so the agent knows before you do if a half landed off the plate.
+- "Find the FlashForge on my network and add it."
+- "Is the printer idle? What are the bed and chamber temperatures?"
+- "Preheat nozzle two to 240 and turn the chamber light on."
+- "Send it to the C5P."
+- "List the files on the printer and print the last one again."
 
-`cut_object` · `flatten_object` · `auto_orient` · `arrange_objects` · `render_plate_view`
+**When it goes wrong**
 
----
-
-> It is a load-bearing PETG bracket. Set it up properly.
-
-Three walls and 40% gyroid on the object, a layer range over the first 10 mm with denser infill,
-adaptive layer height for the curved top, and the reasoning written out. Settings are applied by
-name; the agent can list the valid keys for any category before it guesses.
-
-`get_valid_config_keys` · `apply_config` · `set_object_config` · `set_object_layer_range` · `apply_adaptive_layer_height`
-
----
-
-> Slice it, tell me how long it takes, and if it is under an hour send it to the C5P.
-
-Slice the current plate, poll until done, read back the estimate. The two parts above came back
-as 3 h 20 min, 315 layers, 34 g over three filaments and 506 tool changes, so the agent did not
-send, and could say why: three colors share most layers, so the tool changes dominate. The
-status response also carried the slicer's warning that the bracket has floating regions and wants
-supports. When the answer is yes, sending opens the slicer's own send dialog with the file
-already selected; the last click is yours.
-
-`slice_all` · `get_slicing_status` · `get_print_estimate` · `send_to_printer`
-
----
-
-> That looked wrong. Go back.
-
-`undo`
+- "Undo that."
+- "That looked wrong. Go back two steps and show me the plate."
+- "Start a new project and load the last 3MF I saved."
 
 ## Built for agents
 
