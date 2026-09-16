@@ -130,18 +130,32 @@ public:
     ProgressIndicator * get_pri() { return m_progress.get(); }
     const ProgressIndicator * get_pri() const  { return m_progress.get(); }
 
+    // Both of these are called from the worker thread, and both end in widget calls: clear_percent
+    // hides the cancel button, show_error_info hides and shows widgets, resizes the panel and relays
+    // out the status bar. Touching view geometry off the main thread makes Cocoa abort the process
+    // ("!view->_descendantHasCachedVisibleRect"), which is how a failed print took the app down
+    // rather than showing its error. update_status has always gone through the output queue for this
+    // reason; these two went straight to the widgets. They now take the same route.
     void clear_percent() override
     {
-        if (m_progress) {
-            m_progress->clear_percent();
-        }
+        if (!m_progress)
+            return;
+
+        call_on_main_thread([this]() {
+            if (m_progress)
+                m_progress->clear_percent();
+        });
     }
 
     void show_error_info(const std::string &msg, int code, const std::string &description, const std::string &extra) override
     {
-        if (m_progress) {
-            m_progress->show_error_info(from_u8(msg), code, from_u8(description), from_u8(extra));
-        }
+        if (!m_progress)
+            return;
+
+        call_on_main_thread([this, msg, code, description, extra]() {
+            if (m_progress)
+                m_progress->show_error_info(from_u8(msg), code, from_u8(description), from_u8(extra));
+        });
     }
 
     void process_events() override;
