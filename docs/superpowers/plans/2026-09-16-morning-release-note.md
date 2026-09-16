@@ -1,8 +1,27 @@
 # Morning note — 2026-09-16: releasing v2.5.0.1-dev
 
-Rewritten at 03:40 after a long night on CI. The print is running, a fresh CI run is on the true
-tip, and the tag is **not** pushed — that is yours, and it is the only step left. But there is one
-decision to make first, described under **The one open case**.
+**Updated late morning.** The one red case is fixed, not documented around: the wipe-tower placement
+clamp was missing upstream's comfort-margin commit. Found by building `upstream/main` and running the
+identical case on both binaries — same estimate to the digit, clamp 14 mm apart. Details in T20.
+
+Also done this morning on request: the Device page shows only Obico's primary camera (the "side view"
+is gone).
+
+The user's rule for this release, recorded: **CI must be fully green on the exact commit, then tag.**
+No known-open failures.
+
+## What to do now
+
+1. Wait for the CI run on the current tip (run id given in chat when triggered) to finish **green**:
+   19 jobs, and the Linux *"Run external slicer regression tests"* step at **0 failed**.
+2. Tag **that exact commit** — the one the run's `headSha` names, not `HEAD`:
+
+       cd ~/Projects/OrcaMCP
+       git tag v2.5.0.1-dev <sha CI tested>
+       git push origin v2.5.0.1-dev
+
+   `version.inc` already reads `2.5.0.1-dev`. `release.yml` rebuilds every platform (~1 h) and
+   publishes a **draft**; nothing is public until you press Publish.
 
 ## Check these first
 
@@ -18,7 +37,7 @@ decision to make first, described under **The one open case**.
 **2. The print.** Plate 1 finishes around **09:20** — chamber held 60 all night. `get_printer_status` or the
 Device tab.
 
-## The one open case
+## The one open case (RESOLVED — see T20; kept for the record)
 
 `mixed-filament-defined-on-cli-slices`: a bare STL, sliced from the CLI with a mixed filament whose two
 components are the *same* PLA preset, on the X1C profile. Ours exits 154 (`CLI_GCODE_PATH_IN_UNPRINTABLE_AREA`,
