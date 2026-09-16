@@ -368,13 +368,41 @@ NozzleVolumeType convert_to_nozzle_type(const std::string &str)
     return res;
 }
 
+/// The human name a vendor profile gives the model behind `model_id`. Preset::get_printer_type
+/// builds MachineObject::printer_type out of exactly this field, so the mapping is the same one
+/// read backwards, and it covers every printer Orca ships a profile for.
+static std::string vendor_printer_model_name(const std::string& model_id)
+{
+    if (model_id.empty())
+        return {};
+
+    const PresetBundle* preset_bundle = GUI::wxGetApp().preset_bundle;
+    if (preset_bundle == nullptr)
+        return {};
+
+    for (const auto& vendor : preset_bundle->vendors) {
+        for (const VendorProfile::PrinterModel& model : vendor.second.models) {
+            if (model.model_id == model_id)
+                return model.name;
+        }
+    }
+    return {};
+}
+
 wxString MachineObject::get_printer_type_display_str() const
 {
     std::string display_name = DevPrinterConfigUtil::get_printer_display_name(printer_type);
     if (!display_name.empty())
         return display_name;
-    else
-        return _L("Unknown");
+
+    // That table is Bambu's own printer list, so no third-party model is in it and every one of
+    // them rendered as "Unknown" -- in the Send print job dialog, next to a perfectly good nozzle
+    // reading. The vendor profiles know the same models by the same id, so ask them before giving up.
+    display_name = vendor_printer_model_name(printer_type);
+    if (!display_name.empty())
+        return GUI::from_u8(display_name);
+
+    return _L("Unknown");
 }
 
 std::string MachineObject::get_printer_thumbnail_img_str() const
