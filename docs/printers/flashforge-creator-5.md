@@ -134,8 +134,8 @@ host type, Advanced mode): **Obico server URL** (e.g. `http://10.0.0.2:3334`) an
 token** (the token the agent uses). Both or neither; the dialog refuses to save half a link. The
 console then:
 
-- shows every camera Obico lists for the printer, played from the agent's re-served stream; with
-  more than one camera a thumbnail strip appears under the picture and a click swaps cameras;
+- shows Obico's primary camera, played from the agent's re-served stream — the same picture Obico
+  itself judges for failures. Other cameras the agent advertises are not shown;
 - shows a line under the camera with Obico's state: connecting, watching with a low/medium/high
   failure confidence, or a warning (and a banner) when Obico has flagged a failure;
 - falls back in order: advertised stream → Obico's latest snapshot → the printer's own stream.

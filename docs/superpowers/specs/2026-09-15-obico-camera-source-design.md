@@ -1,5 +1,12 @@
 # Obico as the camera and watch source for the Flashforge console — design
 
+> **Amended 2026-09-16, before release:** the console shows **only Obico's primary camera**. The
+> thumbnail strip for additional cameras described below was built and then removed on the user's
+> request; `cameraSources()` in `index.html` keeps the primary (or first streamable) Obico webcam
+> and drops the rest. The fallback order — Obico stream → Obico snapshot → the printer's own stream
+> — is unchanged. Re-enabling multi-camera is a one-line change at that filter.
+
+
 **Date:** 2026-09-15
 **Status:** draft for review
 **Companion:** the `flashforge-obico` agent (separate repo, `~/Projects/flashforge-obico`), whose

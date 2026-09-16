@@ -1154,11 +1154,15 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
   function cameraSources(s, p, doc){
     var out = [];
     var cams = (doc && doc.settings && Array.isArray(doc.settings.webcams)) ? doc.settings.webcams : [];
-    cams.filter(function(w){ return w && w.stream_url; })
-        .sort(function(a, b){ return (b.is_primary_camera ? 1 : 0) - (a.is_primary_camera ? 1 : 0); })
-        .forEach(function(w){
-          out.push({ kind:"obico-stream", url:w.stream_url, name:w.name || "Primary", primary:!!w.is_primary_camera });
-        });
+    /* Only Obico's primary camera is offered. The agent may advertise more (a side view, say); the
+       console shows the one Obico itself watches for failures, so the picture here and the picture
+       Obico judges are the same. If no entry is flagged primary, the first streamable one stands in. */
+    var streams = cams.filter(function(w){ return w && w.stream_url; })
+        .sort(function(a, b){ return (b.is_primary_camera ? 1 : 0) - (a.is_primary_camera ? 1 : 0); });
+    if (streams.length){
+      var w = streams[0];
+      out.push({ kind:"obico-stream", url:w.stream_url, name:w.name || "Primary", primary:true });
+    }
     var agentSilent = !doc || obicoDocStale(doc);
     if (doc && doc.pic && doc.pic.img_url && !agentSilent)
       out.push({ kind:"obico-snapshot", url:doc.pic.img_url, name:"Snapshot via Obico", primary:true });
