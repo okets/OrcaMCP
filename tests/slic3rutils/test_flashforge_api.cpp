@@ -181,10 +181,13 @@ TEST_CASE("flashforge_status_to_bambu_payload maps the whole Creator 5 Pro detai
     // command id range so it can never be taken for one.
     CHECK(p["sequence_id"] == "0");
 
-    // Storage is always present on a Flashforge, and the bore comes from the printer's own report.
+    // Storage is always present on a Flashforge.
     CHECK(p["sdcard"] == true);
-    CHECK(p["nozzle_diameter"] == Catch::Approx(0.4));
-    CHECK(p["nozzle_type"] == "undefine");
+
+    // No nozzle keys from a parse alone: the bore is known but the material is not, and the pair is
+    // published only when both are. The agent fills the material in from the machine preset.
+    CHECK_FALSE(p.contains("nozzle_diameter"));
+    CHECK_FALSE(p.contains("nozzle_type"));
 }
 
 TEST_CASE("flashforge_status_to_bambu_payload always reports storage present", "[flashforge]") {
@@ -200,17 +203,25 @@ TEST_CASE("flashforge_status_to_bambu_payload always reports storage present", "
     }
 }
 
-TEST_CASE("flashforge_status_to_bambu_payload publishes a known nozzle bore", "[flashforge]") {
+TEST_CASE("flashforge_status_to_bambu_payload publishes a fully known nozzle", "[flashforge]") {
     PrinterStatus s = make_status("ready");
 
-    // Both keys or neither: MachineObject::parse_json only reaches the nozzle parser when the
-    // payload carries `nozzle_diameter` *and* `nozzle_type`.
+    // The bore comes from the printer, the material from the machine preset. With both in hand the
+    // pair is published, which is what SelectMachineDialog needs to let the print through.
     s.nozzle_diameter = 0.4;
+    s.nozzle_type     = "hardened_steel";
     auto p = flashforge_status_to_bambu_payload(s)["print"];
     CHECK(p["nozzle_diameter"] == Catch::Approx(0.4));
-    CHECK(p["nozzle_type"] == "undefine");   // the local API reports a bore, never a material
+    CHECK(p["nozzle_type"] == "hardened_steel");
 
-    // Unknown bore: say nothing rather than publish a 0 that reads as a real measurement.
+    // Half a nozzle is worse than none: the dialog rejects an undefined type or a zero bore with
+    // "Invalid nozzle information", so an incomplete pair is not published at all.
+    s.nozzle_type = "";
+    p = flashforge_status_to_bambu_payload(s)["print"];
+    CHECK_FALSE(p.contains("nozzle_diameter"));
+    CHECK_FALSE(p.contains("nozzle_type"));
+
+    s.nozzle_type     = "hardened_steel";
     s.nozzle_diameter = 0.0;
     p = flashforge_status_to_bambu_payload(s)["print"];
     CHECK_FALSE(p.contains("nozzle_diameter"));

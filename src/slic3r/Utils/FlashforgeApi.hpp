@@ -20,6 +20,10 @@ struct PrinterStatus {
     // Installed nozzle bore in mm, from the printer's own `nozzleModel` ("0.4mm;0.4mm;..."). 0 when
     // the firmware does not report it -- the UI already renders an unknown diameter as "Unknown".
     double nozzle_diameter{0};
+    // Nozzle material ("hardened_steel", "brass", ...). The local API reports a bore but never a
+    // material, so this is not parsed from the printer: the caller fills it from the machine preset,
+    // which is where the user declares what is fitted. Empty when unknown.
+    std::string nozzle_type;
     std::string name, model, firmware, ip, camera_stream_url; int pid{0};
     bool has_material_station{false}; std::vector<MaterialSlot> slots;
     nlohmann::json raw;                // the untouched `detail` object

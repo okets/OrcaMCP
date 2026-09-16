@@ -20,6 +20,15 @@
 namespace Slic3r {
 
 class Flashforge;
+class DynamicPrintConfig;
+
+/// The machine preset's nozzle material, as the wire name the device-side nozzle parser expects
+/// ("hardened_steel", "brass", ...). The Flashforge local API reports a bore but never a material,
+/// and SelectMachineDialog refuses to print without one, so the preset -- where the user declares
+/// what is fitted -- is the source. `nozzle_type` is a per-extruder enum list and a Flashforge fits
+/// one kind across its tools, so the first entry speaks for the machine. Empty when the preset does
+/// not say, which publishes nothing rather than guessing at the hardware.
+std::string flashforge_nozzle_type_of(const DynamicPrintConfig& config);
 
 /**
  * FlashforgePrinterAgent - Device tab support for Flashforge's local HTTP API.
@@ -157,6 +166,7 @@ private:
     std::string                  m_access_code;
     std::string                  m_firmware_version; // learned from the first successful poll
     std::string                  m_model_id;         // vendor model_id of the selected preset
+    std::string                  m_nozzle_type;      // nozzle material of the selected preset
 
     // Only the callbacks this agent actually invokes are stored; the rest of the IPrinterAgent
     // setters accept and drop their argument rather than keeping a member nothing ever reads.

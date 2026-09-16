@@ -21,6 +21,8 @@
 
 #include "slic3r/GUI/DeviceCore/DevStorage.h"
 #include "slic3r/Utils/FlashforgeApi.hpp"
+#include "slic3r/Utils/FlashforgePrinterAgent.hpp"
+#include "libslic3r/PrintConfig.hpp"
 
 using namespace Slic3r;
 
@@ -60,4 +62,32 @@ TEST_CASE("An sdcard key in the payload decides the state either way", "[DevStor
     absent.set_sdcard_state(DevStorage::HAS_SDCARD_NORMAL);
     DevStorage::ParseV1_0(nlohmann::json::parse(R"({"sdcard":false})"), &absent);
     CHECK(absent.get_sdcard_state() == DevStorage::NO_SDCARD);
+}
+
+
+TEST_CASE("The nozzle material is read out of the machine preset", "[DevStorage]")
+{
+    // Regression: `nozzle_type` is a *nullable* enum list. Reading it as the non-nullable type
+    // yields nullptr without any error, the material comes back unknown, and the Send print job
+    // dialog refuses with "Invalid nozzle information" while showing a perfectly good bore.
+    DynamicPrintConfig config;
+    config.apply(DynamicPrintConfig::full_print_config());
+
+    config.set_deserialize_strict("nozzle_type", "hardened_steel,hardened_steel,hardened_steel,hardened_steel");
+    CHECK(flashforge_nozzle_type_of(config) == "hardened_steel");
+
+    // A Flashforge fits one kind across its tools, so the first entry speaks for the machine.
+    config.set_deserialize_strict("nozzle_type", "brass,brass");
+    CHECK(flashforge_nozzle_type_of(config) == "brass");
+
+    // The wire names must be the ones the device-side parser knows (NozzleTypeStrToEumn).
+    config.set_deserialize_strict("nozzle_type", "stainless_steel");
+    CHECK(flashforge_nozzle_type_of(config) == "stainless_steel");
+
+    config.set_deserialize_strict("nozzle_type", "undefine");
+    CHECK(flashforge_nozzle_type_of(config) == "undefine");
+
+    // A config that says nothing about nozzles yields nothing, rather than a guess.
+    DynamicPrintConfig empty;
+    CHECK(flashforge_nozzle_type_of(empty).empty());
 }

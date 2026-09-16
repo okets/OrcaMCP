@@ -389,14 +389,16 @@ nlohmann::json flashforge_status_to_bambu_payload(const PrinterStatus& status)
     // That is what made the Send print job dialog refuse with "Storage needs to be inserted".
     print["sdcard"] = true;
 
-    // Likewise for the bore. Reported as `nozzle_diameter` + `nozzle_type` because
+    // Likewise for the nozzle. Reported as `nozzle_diameter` + `nozzle_type` because
     // MachineObject::parse_json only reaches DevNozzleSystemParser when *both* keys are present
     // (DeviceManager.cpp:3667), and DevExtderSystem exposes no setter -- the parser is the only way
-    // in. The type is honestly "undefine": the local API gives us a bore, never a nozzle material,
-    // and the hardness check treats an undefined type as matching (SelectMachine.cpp:2583).
-    if (status.nozzle_diameter > 0.0) {
+    // in. Both must be real: SelectMachine.cpp:4536 refuses to print with "Invalid nozzle
+    // information" on an undefined type or a non-positive bore. The bore comes from the printer and
+    // the material from the machine preset, so a half-known nozzle publishes nothing at all rather
+    // than a value the dialog would reject anyway.
+    if (status.nozzle_diameter > 0.0 && !status.nozzle_type.empty()) {
         print["nozzle_diameter"] = status.nozzle_diameter;
-        print["nozzle_type"]     = "undefine";
+        print["nozzle_type"]     = status.nozzle_type;
     }
 
     print["mc_percent"]        = scale_progress_to_percent(status.progress);

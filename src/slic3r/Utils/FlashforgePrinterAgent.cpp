@@ -135,6 +135,11 @@ int FlashforgePrinterAgent::connect_printer(std::string dev_id, std::string dev_
     if (model_id.empty())
         model_id = config.opt_string("printer_model");
 
+    // The local API reports the bore but never the nozzle material, and SelectMachineDialog refuses
+    // to print without one. The preset is where the user declares what is fitted, so it is read here
+    // -- on the main thread, with the preset bundle in hand -- and cached for the polling thread.
+    std::string nozzle_type = flashforge_nozzle_type_of(config);
+
     stop_polling(); // a previous selection may still be polling a different printer
 
     {
@@ -142,12 +147,35 @@ int FlashforgePrinterAgent::connect_printer(std::string dev_id, std::string dev_
         m_host        = std::move(host);
         m_access_code = password.empty() ? ACCESS_CODE_PLACEHOLDER : password;
         m_model_id    = std::move(model_id);
+        m_nozzle_type = std::move(nozzle_type);
         m_firmware_version.clear();
     }
 
     start_polling(dev_id);
     BOOST_LOG_TRIVIAL(info) << "FlashforgePrinterAgent: connect_printer dev_id=" << dev_id << " host=" << dev_ip;
     return BAMBU_NETWORK_SUCCESS;
+}
+
+// `nozzle_type` is stored as a *nullable* enum list -- the same read appears in GCodeProcessor.cpp
+// and Plater.cpp. Casting to the non-nullable ConfigOptionEnumsGeneric silently yields nullptr and
+// the material reads as unknown, which is exactly how the dialog came to say "Invalid nozzle
+// information" with the bore sitting right next to it.
+std::string flashforge_nozzle_type_of(const DynamicPrintConfig& config)
+{
+    const auto* opt = config.option<ConfigOptionEnumsGenericNullable>("nozzle_type");
+    if (opt == nullptr || opt->values.empty())
+        return {};
+
+    const ConfigOptionDef* def = print_config_def.get("nozzle_type");
+    if (def == nullptr)
+        return {};
+
+    // Out of range covers the nullable nil sentinel as well as a value from a newer profile format.
+    const int value = opt->values.front();
+    if (value < 0 || value >= static_cast<int>(def->enum_values.size()))
+        return {};
+
+    return def->enum_values[value];
 }
 
 int FlashforgePrinterAgent::disconnect_printer()
@@ -158,6 +186,7 @@ int FlashforgePrinterAgent::disconnect_printer()
         m_host.reset();
         m_firmware_version.clear();
         m_model_id.clear();
+        m_nozzle_type.clear();
     }
     return BAMBU_NETWORK_SUCCESS;
 }
@@ -740,6 +769,11 @@ void FlashforgePrinterAgent::run_poll_loop(std::string dev_id)
             dispatch_local_connect(ConnectStatusOk, dev_id, "0");
             dispatch_printer_connected(dev_id);
             announced_connected = true;
+        }
+
+        {
+            std::lock_guard<std::recursive_mutex> lock(m_state_mutex);
+            status.nozzle_type = m_nozzle_type;
         }
 
         nlohmann::json payload = FlashforgeApi::flashforge_status_to_bambu_payload(status);
