@@ -1027,7 +1027,7 @@ upstream's test repo as much as it measures us.
 
 ---
 
-## T20 — the last red CI case: X1C filament-change purges land 1 mm outside the plate check (open)
+## T20 — the last red CI case: the wipe-tower clamp lacked upstream's comfort margin (fixed)
 
 Found 2026-09-16 while making CI green for the release. Of the eight cases upstream flipped to must-pass
 (T19), seven are fixed by porting #15636, #15438 and #15639 — confirmed by Linux CI run `35005568253`:
@@ -1078,3 +1078,52 @@ involved.
 **Also learned, expensively:** the external suite is meaningless on macOS. `record_exit_reson` is compiled
 `#if defined(__linux__)`, so `result.json` never exists and ten of eleven local "failures" were that. Only the
 Linux CI step is authoritative for this suite.
+
+
+### T20 — resolution (2026-09-16 morning)
+
+The night-time diagnosis above was wrong in its last step, and the way it was wrong is worth
+keeping. The X1C purge at (20, −3) is **not** counted by the check: those are E-only moves, which the
+processor classifies as *unretract*, not *extrude*, and my replica of the check treated them as
+extrusions. Once the replica used the processor's own rule it found nothing outside the plate —
+yet the real check still failed. Modelling the check was the wrong tool; instrumenting it was the
+right one. A temporary log inside the failing branch said, exactly:
+
+```
+label=-1 filament=1 extruder=0 npts=39200 bbox=[161.796,225.719]..[195.74,259.211] plate=[-2,-2]..[258,258]
+```
+
+The prime tower itself, 1.2 mm over the back edge. The G-code endpoints had said 256.5 because the
+tower has `rib` walls with a 30° cone angle, and its base flares past the body box between endpoints.
+
+**Then the real comparison.** Building `upstream/main` in a worktree against our existing deps and
+running the identical case on both binaries, same generated datadir:
+
+| | estimate (body) | brim margin | clamp Y | result |
+|---|---|---|---|---|
+| upstream | 22.6569 | 3.4281 | **214.915** | exit 0 |
+| ours (before) | 22.6569 | 3.4281 | **228.915** | exit 154 / 156 |
+
+Identical estimate, identical margin, **14 mm apart**. Upstream re-places a far-out default with a
+15 mm *comfort* margin (`WIPE_TOWER_AUTO_MARGIN`); we clamped to the 1 mm validity bound. That is
+upstream commit `869805132e` *Add Separate Comfort Margin for Auto Placement* (2026-09-03), the one
+commit of the tower chain not yet ported. Ported, resolving one ordering-artefact hunk in favour of
+our already-newer outline code, `PartPlate::estimate_wipe_tower_polygon` is line-for-line upstream's
+and the case passes with exactly upstream's numbers.
+
+**Honest footnote:** the estimate under-sizes this tower in *both* trees — the planner-based estimate
+models one purge per layer and sub-layer mode generates two (198 tool changes over 100 layers). The
+comfort margin is what absorbs the difference upstream, so taking the same commit is the faithful
+fix; the estimate gap itself is upstream's to close and is worth reporting there.
+
+**The full tower chain, in upstream order, now ported:** `f88fa6bfc7` Extract and Unify Wipe Tower
+Estimation · `bebd54362b` Place Wipe Tower before Slicing · `ca0becfbc0` review fixes ·
+`f844a64850` Size the Footprint Estimate from the Planners · `4def1a09a8` no-purge tower at idle
+depth · `e56950fea4` Verify Footprint at Point of Generation · `28231d3eed` Share the Estimated
+First-Layer Outline · `8c083c5628` footprint-polygon part of Position Clamping Fixes ·
+`961bec4734` Separate Comfort Margin. Plus `2b0a9fa2d3` (#15666) and `70bb6dc636` (#15289), taken
+along the way. One fork-side adaptation: `4b6df13cf7`, our prime-tower state reader on the new API.
+
+**Three mistakes recorded so they are not repeated:** porting a commit before the one it depends on
+(segfault upstream never had); trusting macOS runs of a Linux-only suite; and modelling a check
+instead of instrumenting it.
