@@ -795,6 +795,31 @@ nlohmann::json OrcaMCPPlateUtils::GetCurrentProject(bool with_model_object_featu
         {"max_z", bed_box.max.z()}
     };
     j["plates"] = GetPlates(with_model_object_features);
+
+    // Objects that belong to no plate at all. `plates` is walked plate by plate, so anything sitting
+    // outside every one of them was simply invisible here -- which is where deleting a plate leaves
+    // its objects: PartPlateList::delete_plate moves them to the unprintable area rather than
+    // deleting them or re-homing them. An agent could not see them, could not arrange them, and had
+    // no reason to suspect they were still in the model.
+    nlohmann::json unplaced = nlohmann::json::array();
+    PartPlateList& plate_list = plater->get_partplate_list();
+    for (size_t i = 0; i < model.objects.size(); ++i) {
+        if (plate_list.find_instance(int(i), 0) >= 0)
+            continue;
+
+        const ModelObject* object = model.objects[i];
+        const BoundingBoxf3 bbox  = object->bounding_box_approx();
+        unplaced.push_back(nlohmann::json{
+            {"object_index", int(i)},
+            {"id", std::to_string(object->id().id)},
+            {"name", object->name},
+            {"position", {{"x", bbox.center().x()}, {"y", bbox.center().y()}, {"z", bbox.center().z()}}},
+            {"reason", "Not on any plate. Deleting a plate moves its objects here rather than "
+                       "removing them; use delete_object, or move it onto a plate."}
+        });
+    }
+    j["unplaced_objects"] = std::move(unplaced);
+
     return j;
 }
 

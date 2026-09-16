@@ -747,7 +747,7 @@ void OrcaMCPServer::register_builtin_tools()
                     {"plate_management", {
                         {"add_plate", "Create a new plate"},
                         {"select_plate", "Switch to a plate by index"},
-                        {"delete_plate", "Delete a plate. Cannot delete last plate. Objects moved to another plate."},
+                        {"delete_plate", "Delete a plate. Cannot delete the last plate. Objects on it are NOT deleted and NOT moved to another plate: they are moved outside every plate, where get_scene_info lists them under unplaced_objects. Delete them first if you do not want them."},
                         {"set_prime_tower_position", "Move a plate's prime tower. x/y are the tower body's front-left "
                                                      "corner in plate millimetres; read the current one from "
                                                      "get_scene_info plates[].prime_tower.position."}
@@ -3211,10 +3211,23 @@ void OrcaMCPServer::register_builtin_tools()
                 int previous_plate_count = plate_list.get_plate_count();
                 int current_plate_before = plate_list.get_curr_plate_index();
 
+                // Snapshot first, so a plate added over MCP can be undone like one added from the
+                // toolbar. Plater::priv::on_action_add_plate is the reference for this whole block.
+                plater->take_snapshot("add partplate");
+
                 // Create the new plate
                 int new_index = plate_list.create_plate(true);
                 int total_plates = plate_list.get_plate_count();
                 int current_plate_after = plate_list.get_curr_plate_index();
+
+                // Not optional. When the plate count crosses a column boundary, create_plate
+                // re-flows the grid and rebuilds every plate's picking mesh, which frees the
+                // MeshRaycasters the canvas registered. SceneRaycasterItem keeps a raw pointer to
+                // those, so the next picking pass -- any idle frame with the mouse over the canvas
+                // -- dereferenced freed memory and killed the app. Plater::update() runs
+                // reload_scene, which drops every Bed raycaster and re-registers the new ones.
+                // The GUI never hit this because every plate action of its own ends in update().
+                plater->update();
 
                 return nlohmann::json{
                     {"status", "success"},
@@ -3232,7 +3245,7 @@ void OrcaMCPServer::register_builtin_tools()
     // delete_plate - Delete a plate
     register_tool({
         "delete_plate",
-        "Delete a plate. Cannot delete last plate. Objects moved to another plate.",
+        "Delete a plate. Cannot delete the last plate. Objects on it are NOT deleted and NOT moved to another plate: they are moved outside every plate, where get_scene_info lists them under unplaced_objects. Delete them first if you do not want them.",
         {
             {"type", "object"},
             {"properties", {
@@ -3271,7 +3284,10 @@ void OrcaMCPServer::register_builtin_tools()
                     };
                 }
 
-                int result = plater->delete_plate(plate_index);
+                // The validated index, not the raw parameter: -1 means "current plate" and was
+                // resolved above. Plater::delete_plate resolves it too, so this is agreement
+                // rather than a fix, but the reported index and the deleted one now match.
+                int result = plater->delete_plate(actual_plate_to_delete);
                 if (result == 0) {
                     int current_plate_after = plate_list.get_curr_plate_index();
                     int plate_count_after = plate_list.get_plate_count();
