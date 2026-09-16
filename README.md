@@ -32,7 +32,7 @@ which triangle sits under a given pixel. Then it paints that feature, renders ag
 its own work. Every tool response also carries the slicer's live warnings, so a prime tower off
 the bed or a G-code conflict reaches the agent the moment it appears, not after a failed print.
 
-**The tools are fine-grained.** Paint per triangle, in colour, support, seam and fuzzy-skin modes.
+**The tools are fine-grained.** Paint per triangle, in color, support, seam and fuzzy-skin modes.
 Override settings per object and per layer range. Place brim ears at points. Move the prime
 tower. Create mixed-filament slots and set flush volumes. If the GUI has a gizmo for it, there is
 a tool for it, and the tool writes the same data the gizmo does.
@@ -54,11 +54,11 @@ walls, infill and supports, says why, slices, and shows you the plate before any
 When a print fails anyway, the reason was usually in a warning you closed without reading. Here
 every warning is in the tool response, so the agent reads it for you.
 
-**You print in colour.** Four spools loaded, a model with a dozen features, and a paint gizmo that
-takes an afternoon. Say which feature should be which colour. The agent finds the shells, points
+**You print in color.** Four spools loaded, a model with a dozen features, and a paint gizmo that
+takes an afternoon. Say which feature should be which color. The agent finds the shells, points
 at them in a render, and paints them. Ask what else you could make from those four spools and it
 enumerates the reachable mixes, creates the ones you pick as new slots, and recalculates the
-flush volumes. When a colour is not reachable from what is loaded, it says so instead of
+flush volumes. When a color is not reachable from what is loaded, it says so instead of
 inventing a ratio.
 
 **You design parts that have to hold.** A bracket needs three walls and dense infill in its first
@@ -74,13 +74,11 @@ agent and a render back.
 the boring ones. The whole flow is scriptable against the real slicer, from a chat or from a
 script, with undo.
 
-**You own a FlashForge Creator 5 or 5 Pro.** These four-tool machines get a maintained device
-console, material-station mapping and colour mixing on current OrcaSlicer, over the printer's own
-local API. See [Printer support](#printer-support).
-
-**You build agents.** Slicers are GUI programs, and GUI programs hang on the first modal dialog.
-This one never opens a dialog inside an MCP call. Dialogs are answered and reported, previews
-come back as files or base64, and the transport is plain MCP over stdio, so any client works.
+**You print models other people made.** They arrive as an STL with no orientation, or a 3MF
+from a slicer you do not run, and the first attempt fails at the overhang you did not notice.
+Ask the agent to open it, lay it on its best face, check it fits your bed, and set it up for your
+printer and the material you actually have loaded. It shows you the plate before you commit, and
+the slicer's warnings reach it before the print starts.
 
 ## What a session looks like
 
@@ -106,7 +104,7 @@ allowed range and reported no conflicts, and the warning count was zero on the n
 
 ---
 
-> What colours can I mix from what is loaded?
+> What colors can I mix from what is loaded?
 
 Loaded: gold PETG, dark grey ABS, red ABS, translucent grey PLA. The palette tool found three
 reachable mixes, all from the two ABS spools, from a deep maroon at 70/30 to a brick red at
@@ -142,7 +140,7 @@ name; the agent can list the valid keys for any category before it guesses.
 
 Slice the current plate, poll until done, read back the estimate. The two parts above came back
 as 3 h 20 min, 315 layers, 34 g over three filaments and 506 tool changes, so the agent did not
-send, and could say why: three colours share most layers, so the tool changes dominate. The
+send, and could say why: three colors share most layers, so the tool changes dominate. The
 status response also carried the slicer's warning that the bracket has floating regions and wants
 supports. When the answer is yes, sending opens the slicer's own send dialog with the file
 already selected; the last click is yours.
@@ -213,11 +211,16 @@ Sending a job goes through OrcaSlicer's own print-host support, so every host Or
 to works here: OctoPrint, Klipper and Moonraker, Bambu, Prusa, FlashForge and the rest. Live
 status and printer control are available where the host exposes them.
 
-The FlashForge Creator 5 and Creator 5 Pro additionally get first-class, maintained support: a
-device console built around what the printer actually exposes, four-slot material-station
-mapping, and colour mixing, all on current OrcaSlicer rather than a vendor fork, and all over the
-printer's own local API with no cloud account and no closed network plugin. Details, limits and
-setup are in [FlashForge Creator 5 and Creator 5 Pro](docs/printers/flashforge-creator-5.md).
+### FlashForge Creator 5 and Creator 5 Pro
+
+The Creator 5 Pro is my main printer, so these two machines are fully supported and will stay
+maintained: this is the slicer I print with every day. The aim is a better experience than the
+stock software. You get a device console built around what the printer actually exposes, with all
+four nozzles, the material station in its real colors, live job progress and the camera; four-tool
+workflows with color mixing; material mapping that reads what is loaded; and current OrcaSlicer
+underneath rather than a vendor fork that trails it. Everything runs over the printer's own local
+API, with no cloud account and no closed network plugin. Details, limits and setup are in
+[FlashForge Creator 5 and Creator 5 Pro](docs/printers/flashforge-creator-5.md).
 
 ## Tools
 
@@ -232,7 +235,7 @@ setup are in [FlashForge Creator 5 and Creator 5 Pro](docs/printers/flashforge-c
 | **Plates** | `add_plate`, `select_plate`, `delete_plate`, `set_prime_tower_position` |
 | **Config** | `get_presets`, `get_edited_presets`, `select_preset`, `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset`, `get_valid_config_keys` |
 | **Per-object** | `get_object_config`, `set_object_config`, `reset_object_config`, `get_object_layer_ranges`, `set_object_layer_range`, `delete_object_layer_range` |
-| **Filaments and colour** | `get_filaments`, `set_object_filament`, `set_mixed_filament`, `delete_mixed_filament`, `get_flush_volumes`, `set_flush_volumes`, `auto_calc_flush_volumes`, `get_toolchanger_config`, `suggest_color_mix`, `get_color_palette` |
+| **Filaments and color** | `get_filaments`, `set_object_filament`, `set_mixed_filament`, `delete_mixed_filament`, `get_flush_volumes`, `set_flush_volumes`, `auto_calc_flush_volumes`, `get_toolchanger_config`, `suggest_color_mix`, `get_color_palette` |
 | **Painting** | `paint_object`, `get_object_paint`, `clear_object_paint`, `set_brim_ears`, `get_object_components`, `pick_facet` |
 | **Slicing** | `slice_all`, `get_slicing_status`, `export_gcode`, `get_print_estimate`, `apply_adaptive_layer_height`, `clear_adaptive_layer_height` |
 | **Vision** | `render_plate_view`, `get_preview_base64`, `set_gcode_view_type` |
@@ -292,7 +295,7 @@ See the [configuration guide](docs/setup/configuration.md) for more.
 ## Project origin
 
 OrcaMCP is a fork of [OrcaSlicer](https://github.com/SoftFever/OrcaSlicer) that tracks upstream
-and adds the embedded MCP server, the FlashForge Creator 5 support, and the colour-mixing tools.
+and adds the embedded MCP server, the FlashForge Creator 5 support, and the color-mixing tools.
 
 ## License
 
