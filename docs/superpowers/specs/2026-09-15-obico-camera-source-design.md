@@ -6,6 +6,20 @@
 > and drops the rest. The fallback order — Obico stream → Obico snapshot → the printer's own stream
 > — is unchanged. Re-enabling multi-camera is a one-line change at that filter.
 
+> **Amended 2026-09-16, liveness:** the picture is a plain `<img>` on the MJPEG stream again.
+> WebKit, the slicer's web view on macOS, refuses to hand a `multipart/x-mixed-replace` response
+> to `fetch()` (verified with Playwright WebKit: the same origin's JPEG fetch succeeds, the stream
+> fetch fails), so the fetch-based reader only ever worked in Chromium and the console silently
+> took the plain route, which cannot notice a dead stream - the "frozen frame behind a Live badge"
+> seen after every agent redeploy. Liveness now comes from the picture itself: every 5 s the frame
+> the `<img>` is showing is drawn to a canvas and fingerprinted (the image is requested with CORS,
+> which the agent's re-server and the printer's MJPG-Streamer both allow); camera frames carry
+> sensor noise and never repeat, so an unchanged fingerprint for 15 s means the stream is dead.
+> The source is then marked failed and the chooser moves on (snapshot, then the printer's own
+> camera), with the usual 30 s retry, and every reconnect uses a fresh query string. Checking a
+> server-side snapshot instead was tried first and rejected: after a quick agent restart the server
+> has fresh frames while the page's own connection is dead, which is exactly the case to catch.
+
 
 **Date:** 2026-09-15
 **Status:** draft for review

@@ -1043,98 +1043,47 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     setStructure(el("envRows"), html);
   }
 
-  /* ══ MJPEG reader ═════════════════════════════════════════════════════
-     An <img> pointed at an MJPEG stream shows its last frame for ever once the stream ends: the
-     browser fires no event for a dropped connection. Reading the stream here instead gives the page
-     a frame clock and an end-of-stream, which is what honest fallback needs. Frames reach the <img>
-     as blob URLs. Parts normally carry a Content-Length (mjpg-streamer and the agent both send one);
-     when one does not, the frame ends at the JPEG end-of-image marker.                          */
-  var STREAM_STALL_MS = 15000;
-  function playMjpeg(img, url, handlers){
-    var controller = new AbortController(), stopped = false, gotFrame = false;
-    var lastFrameAt = Date.now(), previousBlob = null;
-    var buf = new Uint8Array(0), contentLength = -1, inBody = false;
-    var CRLF2 = [13, 10, 13, 10], EOI = [0xFF, 0xD9];
-
-    function indexOf(hay, needle){
-      outer: for (var i = 0; i <= hay.length - needle.length; i++){
-        for (var j = 0; j < needle.length; j++) if (hay[i + j] !== needle[j]) continue outer;
-        return i;
-      }
-      return -1;
+  /* ══ Stream liveness ══════════════════════════════════════════════════
+     The picture is a plain <img> on the MJPEG stream: every web view animates that natively, and
+     WebKit will not even hand a multipart stream to fetch() (verified 2026-09-16), so reading the
+     stream ourselves is not an option in the slicer's own view. What an <img> cannot tell us is
+     that its stream has died - it just keeps its last frame for ever, which is how a redeployed
+     agent left the console frozen behind a Live badge. So the page looks at what the <img> is
+     actually showing: every few seconds the current frame is drawn to a canvas and fingerprinted.
+     A camera frame carries sensor noise, so live pictures never repeat exactly; a fingerprint that
+     has not changed in STREAM_STALL_MS means the picture is dead and the caller moves on. Reading
+     pixels needs the image served with CORS headers, which the agent's re-server and the printer's
+     own MJPG-Streamer both do; a source without them cannot be checked and gets the plain route. */
+  var PULSE_MS = 5000, STREAM_STALL_MS = 15000;
+  function watchStream(img, url, handlers){
+    var stopped = false, timer = null, lastPrint = null, lastChangeAt = Date.now(), unreadable = false;
+    var canvas = document.createElement("canvas");
+    function stop(){ stopped = true; if (timer){ clearTimeout(timer); timer = null; } }
+    function fingerprint(){
+      var w = img.naturalWidth, h = img.naturalHeight;
+      if (!w || !h) return null;
+      if (canvas.width !== w || canvas.height !== h){ canvas.width = w; canvas.height = h; }
+      var ctx = canvas.getContext("2d", { willReadFrequently:true });
+      ctx.drawImage(img, 0, 0);
+      var d = ctx.getImageData(0, 0, w, h).data, hash = 2166136261 ^ d.length;
+      for (var i = 0; i < d.length; i += 389){ hash ^= d[i]; hash = (hash * 16777619) >>> 0; }
+      return hash;
     }
-    function append(chunk){
-      var joined = new Uint8Array(buf.length + chunk.length);
-      joined.set(buf); joined.set(chunk, buf.length);
-      buf = joined;
-    }
-    function emit(frame){
-      if (!frame.length) return;
-      var next = URL.createObjectURL(new Blob([frame], { type:"image/jpeg" }));
-      img.src = next;
-      if (previousBlob) URL.revokeObjectURL(previousBlob);
-      previousBlob = next;
-      lastFrameAt = Date.now(); gotFrame = true;
-      if (handlers.onFrame) handlers.onFrame();
-    }
-    function drain(){
-      for (;;){
-        if (!inBody){
-          var end = indexOf(buf, CRLF2);
-          if (end < 0) return;
-          var head = String.fromCharCode.apply(null, buf.subarray(0, Math.min(end, 2000))).toLowerCase();
-          var m = /content-length:\s*(\d+)/.exec(head);
-          contentLength = m ? parseInt(m[1], 10) : -1;
-          buf = buf.subarray(end + 4); inBody = true;
-        }
-        if (contentLength >= 0){
-          if (buf.length < contentLength) return;
-          emit(buf.subarray(0, contentLength)); buf = buf.subarray(contentLength);
-        } else {
-          var eoi = indexOf(buf, EOI);
-          if (eoi < 0) return;
-          emit(buf.subarray(0, eoi + 2)); buf = buf.subarray(eoi + 2);
-        }
-        inBody = false;
-      }
-    }
-    function stop(){
+    function tick(){
       if (stopped) return;
-      stopped = true; clearInterval(watchdog); controller.abort();
-      if (previousBlob) URL.revokeObjectURL(previousBlob);
+      var print = null;
+      try { print = fingerprint(); }
+      catch (e){ unreadable = true; return; }        /* tainted canvas: this source cannot be checked */
+      if (print !== null && print !== lastPrint){ lastPrint = print; lastChangeAt = Date.now(); handlers.onFrame(); }
+      if (Date.now() - lastChangeAt > STREAM_STALL_MS){ stop(); handlers.onEnd("stalled"); return; }
+      timer = setTimeout(tick, PULSE_MS);
     }
-    /* The stall clock starts at connect, so a stream that opens and never delivers ends too. */
-    var watchdog = setInterval(function(){
-      if (!stopped && Date.now() - lastFrameAt > STREAM_STALL_MS){ stop(); handlers.onEnd("stalled"); }
-    }, 1000);
-
-    var RETRY_AFTER_MS = 1500;
-    function connect(attempt){
-      return fetch(url, { mode:"cors", cache:"no-store", signal: controller.signal }).then(function(res){
-        if (!res.ok || !res.body) throw new Error("http " + res.status);
-        var reader = res.body.getReader();
-        function pump(){
-          return reader.read().then(function(r){
-            if (stopped) return;
-            if (r.done){ stop(); handlers.onEnd("ended"); return; }
-            append(r.value); drain();
-            return pump();
-          });
-        }
-        return pump();
-      }).catch(function(e){
-        if (stopped) return;
-        if (gotFrame){ stop(); handlers.onEnd("error"); return; }      /* dropped after frames */
-        /* Nothing arrived. A single-client camera refuses for a moment after its previous viewer
-           lets go, so one more try after a pause; then it is CORS or a server that is not there,
-           and the caller may still take the plain <img> route, which has no frame clock. */
-        if (attempt === 0) return new Promise(function(r){ setTimeout(r, RETRY_AFTER_MS); }).then(function(){
-          if (!stopped) return connect(1);
-        });
-        stop(); handlers.onUnsupported(e);
-      });
-    }
-    connect(0);
+    img.crossOrigin = "anonymous";
+    img.onload  = function(){ if (!stopped && unreadable) handlers.onFrame(); };
+    img.onerror = function(){ if (!stopped){ stop(); handlers.onEnd("error"); } };
+    /* A fresh query string each time, so a reconnect is a new request and not a cached failure. */
+    img.src = url + (url.indexOf("?") < 0 ? "?" : "&") + "t=" + Date.now();
+    timer = setTimeout(tick, 1000);
     return { stop: stop };
   }
 
@@ -1248,14 +1197,9 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
           img.onerror = giveUp;
           img.src = url;                       /* one picture; the next Obico push brings a new URL */
         } else {
-          camPlayer = playMjpeg(img, url, {
+          camPlayer = watchStream(img, url, {
             onFrame: function(){ camPlaying = true; show(el("camLive"), true); },
-            onEnd: giveUp,
-            onUnsupported: function(){         /* no frame clock on this route, but it is what worked before */
-              img.onload  = function(){ show(el("camLive"), true); };
-              img.onerror = giveUp;
-              img.src = url;
-            }
+            onEnd: giveUp
           });
         }
       } else {
