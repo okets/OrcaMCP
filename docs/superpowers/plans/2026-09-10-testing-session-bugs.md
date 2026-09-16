@@ -1127,3 +1127,37 @@ along the way. One fork-side adaptation: `4b6df13cf7`, our prime-tower state rea
 **Three mistakes recorded so they are not repeated:** porting a commit before the one it depends on
 (segfault upstream never had); trusting macOS runs of a Linux-only suite; and modelling a check
 instead of instrumenting it.
+
+---
+
+## T21 — the profile validator's slice sweep refused 522 of 1013 printers once off-plate towers became errors (fixed)
+
+Found 2026-09-16 on CI run `35051895374`, the first run on this branch where the *Slice check* job
+executed at all: it depends on the Linux build job, and the regression step inside that job had been
+failing on every earlier run, so the sweep had been silently skipped. With the regression suite finally
+at zero failures, the sweep ran — and reported **522 of 1013 printer presets failed to slice**, all with
+`Prime Tower is partially outside the printable area` and footprints like `[11.8,216.8]-[45.8,250.7]`
+on 235 mm beds, even negative X on 330 mm ones.
+
+**Cause.** The validator forces a two-filament cube with the prime tower on and slices it at the config
+default position (x 15, y 220), which lies off any bed shallower than the tower. It calls `validate()`
+but slices regardless. Before this morning an off-plate tower was exported silently; the generation-time
+footprint verification ported as `e56950fea4` rejects it. Upstream hit precisely this — their commit
+`fae77be3db` *Place the Wipe Tower in the Profile Validator* (2026-09-07) quotes the same **522 of 1013**
+in its own message — and added the companion four days after the check. We had ported the check and
+not yet its companion.
+
+**Fix.** Port `fae77be3db` (clean, 35 lines): the validator now places the tower the way the GUI and CLI
+do before slicing — beside the centred cube, clear of edge exclusion strips, pulled inside the printable
+outline by its own estimated footprint. Verified locally on Vzbot, six of the presets that failed on CI:
+`All 6 printer preset(s) sliced successfully`. The full 1013-preset sweep is CI's job and was also run
+locally as a cross-check.
+
+**A trap in the local reproduction, so nobody chases it:** running the validator with `-v <vendor>` on
+WEMAKE3D reports every preset "fell back to a default preset", and innovatiQ reports "no instantiable
+printer presets". Both are artefacts of the single-vendor filter, which does not load the shared filament
+library those vendors inherit from — in the full sweep on CI both resolved fine and failed with the
+*tower* error. Reproduce with a vendor that is self-contained (Vzbot), or run the whole sweep.
+
+**Related:** the slice-check job is identical in upstream's `build_all.yml` (SoftFever, 2026-07-15) and
+is a hard gate there too. It is not ours to loosen.
