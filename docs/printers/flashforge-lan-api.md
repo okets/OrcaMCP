@@ -117,7 +117,7 @@ POST http://<ip>:8898/detail
 | `printFileName` | string | File currently printing; empty when idle. |
 | `printProgress` | number | **0.0 to 1.0**, not a percentage. Multiply by 100 to display. |
 | `printDuration` | number | Seconds elapsed in the current job. |
-| `estimatedTime` | number | Seconds remaining. |
+| `estimatedTime` | number | **Not remaining time.** On firmware 1.9.9 this tracks `printDuration` to the second (observed 2026-09-18: 1020 elapsed → 1020, 1680 → 1680, on a ~9 h job). The earlier "seconds remaining" reading was inferred from an idle printer where every time field is 0. Derive remaining time instead: `printDuration × (1 − printProgress) ÷ printProgress`, and treat it as unknown below 2 % progress. OrcaMCP exposes the raw value as `firmware_estimated_s` and the derivation as `remaining_s`. |
 | `printLayer` | number | Current layer. |
 | `targetPrintLayer` | number | Total layers. |
 | `errorCode` | string | Empty when healthy. A **hard fault** (thermal, etc.). |

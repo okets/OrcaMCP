@@ -13,7 +13,15 @@ struct NozzleTemp { double current{0}; double target{0}; };
 struct MaterialSlot { int slot_id{0}; bool has_filament{false}; std::string material_name, material_color; };
 struct PrinterStatus {
     std::string state;                 // normalized: ready|busy|heating|printing|paused|completed|error|cancelled|unknown
-    std::string print_file; double progress{0}; long duration_s{0}; long remaining_s{0};
+    std::string print_file; double progress{0}; long duration_s{0};
+    // Seconds left, PROJECTED from elapsed time and progress: duration_s * (1 - p) / p. The firmware's
+    // own `estimatedTime` is not usable for this -- on 1.9.9 it tracks printDuration exactly, so a
+    // console that trusted it showed "17 min left" 17 minutes into a nine-hour job. -1 when unknown:
+    // no active job, no elapsed time yet, or progress under 2 %, where the projection swings wildly.
+    long remaining_s{-1};
+    // The firmware's `estimatedTime` as reported, untouched, so its real meaning can be studied
+    // against more firmware versions. Never shown to the user as remaining time.
+    long firmware_estimated_s{0};
     double bed_temp{0}, bed_target{0}, chamber_temp{0}, chamber_target{0};
     std::vector<NozzleTemp> nozzles;
     bool light_on{false}; std::string door; std::string error_code;

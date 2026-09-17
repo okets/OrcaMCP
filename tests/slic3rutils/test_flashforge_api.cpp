@@ -17,7 +17,9 @@ TEST_CASE("parse_detail reads a Creator 5 Pro status", "[flashforge]") {
     CHECK(s.state == "printing");
     CHECK(s.print_file == "benchy.gcode");
     CHECK(s.progress == Catch::Approx(0.42));
-    CHECK(s.remaining_s == 1400);
+    // Projected, not the firmware's estimatedTime: 600 s elapsed at 42 % -> 600 * 0.58 / 0.42 = 829.
+    CHECK(s.remaining_s == 829);
+    CHECK(s.firmware_estimated_s == 1400);
     CHECK(s.nozzles.size() == 4);
     CHECK(s.nozzles[3].target == 210);
     CHECK(s.light_on);
@@ -53,6 +55,39 @@ TEST_CASE("parse_detail reads the bore out of nozzleModel", "[flashforge]") {
     PrinterStatus s; std::string err;
     REQUIRE(parse_detail(R"({"code":0,"detail":{"status":"ready"}})", s, err));
     CHECK(s.nozzle_diameter == 0.0);
+}
+
+TEST_CASE("parse_detail projects remaining time and never trusts estimatedTime", "[flashforge]") {
+    // Firmware 1.9.9 reports estimatedTime == printDuration on a running job, so a console that
+    // trusted it read "17 min left" 17 minutes into a nine-hour print. The two live samples that
+    // exposed it:
+    auto parse = [](const std::string& body) { PrinterStatus s; std::string err; REQUIRE(parse_detail(body, s, err)); return s; };
+
+    auto s = parse(R"({"code":0,"detail":{"status":"printing","printProgress":0.03,"printDuration":1020,"estimatedTime":1020}})");
+    CHECK(s.firmware_estimated_s == 1020);             // kept, untouched
+    CHECK(s.remaining_s == 32980);                     // 1020 * 0.97 / 0.03 -- about nine hours, which was right
+
+    s = parse(R"({"code":0,"detail":{"status":"printing","printProgress":0.051,"printDuration":1680,"estimatedTime":1680}})");
+    CHECK(s.remaining_s == 31261);                     // 1680 * 0.949 / 0.051
+
+    // Under 2 % the denominator is noise: unknown, not a wild number.
+    s = parse(R"({"code":0,"detail":{"status":"printing","printProgress":0.01,"printDuration":300,"estimatedTime":300}})");
+    CHECK(s.remaining_s == -1);
+
+    // Warm-up: printing but nothing elapsed yet.
+    s = parse(R"({"code":0,"detail":{"status":"printing","printProgress":0,"printDuration":0,"estimatedTime":0}})");
+    CHECK(s.remaining_s == -1);
+
+    // Paused jobs still project; idle and finished ones do not.
+    s = parse(R"({"code":0,"detail":{"status":"pause","printProgress":0.5,"printDuration":3600}})");
+    CHECK(s.remaining_s == 3600);
+    s = parse(R"({"code":0,"detail":{"status":"ready","printProgress":0,"printDuration":0,"estimatedTime":0}})");
+    CHECK(s.remaining_s == -1);
+    s = parse(R"({"code":0,"detail":{"status":"completed","printProgress":1.0,"printDuration":9000,"estimatedTime":9000}})");
+    CHECK(s.remaining_s == -1);
+
+    // Unknown never leaks into the Bambu payload as a negative minute count.
+    CHECK(flashforge_status_to_bambu_payload(s)["print"]["mc_remaining_time"] == 0);
 }
 
 TEST_CASE("parse_detail normalises the firmware's short state names", "[flashforge]") {
@@ -154,7 +189,7 @@ TEST_CASE("flashforge_status_to_bambu_payload maps the whole Creator 5 Pro detai
     CHECK(p["command"] == "push_status");
     CHECK(p["gcode_state"] == "RUNNING");
     CHECK(p["mc_percent"] == 42);
-    CHECK(p["mc_remaining_time"] == 23);            // 1400 s -> whole minutes
+    CHECK(p["mc_remaining_time"] == 13);            // the 829 s projection -> whole minutes, not estimatedTime
     CHECK(p["subtask_name"] == "benchy.gcode");
     CHECK(p["print_error"] == 0);                   // empty errorCode -> 0
 

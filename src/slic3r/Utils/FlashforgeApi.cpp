@@ -178,6 +178,23 @@ void append_gcode_names(const nlohmann::json& list, std::vector<std::string>& ou
     }
 }
 
+// Remaining time, projected from what the printer does report reliably. `estimatedTime` looked like
+// seconds remaining in the LAN API doc, which was written from an idle printer where every time
+// field is 0. On a running print (firmware 1.9.9, 2026-09-18) it tracked printDuration to the
+// second: 1020 elapsed -> 1020 "remaining", 1680 -> 1680, on a nine-hour job. So it is not used.
+//
+// Elapsed / progress is the whole-job estimate; minus elapsed is what is left. Below 2 % the
+// denominator is small enough that warm-up noise dominates, so the answer is "unknown" (-1) rather
+// than a number that will be wrong by hours. The same formula runs in the phone console served by
+// flashforge-obico, so the two agree.
+long project_remaining_s(const std::string& state, long duration_s, double progress)
+{
+    const bool active = state == "printing" || state == "paused";
+    if (!active || duration_s <= 0 || progress < 0.02)
+        return -1;
+    return std::lround(duration_s * (1.0 - progress) / progress);
+}
+
 void fill_material_slots(const nlohmann::json& detail, PrinterStatus& out)
 {
     out.slots.clear();
@@ -352,10 +369,11 @@ bool parse_detail(const std::string& body, PrinterStatus& out, std::string& erro
     else if (result.state == "pause")
         result.state = "paused";
 
-    result.print_file   = get_string(detail, "printFileName");
-    result.progress     = get_number(detail, "printProgress");
-    result.duration_s   = static_cast<long>(get_number(detail, "printDuration"));
-    result.remaining_s  = static_cast<long>(get_number(detail, "estimatedTime"));
+    result.print_file           = get_string(detail, "printFileName");
+    result.progress             = get_number(detail, "printProgress");
+    result.duration_s           = static_cast<long>(get_number(detail, "printDuration"));
+    result.firmware_estimated_s = static_cast<long>(get_number(detail, "estimatedTime"));
+    result.remaining_s          = project_remaining_s(result.state, result.duration_s, result.progress);
 
     result.bed_temp       = get_number(detail, "platTemp");
     result.bed_target     = get_number(detail, "platTargetTemp");
@@ -472,6 +490,7 @@ nlohmann::json flashforge_status_to_bambu_payload(const PrinterStatus& status)
     }
 
     print["mc_percent"]        = scale_progress_to_percent(status.progress);
+    // Whole minutes of the projection; -1 (unknown) reads as 0, which the Device tab shows as "--".
     print["mc_remaining_time"] = static_cast<int>(std::max<long>(0, status.remaining_s) / 60);
 
     if (!status.print_file.empty()) {

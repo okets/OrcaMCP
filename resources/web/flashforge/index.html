@@ -612,7 +612,7 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     connected:true, sample:true, preset:"C5P", host:"10.0.0.10", poll_ms:2000,
     printer:{
       state:"printing", print_file:"lattice-planter-4c.gcode.3mf",
-      progress:0.349, duration_s:8324, remaining_s:14520,
+      progress:0.349, duration_s:8324, remaining_s:15527, firmware_estimated_s:8324,
       light_on:true, door:"close", error_code:"",
       name:"Creator 5 Pro", model:"Creator 5 Pro", firmware:"1.9.9", ip:"10.0.0.10", pid:41,
       camera_stream_url:"",
@@ -733,6 +733,13 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     var d = new Date(Date.now() + num(remaining)*1000);
     return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
   }
+  /* remaining_s is a projection -- elapsed * (1 - progress) / progress -- not a firmware value: the
+     printer's own estimatedTime tracks elapsed time on 1.9.9 and once showed "17 min left" 17 minutes
+     into a nine-hour job. The server sends null until progress reaches 2 %, where the projection
+     stops swinging by hours. Say so on screen rather than print a number with false precision. */
+  function hasRemaining(p){ return p.remaining_s !== null && p.remaining_s !== undefined && num(p.remaining_s) >= 0; }
+  function remainingText(p){ return hasRemaining(p) ? "est. " + dur(p.remaining_s) : "estimating…"; }
+  function finishesText(p){ return hasRemaining(p) ? "≈ " + eta(p.remaining_s) : "—"; }
   function ratio(now, target){ return num(target) > 0 ? Math.max(0, Math.min(1, num(now)/num(target))) : 0; }
   function round3(v){ return Math.round(num(v) * 1000) / 1000; }
   function zText(v){ return (num(v) >= 0 ? "+" : "−") + Math.abs(num(v)).toFixed(3) + " mm"; }
@@ -1883,8 +1890,8 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
       '<div class="ribbon" role="img" aria-label="Progress ribbon: '+pct.toFixed(0)+' per cent complete">'+ribbon+'</div>'+
       '<dl class="job-stats">'+
         stat("Elapsed", dur(p.duration_s))+
-        stat("Remaining", dur(p.remaining_s))+
-        stat("Finishes", eta(p.remaining_s))+
+        stat("Remaining", remainingText(p))+
+        stat("Finishes", finishesText(p))+
         (total ? stat("Layer", layer.toLocaleString() + " / " + total.toLocaleString()) : "")+
         stat("Bed", t1((((p.temperatures)||{}).bed||{}).current) + " °C")+
         (p.error_code ? stat("Error code", p.error_code) : "")+

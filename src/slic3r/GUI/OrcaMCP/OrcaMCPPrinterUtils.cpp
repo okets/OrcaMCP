@@ -276,7 +276,11 @@ nlohmann::json status_to_json(const FlashforgeApi::PrinterStatus& s)
         {"print_file", s.print_file},
         {"progress", s.progress},
         {"duration_s", s.duration_s},
-        {"remaining_s", s.remaining_s},
+        // Projected from elapsed and progress; null until there is enough progress to project from.
+        // The firmware's own estimate is NOT remaining time (it tracks elapsed on 1.9.9) and is
+        // passed through separately so an agent never mistakes one for the other.
+        {"remaining_s", s.remaining_s >= 0 ? nlohmann::json(s.remaining_s) : nlohmann::json(nullptr)},
+        {"firmware_estimated_s", s.firmware_estimated_s},
         {"temperatures", {
             {"bed", temperature_json(s.bed_temp, s.bed_target)},
             {"chamber", temperature_json(s.chamber_temp, s.chamber_target)},
