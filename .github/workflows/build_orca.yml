@@ -230,7 +230,11 @@ jobs:
 
  # Thanks to RaySajuuk, it's working now
       - name: Sign app and notary
-        if: github.repository == 'OrcaSlicer/OrcaSlicer' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/belt-printer' || startsWith(github.ref, 'refs/heads/release/')) && runner.os == 'macOS' && inputs.macos-combine-only
+        # This fork holds its own Apple Developer credentials, so it signs its own builds.
+        # Upstream's branch list is deliberately dropped: releases here are driven by a tag,
+        # whose ref is refs/tags/*, so a branch-only condition would skip signing on exactly
+        # the builds that are published.
+        if: github.repository == 'okets/OrcaMCP' && runner.os == 'macOS' && inputs.macos-combine-only
         working-directory: ${{ github.workspace }}
         env:
           BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
@@ -288,12 +292,16 @@ jobs:
             sign_app "${{ github.workspace }}/build/universal/OrcaSlicer/OrcaSlicer_profile_validator.app"
           fi
           
-          # Create main OrcaSlicer DMG without the profile validator helper
-          mkdir -p ${{ github.workspace }}/build/universal/OrcaSlicer_dmg
-          rm -rf ${{ github.workspace }}/build/universal/OrcaSlicer_dmg/*
-          cp -R ${{ github.workspace }}/build/universal/OrcaSlicer/OrcaSlicer.app ${{ github.workspace }}/build/universal/OrcaSlicer_dmg/
-          ln -sfn /Applications ${{ github.workspace }}/build/universal/OrcaSlicer_dmg/Applications
-          retry hdiutil create -volname "${{ env.app_name }}" -srcfolder ${{ github.workspace }}/build/universal/OrcaSlicer_dmg -ov -format UDZO ${{ env.app_name }}_Mac_universal_${{ env.ver }}.dmg
+          # Create main DMG without the profile validator helper. The bundle is renamed on the way
+          # in: CMake names it after its target, so the build tree always produces OrcaSlicer.app,
+          # and shipping that name drops this fork's app on top of a user's real Orca Slicer at
+          # /Applications/OrcaSlicer.app. v2.4.0.1-dev renamed it here; the 2.5 upstream merge took
+          # upstream's copy of this file and the rename went with it.
+          mkdir -p ${{ github.workspace }}/build/universal/${{ env.app_name }}_dmg
+          rm -rf ${{ github.workspace }}/build/universal/${{ env.app_name }}_dmg/*
+          cp -R ${{ github.workspace }}/build/universal/OrcaSlicer/OrcaSlicer.app ${{ github.workspace }}/build/universal/${{ env.app_name }}_dmg/${{ env.app_name }}.app
+          ln -sfn /Applications ${{ github.workspace }}/build/universal/${{ env.app_name }}_dmg/Applications
+          retry hdiutil create -volname "${{ env.app_name }}" -srcfolder ${{ github.workspace }}/build/universal/${{ env.app_name }}_dmg -ov -format UDZO ${{ env.app_name }}_Mac_universal_${{ env.ver }}.dmg
           codesign --deep --force --verbose --options runtime --timestamp --entitlements "$ENTITLEMENTS" --sign "$CERTIFICATE_ID" ${{ env.app_name }}_Mac_universal_${{ env.ver }}.dmg
           
           # Create separate OrcaSlicer_profile_validator DMG if the app exists
@@ -317,16 +325,18 @@ jobs:
           fi
 
       - name: Create DMG without notary
-        if: github.ref != 'refs/heads/main' && github.ref != 'refs/heads/belt-printer' && runner.os == 'macOS' && inputs.macos-combine-only
+        # Strict inverse of the signing step above: exactly one of the two must produce the DMG.
+        if: github.repository != 'okets/OrcaMCP' && runner.os == 'macOS' && inputs.macos-combine-only
         working-directory: ${{ github.workspace }}
         run: |
           # Load the `retry` helper (retries flaky commands such as `hdiutil create`).
           source ${{ github.workspace }}/scripts/retry.sh
-          mkdir -p ${{ github.workspace }}/build/universal/OrcaSlicer_dmg
-          rm -rf ${{ github.workspace }}/build/universal/OrcaSlicer_dmg/*
-          cp -R ${{ github.workspace }}/build/universal/OrcaSlicer/OrcaSlicer.app ${{ github.workspace }}/build/universal/OrcaSlicer_dmg/
-          ln -sfn /Applications ${{ github.workspace }}/build/universal/OrcaSlicer_dmg/Applications
-          retry hdiutil create -volname "${{ env.app_name }}" -srcfolder ${{ github.workspace }}/build/universal/OrcaSlicer_dmg -ov -format UDZO ${{ env.app_name }}_Mac_universal_${{ env.ver }}.dmg
+          # Same rename as the signed path above -- see the comment there.
+          mkdir -p ${{ github.workspace }}/build/universal/${{ env.app_name }}_dmg
+          rm -rf ${{ github.workspace }}/build/universal/${{ env.app_name }}_dmg/*
+          cp -R ${{ github.workspace }}/build/universal/OrcaSlicer/OrcaSlicer.app ${{ github.workspace }}/build/universal/${{ env.app_name }}_dmg/${{ env.app_name }}.app
+          ln -sfn /Applications ${{ github.workspace }}/build/universal/${{ env.app_name }}_dmg/Applications
+          retry hdiutil create -volname "${{ env.app_name }}" -srcfolder ${{ github.workspace }}/build/universal/${{ env.app_name }}_dmg -ov -format UDZO ${{ env.app_name }}_Mac_universal_${{ env.ver }}.dmg
           
           # Create separate OrcaSlicer_profile_validator DMG if the app exists
           if [ -f "${{ github.workspace }}/build/universal/OrcaSlicer/OrcaSlicer_profile_validator.app/Contents/MacOS/OrcaSlicer_profile_validator" ]; then
