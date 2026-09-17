@@ -48,12 +48,55 @@ revealed the following gate, so do not assume a single fix clears a path.
 
 ## Goal for v2.5.0.2-dev
 
-**Catch up to upstream.** That is the centrepiece and everything else is secondary. Bump
+**Catch up to upstream, and start giving fixes back.** Every fix that lands upstream is one less
+file in the conflict set forever, which is the cheapest way to make future syncs smaller. Bump
 `version.inc` to `2.5.0.2-dev` as part of the release commit, not before.
+
+### The four stages, in this order
+
+The order matters. Identification comes first because after a 208-commit merge it is much harder to
+tell which change was the fork's, and the surrounding context the patches apply to will have moved.
+
+| Stage | What | Why here |
+|-------|------|----------|
+| **1** | Identify which of our fixes are pure upstream. **Identify only — do not open PRs yet.** | Cheapest before the merge, and the list steers what needs re-verifying after it. |
+| **2** | Sync with `upstream/main`. Prove no regression on the fork. | The big one. See the conflict surface and traps below. |
+| **3** | Fix the extruder count gap, and send it upstream as a PR. | It is upstream's bug (see Stage 3 section). Doing it after the merge means doing it once. |
+| **4** | Send the rest of the Stage 1 list upstream as PRs, one per fix. | Contributing back is what shrinks the diff going forward. |
+
+### Stage 1 output — already done, 2026-09-17
+
+Each of these was **verified still present in `upstream/main`** at the time of writing, by reading
+upstream's copy of the file. Re-check before opening each PR; upstream may have moved.
+
+| # | Fix | Upstream file | Our commit | Why it is upstream's problem too |
+|---|-----|---------------|-----------|----------------------------------|
+| A | Worker thread touches widgets, killing the app on a failed print | `Jobs/BoostThreadWorker.hpp` | `4d76a06287` | Confirmed: upstream still calls `m_progress->show_error_info` straight from the worker thread. Any failed print on macOS aborts the process. Hits Bambu users too. **Highest value.** |
+| B | Use-after-free on exit | `GLCanvas3D.cpp` (`~GLCanvas3D`) | `f599bda795` | Confirmed: the destructor still calls `reset_volumes()`, which ends by reading the notification manager through a half-destroyed Plater. |
+| C | Unguarded index into an empty intersection | `libslic3r/PrintConfig.cpp` | `f599bda795` | Confirmed: `result = result_polygon[0]` with no emptiness check. Segfaults when extruder areas do not overlap. |
+| D | Moonraker printers lose their storage state every poll | `Utils/MoonrakerPrinterAgent.cpp` | `91efc63d30` | Confirmed: upstream's payload has **no** `sdcard` key and still sets the state out of band, so `DevStorage::ParseV1_0` resets it on every status push. Klipper users get "Storage needs to be inserted". |
+| E | Every third-party printer displays as "Unknown" | `DeviceManager.cpp` | `041db47482` | Confirmed: `get_printer_type_display_str` still falls straight through to `_L("Unknown")`. Affects upstream's own Moonraker printers. |
+| F | Error panel draws its text on top of itself | `SelectMachine.cpp` | `f5ff97bfa1` | Confirmed: still no layout pass after `Wrap()`, so the error code overlaps the link below it. |
+
+Two more worth considering, both weaker candidates:
+
+- **Prefer an agent-reported failure reason over the code-derived string** (`Jobs/PrintJob.cpp`,
+  `f5ff97bfa1`). Useful for any non-Bambu agent, but it is a small API addition rather than a plain
+  bug fix, so expect more discussion. Send it after A–F have landed.
+- **`PartPlate::set_shape` should unregister its raycasters before replacing the meshes**
+  (`PartPlate.cpp`). Defensive hardening that would have made the `add_plate` crash impossible for
+  any caller. There is precedent in `invalidate_plate_name_texture`. Optional.
+
+**Not PR-able** — these depend on fork-only code and should stay here: the nozzle material read from
+the preset, the material-station-to-AMS translation, everything in `FlashforgeApi.cpp` and
+`FlashforgePrinterAgent.cpp`, the MCP `add_plate` and `unplaced_objects` work, and the About page.
+
+Practical notes for Stage 4: one PR per fix, each with the reproduction from the commit message,
+and open them against upstream's `main` **after** the merge so they apply cleanly to current code.
 
 ---
 
-## Task 1 — Sync with upstream Orca Slicer
+## Stage 2 — Sync with upstream Orca Slicer
 
 `mcp` is **208 commits behind `upstream/main`** and 332 ahead of it. This is the deliberate
 increment the user has been deferring; it is now top of the list.
@@ -141,10 +184,11 @@ order.
 
 ---
 
-## Task 2 — Flashforge extruder modelling
+## Stage 3 — The extruder count gap, then a PR
 
-**Do this after the sync, not before.** Seventeen of the incoming upstream commits touch this exact
-device layer, so doing it first means doing it twice.
+**Stage 3, after the merge.** Seventeen of the incoming upstream commits touch this exact device
+layer, so doing it first means doing it twice. Fix it on top of merged code, then send it upstream
+as the seventh PR -- it is their bug, and landing it there means the fork carries no patch at all.
 
 ### Whose bug is this?
 
@@ -212,7 +256,7 @@ the error is telling the truth.
 
 ---
 
-## Task 3 — Smaller known items
+## Backlog — smaller known items
 
 ### `get_print_estimate` reports the wrong layer count — confirmed, with numbers
 
