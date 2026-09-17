@@ -41,7 +41,8 @@ manual artifact check below, because some of it genuinely needs a build.
 | 4 | 35225609115 | macOS Universal, "Sign app and notary" | `security unlock-keychain` printed its usage and exited 2. The fork had quoted `"$KEYCHAIN_PASSWORD"`; upstream's version does not; the merge took upstream's. A secret with a space word-splits | Quoting restored; two guard checks |
 | 5 | 35235124489 | macOS Universal, notarization | `HTTP 403: A required agreement is missing or has expired` — Apple's Program License Agreement needed accepting by the Account Holder | Accepted at developer.apple.com. Pre-flight now probes this in two seconds if a keychain profile exists |
 | 5b | same, rerun | "Create Release", after all three assets uploaded | `Headers Timeout Error` from the release action — transient GitHub API | Rerun just that job; nothing to fix |
-| 6 | 35249727814 | — | Final run on the identifier commit | *(outcome recorded below)* |
+| 6 | 35249727814 | "Create Release" | `Error saving asset`, then an HTML error page on rerun — the action's upload to GitHub's asset API failing on the 358 MB DMG | Superseded: the remaining-time fix was folded in and a new tag cut |
+| 7 | 35260570099 | "Create Release", **four attempts** | Same upload failure. On the last attempt the Linux and Windows assets landed and only the macOS image, the largest, failed | **Uploaded the DMG directly with `gh release upload` from the run's artifact.** All builds, signing and notarization had succeeded every time |
 
 Two more defects surfaced during the investigation rather than as run failures:
 
@@ -64,7 +65,7 @@ Two more defects surfaced during the investigation rather than as run failures:
 | Shellcheck | ~10 min | Yes | pre-flight runs CI's exact command |
 | Unquoted secrets | ~95 min | Yes | guard: signing quotes its password secrets |
 | Apple agreement | ~95 min | Yes, with credentials | pre-flight: `notarytool history` hits the same 403 |
-| Headers timeout | ~5 min | No | rerun the Create Release job |
+| Asset upload (`Headers Timeout`, `Error saving asset`, HTML error page) | ~5 min × 6 attempts | No | The `softprops/action-gh-release` upload is flaky on the ~360 MB DMG: it failed on 6 of 7 attempts this week while everything before it succeeded. Rerun the job once; if it fails again, `gh run download` the artifact and `gh release upload` it yourself. |
 | ARM Linux runner lost (earlier in the week) | ~60 min | No | rerun the job; look for a step still "in progress" on a failed job |
 
 Roughly seven hours of build time went to failures that a ten-second script now catches.
@@ -137,9 +138,19 @@ offline. Upstream's flow has the same gap. Not a blocker.
 2. Confirm the release notes and that `mcp` is at the commit you mean to ship.
 3. `git tag -a v<version> <sha> -m "OrcaMCP v<version>"` and push the tag. The tag **must** equal
    `SoftFever_VERSION` in `version.inc` with a `v` prefix; the pre-flight checks this.
-4. Wait for the Release run. If "Create Release" fails with a timeout after the assets are up,
-   rerun that one job. If a job fails with a step still marked in-progress and no log, the runner
-   was lost; rerun it.
+4. Wait for the Release run. **Expect "Create Release" to fail on the asset upload** — it did on
+   six of seven attempts this week, always after every build, the signing and notarization had
+   succeeded. Rerun that one job once (it reuses the artifacts; minutes, not ninety). If it fails
+   again, do not keep rerunning:
+
+   ```bash
+   gh run download <run-id> -R okets/OrcaMCP -D /tmp/rel
+   cp "/tmp/rel/.../OrcaMCP_Mac_universal_V<version>.dmg" "/tmp/rel/OrcaMCP-v<version>-macos-universal.dmg"
+   gh release upload v<version> "/tmp/rel/OrcaMCP-v<version>-macos-universal.dmg" -R okets/OrcaMCP --clobber
+   ```
+
+   The action creates the draft before uploading, so a direct upload lands on the right release.
+   If a job fails with a step still marked in-progress and no log, the runner was lost; rerun it.
 5. **Download the DMG from the draft and run the artifact check above.** Do not skip this. Two
    green runs this week produced artifacts that overwrote a user's Orca Slicer and would not open.
 6. Only then publish the draft.
@@ -149,7 +160,22 @@ at developer.apple.com. No change to the repository will get past it.
 
 ---
 
-## Outcome of the final run
+## Outcome
 
-*Run 35249727814 on `c7715fb646`, the identifier commit.* — pending at time of writing; recorded
-below once the artifact has been verified with the check above.
+**Published 2026-09-17 20:46 UTC**, tag `v2.5.0.1-dev` at `753322a957`, from run 35260570099.
+`Build all` was green on that same commit (run 35260498508), including the Linux regression suite.
+
+The artifact check above was run on the downloaded DMG before publishing:
+
+| Check | Result |
+|-------|--------|
+| Contents | `OrcaMCP.app` + `Applications` link — not `OrcaSlicer.app` |
+| `CFBundleIdentifier` | `com.orcamcp.OrcaMCP` |
+| `CFBundleShortVersionString` | `2.5.0.1-dev` |
+| Signature | `TeamIdentifier=9PCJMHHHK6`, Developer ID Application |
+| Gatekeeper (`spctl`) | `accepted`, `source=Notarized Developer ID` |
+
+Seven release runs in total, roughly ten and a half hours of build time, for a release that a
+ten-second pre-flight and a five-minute artifact check would now keep to one run plus one upload
+retry. The remaining-time fix (`753322a957`) was folded in before the final tag because nothing
+had shipped yet.
