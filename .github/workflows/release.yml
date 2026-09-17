@@ -153,7 +153,12 @@ jobs:
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: OrcaMCP ${{ steps.version.outputs.tag }}
-          draft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft || true }}
+          # `A && B || C` falls through to C whenever B is false, so the old form
+          # (`... && inputs.draft || true`) evaluated to true for every input and every event:
+          # the draft toggle did nothing and a manual run could not publish. This keeps the safe
+          # default -- a tag push drafts, so a human opens the release -- while letting a manual
+          # dispatch with draft=false actually publish.
+          draft: ${{ github.event_name != 'workflow_dispatch' || inputs.draft }}
           generate_release_notes: true
           files: |
             artifacts/OrcaMCP-*.dmg
