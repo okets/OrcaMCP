@@ -61,6 +61,23 @@ concurrency:
 
 jobs:
   # build_win.bat ships a test suite. Run it before the Windows builds.
+  # Runs in about a second and gates nothing else, so it fails fast and visibly. It exists because
+  # the September 2026 upstream sync resolved build_orca.yml with --theirs and deferred re-applying
+  # the fork's rebranding; the re-apply never happened and v2.5.0.1-dev shipped a DMG that
+  # overwrote users' Orca Slicer and could not be opened. A note in a document did not catch that.
+  check_fork_customizations:
+    name: Fork customisations survive upstream merges
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          lfs: 'false'
+
+      - name: Check
+        shell: bash
+        run: ./scripts/check-fork-customizations.sh
+
   check_build_script:
     name: Windows build script tests
     runs-on: windows-latest

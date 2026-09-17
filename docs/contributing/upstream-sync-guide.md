@@ -1,5 +1,16 @@
 # Upstream Sync Guide
 
+> **Before you finish a sync, run this:**
+>
+> ```bash
+> scripts/check-fork-customizations.sh
+> ```
+>
+> It asserts the fork customisations that upstream merges keep reverting. It also runs in CI on
+> every push, so a merge that drops one fails the build rather than reaching a release. Never
+> resolve a failure by relaxing the check — every item in it shipped a broken release at least once.
+
+
 This document tracks the process of syncing OrcaMCP with upstream OrcaSlicer and serves as a guide for future syncs.
 
 ## Current Sync: March 2026
@@ -185,7 +196,7 @@ git diff a3f229f406 07d05f590b -- <file>   # merge-base -> pre-merge mcp
 |------|------------|
 | `.github/ISSUE_TEMPLATE/bug_report.yml` | `--ours` (kept the fork's issue template) |
 | `README.md` | `--ours` (kept the OrcaMCP README) |
-| `.github/workflows/build_orca.yml` | `--theirs` (upstream's multi-arch workflow; fork rebranding re-applied in a later task — release CI is knowingly broken until then) |
+| `.github/workflows/build_orca.yml` | `--theirs` (upstream's multi-arch workflow; fork rebranding "re-applied in a later task"). **This was never done.** See *What this deferral cost* below. |
 | `build_release_vs.bat` | `--theirs`, then re-applied the fork's `vswhere` PATH hunk after `set _START_TIME=%TIME%` |
 | `resources/web/data/text.js` | `--theirs`, then re-inserted the fork's `t127`/`t128` ("Connect AI" / "Setup MCP agents") strings into all 15 language blocks |
 | `version.inc` | Upstream's file with `SLIC3R_APP_NAME`/`SLIC3R_APP_KEY` = `OrcaMCP` (auto-merged) and `SoftFever_VERSION` set to `2.5.0.1-dev`; upstream's `SLIC3R_VERSION "02.08.01.55"` kept |
@@ -193,6 +204,41 @@ git diff a3f229f406 07d05f590b -- <file>   # merge-base -> pre-merge mcp
 | `src/CMakeLists.txt` | Two hunks. `OrcaSlicer_app_gui`: took upstream's new multi-property `set_target_properties` (adds `WIN32_EXECUTABLE`) with `OUTPUT_NAME "orca-mcp"`. Windows install: kept **both** upstream's `install(DIRECTORY "${CMAKE_PREFIX_PATH}/libpython/" ...)` and the fork's `install(DIRECTORY .../scripts/ ...)`. All other fork hunks (`orca-mcp` names, `ln -sf`, `MACOSX_BUNDLE_BUNDLE_NAME "OrcaMCP"`, the non-Windows scripts install) auto-merged. |
 | `src/slic3r/GUI/GUI_App.cpp` | All four MCP hunks (OrcaMCP includes, `start_http_server()` + `ensure_bridge_script_copied()` in `post_init()`, `homepage_connectai` web command, `/mcp` routing in `start_http_server`) auto-merged. The single conflict was cosmetic: the splash text. Kept the fork's wording with upstream's new second argument — `scrn->SetText(_L("Loading configuration (this may take a couple of minutes)") + dots, 5);` |
 | `src/slic3r/GUI/Preferences.hpp` | Kept the fork's `create_mcp_clients_page()` / `refresh_mcp_client_buttons()` declarations and dropped `create_shortcuts_page()`, which upstream removed (no definition remains anywhere in `src/`). All other fork members (`Widgets/Button.hpp`, the new constructor, `m_initial_tab`, `m_highlight_option`, `MCPClientUIElements`, `m_mcp_client_ui`) auto-merged. |
+
+### What this deferral cost
+
+The `--theirs` resolution above was taken knowingly, with a note saying the fork's rebranding would
+be re-applied later. It never was, and nothing failed in the meantime, because the two things it
+broke are invisible until a release is actually built and installed:
+
+| Lost in the merge | Consequence, discovered 2026-09-17 |
+|-------------------|------------------------------------|
+| The DMG step renamed the bundle: `cp -R .../OrcaSlicer.app .../OrcaMCP_dmg/OrcaMCP.app` | CMake names the bundle after its target, so the build tree always produces `OrcaSlicer.app`. Without the rename the DMG installs `OrcaSlicer.app` and **replaces a user's real Orca Slicer**. Confirmed on a live machine: `/Applications/OrcaSlicer.app` reported `CFBundleName OrcaMCP` at `2.5.0.1-dev`. |
+| Signing gated on `okets/OrcaMCP`, not `OrcaSlicer/OrcaSlicer` | The signing step was skipped for eight months of builds. The published app was ad-hoc signed with no team identifier, and Gatekeeper refused it: *"Apple could not verify OrcaSlicer is free of malware."* All seven Apple secrets were configured the whole time. |
+
+Two full release cycles were spent before the cause was found, and the first public release had to
+be unpublished.
+
+**The lessons, in order of usefulness:**
+
+1. **A deferral in a document is not a task.** Either re-apply the fork's hunks during the merge, or
+   open an issue that blocks the release. "Knowingly broken until then" is how it stays broken.
+2. **Some fork customisations are invisible to CI.** `build_all.yml` skips the Store packaging step
+   and never installs a DMG, so a fully green CI run proves nothing about the release path. That is
+   why `scripts/check-fork-customizations.sh` exists: it makes the invariant testable in a second,
+   without building anything.
+3. **Prefer `--ours` plus a deliberate port for files the fork has rebranded.** Taking `--theirs`
+   on a workflow that carries the fork's identity discards that identity by construction. The files
+   at risk are listed in the check script.
+4. **After any sync, diff the workflows against the last good release tag**, not just against
+   upstream:
+
+   ```bash
+   git diff <last-release-tag>..HEAD -- .github/workflows/
+   ```
+
+   Fork-specific conditions and rename steps stand out immediately in that diff and are invisible
+   in a diff against upstream.
 
 ### Compile Fixes
 
