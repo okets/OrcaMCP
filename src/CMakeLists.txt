@@ -132,6 +132,9 @@ endif()
 # Process manifests for various platforms.
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/dev-utils/platform/msw/OrcaSlicer.rc.in ${CMAKE_CURRENT_BINARY_DIR}/OrcaSlicer.rc @ONLY)
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/dev-utils/platform/msw/OrcaSlicer.manifest.in ${CMAKE_CURRENT_BINARY_DIR}/OrcaSlicer.manifest @ONLY)
+# NOT the plist that ships. Nothing installs this output into the bundle; the bundle's Info.plist
+# is generated from cmake/modules/MacOSXBundleInfo.plist.in via the MACOSX_BUNDLE_* variables set
+# below. Editing this template changes nothing on macOS -- it has already cost one wasted fix.
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/dev-utils/platform/osx/Info.plist.in ${CMAKE_CURRENT_BINARY_DIR}/Info.plist @ONLY)
 if (WIN32)
     add_library(OrcaSlicer SHARED OrcaSlicer.cpp OrcaSlicer.hpp)
@@ -342,6 +345,11 @@ else ()
         endif()
         set(MACOSX_BUNDLE_ICON_FILE Icon.icns)
         set(MACOSX_BUNDLE_BUNDLE_NAME "OrcaMCP")
+        # macOS identifies an app by this string, not by its folder name: Launch Services, the
+        # preferences domain, file associations and "Open With" all key off it. Sharing upstream's
+        # com.orcaslicer.OrcaSlicer made this fork and a user's real Orca Slicer the same app as far
+        # as the system was concerned, even after the bundle itself was renamed at packaging time.
+        set(MACOSX_BUNDLE_GUI_IDENTIFIER "com.orcamcp.OrcaMCP")
         set(MACOSX_BUNDLE_SHORT_VERSION_STRING ${SoftFever_VERSION})
         set(MACOSX_BUNDLE_COPYRIGHT "Copyright(C) 2022-2024 Li Jiang All Rights Reserved")
         if (XCODE)

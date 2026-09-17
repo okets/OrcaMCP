@@ -114,6 +114,16 @@ check "unix binary is orca-mcp" \
     "The AppImage and desktop entry both look for this exact name."
 
 # --- macOS packaging ------------------------------------------------------------------------
+check "macOS bundle identifier is the fork's own" \
+    src/CMakeLists.txt \
+    'MACOSX_BUNDLE_GUI_IDENTIFIER "com\.orcamcp\.OrcaMCP"' \
+    "Sharing com.orcaslicer.OrcaSlicer makes macOS treat this and the real Orca Slicer as one app."
+
+check "bundle plist template takes the identifier from CMake" \
+    cmake/modules/MacOSXBundleInfo.plist.in \
+    '<string>[$]\{MACOSX_BUNDLE_GUI_IDENTIFIER\}</string>' \
+    "Upstream hardcodes com.orcaslicer.OrcaSlicer here; a merge that restores it silently wins."
+
 # Two code paths build this DMG -- signed and unsigned -- and both must rename.
 check_count "DMG renames the bundle to the fork's name (both paths)" \
     .github/workflows/build_orca.yml \
