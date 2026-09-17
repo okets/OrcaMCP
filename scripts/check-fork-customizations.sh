@@ -18,7 +18,7 @@
 # Exit:  0 all invariants hold, 1 otherwise.
 
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || { echo "cannot reach the repository root" >&2; exit 1; }
 
 FAILURES=0
 
