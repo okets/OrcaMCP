@@ -61,6 +61,12 @@ jobs:
     uses: ./.github/workflows/build_check_cache.yml
     with:
       os: windows-latest
+      # Must match build_all.yml's Windows matrix entry, or the release ships a build nobody tested.
+      # `arch` is not cosmetic: build_orca.yml passes it straight to the Store packaging script,
+      # which declares [ValidateSet("x64","arm64")], so an omitted value arrives as "" and fails the
+      # whole release after a full build. `compiler` decides clang vs MSVC, and CI tests clang.
+      arch: x64
+      compiler: clang
     secrets: inherit
 
   # Create release with all artifacts
