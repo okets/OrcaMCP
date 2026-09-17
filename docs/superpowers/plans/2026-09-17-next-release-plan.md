@@ -10,22 +10,39 @@ below look like one-line fixes and are not.
 
 | Branch | Commit | Meaning |
 |--------|--------|---------|
-| `mcp` (default) | `b83b42efb7` | What shipped. Fast-forwarded, no merge commit. |
+| `mcp` (default) | `2ffaa64c1e` | Tip. The release plus two CI fixes that landed after the tag. |
+| `sync-upstream-2.5` | `2ffaa64c1e` | Same commit as `mcp`. |
 | `main` | `ca668a3bc9` | Exactly `upstream/main`. Tracks Orca Slicer, carries no fork work. |
-| `sync-upstream-2.5` | `b83b42efb7` | The release branch. Same commit as `mcp`. |
+| tag `v2.5.0.1-dev` | `03687eed70` | **Released and public**, three assets attached. |
 
-`v2.5.0.1-dev` points at `b83b42efb7`, which is the exact commit CI ran green on, including the
-external slicer regression suite on Linux. `version.inc` reads `2.5.0.1-dev`.
+`version.inc` reads `2.5.0.1-dev`. The release is live at
+<https://github.com/okets/OrcaMCP/releases/tag/v2.5.0.1-dev>.
 
-**First thing to check:** did the release workflow finish and publish?
+### What the release cost, and what it taught
+
+The first tag failed after a full build and published nothing, then the second built green and still
+was not public. Both causes were in `release.yml`, which is this fork's own workflow — upstream has
+no equivalent — and both are now fixed. Read this before touching release plumbing:
+
+1. **The Windows call omitted `arch` and `compiler`.** `arch` goes straight into the Microsoft Store
+   packaging script, which declares `[ValidateSet("x64","arm64")]`, so an omitted value arrived as
+   `""` and failed the whole release. `compiler` chooses clang versus MSVC, so the binary about to
+   ship was built differently from the one CI tested. The Windows call now mirrors `build_all.yml`'s
+   matrix entry exactly. **Leave Linux alone** — `build_all.yml` documents that amd64's empty `arch`
+   is load-bearing for the deps cache key and the unsuffixed asset names.
+2. **The `draft` toggle did nothing.** `A && B || C` falls through to `C` whenever `B` is false, so
+   `... && inputs.draft || true` was true for every event and input. Tag pushes draft by design —
+   that is the human gate — but a manual dispatch could not publish. Now fixed.
+
+**The lesson worth carrying:** `build_all.yml` skips the Store packaging step, so a fully green CI
+run does not prove the release path works. Only a release run exercises it. Do not treat green CI as
+proof that a release will succeed.
+
+**First thing to check next session:** the release is still public and intact.
 
 ```bash
-gh release view v2.5.0.1-dev -R okets/OrcaMCP --json assets -q '.assets[]|.name'
+gh release view v2.5.0.1-dev -R okets/OrcaMCP --json isDraft,assets -q '"draft: \(.isDraft)  assets: \(.assets|length)"'
 ```
-
-Three assets are expected: macOS universal, Linux ubuntu 24.04, Windows. If the run failed after
-building, the usual cause is `version.inc` not matching the tag — it did match here, so a failure
-means something else and the run log is the place to look.
 
 ### What shipped in v2.5.0.1-dev
 
