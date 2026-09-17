@@ -83,6 +83,43 @@ and vendor profiles. Seventeen of them touch `DeviceCore/`, `DeviceManager.cpp` 
 resolve them keeping **both** upstream's change and the fork's fix. Never drop a fork fix to make a
 merge easy; that rule is in the user's standing preferences.
 
+### What upstream actually landed — the 208 commits by theme
+
+Counts are approximate; they are there to show where the weight sits.
+
+| Theme | ~n | What it is |
+|-------|----|------------|
+| **Publish 3MF** | ~45 | A whole new subsystem: publish a project with embedded settings, tabbed publish dialog, badges in thumbnails, mixed-filament and per-extruder slot selection, import-side hardening, OTA/updater plumbing gated by an app-config flag. Biggest single block and entirely new surface. |
+| **Build warnings / -Werror** | ~25 | A campaign to zero the warning list, then enable `-Werror` with an exception list. Also ccache, PCH, clang-cl, shared object cache. Mechanical, but it touches a very large number of files — expect many trivial conflicts and almost no semantic ones. |
+| **Wipe tower estimation + placement** | ~13 | Estimation extracted and unified, footprint sized from the planners, clamping fixes, brim/cone-aware preview, comfort margin for auto placement, placement before slicing and in the profile validator. **See the duplicate-port trap below.** |
+| **CLI** | ~12 | `--inspect-paint`, `--inspect-mesh`, `--ground-*`, `--strict` plus a warnings array in `result.json`, `--export-settings -` to stdout, `compatible_printers_condition` in compat checks, relative path resolution, GUI mixed-filament rules applied on the CLI. |
+| **Preset / vendor loading** | ~8 | One shared library load in the CLI resolver, vendor trees loaded once, failed vendor loads no longer kept, inherited presets resolved through vendor manifests, hotfix for system bundles being recopied on every startup, detach-from-parent for parentless profiles. |
+| **Slicing correctness** | ~8 | Non-deterministic slicing fixed by ordering per-layer intersection lines canonically, deterministic tree support, internal bridges over Hilbert/Octagram infill, bridge flow with zero-gap supports, fuzzy-skin min junction width, stale paths when merging perimeter regions. Plus features: inward wipe for external perimeters, toolchange cyclic order. |
+| **Security / robustness** | ~6 | **Two stack buffer overflows in ADMesh `stl_read`** (unbounded solid name, MW metadata parse) — a malicious STL issue, take this one. Bounds-checked toolchange flush-volume and HRC per-filament lookups, guarded short per-filament config arrays, config import confined to the preset directory, float-or-percent range validation. |
+| **macOS / UI** | ~6 | Menu icons on macOS and Linux, custom colour accuracy, single-instance activation no longer maximises, publish dialog layout, Windows light-mode text, paint-on-resize. |
+| **Profiles** | ~6 | **Flashforge Creator 5 and Creator 5 Pro 0.25 mm nozzle profiles** — a direct gain for this project's printer. Also Qidi X-Plus 5 chamber heating, Snapmaker U1 ABS/ASA bed caps, PETG SuperTack temps, Folgertech i3 printable area. |
+| **Plates / instances** | ~2 | "Register Instance Copies and Moves with Their Plate" and "Let the Remaining Per-Plate Object Scans See Every Instance". Adjacent to the `add_plate` fix that shipped — read these before touching plate code. |
+| **Plugins** | 1 | Plater notification API for plugins. |
+
+Most relevant to this fork, in order: the Flashforge 0.25 mm profiles, the plate/instance fixes, the
+ADMesh overflow fixes, the HRC and flush-volume bounds checks (the fork touches HRC in
+`SelectMachine.cpp`), and the determinism fixes, which should make the regression suite steadier.
+
+### Two traps specific to this merge
+
+**1. `docs/superpowers/` is gitignored upstream.** Upstream added it at `.gitignore:56` and deleted
+its own plan docs. This fork tracks **17** plan documents there, including this file. Already-tracked
+files stay tracked, so nothing disappears — but after the merge, a newly written plan will be
+silently ignored by `git add` and will look like it simply did not save. Decide deliberately: either
+negate the rule in the fork's `.gitignore`, or move the fork's plans somewhere upstream does not
+ignore. Do not let it be discovered by accident.
+
+**2. Some upstream commits are already in the fork as ports with different SHAs.** The wipe tower
+cluster and "Fix the Folgertech i3 0.6 nozzle printable area" were cherry-picked or re-implemented
+here, so git sees upstream's originals as missing and will try to apply them again. Check each one
+against what the fork already has before resolving; applying a port twice is how a working tree ends
+up with duplicated logic that still compiles.
+
 ### Suggested approach
 
 1. Work on a fresh branch off `mcp`, not on `mcp` itself.
@@ -108,6 +145,23 @@ order.
 
 **Do this after the sync, not before.** Seventeen of the incoming upstream commits touch this exact
 device layer, so doing it first means doing it twice.
+
+### Whose bug is this?
+
+**Upstream's, not the fork's Flashforge code.** Worth knowing before anyone patches it locally.
+
+In upstream, `m_total_extder_count` is written in exactly two places: the constructor default of 1,
+and `ParseV2_0`. Upstream's own `MoonrakerPrinterAgent.cpp` — which is upstream code, not this
+fork's — does not set it either. So on stock Orca Slicer, *any* printer reached through an agent
+gets a one-extruder device model, and an IDEX Klipper machine would hit exactly this.
+
+What this fork did was make it visible: it ships Flashforge profiles that declare four tools, and
+the Send-dialog fixes in v2.5.0.1-dev let the code reach the check that compares the two numbers at
+all. Before those fixes the dialog bailed out earlier and never got here.
+
+That points at the fix belonging upstream rather than in a local patch, which is the
+stay-close-to-upstream rule. Consider raising it with SoftFever alongside the two inherited crashes
+listed further down.
 
 ### The gap, plainly
 
