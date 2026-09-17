@@ -142,6 +142,18 @@ check_condition "unsigned DMG fallback is the inverse of signing" \
     "github\.repository != 'okets/OrcaMCP'" \
     "If both conditions can be true, the unsigned DMG overwrites the signed one."
 
+check_count "signing quotes its password secrets" \
+    .github/workflows/build_orca.yml \
+    'security (create-keychain|unlock-keychain) -p "[$]KEYCHAIN_PASSWORD"' \
+    2 \
+    "Unquoted, a secret with a space word-splits and unlock-keychain dies with its usage message."
+
+check_count "certificate import quotes its password" \
+    .github/workflows/build_orca.yml \
+    '(-P|-k) "[$]P12_PASSWORD"' \
+    2 \
+    "Same word-splitting failure, one step later, after the keychain is already unlocked."
+
 # --- Release workflow -----------------------------------------------------------------------
 check "release passes the Windows arch" \
     .github/workflows/release.yml \

@@ -244,17 +244,22 @@ jobs:
         run: |
           # Load the `retry` helper (retries flaky commands such as `hdiutil create`).
           source ${{ github.workspace }}/scripts/retry.sh
+          # The password variables are quoted deliberately. Unquoted, a secret containing a
+          # space word-splits and `security unlock-keychain` fails with its usage message and
+          # exit 2 -- which is exactly how the first signed release attempt died. The fork had
+          # quoted these; the 2.5 upstream merge reverted it, and the signing step was gated
+          # off at the same time, so the bug could not surface until the gate was fixed.
           CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
           KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
           echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode --output $CERTIFICATE_PATH
-          security create-keychain -p $KEYCHAIN_PASSWORD $KEYCHAIN_PATH
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
-          security unlock-keychain -p $KEYCHAIN_PASSWORD $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           # Set the temporary keychain as the default to prevent codesign from accessing the locked login keychain
           security default-keychain -s "$KEYCHAIN_PATH"
-          security import $CERTIFICATE_PATH -P $P12_PASSWORD -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security import "$CERTIFICATE_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
           security list-keychain -d user -s $KEYCHAIN_PATH
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k $P12_PASSWORD $KEYCHAIN_PATH
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$P12_PASSWORD" "$KEYCHAIN_PATH"
           # codesign --deep is deprecated and cannot sign the bundled Python
           # runtime (see relocate_python_runtime in build_release_macos.sh).
           # Sign every nested Mach-O in the bundle explicitly -- notarization
