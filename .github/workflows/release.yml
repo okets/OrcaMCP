@@ -160,10 +160,12 @@ jobs:
           # dispatch with draft=false actually publish.
           draft: ${{ github.event_name != 'workflow_dispatch' || inputs.draft }}
           generate_release_notes: true
-          files: |
-            artifacts/OrcaMCP-*.dmg
-            artifacts/OrcaMCP-*.AppImage
-            artifacts/OrcaMCP-*.exe
+          # No `files:` here on purpose. This action uploads through Node's fetch, and on the
+          # ~360 MB DMG that failed on six of seven release runs in September 2026 -- "Headers
+          # Timeout Error", "Error saving asset", or an HTML error page -- every time after all
+          # builds, signing and notarization had succeeded. The assets go up in the next step with
+          # the gh CLI, which streams the upload and retries, and which moved this same file first
+          # time when done by hand.
           body: |
             ## OrcaMCP ${{ steps.version.outputs.tag }}
 
@@ -186,3 +188,49 @@ jobs:
             ---
 
             **Full Changelog**: https://github.com/okets/OrcaMCP/compare/...v${{ steps.version.outputs.version }}
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(artifacts/OrcaMCP-*.dmg artifacts/OrcaMCP-*.AppImage artifacts/OrcaMCP-*.exe)
+          if [ "${#files[@]}" -ne 3 ]; then
+            echo "expected 3 assets to upload, found ${#files[@]}:"; printf '  %s\n' "${files[@]}"; exit 1
+          fi
+          for f in "${files[@]}"; do
+            for attempt in 1 2 3 4; do
+              if gh release upload "$TAG" "$f" --repo "$GITHUB_REPOSITORY" --clobber; then
+                echo "uploaded $(basename "$f")"; break
+              fi
+              if [ "$attempt" -eq 4 ]; then echo "giving up on $(basename "$f") after 4 attempts"; exit 1; fi
+              echo "upload of $(basename "$f") failed (attempt $attempt); retrying in $((attempt * 20))s"
+              sleep $((attempt * 20))
+            done
+          done
+
+      - name: Verify release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The run is green only if every asset is attached with the size we built. A release
+          # with a missing installer must not look like success -- that is how a broken macOS
+          # image reached a user's machine this month.
+          ok=1
+          for f in artifacts/OrcaMCP-*.dmg artifacts/OrcaMCP-*.AppImage artifacts/OrcaMCP-*.exe; do
+            name=$(basename "$f"); want=$(stat -c%s "$f")
+            got=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+                    --jq ".assets[] | select(.name == \"$name\") | .size")
+            if [ "$got" = "$want" ]; then
+              echo "ok       $name ($want bytes)"
+            else
+              echo "MISSING  $name: on release '${got:-none}' bytes, built $want"; ok=0
+            fi
+          done
+          [ "$ok" -eq 1 ] || { echo "release is incomplete; not all assets attached"; exit 1; }

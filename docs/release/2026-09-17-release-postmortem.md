@@ -138,10 +138,12 @@ offline. Upstream's flow has the same gap. Not a blocker.
 2. Confirm the release notes and that `mcp` is at the commit you mean to ship.
 3. `git tag -a v<version> <sha> -m "OrcaMCP v<version>"` and push the tag. The tag **must** equal
    `SoftFever_VERSION` in `version.inc` with a `v` prefix; the pre-flight checks this.
-4. Wait for the Release run. **Expect "Create Release" to fail on the asset upload** — it did on
-   six of seven attempts this week, always after every build, the signing and notarization had
-   succeeded. Rerun that one job once (it reuses the artifacts; minutes, not ninety). If it fails
-   again, do not keep rerunning:
+4. Wait for the Release run. As of `release.yml` after this post-mortem, the release action no
+   longer uploads assets: a separate step uploads each one with `gh release upload` and up to four
+   retries, and a final step fails the run unless all three are attached at the size that was
+   built. That replaces the action's upload, which failed on six of seven attempts this week.
+   **First verification of this change is the next release.** If it still fails, the manual
+   fallback remains:
 
    ```bash
    gh run download <run-id> -R okets/OrcaMCP -D /tmp/rel

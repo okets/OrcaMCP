@@ -170,6 +170,21 @@ check "release passes the Windows arch" \
     'arch: x64' \
     "Feeds the MSIX script, which declares ValidateSet(x64,arm64); empty fails the whole release."
 
+check_absent "release does not upload assets through the gh-release action" \
+    .github/workflows/release.yml \
+    '^          files: \|' \
+    "That upload failed on 6 of 7 runs on the 360 MB DMG; assets go up via gh release upload with retries."
+
+check "release uploads assets with the gh CLI" \
+    .github/workflows/release.yml \
+    'gh release upload "[$]TAG"' \
+    "Streams and retries; the only upload path that has moved the macOS image reliably."
+
+check "release verifies every asset is attached" \
+    .github/workflows/release.yml \
+    'name: Verify release assets' \
+    "Without it a release missing an installer still shows green."
+
 check "release passes the Windows compiler" \
     .github/workflows/release.yml \
     'compiler: clang' \
