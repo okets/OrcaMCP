@@ -616,6 +616,32 @@ git push origin mcp
 git fetch upstream && git checkout main && git merge upstream/main && git checkout mcp && git merge main && git push origin main mcp
 ```
 
+### Carried upstream fixes — re-check at every major upstream release
+
+Decided 2026-09-18: this fork does **not** send its fixes upstream (judged not worth the effort).
+We carry them, and drop each one the moment upstream fixes it, so the conflict set shrinks anyway.
+At every major upstream release, as part of the sync, run these probes against `upstream/main`.
+A non-zero / "yes" means upstream still has the bug: keep our patch. A zero / "no" means upstream
+fixed it: take upstream's version in the merge and re-verify ours is gone. Add a probe whenever a
+new fork-only fix lands in an upstream file.
+
+```bash
+U(){ git show "upstream/main:$1"; }
+echo "A worker thread calls show_error_info directly (4d76a06287):     $(U src/slic3r/GUI/Jobs/BoostThreadWorker.hpp | grep -c 'show_error_info')"
+echo "B ~GLCanvas3D calls reset_volumes (f599bda795):                  $(U src/slic3r/GUI/GLCanvas3D.cpp | awk '/^GLCanvas3D::~GLCanvas3D/{f=1} f&&/reset_volumes/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
+echo "C unguarded result_polygon[0] (f599bda795):                      $(U src/libslic3r/PrintConfig.cpp | grep -c 'result = result_polygon\[0\]')"
+echo "D Moonraker payload lacks sdcard key (91efc63d30; 0 = bug):      $(U src/slic3r/Utils/MoonrakerPrinterAgent.cpp | grep -c '\"sdcard\"')"
+echo "E display name falls through to Unknown (041db47482):           $(U src/slic3r/GUI/DeviceManager.cpp | awk '/get_printer_type_display_str/{f=1} f&&/_L\("Unknown"\)/{print "yes"; exit}')"
+echo "F error panel: Wrap( without Layout() (f5ff97bfa1):             $(U src/slic3r/GUI/SelectMachine.cpp | grep -c 'Wrap(') Wrap / $(U src/slic3r/GUI/SelectMachine.cpp | grep -A3 'Wrap(' | grep -c 'Layout()') Layout"
+echo "G dead [this] capture CameraPopup (merge 476df4364e):            $(U src/slic3r/GUI/CameraPopup.cpp | grep -c 'Bind(wxEVT_TOGGLEBUTTON, \[this\](wxCommandEvent &e)')"
+echo "H dead [this] capture StatusPanel (merge 476df4364e):            $(U src/slic3r/GUI/StatusPanel.cpp | grep -c 'm_bmToggleBtn_timelapse->Bind(wxEVT_TOGGLEBUTTON, \[this\]')"
+echo "I extruder-count mismatch in the Send dialog (reported upstream): $(gh issue view 15758 -R OrcaSlicer/OrcaSlicer --json state -q .state 2>/dev/null || echo unknown)"
+```
+
+Item I is not a fork patch -- we deliberately carry nothing for it (see
+`docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices
+when <https://github.com/OrcaSlicer/OrcaSlicer/issues/15758> closes.
+
 ### Alternative: Rebase (cleaner history)
 
 ```bash

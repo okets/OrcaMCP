@@ -96,6 +96,11 @@ tell which change was the fork's, and the surrounding context the patches apply 
 | **3** | Fix the extruder count gap, and send it upstream as a PR. | It is upstream's bug (see Stage 3 section). Doing it after the merge means doing it once. |
 | **4** | Send the rest of the Stage 1 list upstream as PRs, one per fix. | Contributing back is what shrinks the diff going forward. |
 
+**Stage 4 cancelled 2026-09-18 by the user:** not worth the effort; upstream can fix these in its own
+time. The fork carries its fixes and re-checks them at every major upstream release with the probe
+block in `CLAUDE.md` § "Carried upstream fixes". All eight (A–F, plus the two dead `this` captures
+found during the merge) were still present in upstream `52f4c68c41` when this was decided.
+
 ### Stage 1 output — already done, 2026-09-17
 
 Each of these was **verified still present in `upstream/main`** at the time of writing, by reading
