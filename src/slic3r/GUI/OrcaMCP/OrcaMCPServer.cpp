@@ -1081,6 +1081,11 @@ void OrcaMCPServer::register_builtin_tools()
                     {"description", "Resolution in pixels (default: 512)"},
                     {"default", 512}
                 }},
+                {"image_format", {
+                    {"type", "string"},
+                    {"enum", {"png", "jpeg"}},
+                    {"description", "png or jpeg. Default: png when save_to_file is true (crisp overlays, alpha kept), jpeg for inline base64 (smaller)."}
+                }},
                 {"views", {
                     {"type", "array"},
                     {"description", "Views to render; camera_position and target in bed mm (the get_scene_info frame)"},

@@ -139,7 +139,7 @@ static std::string encode_thumbnail_to_base64(const ThumbnailData& thumbnail_dat
     return data_uri;
 }
 
-static std::string save_thumbnail_to_file(const ThumbnailData& thumbnail_data, int view_index) {
+static std::string save_thumbnail_to_file(const ThumbnailData& thumbnail_data, int view_index, bool use_png) {
     // Create wxImage from thumbnail data
     wxImage image(thumbnail_data.width, thumbnail_data.height);
     image.InitAlpha();
@@ -156,10 +156,10 @@ static std::string save_thumbnail_to_file(const ThumbnailData& thumbnail_data, i
     // Generate unique filename in temp directory
     std::string filename = "/tmp/orcamcp_render_" +
                           std::to_string(std::time(nullptr)) + "_" +
-                          std::to_string(view_index) + ".jpg";
+                          std::to_string(view_index) + (use_png ? ".png" : ".jpg");
 
     // Save as JPEG
-    image.SaveFile(filename, wxBITMAP_TYPE_JPEG);
+    image.SaveFile(filename, use_png ? wxBITMAP_TYPE_PNG : wxBITMAP_TYPE_JPEG);  // PNG keeps 1 px overlays crisp and alpha intact
 
     return filename;
 }
@@ -210,6 +210,11 @@ nlohmann::json OrcaMCPPlateUtils::RenderPlateView(const nlohmann::json& params) 
     int plate_index = payload.value("plate_index", -1);
     bool save_to_file = payload.value("save_to_file", false);
     int resolution = payload.value("resolution", 512);
+    // Files default to PNG; inline base64 defaults to JPEG, where size matters more than crispness.
+    const std::string image_format = payload.value("image_format", std::string(save_to_file ? "png" : "jpeg"));
+    if (image_format != "png" && image_format != "jpeg")
+        throw std::runtime_error("image_format must be \"png\" or \"jpeg\"");
+    const bool use_png = image_format == "png";
     auto views = payload["views"];
 
     if (!views.is_array()) {
@@ -281,10 +286,10 @@ nlohmann::json OrcaMCPPlateUtils::RenderPlateView(const nlohmann::json& params) 
         nlohmann::json entry;
         if (save_to_file) {
             // Save to file and return path
-            entry["file_path"] = save_thumbnail_to_file(data, view_index);
+            entry["file_path"] = save_thumbnail_to_file(data, view_index, use_png);
         } else {
             // Convert to base64-encoded image
-            entry["base64"] = encode_thumbnail_to_base64(data, false);
+            entry["base64"] = encode_thumbnail_to_base64(data, use_png);
         }
         entry["camera"] = camera_json;
         append_render_report(entry, report, cam.frame, plate_index);
