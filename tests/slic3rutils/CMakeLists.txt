@@ -37,6 +37,7 @@ add_executable(${_TEST_NAME}_tests
     test_object_placement.cpp
     test_plate_occupancy.cpp
     test_transform_frames.cpp
+    test_render_math.cpp
     ../fff_print/test_helpers.cpp
     )
 
