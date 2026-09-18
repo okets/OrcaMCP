@@ -369,6 +369,41 @@ void OrcaMCPServer::register_builtin_tools()
     // ==================== SERVER INFO ====================
 
     // get_server_info - Get comprehensive server documentation
+    // quit_app - close the app from MCP without any dialog. MainFrame::on_close asks "save changes?"
+    // and runs other vetoable checks only when the close event can be vetoed; Close(true) cannot be,
+    // so nothing modal ever opens. The close is scheduled so this reply reaches the caller first.
+    register_tool({
+        "quit_app",
+        "Quit OrcaMCP cleanly with no dialog. By default unsaved project changes are discarded; pass "
+        "discard_changes=false to refuse while the project is dirty (call save_project first).",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"discard_changes", {
+                    {"type", "boolean"},
+                    {"description", "Discard unsaved project changes (default true)"}
+                }}
+            }}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            if (params.contains("discard_changes") && !params.at("discard_changes").is_boolean())
+                return nlohmann::json{{"status", "error"}, {"message", "discard_changes must be a boolean"}};
+            const bool discard = params.value("discard_changes", true);
+            return run_on_main_thread([discard]() -> nlohmann::json {
+                Plater* plater = wxGetApp().plater();
+                if (!discard && plater != nullptr && plater->is_project_dirty())
+                    return nlohmann::json{{"status", "error"}, {"message", "project has unsaved changes; call save_project first or pass discard_changes=true"}};
+                wxGetApp().CallAfter([]() {
+                    if (Plater* p = wxGetApp().plater(); p != nullptr)
+                        p->reset_project_dirty_after_save();
+                    if (wxGetApp().mainframe != nullptr)
+                        wxGetApp().mainframe->Close(true);
+                });
+                return nlohmann::json{{"status", "quitting"}};
+            });
+        }
+    });
+
     register_tool({
         "get_server_info",
         "Get documentation about tools, concepts, and workflows",
