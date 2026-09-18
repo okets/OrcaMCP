@@ -1,6 +1,8 @@
 #include "OrcaMCPPlateUtils.hpp"
 #include "OrcaMCPPlateOccupancy.hpp"
 #include "slic3r/GUI/GLCanvas3D.hpp"
+#include "slic3r/GUI/OpenGLManager.hpp"
+#include <glad/gl.h>
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/Camera.hpp"
@@ -256,6 +258,73 @@ nlohmann::json OrcaMCPPlateUtils::RenderPlateView(const nlohmann::json& params) 
     return result;
 }
 
+// Offscreen render target for RenderThumbnail.
+//
+// The renderer used to draw into whatever framebuffer happened to be current on the GUI thread and
+// glReadPixels it straight back. That is the wxGLCanvas's default framebuffer, and what it holds
+// after a draw depends on state the tool does not control: with the Preview tab in front, the 3D
+// canvas is hidden and every read came back as the clear colour -- a solid black image, for every
+// plate and every camera, with nothing logged. Orca's own plate thumbnails never had this problem
+// because GLCanvas3D::render_thumbnail_framebuffer draws into a framebuffer object it owns. This
+// does the same, in the same non-multisampled shape, and puts the previous binding and viewport
+// back so the on-screen canvas is untouched. If the framebuffer cannot be completed, or the driver
+// only offers the EXT flavour, `ok` stays false and the caller draws exactly as before.
+struct OffscreenRenderTarget
+{
+    GLuint fbo = 0, color = 0, depth = 0;
+    GLint  prev_fbo = 0;
+    GLint  prev_viewport[4] = {0, 0, 0, 0};
+    bool   ok = false;
+
+    OffscreenRenderTarget(unsigned int w, unsigned int h)
+    {
+        if (OpenGLManager::get_framebuffers_type() != OpenGLManager::EFramebufferType::Arb)
+            return;
+        glsafe(::glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prev_fbo));
+        glsafe(::glGetIntegerv(GL_VIEWPORT, prev_viewport));
+
+        glsafe(::glGenFramebuffers(1, &fbo));
+        glsafe(::glBindFramebuffer(GL_FRAMEBUFFER, fbo));
+
+        glsafe(::glGenTextures(1, &color));
+        glsafe(::glBindTexture(GL_TEXTURE_2D, color));
+        glsafe(::glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr));
+        glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR));
+        glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
+        glsafe(::glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color, 0));
+
+        glsafe(::glGenRenderbuffers(1, &depth));
+        glsafe(::glBindRenderbuffer(GL_RENDERBUFFER, depth));
+        glsafe(::glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT, w, h));
+        glsafe(::glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depth));
+
+        const GLenum draw_bufs[] = {GL_COLOR_ATTACHMENT0};
+        glsafe(::glDrawBuffers(1, draw_bufs));
+
+        ok = ::glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+        if (!ok) {
+            BOOST_LOG_TRIVIAL(warning) << "RenderThumbnail: offscreen framebuffer incomplete, drawing to the current framebuffer instead";
+            release();
+            return;
+        }
+        glsafe(::glViewport(0, 0, (GLsizei) w, (GLsizei) h));
+    }
+
+    ~OffscreenRenderTarget() { release(); }
+
+    void release()
+    {
+        if (fbo != 0) {
+            glsafe(::glBindFramebuffer(GL_FRAMEBUFFER, (GLuint) prev_fbo));
+            glsafe(::glDeleteFramebuffers(1, &fbo));
+            fbo = 0;
+            glsafe(::glViewport(prev_viewport[0], prev_viewport[1], prev_viewport[2], prev_viewport[3]));
+        }
+        if (color != 0) { glsafe(::glDeleteTextures(1, &color)); color = 0; }
+        if (depth != 0) { glsafe(::glDeleteRenderbuffers(1, &depth)); depth = 0; }
+    }
+};
+
 void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
     const Vec3d& camera_position, const Vec3d& target, int plate_index,
     RenderCameraInfo* out_camera)
@@ -325,6 +394,10 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
         volumes_box.max += padding;
         volumes_box.min.z() = -Slic3r::BuildVolume::SceneEpsilon;
     }
+
+    // Draw into our own framebuffer, not the canvas's (see OffscreenRenderTarget). It lives until the
+    // end of this function, so glReadPixels below reads from it and the canvas gets its state back.
+    OffscreenRenderTarget offscreen(thumbnail_data.width, thumbnail_data.height);
 
     // Setup camera
     Camera camera;
@@ -404,6 +477,9 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
 
     // Read pixels
     glsafe(::glReadPixels(0, 0, thumbnail_data.width, thumbnail_data.height, GL_RGBA, GL_UNSIGNED_BYTE, (void*)thumbnail_data.pixels.data()));
+    BOOST_LOG_TRIVIAL(info) << "RenderThumbnail: read " << thumbnail_data.width << "x" << thumbnail_data.height
+                            << " from " << (offscreen.ok ? "offscreen framebuffer" : "current framebuffer")
+                            << ", " << visible_volumes.size() << " visible volume(s)";
 
     // Debug output
     // std::string file_name = "zzh_" +

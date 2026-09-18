@@ -1028,7 +1028,7 @@ void OrcaMCPServer::register_builtin_tools()
     // render_plate_view - Render plate thumbnail
     register_tool({
         "render_plate_view",
-        "Render plate from custom camera angles. Use save_to_file=true for file paths.",
+        "Render a plate from custom camera angles. camera_position and target are BED millimetres -- the same frame as get_scene_info positions and plates[].bounding_box -- not plate-relative: plate N sits at plates[N].bounding_box, so aim at its objects' positions. Only volumes on the requested plate are drawn; a camera aimed at another plate's area returns a black image. Use save_to_file=true for file paths.",
         {
             {"type", "object"},
             {"properties", {
@@ -1048,19 +1048,19 @@ void OrcaMCPServer::register_builtin_tools()
                 }},
                 {"views", {
                     {"type", "array"},
-                    {"description", "View configurations"},
+                    {"description", "Views to render; camera_position and target in bed mm (the get_scene_info frame)"},
                     {"items", {
                         {"type", "object"},
                         {"properties", {
                             {"camera_position", {
                                 {"type", "array"},
                                 {"items", {{"type", "number"}}},
-                                {"description", "[x, y, z]"}
+                                {"description", "[x, y, z] in bed mm, same frame as get_scene_info"}
                             }},
                             {"target", {
                                 {"type", "array"},
                                 {"items", {{"type", "number"}}},
-                                {"description", "[x, y, z]"}
+                                {"description", "[x, y, z] in bed mm; point it at the plate's objects (get_scene_info positions)"}
                             }}
                         }}
                     }}

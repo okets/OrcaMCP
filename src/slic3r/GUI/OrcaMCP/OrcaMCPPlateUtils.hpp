@@ -2,7 +2,6 @@
 #define slic3r_GUI_OrcaMCPPlateUtils_hpp_
 
 #include <nlohmann/json.hpp>
-#include <GL/glew.h>
 
 #include "libslic3r/GCode/ThumbnailData.hpp"
 #include "slic3r/GUI/Camera.hpp"
