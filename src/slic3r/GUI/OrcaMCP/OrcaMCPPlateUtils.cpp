@@ -2,6 +2,7 @@
 #include "OrcaMCPPlateOccupancy.hpp"
 #include "slic3r/GUI/GLCanvas3D.hpp"
 #include "slic3r/GUI/OpenGLManager.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPRenderOverlay.hpp"
 #include <glad/gl.h>
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Plater.hpp"
@@ -18,6 +19,7 @@
 #include <iomanip>
 #include <sstream>
 #include <cstring>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 
@@ -97,19 +99,12 @@ static void z_debug_output_thumbnail(const ThumbnailData& thumbnail_data, std::s
     image.SaveFile(file_name_path, wxBITMAP_TYPE_PNG);
 }
 
-static std::string encode_thumbnail_to_base64(const ThumbnailData& thumbnail_data, bool use_png = true) {
-    // Create wxImage from thumbnail data
-    wxImage image(thumbnail_data.width, thumbnail_data.height);
-    image.InitAlpha();
-
-    for (unsigned int r = 0; r < thumbnail_data.height; ++r) {
-        unsigned int rr = (thumbnail_data.height - 1 - r) * thumbnail_data.width;
-        for (unsigned int c = 0; c < thumbnail_data.width; ++c) {
-            unsigned char* px = (unsigned char*)thumbnail_data.pixels.data() + 4 * (rr + c);
-            image.SetRGB((int)c, (int)r, px[0], px[1], px[2]);
-            image.SetAlpha((int)c, (int)r, px[3]);
-        }
-    }
+static std::string encode_image_to_base64(const wxImage& image, bool use_png);
+static std::string encode_thumbnail_to_base64(const ThumbnailData& thumbnail_data, bool use_png = true)
+{
+    return encode_image_to_base64(OrcaMCP::thumbnail_to_wximage(thumbnail_data), use_png);
+}
+static std::string encode_image_to_base64(const wxImage& image, bool use_png) {
 
     // Convert wxImage to memory stream
     wxMemoryOutputStream stream;
@@ -139,23 +134,20 @@ static std::string encode_thumbnail_to_base64(const ThumbnailData& thumbnail_dat
     return data_uri;
 }
 
-static std::string save_thumbnail_to_file(const ThumbnailData& thumbnail_data, int view_index, bool use_png) {
-    // Create wxImage from thumbnail data
-    wxImage image(thumbnail_data.width, thumbnail_data.height);
-    image.InitAlpha();
-
-    for (unsigned int r = 0; r < thumbnail_data.height; ++r) {
-        unsigned int rr = (thumbnail_data.height - 1 - r) * thumbnail_data.width;
-        for (unsigned int c = 0; c < thumbnail_data.width; ++c) {
-            unsigned char* px = (unsigned char*)thumbnail_data.pixels.data() + 4 * (rr + c);
-            image.SetRGB((int)c, (int)r, px[0], px[1], px[2]);
-            image.SetAlpha((int)c, (int)r, px[3]);
-        }
-    }
+static std::string save_image_to_file(const wxImage& image, int view_index, bool use_png);
+static std::string save_thumbnail_to_file(const ThumbnailData& thumbnail_data, int view_index, bool use_png)
+{
+    return save_image_to_file(OrcaMCP::thumbnail_to_wximage(thumbnail_data), view_index, use_png);
+}
+static std::string save_image_to_file(const wxImage& image, int view_index, bool use_png) {
 
     // Generate unique filename in temp directory
+    // Time alone collided: three renders in one second overwrote each other. The sequence number
+    // makes every file this process writes distinct.
+    static std::atomic<unsigned> s_sequence{0};
     std::string filename = "/tmp/orcamcp_render_" +
                           std::to_string(std::time(nullptr)) + "_" +
+                          std::to_string(s_sequence.fetch_add(1)) + "_" +
                           std::to_string(view_index) + (use_png ? ".png" : ".jpg");
 
     // Save as JPEG
@@ -215,6 +207,11 @@ nlohmann::json OrcaMCPPlateUtils::RenderPlateView(const nlohmann::json& params) 
     if (image_format != "png" && image_format != "jpeg")
         throw std::runtime_error("image_format must be \"png\" or \"jpeg\"");
     const bool use_png = image_format == "png";
+    // Overlays default on (true/missing); false disables all; an object picks per overlay.
+    const OrcaMCP::OverlayOptions overlay_options = OrcaMCP::overlay_options_from_json(payload.value("overlays", nlohmann::json(true)));
+    std::vector<BoundingBoxf3> excluded_areas;
+    if (PartPlate* plate = wxGetApp().plater()->get_partplate_list().get_plate(plate_index); plate != nullptr)
+        excluded_areas = plate->get_exclude_areas();
     auto views = payload["views"];
 
     if (!views.is_array()) {
@@ -272,6 +269,14 @@ nlohmann::json OrcaMCPPlateUtils::RenderPlateView(const nlohmann::json& params) 
         RenderReport     report;
         RenderThumbnail(data, camera_position, target, plate_index, &cam, RenderOptions{}, &report);
 
+        // Overlays go on the finished pixels, projected through the very camera that drew them.
+        wxImage image = OrcaMCP::thumbnail_to_wximage(data);
+        std::vector<OrcaMCP::OverlayLabel> labels;
+        for (const RenderedVolume& v : report.drawn)
+            if (!v.wipe_tower)
+                labels.push_back({std::to_string(v.object_index), Vec3d(v.world_bbox.center().x(), v.world_bbox.center().y(), v.world_bbox.max.z()), v.color});
+        OrcaMCP::draw_overlays(image, cam.frame, report.plate_box, excluded_areas, labels, overlay_options);
+
         // Everything pick_facet needs to turn a pixel of this image back into a ray. The three
         // required keys are written by the same function pick_facet parses with, so the two halves
         // cannot disagree about names or row order; the rest is for the reader. Pixel row 0 is the
@@ -286,13 +291,14 @@ nlohmann::json OrcaMCPPlateUtils::RenderPlateView(const nlohmann::json& params) 
         nlohmann::json entry;
         if (save_to_file) {
             // Save to file and return path
-            entry["file_path"] = save_thumbnail_to_file(data, view_index, use_png);
+            entry["file_path"] = save_image_to_file(image, view_index, use_png);
         } else {
             // Convert to base64-encoded image
-            entry["base64"] = encode_thumbnail_to_base64(data, use_png);
+            entry["base64"] = encode_image_to_base64(image, use_png);
         }
         entry["camera"] = camera_json;
         append_render_report(entry, report, cam.frame, plate_index);
+        entry["overlays"] = OrcaMCP::overlay_options_to_json(overlay_options);
         result.push_back(entry);
         view_index++;
     }

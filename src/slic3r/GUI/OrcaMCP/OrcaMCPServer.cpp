@@ -1081,6 +1081,14 @@ void OrcaMCPServer::register_builtin_tools()
                     {"description", "Resolution in pixels (default: 512)"},
                     {"default", 512}
                 }},
+                {"overlays", {
+                    {"type", {"boolean", "object"}},
+                    {"description", "Self-locating overlays drawn on the image: plate outline, 10 mm grid, origin with X/Y, numbered object labels, hatched excluded areas. true/omitted = all, false = none, or an object {outline, grid, origin, labels, excluded} of booleans."},
+                    {"properties", {
+                        {"outline", {{"type", "boolean"}}}, {"grid", {{"type", "boolean"}}}, {"origin", {{"type", "boolean"}}},
+                        {"labels", {{"type", "boolean"}}}, {"excluded", {{"type", "boolean"}}}
+                    }}
+                }},
                 {"image_format", {
                     {"type", "string"},
                     {"enum", {"png", "jpeg"}},
