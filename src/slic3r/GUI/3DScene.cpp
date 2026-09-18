@@ -946,14 +946,19 @@ int GLVolumeCollection::load_wipe_tower_preview(
     // Orca: make it transparent
     for(auto& color : colors)
         color.a(0.66f);
+    const size_t slab_count = colors.size(); // per-filament body slabs; the brim part comes after
+    if (show_brim && !colors.empty())
+        colors.push_back(colors.front());
     volumes.emplace_back(new GLWipeTowerVolume(colors));
     GLWipeTowerVolume& v = *dynamic_cast<GLWipeTowerVolume*>(volumes.back());
     v.model_per_colors.resize(colors.size());
-    for (int i = 0; i < colors.size(); i++) {
-        TriangleMesh color_part = make_cube(width, depth / colors.size(), height);
-        color_part.translate({ 0.f, depth * i / colors.size(), 0. });
+    for (size_t i = 0; i < slab_count; i++) {
+        TriangleMesh color_part = make_cube(width, depth / slab_count, height);
+        color_part.translate({ 0.f, depth * i / slab_count, 0. });
         v.model_per_colors[i].init_from(color_part);
     }
+    if (show_brim && !colors.empty())
+        v.model_per_colors[slab_count].init_from(brim_slab);
     v.model.init_from(wipe_tower_shell);
     v.mesh_raycaster = std::make_unique<GUI::MeshRaycaster>(std::make_shared<const TriangleMesh>(wipe_tower_shell));
     v.set_convex_hull(wipe_tower_shell);

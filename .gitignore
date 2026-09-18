@@ -62,3 +62,7 @@ __pycache__/
 *.opc
 /.test/
 .playwright-mcp/
+docs/superpowers/
+# This fork tracks its plan and spec documents in docs/superpowers/. Upstream ignores
+# that directory; negate the rule here so newly written plans are not silently dropped.
+!docs/superpowers/

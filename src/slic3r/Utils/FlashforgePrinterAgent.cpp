@@ -5,6 +5,7 @@
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
+#include "slic3r/GUI/DeviceManager.hpp"
 #include "slic3r/GUI/DeviceCore/DevManager.h"
 #include "slic3r/GUI/DeviceCore/DevStorage.h"
 #include "slic3r/GUI/DeviceCore/DevFirmware.h"

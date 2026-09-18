@@ -201,6 +201,19 @@ check "the bridge script is packaged" \
     'orcamcp-bridge\.py' \
     "Without it an installed OrcaMCP cannot be driven by an agent at all."
 
+# The guard can only catch a bad merge if CI still runs it, and the job that runs it lives in a
+# file upstream also edits -- so the guard is exactly as revertible as everything it protects.
+# It checks itself last, because a merge that drops this job makes every check above silent.
+check "CI still runs this guard" \
+    .github/workflows/build_all.yml \
+    'check-fork-customizations\.sh' \
+    "Without the job, an upstream merge can revert every invariant above and CI stays green."
+
+check "the fork's branch still triggers CI" \
+    .github/workflows/build_all.yml \
+    '^[[:space:]]+- mcp$' \
+    "Upstream's copy builds only its own branches, so a --theirs resolution stops building this fork."
+
 echo
 if [[ $FAILURES -eq 0 ]]; then
     echo "All fork customisations intact."

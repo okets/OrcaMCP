@@ -1,5 +1,5 @@
-name: Bug Report
-description: File a bug report for OrcaMCP
+name: 🐞 Bug Report
+description: Something behaves incorrectly while OrcaMCP keeps running
 labels: ["bug"]
 body:
   - type: markdown
@@ -8,7 +8,9 @@ body:
         **Thank you for using OrcaMCP and wanting to report a bug.**
 
         Please note that this is not the place to make feature requests or ask for help.
-        For feature requests, please use the [Feature request](https://github.com/okets/OrcaMCP/issues/new?template=feature_request.yml) template.
+        For this, please use the [Feature request](https://github.com/okets/OrcaMCP/issues/new?template=feature_request.yml) issue type.
+
+        If OrcaMCP closes on its own, freezes or stops responding, please use the [Crash report](https://github.com/okets/OrcaMCP/issues/new?template=crash_report.yml) form instead. It asks for the logs a crash needs.
 
         Before filing, please check if the issue already exists (either open or closed) by using the search bar on the issues page. If it does, comment there. Even if it's closed, we can reopen it based on your comment.
 
@@ -41,7 +43,7 @@ body:
     id: os_type
     attributes:
       label: "Operating System (OS)"
-      description: "What OSes are you are experiencing issues on?"
+      description: "What OSes are you experiencing issues on?"
       multiple: true
       options:
         - Linux
@@ -80,7 +82,7 @@ body:
     id: reproduce_steps
     attributes:
       label: How to reproduce
-      description: Please described the detailed steps to reproduce this issue
+      description: Please describe the detailed steps to reproduce this issue
       placeholder: |
         1. Go to '...'
         2. Click on '...'
@@ -102,29 +104,23 @@ body:
       description: What should happen after the above steps?
     validations:
       required: true
-  - type: markdown
-    id: file_required
-    attributes:
-      value: |
-        Please be sure to add the following files:
-          * Please upload a ZIP archive containing the **project file** used when the problem arise. Please export it just before or after the problem occurs. Even if you did nothing and/or there is no object, export it! (We need the configurations in project file).
-            You can export the project file from the application menu in `File`->`Save project as...`, then zip it
-          * A **log file** for crashes and similar issues.
-            You can find your log file here:
-            Windows: `%APPDATA%\OrcaMCP\log` or usually `C:\Users\<your username>\AppData\Roaming\OrcaMCP\log`
-            macOS: `$HOME/Library/Application Support/OrcaMCP/log`
-            Linux: `$HOME/.config/OrcaMCP/log`
-            If OrcaMCP still starts, you can also reach this directory from the application menu in `Help` -> `Show Configuration Folder`
-            You can zip the log directory, or just select the newest logs when this issue happens, and zip them
-          * For **MCP-specific issues**: Include the curl command and response, or Claude Code conversation excerpt
   - type: textarea
     id: file_uploads
     attributes:
       label: Project file & Debug log uploads
-      description:  Drop the project file and debug log here
+      description: |
+        Attach the files with the **Paste, drop, or click to add files** control directly underneath this box. Zip anything that is not a `.log`, `.txt` or image, since GitHub rejects other file types, and keep each file under 25 MB.
+
+        * The **project file** used when the problem happened, zipped. Export it just before or after the problem occurs. Even if you did nothing and there is no object on the plate, export it, since we need the configuration it carries. `File` -> `Save project as...`
+        * The **log folder**, zipped. `Help` -> `Show Configuration Folder` opens it, or find it at:
+          * Windows: `%APPDATA%\OrcaMCP\log`, usually `C:\Users\<you>\AppData\Roaming\OrcaMCP\log`
+          * macOS: `$HOME/Library/Application Support/OrcaMCP/log`
+          * Linux: `$HOME/.config/OrcaMCP/log`
+          * If the zip comes out over 25 MB, attach the newest logs from that folder on their own instead.
+        * For **MCP-specific issues**, the curl command and its response, or the Claude Code conversation excerpt.
       placeholder: |
-        Project File: `File` -> `Save project as...` then zip it & drop it here
-        Log File:  `Help` -> `Show Configuration Folder`, then zip the log directory, or just select the newest logs in `log` when this issue happens and zip them, then drop the zip file here
+        Zipped project file
+        Zipped log folder
     validations:
       required: true
   - type: checkboxes
@@ -139,7 +135,5 @@ body:
       label: Anything else?
       description: |
         Screenshots? References? Anything that will give us more context about the issue you are encountering!
-
-        Tip: You can attach images or log files by clicking this area to highlight it and then dragging files in.
     validations:
       required: false

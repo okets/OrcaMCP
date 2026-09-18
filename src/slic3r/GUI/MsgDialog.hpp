@@ -68,7 +68,7 @@ struct MsgDialog : DPIDialog
 
 	void show_dsa_button(wxString const & title = {});
 	bool get_checkbox_state();
-	virtual void on_dpi_changed(const wxRect& suggested_rect);
+	virtual void on_dpi_changed(const wxRect& suggested_rect) override;
 	void SetButtonLabel(wxWindowID btn_id, const wxString& label, bool set_focus = false);
 	// Public wrapper around add_button — lets callers append custom-labelled choice buttons to an
 	// already-constructed dialog (used by the H2C rack hotend "Jump to the upgrade page" prompt).
@@ -182,7 +182,6 @@ public:
 // Generic rich message dialog, used intead of wxRichMessageDialog
 class RichMessageDialog : public MsgDialog
 {
-	wxCheckBox* m_checkBox{ nullptr };
 	wxString	m_checkBoxText;
 	bool		m_checkBoxValue{ false };
 
@@ -421,7 +420,6 @@ private:
     wxString      m_new_keys;
     Button *      m_update_btn = nullptr;
     Button *      m_later_btn  = nullptr;
-    wxStaticText *m_msg_text   = nullptr;
 };
 
 
