@@ -19,6 +19,7 @@
 #include <sstream>
 #include <cstring>
 #include <cmath>
+#include <cstdio>
 
 namespace Slic3r { namespace GUI {
 
@@ -163,6 +164,40 @@ static std::string save_thumbnail_to_file(const ThumbnailData& thumbnail_data, i
     return filename;
 }
 
+// The numbers that make a picture checkable without looking at it. `frame` says which coordinates
+// everything is in; `plate_origin` lets an agent convert plate-local numbers itself;
+// `objects_in_frame` names what is visible and where in the image; `uniform_image` says the
+// picture shows nothing, and `hint` says why -- the case that cost fifteen blind renders once.
+static void append_render_report(nlohmann::json& entry, const RenderReport& report, const OrcaMCP::CameraFrame& camera, int plate_index)
+{
+    const BoundingBoxf3& plate = report.plate_box;
+    entry["frame"]        = "bed_mm";
+    entry["plate_origin"] = {plate.min.x(), plate.min.y()};
+
+    nlohmann::json in_frame = nlohmann::json::array();
+    for (const RenderedVolume& v : report.drawn) {
+        const OrcaMCP::ScreenBBox sb = OrcaMCP::screen_bbox_of(camera, v.world_bbox);
+        if (!sb.visible)
+            continue;
+        in_frame.push_back({{"object_index", v.object_index},
+                            {"name", v.name},
+                            {"screen_bbox", {std::round(sb.x0), std::round(sb.y0), std::round(sb.x1), std::round(sb.y1)}},
+                            {"clipped", sb.clipped}});
+    }
+    entry["objects_in_frame"] = in_frame;
+    entry["uniform_image"]    = report.uniform_image;
+    if (report.uniform_image) {
+        char buf[256];
+        if (report.drawn.empty())
+            std::snprintf(buf, sizeof(buf), "plate %d has no printable volumes; nothing to draw", plate_index);
+        else
+            std::snprintf(buf, sizeof(buf),
+                          "%zu volume(s) on plate %d but none inside this view; plate %d spans x [%.0f, %.0f] y [%.0f, %.0f] bed mm -- aim the camera there or use a preset",
+                          report.drawn.size(), plate_index, plate_index, plate.min.x(), plate.max.x(), plate.min.y(), plate.max.y());
+        entry["hint"] = buf;
+    }
+}
+
 nlohmann::json OrcaMCPPlateUtils::RenderPlateView(const nlohmann::json& params) {
     nlohmann::json payload = params.value("payload", nlohmann::json::object());
     if (payload.is_null() ||
@@ -229,7 +264,8 @@ nlohmann::json OrcaMCPPlateUtils::RenderPlateView(const nlohmann::json& params) 
         ThumbnailData    data;
         data.set(resolution, resolution);
         RenderCameraInfo cam;
-        RenderThumbnail(data, camera_position, target, plate_index, &cam);
+        RenderReport     report;
+        RenderThumbnail(data, camera_position, target, plate_index, &cam, RenderOptions{}, &report);
 
         // Everything pick_facet needs to turn a pixel of this image back into a ray. The three
         // required keys are written by the same function pick_facet parses with, so the two halves
@@ -251,6 +287,7 @@ nlohmann::json OrcaMCPPlateUtils::RenderPlateView(const nlohmann::json& params) 
             entry["base64"] = encode_thumbnail_to_base64(data, false);
         }
         entry["camera"] = camera_json;
+        append_render_report(entry, report, cam.frame, plate_index);
         result.push_back(entry);
         view_index++;
     }
@@ -329,6 +366,16 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
     const Vec3d& camera_position, const Vec3d& target, int plate_index,
     RenderCameraInfo* out_camera)
 {
+    RenderThumbnail(thumbnail_data, camera_position, target, plate_index, out_camera, RenderOptions{}, nullptr);
+}
+
+void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
+    const Vec3d& camera_position, const Vec3d& target, int plate_index,
+    RenderCameraInfo* out_camera, const RenderOptions& options, RenderReport* report)
+{
+    using OrcaMCP::object_palette_color;
+    using OrcaMCP::wipe_tower_color;
+    using OrcaMCP::is_uniform_rgba;
     const Camera::EType camera_type = Camera::EType::Perspective;  // Fixed camera type
     const ThumbnailsParams thumbnail_params = { {}, false, true, true, true, 0};  // Fixed params
 
@@ -432,7 +479,7 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
     }
 
     // Clear background
-    glsafe(::glClearColor(0.f, 0.f, 0.f, 0.f));
+    glsafe(::glClearColor(options.background.r(), options.background.g(), options.background.b(), options.background.a()));
     glsafe(::glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT));
     glsafe(::glEnable(GL_DEPTH_TEST));
     if (ban_light) {
@@ -444,7 +491,7 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
 
     // Render volumes
     shader->start_using();
-    shader->set_uniform("emission_factor", 0.1f);
+    shader->set_uniform("emission_factor", options.emission);
     shader->set_uniform("ban_light", false);
 
     for (GLVolume* vol : visible_volumes) {
@@ -452,7 +499,21 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
         // its own render() is not the one called here -- simple_render draws the plain shell mesh.
         // A fixed light grey reads unmistakably as "the tower" next to the objects' filament
         // colours, which is what a caller checking a layout needs it to do.
-        curr_color = vol->is_wipe_tower ? ColorRGBA(0.75f, 0.76f, 0.80f, 1.0f) : vol->color;
+        // Palette by object index (see RenderOptions): the question a picture answers is "which
+        // object is that", and filament colours often coincide.
+        const int object_index = vol->composite_id.object_id;
+        curr_color = vol->is_wipe_tower ? wipe_tower_color()
+                   : (options.palette_colors ? object_palette_color(object_index) : vol->color);
+        if (report != nullptr) {
+            RenderedVolume drawn;
+            drawn.object_index = vol->is_wipe_tower ? -1 : object_index;
+            drawn.name         = vol->is_wipe_tower ? std::string("wipe tower")
+                               : (object_index >= 0 && size_t(object_index) < model_objects.size() ? model_objects[object_index]->name : std::string());
+            drawn.world_bbox   = vol->transformed_bounding_box();
+            drawn.color        = curr_color;
+            drawn.wipe_tower   = vol->is_wipe_tower;
+            report->drawn.push_back(std::move(drawn));
+        }
         ColorRGBA new_color = adjust_color_for_rendering(curr_color);
         vol->model.set_color(new_color);
 
@@ -477,6 +538,10 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
 
     // Read pixels
     glsafe(::glReadPixels(0, 0, thumbnail_data.width, thumbnail_data.height, GL_RGBA, GL_UNSIGNED_BYTE, (void*)thumbnail_data.pixels.data()));
+    if (report != nullptr) {
+        report->uniform_image = is_uniform_rgba(thumbnail_data.pixels, thumbnail_data.width, thumbnail_data.height);
+        report->plate_box     = plate->get_plate_box();
+    }
     BOOST_LOG_TRIVIAL(info) << "RenderThumbnail: read " << thumbnail_data.width << "x" << thumbnail_data.height
                             << " from " << (offscreen.ok ? "offscreen framebuffer" : "current framebuffer")
                             << ", " << visible_volumes.size() << " visible volume(s)";
