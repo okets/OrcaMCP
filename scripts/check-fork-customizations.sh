@@ -214,6 +214,11 @@ check "the fork's branch still triggers CI" \
     '^[[:space:]]+- mcp$' \
     "Upstream's copy builds only its own branches, so a --theirs resolution stops building this fork."
 
+check "WinGet publishing stays upstream's" \
+    .github/workflows/winget_updater.yml \
+    "github.repository == 'OrcaSlicer/OrcaSlicer'" \
+    "Ungated, this fork publishes its installers into upstream's WinGet package, and without a token it just fails every release."
+
 echo
 if [[ $FAILURES -eq 0 ]]; then
     echo "All fork customisations intact."

@@ -4,6 +4,13 @@ on:
     types: [ released ]
 jobs:
   publish:
+    # Upstream only. The identifier below is Orca Slicer's WinGet package, so a fork that ran
+    # this would publish its own installers into upstream's entry. This fork has no WINGET_TOKEN
+    # either, so before this gate the job failed on every single release -- v2.4.0.1-dev and both
+    # v2.5.0.1-dev attempts -- and made a good release look broken.
+    # To publish OrcaMCP to WinGet, submit its own package and change the identifier; do not
+    # remove this condition.
+    if: ${{ github.repository == 'OrcaSlicer/OrcaSlicer' }}
     runs-on: windows-latest
     steps:
       - uses: vedantmgoyal9/winget-releaser@main
