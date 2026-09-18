@@ -568,6 +568,7 @@ The `count` field is always present (even when 0) to help confirm issues have be
 | `ORCAMCP_PORT` | `13618` | OrcaSlicer HTTP server port |
 | `ORCAMCP_TIMEOUT` | `120` | Request timeout in seconds |
 | `ORCAMCP_DEBUG` | (unset) | Enable debug logging to stderr |
+| `ORCAMCP_SKIP_CLOUD_LOGIN` | (set by `start_orca`) | App-side: skip the Orca cloud silent sign-in at startup. That sign-in reads the keychain synchronously on the GUI thread; on macOS it raises a permission prompt per freshly built binary and, with the screen locked, blocks the app before the MCP server starts. Set it yourself when launching the app for an agent. |
 
 ---
 

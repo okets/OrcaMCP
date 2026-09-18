@@ -637,6 +637,17 @@ static bool parse_stored_secret(const std::string& secret, std::string& out_refr
 
 int OrcaCloudServiceAgent::start()
 {
+    // OrcaMCP: an instance launched for an agent has no use for the Orca cloud sign-in, and the
+    // silent sign-in below reads the keychain synchronously on the GUI thread. On macOS that read
+    // raises a keychain permission prompt for every freshly built binary; with the screen locked
+    // the prompt cannot be answered and the app never reaches the point where its MCP server starts
+    // (seen 2026-09-19: two instances blocked in SecKeychainFindGenericPassword). The bridge sets
+    // this variable when it launches the app. It changes nothing for a normally launched app.
+    if (const char* skip = std::getenv("ORCAMCP_SKIP_CLOUD_LOGIN"); skip != nullptr && *skip != '\0' && std::string(skip) != "0") {
+        BOOST_LOG_TRIVIAL(info) << "OrcaCloudServiceAgent: ORCAMCP_SKIP_CLOUD_LOGIN set, skipping silent sign-in";
+        return 0;
+    }
+
     regenerate_pkce();
 
     // Attempt silent sign-in from stored refresh token

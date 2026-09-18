@@ -46,6 +46,7 @@ The bridge script accepts these environment variables:
 | `ORCAMCP_PORT` | `13618` | OrcaSlicer HTTP server port |
 | `ORCAMCP_TIMEOUT` | `120` | Request timeout in seconds |
 | `ORCAMCP_DEBUG` | (unset) | Enable debug logging to stderr |
+| `ORCAMCP_SKIP_CLOUD_LOGIN` | set to `1` by `start_orca` | Read by the **app**, not the bridge: skips the Orca cloud silent sign-in at startup. That sign-in reads the keychain synchronously on the GUI thread and, on macOS, can block on a permission prompt before the MCP server starts. Set it yourself if you launch the app for an agent by other means. |
 
 ### Setting Environment Variables
 

@@ -161,6 +161,11 @@ def launch_orcamcp() -> dict:
     try:
         log_debug(f"Launching OrcaMCP from: {executable}")
 
+        # An agent-launched app skips the Orca cloud silent sign-in: it reads the keychain
+        # synchronously at startup, which on macOS can block on a permission prompt before the MCP
+        # server exists (see CLAUDE.md, environment variables).
+        agent_env = dict(os.environ, ORCAMCP_SKIP_CLOUD_LOGIN="1")
+
         # Launch detached from this process
         import platform
         if platform.system() == "Windows":
@@ -171,6 +176,7 @@ def launch_orcamcp() -> dict:
                 [executable],
                 creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
                 close_fds=True,
+                env=agent_env,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL
             )
@@ -178,12 +184,14 @@ def launch_orcamcp() -> dict:
             # macOS: use 'open' command for .app bundles
             app_path = executable.replace("/Contents/MacOS/OrcaSlicer", "")
             if app_path.endswith(".app"):
-                subprocess.Popen(["open", app_path], close_fds=True)
+                # --env reaches the app through LaunchServices; a plain env= would not.
+                subprocess.Popen(["open", "--env", "ORCAMCP_SKIP_CLOUD_LOGIN=1", app_path], close_fds=True)
             else:
                 subprocess.Popen(
                     [executable],
                     start_new_session=True,
                     close_fds=True,
+                    env=agent_env,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL
                 )
@@ -192,6 +200,7 @@ def launch_orcamcp() -> dict:
             subprocess.Popen(
                 [executable],
                 start_new_session=True,
+                env=agent_env,
                 close_fds=True,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL
