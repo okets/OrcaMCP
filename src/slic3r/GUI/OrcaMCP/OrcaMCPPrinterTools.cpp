@@ -349,7 +349,7 @@ void OrcaMCPServer::register_printer_tools()
     // send_to_printer - Upload the sliced plate to the configured print host
     register_tool({
         "send_to_printer",
-        "Upload the sliced plate to the configured print host and optionally start it. The upload runs "
+        "Upload the sliced plate to the configured print host and START PRINTING IT: start_print defaults to true, so a bare call begins a print on real hardware. Pass start_print=false to upload only. The upload runs "
         "without any dialog: on a Flashforge printer with a material station the project's filaments are "
         "mapped onto the loaded slots automatically (pass material_mappings to choose the slots "
         "yourself). Pass direct=false to open OrcaSlicer's send dialog and leave the send to the user.",
