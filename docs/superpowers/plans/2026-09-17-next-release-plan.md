@@ -274,6 +274,16 @@ noise without hiding them (see "Agent-visible warnings" in the backlog below).
 
 ## Backlog — smaller known items
 
+### `render_plate_view` returns solid black images — found 2026-09-18 on the merged build
+
+Every render came back a fully black 512×512 JPEG: two custom cameras and the tool's own documented
+example camera, on a plate with a sliced 96 mm object, in the 2.5.0.2-dev dev build after the
+215-commit merge. Nothing was logged. `views` is also a required parameter although the docs imply
+a default. Not yet bisected: could be the merge (it touched `GLCanvas3D`, `3DScene`, `PartPlate`),
+or GUI state at the time (the user was working in the same window). Reproduce with
+`render_plate_view` on any sliced plate; compare against the v2.5.0.1-dev build. Plate rendering
+lives in `src/slic3r/GUI/OrcaMCP/OrcaMCPPlateUtils.cpp`.
+
 ### Agent-visible warnings — decide how to mark known noise
 
 Raised 2026-09-18. Agents that tail `log/debug_*.log` to debug pay tokens for repeated,
