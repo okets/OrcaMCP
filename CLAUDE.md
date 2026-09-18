@@ -99,9 +99,9 @@ cd build && ctest --output-on-failure
 
 **Status**: Complete & Tested ✓
 
-### MCP Tools (77 registered, 78 reachable)
+### MCP Tools (78 registered, 79 reachable)
 
-The server registers 77; the bridge adds `start_orca`, which launches OrcaSlicer and
+The server registers 78; the bridge adds `start_orca`, which launches OrcaSlicer and
 so cannot live inside it. To regenerate this count after adding a tool:
 
 ```bash
@@ -120,11 +120,11 @@ grep -hA1 -E '^\s*register_tool\(\{' src/slic3r/GUI/OrcaMCP/*.cpp | grep -coE '^
 | **Filaments & colour** | `get_filaments`, `set_object_filament`, `set_mixed_filament`, `delete_mixed_filament`, `get_flush_volumes`, `set_flush_volumes`, `auto_calc_flush_volumes`, `get_toolchanger_config`, `suggest_color_mix`, `get_color_palette` |
 | **Painting** | `paint_object`, `get_object_paint`, `clear_object_paint`, `set_brim_ears`, `get_object_components`, `pick_facet` |
 | **Slicing** | `slice_all`, `get_slicing_status`, `export_gcode`, `get_print_estimate` |
-| **Visualization** | `render_plate_view`, `get_preview_base64`, `set_gcode_view_type` |
+| **Visualization** | `render_plate_view` (named cameras `iso/top/front/back/left/right/low`, fit to plate or object, default 3-view contact sheet, plate outline + 10 mm grid + origin + object labels, `objects_in_frame` / `uniform_image` metadata, `layer_view: first_layer` plan with brim and supports; coordinates are bed mm), `get_preview_base64`, `set_gcode_view_type` |
 | **Printers** | `get_printers`, `select_printer`, `add_physical_printer` (incl. optional Obico URL/token for Flashforge), `discover_printers`, `send_to_printer`, `get_printer_status`, `printer_control`, `list_printer_files`, `print_printer_file`, `match_project_to_printer` |
 | **Adaptive** | `apply_adaptive_layer_height`, `clear_adaptive_layer_height` |
 | **History** | `undo`, `redo` |
-| **Info** | `get_server_info` |
+| **Info** | `get_server_info`, `quit_app` (closes the app with no dialog; discards unsaved changes unless `discard_changes=false`) |
 | **Bridge only** | `start_orca` |
 
 ---
@@ -296,7 +296,10 @@ gh release upload v2.3.2.10 ./path/to/new/artifact.exe -R okets/OrcaMCP
 |------|---------|
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPServer.hpp` | MCP server class definition |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPServer.cpp` | Most tool implementations; filament and printer tools live in OrcaMCPFilamentTools.cpp / OrcaMCPPrinterTools.cpp |
-| `src/slic3r/GUI/OrcaMCP/OrcaMCPPlateUtils.cpp` | Plate rendering, turntable previews |
+| `src/slic3r/GUI/OrcaMCP/OrcaMCPPlateUtils.cpp` | Plate rendering (`render_plate_view`), turntable previews. Draws into its own framebuffer. |
+| `src/slic3r/GUI/OrcaMCP/OrcaMCPRenderMath.cpp` | Pure render math: pixel projection, palette, camera presets, grid (unit-tested in `tests/slic3rutils/test_render_math.cpp`) |
+| `src/slic3r/GUI/OrcaMCP/OrcaMCPRenderOverlay.cpp` | 2D overlays on finished renders: outline, grid, origin, labels, excluded areas |
+| `src/slic3r/GUI/OrcaMCP/OrcaMCPFirstLayerPlan.cpp` | Top-down first-layer plan from the sliced `Print` (brim, support, wipe tower) with footprint fallback |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPPresetConfigUtils.cpp` | Preset/config management |
 | `src/slic3r/Utils/ObicoLink.cpp` | Flashforge preset's Obico link: page link object and token-free MCP status (spec `docs/superpowers/specs/2026-09-15-obico-camera-source-design.md`) |
 | `src/slic3r/GUI/HttpServer.hpp` | HTTP server with JSON responses |

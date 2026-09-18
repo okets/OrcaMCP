@@ -50,6 +50,20 @@ Get comprehensive documentation about the server, tools, and workflows.
 
 ---
 
+### quit_app
+Quit OrcaMCP cleanly with no dialog. An agent has to be able to close the app; a signal skips the
+shutdown path and AppleScript raises the "save changes?" prompt, which MCP dialog suppression does
+not cover because the close did not come through MCP.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `discard_changes` | boolean | No | Default `true`: unsaved project changes are discarded. `false` refuses while the project is dirty, so call `save_project` first. |
+
+**Returns:** `{"status": "quitting"}`; the app exits within a few seconds.
+
+---
+
 ### get_scene_info
 Get current project state including plates, objects, and positions.
 
@@ -1311,51 +1325,76 @@ interface was told it made no tool changes at all; the `total_toolchanges` key i
 ## Visualization Tools
 
 ### render_plate_view
-Capture plate images from specified camera angles.
+Picture a plate so an agent can read it: parts in distinct colours on a light background, the
+plate outline, a 10 mm grid, the origin with X/Y, and each object's index painted on it. Every
+view also returns the numbers that make the picture checkable without looking at it.
+
+**Coordinates are bed millimetres** — the same frame `get_scene_info` reports positions and
+`plates[].bounding_box` in. Plate N sits at `plates[N].bounding_box`; plate 2 of a 256 mm bed
+starts at x ≈ 307. A camera aimed at another plate's area returns a flat image and says so.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `plate_index` | integer | No | Plate to render (default: current) |
-| `save_to_file` | boolean | No | Save to temp file (RECOMMENDED: true) |
-| `resolution` | integer | No | Image size in pixels (default: 512) |
-| `views` | array | No | Array of camera configurations |
+| `plate_index` | integer | Yes | Plate to render (0-based). Only its volumes are drawn. |
+| `views` | array | No | Views to render. **Omit for a contact sheet** of `iso`, `top` and `front` fitted to the plate, composed side by side into one image. |
+| `save_to_file` | boolean | No | Write a PNG to `/tmp` and return its path (recommended) instead of inline base64. |
+| `resolution` | integer | No | Pixels per view side (default 512, 32–2048). Prefer `fit` to an object over more pixels. |
+| `image_format` | `"png"` / `"jpeg"` | No | Default `png` for files, `jpeg` for inline base64. |
+| `overlays` | boolean / object | No | `true` (default) draws all; `false` none; or `{outline, grid, origin, labels, excluded}` booleans. |
+| `layer_view` | `"first_layer"` | No | A top-down **first-layer plan** instead of a 3D render — see below. Ignores `views`. |
 
-**View object format:**
+**A view** is one of:
 ```json
-{"camera_position": [x, y, z], "target": [x, y, z]}
+{"preset": "iso" | "top" | "front" | "back" | "left" | "right" | "low", "fit": "plate" | {"object_index": 8}}
+{"camera_position": [x, y, z], "target": [x, y, z], "frame": "bed_mm" | "plate_local"}
+```
+`fit` defaults to the plate (its footprint at the height of what is on it). Fitting an object
+frames it and zooms to it: a closer camera, not more pixels. `low` looks at the first layers from
+the front, slightly downward — brims, support feet, bottom edges. `frame: "plate_local"` lets an
+explicit camera be given relative to the plate's front-left corner.
+
+**Examples:**
+```json
+{"name": "render_plate_view", "arguments": {"plate_index": 1, "save_to_file": true}}
+{"name": "render_plate_view", "arguments": {"plate_index": 1, "save_to_file": true,
+  "views": [{"preset": "low", "fit": {"object_index": 8}}, {"preset": "top"}]}}
+{"name": "render_plate_view", "arguments": {"plate_index": 1, "save_to_file": true, "layer_view": "first_layer"}}
 ```
 
-**Example:**
+**Returns** an array with one entry per view (or one contact-sheet entry):
 ```json
-{"name": "render_plate_view", "arguments": {
-  "plate_index": 0,
-  "save_to_file": true,
-  "resolution": 512,
-  "views": [
-    {"camera_position": [300, -200, 150], "target": [155, 155, 30]},
-    {"camera_position": [155, -200, 50], "target": [155, 155, 30]}
-  ]
-}}
+[{
+  "file_path": "/tmp/orcamcp_render_1789763152_1_0.png",
+  "frame": "bed_mm",
+  "plate_origin": [307.2, 0.0],
+  "objects_in_frame": [
+    {"object_index": 8, "name": "Top Frame-SOLID-2", "screen_bbox": [206, 184, 437, 315], "clipped": false}
+  ],
+  "uniform_image": false,
+  "overlays": {"outline": true, "grid": true, "origin": true, "labels": true, "excluded": true},
+  "camera": {"preset": "low", "fit": {"object_index": 8}, "input_frame": "bed_mm",
+             "camera_position": [...], "target": [...], "view_matrix": [...], "projection_matrix": [...],
+             "viewport": [0, 0, 512, 512], "type": "perspective", "pixel_origin": "top_left"}
+}]
 ```
+- `objects_in_frame` lists every volume that projects into the view, with its bounding box in
+  image pixels (top-left origin). `clipped` means the box extends past the frame or behind the
+  camera.
+- `uniform_image: true` means the picture is a single flat colour, and `hint` says why: which
+  plate the camera should be aimed at, or that the plate has nothing printable. Check it before
+  reading the image.
+- `camera` is what `pick_facet` needs to turn a pixel back into a ray; pass it unchanged. On a
+  contact sheet each entry under `views` carries its own `camera`, `column` and `x_offset` to add
+  to a pixel's x first.
 
-**Returns:**
-```json
-{
-  "images": [
-    {"file_path": "/tmp/orcamcp_render_abc123.jpg"},
-    {"file_path": "/tmp/orcamcp_render_def456.jpg"}
-  ]
-}
-```
-
-**Important:** Always use `save_to_file: true` to avoid large base64-encoded responses.
-
-Each entry in `images` also carries a `camera` object: `view_matrix` and `projection_matrix`
-(16 numbers each, row-major), `viewport` (`[x, y, width, height]`), `type`
-(`"perspective"` or `"orthographic"`), `pixel_origin` (always `"top_left"`),
-`camera_position`, and `target`. Pass it to `pick_facet` unchanged, along with the `[u, v]`
-pixel you read off the image, to turn a point in the render back into the facet it shows.
+**First-layer plan** (`layer_view: "first_layer"`): a top-down, orthographic plan drawn from the
+plate's sliced first layer — each object's footprint in its colour, its brim loops as darker
+lines, the support first layer hatched grey, the wipe tower in grey — plus the overlays. On an
+unsliced plate it falls back to model footprints with the configured brim width as a ring and
+reports `source: "footprints"` instead of `"sliced"`. The entry adds `has_brim` per object,
+`support_present`, `wipe_tower_present` and `camera.mm_per_pixel`. This is the view for
+"is the brim wide enough" and "where do the support feet land".
 
 ---
 
