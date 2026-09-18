@@ -479,7 +479,7 @@ When `load_model`, `load_project`, or `new_project` is called:
 | Native file dialogs (`wxFileDialog` via `Plater::priv::get_export_file`) | Never opened. `save_project` without a name returns an error asking for `output_path`; `export_gcode` / `export_3mf` without `output_path` return an error asking for a path. |
 | Archive contents picker (`FileArchiveDialog`, loading a .zip) | Not opened; the ZIP is not imported, message captured |
 | `StepMeshDialog` (STEP/STP import tessellation) | Not opened; imported with the configured linear/angle deflection, message captured |
-| Send-to-printer dialogs (`SelectMachineDialog`, print-host send) | Not suppressed: `send_to_printer` schedules them with `CallAfter` and returns `dialog_opened` immediately, so the user drives the dialog after the tool replies |
+| Send-to-printer (`send_to_printer`) | **Bambu:** the `SelectMachineDialog` is scheduled with `CallAfter` and the tool returns `dialog_opened`; the user drives it. **Print hosts (Flashforge, Moonraker, OctoPrint, …):** by default (`direct: true`) there is **no dialog** — the tool uploads the sliced plate and, because `start_print` also defaults to true, **starts the print**. It returns `queued`. Pass `start_print: false` to upload only, or `direct: false` to open the print-host dialog instead. Never call it to "look at the dialog": on 2026-09-18 that started a 7 h print. |
 
 ### Implementation
 

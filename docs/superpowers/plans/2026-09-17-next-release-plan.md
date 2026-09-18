@@ -216,79 +216,69 @@ order.
 
 ---
 
-## Stage 3 — The extruder count gap, then a PR
+## Stage 3 — The extruder count gap: investigated 2026-09-18, not fixing it here
 
-**Stage 3, after the merge.** Seventeen of the incoming upstream commits touch this exact device
-layer, so doing it first means doing it twice. Fix it on top of merged code, then send it upstream
-as the seventh PR -- it is their bug, and landing it there means the fork carries no patch at all.
+**Decision (2026-09-18, with the user):** this is upstream's bug, it is bigger than one printer, and
+the fork will not carry a patch for it. Reported as
+<https://github.com/OrcaSlicer/OrcaSlicer/issues/15758>, with a suggested direction and an offer
+to PR it if upstream agrees. What follows replaces the earlier text, whose central claim turned out
+to be wrong.
 
-### Whose bug is this?
+### What the evidence showed
 
-**Upstream's, not the fork's Flashforge code.** Worth knowing before anyone patches it locally.
+Established against the merged tree (upstream `52f4c68c41`), the live Creator 5 Pro, and
+Flashforge's published specifications -- not by reading alone.
 
-In upstream, `m_total_extder_count` is written in exactly two places: the constructor default of 1,
-and `ParseV2_0`. Upstream's own `MoonrakerPrinterAgent.cpp` — which is upstream code, not this
-fork's — does not set it either. So on stock Orca Slicer, *any* printer reached through an agent
-gets a one-extruder device model, and an IDEX Klipper machine would hit exactly this.
+- **The printer reports the count.** `nozzleCnt: 4`, per-nozzle temperatures, per-nozzle bores
+  (`nozzleModel: "0.4mm;0.4mm;0.4mm;0.4mm"`). "Nothing ever told it otherwise" is true of the
+  *device model*, not of the source data.
+- **The nozzles are hardened steel.** Flashforge ships the C5/C5P with red-copper nozzles carrying a
+  hardened-steel tip, rated 320 °C and sold for CF filaments. So the preset's `hardened_steel`
+  (HRC 55) is correct, and the hardness gate is *right* never to fire: the most demanding filament in
+  the table needs HRC 40. **There is no missing abrasive warning on stock nozzles.**
+- **The hardness gate does not go through the count comparison.** It walks
+  `GetExtderSystem()->GetExtruders()` directly. The nozzle-label path exits before the comparison on
+  any printer without a hotend rack. The only two live callers of `get_mapped_nozzles()` are the
+  blacklist checks, driven by the dialog's refresh timer, and upstream's own comment there handles
+  the empty map for "a non-rack printer". **Consequence on the C5P: log noise at timer rate.**
+  Printing, the hardness gate and the material blacklist are all intact.
+- **Agents never see it.** `send_to_printer` on a print host uploads directly and never opens the
+  `SelectMachineDialog`; boost log lines never reach `active_warnings`. Zero occurrences were logged
+  during the live MCP send. The spam is a human-in-the-GUI symptom only.
+- **Raising the device count would introduce bugs.** The Send dialog assumes one or two extruders in
+  23 places, the Device tab in 13, and `sync_extruder_list` -- gated today on `is_multi_extruders()`
+  -- would index a one-entry `physical_extruder_map` with `extruder_nums == 4`, asserts compiled out.
+- **It is upstream's, by construction.** `get_printer_extruder_count()` *is* `nozzle_diameter.size()`.
+  Upstream's own Snapmaker U1 (four tool-heads, added in this merge) is modelled exactly like the C5P:
+  four nozzle diameters, one logical extruder, no physical map. Upstream's Moonraker agent publishes a
+  single `nozzle_temper` and never sets a count. `get_mapped_nozzles()` is byte-identical between the
+  fork and upstream.
+- **The fix the evidence points at** lives in the dialog, not the device layer: Bambu's dual profile
+  declares `physical_extruder_map: ["1","0"]`; tool-changers leave the default `[0]`. Distinct
+  physical extruders -- 2 for the H2D, 1 for the U1 and C5P -- matches the device model in every
+  case. That is the direction offered in the issue.
 
-What this fork did was make it visible: it ships Flashforge profiles that declare four tools, and
-the Send-dialog fixes in v2.5.0.1-dev let the code reach the check that compares the two numbers at
-all. Before those fixes the dialog bailed out earlier and never got here.
+### What happened while gathering it
 
-That points at the fix belonging upstream rather than in a local patch, which is the
-stay-close-to-upstream rule. Consider raising it with SoftFever alongside the two inherited crashes
-listed further down.
-
-### The gap, plainly
-
-The Creator 5 Pro has four tool heads, and the printer profile says so. The slicer also keeps a
-separate live model of the machine, built from what the printer reports over the network, and that
-model says **one** extruder. It says one because nothing ever told it otherwise: the count is only
-ever set by a newer message format this printer does not speak, so it keeps the default of one.
-
-So two pictures of the same printer disagree — the profile says four, the live model says one.
-
-When the Send dialog works out which nozzle each filament comes from, it compares the two, sees the
-mismatch, gives up, and logs an error. While the dialog is open it does that several times a second.
-
-Two consequences:
-
-- The log fills with `get_mapped_nozzles: total_ext_count not match` (`SelectMachine.cpp:1499`).
-- The check it abandoned is the one that warns when a filament is too abrasive for the nozzle.
-  **That warning never appears on this printer.** This is a missing safety check, not just noise.
-
-Printing is unaffected.
-
-### Why the obvious fix is wrong
-
-Setting the live model to four extruders breaks something that currently works.
-`ExtderSystemParser::ParseV1_0` (`DevExtruderSystem.cpp:191`) returns immediately unless the count
-is exactly one:
-
-```cpp
-if (system->GetTotalExtderCount() != 1) { return; }
-```
-
-That parser is what feeds the Flashforge's nozzle temperatures into the Device tab. Raise the count
-and the temperatures stop updating, silently.
-
-Note also `GetTotalExtderCount()` asserts `m_extders.size() == m_total_extder_count`, so the count
-and the extruder vector have to move together.
-
-### What the real fix looks like
-
-The count is only set in `ExtderSystemParser::ParseV2_0` (`DevExtruderSystem.cpp:283`), reached
-from `DeviceManager.cpp:5446`, inside the newer protocol path gated by `check_enable_np`. Doing
-this properly means emitting a version-two `device.extruder` block with per-tool bit-packed fields
-(`info`, `filam_bak`, `temp`, `spre`, `snow`, `star`, `stat`, `hnow`) — and having the printer
-claim that protocol, which changes far more than extruders.
-
-Budget it as a real piece of work with its own verification, not a patch. Do not silence the log:
-the error is telling the truth.
-
----
+Calling `send_to_printer` with no arguments to "open the dialog and observe" **started a print**:
+on a print host the tool uploads directly and `start_print` defaults to true. It was cancelled
+before any heater reached target. CLAUDE.md's description of the tool was wrong and has been
+corrected. Two design questions came out of it and are open with the user: whether an agent-facing
+send tool should default to starting a print, and how to tell agents which log warnings are known
+noise without hiding them (see "Agent-visible warnings" in the backlog below).
 
 ## Backlog — smaller known items
+
+### Agent-visible warnings — decide how to mark known noise
+
+Raised 2026-09-18. Agents that tail `log/debug_*.log` to debug pay tokens for repeated,
+known-benign lines (the `total_ext_count not match` spam above being the example). The user does
+not want them suppressed at source. Candidate approaches, not yet chosen: an MCP diagnostics tool
+that returns recent log lines de-duplicated with repeat counts and annotated from a known-benign
+registry (pattern, reason, upstream issue URL); a fork-side log-sink formatter that collapses
+consecutive duplicates into one line with a count; or both, sharing one registry file in
+`resources/`. `get_server_info` should point agents at the tool instead of the raw log.
+
 
 ### `get_print_estimate` reports the wrong layer count — confirmed, with numbers
 
