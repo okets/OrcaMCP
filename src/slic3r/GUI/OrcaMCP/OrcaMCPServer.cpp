@@ -432,7 +432,7 @@ void OrcaMCPServer::register_builtin_tools()
                         {"load_and_slice", "load_model -> arrange_objects -> slice_all -> poll get_slicing_status -> export_gcode"},
                         {"change_settings", "apply_config with settings array"},
                         {"modify_object", "get_scene_info (get object_id) -> transform tools"},
-                        {"visualize", "render_plate_view with save_to_file=true, then Read the file"}
+                        {"visualize", "render_plate_view with save_to_file=true (omit views for a 3-view contact sheet), then Read the PNG; check uniform_image first"}
                     }}
                 }},
 
@@ -560,10 +560,14 @@ void OrcaMCPServer::register_builtin_tools()
                         {"tip", "Use bed info to calculate valid positions. Object positions are center points."}
                     }},
                     {"render_plate_view", {
-                        {"single_view", R"({"plate_index": 0, "save_to_file": true, "views": [{"camera_position": [300, -200, 150], "target": [155, 155, 30]}]})"},
-                        {"multiple_views", R"({"plate_index": 0, "save_to_file": true, "views": [{"camera_position": [300, -200, 150], "target": [155, 155, 30]}, {"camera_position": [155, -200, 50], "target": [155, 155, 30]}, {"camera_position": [10, -100, 80], "target": [155, 155, 30]}]})"},
-                        {"when_to_use", "Before/after transforms, to verify object state, to analyze geometry"},
-                        {"tip", "ALWAYS use save_to_file=true to avoid huge base64 responses"}
+                        {"contact_sheet", R"({"plate_index": 1, "save_to_file": true})"},
+                        {"preset_views", R"({"plate_index": 1, "save_to_file": true, "views": [{"preset": "iso"}, {"preset": "low", "fit": {"object_index": 8}}]})"},
+                        {"explicit_camera", R"({"plate_index": 0, "save_to_file": true, "views": [{"camera_position": [300, -200, 150], "target": [128, 128, 30]}]})"},
+                        {"first_layer_plan", R"({"plate_index": 1, "save_to_file": true, "layer_view": "first_layer"})"},
+                        {"coordinate_frame", "camera_position/target are BED mm, the get_scene_info frame; plate N is at plates[N].bounding_box. Add frame: \"plate_local\" to give them from the plate's front-left corner. Presets never need coordinates."},
+                        {"read_the_numbers_first", "Check uniform_image (and its hint) and objects_in_frame before reading the image; a flat image means the camera saw nothing on that plate."},
+                        {"tip", "ALWAYS use save_to_file=true (PNG paths). Prefer fit: {object_index} over a higher resolution."},
+                        {"when_to_use", "Before/after transforms, to verify object state, to analyze geometry; layer_view first_layer for brim, support feet and adhesion questions"}
                     }},
                     {"apply_config", {
                         {"single_setting", R"({"settings": [{"type": "print", "key": "layer_height", "value": "0.2"}]})"},
@@ -701,6 +705,7 @@ void OrcaMCPServer::register_builtin_tools()
                 {"tools_by_category", {
                     {"information", {
                         {"get_server_info", "This documentation"},
+                        {"quit_app", "Quit the app with no dialog (discards unsaved changes unless discard_changes=false)"},
                         {"get_scene_info", "Get current project state: plates, objects, positions, and each plate's "
                                            "full occupancy list (objects with brim, prime tower, excluded bed areas)"},
                         {"get_object_info", "Get single object info. Faster than get_scene_info for targeted queries."},
@@ -747,7 +752,7 @@ void OrcaMCPServer::register_builtin_tools()
                         {"save_project", "Save current project"}
                     }},
                     {"visualization", {
-                        {"render_plate_view", "Render plate thumbnail from custom camera angles (use save_to_file=true for file paths instead of base64)"},
+                        {"render_plate_view", "Picture a plate: named cameras (iso/top/front/back/left/right/low), fit to plate or object, default 3-view contact sheet, grid + labels overlays, objects_in_frame/uniform_image metadata, or a first-layer plan (layer_view). Bed mm. save_to_file=true for PNG paths."},
                         {"get_preview_base64", "Convert preview to base64. Only for agents without filesystem access - Claude Code should use Read tool instead."}
                     }},
                     {"per_object_settings", {
@@ -1088,6 +1093,11 @@ void OrcaMCPServer::register_builtin_tools()
                         {"outline", {{"type", "boolean"}}}, {"grid", {{"type", "boolean"}}}, {"origin", {{"type", "boolean"}}},
                         {"labels", {{"type", "boolean"}}}, {"excluded", {{"type", "boolean"}}}
                     }}
+                }},
+                {"layer_view", {
+                    {"type", "string"},
+                    {"enum", {"first_layer"}},
+                    {"description", "Instead of a 3D render: a top-down plan of the first layer -- object footprints, brim loops, support and wipe tower -- from the sliced plate (source: sliced) or the model footprints when unsliced (source: footprints). Ignores views. This is the view for 'is the brim wide enough' and 'where do the support feet land'."}
                 }},
                 {"image_format", {
                     {"type", "string"},

@@ -3,6 +3,7 @@
 #include "slic3r/GUI/GLCanvas3D.hpp"
 #include "slic3r/GUI/OpenGLManager.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPRenderOverlay.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPFirstLayerPlan.hpp"
 #include <glad/gl.h>
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Plater.hpp"
@@ -233,6 +234,46 @@ nlohmann::json OrcaMCPPlateUtils::RenderPlateView(const nlohmann::json& params) 
         throw std::runtime_error("plate_index out of range");
     const BoundingBoxf3              plate_box      = plate->get_plate_box();
     const std::vector<BoundingBoxf3> excluded_areas = plate->get_exclude_areas();
+
+    // The first-layer plan is a different picture altogether: top-down, drawn on the CPU from the
+    // sliced first layer (or footprints when unsliced), with brim, support and the wipe tower.
+    const std::string layer_view = payload.value("layer_view", std::string());
+    if (!layer_view.empty()) {
+        if (layer_view != "first_layer")
+            throw std::runtime_error("layer_view must be \"first_layer\"");
+        const DynamicPrintConfig full_config = wxGetApp().preset_bundle->full_config();
+        const OrcaMCP::FirstLayerPlan plan    = OrcaMCP::collect_first_layer(*plate, full_config);
+        const OrcaMCP::PlanMapping    mapping = OrcaMCP::plan_mapping(plate_box, resolution);
+        const OrcaMCP::CameraFrame    camera  = OrcaMCP::plan_camera(mapping);
+        wxImage image = OrcaMCP::draw_first_layer_plan(plan, mapping, plate_box, excluded_areas, overlay_options);
+
+        nlohmann::json entry;
+        entry["layer_view"]   = "first_layer";
+        entry["source"]       = plan.source;
+        entry["frame"]        = "bed_mm";
+        entry["plate_origin"] = {plate_box.min.x(), plate_box.min.y()};
+        entry["camera"]       = OrcaMCP::camera_frame_to_json(camera);
+        entry["camera"]["type"] = "orthographic";
+        entry["camera"]["pixel_origin"] = "top_left";
+        entry["camera"]["mm_per_pixel"] = 1.0 / mapping.scale;
+        nlohmann::json objects = nlohmann::json::array();
+        for (const OrcaMCP::PlanObject& o : plan.objects) {
+            if (o.body.empty()) continue;
+            const BoundingBox   bb = get_extents(o.body);
+            const BoundingBoxf3 mm(Vec3d(unscale<double>(bb.min.x()), unscale<double>(bb.min.y()), 0.), Vec3d(unscale<double>(bb.max.x()), unscale<double>(bb.max.y()), 0.));
+            const OrcaMCP::ScreenBBox sb = OrcaMCP::screen_bbox_of(camera, mm);
+            objects.push_back({{"object_index", o.object_index}, {"name", o.name},
+                               {"screen_bbox", {std::round(sb.x0), std::round(sb.y0), std::round(sb.x1), std::round(sb.y1)}},
+                               {"has_brim", !o.brim.empty()}});
+        }
+        entry["objects_in_frame"] = objects;
+        entry["support_present"]  = !plan.support.empty();
+        entry["wipe_tower_present"] = plan.wipe_tower.has_value();
+        entry["overlays"] = OrcaMCP::overlay_options_to_json(overlay_options);
+        if (save_to_file) entry["file_path"] = save_image_to_file(image, 0, use_png);
+        else              entry["base64"]    = encode_image_to_base64(image, use_png);
+        return nlohmann::json::array({entry});
+    }
 
     // No views: a contact sheet of the three presets an agent reaches for first, fitted to the plate.
     nlohmann::json views         = payload.value("views", nlohmann::json());

@@ -426,6 +426,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/OrcaMCP/OrcaMCPRenderMath.cpp
     GUI/OrcaMCP/OrcaMCPRenderOverlay.hpp
     GUI/OrcaMCP/OrcaMCPRenderOverlay.cpp
+    GUI/OrcaMCP/OrcaMCPFirstLayerPlan.hpp
+    GUI/OrcaMCP/OrcaMCPFirstLayerPlan.cpp
     GUI/OrcaMCP/OrcaMCPPresetConfigUtils.hpp
     GUI/OrcaMCP/OrcaMCPPresetConfigUtils.cpp
     GUI/OrcaMCP/OrcaMCPConfigKeys.hpp
