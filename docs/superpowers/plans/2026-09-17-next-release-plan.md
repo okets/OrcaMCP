@@ -10,39 +10,48 @@ below look like one-line fixes and are not.
 
 | Branch | Commit | Meaning |
 |--------|--------|---------|
-| `mcp` (default) | `2ffaa64c1e` | Tip. The release plus two CI fixes that landed after the tag. |
-| `sync-upstream-2.5` | `2ffaa64c1e` | Same commit as `mcp`. |
+| `mcp` (default) | `89eb8b12e0` | Tip. The released commit plus three docs/CI commits after it. |
+| `sync-upstream-2.5` | `89eb8b12e0` | Same commit as `mcp`. |
 | `main` | `ca668a3bc9` | Exactly `upstream/main`. Tracks Orca Slicer, carries no fork work. |
-| tag `v2.5.0.1-dev` | `03687eed70` | **Released and public**, three assets attached. |
+| tag `v2.5.0.1-dev` | `753322a957` | **Published 2026-09-17 20:46 UTC**, three assets, artifact verified. |
 
-`version.inc` reads `2.5.0.1-dev`. The release is live at
-<https://github.com/okets/OrcaMCP/releases/tag/v2.5.0.1-dev>.
+`version.inc` reads `2.5.0.1-dev`. Release: <https://github.com/okets/OrcaMCP/releases/tag/v2.5.0.1-dev>.
 
-### What the release cost, and what it taught
-
-The first tag failed after a full build and published nothing, then the second built green and still
-was not public. Both causes were in `release.yml`, which is this fork's own workflow — upstream has
-no equivalent — and both are now fixed. Read this before touching release plumbing:
-
-1. **The Windows call omitted `arch` and `compiler`.** `arch` goes straight into the Microsoft Store
-   packaging script, which declares `[ValidateSet("x64","arm64")]`, so an omitted value arrived as
-   `""` and failed the whole release. `compiler` chooses clang versus MSVC, so the binary about to
-   ship was built differently from the one CI tested. The Windows call now mirrors `build_all.yml`'s
-   matrix entry exactly. **Leave Linux alone** — `build_all.yml` documents that amd64's empty `arch`
-   is load-bearing for the deps cache key and the unsuffixed asset names.
-2. **The `draft` toggle did nothing.** `A && B || C` falls through to `C` whenever `B` is false, so
-   `... && inputs.draft || true` was true for every event and input. Tag pushes draft by design —
-   that is the human gate — but a manual dispatch could not publish. Now fixed.
-
-**The lesson worth carrying:** `build_all.yml` skips the Store packaging step, so a fully green CI
-run does not prove the release path works. Only a release run exercises it. Do not treat green CI as
-proof that a release will succeed.
-
-**First thing to check next session:** the release is still public and intact.
+Verify before trusting any of the above -- commits move:
 
 ```bash
+git fetch origin --tags
+for b in mcp sync-upstream-2.5 main; do echo "$b $(git rev-parse --short origin/$b)"; done
+echo "tag $(git rev-list -n1 v2.5.0.1-dev | cut -c1-10)"
 gh release view v2.5.0.1-dev -R okets/OrcaMCP --json isDraft,assets -q '"draft: \(.isDraft)  assets: \(.assets|length)"'
 ```
+
+### The release took seven runs. Read the post-mortem before touching release plumbing.
+
+**`docs/release/2026-09-17-release-postmortem.md`** is the authority on what went wrong: every
+failed run in order, its cause, its fix, and what now catches it in seconds. Do not re-derive it
+from this file. The one-paragraph version:
+
+Three root causes covered everything but the transient failures. `release.yml` never mirrored the
+CI matrix. The September upstream merge took `--theirs` on `build_orca.yml` with a note saying the
+fork's rebranding would be re-applied "later", which never happened, and that one resolution removed
+three customisations that then hid each other. And a green `Build all` run does not exercise the
+release path at all -- it skips Store packaging, never installs a DMG, never signs or notarizes --
+so "CI is green" was true before every one of the failures and meant nothing. On top of that the
+release action's asset upload failed on six of seven attempts on the 360 MB macOS image.
+
+### Release tooling that now exists -- use it, in this order
+
+| Tool | What it does | When |
+|------|--------------|------|
+| `scripts/check-fork-customizations.sh` | Asserts **19 invariants** an upstream merge tends to revert: app names, the DMG bundle rename in both code paths, the fork's bundle identifier and its template variable, signing gated on this repo and not on branches, quoted signing secrets, the release workflow's Windows inputs, the gh-CLI asset upload, the asset verification step, Connect AI strings, bridge packaging. Runs in CI on every push that touches source. | After any merge; before any tag. |
+| `scripts/release-preflight.sh v<tag>` | The guard, plus Shellcheck with CI's exact command, YAML parse of every workflow, `version.inc` matches the tag, tag not already on the remote, and an Apple notary credential probe if a `release-preflight` keychain profile exists. Says what it cannot check. | Immediately before pushing a tag. Must exit 0. |
+| Artifact check (post-mortem, "What still needs a build") | Download the DMG from the draft; confirm `OrcaMCP.app`, `com.orcamcp.OrcaMCP`, Developer ID team `9PCJMHHHK6`, `spctl` accepted as notarized. | Before publishing. **Never skip** -- two green runs shipped an image that overwrote the user's Orca Slicer and would not open. |
+
+The release workflow was rewritten after the last release so that the gh CLI uploads assets with
+retries and a final step fails the run unless all three are attached at the built size. **Its
+first end-to-end test is the next release.** If "Create Release" still fails, the manual fallback
+is in the post-mortem's procedure step 4.
 
 ### What shipped in v2.5.0.1-dev
 
@@ -60,6 +69,12 @@ revealed the following gate, so do not assume a single fix clears a path.
 6. The error said "ftp" on a printer with no FTP, instead of the printer's own words.
 7. The error panel drew its text on top of itself.
 8. `add_plate` over MCP left the canvas pointing at freed picking meshes.
+9. Flashforge "remaining time" was the firmware's elapsed time. Now projected from elapsed and
+   progress, unknown below 2 %; the raw firmware field is kept as `firmware_estimated_s`.
+
+Plus, in the same tag: the About page rebranded and crediting the author; the macOS bundle renamed
+to `OrcaMCP.app` in the DMG and given its own identifier `com.orcamcp.OrcaMCP`; macOS signing and
+notarization actually running; `release.yml` passing the Windows arch and compiler.
 
 ---
 
@@ -329,6 +344,22 @@ stay-close-to-upstream rule working in the other direction.
 - **Watch for a second app instance.** Two copies fight over port 13618, and an old one crashing
   will look exactly like your fix failing. Check `pgrep -f OrcaSlicer.app | wc -l` and compare the
   crash report's `procLaunch` against the binary's mtime before believing a crash is yours.
+- **A green `Build all` is not a release test.** It skips Store packaging, never installs a DMG,
+  never signs or notarizes. Only a release run exercises those, and only the artifact check
+  proves the result. Both `Build all` and the Release run must be green on the tagged commit.
+- **A deferral in a document is not a task.** "Re-applied in a later task -- release CI is
+  knowingly broken until then" sat in the sync guide for months and cost three broken releases.
+  Either do it in the merge or open an issue that blocks the release.
+- **If you edit a plist and the bundle does not change, you edited the wrong plist.**
+  `src/dev-utils/platform/osx/Info.plist.in` is configured and never installed; the bundle's plist
+  comes from `cmake/modules/MacOSXBundleInfo.plist.in`. An hour was lost to this once.
+- **Expect the release's asset upload to be the flaky step**, always after every real check has
+  passed. Rerun that one job once; then upload the artifact directly with `gh release upload`.
+- **Run Shellcheck with CI's exact command before pushing any shell.** Two scripts written to
+  prevent regressions each turned CI red on their first push. `scripts/release-preflight.sh` does
+  this for you.
+- **Pushes to `mcp` that touch source start an hour-long build.** Check `gh run list` first; a
+  docs-only commit takes `[skip ci]`.
 
 ## Environment notes
 
