@@ -310,6 +310,11 @@ the tool is wrong by 55 layers. Reproducible: slice that plate, export, count ma
 Start at whatever `layer_count` is derived from in the estimate handler — it is not counting the
 same thing the G-code writer counts.
 
+Second sample, 2026-09-18, plate 2 of `frame-abs-4plate-chamber60-diagonal-print` (96 mm object on
+its diagonal, 0.12 mm layers, tree supports with a 6 mm manual brim): `get_print_estimate` said
+**1322** layers; the Creator 5 Pro firmware, printing that exact file, reports `targetPrintLayer`
+**796**. Same direction, larger gap -- the tool over-counts by roughly the support layers.
+
 ### `obico.configured` flickers to false after `send_to_printer`
 
 Carried over and **not re-verified since the fixes above landed** — confirm it still happens before
