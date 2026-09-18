@@ -19,6 +19,7 @@
 #include <iomanip>
 #include <sstream>
 #include <cstring>
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -190,18 +191,35 @@ static void append_render_report(nlohmann::json& entry, const RenderReport& repo
     }
 }
 
+// The plate footprint, as tall as its tallest object (at least 10 mm, so an empty plate still frames).
+static BoundingBoxf3 plate_contents_box(PartPlate& plate, const BoundingBoxf3& plate_box)
+{
+    double top = plate_box.min.z() + 10.0;
+    for (const ModelObject* mo : plate.get_objects_on_this_plate())
+        for (size_t i = 0; i < mo->instances.size(); ++i)
+            top = std::max(top, mo->instance_bounding_box(i).max.z());
+    return BoundingBoxf3(plate_box.min, Vec3d(plate_box.max.x(), plate_box.max.y(), top));
+}
+
+// [x, y, z] or {x, y, z}, bed mm.
+static Vec3d read_vec3(const nlohmann::json& v, const char* what)
+{
+    if (v.is_array() && v.size() >= 3)
+        return Vec3d(v[0].get<double>(), v[1].get<double>(), v[2].get<double>());
+    if (v.is_object())
+        return Vec3d(v.value("x", 0.0), v.value("y", 0.0), v.value("z", 0.0));
+    throw std::runtime_error(std::string(what) + " must be [x, y, z]");
+}
+
 nlohmann::json OrcaMCPPlateUtils::RenderPlateView(const nlohmann::json& params) {
     nlohmann::json payload = params.value("payload", nlohmann::json::object());
-    if (payload.is_null() ||
-        payload.value("plate_index", -1) == -1 ||
-        !payload.contains("views")) {
-        BOOST_LOG_TRIVIAL(error) << "RenderPlateView: missing required parameters";
-        throw std::runtime_error("Missing required parameters");
+    if (payload.is_null() || payload.value("plate_index", -1) == -1) {
+        BOOST_LOG_TRIVIAL(error) << "RenderPlateView: missing plate_index";
+        throw std::runtime_error("Missing required parameter plate_index");
     }
-
-    int plate_index = payload.value("plate_index", -1);
-    bool save_to_file = payload.value("save_to_file", false);
-    int resolution = payload.value("resolution", 512);
+    const int         plate_index  = payload.value("plate_index", -1);
+    const bool        save_to_file = payload.value("save_to_file", false);
+    const int         resolution   = std::clamp(payload.value("resolution", 512), 32, 2048);
     // Files default to PNG; inline base64 defaults to JPEG, where size matters more than crispness.
     const std::string image_format = payload.value("image_format", std::string(save_to_file ? "png" : "jpeg"));
     if (image_format != "png" && image_format != "jpeg")
@@ -209,100 +227,134 @@ nlohmann::json OrcaMCPPlateUtils::RenderPlateView(const nlohmann::json& params) 
     const bool use_png = image_format == "png";
     // Overlays default on (true/missing); false disables all; an object picks per overlay.
     const OrcaMCP::OverlayOptions overlay_options = OrcaMCP::overlay_options_from_json(payload.value("overlays", nlohmann::json(true)));
-    std::vector<BoundingBoxf3> excluded_areas;
-    if (PartPlate* plate = wxGetApp().plater()->get_partplate_list().get_plate(plate_index); plate != nullptr)
-        excluded_areas = plate->get_exclude_areas();
-    auto views = payload["views"];
 
-    if (!views.is_array()) {
-        BOOST_LOG_TRIVIAL(error) << "RenderPlateView: views must be an array";
-        throw std::runtime_error("Views must be an array");
-    }
+    PartPlate* plate = wxGetApp().plater()->get_partplate_list().get_plate(plate_index);
+    if (plate == nullptr)
+        throw std::runtime_error("plate_index out of range");
+    const BoundingBoxf3              plate_box      = plate->get_plate_box();
+    const std::vector<BoundingBoxf3> excluded_areas = plate->get_exclude_areas();
 
-    nlohmann::json result = nlohmann::json::array();
+    // No views: a contact sheet of the three presets an agent reaches for first, fitted to the plate.
+    nlohmann::json views         = payload.value("views", nlohmann::json());
+    const bool     contact_sheet = !views.is_array();
+    if (contact_sheet)
+        views = nlohmann::json::array({{{"preset", "iso"}}, {{"preset", "top"}}, {{"preset", "front"}}});
+    if (views.empty())
+        throw std::runtime_error("views must not be empty");
+
+    struct Rendered { wxImage image; nlohmann::json entry; };
+    std::vector<Rendered> rendered;
     int view_index = 0;
-
-    // Generate thumbnails for each view
     for (const auto& view : views) {
-        if (!view.contains("camera_position") || !view.contains("target")) {
-            BOOST_LOG_TRIVIAL(error) << "RenderPlateView: each view must contain camera_position and target";
-            throw std::runtime_error("Invalid view format");
+        if (!view.is_object())
+            throw std::runtime_error("each view must be an object");
+
+        // What the camera frames: the plate, or one object (a closer camera beats more pixels).
+        // "plate" is the plate's footprint at the height of what is on it -- the full build volume
+        // would push the parts into the bottom third of every picture.
+        BoundingBoxf3  fit_box  = plate_contents_box(*plate, plate_box);
+        nlohmann::json fit_json = "plate";
+        if (view.contains("fit") && view["fit"].is_object() && view["fit"].contains("object_index")) {
+            const int              oi   = view["fit"]["object_index"].get<int>();
+            const ModelObjectPtrs& objs = wxGetApp().model().objects;
+            if (oi < 0 || size_t(oi) >= objs.size())
+                throw std::runtime_error("fit.object_index out of range");
+            fit_box  = objs[oi]->instance_bounding_box(0);
+            fit_json = view["fit"];
         }
 
-        auto camera_pos_json = view["camera_position"];
-        auto target_json = view["target"];
-
-        // Support both array [x, y, z] and object {"x": x, "y": y, "z": z} formats
-        Vec3d camera_position;
-        if (camera_pos_json.is_array() && camera_pos_json.size() >= 3) {
-            camera_position = Vec3d(
-                camera_pos_json[0].get<double>(),
-                camera_pos_json[1].get<double>(),
-                camera_pos_json[2].get<double>()
-            );
+        Vec3d       camera_position, target;
+        std::string preset_name;
+        std::string input_frame = view.value("frame", std::string("bed_mm"));
+        if (view.contains("preset")) {
+            OrcaMCP::CameraPreset preset;
+            preset_name = view["preset"].get<std::string>();
+            if (!OrcaMCP::camera_preset_from_string(preset_name, preset))
+                throw std::runtime_error("unknown preset '" + preset_name + "'; use iso, top, front, back, left, right or low");
+            OrcaMCP::preset_camera(preset, fit_box, camera_position, target);
+            input_frame = "bed_mm";
         } else {
-            camera_position = Vec3d(
-                camera_pos_json.value("x", 0.0),
-                camera_pos_json.value("y", 0.0),
-                camera_pos_json.value("z", 0.0)
-            );
+            if (!view.contains("camera_position") || !view.contains("target"))
+                throw std::runtime_error("each view needs a preset, or camera_position and target");
+            camera_position = read_vec3(view["camera_position"], "camera_position");
+            target          = read_vec3(view["target"], "target");
+            if (input_frame == "plate_local") {
+                // Relative to this plate's front-left corner; converted so the renderer sees bed mm.
+                const Vec3d origin(plate_box.min.x(), plate_box.min.y(), 0.);
+                camera_position += origin;
+                target += origin;
+            } else if (input_frame != "bed_mm") {
+                throw std::runtime_error("frame must be \"bed_mm\" or \"plate_local\"");
+            }
         }
 
-        Vec3d target;
-        if (target_json.is_array() && target_json.size() >= 3) {
-            target = Vec3d(
-                target_json[0].get<double>(),
-                target_json[1].get<double>(),
-                target_json[2].get<double>()
-            );
-        } else {
-            target = Vec3d(
-                target_json.value("x", 0.0),
-                target_json.value("y", 0.0),
-                target_json.value("z", 0.0)
-            );
-        }
-
-        ThumbnailData    data;
+        ThumbnailData data;
         data.set(resolution, resolution);
         RenderCameraInfo cam;
         RenderReport     report;
-        RenderThumbnail(data, camera_position, target, plate_index, &cam, RenderOptions{}, &report);
+        RenderOptions options;
+        if (!preset_name.empty() || !fit_json.is_string())
+            options.zoom_box = fit_box;  // presets and object fits frame exactly what they were asked to
+        RenderThumbnail(data, camera_position, target, plate_index, &cam, options, &report);
 
         // Overlays go on the finished pixels, projected through the very camera that drew them.
         wxImage image = OrcaMCP::thumbnail_to_wximage(data);
         std::vector<OrcaMCP::OverlayLabel> labels;
         for (const RenderedVolume& v : report.drawn)
             if (!v.wipe_tower)
-                labels.push_back({std::to_string(v.object_index), Vec3d(v.world_bbox.center().x(), v.world_bbox.center().y(), v.world_bbox.max.z()), v.color});
+                labels.push_back({std::to_string(v.object_index), v.world_bbox.center(), v.color});
         OrcaMCP::draw_overlays(image, cam.frame, report.plate_box, excluded_areas, labels, overlay_options);
 
         // Everything pick_facet needs to turn a pixel of this image back into a ray. The three
         // required keys are written by the same function pick_facet parses with, so the two halves
         // cannot disagree about names or row order; the rest is for the reader. Pixel row 0 is the
-        // top of the image -- save_thumbnail_to_file and encode_thumbnail_to_base64 write the GL
-        // buffer bottom-up (this file, :63 and :105) -- and unproject_pixel_to_ray assumes that.
+        // top of the image and unproject_pixel_to_ray assumes that.
         nlohmann::json camera_json     = OrcaMCP::camera_frame_to_json(cam.frame);
         camera_json["type"]            = cam.perspective ? "perspective" : "orthographic";
         camera_json["pixel_origin"]    = "top_left";
-        camera_json["camera_position"] = {camera_position.x(), camera_position.y(), camera_position.z()};
+        camera_json["camera_position"] = {camera_position.x(), camera_position.y(), camera_position.z()};  // bed mm, after any conversion
         camera_json["target"]          = {target.x(), target.y(), target.z()};
+        camera_json["preset"]          = preset_name.empty() ? nlohmann::json(nullptr) : nlohmann::json(preset_name);
+        camera_json["fit"]             = fit_json;
+        camera_json["input_frame"]     = input_frame;
 
         nlohmann::json entry;
-        if (save_to_file) {
-            // Save to file and return path
-            entry["file_path"] = save_image_to_file(image, view_index, use_png);
-        } else {
-            // Convert to base64-encoded image
-            entry["base64"] = encode_image_to_base64(image, use_png);
-        }
         entry["camera"] = camera_json;
         append_render_report(entry, report, cam.frame, plate_index);
         entry["overlays"] = OrcaMCP::overlay_options_to_json(overlay_options);
-        result.push_back(entry);
-        view_index++;
+        rendered.push_back({std::move(image), std::move(entry)});
+        ++view_index;
     }
 
+    nlohmann::json result = nlohmann::json::array();
+    if (!contact_sheet) {
+        int idx = 0;
+        for (Rendered& r : rendered) {
+            if (save_to_file) r.entry["file_path"] = save_image_to_file(r.image, idx, use_png);
+            else              r.entry["base64"]    = encode_image_to_base64(r.image, use_png);
+            result.push_back(std::move(r.entry));
+            ++idx;
+        }
+        return result;
+    }
+
+    // One image, the views side by side, each column's metadata under "views".
+    wxImage sheet(resolution * int(rendered.size()), resolution);
+    sheet.InitAlpha();
+    nlohmann::json columns = nlohmann::json::array();
+    for (size_t i = 0; i < rendered.size(); ++i) {
+        sheet.Paste(rendered[i].image, int(i) * resolution, 0);
+        rendered[i].entry["column"] = int(i);
+        rendered[i].entry["x_offset"] = int(i) * resolution;  // add to a pixel x before handing it to pick_facet
+        columns.push_back(std::move(rendered[i].entry));
+    }
+    nlohmann::json entry;
+    entry["contact_sheet"] = true;
+    entry["columns"]       = int(rendered.size());
+    entry["views"]         = std::move(columns);
+    if (save_to_file) entry["file_path"] = save_image_to_file(sheet, 0, use_png);
+    else              entry["base64"]    = encode_image_to_base64(sheet, use_png);
+    result.push_back(std::move(entry));
     return result;
 }
 
@@ -465,7 +517,8 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
     camera.apply_viewport();
 
     // Zoom to objects if present, otherwise fall back to plate
-    BoundingBoxf3 zoom_box = (!visible_volumes.empty() && volumes_box.defined) ? volumes_box : plate_build_volume;
+    BoundingBoxf3 zoom_box = options.zoom_box.has_value() ? *options.zoom_box
+                           : (!visible_volumes.empty() && volumes_box.defined) ? volumes_box : plate_build_volume;
     zoom_box.min.z() = zoom_box.max.z() = 0.0;
     camera.zoom_to_box(zoom_box, 1.0);
     // Not a plain Vec3d::UnitZ(): look_at builds its basis from up.cross(view_direction), and for a

@@ -114,9 +114,10 @@ void preset_camera(CameraPreset preset, const BoundingBoxf3& fit, Vec3d& positio
     case CameraPreset::Left:  position = target + Vec3d(-1., 0., 0.35).normalized() * distance; break;
     case CameraPreset::Right: position = target + Vec3d(1., 0., 0.35).normalized() * distance; break;
     case CameraPreset::Low:
-        // Bed-level, from the front, aimed low: first layers, brims and support feet.
-        position = Vec3d(target.x(), fit.min.y() - distance, fit.min.z() + 0.05 * size.z() + 5.0);
-        target.z() = fit.min.z() + 0.1 * size.z();
+        // From the front, a little above the first layers, looking slightly down at them: brims,
+        // support feet and the bottom edges read without the view collapsing to a silhouette.
+        position   = Vec3d(target.x(), fit.min.y() - distance, fit.min.z() + 0.30 * size.z() + 10.0);
+        target.z() = fit.min.z() + 0.15 * size.z();
         break;
     }
 }

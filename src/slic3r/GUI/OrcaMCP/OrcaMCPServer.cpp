@@ -1063,7 +1063,7 @@ void OrcaMCPServer::register_builtin_tools()
     // render_plate_view - Render plate thumbnail
     register_tool({
         "render_plate_view",
-        "Render a plate from custom camera angles. camera_position and target are BED millimetres -- the same frame as get_scene_info positions and plates[].bounding_box -- not plate-relative: plate N sits at plates[N].bounding_box, so aim at its objects' positions. Only volumes on the requested plate are drawn; a camera aimed at another plate's area returns a black image. Use save_to_file=true for file paths.",
+        "Render a plate. Omit views for a contact sheet of iso, top and front fitted to the plate. A view is {preset: iso|top|front|back|left|right|low, fit: \"plate\" | {object_index}} or explicit {camera_position, target} in BED mm (the get_scene_info frame; plate N sits at plates[N].bounding_box) -- or add frame: \"plate_local\" to give them relative to the plate's front-left corner. Only the requested plate's volumes are drawn. Every view returns objects_in_frame, uniform_image (+hint), plate_origin and the camera; overlays (outline, 10 mm grid, origin, labels) are on by default. Use save_to_file=true for PNG paths.",
         {
             {"type", "object"},
             {"properties", {
@@ -1096,10 +1096,23 @@ void OrcaMCPServer::register_builtin_tools()
                 }},
                 {"views", {
                     {"type", "array"},
-                    {"description", "Views to render; camera_position and target in bed mm (the get_scene_info frame)"},
+                    {"description", "Views to render. Omit for the default contact sheet (iso, top, front). Each view: a preset with optional fit, or camera_position + target (bed mm unless frame is plate_local)."},
                     {"items", {
                         {"type", "object"},
                         {"properties", {
+                            {"preset", {
+                                {"type", "string"},
+                                {"enum", {"iso", "top", "front", "back", "left", "right", "low"}},
+                                {"description", "Named camera framing `fit` (default the plate). low = bed level from the front, for first layers and support feet."}
+                            }},
+                            {"fit", {
+                                {"description", "\"plate\" (default) or {\"object_index\": n} to frame one object -- a closer camera beats more pixels."}
+                            }},
+                            {"frame", {
+                                {"type", "string"},
+                                {"enum", {"bed_mm", "plate_local"}},
+                                {"description", "Frame of camera_position/target: bed_mm (default, the get_scene_info frame) or plate_local (from this plate's front-left corner)."}
+                            }},
                             {"camera_position", {
                                 {"type", "array"},
                                 {"items", {{"type", "number"}}},
@@ -1114,7 +1127,7 @@ void OrcaMCPServer::register_builtin_tools()
                     }}
                 }}
             }},
-            {"required", {"plate_index", "views"}}
+            {"required", {"plate_index"}}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
             return run_on_main_thread([params]() {

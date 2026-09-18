@@ -2,6 +2,7 @@
 #define slic3r_GUI_OrcaMCPPlateUtils_hpp_
 
 #include <nlohmann/json.hpp>
+#include <optional>
 
 #include "libslic3r/GCode/ThumbnailData.hpp"
 #include "slic3r/GUI/Camera.hpp"
@@ -24,6 +25,9 @@ struct RenderOptions
     bool      palette_colors = true;                    // object_palette_color(object_index); false = filament colours
     ColorRGBA background{0.93f, 0.93f, 0.93f, 1.0f};
     float     emission = 0.3f;                          // the thumbnail shader's emission_factor
+    // What the view is zoomed to. Unset: the plate's visible volumes, as before. A preset or a
+    // `fit` sets it, otherwise "fit to one object" would move the camera but not narrow the view.
+    std::optional<BoundingBoxf3> zoom_box;
 };
 
 // One volume RenderThumbnail actually drew, with what an agent needs to name and locate it.

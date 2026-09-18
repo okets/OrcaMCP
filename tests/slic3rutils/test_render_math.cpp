@@ -111,7 +111,8 @@ TEST_CASE("preset cameras frame the box from the named side", "[RenderMath]")
 
     REQUIRE(camera_preset_from_string("low", preset));
     preset_camera(preset, box, p, t);
-    CHECK(p.z() < box.min.z() + 20.);
+    CHECK(p.z() < box.center().z());        // below mid-height ...
+    CHECK(p.z() > t.z());                   // ... but looking slightly down at the first layers
     CHECK(p.y() < box.min.y());
     CHECK(t.z() < box.center().z());
 
