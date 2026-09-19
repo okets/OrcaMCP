@@ -705,10 +705,9 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
             m_print_enable = get_enable_print_status();
             m_print_btn->Enable(m_print_enable);
             if (m_print_enable) {
-                if (wxGetApp().preset_bundle->use_bbl_network() || wxGetApp().app_config->get_bool("use_printer_agents"))
-                    wxPostEvent(m_plater, SimpleEvent(EVT_GLTOOLBAR_PRINT_PLATE));
-                else
-                    wxPostEvent(m_plater, SimpleEvent(EVT_GLTOOLBAR_SEND_GCODE));
+                // Plater::priv::on_action_print_plate picks the send dialog; see SendDialogRouting.hpp.
+                // It falls through to send_gcode_legacy(), which is what EVT_GLTOOLBAR_SEND_GCODE did here.
+                wxPostEvent(m_plater, SimpleEvent(EVT_GLTOOLBAR_PRINT_PLATE));
             }
             evt.Skip();
             return;

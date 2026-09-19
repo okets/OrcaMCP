@@ -29,6 +29,7 @@
 #include "GUI.hpp"
 #include "GUI_App.hpp"
 #include "MsgDialog.hpp"
+#include "Widgets/StaticGroup.hpp"
 #include "I18N.hpp"
 #include "MainFrame.hpp"
 #include "libslic3r/AppConfig.hpp"
@@ -61,6 +62,131 @@ long long color_distance_sq(const wxColour& lhs, const wxColour& rhs)
     const long long db = static_cast<long long>(lhs.Blue()) - static_cast<long long>(rhs.Blue());
     return dr * dr + dg * dg + db * db;
 }
+
+// A filament drawn the way the flashforge-obico printer page draws a station slot: a round colour
+// chip with a thin ring, the slot number in a small badge tucked at the chip's lower right, and a
+// caption underneath. The station row (what the printer holds) and the mapping cards (what the
+// project needs) share it, so a filament and the slot it is assigned to read as the same object.
+const int CHIP_CARD_W = 78;
+const int CHIP_CARD_H = 74;
+
+// The mapping widget is a row, not a card: it has to say "this filament goes to that slot", and a
+// second grid of chips beside the station's grid said nothing about the relationship between them.
+const int MAP_ROW_W = 404;
+const int MAP_ROW_H = 46;
+
+struct ChipCard
+{
+    wxColour                color;                  // the filament colour; ignored unless `filled`
+    bool                    filled      = false;    // false draws the hollow chip of an empty slot
+    wxString                badge;                  // slot number; empty draws no badge
+    std::optional<wxColour> badge_color;            // fills the badge, for a card showing another slot's colour
+    wxString                caption;                // material name, or "Empty"
+    bool                    enabled     = true;
+    bool                    highlighted = false;    // the ring shown while a card is being edited
+};
+
+void draw_chip_card(wxWindow& win, wxDC& dc, wxGraphicsContext& gc, const ChipCard& card)
+{
+    const wxSize size   = win.GetSize();
+    const int    chip   = win.FromDIP(34);
+    const int    ring   = win.FromDIP(3);
+    const int    badge  = win.FromDIP(18);
+    const int    chip_x = (size.x - chip) / 2;
+    const int    chip_y = win.FromDIP(7);
+
+    const wxColour line       = StateColor::darkModeColorFor(wxColour("#DBDBDB"));
+    // "#F4F4F4" rather than any near-white: StateColor::darkModeColorFor is a lookup table, and a
+    // colour missing from it comes back unchanged -- "#F6F6F6" left empty slots glaring white in
+    // dark mode. This one maps to "#36363D", so an empty chip reads as a recess in both themes.
+    const wxColour hollow     = StateColor::darkModeColorFor(wxColour("#F4F4F4"));
+    const wxColour caption_fg = StateColor::darkModeColorFor(wxColour(card.enabled ? "#323A3D" : "#ACACAC"));
+
+    gc.SetPen(wxPen(line, ring));
+    gc.SetBrush(wxBrush(card.filled ? card.color : hollow));
+    gc.DrawEllipse(chip_x, chip_y, chip, chip);
+
+    if (!card.badge.empty()) {
+        const wxColour badge_bg = card.badge_color.value_or(StateColor::darkModeColorFor(*wxWHITE));
+        const int      bx       = chip_x + chip - badge + win.FromDIP(5);
+        const int      by       = chip_y + chip - badge + win.FromDIP(5);
+        gc.SetPen(wxPen(line, win.FromDIP(1)));
+        gc.SetBrush(wxBrush(badge_bg));
+        gc.DrawEllipse(bx, by, badge, badge);
+
+        dc.SetFont(::Label::Body_10);
+        dc.SetTextForeground(card.badge_color.has_value() ? contrasting_text_color(badge_bg) : caption_fg);
+        const wxSize bs = dc.GetTextExtent(card.badge);
+        dc.DrawText(card.badge, bx + (badge - bs.x) / 2, by + (badge - bs.y) / 2);
+    }
+
+    if (card.highlighted) {
+        gc.SetPen(wxPen(wxColour("#00AE42"), win.FromDIP(2)));
+        gc.SetBrush(*wxTRANSPARENT_BRUSH);
+        gc.DrawRoundedRectangle(win.FromDIP(1), win.FromDIP(1), size.x - win.FromDIP(2), size.y - win.FromDIP(2), win.FromDIP(10));
+    }
+
+    dc.SetFont(::Label::Body_12);
+    dc.SetTextForeground(caption_fg);
+    wxString  label = card.caption;
+    const int avail = size.x - win.FromDIP(6);
+    if (dc.GetTextExtent(label).x > avail)
+        dc.SetFont(::Label::Body_10);
+    if (dc.GetTextExtent(label).x > avail) {
+        while (!label.empty() && dc.GetTextExtent(label + "...").x > avail)
+            label.RemoveLast();
+        label += "...";
+    }
+    const wxSize ls = dc.GetTextExtent(label);
+    dc.DrawText(label, (size.x - ls.x) / 2, chip_y + chip + win.FromDIP(7));
+}
+
+// One slot of the printer's material station. Read-only: it says what is loaded, nothing more.
+class FlashforgeStationSlotWidget : public wxPanel
+{
+public:
+    FlashforgeStationSlotWidget(wxWindow* parent, int slot_id, const wxColour& color, bool has_filament, const wxString& material)
+        : wxPanel(parent, wxID_ANY)
+        , m_slot_id(slot_id)
+        , m_color(color)
+        , m_has_filament(has_filament)
+        , m_material(material.Strip())
+    {
+        SetDoubleBuffered(true);
+        SetBackgroundColour(parent->GetBackgroundColour());
+        const wxSize size(FromDIP(CHIP_CARD_W), FromDIP(CHIP_CARD_H));
+        SetSize(size);
+        SetMinSize(size);
+        SetMaxSize(size);
+        SetToolTip(has_filament ? wxString::Format(_L("Slot %d holds %s"), slot_id, m_material.empty() ? _L("filament") : m_material)
+                                : wxString::Format(_L("Slot %d is empty"), slot_id));
+        Bind(wxEVT_PAINT, &FlashforgeStationSlotWidget::on_paint, this);
+    }
+
+    wxSize DoGetBestSize() const override { return wxSize(FromDIP(CHIP_CARD_W), FromDIP(CHIP_CARD_H)); }
+
+private:
+    void on_paint(wxPaintEvent&)
+    {
+        wxPaintDC dc(this);
+        std::unique_ptr<wxGraphicsContext> gc(wxGraphicsContext::Create(dc));
+        if (gc == nullptr)
+            return;
+
+        ChipCard card;
+        card.color   = m_color;
+        card.filled  = m_has_filament;
+        card.badge   = wxString::Format("%d", m_slot_id);
+        card.caption = m_has_filament ? (m_material.empty() ? _L("Loaded") : m_material) : _L("Empty");
+        card.enabled = m_has_filament;
+        draw_chip_card(*this, dc, *gc, card);
+    }
+
+    int      m_slot_id {0};
+    wxColour m_color;
+    bool     m_has_filament {false};
+    wxString m_material;
+};
 
 class FlashforgeSlotCard : public wxPanel
 {
@@ -275,13 +401,15 @@ public:
         , m_select_fn(std::move(on_select))
     {
         SetDoubleBuffered(true);
-        const wxSize size(FromDIP(72), FromDIP(58));
+        SetBackgroundColour(parent->GetBackgroundColour());
+        const wxSize size(FromDIP(MAP_ROW_W), FromDIP(MAP_ROW_H));
         SetSize(size);
         SetMinSize(size);
-        SetMaxSize(size);
+        SetCursor(wxCursor(wxCURSOR_HAND));
         Bind(wxEVT_PAINT, &FlashforgeMaterialMapWidget::on_paint, this);
         Bind(wxEVT_LEFT_DOWN, &FlashforgeMaterialMapWidget::on_left_down, this);
-
+        Bind(wxEVT_ENTER_WINDOW, [this](wxMouseEvent& e) { m_hover = true;  Refresh(); e.Skip(); });
+        Bind(wxEVT_LEAVE_WINDOW, [this](wxMouseEvent& e) { m_hover = false; Refresh(); e.Skip(); });
     }
 
     int tool_id() const { return m_tool_id; }
@@ -322,7 +450,7 @@ public:
 
     wxSize DoGetBestSize() const override
     {
-        return wxSize(FromDIP(72), FromDIP(58));
+        return wxSize(FromDIP(MAP_ROW_W), FromDIP(MAP_ROW_H));
     }
 
 private:
@@ -353,50 +481,58 @@ private:
         if (gc == nullptr)
             return;
 
-        const wxSize size = GetSize();
-        const int half_h = size.y / 2;
-        gc->SetPen(*wxTRANSPARENT_PEN);
+        const wxSize   size   = GetSize();
+        const int      dot    = FromDIP(22);
+        const int      mid_y  = size.y / 2;
+        const wxColour line   = StateColor::darkModeColorFor(wxColour("#DBDBDB"));
+        const wxColour text   = StateColor::darkModeColorFor(wxColour(m_mapping_enabled ? "#323A3D" : "#ACACAC"));
+        const wxColour dim    = StateColor::darkModeColorFor(wxColour("#ACACAC"));
+        const bool     mapped = m_slot_id > 0;
+
+        gc->SetPen(wxPen(m_selected || m_hover ? wxColour("#00AE42") : line, FromDIP(1)));
+        gc->SetBrush(*wxTRANSPARENT_BRUSH);
+        gc->DrawRoundedRectangle(FromDIP(1), FromDIP(1), size.x - FromDIP(2), size.y - FromDIP(2), FromDIP(8));
+
+        // left: the filament this plate needs
+        const int fil_x = FromDIP(12);
+        gc->SetPen(wxPen(line, FromDIP(2)));
         gc->SetBrush(wxBrush(m_color));
-        gc->DrawRoundedRectangle(0, 0, size.x, half_h, FromDIP(3));
-        gc->DrawRectangle(0, half_h - FromDIP(3), size.x, FromDIP(3));
-
-        gc->SetBrush(wxBrush(m_mapping_enabled ? m_slot_color : wxColour("#DDDDDD")));
-        gc->DrawRoundedRectangle(0, half_h, size.x, half_h, FromDIP(3));
-        gc->DrawRectangle(0, half_h, size.x, FromDIP(3));
-
-        if (m_selected) {
-            gc->SetPen(wxPen(wxColour("#00AE42"), FromDIP(2)));
-            gc->SetBrush(*wxTRANSPARENT_BRUSH);
-            gc->DrawRoundedRectangle(0, 0, size.x - FromDIP(1), size.y - FromDIP(1), FromDIP(3));
-        } else if (m_color.GetLuminance() > 0.95 || m_slot_color.GetLuminance() > 0.95) {
-            gc->SetPen(wxPen(wxColour("#ACACAC"), FromDIP(1)));
-            gc->SetBrush(*wxTRANSPARENT_BRUSH);
-            gc->DrawRoundedRectangle(0, 0, size.x - FromDIP(1), size.y - FromDIP(1), FromDIP(3));
-        }
+        gc->DrawEllipse(fil_x, mid_y - dot / 2, dot, dot);
 
         dc.SetFont(::Label::Body_13);
-        dc.SetTextForeground(contrasting_text_color(m_color));
-        wxString top_text = m_name;
-        if (dc.GetTextExtent(top_text).x > size.x - FromDIP(10)) {
-            dc.SetFont(::Label::Body_10);
-        }
-        wxSize top_size = dc.GetTextExtent(top_text);
-        dc.DrawText(top_text, (size.x - top_size.x) / 2, (half_h - top_size.y) / 2);
+        dc.SetTextForeground(text);
+        const wxSize name_size = dc.GetTextExtent(m_name);
+        dc.DrawText(m_name, fil_x + dot + FromDIP(10), mid_y - name_size.y / 2);
+
+        // the arrow, so the row reads as one sentence rather than two lists
+        const int arrow_x = size.x * 42 / 100;
+        dc.SetFont(::Label::Body_13);
+        dc.SetTextForeground(dim);
+        const wxString arrow = wxString::FromUTF8("\xe2\x86\x92");
+        const wxSize   a_sz  = dc.GetTextExtent(arrow);
+        dc.DrawText(arrow, arrow_x, mid_y - a_sz.y / 2);
+
+        // right: the slot on the printer it is going to
+        const int slot_x = size.x * 50 / 100;
+        gc->SetPen(wxPen(line, FromDIP(2)));
+        gc->SetBrush(wxBrush(mapped ? m_slot_color : StateColor::darkModeColorFor(wxColour("#F4F4F4"))));
+        gc->DrawEllipse(slot_x, mid_y - dot / 2, dot, dot);
 
         dc.SetFont(::Label::Body_13);
-        dc.SetTextForeground(contrasting_text_color(m_slot_color));
-        const wxString bottom_text = m_slot_id > 0 ? wxString::Format("%d", m_slot_id) : "-";
-        const wxSize bottom_size = dc.GetTextExtent(bottom_text);
-        dc.DrawText(bottom_text, (size.x - bottom_size.x - FromDIP(10)) / 2, half_h + (half_h - bottom_size.y) / 2);
+        dc.SetTextForeground(mapped ? text : dim);
+        const wxString slot_txt = mapped ? wxString::Format(_L("Slot %d"), m_slot_id) : _L("Not assigned");
+        const wxSize   s_sz     = dc.GetTextExtent(slot_txt);
+        dc.DrawText(slot_txt, slot_x + dot + FromDIP(10), mid_y - s_sz.y / 2);
 
-        wxPoint pts[3] = {
-            wxPoint(size.x - FromDIP(18), half_h + half_h / 2 - FromDIP(2)),
-            wxPoint(size.x - FromDIP(10), half_h + half_h / 2 - FromDIP(2)),
-            wxPoint(size.x - FromDIP(14), half_h + half_h / 2 + FromDIP(3))
-        };
-        dc.SetBrush(wxBrush(contrasting_text_color(m_slot_color)));
-        dc.SetPen(*wxTRANSPARENT_PEN);
-        dc.DrawPolygon(3, pts);
+        // the chevron that says the row can be changed
+        if (m_mapping_enabled) {
+            const int cx = size.x - FromDIP(20);
+            wxPoint   pts[3] = {wxPoint(cx, mid_y - FromDIP(3)), wxPoint(cx + FromDIP(8), mid_y - FromDIP(3)),
+                                wxPoint(cx + FromDIP(4), mid_y + FromDIP(3))};
+            dc.SetBrush(wxBrush(dim));
+            dc.SetPen(*wxTRANSPARENT_PEN);
+            dc.DrawPolygon(3, pts);
+        }
     }
 
 private:
@@ -406,6 +542,7 @@ private:
     wxColour             m_slot_color {wxColour("#DDDDDD")};
     int                  m_slot_id {0};
     bool                 m_selected {false};
+    bool                 m_hover {false};
     bool                 m_mapping_enabled {true};
     SelectFn             m_select_fn;
     std::vector<Slic3r::FlashforgeMaterialSlot> m_slots_snapshot;
@@ -680,13 +817,6 @@ void FlashforgePrintHostSendDialog::init()
     if (m_supports_material_station && !app_config->has("recent", CONFIG_KEY_IFS))
         const_cast<AppConfig*>(app_config)->set("recent", CONFIG_KEY_IFS, "1");
 
-    this->SetMinSize(wxSize(560, 420));
-
-    auto* label_dir_hint = new wxStaticText(this, wxID_ANY, _L("Use forward slashes ( / ) as a directory separator if needed."));
-    label_dir_hint->Wrap(CONTENT_WIDTH * wxGetApp().em_unit());
-    content_sizer->Add(txt_filename, 0, wxEXPAND);
-    content_sizer->Add(label_dir_hint);
-    content_sizer->AddSpacer(VERT_SPACING);
 
     wxString recent_path = from_u8(app_config->get("recent", CONFIG_KEY_PATH));
     if (recent_path.Length() > 0 && recent_path[recent_path.Length() - 1] != '/')
@@ -697,32 +827,35 @@ void FlashforgePrintHostSendDialog::init()
     const auto stem_len = stem.Length();
     txt_filename->SetValue(recent_path);
 
-    {
-        auto checkbox_sizer = new wxBoxSizer(wxHORIZONTAL);
-        auto checkbox       = new ::CheckBox(this, wxID_APPLY);
-        checkbox->SetValue(m_switch_to_device_tab);
-        checkbox->Bind(wxEVT_TOGGLEBUTTON, [this](wxCommandEvent& e) {
-            auto* source = dynamic_cast<::CheckBox*>(e.GetEventObject());
-            if (source != nullptr)
-                source->SetValue(e.IsChecked());
-            m_switch_to_device_tab = e.IsChecked();
-            e.Skip();
-        });
-        checkbox_sizer->Add(checkbox, 0, wxALL | wxALIGN_CENTER, FromDIP(2));
+    // The logo took a third of the width and said nothing. The grouped panels below carry the meaning.
+    if (logo != nullptr)
+        logo->Hide();
 
-        auto checkbox_text = new wxStaticText(this, wxID_ANY, _L("Switch to Device tab after upload."));
-        checkbox_text->SetFont(::Label::Body_13);
-        checkbox_text->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#323A3D")));
-        checkbox_sizer->Add(checkbox_text, 0, wxALL | wxALIGN_CENTER, FromDIP(2));
-        content_sizer->Add(checkbox_sizer);
-        content_sizer->AddSpacer(VERT_SPACING);
-    }
+    // One inset for every panel interior and one gap between panels. Every ragged edge in the first
+    // version came from mixing per-widget borders instead of these two.
+    const int PAD = FromDIP(12);
+    const int GAP = FromDIP(10);
 
-    m_flashforge_options_sizer = new wxBoxSizer(wxVERTICAL);
+    auto make_group = [this](const wxString& title) {
+        auto* group = new StaticGroup(this, wxID_ANY, title);
+        group->SetFont(::Label::Body_13);
+        group->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#323A3D")));
+        group->SetBorderColor(StateColor::darkModeColorFor(wxColour("#DBDBDB")));
+        group->SetCornerRadius(FromDIP(8));
+        return group;
+    };
 
-    auto add_option_checkbox = [this](wxBoxSizer* parent, const wxString& label, bool value, std::function<void(bool)> setter, ::CheckBox** out = nullptr) {
+    auto caption = [](wxWindow* parent, const wxString& text) {
+        auto* label = new wxStaticText(parent, wxID_ANY, text);
+        label->SetFont(::Label::Body_11);
+        label->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#ACACAC")));
+        return label;
+    };
+
+    auto add_option_checkbox = [](wxWindow* parent, wxSizer* target, const wxString& label, bool value,
+                                  std::function<void(bool)> setter, ::CheckBox** out = nullptr) {
         auto row      = new wxBoxSizer(wxHORIZONTAL);
-        auto checkbox = new ::CheckBox(this);
+        auto checkbox = new ::CheckBox(parent);
         checkbox->SetValue(value);
         checkbox->Bind(wxEVT_TOGGLEBUTTON, [setter](wxCommandEvent& e) {
             auto* source = dynamic_cast<::CheckBox*>(e.GetEventObject());
@@ -731,52 +864,101 @@ void FlashforgePrintHostSendDialog::init()
             setter(e.IsChecked());
             e.Skip();
         });
-        row->Add(checkbox, 0, wxALL | wxALIGN_CENTER, FromDIP(2));
+        row->Add(checkbox, 0, wxALIGN_CENTER_VERTICAL);
 
-        auto text = new wxStaticText(this, wxID_ANY, label);
+        auto text = new wxStaticText(parent, wxID_ANY, label);
         text->SetFont(::Label::Body_13);
         text->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#323A3D")));
-        row->Add(text, 0, wxALL | wxALIGN_CENTER, FromDIP(2));
-        parent->Add(row);
-        parent->AddSpacer(FromDIP(6));
+        row->Add(text, 1, wxALIGN_CENTER_VERTICAL | wxLEFT, parent->FromDIP(8));
+        target->Add(row, 0, wxEXPAND | wxBOTTOM, parent->FromDIP(8));
 
         if (out != nullptr)
             *out = checkbox;
     };
 
-    add_option_checkbox(m_flashforge_options_sizer, _L("Leveling before print"), m_leveling_before_print,
+    // File name.
+    auto* file_group = make_group(_L("File name"));
+    auto* file_sizer = new wxStaticBoxSizer(file_group, wxVERTICAL);
+    txt_filename->Reparent(file_group);
+    file_sizer->Add(txt_filename, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, PAD);
+    file_sizer->Add(caption(file_group, _L("Use forward slashes ( / ) as a directory separator if needed.")),
+                    0, wxEXPAND | wxALL, PAD);
+    content_sizer->Add(file_sizer, 0, wxEXPAND | wxBOTTOM, GAP);
+
+    // Printer: what the machine is holding right now.
+    auto* printer_group       = make_group(_L("Printer"));
+    auto* printer_group_sizer = new wxStaticBoxSizer(printer_group, wxVERTICAL);
+    m_station_parent          = printer_group;
+    m_station_section_sizer   = printer_group_sizer;
+
+    m_status_text = caption(printer_group, wxEmptyString);
+    printer_group_sizer->Add(m_status_text, 0, wxLEFT | wxRIGHT | wxTOP, PAD);
+
+    // A plain horizontal box, not a wxWrapSizer: the station is a fixed short row, and wxWrapSizer
+    // reports a minimum height with room for a second row that never fills, which is what left a
+    // band of dead space under the chips.
+    m_station_wrap_sizer = new wxBoxSizer(wxHORIZONTAL);
+    printer_group_sizer->Add(m_station_wrap_sizer, 0, wxLEFT | wxRIGHT | wxTOP | wxBOTTOM, PAD);
+    content_sizer->Add(printer_group_sizer, 0, wxEXPAND | wxBOTTOM, GAP);
+
+    // This plate: one row per filament the plate uses, saying which slot feeds it.
+    auto* plate_group       = make_group(_L("This plate"));
+    auto* plate_group_sizer = new wxStaticBoxSizer(plate_group, wxVERTICAL);
+    m_mapping_parent        = plate_group;
+    m_mapping_section_sizer = plate_group_sizer;
+
+    m_mapping_wrap_sizer = new wxBoxSizer(wxVERTICAL);
+    plate_group_sizer->Add(m_mapping_wrap_sizer, 0, wxEXPAND | wxALL, PAD);
+    content_sizer->Add(plate_group_sizer, 0, wxEXPAND | wxBOTTOM, GAP);
+
+    // Options.
+    auto* options_group        = make_group(_L("Options"));
+    auto* options_group_sizer  = new wxStaticBoxSizer(options_group, wxVERTICAL);
+    m_flashforge_options_sizer = new wxBoxSizer(wxVERTICAL);
+
+    add_option_checkbox(options_group, m_flashforge_options_sizer, _L("Level the bed before printing"), m_leveling_before_print,
                         [this](bool checked) { m_leveling_before_print = checked; }, &m_checkbox_leveling);
-    add_option_checkbox(m_flashforge_options_sizer, _L("Time-lapse"), m_time_lapse_video,
+    add_option_checkbox(options_group, m_flashforge_options_sizer, _L("Ask the printer to record a time-lapse"), m_time_lapse_video,
                         [this](bool checked) { m_time_lapse_video = checked; }, &m_checkbox_timelapse);
-    add_option_checkbox(m_flashforge_options_sizer, _L("Enable IFS"), m_use_material_station,
+    add_option_checkbox(options_group, m_flashforge_options_sizer, _L("Feed from the material station"), m_use_material_station,
                         [this](bool checked) {
                             m_use_material_station = checked;
                             if (checked) {
                                 ensure_slots_loaded();
+                                rebuild_station_row();
                                 rebuild_mapping_rows();
                             }
                             sync_mapping_section_visibility();
                         }, &m_checkbox_ifs);
+    add_option_checkbox(options_group, m_flashforge_options_sizer, _L("Switch to the Device tab after upload"), m_switch_to_device_tab,
+                        [this](bool checked) { m_switch_to_device_tab = checked; });
 
     if (m_checkbox_ifs != nullptr && !m_supports_material_station)
         m_checkbox_ifs->Enable(false);
 
-    m_status_text = new wxStaticText(this, wxID_ANY, wxEmptyString);
-    m_status_text->SetFont(::Label::Body_12);
-    m_flashforge_options_sizer->Add(m_status_text, 0, wxTOP | wxBOTTOM, FromDIP(4));
+    // Both of these ride on headers that only Flashforge::upload_local_api sends. Without a serial
+    // number and check code the upload falls back to the TCP console path, which drops them -- the
+    // boxes would look live and do nothing.
+    const bool local_api = m_host != nullptr && m_host->has_local_api_credentials();
+    if (!local_api) {
+        const wxString why = _L("Needs the printer's serial number and check code in the printer settings.");
+        for (::CheckBox* box : {m_checkbox_leveling, m_checkbox_timelapse}) {
+            if (box == nullptr)
+                continue;
+            box->Enable(false);
+            box->SetToolTip(why);
+        }
+    }
 
-    m_mapping_section_sizer = new wxBoxSizer(wxVERTICAL);
-    m_mapping_wrap_sizer    = new wxWrapSizer(wxHORIZONTAL, wxWRAPSIZER_DEFAULT_FLAGS);
-    m_mapping_section_sizer->Add(m_mapping_wrap_sizer, 0, wxTOP | wxALIGN_LEFT, FromDIP(10));
-    m_flashforge_options_sizer->Add(m_mapping_section_sizer, 0, wxEXPAND);
-
-    content_sizer->Add(m_flashforge_options_sizer, 0, wxEXPAND);
+    options_group_sizer->Add(m_flashforge_options_sizer, 0, wxEXPAND | wxALL, PAD);
+    content_sizer->Add(options_group_sizer, 0, wxEXPAND);
 
     if (m_supports_material_station)
-        m_status_text->SetLabel(wxString::Format(_L("Detected %d IFS slots on printer."), static_cast<int>(m_slots.size())));
+        m_status_text->SetLabel(wxString::Format(_L("%d material slots"), static_cast<int>(m_slots.size())));
     else
-        m_status_text->SetLabel(_L("This printer does not report a material station."));
+        m_status_text->SetLabel(_L("This printer has no material station."));
 
+    rebuild_station_row();
     rebuild_mapping_rows();
     sync_mapping_section_visibility();
 
@@ -803,6 +985,9 @@ void FlashforgePrintHostSendDialog::init()
 
     if (m_post_actions.has(PrintHostPostUploadAction::StartPrint)) {
         auto* btn_print = add_button(wxID_YES, false, _L("Upload and Print"));
+        // Confirm styling on both made neither read as the primary action, and this is the one that
+        // starts a print.
+        btn_print->SetStyle(ButtonStyle::Regular, ButtonType::Choice);
         btn_print->Bind(wxEVT_BUTTON, [this, validate_path](wxCommandEvent&) {
             if (validate_path(txt_filename->GetValue())) {
                 post_upload_action = PrintHostPostUploadAction::StartPrint;
@@ -923,21 +1108,35 @@ bool FlashforgePrintHostSendDialog::ensure_slots_loaded(bool force_reload)
     return m_slots_loaded;
 }
 
+void FlashforgePrintHostSendDialog::rebuild_station_row()
+{
+    if (m_station_wrap_sizer == nullptr)
+        return;
+
+    m_station_wrap_sizer->Clear(true);
+    wxWindow* station_parent = m_station_parent != nullptr ? m_station_parent : static_cast<wxWindow*>(this);
+    for (const auto& slot : m_slots)
+        m_station_wrap_sizer->Add(new FlashforgeStationSlotWidget(station_parent, slot.slot_id, to_wx_colour(slot.material_color),
+                                                                  slot.has_filament, from_u8(slot.material_name)),
+                                  0, wxRIGHT | wxFIXED_MINSIZE, FromDIP(8));
+}
+
 void FlashforgePrintHostSendDialog::rebuild_mapping_rows()
 {
     if (m_mapping_wrap_sizer == nullptr)
         return;
 
     m_mapping_wrap_sizer->Clear(true);
+    wxWindow* mapping_parent = m_mapping_parent != nullptr ? m_mapping_parent : static_cast<wxWindow*>(this);
     m_mapping_rows.clear();
 
     if (m_project_filaments.empty()) {
-        m_mapping_wrap_sizer->Add(new wxStaticText(this, wxID_ANY, _L("Slice the plate first to get project material information.")), 0, wxALL, FromDIP(2));
+        m_mapping_wrap_sizer->Add(new wxStaticText(mapping_parent, wxID_ANY, _L("Slice the plate first to get project material information.")), 0, wxALL, FromDIP(2));
         return;
     }
 
     for (const auto& filament : m_project_filaments) {
-        auto* card = new FlashforgeMaterialMapWidget(this, filament.id, to_wx_colour(filament.color), from_u8(filament.get_display_filament_type()),
+        auto* card = new FlashforgeMaterialMapWidget(mapping_parent, filament.id, to_wx_colour(filament.color), from_u8(filament.get_display_filament_type()),
                                                      [this](FlashforgeMaterialMapWidget* changed_card) {
                                                          if (changed_card == nullptr)
                                                              return;
@@ -948,7 +1147,7 @@ void FlashforgePrintHostSendDialog::rebuild_mapping_rows()
                                                              }
                                                          }
                                                      });
-        m_mapping_wrap_sizer->Add(card, 0, wxRIGHT | wxBOTTOM | wxFIXED_MINSIZE, FromDIP(10));
+        m_mapping_wrap_sizer->Add(card, 0, wxEXPAND | wxBOTTOM, FromDIP(6));
 
         MappingRow row;
         row.tool_id = filament.id;
@@ -1022,7 +1221,13 @@ void FlashforgePrintHostSendDialog::sync_mapping_section_visibility()
     if (m_mapping_section_sizer == nullptr)
         return;
 
-    m_mapping_section_sizer->ShowItems(m_use_material_station && m_supports_material_station);
+    // Hide the panels through content_sizer, so their slots collapse instead of leaving two gaps.
+    const bool show = m_use_material_station && m_supports_material_station;
+    if (content_sizer != nullptr) {
+        if (m_station_section_sizer != nullptr)
+            content_sizer->Show(m_station_section_sizer, show, true);
+        content_sizer->Show(m_mapping_section_sizer, show, true);
+    }
     if (wxSizer* sizer = GetSizer(); sizer != nullptr) {
         sizer->Layout();
         sizer->Fit(this);

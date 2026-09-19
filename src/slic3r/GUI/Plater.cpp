@@ -172,6 +172,7 @@
 
 #include "PhysicalPrinterDialog.hpp"
 #include "PrintHostDialogs.hpp"
+#include "SendDialogRouting.hpp"
 #include "PlateSettingsDialog.hpp"
 #include "DailyTips.hpp"
 #include "CreatePresetsDialog.hpp"
@@ -12949,8 +12950,7 @@ void Plater::priv::on_action_print_plate(SimpleEvent&)
         BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << ":received print plate event\n" ;
     }
 
-    PresetBundle& preset_bundle = *wxGetApp().preset_bundle;
-    if (preset_bundle.use_bbl_network() || wxGetApp().app_config->get_bool("use_printer_agents")) {
+    if (choose_send_dialog_for_current_printer() == SendDialogKind::MachineSelect) {
         open_machine_select_dialog(partplate_list.get_curr_plate_index());
     } else {
         q->send_gcode_legacy(PLATE_CURRENT_IDX, nullptr);

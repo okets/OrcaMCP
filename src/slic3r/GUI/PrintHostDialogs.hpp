@@ -250,6 +250,7 @@ private:
     void load_slots();
     bool ensure_slots_loaded(bool force_reload = false);
     void rebuild_mapping_rows();
+    void rebuild_station_row();
     void auto_assign_mappings();
     void refresh_mapping_card(MappingRow& row);
     void sync_mapping_section_visibility();
@@ -266,8 +267,12 @@ private:
     std::vector<Slic3r::FlashforgeMaterialSlot> m_slots;
     std::vector<MappingRow>          m_mapping_rows;
     wxBoxSizer*                      m_flashforge_options_sizer {nullptr};
-    wxBoxSizer*                      m_mapping_section_sizer {nullptr};
-    wxWrapSizer*                     m_mapping_wrap_sizer {nullptr};
+    wxWindow*                        m_station_parent {nullptr};
+    wxWindow*                        m_mapping_parent {nullptr};
+    wxSizer*                         m_station_section_sizer {nullptr};
+    wxBoxSizer*                      m_station_wrap_sizer {nullptr};
+    wxSizer*                         m_mapping_section_sizer {nullptr};
+    wxBoxSizer*                      m_mapping_wrap_sizer {nullptr};
     wxStaticText*                    m_status_text {nullptr};
     ::CheckBox*                      m_checkbox_leveling {nullptr};
     ::CheckBox*                      m_checkbox_timelapse {nullptr};

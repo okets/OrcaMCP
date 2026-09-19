@@ -481,6 +481,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/FlashforgeConsoleHandler.hpp
     GUI/PrintHostDialogs.cpp
     GUI/PrintHostDialogs.hpp
+    GUI/SendDialogRouting.cpp
+    GUI/SendDialogRouting.hpp
     GUI/PrintOptionsDialog.cpp
     GUI/PrintOptionsDialog.hpp
     GUI/PrivacyUpdateDialog.cpp
