@@ -8,6 +8,11 @@ below look like one-line fixes and are not.
 
 ## Where things stand
 
+> **Update 2026-09-19:** v2.5.0.2-dev (the upstream merge) and v2.5.0.3-dev (vision v2, `quit_app`,
+> the framebuffer fix, the agent-launch cloud-login skip) are both published; each Release run went
+> green on the first attempt and the WinGet job skipped as intended. `mcp` is at `abfbe6e20b`.
+> The table below is the 2026-09-17 snapshot.
+
 | Branch | Commit | Meaning |
 |--------|--------|---------|
 | `mcp` (default) | `89eb8b12e0` | Tip. The released commit plus three docs/CI commits after it. |
