@@ -1,9 +1,12 @@
+#include <cctype>
+#include <regex>
 // src/slic3r/GUI/OrcaMCP/OrcaMCPFilamentTools.cpp
 #include "OrcaMCPServer.hpp"
 #include "OrcaMCPCommon.hpp"
 #include "OrcaMCPFilamentUtils.hpp"
 #include "OrcaMCPColorRecipe.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
+#include "slic3r/GUI/PresetComboBoxes.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "libslic3r/ColorDecomposeRecipe.hpp"
 
@@ -167,6 +170,67 @@ void OrcaMCPServer::register_filament_tools()
 
                 nlohmann::json r = {{"status", "success"}, {"object_id", object_id}, {"filament", filament}};
                 r["volume_id"] = volume_id < 0 ? nlohmann::json(nullptr) : nlohmann::json(volume_id);
+                r["active_warnings"] = get_active_warnings_json(wxGetApp().plater());
+                return r;
+            });
+        }
+    });
+
+    // set_filament_color - the plate's per-slot colour. apply_config edits the filament *preset*,
+    // which is not what the sidebar swatches, the 3D volumes and the render palette show; those read
+    // project_config's filament_colour. This writes it the way the sidebar's colour picker does
+    // (PresetComboBoxes.cpp: apply to project_config, on_config_change, EVT_FILAMENT_COLOR_CHANGED),
+    // so every consumer refreshes. Found when "paint it white" had no white slot to paint with.
+    register_tool({
+        "set_filament_color",
+        "Set the colour of a filament slot as the plate shows it (sidebar swatch, 3D view, flush "
+        "calculation). #RRGGBB or #RRGGBBAA. This is the project's per-slot colour, not the preset's.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"slot", {{"type", "integer"}, {"minimum", 1}, {"description", "Filament slot, 1-based"}}},
+                {"color", {{"type", "string"}, {"description", "#RRGGBB or #RRGGBBAA"}}}
+            }},
+            {"required", {"slot", "color"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            if (!params.contains("slot") || !params["slot"].is_number_integer())
+                return nlohmann::json{{"status", "error"}, {"message", "slot must be an integer"}};
+            if (!params.contains("color") || !params["color"].is_string())
+                return nlohmann::json{{"status", "error"}, {"message", "color must be a string like #FFFFFF"}};
+            const int   slot  = params["slot"];
+            std::string color = params["color"].get<std::string>();
+            static const std::regex hex(R"(^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$)");
+            if (!std::regex_match(color, hex))
+                return nlohmann::json{{"status", "error"}, {"message", "color must be #RRGGBB or #RRGGBBAA"}};
+            for (char& c : color) c = char(std::toupper(static_cast<unsigned char>(c)));
+            return run_on_main_thread([slot, color]() -> nlohmann::json {
+                DynamicPrintConfig& project_config = wxGetApp().preset_bundle->project_config;
+                auto* head = project_config.option<ConfigOptionStrings>("filament_colour");
+                auto* pack = project_config.option<ConfigOptionStrings>("filament_multi_colour");
+                if (head == nullptr || slot < 1 || size_t(slot) > head->values.size())
+                    return nlohmann::json{{"status", "error"},
+                                          {"message", "slot out of range; the project has " + std::to_string(head ? head->values.size() : 0) + " filament slot(s)"}};
+                const size_t idx      = size_t(slot - 1);
+                const std::string was = head->values[idx];
+
+                auto* new_head = static_cast<ConfigOptionStrings*>(head->clone());
+                new_head->values[idx] = color;
+                DynamicPrintConfig new_cfg;
+                new_cfg.set_key_value("filament_colour", new_head);
+                if (pack != nullptr && pack->values.size() > idx) {
+                    auto* new_pack = static_cast<ConfigOptionStrings*>(pack->clone());
+                    new_pack->values[idx] = color;  // a plain colour: the multi-colour pack is that one colour
+                    new_cfg.set_key_value("filament_multi_colour", new_pack);
+                }
+                project_config.apply(new_cfg);
+                wxGetApp().plater()->on_config_change(new_cfg);
+                wxGetApp().sidebar().update_presets(Preset::TYPE_FILAMENT);
+                auto* evt = new wxCommandEvent(EVT_FILAMENT_COLOR_CHANGED);
+                evt->SetInt(int(idx));
+                wxQueueEvent(wxGetApp().plater(), evt);
+
+                nlohmann::json r = {{"status", "success"}, {"slot", slot}, {"color", color}, {"previous_color", was}};
                 r["active_warnings"] = get_active_warnings_json(wxGetApp().plater());
                 return r;
             });

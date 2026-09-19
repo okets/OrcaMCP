@@ -50,6 +50,26 @@ Get comprehensive documentation about the server, tools, and workflows.
 
 ---
 
+### set_filament_color
+Set the colour of a filament slot **as the plate shows it** — the sidebar swatch, the 3D view and
+the flush calculation all read the project's per-slot colour. `apply_config` with `filament_colour`
+edits the filament *preset* instead, which is why "paint it white" could not be completed before
+this tool existed.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `slot` | integer | Yes | Filament slot, 1-based |
+| `color` | string | Yes | `#RRGGBB` or `#RRGGBBAA` |
+
+**Example:** `{"name": "set_filament_color", "arguments": {"slot": 4, "color": "#FFFFFF"}}`
+
+**Returns:** `{"status": "success", "slot": 4, "color": "#FFFFFF", "previous_color": "#BEBEBE"}`.
+Pair it with `select_preset` (`type: filament`, `slot`) to put a material on the spool, then
+`paint_object` or `set_object_filament` to use it.
+
+---
+
 ### quit_app
 Quit OrcaMCP cleanly with no dialog. An agent has to be able to close the app; a signal skips the
 shutdown path and AppleScript raises the "save changes?" prompt, which MCP dialog suppression does
