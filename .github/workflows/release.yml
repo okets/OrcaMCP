@@ -159,6 +159,11 @@ jobs:
           # default -- a tag push drafts, so a human opens the release -- while letting a manual
           # dispatch with draft=false actually publish.
           draft: ${{ github.event_name != 'workflow_dispatch' || inputs.draft }}
+          # This appends GitHub's own changelog and its "Full Changelog" compare link, against the
+          # previous tag it works out itself. A hand-written compare link used to sit at the end of
+          # `body` too; it had no "from" tag, so every release shipped a broken
+          # `compare/...v<version>` above the working one. Deleted rather than repaired -- the
+          # generated link is already correct and already there.
           generate_release_notes: true
           # No `files:` here on purpose. This action uploads through Node's fetch, and on the
           # ~360 MB DMG that failed on six of seven release runs in September 2026 -- "Headers
@@ -184,10 +189,6 @@ jobs:
             ### What's Changed
 
             See below for auto-generated changelog.
-
-            ---
-
-            **Full Changelog**: https://github.com/okets/OrcaMCP/compare/...v${{ steps.version.outputs.version }}
 
       - name: Upload release assets
         env:
