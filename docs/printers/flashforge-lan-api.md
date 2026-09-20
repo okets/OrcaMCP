@@ -239,6 +239,18 @@ POST http://<ip>:8898/control
 }
 ```
 
+### `control` reports success for commands it does not implement
+
+**This is the most dangerous fact on this page.** `control` answers `{"code": 0, "message":
+"Success"}` to a `cmd` the firmware has never heard of -- verified on 1.9.9 by sending the invented
+`definitelyNotACmd_cmd`, which was acknowledged exactly like a real one.
+
+Two consequences. A zero result code from `control` means "the request was well-formed", not "the
+printer did the thing", so **never treat the reply as confirmation** -- read the state back from
+`detail` instead, which is what this fork's agent does for pause and resume. And `control` cannot be
+used to discover whether a command exists: a real one and an imaginary one are indistinguishable,
+so probing for, say, an undocumented file-deletion command can only be resolved by losing a file.
+
 ### Job control — what a bridge actually needs
 
 ```json
@@ -283,16 +295,50 @@ target already at 40 °C untouched.
 
 ---
 
-## 4. Files — `gcodeList` and `printGcode`
+## 4. Files — `gcodeList`, `gcodeThumb` and `printGcode`
 
-Not needed for a failure-detection bridge; listed so you know they exist.
+Not needed for a failure-detection bridge, but enough to build a file browser: the printer knows
+what each stored job costs and what it looks like.
 
-`gcodeList` takes the bare credentials payload and returns the stored file names. Accept both a
-plain string element and a `{"gcodeFileName": ...}` object, and drop nameless entries rather than
-failing the call.
+`gcodeList` takes the bare credentials payload. It returns **two parallel lists**:
+
+| Key | What |
+|---|---|
+| `gcodeList` | The bare file names |
+| `gcodeListDetail` | One object per file, in the same order |
+
+A `gcodeListDetail` entry carries `gcodeFileName`, `printingTime` (seconds), `totalFilamentWeight`
+(grams), `gcodeToolCnt`, `useMatlStation`, and a `gcodeToolDatas` array of
+`{toolId, slotId, materialName, materialColor, filamentWeight}`. That is the per-tool material and
+colour the file was sliced for, which is also the mapping to send back to `printGcode` when
+reprinting it. Older firmware may return only the names, and `gcodeList` elements have been seen as
+both plain strings and `{"gcodeFileName": ...}` objects, so let the names drive the order, merge the
+detail in where it matches, and drop what you cannot read rather than failing the call.
+
+`gcodeThumb` takes `fileName` and returns that file's own thumbnail, base64 in `imageData`:
+
+```
+POST http://<ip>:8898/gcodeThumb
+{"serialNumber": "...", "checkCode": "...", "fileName": "benchy.gcode.3mf"}
+-> {"code": 0, "imageData": "<base64 PNG>", "message": "Success"}
+```
+
+Verified per-file on 1.9.9: ten stored files returned ten distinct PNGs. Check the PNG magic number
+before using it — the field is the printer's word, and a page that serves whatever arrives as an
+image will serve anything. Note the firmware spells the content type `appliation/json`.
+
+Do not confuse it with `GET /getThum`, which appears in `detail.printFileThumbUrl`: that one is the
+**currently printing** job's thumbnail and ignores any file name you pass it.
 
 `printGcode` starts a stored file and takes a file name, a bed-levelling flag, and an optional
 material-mapping array pairing project tools to material-station slots.
+
+### No deletion
+
+There is no delete. Nine plausible endpoint names -- `deleteGcode`, `delGcode`, `removeGcode`,
+`gcodeDelete`, `deleteFile`, `removeFile`, `delFile`, `fileDelete`, `gcodeRemove` -- all answer 404
+on 1.9.9. Files are removed from the printer's own touchscreen. See the warning below before trying
+to discover one through `control`.
 
 ---
 
@@ -347,6 +393,13 @@ This implementation lives in OrcaMCP, a fork of OrcaSlicer with first-class Crea
 | `src/slic3r/Utils/FlashforgeApi.{hpp,cpp}` | Pure parsing and payload construction. No GUI, no network — the reusable half. |
 | `src/slic3r/Utils/Flashforge.{hpp,cpp}` | The HTTP calls and the print-host integration. Coupled to wxWidgets and the slicer's networking, so read it as a reference, not a library. |
 | `tests/slic3rutils/test_flashforge_live.cpp` | The hardware test the facts above were verified with. |
+
+`gcodeListDetail`, `gcodeThumb`, the absence of any deletion endpoint, and `control` acknowledging
+commands it does not implement were all found on 2026-09-20 by probing a Creator 5 Pro on firmware
+1.9.9. None of them appear in FlashForge's published material. The deletion probes used a file name
+that was certainly not on the printer, so nothing was at risk; `control` was never aimed at a real
+file, for the reason given in section 3. A reference consumer of the file list and thumbnails is
+[flashforge-obico](https://github.com/okets/flashforge-obico) (`flashforge/client.py`).
 
 The parsing layer is genuinely dependency-free and is the part worth reading closely. The transport
 layer is 40 lines of HTTP in any language — reimplement it rather than trying to lift it out.
