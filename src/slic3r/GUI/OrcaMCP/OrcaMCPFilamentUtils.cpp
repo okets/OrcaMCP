@@ -133,7 +133,8 @@ int slot_to_config_index(int slot, std::string& error)
     return slot - 1;
 }
 
-bool set_object_filament(int object_id, int volume_id, int slot, std::string& error)
+bool set_object_filament(int object_id, int volume_id, int slot, bool include_modifiers,
+                         FilamentAssignment& out, std::string& error)
 {
     Plater* plater = wxGetApp().plater();
     Model& model = plater->model();
@@ -161,13 +162,21 @@ bool set_object_filament(int object_id, int volume_id, int slot, std::string& er
 
     // Everything is validated -- only now do we touch the undo stack.
     plater->take_snapshot(_u8L("Change Filaments"));
-    if (vol)
+    if (vol) {
         vol->config.set("extruder", slot);
-    else
+    } else {
         obj->config.set("extruder", slot);
+        // The object's slot is only a default the volumes override, so without this the change
+        // is invisible: the parts keep printing their old slot and the plate keeps its prime
+        // tower. The GUI's object-row picker erases the same overrides (update_filament_in_config).
+        out.cleared = clear_volume_filament_overrides(*obj, include_modifiers);
+    }
+    out.effective_filaments = effective_object_filaments(*obj);
+    out.other_slots         = other_volume_filaments(*obj, obj->config.has("extruder") ? obj->config.extruder() : 1);
 
+    // The rows keep their old number until told otherwise; changed_object does not tell them.
+    wxGetApp().obj_list()->sync_filament_rows_from_model(object_id);
     wxGetApp().obj_list()->changed_object(object_id);
-    wxGetApp().obj_list()->update_filament_colors();
     plater->update();
     return true;
 }

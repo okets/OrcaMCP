@@ -231,6 +231,10 @@ public:
     void                update_objects_list_filament_column(size_t filaments_count);
     void                update_objects_list_filament_column_when_delete_filament(size_t filament_id, size_t filaments_count, int replace_filament_id = -1);
     void                update_filament_colors();
+    // Rewrites one object's filament rows (the object and each part/modifier) from the model,
+    // for code that changed ModelObject/ModelVolume configs directly instead of through this
+    // list's editors. Those rows otherwise keep showing the old slot until the tree is rebuilt.
+    void                sync_filament_rows_from_model(int obj_idx);
     // show/hide "Extruder" column for Objects List
     void                set_filament_column_hidden(const bool hide) const;
     // show/hide variable height column for Objects List

@@ -1069,6 +1069,43 @@ void ObjectList::update_objects_list_filament_column_when_delete_filament(size_t
     m_prevent_update_filament_in_config = false;
 }
 
+void ObjectList::sync_filament_rows_from_model(int obj_idx)
+{
+    if (!m_objects || obj_idx < 0 || obj_idx >= int(m_objects->size()))
+        return;
+    const ModelObject*   object   = (*m_objects)[obj_idx];
+    const wxDataViewItem obj_item = m_objects_model->GetItemById(obj_idx);
+    if (!obj_item.IsOk())
+        return;
+
+    // SetExtruder raises ItemValueChanged, whose handler copies the row back into the model and
+    // erases the volumes' slots. The rows are being set FROM the model here, so that copy would be
+    // pointless at best and, with a stale row, destructive. Same guard as
+    // update_objects_list_filament_column.
+    m_prevent_update_filament_in_config = true;
+
+    const int obj_extruder = object->config.has("extruder") ? object->config.extruder() : 1;
+    m_objects_model->SetExtruder(wxString::Format("%d", obj_extruder), obj_item);
+
+    for (size_t vol_idx = 0; vol_idx < object->volumes.size(); ++vol_idx) {
+        const ModelVolume* volume = object->volumes[vol_idx];
+        if (!volume->is_model_part() && !volume->is_modifier())
+            continue;
+        const wxDataViewItem vol_item = m_objects_model->GetItemByVolumeId(obj_idx, int(vol_idx));
+        if (!vol_item.IsOk() || vol_item == obj_item)
+            continue;
+        // A part without its own slot shows the object's; a modifier without one shows none,
+        // exactly as set_extruder_for_selected_items leaves them.
+        int shown = volume->config.has("extruder") ? volume->config.extruder() : 0;
+        if (shown == 0 && volume->is_model_part())
+            shown = obj_extruder;
+        m_objects_model->SetExtruder(wxString::Format("%d", shown), vol_item);
+    }
+
+    m_prevent_update_filament_in_config = false;
+    update_filament_colors();
+}
+
 void ObjectList::update_filament_colors()
 {
     m_objects_model->UpdateColumValues(colFilament);

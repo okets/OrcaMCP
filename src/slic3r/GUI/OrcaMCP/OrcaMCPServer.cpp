@@ -4570,6 +4570,24 @@ void OrcaMCPServer::register_builtin_tools()
                 // tells agents to read on_bed to verify placement.
                 report_placement(result, object_id);
 
+                // Every volume, not just the printable parts get_object_components lists:
+                // modifiers carry a filament too, and one pinned to another slot keeps the plate
+                // multi-filament however the object is set. own_filament is null when the
+                // volume inherits the object's; effective_filament is what prints.
+                nlohmann::json volumes = nlohmann::json::array();
+                for (const OrcaMCP::VolumeFilament& v : OrcaMCP::describe_volume_filaments(*obj)) {
+                    volumes.push_back({
+                        {"volume_id", v.volume_id},
+                        {"name", v.name},
+                        {"type", v.type},
+                        {"own_filament", v.own_filament > 0 ? nlohmann::json(v.own_filament) : nlohmann::json(nullptr)},
+                        {"effective_filament", v.effective_filament}
+                    });
+                }
+                result["volumes"]        = volumes;
+                result["filament"]       = obj->config.has("extruder") ? obj->config.extruder() : 1;
+                result["filaments_used"] = OrcaMCP::effective_object_filaments(*obj);
+
                 return result;
             });
         }

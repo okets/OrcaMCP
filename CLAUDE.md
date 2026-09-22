@@ -110,14 +110,14 @@ grep -hA1 -E '^\s*register_tool\(\{' src/slic3r/GUI/OrcaMCP/*.cpp | grep -coE '^
 
 | Category | Tools |
 |----------|-------|
-| **Scene** | `get_scene_info` (plates, objects, and each plate's full occupancy: object footprints with brim, the prime tower, excluded bed areas), `new_project`, `load_project`, `save_project`, `export_3mf` |
-| **Models** | `load_model`, `auto_orient`, `arrange_objects`, `get_object_info`, `rename_object`, `set_object_printable` |
+| **Scene** | `get_scene_info` (plates, objects with `filaments_used` — read that, not `extruder_id` — and each plate's full occupancy: object footprints with brim, the prime tower, excluded bed areas), `new_project`, `load_project`, `save_project`, `export_3mf` |
+| **Models** | `load_model`, `auto_orient`, `arrange_objects`, `get_object_info` (incl. every volume with its type and filament), `rename_object`, `set_object_printable` |
 | **Transforms** | `move_object`, `rotate_object`, `scale_object`, `mirror_object`, `flatten_object`, `clone_object`, `cut_object`, `delete_object`, `transform_objects` |
 | **Plates** | `add_plate`, `select_plate`, `delete_plate`, `set_prime_tower_position` |
 | **Config** | `get_presets`, `get_edited_presets`, `select_preset`, `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset`, `get_valid_config_keys` |
 | **Per-Object** | `get_object_config`, `set_object_config`, `reset_object_config` |
 | **Layer Ranges** | `get_object_layer_ranges`, `set_object_layer_range`, `delete_object_layer_range` |
-| **Filaments & colour** | `get_filaments`, `set_object_filament`, `set_mixed_filament`, `delete_mixed_filament`, `set_filament_color` (a slot's plate colour; `apply_config` edits the preset instead), `get_flush_volumes`, `set_flush_volumes`, `auto_calc_flush_volumes`, `get_toolchanger_config`, `suggest_color_mix`, `get_color_palette` |
+| **Filaments & colour** | `get_filaments`, `set_object_filament` (whole-object form clears the volumes' own slots and reports `effective_filaments`; a volume's slot beats the object's), `set_mixed_filament`, `delete_mixed_filament`, `set_filament_color` (a slot's plate colour; `apply_config` edits the preset instead), `get_flush_volumes`, `set_flush_volumes`, `auto_calc_flush_volumes`, `get_toolchanger_config`, `suggest_color_mix`, `get_color_palette` |
 | **Painting** | `paint_object`, `get_object_paint`, `clear_object_paint`, `set_brim_ears`, `get_object_components`, `pick_facet` |
 | **Slicing** | `slice_all`, `get_slicing_status`, `export_gcode`, `get_print_estimate` |
 | **Visualization** | `render_plate_view` (named cameras `iso/top/front/back/left/right/low`, fit to plate or object, default 3-view contact sheet, plate outline + 10 mm grid + origin + object labels, `objects_in_frame` / `uniform_image` metadata, `layer_view: first_layer` plan with brim and supports; coordinates are bed mm), `get_preview_base64`, `set_gcode_view_type` |

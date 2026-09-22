@@ -4,6 +4,7 @@
 #include "slic3r/GUI/OpenGLManager.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPRenderOverlay.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPFirstLayerPlan.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPFilamentModel.hpp"
 #include <glad/gl.h>
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Plater.hpp"
@@ -902,6 +903,13 @@ nlohmann::json OrcaMCPPlateUtils::GetPlates(bool with_model_object_features) {
                 extruder_id = *extruder_id_ptr;
             }
             object_info["extruder_id"] = extruder_id;
+            // extruder_id is the object's own setting, which a volume's own slot overrides
+            // (ModelVolume::extruder_id). filaments_used is what the object prints with -- the
+            // per-object half of the rule the plate applies for its prime tower -- and is the
+            // field to read; the two agree only when filament_override_count is 0. Added after an
+            // agent read extruder_id == 3 on 45 objects whose modifiers were all still on slot 1.
+            object_info["filaments_used"]          = OrcaMCP::effective_object_filaments(*obj);
+            object_info["filament_override_count"] = OrcaMCP::volume_filament_override_count(*obj);
 
             objects_info.push_back(object_info);
 

@@ -1607,8 +1607,10 @@ void OrcaMCPServer::register_paint_tools()
 
     register_tool({
         "get_object_components",
-        "List the connected shells of each part's mesh -- component id, facet count, area and a "
-        "plate-frame bounding box. A generated or assembled model often has a feature (a bag, a "
+        "List the connected shells of each MODEL PART's mesh -- component id, facet count, area and a "
+        "plate-frame bounding box. Parts only: modifiers, negative volumes and support blockers are "
+        "not listed here, so this is not a census of the object's volumes; get_object_info's `volumes` "
+        "is, with each volume's type and filament.A generated or assembled model often has a feature (a bag, a "
         "wheel) as its own shell; paint_object {selection: \"component\", component: <id>} paints "
         "exactly that shell. Ids are stable for a given mesh: discovery order by lowest facet "
         "index. Coordinates are PLATE millimetres. On a mesh of millions of facets this takes "

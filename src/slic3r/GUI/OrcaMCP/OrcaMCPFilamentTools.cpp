@@ -142,9 +142,21 @@ void OrcaMCPServer::register_filament_tools()
         }
     });
 
+    // Written after an agent set 45 objects to slot 3, read extruder_id == 3 back on every one,
+    // and reported success while every object still printed in slot 1: each had modifiers pinned
+    // to slot 1, a volume's own slot beats the object's, and no read tool showed the modifiers.
+    // So the whole-object form now clears the overrides, and the response says what happened.
     register_tool({
         "set_object_filament",
-        "Assign a filament slot (physical or mixed) to an object, or to one part/modifier of it.",
+        "Assign a filament slot (physical or mixed) to a whole object, or to one volume of it "
+        "(volume_id). A volume's own slot beats the object's, so the whole-object form also clears "
+        "the own slot of every part and, unless include_modifiers=false, of every modifier -- "
+        "otherwise the change is invisible and the plate keeps its prime tower. Read the response, "
+        "not just status: effective_filaments is every slot the object still prints with (volumes, "
+        "painted facets, layer ranges); cleared_overrides lists each volume that lost its own slot "
+        "and what it held; other_slots lists slots its volumes still force. The object is on one "
+        "filament only when effective_filaments has one entry. get_object_info's `volumes` shows the "
+        "same per volume; get_scene_info's filaments_used shows it per object.",
         {
             {"type", "object"},
             {"properties", {
@@ -153,7 +165,15 @@ void OrcaMCPServer::register_filament_tools()
                 {"volume_id", {
                     {"type", "integer"},
                     {"minimum", -1},
-                    {"description", "Part index within the object (0-based); omit, or pass -1, for the whole object"}
+                    {"description", "Volume index within the object (0-based, as get_object_info's `volumes` "
+                                    "lists them; parts and modifiers only). Omit, or pass -1, for the whole object."}
+                }},
+                {"include_modifiers", {
+                    {"type", "boolean"},
+                    {"description", "Whole-object form only. true (default): modifiers lose their own slot too, "
+                                    "so the object prints in one filament. false: keep them, as the GUI's object "
+                                    "row does -- a modifier pinned to another slot is how a two-colour inlay is "
+                                    "made; other_slots then lists what they still force."}
                 }}
             }},
             {"required", {"object_id", "filament"}}
@@ -162,15 +182,27 @@ void OrcaMCPServer::register_filament_tools()
             const int object_id = params["object_id"];
             const int filament  = params["filament"];
             const int volume_id = params.value("volume_id", -1);
+            bool include_modifiers = true;
+            if (params.contains("include_modifiers") && !parse_boolean_param(params["include_modifiers"], include_modifiers))
+                return nlohmann::json{{"status", "error"}, {"message", "include_modifiers must be a boolean"}};
 
-            return run_on_main_thread([object_id, filament, volume_id]() -> nlohmann::json {
-                std::string error;
-                if (!set_object_filament(object_id, volume_id, filament, error))
+            return run_on_main_thread([object_id, filament, volume_id, include_modifiers]() -> nlohmann::json {
+                std::string        error;
+                FilamentAssignment done;
+                if (!set_object_filament(object_id, volume_id, filament, include_modifiers, done, error))
                     return nlohmann::json{{"status", "error"}, {"message", error}};
 
+                nlohmann::json cleared = nlohmann::json::array();
+                for (const ClearedOverride& c : done.cleared)
+                    cleared.push_back({{"volume_id", c.volume_id}, {"name", c.name}, {"type", c.type}, {"was_filament", c.was_filament}});
+
                 nlohmann::json r = {{"status", "success"}, {"object_id", object_id}, {"filament", filament}};
-                r["volume_id"] = volume_id < 0 ? nlohmann::json(nullptr) : nlohmann::json(volume_id);
-                r["active_warnings"] = get_active_warnings_json(wxGetApp().plater());
+                r["volume_id"]           = volume_id < 0 ? nlohmann::json(nullptr) : nlohmann::json(volume_id);
+                r["cleared_overrides"]   = cleared;
+                r["effective_filaments"] = done.effective_filaments;
+                r["other_slots"]         = done.other_slots;
+                r["single_filament"]     = done.effective_filaments.size() == 1;
+                r["active_warnings"]     = get_active_warnings_json(wxGetApp().plater());
                 return r;
             });
         }

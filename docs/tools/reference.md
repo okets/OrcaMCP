@@ -144,6 +144,16 @@ Get current project state including plates, objects, and positions.
 }
 ```
 
+#### Which filament an object prints with
+
+Each `model_objects` entry carries three filament fields. `extruder_id` is the object's own
+setting. A volume's own slot beats it (`ModelVolume::extruder_id`), so `filaments_used` — every
+slot the object's parts, modifiers, painted facets and layer ranges print with — is the field to
+read, and `filament_override_count` says how many parts and modifiers carry their own slot. The two
+agree only when that count is 0. `filaments_used` is the per-object half of the rule the plate
+applies for `prime_tower`; an object whose modifiers are pinned to another slot keeps the plate
+multi-filament however `extruder_id` reads.
+
 #### Occupancy: everything standing on the plate
 
 `model_objects` lists the models. It is **not** the list of what occupies the bed. `occupancy` is:
@@ -1106,6 +1116,25 @@ correctly on plate 4 read as off the bed whenever another plate was selected.
 `on_bed` still only means "inside the plate in XY, and not sunk below Z". It does not check for
 collisions with other objects or the prime tower, and a part floating above the bed passes it.
 
+**Filament fields:** `filament` is the object's own slot. `filaments_used` is every slot the object
+actually prints with — volumes, painted facets and layer ranges — and `volumes` lists every volume
+of the object, not just the printable parts `get_object_components` shows:
+
+```json
+"filament": 3,
+"filaments_used": [1, 3],
+"volumes": [
+  {"volume_id": 0, "name": "Base",          "type": "part",     "own_filament": null, "effective_filament": 3},
+  {"volume_id": 1, "name": "Base Modifier", "type": "modifier", "own_filament": 1,    "effective_filament": 1}
+]
+```
+
+`type` is one of `part`, `modifier`, `negative_volume`, `support_blocker`, `support_enforcer`.
+`own_filament` is `null` when the volume inherits the object's slot; `effective_filament` is what
+prints. A volume's own slot beats the object's, so when `filaments_used` has more than one entry
+this is where to look for the volume responsible — and `volume_id` here is the index
+`set_object_filament` takes.
+
 ---
 
 ### get_object_config
@@ -1474,6 +1503,50 @@ Disable adaptive layer height.
 
 ## Filament & Colour Tools
 
+### set_object_filament
+Assign a filament slot to a whole object, or to one volume of it.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `object_id` | integer | Yes | Object index (0-based) |
+| `filament` | integer | Yes | Filament slot, 1-based (physical or mixed) |
+| `volume_id` | integer | No | Volume index (0-based, as `get_object_info`'s `volumes` lists them; parts and modifiers only). Omit or `-1` for the whole object |
+| `include_modifiers` | boolean | No | Whole-object form only. `true` (default): modifiers lose their own slot too. `false`: keep them, as the GUI's object row does |
+
+**What the whole-object form does, and why:** a volume's own slot beats the object's
+(`ModelVolume::extruder_id`). Setting only the object's slot therefore changes nothing visible when
+its parts or modifiers carry their own — the parts keep printing their old slot and the plate keeps
+its prime tower. So the whole-object form also erases the own slot of every part and, unless
+`include_modifiers: false`, of every modifier. A modifier pinned to another slot is how a two-colour
+inlay is made; pass `false` to keep those and read `other_slots` for what they still force.
+
+**Response:**
+```json
+{
+  "status": "success",
+  "object_id": 30, "filament": 3, "volume_id": null,
+  "cleared_overrides": [
+    {"volume_id": 1, "name": "Base Modifier",  "type": "modifier", "was_filament": 1},
+    {"volume_id": 2, "name": "Wheel Modifier", "type": "modifier", "was_filament": 1}
+  ],
+  "effective_filaments": [3],
+  "other_slots": [],
+  "single_filament": true
+}
+```
+
+Read the response, not `status`. `effective_filaments` is every slot the object still prints with
+(volumes, painted facets, layer ranges); the object is on one filament only when it has one entry.
+`cleared_overrides` names each volume that lost its own slot and what it held. The object list rows
+are refreshed too; until v2.5.0.4 they kept showing the old number for modifiers after an MCP write,
+which made a correct write look like a failed one.
+
+Written after an agent set 45 objects to slot 3, read `extruder_id == 3` back on every one and
+reported success, while every object still printed in slot 1 from modifiers no tool listed.
+
+---
+
 ### suggest_color_mix
 Suggest the closest achievable 2–3 component filament mix for a target colour, from the printer's
 loaded physical filaments. Optionally create the mixed slot.
@@ -1810,9 +1883,13 @@ and shape `paint_object` and `get_object_paint` use), `brim_ear_count`, `brim_ea
 ---
 
 ### get_object_components
-List the connected shells of each part's mesh — the pieces `paint_object
+List the connected shells of each **model part**'s mesh — the pieces `paint_object
 {selection: "component"}` can paint individually. A generated or assembled model often has a
 feature (a bag, a wheel) as its own shell.
+
+Parts only. Modifiers, negative volumes and support blockers are not listed, so this is not a census
+of the object's volumes and its `volume_id`s are not contiguous when the object has any of those.
+`get_object_info`'s `volumes` lists every volume with its type and filament.
 
 **Parameters:**
 | Parameter | Type | Required | Description |

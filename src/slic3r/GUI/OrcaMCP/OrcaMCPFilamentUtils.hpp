@@ -6,6 +6,7 @@
 #include <vector>
 #include "slic3r/GUI/MixedFilamentDialog.hpp"   // MixedFilamentResult
 #include "libslic3r/ColorDecomposeRecipe.hpp"   // ColorDecomposePhysicalFilament
+#include "slic3r/GUI/OrcaMCP/OrcaMCPFilamentModel.hpp"  // ClearedOverride
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
@@ -21,9 +22,22 @@ bool mixed_result_from_params(const nlohmann::json& params, MixedFilamentResult&
 // 1-based slot -> 0-based config index, validating range. Returns -1 and sets `error` when invalid.
 int slot_to_config_index(int slot, std::string& error);
 
-// Assigns a filament slot to an object or one of its volumes. Returns false and sets `error` on failure.
-// Main thread only.
-bool set_object_filament(int object_id, int volume_id /* -1 = object */, int slot, std::string& error);
+// What set_object_filament actually did to the object, for the tool to report: an agent that
+// reads only "success" cannot tell a one-filament object from one whose modifiers still force
+// another slot, and that difference is a prime tower.
+struct FilamentAssignment
+{
+    std::vector<ClearedOverride> cleared;              // volume overrides erased (whole-object form)
+    std::vector<int>             effective_filaments;  // every slot the object prints with now
+    std::vector<int>             other_slots;          // slots its volumes still force besides the object's
+};
+
+// Assigns a filament slot to an object or one of its volumes. The whole-object form (volume_id
+// -1) also erases each part's own slot and, when include_modifiers, each modifier's, so the
+// object's choice takes effect -- a volume's own slot beats the object's (ModelVolume::extruder_id).
+// Refreshes the object list rows. Returns false and sets `error` on failure. Main thread only.
+bool set_object_filament(int object_id, int volume_id /* -1 = object */, int slot, bool include_modifiers,
+                         FilamentAssignment& out, std::string& error);
 
 // Snapshot of the per-extruder flush-volume matrices and the flush multiplier. Main thread only.
 nlohmann::json describe_flush_volumes();

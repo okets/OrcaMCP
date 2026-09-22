@@ -40,6 +40,7 @@ add_executable(${_TEST_NAME}_tests
     test_transform_frames.cpp
     test_render_math.cpp
     test_first_layer_plan.cpp
+    test_filament_model.cpp
     ../fff_print/test_helpers.cpp
     )
 
