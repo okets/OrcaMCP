@@ -304,9 +304,13 @@ void OrcaMCPServer::register_filament_tools()
         [](const nlohmann::json& params) -> nlohmann::json {
             const nlohmann::json matrix = params.at("matrix");
             const int extruder = params.value("extruder", 0);
-            const std::optional<double> flush_multiplier = params.contains("flush_multiplier")
-                ? std::optional<double>(params["flush_multiplier"].get<double>())
-                : std::nullopt;
+            std::optional<double> flush_multiplier;
+            if (params.contains("flush_multiplier")) {
+                double m = 0.0;
+                if (!parse_double_param(params["flush_multiplier"], m))
+                    return nlohmann::json{{"status", "error"}, {"message", "flush_multiplier must be a finite number"}};
+                flush_multiplier = m;
+            }
 
             return run_on_main_thread([matrix, extruder, flush_multiplier]() -> nlohmann::json {
                 std::string error;

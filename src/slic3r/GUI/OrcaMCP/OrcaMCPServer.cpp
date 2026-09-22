@@ -2217,8 +2217,12 @@ void OrcaMCPServer::register_builtin_tools()
         },
         [](const nlohmann::json& params) -> nlohmann::json {
             int object_id = params["object_id"];
-            double z_min = params["z_min"];
-            double z_max = params["z_max"];
+            // Through parse_double_param, not get<double>(): the bridge delivered "1.4" as a string
+            // on 2026-09-22 and the bare conversion threw past the handler as an "Internal error".
+            double z_min = 0.0, z_max = 0.0;
+            if (!parse_double_param(params["z_min"], z_min) || !parse_double_param(params["z_max"], z_max))
+                return nlohmann::json{{"status", "error"},
+                                      {"message", "z_min and z_max must be finite numbers, in millimetres above the object's base"}};
             nlohmann::json settings = params["settings"];
             return run_on_main_thread([object_id, z_min, z_max, settings]() {
                 Plater* plater = wxGetApp().plater();
@@ -2321,8 +2325,10 @@ void OrcaMCPServer::register_builtin_tools()
         [](const nlohmann::json& params) -> nlohmann::json {
             int object_id = params["object_id"];
             bool has_range = params.contains("z_min") && params.contains("z_max");
-            double z_min = has_range ? params["z_min"].get<double>() : 0;
-            double z_max = has_range ? params["z_max"].get<double>() : 0;
+            double z_min = 0.0, z_max = 0.0;
+            if (has_range && (!parse_double_param(params["z_min"], z_min) || !parse_double_param(params["z_max"], z_max)))
+                return nlohmann::json{{"status", "error"},
+                                      {"message", "z_min and z_max must be finite numbers, in millimetres above the object's base"}};
             return run_on_main_thread([object_id, has_range, z_min, z_max]() {
                 Plater* plater = wxGetApp().plater();
                 Model& model = plater->model();
@@ -4829,7 +4835,10 @@ void OrcaMCPServer::register_builtin_tools()
         },
         [](const nlohmann::json& params) -> nlohmann::json {
             int object_id = params["object_id"];
-            double z_height = params["z_height"];
+            double z_height = 0.0;
+            if (!parse_double_param(params["z_height"], z_height))
+                return nlohmann::json{{"status", "error"},
+                                      {"message", "z_height must be a finite number, in plate millimetres"}};
             std::string keep = params.value("keep", "below");
             bool include_preview = params.value("include_preview", false);
             return run_on_main_thread([object_id, z_height, keep, include_preview]() {

@@ -739,10 +739,20 @@ void OrcaMCPServer::register_printer_tools()
             std::optional<double>              chamber;
             std::vector<std::optional<double>> nozzles(4, std::nullopt);
             if (action == "set_temperature") {
-                if (params.contains("bed") && params.at("bed").is_number())
-                    bed = params.at("bed").get<double>();
-                if (params.contains("chamber") && params.at("chamber").is_number())
-                    chamber = params.at("chamber").get<double>();
+                // parse_double_param, and an error rather than a skip: this used to ignore a bed
+                // or chamber value that was not a JSON number, so a client sending "60" as a string
+                // got "success" and a printer that never heated.
+                double parsed = 0.0;
+                if (params.contains("bed")) {
+                    if (!parse_double_param(params.at("bed"), parsed))
+                        return error_response("bed must be a finite number, in degrees C");
+                    bed = parsed;
+                }
+                if (params.contains("chamber")) {
+                    if (!parse_double_param(params.at("chamber"), parsed))
+                        return error_response("chamber must be a finite number, in degrees C");
+                    chamber = parsed;
+                }
                 if (params.contains("nozzles") && params.at("nozzles").is_array()) {
                     for (const auto& entry : params.at("nozzles")) {
                         if (!entry.is_object() || !entry.contains("tool") || !entry.contains("temp"))
@@ -753,11 +763,12 @@ void OrcaMCPServer::register_printer_tools()
                         int tool = 0;
                         if (!parse_integer_param(entry.at("tool"), tool))
                             return error_response("nozzles[].tool must be an integer");
-                        if (!entry.at("temp").is_number())
-                            return error_response("nozzles[].temp must be a number");
+                        double temp = 0.0;
+                        if (!parse_double_param(entry.at("temp"), temp))
+                            return error_response("nozzles[].temp must be a finite number, in degrees C");
                         if (tool < 0 || tool > 3)
                             return error_response("nozzles[].tool must be between 0 and 3");
-                        nozzles[tool] = entry.at("temp").get<double>();
+                        nozzles[tool] = temp;
                     }
                 }
             }
