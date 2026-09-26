@@ -443,12 +443,16 @@ json bridge_only_tools(const ToolMap& tools)
     return names;
 }
 
-// Each section's size in bytes, so a caller can see what a fetch costs before making it.
-json section_index()
+// Each section's size in bytes, so a caller can see what a fetch costs before making it. The sections
+// are fixed text, so they are built and measured once rather than on every call.
+const json& section_index()
 {
-    json index = json::object();
-    for (const Section& section : documentation_sections())
-        index[section.name] = section.content().dump().size();
+    static const json index = [] {
+        json sizes = json::object();
+        for (const Section& section : documentation_sections())
+            sizes[section.name] = section.content().dump().size();
+        return sizes;
+    }();
     return index;
 }
 
