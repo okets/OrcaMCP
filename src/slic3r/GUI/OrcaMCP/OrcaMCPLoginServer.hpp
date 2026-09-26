@@ -3,6 +3,7 @@
 // HttpServer.hpp first: it pulls in boost/asio, which on Windows must see <windows.h> before other
 // headers do.
 #include "slic3r/GUI/HttpServer.hpp"
+#include "OrcaMCPMainThreadGate.hpp"
 #include <atomic>
 #include <functional>
 #include <memory>
@@ -11,7 +12,6 @@
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
-class MainThreadGate;
 
 // Where the cloud login's loopback callback is answered, kept from ever disturbing the MCP server.
 //

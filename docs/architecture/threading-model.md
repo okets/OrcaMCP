@@ -37,20 +37,22 @@ This document explains how we safely execute MCP tool handlers.
 ## The Solution: run_on_main_thread()
 
 Work is handed to the main thread through the app's `MainThreadGate`
-(`src/slic3r/GUI/OrcaMCP/OrcaMCPMainThreadGate.cpp`), which queues it with wxWidgets' `CallAfter()`
+(`src/slic3r/GUI/OrcaMCP/OrcaMCPMainThreadGate.hpp`), which queues it with wxWidgets' `CallAfter()`
 and waits for it:
 
 ```cpp
 template<typename Func>
 nlohmann::json run_on_main_thread(Func&& func)
 {
-    return main_thread_gate().call(MainThreadGate::Work(std::forward<Func>(func)));
+    return call_through(main_thread_gate(), McpWork(std::forward<Func>(func)));
 }
 ```
 
-`MainThreadGate::call` queues a task that runs `func` on the main thread, then waits until the task
-has finished or the gate is closed. The task shares its state with the caller through a
-`shared_ptr`, so a caller that was released early (see Shutdown below) leaves nothing dangling.
+The gate is `QueuedCalls` (`src/slic3r/Utils/QueuedCall.hpp`), which the printer agents' bounded
+GUI-thread calls share. `call_through` queues a task that runs `func` on the main thread, then waits
+until the task has finished or the gate is closed. The task shares its state with the caller through
+a `shared_ptr`, so a caller that was released early (see Shutdown below) leaves nothing dangling, and
+its work is never run.
 
 ## Execution Flow
 
@@ -170,7 +172,7 @@ json handle_get_slicing_status(const json& params) {
 ## Exception Handling
 
 An exception thrown by the work on the main thread is caught there and rethrown on the HTTP thread by
-`MainThreadGate::call`. `handle_tools_call` turns it into a JSON-RPC error naming the tool (-32603),
+`call_through` (`QueuedCalls::run`). `handle_tools_call` turns it into a JSON-RPC error naming the tool (-32603),
 except `McpShuttingDown`, which `handle_request` answers as -32002 (below).
 
 ## Shutdown

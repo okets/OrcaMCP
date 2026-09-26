@@ -28,7 +28,7 @@ namespace {
 class BackgroundCall
 {
 public:
-    BackgroundCall(MainThreadGate& gate, MainThreadGate::Work work)
+    BackgroundCall(MainThreadGate& gate, McpWork work)
         : m_future(m_outcome.get_future()), m_thread([this, &gate, work] { m_outcome.set_value(outcome_of(gate, work)); })
     {}
     ~BackgroundCall() { m_thread.join(); }
@@ -37,10 +37,10 @@ public:
     std::string outcome() { return m_future.get(); }
 
 private:
-    static std::string outcome_of(MainThreadGate& gate, const MainThreadGate::Work& work)
+    static std::string outcome_of(MainThreadGate& gate, const McpWork& work)
     {
         try {
-            return "value " + gate.call(work).dump();
+            return "value " + call_through(gate, work).dump();
         } catch (const McpShuttingDown&) {
             return "shutting down";
         } catch (const std::exception& e) {
@@ -82,7 +82,7 @@ TEST_CASE("a closed gate refuses a call at once and queues nothing", "[McpShutdo
     CHECK(gate.close()); // this call closed it
 
     CHECK(gate.is_closed());
-    CHECK_THROWS_AS(gate.call([] { return nlohmann::json("ran"); }), McpShuttingDown);
+    CHECK_THROWS_AS(call_through(gate, [] { return nlohmann::json("ran"); }), McpShuttingDown);
     CHECK(main_thread.size() == 0);
 
     CHECK_FALSE(gate.close()); // closing twice is harmless, and says it changed nothing
@@ -173,7 +173,7 @@ TEST_CASE("a close with no call's work running is not deferred", "[McpShutdown][
     std::atomic<bool> ran{false};
 
     CHECK_FALSE(gate.defer_until_work_ends([&] { ran = true; }));
-    CHECK(gate.call([] { return nlohmann::json("done"); }) == "done"); // a call that ran and returned
+    CHECK(call_through(gate, [] { return nlohmann::json("done"); }) == "done"); // a call that ran and returned
     CHECK_FALSE(gate.defer_until_work_ends([&] { ran = true; }));
     CHECK_FALSE(ran); // the caller closes at once instead
 }
@@ -183,9 +183,9 @@ TEST_CASE("a call returns what its work returned, and rethrows what it threw", "
     RunningMainThread main_thread;
     MainThreadGate    gate(main_thread.post());
 
-    CHECK(gate.call([] { return nlohmann::json{{"status", "success"}}; }) == nlohmann::json{{"status", "success"}});
+    CHECK(call_through(gate, [] { return nlohmann::json{{"status", "success"}}; }) == nlohmann::json{{"status", "success"}});
     try {
-        gate.call([]() -> nlohmann::json { throw std::runtime_error("no plater"); });
+        call_through(gate, []() -> nlohmann::json { throw std::runtime_error("no plater"); });
         FAIL("the work's exception was lost");
     } catch (const std::runtime_error& e) {
         CHECK(std::string(e.what()) == "no plater");

@@ -206,7 +206,7 @@ TEST_CASE("quitting with an MCP call waiting on the main thread answers the call
     HttpServer server(0);
     server.set_request_handler([&gate](const std::string&, const std::string&, const std::string&) {
         try {
-            return json_response(gate.call([] { return nlohmann::json{{"status", "ran"}}; }));
+            return json_response(call_through(gate, [] { return nlohmann::json{{"status", "ran"}}; }));
         } catch (const JsonRpcError& e) {
             return json_response({{"error", {{"code", e.code}, {"message", e.what()}}}});
         }

@@ -409,7 +409,6 @@ set(SLIC3R_GUI_SOURCES
     GUI/OrcaMCP/OrcaMCPCommon.cpp
     GUI/OrcaMCP/OrcaMCPJsonRpcError.hpp
     GUI/OrcaMCP/OrcaMCPMainThreadGate.hpp
-    GUI/OrcaMCP/OrcaMCPMainThreadGate.cpp
     GUI/OrcaMCP/OrcaMCPQuit.hpp
     GUI/OrcaMCP/OrcaMCPQuit.cpp
     GUI/OrcaMCP/OrcaMCPQuitApp.cpp

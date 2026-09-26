@@ -22,7 +22,7 @@ namespace OrcaMCP {
 template<typename Func>
 nlohmann::json run_on_main_thread(Func&& func)
 {
-    return main_thread_gate().call(MainThreadGate::Work(std::forward<Func>(func)));
+    return call_through(main_thread_gate(), McpWork(std::forward<Func>(func)));
 }
 
 // MCP clients do not all deliver scalars the same way: a client whose cached tool schema predates a

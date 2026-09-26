@@ -349,7 +349,7 @@ gh release upload v2.3.2.10 ./path/to/new/artifact.exe -R okets/OrcaMCP
 | `src/slic3r/Utils/ObicoLink.cpp` | Flashforge preset's Obico link: page link object and token-free MCP status (spec `docs/superpowers/specs/2026-09-15-obico-camera-source-design.md`) |
 | `src/slic3r/GUI/HttpServer.hpp` | HTTP server with JSON responses; listens on 127.0.0.1 only |
 | `src/slic3r/GUI/HttpServer.cpp` | POST body reading, ResponseJson, the stop that waits for handlers and lets replies out |
-| `src/slic3r/GUI/OrcaMCP/OrcaMCPMainThreadGate.cpp` | How a call hands work to the main thread and waits, and how quitting releases it (see "Threading Model"; unit-tested in `tests/slic3rutils/test_mcp_shutdown.cpp`) |
+| `src/slic3r/GUI/OrcaMCP/OrcaMCPMainThreadGate.hpp` | How a call hands work to the main thread and waits, and how quitting releases it: the gate is `QueuedCalls` (`src/slic3r/Utils/QueuedCall.hpp`), with `call_through` for a tool's json (see "Threading Model"; unit-tested in `tests/slic3rutils/test_mcp_shutdown.cpp`, `test_queued_call.cpp`) |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPQuit.cpp` | Quitting while a modal dialog is open: which dialogs are open, ending the innermost unanswered, holding the close until they are gone, and `quit_app`'s refusals (unit-tested in `tests/slic3rutils/test_mcp_quit.cpp`); the wx side (modal hook, turn timer) is `OrcaMCPQuitApp.cpp` |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPLoginServer.cpp` | Where the cloud login's callback is answered: a second port of the MCP server, on its thread (unit-tested in `tests/slic3rutils/test_http_server.cpp`) |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPRequestGuard.cpp` | Which requests the server answers: no web page's and no DNS-rebound one on `/mcp`, login callbacks only where a login listens (see "Security"; unit-tested in `tests/slic3rutils/test_mcp_request_guard.cpp`) |
@@ -458,11 +458,11 @@ The HTTP server runs **one** thread, and it calls the request handler itself, so
 one at a time. All tool handlers use `run_on_main_thread()` which:
 - Blocks the HTTP thread until the GUI operation completes
 - Required for OpenGL rendering and wxWidgets operations
-- Goes through the app's `MainThreadGate` (`OrcaMCPMainThreadGate.cpp`), which queues the work with
-  `wxGetApp().CallAfter()` and waits for it. Its handshake -- work that started is waited for, a caller
-  released before its work started never has it run, what the work throws is rethrown -- is
-  `QueuedCalls` (`src/slic3r/Utils/QueuedCall.hpp`), which the printer agents' bounded GUI-thread calls
-  use too (`run_queued_and_wait`)
+- Goes through the app's `MainThreadGate` (`OrcaMCPMainThreadGate.hpp`), which queues the work with
+  `wxGetApp().CallAfter()` and waits for it. The gate is `QueuedCalls` (`src/slic3r/Utils/QueuedCall.hpp`):
+  work that started is waited for, a caller released before its work started never has it run, what
+  the work throws is rethrown. The printer agents' bounded GUI-thread calls use it too
+  (`run_queued_and_wait`)
 
 ```cpp
 template<typename Func>
