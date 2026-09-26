@@ -102,3 +102,17 @@ TEST_CASE("a keyed answer can say how to get the other outcome", "[McpSuppressio
     CHECK(mcp_answer_for(wxOK, "").text == "OK");
     clear_mcp_prompt_answers();
 }
+
+// A modal dialog that no specific MCP handler answers blocks the GUI thread, and with it the MCP
+// call, until someone clicks it: the texture importer and the sync-printer tips were found that
+// way, one at a time. Every DPIDialog now falls back to Cancel under suppression.
+TEST_CASE("a modal no handler answered is cancelled under MCP and shown otherwise", "[McpSuppression][orcamcp][suppression]")
+{
+    const McpUnhandledModal suppressed = mcp_unhandled_modal(true, "Filament grouping");
+    CHECK(suppressed.suppress);
+    CHECK(suppressed.answer == wxID_CANCEL);
+    CHECK(suppressed.message == "Filament grouping was suppressed (auto-answered Cancel)");
+
+    CHECK(mcp_unhandled_modal(true, "").message == "A dialog was suppressed (auto-answered Cancel)");
+    CHECK_FALSE(mcp_unhandled_modal(false, "Filament grouping").suppress);
+}

@@ -89,6 +89,11 @@ void update_dark_ui(wxWindow* window);
 
 extern std::deque<wxDialog*> dialogStack;
 
+// Orca MCP: true when MCP dialog suppression is on and the modal titled `title` must not be shown;
+// `answer` is then the result ShowModal returns (Cancel) and the dialog is recorded as suppressed.
+// The fallback for modals no specific handler answered (GUI.cpp, mcp_unhandled_modal).
+bool mcp_skip_unhandled_modal(const wxString& title, int& answer);
+
 template<class P> class DPIAware : public P, public wxInspector::wxInspectable
 {
 public:
@@ -201,6 +206,10 @@ public:
 
     int ShowModal()
     {
+        // Orca MCP: a modal nobody answered would block the GUI thread, and the MCP call waiting on
+        // it, until someone clicks. Dialogs with their own MCP handling answer before reaching here.
+        if (int mcp_answer; mcp_skip_unhandled_modal(this->GetTitle(), mcp_answer))
+            return mcp_answer;
         dialogStack.push_front(this);
         int r = wxDialog::ShowModal();
         dialogStack.pop_front();

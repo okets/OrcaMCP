@@ -119,6 +119,22 @@ McpAnswer mcp_answer_for(long style, const std::string& prompt_key) {
     return {id, mcp_answer_label(id)};
 }
 
+McpUnhandledModal mcp_unhandled_modal(bool suppression_enabled, const std::string& title) {
+    if (!suppression_enabled)
+        return {false, wxID_CANCEL, std::string()};
+    const std::string dialog = title.empty() ? std::string("A dialog") : title;
+    return {true, wxID_CANCEL, mcp_answered_prompt(dialog + " was suppressed", mcp_answer_label(wxID_CANCEL))};
+}
+
+bool mcp_skip_unhandled_modal(const wxString& title, int& answer) {
+    const McpUnhandledModal fallback = mcp_unhandled_modal(is_mcp_dialog_suppression_enabled(), into_u8(title));
+    if (!fallback.suppress)
+        return false;
+    add_mcp_suppressed_message(fallback.message);
+    answer = fallback.answer;
+    return true;
+}
+
 bool is_agent_launch() {
     const char* value = std::getenv("ORCAMCP_SKIP_CLOUD_LOGIN");
     return value != nullptr && *value != '\0' && std::string(value) != "0";

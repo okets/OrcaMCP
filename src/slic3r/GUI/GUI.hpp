@@ -82,6 +82,16 @@ struct McpAnswer
 void set_mcp_prompt_answer(const std::string& key, int answer_id, const std::string& note = std::string());
 void clear_mcp_prompt_answers();
 McpAnswer mcp_answer_for(long style, const std::string& prompt_key);
+// The fallback for a modal DPIDialog that no specific handler answered (see DPIAware::ShowModal):
+// under suppression it is not shown, answers Cancel and is recorded as
+// "<title> was suppressed (auto-answered Cancel)". Not suppressed: shown as usual.
+struct McpUnhandledModal
+{
+    bool        suppress;
+    int         answer;
+    std::string message;
+};
+McpUnhandledModal mcp_unhandled_modal(bool suppression_enabled, const std::string& title);
 // True when the app was launched for an agent: the bridge's start_orca sets ORCAMCP_SKIP_CLOUD_LOGIN
 // (to anything but "" or "0"). Such a launch has nobody at the screen, so startup must not wait on
 // anything a person has to answer, such as a keychain or macOS privacy prompt.
