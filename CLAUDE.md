@@ -816,6 +816,7 @@ echo "M HttpServer::stop cuts a reply still being written (rel2506/04b): $(U src
 echo "N HttpServer listens on every interface (rel2506/04b):             $(U src/slic3r/GUI/HttpServer.hpp | grep -c 'acceptor(io_service, {boost::asio::ip::tcp::v4()')"
 echo "R HttpServer serves a request without reading its Origin (rel2506/04b): $( { U src/slic3r/GUI/HttpServer.hpp; U src/slic3r/GUI/HttpServer.cpp; } | grep -qi '"origin"' && echo no || echo yes)"
 echo "O priv::reset frees the prints before it stops the slice (rel2506/04c): $(U src/slic3r/GUI/Plater.cpp | awk '/^void Plater::priv::reset\(bool/{f=1} f&&/background_process\.(stop|reset)\(\)/{print "no"; exit} f&&/partplate_list\.reinit\(\)/{print "yes"; exit}')"
+echo "P delete_plate frees a Print the slice may be using (rel2506/04c):  $(U src/slic3r/GUI/Plater.cpp | awk '/^int Plater::delete_plate\(int/{f=1} f&&/background_process\.stop\(\)/{print "no"; exit} f&&/partplate_list\.delete_plate\(/{print "yes"; exit}')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -837,6 +838,11 @@ while the thread ran on in freed memory: quit, New Project (Cmd-N skips the menu
 slicing" check) or Open during a slice crashed or froze the app (2026-09-26, release and dev builds).
 Ours stops the slice just before `reinit()`. On "no", take upstream's order and re-check a quit during
 a tree-support slice.
+
+Item P: the same in `Plater::delete_plate`: deleting the plate being sliced deleted its `Print` under
+the slicing thread (SIGSEGV, 2026-09-26), and a change of current plate repointed the background
+process. Ours stops the slice first. On "no", take upstream's and re-check `delete_plate` on the plate
+being sliced.
 
 Item J: upstream opens every recent 3MF synchronously while building the main window, before
 post_init starts the MCP server. Our patch skips it for an agent launch (`GUI::is_agent_launch()`,

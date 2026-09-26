@@ -786,7 +786,7 @@ Switch to a different plate.
 ---
 
 ### delete_plate
-Remove a plate from the project.
+Remove a plate from the project. A running slice is cancelled first.
 
 **Parameters:**
 | Parameter | Type | Required | Description |

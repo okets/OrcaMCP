@@ -22105,6 +22105,10 @@ int Plater::delete_plate(int plate_index)
         index = p->partplate_list.get_curr_plate_index();
 
     take_snapshot("delete partplate");
+    // Orca: the plate's Print is deleted below, and the slicing thread may be using it; the current
+    // plate can change too, and with it the Print the background process would cancel. So stop the
+    // slice first: deleting the plate being sliced crashed the app (2026-09-26).
+    p->background_process.stop();
     ret = p->partplate_list.delete_plate(index);
 
     //BBS: update the current print to the current plate
