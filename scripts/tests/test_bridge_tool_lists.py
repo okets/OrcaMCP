@@ -10,6 +10,9 @@ framework disconnects.
 Run from the repo root:  python3 -m unittest discover -s scripts/tests -t scripts
 """
 
+import contextlib
+import io
+import json
 import os
 import sys
 import tempfile
@@ -87,22 +90,81 @@ class BridgeToolTextTests(unittest.TestCase):
         self.assertFalse(response["result"]["isError"])
 
 
-class MissingManifestTests(unittest.TestCase):
-    def test_an_unreadable_file_gives_empty_lists_and_says_which_file(self):
-        bridge = load_bridge()
-        with tempfile.TemporaryDirectory() as tmp:
-            missing = os.path.join(tmp, "orcamcp_tools.json")
-            manifest, error = bridge.load_tools_manifest(missing)
-        self.assertEqual(manifest, {"server_tools": [], "bridge_tools": []})
-        self.assertIn(missing, error)
+# Every way the golden file can be unusable. None of them may stop the bridge from starting, or from
+# offering start_orca: without it an agent cannot even launch the app to get a working list.
+BROKEN_MANIFESTS = {
+    "missing file": None,
+    "not JSON": "{not json",
+    "not an object": "[]",
+    "no bridge_tools": json.dumps({"server_tools": []}),
+    "entry without a description": json.dumps({
+        "server_tools": [{"name": "get_scene_info", "inputSchema": {"type": "object"}}], "bridge_tools": []}),
+    "entry with a numeric name": json.dumps({
+        "server_tools": [{"name": 7, "description": "x", "inputSchema": {"type": "object"}}], "bridge_tools": []}),
+    "entry whose schema is not an object": json.dumps({
+        "server_tools": [], "bridge_tools": [{"name": "start_orca", "description": "x", "inputSchema": "none"}]}),
+    "entry that is not an object": json.dumps({"server_tools": ["get_scene_info"], "bridge_tools": []}),
+}
 
-    def test_the_offline_tools_list_is_an_error_rather_than_an_empty_list(self):
-        """An empty list would hide start_orca too, leaving the agent no way to start the app."""
+
+class BrokenManifestTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def bridge_with(self, content):
+        """A bridge that read `content` as its tool list (None: the file does not exist)."""
+        path = os.path.join(self.tmp.name, "orcamcp_tools.json")
+        if content is not None:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
         bridge = load_bridge()
-        bridge.TOOLS_MANIFEST_ERROR = "cannot read OrcaMCP's tool list /nowhere/orcamcp_tools.json"
+        with contextlib.redirect_stderr(io.StringIO()):
+            bridge.install_tools_manifest(path)
+        return bridge, path
+
+    def offline_tools(self, bridge):
         with mock.patch.object(bridge, "check_orcaslicer_connection", return_value=bridge.DOWN):
-            response = bridge.handle_local_request({"jsonrpc": "2.0", "id": 3, "method": "tools/list"})
-        self.assertIn("/nowhere/orcamcp_tools.json", response["error"]["message"])
+            return bridge.handle_local_request({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})["result"]["tools"]
+
+    def test_loading_a_broken_file_never_raises(self):
+        for label, content in BROKEN_MANIFESTS.items():
+            with self.subTest(case=label):
+                bridge, path = self.bridge_with(content)
+                self.assertIn(path, bridge.TOOLS_MANIFEST_ERROR)
+                self.assertEqual(bridge.OFFLINE_SERVER_TOOLS, [])
+
+    def test_start_orca_is_still_listed_while_the_app_is_down(self):
+        for label, content in BROKEN_MANIFESTS.items():
+            with self.subTest(case=label):
+                bridge, path = self.bridge_with(content)
+                tools = self.offline_tools(bridge)
+                self.assertEqual([t["name"] for t in tools], ["start_orca"])
+                # It says what is wrong, so the agent can tell the user.
+                self.assertIn(path, tools[0]["description"])
+                self.assertEqual(tools[0]["inputSchema"]["type"], "object")
+
+    def test_start_orca_is_still_listed_once_the_app_is_up(self):
+        live = {"jsonrpc": "2.0", "id": 1, "result": {"tools": [
+            {"name": "get_scene_info", "description": "Scene.", "inputSchema": {"type": "object", "properties": {}}}]}}
+        bridge, _ = self.bridge_with(None)
+        tools = bridge.adopt_live_tools(live)["result"]["tools"]
+        self.assertEqual([t["name"] for t in tools], ["start_orca", "get_scene_info"])
+        # ...and stays listed when the app quits again, since that list is what gets cached.
+        self.assertEqual([t["name"] for t in bridge.CACHED_TOOLS], ["start_orca", "get_scene_info"])
+
+    def test_start_orca_still_launches_the_app(self):
+        bridge, _ = self.bridge_with(None)
+        with mock.patch.object(bridge, "launch_orcamcp", return_value={"success": True, "message": "started"}):
+            response = bridge.handle_local_request(
+                {"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "start_orca"}})
+        self.assertFalse(response["result"]["isError"])
+
+    def test_a_readable_file_leaves_no_error(self):
+        bridge = load_bridge()
+        self.assertIsNone(bridge.TOOLS_MANIFEST_ERROR)
+        self.assertEqual([t["name"] for t in bridge.BRIDGE_TOOLS],
+                         [t["name"] for t in load_manifest()["bridge_tools"]])
 
 
 if __name__ == "__main__":

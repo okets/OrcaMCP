@@ -40,18 +40,9 @@ import urllib.error
 # against it by tests/slic3rutils/test_mcp_tool_list.cpp. The bridge serves its server_tools while
 # the app is not running, and takes its own tools (bridge_tools, e.g. start_orca) from it whether
 # the app runs or not, so a client sees the same names and descriptions before and after the app
-# starts. None of that text is written here.
+# starts. None of that text is written here; the one exception is the start_orca offered when the
+# file itself is unusable (fallback_bridge_tools).
 TOOLS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "orcamcp_tools.json")
-
-
-def load_tools_manifest(path: str = TOOLS_FILE) -> tuple:
-    """Return (manifest, error). An unreadable file gives empty tool lists and says why."""
-    try:
-        with open(path, encoding="utf-8") as f:
-            manifest = json.load(f)
-        return {"server_tools": manifest["server_tools"], "bridge_tools": manifest["bridge_tools"]}, None
-    except (OSError, ValueError, KeyError, TypeError) as e:
-        return {"server_tools": [], "bridge_tools": []}, f"cannot read OrcaMCP's tool list {path}: {e!r}"
 
 
 def list_entry(tool: dict) -> dict:
@@ -59,11 +50,59 @@ def list_entry(tool: dict) -> dict:
     return {"name": tool["name"], "description": tool["description"], "inputSchema": tool["inputSchema"]}
 
 
-TOOLS_MANIFEST, TOOLS_MANIFEST_ERROR = load_tools_manifest()
-if TOOLS_MANIFEST_ERROR:
-    print(f"[orcamcp-bridge] {TOOLS_MANIFEST_ERROR}", file=sys.stderr)
-BRIDGE_TOOLS = [list_entry(t) for t in TOOLS_MANIFEST["bridge_tools"]]
-OFFLINE_SERVER_TOOLS = [list_entry(t) for t in TOOLS_MANIFEST["server_tools"]]
+def _list_entries(manifest, key: str) -> list:
+    """The manifest's `key` array as tools/list entries. Raises ValueError naming a malformed entry."""
+    tools = manifest.get(key) if isinstance(manifest, dict) else None
+    if not isinstance(tools, list):
+        raise ValueError(f"it has no {key} list")
+    for i, tool in enumerate(tools):
+        if not (isinstance(tool, dict) and isinstance(tool.get("name"), str)
+                and isinstance(tool.get("description"), str) and isinstance(tool.get("inputSchema"), dict)):
+            raise ValueError(f"{key}[{i}] lacks a string name, a string description or an object inputSchema")
+    return [list_entry(tool) for tool in tools]
+
+
+def fallback_bridge_tools(error: str) -> list:
+    """What the bridge offers when orcamcp_tools.json is unusable: start_orca alone, since without it
+    an agent could not even launch the app.
+
+    Its description deliberately differs from the file's start_orca -- it has to say what is wrong --
+    so in this error state the offline and online lists do not match. They could not anyway: the
+    offline list has lost every app tool.
+    """
+    return [{
+        "name": "start_orca",
+        "description": ("Launch OrcaMCP and wait until it is ready. The bridge could not read its tool list "
+                        f"({error}), so this is the only tool it can offer while the app is down. Reinstall "
+                        "OrcaMCP, or reconnect your agent from the app, to restore the rest."),
+        "inputSchema": {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
+    }]
+
+
+def load_tools_manifest(path: str = TOOLS_FILE) -> tuple:
+    """Return (server_tools, bridge_tools, error), as tools/list entries.
+
+    Never raises: a bridge that dies lists nothing at all. An unreadable or malformed file gives no
+    app tools, the fallback start_orca, and the reason.
+    """
+    try:
+        with open(path, encoding="utf-8") as f:
+            manifest = json.load(f)
+        return _list_entries(manifest, "server_tools"), _list_entries(manifest, "bridge_tools"), None
+    except Exception as e:
+        error = f"cannot read OrcaMCP's tool list {path}: {e}"
+        return [], fallback_bridge_tools(error), error
+
+
+def install_tools_manifest(path: str = TOOLS_FILE):
+    """Read the tool list the bridge serves. Runs once at import; tests point it at other files."""
+    global OFFLINE_SERVER_TOOLS, BRIDGE_TOOLS, TOOLS_MANIFEST_ERROR
+    OFFLINE_SERVER_TOOLS, BRIDGE_TOOLS, TOOLS_MANIFEST_ERROR = load_tools_manifest(path)
+    if TOOLS_MANIFEST_ERROR:
+        print(f"[orcamcp-bridge] {TOOLS_MANIFEST_ERROR}", file=sys.stderr)
+
+
+install_tools_manifest()
 
 # Configuration
 ORCAMCP_HOST = os.environ.get("ORCAMCP_HOST", "localhost")
@@ -486,10 +525,6 @@ def handle_local_request(request: dict) -> dict | None:
     if method == "tools/list" and CACHED_TOOLS is None:
         # First time - try a quick check, but return the static list fast if nothing answers
         if check_orcaslicer_connection(timeout=0.1) != LIVE:
-            if TOOLS_MANIFEST_ERROR:
-                # An empty list would hide start_orca too, leaving no way to start the app.
-                return make_error_response(request_id, -32603, TOOLS_MANIFEST_ERROR +
-                                           ". Reinstall OrcaMCP, or reconnect your agent from the app.")
             log_debug("Quick startup: returning static tools list")
             _served_static_tools = True
             return make_success_response(request_id, {"tools": get_full_tools_list()})
