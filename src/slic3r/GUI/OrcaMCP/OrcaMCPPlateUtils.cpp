@@ -1,4 +1,5 @@
 #include "OrcaMCPPlateUtils.hpp"
+#include "OrcaMCPImageFiles.hpp"
 #include "OrcaMCPPlateOccupancy.hpp"
 #include "OrcaMCPCommon.hpp"
 #include "slic3r/GUI/GLCanvas3D.hpp"
@@ -124,7 +125,7 @@ static std::string save_thumbnail_to_file(const ThumbnailData& thumbnail_data, i
 }
 // An image this server hands out by path. A failed write throws: returning the path of a file that
 // was never written sent agents to read a picture that did not exist.
-static std::string write_mcp_image(const wxImage& image, const char* prefix, const std::string& tag, bool use_png)
+static std::string write_mcp_image(const wxImage& image, std::string_view prefix, const std::string& tag, bool use_png)
 {
     const std::string path = OrcaMCP::new_mcp_image_path(prefix, tag, use_png ? ".png" : ".jpg");
     // PNG keeps 1 px overlays crisp and alpha intact.

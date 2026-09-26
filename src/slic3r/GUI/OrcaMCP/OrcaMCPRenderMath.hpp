@@ -1,10 +1,11 @@
 #ifndef slic3r_OrcaMCPRenderMath_hpp_
 #define slic3r_OrcaMCPRenderMath_hpp_
 
-// Pure geometry, colour and camera decisions behind render_plate_view, and where its images are
-// written. Nothing here touches GL or wx, so every function is unit-tested in
-// tests/slic3rutils/test_render_math.cpp. The renderer and the 2D overlay code call these; they
-// never duplicate the arithmetic.
+// Pure geometry, colour and camera decisions behind render_plate_view. Nothing here draws, touches
+// wx or reads or writes files: frame_camera uses Camera's matrix arithmetic, none of its GL calls.
+// So every function is unit-tested in tests/slic3rutils/test_render_math.cpp, without a GL context.
+// The renderer and the 2D overlay code call these; they never duplicate the arithmetic. Where the
+// rendered images are written is OrcaMCPImageFiles.
 
 #include <string>
 #include <vector>
@@ -92,25 +93,6 @@ struct RenderCounts
 // Why a picture came out as one flat colour: the 3D view had no model volumes at all, none of them
 // were on this plate, or they were drawn and the camera looked elsewhere. `plate_box` is bed mm.
 std::string uniform_image_hint(const RenderCounts& counts, int plate_index, const BoundingBoxf3& plate_box);
-
-// Where render_plate_view and the turntable previews write their images: the platform's temp
-// directory, as boost::filesystem reports it. It used to be a literal "/tmp/", which is not a
-// directory on Windows.
-std::string mcp_image_directory();
-
-// A new path in mcp_image_directory() for one image: "<prefix><time>_<sequence>_<tag><extension>".
-// The per-process sequence number keeps renders made within the same second from overwriting
-// each other. `prefix` is one of the two below.
-std::string new_mcp_image_path(const std::string& prefix, const std::string& tag, const std::string& extension);
-inline const char* k_render_image_prefix  = "orcamcp_render_";
-inline const char* k_preview_image_prefix = "orcamcp_preview_";
-
-// True for the file name of an image this server writes: either prefix, .png or .jpg.
-bool is_mcp_image_file_name(const std::string& file_name);
-
-// True when `path` is such an image directly inside mcp_image_directory(): the only files
-// get_preview_base64 will read. A name check alone let "<anywhere>/orcamcp_render_/../<file>" through.
-bool is_mcp_image_path(const std::string& path);
 
 // Grid lines at z = plate.min.z inside the plate's footprint, every `step_mm`. A line is `major`
 // when its coordinate is a multiple of step_mm * major_every (the origin line counts).

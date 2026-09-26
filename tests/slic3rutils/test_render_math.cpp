@@ -2,9 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <fstream>
-
-#include <boost/filesystem.hpp>
 
 #include "slic3r/GUI/OrcaMCP/OrcaMCPRenderMath.hpp"
 #include "slic3r/GUI/Camera.hpp"
@@ -251,42 +248,4 @@ TEST_CASE("the blank-picture hint names what was missing", "[RenderMath]")
     const std::string stale = uniform_image_hint({0, 0, false}, 0, plate);
     CHECK(stale.find("could not be refreshed") != std::string::npos);
     CHECK(looked_away.find("could not be refreshed") == std::string::npos);
-}
-
-// Where the images go. They used to be written to a literal /tmp/, which is not a directory on
-// Windows, and the render files were never cleaned up.
-
-TEST_CASE("images are written to the temp directory under names that never repeat", "[RenderMath]")
-{
-    namespace fs = boost::filesystem;
-    const std::string first  = new_mcp_image_path(k_render_image_prefix, "0", ".png");
-    const std::string second = new_mcp_image_path(k_render_image_prefix, "0", ".png");
-    CHECK(first != second);  // two renders in the same second used to overwrite each other
-    CHECK(fs::path(first).parent_path() == fs::path(mcp_image_directory()));
-    CHECK(fs::equivalent(fs::path(mcp_image_directory()), fs::temp_directory_path()));
-    CHECK(is_mcp_image_file_name(fs::path(first).filename().string()));
-}
-
-TEST_CASE("only this server's image names count as its images", "[RenderMath]")
-{
-    CHECK(is_mcp_image_file_name("orcamcp_render_1789763152_1_0.png"));
-    CHECK(is_mcp_image_file_name("orcamcp_preview_1789763152_0_grid.jpg"));
-    CHECK_FALSE(is_mcp_image_file_name("orcamcp_render_1789763152_1_0.txt"));
-    CHECK_FALSE(is_mcp_image_file_name("my_orcamcp_render_1.png"));
-    CHECK_FALSE(is_mcp_image_file_name("id_rsa"));
-}
-
-TEST_CASE("an image path is readable only directly inside the temp directory", "[RenderMath]")
-{
-    namespace fs = boost::filesystem;
-    const std::string image = new_mcp_image_path(k_preview_image_prefix, "test", ".jpg");
-    std::ofstream(image) << "not really a jpeg";
-    CHECK(is_mcp_image_path(image));
-
-    const fs::path dir(mcp_image_directory());
-    CHECK_FALSE(is_mcp_image_path((dir / "orcamcp_render_" / ".." / "secret.png").string()));  // a name check passed this
-    CHECK_FALSE(is_mcp_image_path((dir / "sub" / "orcamcp_render_1_0_0.png").string()));
-    CHECK_FALSE(is_mcp_image_path((dir / "notes.png").string()));
-    CHECK_FALSE(is_mcp_image_path("orcamcp_render_1_0_0.png"));  // relative: not inside it
-    fs::remove(image);
 }

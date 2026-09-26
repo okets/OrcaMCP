@@ -2,6 +2,7 @@
 #include "OrcaMCPCommon.hpp"
 #include "OrcaMCPPresetConfigUtils.hpp"
 #include "OrcaMCPPlateUtils.hpp"
+#include "OrcaMCPImageFiles.hpp"
 #include "OrcaMCPConfigKeys.hpp"
 #include "OrcaMCPFilamentUtils.hpp"
 #include "OrcaMCPSliceEstimate.hpp"

@@ -2,14 +2,9 @@
 #include "OrcaMCPPlateOccupancy.hpp"  // stable_camera_up
 #include "slic3r/GUI/Camera.hpp"
 
-#include <boost/algorithm/string/predicate.hpp>
-#include <boost/filesystem.hpp>
-
 #include <algorithm>
-#include <atomic>
 #include <cmath>
 #include <cstdio>
-#include <ctime>
 #include <limits>
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
@@ -227,48 +222,6 @@ std::string uniform_image_hint(const RenderCounts& counts, int plate_index, cons
     if (!counts.scene_current)
         hint += " (the hidden 3D view could not be refreshed, so its scene may be out of date; showing the Prepare tab once refreshes it)";
     return hint;
-}
-
-namespace {
-
-// Resolved, so a path handed back later compares equal to it whatever links the temp directory
-// sits behind (/var is /private/var on macOS), and without the trailing separator $TMPDIR carries,
-// so it equals the parent_path() of a file inside it.
-boost::filesystem::path image_directory()
-{
-    boost::filesystem::path directory = boost::filesystem::weakly_canonical(boost::filesystem::temp_directory_path());
-    directory.remove_trailing_separator();
-    return directory;
-}
-
-} // namespace
-
-std::string mcp_image_directory() { return image_directory().string(); }
-
-std::string new_mcp_image_path(const std::string& prefix, const std::string& tag, const std::string& extension)
-{
-    static std::atomic<unsigned> s_sequence{0};
-    const std::string name = prefix + std::to_string(std::time(nullptr)) + "_" + std::to_string(s_sequence.fetch_add(1)) +
-                             "_" + tag + extension;
-    return (image_directory() / name).string();
-}
-
-bool is_mcp_image_file_name(const std::string& file_name)
-{
-    const bool ours  = boost::starts_with(file_name, k_render_image_prefix) || boost::starts_with(file_name, k_preview_image_prefix);
-    const bool image = boost::ends_with(file_name, ".png") || boost::ends_with(file_name, ".jpg");
-    return ours && image;
-}
-
-bool is_mcp_image_path(const std::string& path)
-{
-    namespace fs = boost::filesystem;
-    const fs::path given(path);
-    if (!given.is_absolute())
-        return false;
-    boost::system::error_code ec;
-    const fs::path resolved = fs::weakly_canonical(given, ec);
-    return !ec && is_mcp_image_file_name(resolved.filename().string()) && resolved.parent_path() == image_directory();
 }
 
 std::vector<GridSegment> grid_segments(const BoundingBoxf3& plate, double step_mm, int major_every)
