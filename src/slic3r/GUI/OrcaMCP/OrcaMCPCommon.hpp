@@ -18,7 +18,7 @@ namespace OrcaMCP {
 
 // Runs `func` on the wx main thread and blocks the calling HTTP worker until it returns.
 // `func` must return nlohmann::json. Exceptions propagate to the caller. Once the app has begun to
-// quit this throws McpShuttingDown instead, without running `func` (MainThreadGate::call).
+// quit this throws McpShuttingDown instead, without running `func` (call_through, QueuedCalls::run).
 template<typename Func>
 nlohmann::json run_on_main_thread(Func&& func)
 {
