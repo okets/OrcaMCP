@@ -9575,8 +9575,14 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                 wxString tips = from_u8((boost::format(_u8L("Connected printer is %s. It must match the project preset for printing.\n")) % printer_model).str());
 
                                 tips += _L("Do you want to sync the printer information and automatically switch the preset?");
-                                TipsDialog dlg(wxGetApp().mainframe, _L("Tips"), tips, "sync_after_load_file_show_flag", wxYES_NO);
-                                if (dlg.ShowModal() == wxID_YES) { sync_printer_info = true; }
+                                // Orca MCP: TipsDialog is modal and would block the GUI thread while the MCP handler
+                                // waits. Keep the project's printer preset; select_preset switches it.
+                                if (is_mcp_dialog_suppression_enabled()) {
+                                    add_mcp_suppressed_answer(into_u8(tips), "No: the printer preset was not switched");
+                                } else {
+                                    TipsDialog dlg(wxGetApp().mainframe, _L("Tips"), tips, "sync_after_load_file_show_flag", wxYES_NO);
+                                    if (dlg.ShowModal() == wxID_YES) { sync_printer_info = true; }
+                                }
                             }
                             else {
                                 sync_printer_info = wxGetApp().app_config->get("sync_after_load_file_show_flag") == "true";
@@ -14868,6 +14874,16 @@ bool Plater::priv::run_textured_mesh_import_dialog(Slic3r::Model& loaded_model, 
     // message instead of making the user round-trip a meaningless matcher.
     if (loaded_model.objects.empty()) {
         BOOST_LOG_TRIVIAL(warning) << "handle_textured_mesh_import: skipping dialog because the loaded model has no geometry objects";
+        loaded_model.texture_mesh.reset();
+        result.skipped = true;
+        return true;
+    }
+
+    // Orca MCP: the dialog is modal and would block the GUI thread while the MCP handler waits.
+    // Answer it as its Skip button does: the geometry is imported, the colours are not mapped.
+    if (is_mcp_dialog_suppression_enabled()) {
+        add_mcp_suppressed_answer("Texture import: match the model's colours to filaments",
+                                  "Skip: imported as plain geometry, colours not mapped");
         loaded_model.texture_mesh.reset();
         result.skipped = true;
         return true;
