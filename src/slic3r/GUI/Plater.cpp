@@ -8293,8 +8293,12 @@ static bool mcp_skip_step_mesh_dialog(double linear, double angle, bool split_co
     if (!is_mcp_dialog_suppression_enabled())
         return false;
 
-    add_mcp_suppressed_message("STEP mesh settings dialog suppressed: the file was imported with the "
-                               "configured linear/angle deflection.");
+    // Without enable_step_mesh_setting the dialog is not shown anyway: there is nothing to report.
+    if (wxGetApp().app_config->get_bool("enable_step_mesh_setting"))
+        add_mcp_suppressed_answer("STEP mesh settings: choose the tessellation deflection",
+                                  (boost::format("OK with the configured values: linear deflection %1%, angle deflection "
+                                                 "%2%, split compound %3%") %
+                                   linear % angle % (split_compound ? "yes" : "no")).str());
     linear_value = linear;
     angle_value  = angle;
     is_split     = split_compound;
@@ -9939,7 +9943,7 @@ wxString Plater::priv::get_export_file(GUI::FileType file_type, const wxString& 
     // MCP automation: a native file dialog is modal and would block the GUI thread forever
     // while the MCP handler waits for this call to return. Report it instead of opening it.
     if (is_mcp_dialog_suppression_enabled()) {
-        add_mcp_suppressed_message("A file-save dialog was required and skipped under automation; nothing was written.");
+        add_mcp_suppressed_answer("Save file: choose where to write it", "Cancel: nothing was written");
         return wxString();
     }
 
@@ -17042,8 +17046,8 @@ bool Plater::preview_zip_archive(const boost::filesystem::path& archive_path)
     // MCP automation: the archive file picker is modal and would block the GUI thread while
     // the MCP handler waits. Report it instead of opening it.
     if (is_mcp_dialog_suppression_enabled()) {
-        add_mcp_suppressed_message("Archive contents dialog suppressed: the ZIP was not imported. "
-                                   "Extract it and load the model files individually.");
+        add_mcp_suppressed_answer("Archive contents: choose the files to import from the ZIP",
+                                  "Cancel: the ZIP was not imported; extract it and load the model files one by one");
         return false;
     }
 
@@ -17808,7 +17812,8 @@ int GUI::Plater::close_with_confirm(std::function<bool(bool)> second_check)
     // MCP automation: answer "No" (continue without saving). The generic MsgDialog suppression
     // answers Yes/No dialogs with Yes, which would route into save_project() and a modal file dialog.
     if (is_mcp_dialog_suppression_enabled()) {
-        add_mcp_suppressed_message("The current project has unsaved changes. Continued without saving.");
+        add_mcp_suppressed_answer("The current project has unsaved changes. Save it before continuing?",
+                                  "No: continued without saving");
         if (second_check && !second_check(false)) return wxID_CANCEL;
         model().set_backup_path("");
         up_to_date(true, false);

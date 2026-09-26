@@ -57,6 +57,17 @@ bool is_mcp_dialog_suppression_enabled();
 std::vector<std::string> get_mcp_suppressed_messages();
 void add_mcp_suppressed_message(const std::string& msg);
 void clear_mcp_suppressed_messages();
+// A suppressed prompt that offered a choice is recorded with the answer automation gave it, as
+// "<prompt> (auto-answered <answer>)", so an agent can tell a merge or a rescale from a notice.
+std::string mcp_answered_prompt(const std::string& prompt, const std::string& answer);
+void add_mcp_suppressed_answer(const std::string& prompt, const std::string& answer);
+// How MsgDialog answers a suppressed prompt with the given wx button style: Yes when it has a Yes or
+// No button, OK otherwise. offers_choice is false for an OK-only box, which records its text alone.
+int mcp_default_answer(long style);
+bool mcp_prompt_offers_choice(long style);
+std::string mcp_answer_label(int answer_id);
+// "a, b, c and 4 more": at most max_items of `items`, for naming what a suppressed prompt affected.
+std::string mcp_list_summary(const std::vector<std::string>& items, size_t max_items);
 void show_substitutions_info(const PresetsConfigSubstitutions& presets_config_substitutions);
 void show_substitutions_info(const ConfigSubstitutions& config_substitutions, const std::string& filename);
 

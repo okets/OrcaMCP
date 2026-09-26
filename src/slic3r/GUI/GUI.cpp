@@ -65,6 +65,44 @@ void clear_mcp_suppressed_messages() {
     s_mcp_suppressed_messages.clear();
 }
 
+std::string mcp_answered_prompt(const std::string& prompt, const std::string& answer) {
+    return prompt + " (auto-answered " + answer + ")";
+}
+
+void add_mcp_suppressed_answer(const std::string& prompt, const std::string& answer) {
+    add_mcp_suppressed_message(mcp_answered_prompt(prompt, answer));
+}
+
+int mcp_default_answer(long style) {
+    // Yes for any Yes/No prompt: the load prompts (scale to fit, convert units, merge parts) are
+    // safer answered Yes. Prompts where Yes would open a modal (close_with_confirm) answer themselves.
+    return (style & (wxYES | wxNO)) ? wxID_YES : wxID_OK;
+}
+
+bool mcp_prompt_offers_choice(long style) {
+    return (style & (wxYES | wxNO | wxCANCEL)) != 0;
+}
+
+std::string mcp_answer_label(int answer_id) {
+    switch (answer_id) {
+    case wxID_YES: return "Yes";
+    case wxID_NO: return "No";
+    case wxID_OK: return "OK";
+    case wxID_CANCEL: return "Cancel";
+    default: return "button " + std::to_string(answer_id);
+    }
+}
+
+std::string mcp_list_summary(const std::vector<std::string>& items, size_t max_items) {
+    const size_t shown = std::min(items.size(), max_items);
+    std::string  summary;
+    for (size_t i = 0; i < shown; ++i)
+        summary += (i == 0 ? "" : ", ") + items[i];
+    if (items.size() > shown)
+        summary += " and " + std::to_string(items.size() - shown) + " more";
+    return summary;
+}
+
 #if __APPLE__
 IOPMAssertionID assertionID;
 #endif

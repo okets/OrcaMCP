@@ -833,7 +833,10 @@ inline int UnsavedChangesDialog::ShowModal()
     // MCP handler waits. Discard the unsaved preset changes, as documented for automation.
     if (is_mcp_dialog_suppression_enabled()) {
         m_exit_action = Action::Discard;
-        add_mcp_suppressed_message(into_u8(GetTitle()) + ": unsaved preset changes were discarded.");
+        const std::vector<std::string> keys = get_selected_options();
+        add_mcp_suppressed_answer(into_u8(GetTitle()) + ": the presets have unsaved changes" +
+                                      (keys.empty() ? std::string() : " to " + mcp_list_summary(keys, 8)),
+                                  "Discard: the changes were lost");
         return wxID_OK;
     }
 

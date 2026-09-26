@@ -85,21 +85,14 @@ int MsgDialog::ShowModal()
 {
     // Check if MCP dialog suppression is enabled
     if (is_mcp_dialog_suppression_enabled()) {
-        // Capture the message
-        std::string msg = m_mcp_message.ToUTF8().data();
-        add_mcp_suppressed_message(msg);
-
-        // Return appropriate default based on dialog style
-        // For Yes/No dialogs, default to YES (safer for scaling operations)
-        if (m_style & wxYES_NO) {
-            return wxID_YES;
-        }
-        // For OK/Cancel dialogs, default to OK
-        if (m_style & wxCANCEL) {
-            return wxID_OK;
-        }
-        // For OK-only dialogs, return OK
-        return wxID_OK;
+        // Capture the message, and for a prompt that offered a choice, the answer given to it.
+        const std::string prompt = m_mcp_message.ToUTF8().data();
+        const int         answer = mcp_default_answer(m_style);
+        if (mcp_prompt_offers_choice(m_style))
+            add_mcp_suppressed_answer(prompt, mcp_answer_label(answer));
+        else
+            add_mcp_suppressed_message(prompt);
+        return answer;
     }
 
     // Normal behavior - show the dialog
