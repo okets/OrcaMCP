@@ -3,9 +3,11 @@
 #include <chrono>
 #include <ctime>
 #include <fstream>
+#include <stdexcept>
 
 #include <boost/filesystem.hpp>
 
+#include "slic3r/GUI/OrcaMCP/OrcaMCPCommon.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPImageFiles.hpp"
 
 using namespace Slic3r::GUI::OrcaMCP;
@@ -77,4 +79,31 @@ TEST_CASE("startup cleanup removes only this server's images older than the safe
 TEST_CASE("startup cleanup of a missing directory removes nothing", "[orcamcp][ImageFiles]")
 {
     CHECK(remove_stale_mcp_images("/nonexistent/orcamcp-cleanup", std::chrono::hours(1)) == 0);
+}
+
+// A turntable preview rides on a call that has already changed the scene (a transform, a load,
+// adaptive layers). If making it fails, the call must still report its change as done: an error
+// there reads as "nothing happened", and the retry applies the change twice.
+
+TEST_CASE("a preview that cannot be made is reported beside a successful result", "[orcamcp][ImageFiles]")
+{
+    nlohmann::json result = {{"status", "success"}, {"object_id", 0}};
+    add_preview_to(result, []() -> nlohmann::json { throw std::runtime_error("could not write the image to /x"); });
+    CHECK(result["status"] == "success");
+    CHECK_FALSE(result.contains("preview_path"));
+    REQUIRE(result.contains("preview_error"));
+    CHECK(result["preview_error"].get<std::string>().find("could not write the image") != std::string::npos);
+}
+
+TEST_CASE("a preview reports its path, or the error the capture returned", "[orcamcp][ImageFiles]")
+{
+    nlohmann::json made = {{"status", "success"}};
+    add_preview_to(made, [] { return nlohmann::json{{"preview_path", "/tmp/orcamcp_preview_1_0_turntable.jpg"}}; });
+    CHECK(made["preview_path"] == "/tmp/orcamcp_preview_1_0_turntable.jpg");
+    CHECK_FALSE(made.contains("preview_error"));
+
+    nlohmann::json refused = {{"status", "success"}};
+    add_preview_to(refused, [] { return nlohmann::json{{"error", "Invalid plate index"}}; });
+    CHECK(refused["status"] == "success");
+    CHECK(refused["preview_error"] == "Invalid plate index");
 }

@@ -1552,6 +1552,12 @@ Convert a preview image file to base64 data URI for remote/containerized clients
 
 **When to use:** Only use this tool if you do NOT have direct filesystem access to read the `preview_path`. Agents with local filesystem access (like Claude Code CLI) should use the Read tool instead.
 
+**Where `preview_path` comes from.** Tools that take `include_preview` (the transforms, `load_model`,
+`get_scene_info` and others) add a turntable preview of the selected plate as `preview_path`. If the
+preview cannot be made, the tool still succeeds -- its change has been applied -- and says why in
+`preview_error` instead. Before v2.5.0.6 a failed preview could make a transform report an error for
+a change it had made, so a retry applied it twice.
+
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

@@ -143,6 +143,13 @@ nlohmann::json model_object_summary_json(const ModelObject& object, int object_i
 // Always returns {"count": N, "warnings": [{level, message, type}...]}.
 nlohmann::json get_active_warnings_json(Plater* plater);
 
+// Adds the preview `capture` makes to `result`: preview_path, or preview_error when capture fails,
+// by returning {"error": ...} or by throwing. Never throws: a preview rides on a call that has
+// already changed the scene, and an error there would read as "nothing happened" -- the retry then
+// applies the change twice.
+void add_preview_to(nlohmann::json& result, const std::function<nlohmann::json()>& capture);
+
+// A turntable preview of the selected plate, through add_preview_to, when `include_preview` is set.
 void add_turntable_preview_if_requested(nlohmann::json& result, bool include_preview, int view_count = 4, int resolution = 256);
 
 // RAII: suppress modal dialogs for the lifetime of the guard and collect their messages.

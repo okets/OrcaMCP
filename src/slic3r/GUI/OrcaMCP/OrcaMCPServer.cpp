@@ -649,17 +649,9 @@ void OrcaMCPServer::register_builtin_tools()
             return run_on_main_thread([with_features, include_preview, preview_views, preview_resolution]() {
                 nlohmann::json result = OrcaMCPPlateUtils::GetCurrentProject(with_features);
 
-                // Add turntable preview if requested
-                if (include_preview) {
-                    Plater* plater = wxGetApp().plater();
-                    int plate_index = plater->get_partplate_list().get_curr_plate_index();
-                    nlohmann::json preview = OrcaMCPPlateUtils::CaptureTurntablePreview(
-                        plate_index, preview_views, preview_resolution);
-                    if (preview.contains("preview_path")) {
-                        result["preview_path"] = preview["preview_path"];
-                        result["preview_hint"] = "Check the preview image to get a visual overview of objects on the current plate.";
-                    }
-                }
+                add_turntable_preview_if_requested(result, include_preview, preview_views, preview_resolution);
+                if (result.contains("preview_path"))
+                    result["preview_hint"] = "Check the preview image to get a visual overview of objects on the current plate.";
 
                 // Always include active warnings section
                 result["active_warnings"] = get_active_warnings_json(wxGetApp().plater());

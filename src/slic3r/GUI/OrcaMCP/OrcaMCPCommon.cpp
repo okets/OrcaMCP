@@ -333,18 +333,25 @@ nlohmann::json get_active_warnings_json(Plater* plater) {
     return result;
 }
 
-// Helper to add turntable preview to result if requested
-void add_turntable_preview_if_requested(nlohmann::json& result, bool include_preview,
-                                         int view_count, int resolution) {
-    if (!include_preview) return;
-
-    Plater* plater = wxGetApp().plater();
-    int plate_index = plater->get_partplate_list().get_curr_plate_index();
-
-    nlohmann::json preview = OrcaMCPPlateUtils::CaptureTurntablePreview(plate_index, view_count, resolution);
-    if (preview.contains("preview_path")) {
-        result["preview_path"] = preview["preview_path"];
+void add_preview_to(nlohmann::json& result, const std::function<nlohmann::json()>& capture)
+{
+    try {
+        const nlohmann::json preview = capture();
+        if (preview.contains("preview_path"))
+            result["preview_path"] = preview["preview_path"];
+        else
+            result["preview_error"] = preview.value("error", std::string("the preview returned no image"));
+    } catch (const std::exception& e) {
+        result["preview_error"] = std::string("the turntable preview could not be made: ") + e.what();
     }
+}
+
+void add_turntable_preview_if_requested(nlohmann::json& result, bool include_preview, int view_count, int resolution)
+{
+    if (!include_preview)
+        return;
+    const int plate_index = wxGetApp().plater()->get_partplate_list().get_curr_plate_index();
+    add_preview_to(result, [&] { return OrcaMCPPlateUtils::CaptureTurntablePreview(plate_index, view_count, resolution); });
 }
 
 }}} // namespace Slic3r::GUI::OrcaMCP
