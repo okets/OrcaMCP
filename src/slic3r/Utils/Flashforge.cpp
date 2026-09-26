@@ -544,14 +544,20 @@ bool Flashforge::fetch_material_slots(std::vector<FlashforgeMaterialSlot>& slots
     return true;
 }
 
-bool Flashforge::fetch_status(FlashforgeApi::PrinterStatus& out, wxString& msg) const
+bool Flashforge::fetch_status(FlashforgeApi::PrinterStatus& out, wxString& msg, bool* unreachable) const
 {
+    if (unreachable != nullptr)
+        *unreachable = false;
     if (!require_local_api_credentials(msg))
         return false;
 
-    std::string body;
-    if (!request_local_api_json("detail", FlashforgeApi::make_credentials_payload(m_serial_number, m_check_code).dump(), body, msg))
+    std::string                        body;
+    FlashforgeLocalApi::RequestFailure failure;
+    if (!request_local_api_json("detail", FlashforgeApi::make_credentials_payload(m_serial_number, m_check_code).dump(), body, msg, &failure)) {
+        if (unreachable != nullptr)
+            *unreachable = FlashforgeLocalApi::is_connectivity_failure(failure);
         return false;
+    }
 
     std::string err;
     if (!FlashforgeApi::parse_detail(body, out, err)) {

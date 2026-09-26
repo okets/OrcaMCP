@@ -176,6 +176,22 @@ TEST_CASE("run_with_retry makes one attempt for a caller that may not block", "[
     CHECK(request.calls == 1);
 }
 
+TEST_CASE("is_connectivity_failure is true only when the printer could not be talked to", "[flashforge]")
+{
+    CHECK(is_connectivity_failure(RequestFailure{kImmediateConnectFailure}));
+    CHECK(is_connectivity_failure(RequestFailure{kRefused}));
+    CHECK(is_connectivity_failure(RequestFailure{kTimeout}));
+    CHECK(is_connectivity_failure(RequestFailure{kUnresolved}));
+    CHECK(is_connectivity_failure(RequestFailure{"curl:Server returned nothing (no headers, no data):\n\n[Error 52]"}));
+    CHECK(is_connectivity_failure(RequestFailure{"curl:Failure when receiving data from the peer:\n\n[Error 56]"}));
+
+    // It answered: a wrong check code, an HTTP error status, a body that is not the API's.
+    CHECK_FALSE(is_connectivity_failure(RequestFailure{"", 200, 12, "Flashforge local API error 1: check code wrong"}));
+    CHECK_FALSE(is_connectivity_failure(RequestFailure{"", 500, 12}));
+    CHECK_FALSE(is_connectivity_failure(RequestFailure{"curl:SSL connect error:\n\n[Error 35]"}));
+    CHECK_FALSE(is_connectivity_failure(RequestFailure{}));
+}
+
 TEST_CASE("describe_failure names the host, the port and a next step", "[flashforge]")
 {
     RequestFailure immediate{kImmediateConnectFailure, 0, 3};

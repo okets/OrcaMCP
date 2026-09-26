@@ -143,6 +143,18 @@ bool run_with_retry(const AttemptFn& attempt, const SleepFn& sleep, bool may_wai
     }
 }
 
+bool is_connectivity_failure(const RequestFailure& failure)
+{
+    switch (curl_code_of(failure.error)) {
+    case kCurlCouldntResolveHost:
+    case kCurlCouldntConnect:
+    case kCurlOperationTimedout:
+    case kCurlGotNothing:
+    case kCurlRecvError: return true;
+    default: return false;
+    }
+}
+
 std::string describe_failure(const std::string& host, const RequestFailure& failure, int attempts)
 {
     const int         code   = curl_code_of(failure.error);

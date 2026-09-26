@@ -2153,9 +2153,13 @@ Live status from the configured print host. Full detail for Flashforge hosts.
 ```
 `obico.configured` says whether the preset names an Obico server; the token is never included.
 
-**When the printer cannot be read:** a connection that was never made is tried once more after
-500 ms. If that fails too, the error names the host and port and the next step, and `cached` carries
-the material station from the printer's last answer, if it answered since the app started:
+**When the printer cannot be reached:** a connection that was never made is tried once more after
+500 ms (not on the GUI thread, which must not sleep). If that fails too, the error names the host
+and port and the next step, and `cached` carries the material station from the printer's last
+answer, if it answered since the app started. `cached` appears only when the printer could not be
+talked to at all (no connection, a timeout, an unresolvable name, a connection dropped before any
+answer); a refusal such as a wrong check code, an HTTP error or an unreadable answer is returned as
+that error alone:
 ```json
 {
   "status": "error",
@@ -2186,11 +2190,12 @@ colour. Empty slots are left alone.
 **Returns:** `{"status": "success"|"partial", "dry_run": ..., "changed_count": N, "slots": [...],
 "filaments": [...], "source": "live"}`.
 
-When the printer cannot be read live but answered earlier in this session, the plan is made from
+When the printer cannot be reached but answered earlier in this session, the plan is made from
 that last status and the response says so: `"source": "cached"`, `age_s`, `live_error` and a `note`.
 It changes the project only with `allow_cached: true`. Without it, a call that asked to apply comes
 back as a dry run with `"applied": false`, and the note says how to opt in. With no earlier answer,
-the call returns the live error.
+the call returns the live error. So does a printer that answered with a refusal (wrong check code,
+HTTP error, unreadable answer): only an unreachable printer falls back to its last status.
 
 ---
 

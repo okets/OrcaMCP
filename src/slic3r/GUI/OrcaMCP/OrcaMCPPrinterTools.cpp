@@ -709,8 +709,9 @@ void OrcaMCPServer::register_printer_tools()
         "Live printer state and temperatures",
         "Get live status from the configured print host: state, progress, temperatures, light, material "
         "station. Full detail is only available for Flashforge hosts; other host types report online/offline. "
-        "When a Flashforge cannot be read, the error says why and what to do next, and `cached` carries the "
-        "material station from its last answer, with age_s.",
+        "When a Flashforge cannot be reached, the error says why and what to do next, and `cached` carries "
+        "the material station from its last answer, with age_s. An answer that refuses (wrong check code) "
+        "or cannot be read is returned as that error, without `cached`.",
         {
             {"type", "object"},
             {"properties", nlohmann::json::object()}
@@ -743,9 +744,12 @@ void OrcaMCPServer::register_printer_tools()
 
             Slic3r::FlashforgeApi::PrinterStatus status;
             wxString                     msg;
-            if (!ff->fetch_status(status, msg)) {
+            bool                         unreachable = false;
+            if (!ff->fetch_status(status, msg, &unreachable)) {
                 nlohmann::json error = error_response(msg.empty() ? "Failed to fetch printer status" : to_std(msg));
-                if (const auto cached = ff->last_known_status())
+                // Only when the printer could not be talked to: a refusal (wrong check code) or an
+                // unreadable answer is its own reply, and a stale status would hide it.
+                if (const auto cached = unreachable ? ff->last_known_status() : std::nullopt)
                     error["cached"] = cached_station_json(*cached);
                 return error;
             }
@@ -999,7 +1003,7 @@ void OrcaMCPServer::register_printer_tools()
         "pick a filament preset of the material the printer reports and set that slot's colour to the "
         "colour it reports. Slots the printer reports as empty are left untouched. Fixes the two things "
         "a stale project causes: send_to_printer refusing on a material mismatch, and a plate preview in "
-        "the wrong colour. When the printer cannot be read live, the plan comes from its last known status "
+        "the wrong colour. When the printer cannot be reached, the plan comes from its last known status "
         "(source: cached, with age_s and live_error) and changes the project only with allow_cached: true; "
         "otherwise it is returned as a dry run.",
         {
@@ -1049,9 +1053,12 @@ void OrcaMCPServer::register_printer_tools()
 
             Slic3r::FlashforgeApi::PrinterStatus status;
             wxString                             msg;
-            if (!ff->fetch_status(status, msg)) {
+            bool                                 unreachable = false;
+            if (!ff->fetch_status(status, msg, &unreachable)) {
                 const std::string live_error = msg.empty() ? "Failed to read material station status" : to_std(msg);
-                const auto        cached     = ff->last_known_status();
+                // The last known status stands in only for a printer that could not be reached; its
+                // own refusal (wrong check code, HTTP error, unreadable answer) is returned as is.
+                const auto cached = unreachable ? ff->last_known_status() : std::nullopt;
                 if (!cached)
                     return error_response(live_error);
                 return match_from_cached_status(*cached, slots, dry_run, allow_cached, live_error);

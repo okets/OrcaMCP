@@ -74,6 +74,13 @@ using SleepFn   = std::function<void(std::chrono::milliseconds)>;
 // `last_failure` is the final attempt's failure; `attempts` is how many were made.
 bool run_with_retry(const AttemptFn& attempt, const SleepFn& sleep, bool may_wait, RequestFailure& last_failure, int& attempts);
 
+// The printer could not be talked to at all: no connection, a timeout, an unresolvable name, or a
+// connection dropped before any answer. Only then is its last known status a fair stand-in; a
+// wrong check code, an HTTP error or an unreadable answer is the printer's own reply and stands.
+bool is_connectivity_failure(const RequestFailure& failure);
+constexpr int kCurlGotNothing = 52;
+constexpr int kCurlRecvError  = 56;
+
 // What the agent or the user reads when a request never got an HTTP answer: the host and port, what
 // happened, and what to do next. `failure.error` must carry a curl code.
 std::string describe_failure(const std::string& host, const RequestFailure& failure, int attempts);
