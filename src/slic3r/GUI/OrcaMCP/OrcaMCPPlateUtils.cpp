@@ -1079,10 +1079,12 @@ nlohmann::json OrcaMCPPlateUtils::CaptureTurntablePreview(int plate_index, int v
         return {{"error", "Invalid plate index"}};
     }
 
-    // Calculate bounding box of objects on this plate
+    // The box of what stands on this plate: each object's instances here (instances_on_plate), not
+    // every copy it has on every plate, which aimed the camera between plates.
     BoundingBoxf3 objects_box;
-    for (const auto& obj : plate->get_objects_on_this_plate()) {
-        objects_box.merge(OrcaMCP::object_world_box(*obj));
+    for (const ModelObject* obj : plate->get_objects_on_this_plate()) {
+        const OrcaMCP::InstancesOnPlate here = OrcaMCP::instances_on_plate(*obj, OrcaMCP::model_object_index(obj), *plate);
+        objects_box.merge(OrcaMCP::plate_box_of(*obj, here));
     }
 
     // Determine target (center of objects) and camera distance
