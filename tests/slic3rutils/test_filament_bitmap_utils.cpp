@@ -18,9 +18,11 @@
 #include <wx/colour.h>
 #include <wx/string.h>
 
+// slic3r/GUI headers first: on Windows they must see <windows.h> (via wx) before the libslic3r
+// headers do; scripts/tests/test_gui_include_order.py checks it.
+#include "slic3r/GUI/FilamentBitmapUtils.hpp"
 #include "libslic3r/FilamentMixer.hpp"
 #include "libslic3r/PrintConfig.hpp"
-#include "slic3r/GUI/FilamentBitmapUtils.hpp"
 
 using namespace Slic3r;
 using Slic3r::GUI::recompute_mixed_slot_colors;

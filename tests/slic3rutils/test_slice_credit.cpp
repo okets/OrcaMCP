@@ -3,10 +3,12 @@
 #include <string>
 #include <vector>
 
-#include "libslic3r/Model.hpp"
-#include "libslic3r/Print.hpp"
+// slic3r/GUI headers first: on Windows they must see <windows.h> (via wx) before the libslic3r
+// headers do; scripts/tests/test_gui_include_order.py checks it.
 #include "slic3r/GUI/OrcaMCP/OrcaMCPSliceCredit.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
+#include "libslic3r/Model.hpp"
+#include "libslic3r/Print.hpp"
 
 // Which plate a slice's completion is credited to, and what a plate-list change does to a running
 // slice. A plate wrongly marked sliced exports and sends G-code that is not its own; a plate or Print

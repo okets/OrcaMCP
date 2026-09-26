@@ -3,8 +3,10 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
-#include "libslic3r/FilamentMixer.hpp"
+// slic3r/GUI headers first: on Windows they must see <windows.h> (via wx) before the libslic3r
+// headers do; scripts/tests/test_gui_include_order.py checks it.
 #include "slic3r/GUI/OrcaMCP/OrcaMCPColorRecipe.hpp"
+#include "libslic3r/FilamentMixer.hpp"
 
 // The decisions behind suggest_color_mix and get_color_palette that do not need a printer: what a
 // recommend_from_physical_filaments result means, how far is too far, and which colours the loaded
