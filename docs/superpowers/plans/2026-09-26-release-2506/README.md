@@ -49,10 +49,10 @@ gave were wrong; the prompts carry the corrected facts.
 | # | Prompt | Needs merged first | Touches mostly | Status |
 |---|--------|--------------------|----------------|--------|
 | 01 | [Tool-list foundation](01-tool-list-foundation.md) | — | every `register_tool`, `get_server_info`, bridge, golden file | merged 2026-09-26 |
-| 02 | [load_model: geometry only, honest reporting](02-load-model.md) | 01 | `Plater.cpp`, `MsgDialog.cpp`, load handler | not started |
-| 03 | [Render, transforms, estimate](03-render-transforms-estimate.md) | 01 | `OrcaMCPPlateUtils.cpp`, `OrcaMCPCommon.cpp`, estimate handler | not started |
-| 04 | [Printer match and slot colours](04-printer-and-colours.md) | 01 | printer tools, Flashforge, preset utils | not started |
-| 05 | [Mesh health](05-mesh-health.md) | 01, 03 | new tool, `active_warnings`, `get_scene_info` | not started |
+| 02 | [load_model: geometry only, honest reporting](02-load-model.md) | 01 | `Plater.cpp`, `MsgDialog.cpp`, load handler | merged locally 2026-09-26 (push with batch 1) |
+| 03 | [Render, transforms, estimate](03-render-transforms-estimate.md) | 01 | `OrcaMCPPlateUtils.cpp`, `OrcaMCPCommon.cpp`, estimate handler | design approved 2026-09-26; queued behind 02 |
+| 04 | [Printer match and slot colours](04-printer-and-colours.md) | 01 | printer tools, Flashforge, preset utils | design approved 2026-09-26; queued behind 03 (merge last of 02-04) |
+| 05 | [Mesh health](05-mesh-health.md) | 01, 03 | new tool, `active_warnings`, `get_scene_info` | design approved 2026-09-26; queued behind 04 |
 | 06 | [Workflow tools](06-workflow-tools.md) | 01, 03 | bridge, slicing status, preset reads, paint remap, estimate breakdown | not started |
 | 07 | [Sliced layer plan](07-layer-plan.md) | 01, 03 | `OrcaMCPFirstLayerPlan.cpp`, `render_plate_view` | not started |
 | 08 | [Server instructions and hints](08-instructions-and-hints.md) | 01–07 | `initialize`, descriptions, result hints | not started |
@@ -80,6 +80,17 @@ roadmap; nothing ships half-done.
   - Pushes are batched: every push starts an hour-long Build all. Check
     `gh run list -R okets/OrcaMCP` first, and cancel redundant runs.
   - Docs-only commits carry `[skip ci]`.
+- **Weekend mode (user, 2026-09-26).** The orchestrator runs the release unattended and never waits
+  for CI. It pushes at three batch points (after 04, after 07, and the release push with 08 and the
+  version bump) and fixes CI failures in the next sprint. It approves designs that stay inside their
+  brief and the user's earlier decisions. When a question or approval genuinely belongs to the user,
+  it pauses all work and leaves the question in the session.
+- **Acceptance by the orchestrator, per sprint (user, 2026-09-26: "you are an agent and we are
+  building an MCP").** Before merging, the orchestrator uses the sprint's build *as an agent*, through
+  the `mcp__orca-slicer__*` tools only, on a copy of the data dir: it replays the sprint's user-facing
+  scenario and records every friction point it hits (a tool it couldn't find, a result that didn't say
+  what happened, a missing next step). Friction goes into the owning prompt, or into 08 if it is
+  discoverability. Unit tests and code review come on top of this, not instead of it.
 - **Status:** update the table above as prompts move through design → approved → implementing → merged.
 
 ## Shared traps (also inside every prompt)

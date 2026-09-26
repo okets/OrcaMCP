@@ -82,6 +82,9 @@ These all come from a session on 2026-09-26. The transcript is
      Decide in your design, with the reason.
    - Either way, an agent must be able to read 12 keys for well under 1 KB, and see which values
      differ from the saved preset.
+   - Also give a cheap answer to "which presets are selected": printer, process, and each filament
+     slot's preset, in well under 1 KB. Found in the orchestrator's acceptance pass on 2026-09-26: the
+     only way today is paging `get_presets` lists and reading `is_selected`.
    - Unknown keys return an error naming them. The key validation already used by `apply_config`
      is centralised; reuse it.
 4. **Paint remapping.**

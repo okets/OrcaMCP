@@ -93,6 +93,15 @@ In the session of 2026-09-26 (transcript
      - `render_plate_view`, when it returns a uniform image: say why, and what to do.
    - Decide the exact field name and shape in your design. One shape everywhere, built by one
      helper.
+   - From the orchestrator's acceptance pass (2026-09-26), as an agent reading `get_server_info`:
+     - `quick_start.first_steps` never mentions inspecting the model (mesh health, components).
+     - `get_object_components`' summary, "List a part's connected mesh shells", would not match an
+       agent looking for stray fragments or loose parts. Summaries are searchable text too.
+   - Naming trap found in the acceptance pass (2026-09-26): `get_scene_info` and `load_model`'s
+     `loaded_objects` carry both `"id": "71"` (an internal ObjectID) and `"object_index": 0`, while
+     every tool's parameter is called `object_id` and means the index. An agent can easily pass 71.
+     Decide in your design how to remove the trap (rename or drop `id`, or say it in the descriptions),
+     keeping existing readers of `object_index` working.
 4. **Extend the name check** (from prompt 01) to cover the instructions, every description and every
    hint.
 5. **The acceptance test, with a fresh agent.**
@@ -104,7 +113,10 @@ In the session of 2026-09-26 (transcript
    - Pass if it uses the mesh-health or component tool, and considers support painting or support
      settings, **without being told those tools exist**.
    - Run it three times; agents vary. Report each run's tool calls.
-6. **Docs.** Add a short section to CLAUDE.md on where the instructions live and how the hints
+6. **Docs.** In `docs/setup/troubleshooting.md`, add: an agent session that started before OrcaMCP
+   was upgraded keeps the tool schemas it loaded at start (seen 2026-09-26: `load_model` showed no
+   `multipart`), so reconnect the MCP server (`/mcp` in Claude Code) after an upgrade.
+   Also: Add a short section to CLAUDE.md on where the instructions live and how the hints
    work. Update `docs/tools/reference.md` for changed descriptions. Regenerate the golden tools file.
 
 **Out of scope:**
