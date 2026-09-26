@@ -372,7 +372,7 @@ void OrcaMCPServer::register_printer_tools()
             if (!physical_printer.empty())
                 return run_on_main_thread([physical_printer]() -> nlohmann::json {
                     McpDialogSuppressionGuard suppression;
-                    return select_print_host_preset(physical_printer);
+                    return suppression.report(select_print_host_preset(physical_printer));
                 });
 
             return run_on_main_thread([dev_id]() -> nlohmann::json {
@@ -690,8 +690,8 @@ void OrcaMCPServer::register_printer_tools()
                 const std::string error = save_print_host_preset(name, host, host_type, serial_number, api_key,
                                                                  printer_preset, obico_url, obico_token);
                 if (!error.empty())
-                    return error_response(error);
-                return select_print_host_preset(name);
+                    return suppression.report(error_response(error));
+                return suppression.report(select_print_host_preset(name));
             });
         }
     });

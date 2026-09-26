@@ -255,6 +255,23 @@ void report_project_rename(nlohmann::json& response, std::vector<std::string>& i
     info_messages.push_back("The project is now named " + after + ": save_project and the GUI's Save both write there from now on.");
 }
 
+// select_preset's work, success or failure alike; the caller adds what suppressed dialogs said.
+nlohmann::json select_preset_now(const std::string& type, const std::string& name, int slot, bool has_slot)
+{
+    if (has_slot) {
+        std::string error;
+        if (!OrcaMCPPresetConfigUtils::SelectFilamentSlotPreset(slot, name, error))
+            return {{"status", "error"}, {"message", error}};
+        return {{"status", "success"}, {"slot", slot}, {"filaments", describe_filaments()["filaments"]}};
+    }
+    // A printer switch may replace every slot's colour (upstream's remembered per-printer
+    // configuration); the response shows what it left.
+    if (type == "printer")
+        return OrcaMCPPresetConfigUtils::SelectPrinterPreset(name);
+    OrcaMCPPresetConfigUtils::SelectPreset(type, name);
+    return {{"status", "success"}};
+}
+
 } // namespace
 
 std::shared_ptr<HttpServer::Response> OrcaMCPServer::handle_request(
@@ -938,31 +955,11 @@ void OrcaMCPServer::register_builtin_tools()
             }
 
             return run_on_main_thread([type, name, slot, has_slot]() -> nlohmann::json {
-                // Suppress any dialogs during preset selection
+                // Suppress any dialogs during preset selection, and report what they said on the
+                // failure path too: a printer switch that did not take has already discarded the
+                // unsaved preset edits, and the message saying so must not be lost.
                 McpDialogSuppressionGuard suppression_guard;
-                nlohmann::json response = {{"status", "success"}};
-                if (has_slot) {
-                    std::string error;
-                    if (!OrcaMCPPresetConfigUtils::SelectFilamentSlotPreset(slot, name, error)) {
-                        return nlohmann::json{{"status", "error"}, {"message", error}};
-                    }
-                    response["slot"] = slot;
-                    response["filaments"] = describe_filaments()["filaments"];
-                } else if (type == "printer") {
-                    // A printer switch may replace every slot's colour (upstream's remembered
-                    // per-printer configuration); the response shows what it left.
-                    response = OrcaMCPPresetConfigUtils::SelectPrinterPreset(name);
-                    if (response["status"] != "success")
-                        return response;
-                } else {
-                    OrcaMCPPresetConfigUtils::SelectPreset(type, name);
-                }
-
-                auto info_messages = suppression_guard.messages();
-                if (!info_messages.empty()) {
-                    response["info_messages"] = info_messages;
-                }
-                return response;
+                return suppression_guard.report(select_preset_now(type, name, slot, has_slot));
             });
         }
     });

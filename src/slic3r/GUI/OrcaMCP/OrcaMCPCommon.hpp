@@ -203,6 +203,14 @@ struct McpDialogSuppressionGuard
         set_mcp_dialog_suppression(m_was_enabled);
     }
     std::vector<std::string> messages() const { return get_mcp_suppressed_messages(); }
+    // Adds what the suppressed dialogs said to `response` as info_messages, when they said anything.
+    // Returns the response, so a handler can end with `return guard.report(result);` on every path.
+    nlohmann::json report(nlohmann::json response) const
+    {
+        if (const auto said = messages(); !said.empty())
+            response["info_messages"] = said;
+        return response;
+    }
     void answer_prompt(const std::string& key, int answer_id, const std::string& note = std::string())
     {
         set_mcp_prompt_answer(key, answer_id, note);
