@@ -558,12 +558,10 @@ The bridge sends no `Origin` and names `localhost` or `127.0.0.1` (`scripts/test
    cancelled") within about a second. `quit_app` itself is served after the call ahead of it on the
    one HTTP thread, e.g. a `discover_printers` runs out its timeout first. A Bambu cloud sign-in
    callback in flight is not cancellable (the network plugin's own calls); if it still runs 5 s into
-   the quit, the process ends there, without its teardown (the config is saved first). A quit during a slice waits for the slice to cancel (upstream's
-   `BackgroundSlicingProcess::stop`; 1.5 s for a tree-support slice on the -O0 dev build). **Wait
-   for a slice to finish before `quit_app` or `new_project`:** resetting the plater mid-slice can
-   crash the app, because upstream's `Plater::priv::reset` frees the plates' prints
-   (`partplate_list.reinit()`) before it stops the slicing thread (seen 2026-09-26 on the release and
-   dev builds; not fixed here)
+   the quit, the process ends there, without its teardown (the config is saved first). A quit,
+   `new_project` or `load_project` during a slice first waits for the slice to cancel (upstream's
+   `BackgroundSlicingProcess::stop`): usually well under a second, but organic tree supports check
+   for a cancel only between phases, and on the -O0 dev build one wait took 47 s
 5. **Local only**: the MCP server listens on 127.0.0.1; it cannot be reached from another machine
 
 ---
@@ -817,6 +815,7 @@ echo "L Flashforge local API: no retry, failure log or next step (rel2506/04; 0 
 echo "M HttpServer::stop cuts a reply still being written (rel2506/04b): $(U src/slic3r/GUI/HttpServer.cpp | awk '/^void HttpServer::stop/{f=1} f&&/stop_all\(\)/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
 echo "N HttpServer listens on every interface (rel2506/04b):             $(U src/slic3r/GUI/HttpServer.hpp | grep -c 'acceptor(io_service, {boost::asio::ip::tcp::v4()')"
 echo "R HttpServer serves a request without reading its Origin (rel2506/04b): $( { U src/slic3r/GUI/HttpServer.hpp; U src/slic3r/GUI/HttpServer.cpp; } | grep -qi '"origin"' && echo no || echo yes)"
+echo "O priv::reset frees the prints before it stops the slice (rel2506/04c): $(U src/slic3r/GUI/Plater.cpp | awk '/^void Plater::priv::reset\(bool/{f=1} f&&/background_process\.(stop|reset)\(\)/{print "no"; exit} f&&/partplate_list\.reinit\(\)/{print "yes"; exit}')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -830,6 +829,14 @@ reaches it. Ours passes every request's `Origin`, `Host` and arrival port to a g
 (`set_request_guard`, called from `session::process_request`; `http_headers::value`), and
 `OrcaMCP::app_request_guard` refuses web pages. On "no", upstream reads `Origin` somewhere: see whether
 its check can replace our hook.
+
+Item O: upstream's `Plater::priv::reset` calls `partplate_list.reinit()`, which deletes every plate's
+`Print` -- the one the slicing thread is using too -- and repoints the background process at a new
+one, before `background_process.reset()` stops the slice. The stop then cancelled the new `Print`
+while the thread ran on in freed memory: quit, New Project (Cmd-N skips the menu's "not while
+slicing" check) or Open during a slice crashed or froze the app (2026-09-26, release and dev builds).
+Ours stops the slice just before `reinit()`. On "no", take upstream's order and re-check a quit during
+a tree-support slice.
 
 Item J: upstream opens every recent 3MF synchronously while building the main window, before
 post_init starts the MCP server. Our patch skips it for an agent launch (`GUI::is_agent_launch()`,

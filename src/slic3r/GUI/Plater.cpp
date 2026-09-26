@@ -10258,6 +10258,12 @@ void Plater::priv::reset(bool apply_presets_change)
 
     m_worker.cancel_all();
 
+    // Orca: stop the slice before reinit() deletes every plate's Print, the one being sliced too, and
+    // points the background process at a new one. Stopped after that, it cancelled the new Print while
+    // the slicing thread ran on in freed memory: quitting, or a new or loaded project, during a slice
+    // crashed or froze the app.
+    this->background_process.stop();
+
     //BBS: clear the partplate list's object before object cleared
     partplate_list.reinit();
     partplate_list.update_slice_context_to_current_plate(background_process);

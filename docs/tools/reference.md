@@ -97,9 +97,9 @@ is answered with JSON-RPC error -32002, "OrcaMCP is quitting, so this call was n
 is not run; a call already running on the GUI thread is let finish, and one waiting on the network
 (`discover_printers`, a printer request) gives up within about a second with its tool error ("Request
 cancelled", "Printer discovery was cancelled"). `quit_app` is itself served after the call ahead of it:
-calls are answered one at a time. Let a running slice finish first
-(`get_slicing_status`): a quit mid-slice waits for the slice to cancel, and can crash the app on its
-way out (a known upstream bug; CLAUDE.md, Known Limitations).
+calls are answered one at a time. A running slice is cancelled first: usually within a second, but
+organic tree supports check for a cancel only between phases, so on the -O0 dev build the quit can
+wait up to about a minute for one.
 
 ---
 
@@ -267,7 +267,8 @@ run read `plates_sliced` / `plates`.
 ## Project Tools
 
 ### new_project
-Create a new empty project.
+Create a new empty project. A running slice is cancelled first (see `quit_app` for how long that can
+take).
 
 **Parameters:** None
 
@@ -279,7 +280,7 @@ Create a new empty project.
 ---
 
 ### load_project
-Load a project file (.3mf), replacing the current project.
+Load a project file (.3mf), replacing the current project. A running slice is cancelled first.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
