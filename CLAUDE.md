@@ -125,7 +125,7 @@ grep -hA1 -E '^\s*register_(bridge_)?tool\(\{' src/slic3r/GUI/OrcaMCP/*.cpp | gr
 | **Printers** | `get_printers` (`is_online` is not a live check; `current_print_host.last_status_age_s` is), `select_printer`, `add_physical_printer` (incl. optional Obico URL/token for Flashforge), `discover_printers`, `send_to_printer`, `get_printer_status` (a failure names host:port and the next step, with the last known material station as `cached`), `printer_control`, `list_printer_files`, `print_printer_file`, `match_project_to_printer` (falls back to the printer's last status, applied only with `allow_cached: true`) |
 | **Adaptive** | `apply_adaptive_layer_height`, `clear_adaptive_layer_height` |
 | **History** | `undo`, `redo` |
-| **Info** | `get_server_info` (every tool's summary by category; `section` fetches the rest of the docs), `quit_app` (closes the app with no dialog; discards unsaved changes unless `discard_changes=false`), `start_orca` (bridge-only) |
+| **Info** | `get_server_info` (every tool's summary by category; `section` fetches the rest of the docs), `quit_app` (closes the app with no dialog; discards unsaved changes and closes an open dialog unanswered unless `discard_changes=false`; refuses while a system file chooser or alert is open), `start_orca` (bridge-only) |
 
 ### Tool list: one source for every tool's text
 
@@ -350,6 +350,7 @@ gh release upload v2.3.2.10 ./path/to/new/artifact.exe -R okets/OrcaMCP
 | `src/slic3r/GUI/HttpServer.hpp` | HTTP server with JSON responses; listens on 127.0.0.1 only |
 | `src/slic3r/GUI/HttpServer.cpp` | POST body reading, ResponseJson, the stop that waits for handlers and lets replies out |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPMainThreadGate.cpp` | How a call hands work to the main thread and waits, and how quitting releases it (see "Threading Model"; unit-tested in `tests/slic3rutils/test_mcp_shutdown.cpp`) |
+| `src/slic3r/GUI/OrcaMCP/OrcaMCPQuit.cpp` | Quitting while a modal dialog is open: ends the app's dialogs before the frame is torn down, and `quit_app`'s refusals (unit-tested in `tests/slic3rutils/test_mcp_quit.cpp`) |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPLoginServer.cpp` | Where the cloud login's callback is answered: a second port of the MCP server, on its thread (unit-tested in `tests/slic3rutils/test_http_server.cpp`) |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPRequestGuard.cpp` | Which requests the server answers: no web page's and no DNS-rebound one on `/mcp`, login callbacks only where a login listens (see "Security"; unit-tested in `tests/slic3rutils/test_mcp_request_guard.cpp`) |
 | `src/slic3r/Utils/ThreadCancel.cpp` | The per-request cancel check a quit applies to blocking network calls on the HTTP thread (unit-tested in `tests/slic3rutils/test_thread_cancel.cpp`) |
@@ -498,6 +499,16 @@ that call in flight waited forever: on 2026-09-26 `quit_app`, with a script poll
   frame's close handler asks `OrcaMCPServer::defer_until_tool_call_returns` and, while the work runs,
   vetoes or returns, to close again once the work has returned. The plater is never reset, nor the
   frame torn down, under a running tool call.
+- **A close while a modal dialog runs.** A dialog that nobody suppressed (the startup "restore
+  unsaved items?" prompt, a dialog the user opened) runs a nested event loop, and every tool call's
+  work runs inside it. A frame closed there is deleted at that loop's idle time and deletes the dialog,
+  which lives on its caller's stack: on 2026-09-26 `quit_app` under the restore prompt aborted the app
+  ("pointer being freed was not allocated"). So, before anything else, the close handler asks
+  `OrcaMCPServer::hold_close_while_modal` (`OrcaMCPQuit.cpp`): a close that cannot be vetoed ends the
+  app's dialogs (`dialogStack`), innermost first, with `EndModal(wxID_ABORT)` -- what the app does at a
+  system logout -- and asks again on a 50 ms timer, not `CallAfter` (wx runs an event posted from a
+  pending event in the same pass, before the ended loop has returned), until the event loop is the
+  main one again. It gives up after 10 s rather than tear the frame down under a loop that will not end.
 - **The cloud login shares the MCP server's thread.** Its callback port is a second listener on the MCP
   server (`HttpServer::listen_also`, `LoginCallbackServer` in `OrcaMCPLoginServer.cpp`), so login
   callbacks and MCP calls are served one at a time, as when they shared one port. A login never
@@ -642,6 +653,7 @@ given: `"<prompt> (auto-answered <answer>)"`. OK-only notices are captured as th
 | `TextureImportDialog` (textured or vertex-coloured OBJ, GLB, GLTF, FBX) | Not opened; imported as plain geometry, colours not mapped (`auto-answered Skip`) |
 | "Connected printer is X. Sync the printer information and switch the preset?" (`TipsDialog`, project load with a mismatched Bambu printer connected) | Auto-NO: the printer preset is not switched |
 | Any other `DPIDialog` modal (the fallback in `DPIAware::ShowModal`, `GUI_Utils.hpp`) | Not opened: answers Cancel, `"<dialog title> was suppressed (auto-answered Cancel)"`. The rows above answer their dialogs first, so this only catches a modal nobody handled |
+| Startup "Previously unsaved items have been detected. Restore them?" prompt (`EVT_RESTORE_PROJECT`, after a crash) | **Not suppressed**: no MCP call is in flight at startup, so it waits for the user, and every tool call runs underneath it. `quit_app` closes it unanswered (`EndModal(wxID_ABORT)`) and the backup is kept, so the next launch asks again; `quit_app` with `discard_changes: false` refuses and names it |
 | Send-to-printer (`send_to_printer`) | **Bambu:** the `SelectMachineDialog` is scheduled with `CallAfter` and the tool returns `dialog_opened`; the user drives it. **Print hosts (Flashforge, Moonraker, OctoPrint, …):** by default (`direct: true`) there is **no dialog** — the tool uploads the sliced plate and, because `start_print` also defaults to true, **starts the print**. It returns `queued`. Pass `start_print: false` to upload only, or `direct: false` to open the print-host dialog instead. Never call it to "look at the dialog": on 2026-09-18 that started a 7 h print. |
 
 ### Implementation
@@ -817,6 +829,7 @@ echo "N HttpServer listens on every interface (rel2506/04b):             $(U src
 echo "R HttpServer serves a request without reading its Origin (rel2506/04b): $( { U src/slic3r/GUI/HttpServer.hpp; U src/slic3r/GUI/HttpServer.cpp; } | grep -qi '"origin"' && echo no || echo yes)"
 echo "O priv::reset frees the prints before it stops the slice (rel2506/04c): $(U src/slic3r/GUI/Plater.cpp | awk '/^void Plater::priv::reset\(bool/{f=1} f&&/background_process\.(stop|reset)\(\)/{print "no"; exit} f&&/partplate_list\.reinit\(\)/{print "yes"; exit}')"
 echo "P delete_plate frees a Print the slice may be using (rel2506/04c):  $(U src/slic3r/GUI/Plater.cpp | awk '/^int Plater::delete_plate\(int/{f=1} f&&/background_process\.stop\(\)/{print "no"; exit} f&&/partplate_list\.delete_plate\(/{print "yes"; exit}')"
+echo "Q restore prompt closed by a quit deletes the backup (rel2506/04c):  $(U src/slic3r/GUI/Plater.cpp | awk '/EVT_RESTORE_PROJECT, \[this/{f=1} f&&/wxID_ABORT/{print "no"; exit} f&&/remove_all\(last\)/{print "yes"; exit}')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -843,6 +856,11 @@ Item P: the same in `Plater::delete_plate`: deleting the plate being sliced dele
 the slicing thread (SIGSEGV, 2026-09-26), and a change of current plate repointed the background
 process. Ours stops the slice first. On "no", take upstream's and re-check `delete_plate` on the plate
 being sliced.
+
+Item Q: upstream's restore prompt treats every answer but Yes as No and deletes the crashed session's
+backup, including a prompt the app itself ended with `wxID_ABORT` (its system-logout handler, and our
+`quit_app`). Ours returns on `wxID_ABORT` and keeps the backup, so the next launch asks again. On
+"no", take upstream's handler.
 
 Item J: upstream opens every recent 3MF synchronously while building the main window, before
 post_init starts the MCP server. Our patch skips it for an agent launch (`GUI::is_agent_launch()`,

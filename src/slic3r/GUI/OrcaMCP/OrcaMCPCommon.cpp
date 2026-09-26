@@ -1,5 +1,7 @@
 #include "OrcaMCPCommon.hpp"
 #include "OrcaMCPPlateUtils.hpp"
+#include "OrcaMCPQuit.hpp"
+#include "slic3r/GUI/GUI_Utils.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/GUI/NotificationManager.hpp"
@@ -11,6 +13,10 @@
 #include <cstdlib>
 #include <limits>
 
+#include <wx/dialog.h>
+#include <wx/evtloop.h>
+#include <wx/timer.h>
+
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
 MainThreadGate& main_thread_gate()
@@ -19,6 +25,79 @@ MainThreadGate& main_thread_gate()
     static MainThreadGate* const gate =
         new MainThreadGate([](std::function<void()> task) { wxGetApp().CallAfter(std::move(task)); });
     return *gate;
+}
+
+namespace {
+
+// Runs one task on the main thread once the event loop has had a turn. One close is held back at a
+// time (ModalUnwinder), so one timer serves it: each turn replaces the task.
+class TurnTimer : public wxTimer
+{
+public:
+    void run_after_a_turn(std::function<void()> task)
+    {
+        m_task = std::move(task);
+        StartOnce(k_turn_ms);
+    }
+
+private:
+    static constexpr int k_turn_ms = 50; // ModalUnwinder::k_default_max_turns of these is 10 s
+
+    void Notify() override
+    {
+        std::function<void()> task = std::move(m_task);
+        m_task                     = nullptr;
+        if (task)
+            task();
+    }
+
+    std::function<void()> m_task;
+};
+
+wxDialog* open_modal_dialog(std::uintptr_t id)
+{
+    for (wxDialog* dialog : dialogStack)
+        if (reinterpret_cast<std::uintptr_t>(dialog) == id)
+            return dialog;
+    return nullptr;
+}
+
+bool in_modal_event_loop()
+{
+    const wxEventLoopBase* loop = wxEventLoopBase::GetActive();
+    if (loop != nullptr && !loop->IsMain())
+        return true;
+#ifdef __WXOSX__
+    // A system alert or file chooser runs Cocoa's modal loop, not a wx one; wx counts it here.
+    if (wxDialog::OSXHasModalDialogsOpen())
+        return true;
+#endif
+    return false;
+}
+
+} // namespace
+
+ModalState current_modal_state()
+{
+    ModalState state;
+    for (wxDialog* dialog : dialogStack) // innermost first: DPIAware::ShowModal pushes to the front
+        state.dialogs.push_back({reinterpret_cast<std::uintptr_t>(dialog), into_u8(dialog->GetTitle())});
+    state.in_modal_loop = in_modal_event_loop();
+    return state;
+}
+
+ModalUnwinder& modal_unwinder()
+{
+    // Never destroyed, like the gate: a close can be held back while the app object is torn down.
+    static TurnTimer* const     timer    = new TurnTimer;
+    static ModalUnwinder* const unwinder = new ModalUnwinder(
+        {current_modal_state,
+         [](std::uintptr_t id) {
+             if (wxDialog* dialog = open_modal_dialog(id))
+                 dialog->EndModal(wxID_ABORT); // what the app does to its dialogs at a system logout
+         },
+         [](std::function<void()> task) { timer->run_after_a_turn(std::move(task)); }});
+    return *unwinder;
 }
 
 bool is_hex_color(const std::string& value, bool allow_alpha)

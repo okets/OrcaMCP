@@ -9,6 +9,7 @@
 #include "OrcaMCPServerInfo.hpp"
 #include "OrcaMCPModelLoad.hpp"
 #include "OrcaMCPRequestGuard.hpp"
+#include "OrcaMCPQuit.hpp"
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Plater.hpp"
@@ -289,6 +290,21 @@ void OrcaMCPServer::shut_down()
 bool OrcaMCPServer::defer_until_tool_call_returns(std::function<void()> task)
 {
     return main_thread_gate().defer_until_work_ends(std::move(task));
+}
+
+bool OrcaMCPServer::hold_close_while_modal(std::function<void()> close)
+{
+    switch (modal_unwinder().hold_back(std::move(close))) {
+    case ModalUnwinder::Hold::go_on: return false;
+    case ModalUnwinder::Hold::held:
+        BOOST_LOG_TRIVIAL(info) << "OrcaMCPServer: the close waits for the open modal dialogs to end";
+        return true;
+    case ModalUnwinder::Hold::given_up:
+        BOOST_LOG_TRIVIAL(error) << "OrcaMCPServer: a modal dialog is still open after the close ended it; "
+                                    "the app stays open rather than be torn down under it";
+        return true;
+    }
+    return true;
 }
 
 std::shared_ptr<HttpServer::Response> OrcaMCPServer::handle_request(
@@ -592,14 +608,18 @@ void OrcaMCPServer::register_builtin_tools()
         "quit_app",
         ToolCategory::Info,
         "Quit the app with no dialog",
-        "Quit OrcaMCP cleanly with no dialog. By default unsaved project changes are discarded; pass "
-        "discard_changes=false to refuse while the project is dirty (call save_project first).",
+        "Quit OrcaMCP cleanly with no dialog. By default unsaved project changes are discarded, and a "
+        "dialog the app is showing (get_scene_info's open_dialogs) is closed unanswered, as at a system "
+        "logout; the startup restore prompt keeps its backup for the next launch. Pass "
+        "discard_changes=false to refuse while the project is dirty (call save_project first) or a "
+        "dialog is open. A system file chooser or alert is never closed: quit_app refuses until the "
+        "user closes it.",
         {
             {"type", "object"},
             {"properties", {
                 {"discard_changes", {
                     {"type", "boolean"},
-                    {"description", "Discard unsaved project changes (default true)"}
+                    {"description", "Discard unsaved project changes, and close open dialogs unanswered (default true)"}
                 }}
             }}
         },
@@ -608,16 +628,21 @@ void OrcaMCPServer::register_builtin_tools()
                 return nlohmann::json{{"status", "error"}, {"message", "discard_changes must be a boolean"}};
             const bool discard = params.value("discard_changes", true);
             return run_on_main_thread([discard]() -> nlohmann::json {
-                Plater* plater = wxGetApp().plater();
-                if (!discard && plater != nullptr && plater->is_project_dirty())
-                    return nlohmann::json{{"status", "error"}, {"message", "project has unsaved changes; call save_project first or pass discard_changes=true"}};
+                Plater*          plater = wxGetApp().plater();
+                const ModalState modal  = current_modal_state();
+                if (auto refusal = quit_refusal(modal, discard, plater != nullptr && plater->is_project_dirty()))
+                    return nlohmann::json{{"status", "error"}, {"message", *refusal}};
+                // The main frame's close handler ends the open dialogs first (hold_close_while_modal).
                 wxGetApp().CallAfter([]() {
                     if (Plater* p = wxGetApp().plater(); p != nullptr)
                         p->reset_project_dirty_after_save();
                     if (wxGetApp().mainframe != nullptr)
                         wxGetApp().mainframe->Close(true);
                 });
-                return nlohmann::json{{"status", "quitting"}};
+                nlohmann::json response = {{"status", "quitting"}};
+                if (auto notes = quit_notes(modal); !notes.empty())
+                    response["info_messages"] = notes;
+                return response;
             });
         }
     });

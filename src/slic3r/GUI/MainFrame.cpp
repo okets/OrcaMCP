@@ -572,6 +572,14 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
     // declare events
     Bind(wxEVT_CLOSE_WINDOW, [this](wxCloseEvent& event) {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< ": mainframe received close_widow event";
+        // Orca: a close that cannot be vetoed and arrives while a modal dialog runs (quit_app under the
+        // startup restore prompt) would delete this frame inside the dialog's loop, and the dialog with
+        // it. The dialogs are ended first, and the close is asked again once nothing modal is left.
+        if (!event.CanVeto() && OrcaMCPServer::hold_close_while_modal([] {
+                if (wxGetApp().mainframe != nullptr)
+                    wxGetApp().mainframe->Close(true);
+            }))
+            return;
         // Orca: a close that arrives inside an MCP tool call's work (the work pumped the event loop
         // into it) is asked again once the work has returned, so the teardown below never runs under it.
         const bool forced = !event.CanVeto();

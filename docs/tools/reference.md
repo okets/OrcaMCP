@@ -89,9 +89,15 @@ not cover because the close did not come through MCP.
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `discard_changes` | boolean | No | Default `true`: unsaved project changes are discarded. `false` refuses while the project is dirty, so call `save_project` first. |
+| `discard_changes` | boolean | No | Default `true`: unsaved project changes are discarded, and a dialog the app is showing is closed unanswered. `false` refuses while the project is dirty (call `save_project` first) or a dialog is open, and names the dialog. |
 
-**Returns:** `{"status": "quitting"}`; the app exits within a few seconds, also while other calls are
+A dialog the app is showing (the startup "restore unsaved items?" prompt after a crash, a dialog the
+user opened) is closed first, unanswered, the way the app closes its dialogs when the system logs out,
+and each one is named in `info_messages`. The restore prompt keeps its backup, so the next launch asks
+again. A system file chooser or alert cannot be closed by the app: `quit_app` then refuses until the
+user closes it.
+
+**Returns:** `{"status": "quitting"}`, with `info_messages` naming any dialog it closes; the app exits within a few seconds, also while other calls are
 in flight (an agent's parallel calls, a poller). From the moment the app starts closing, every tool call
 is answered with JSON-RPC error -32002, "OrcaMCP is quitting, so this call was not run", and its work
 is not run; a call already running on the GUI thread is let finish, and one waiting on the network

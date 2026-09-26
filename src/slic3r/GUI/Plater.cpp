@@ -7832,6 +7832,10 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
             std::string originfile;
             if (Slic3r::has_restore_data(last_backup, originfile)) {
                 auto result = MessageDialog(this->q, _L("Previously unsaved items have been detected. Do you want to restore them\?"), wxString(SLIC3R_APP_FULL_NAME) + " - " + _L("Restore"), wxYES_NO | wxYES_DEFAULT | wxCENTRE).ShowModal();
+                // Orca: ended by the app quitting (EndModal(wxID_ABORT): a system logout, or quit_app),
+                // not answered. Keep the backup, so the next launch asks again.
+                if (result == wxID_ABORT)
+                    return;
                 if (result == wxID_YES) {
                     this->q->load_project(from_path(last_backup), from_path(originfile));
                     Slic3r::backup_soon();

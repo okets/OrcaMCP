@@ -216,6 +216,13 @@ A close that arrives inside a tool call's work (the work pumped the event loop i
 this far: the main frame's close handler defers itself (`OrcaMCPServer::defer_until_tool_call_returns`)
 and closes again once the work has returned, so the teardown never runs under it.
 
+Nor does a forced close that arrives while a modal dialog runs its nested event loop (tool calls run
+inside it too, so `quit_app` can arrive there). Torn down inside that loop, the frame deleted the
+dialog, which lives on its caller's stack, and the app aborted. The close handler first asks
+`OrcaMCPServer::hold_close_while_modal` (`OrcaMCPQuit.cpp`), which ends the app's dialogs innermost
+first with `EndModal(wxID_ABORT)` and asks again on a timer until the main loop is running again
+(`test_mcp_quit.cpp`).
+
 The cloud login's callback port is a second listener on the same server and thread
 (`HttpServer::listen_also`, `LoginCallbackServer`), so there is one thread to join, login callbacks
 are served one at a time with MCP calls, and moving the login to another port joins nothing.
