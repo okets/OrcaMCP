@@ -49,15 +49,17 @@ gave were wrong; the prompts carry the corrected facts.
 | # | Prompt | Needs merged first | Touches mostly | Status |
 |---|--------|--------------------|----------------|--------|
 | 01 | [Tool-list foundation](01-tool-list-foundation.md) | — | every `register_tool`, `get_server_info`, bridge, golden file | merged and pushed 2026-09-26; Build all green (run 36229581923) |
-| 02 | [load_model: geometry only, honest reporting](02-load-model.md) | 01 | `Plater.cpp`, `MsgDialog.cpp`, load handler | merged locally 2026-09-26 (push with batch 1) |
-| 03 | [Render, transforms, estimate](03-render-transforms-estimate.md) | 01 | `OrcaMCPPlateUtils.cpp`, `OrcaMCPCommon.cpp`, estimate handler | merged locally 2026-09-26 (push with batch 1) |
-| 04 | [Printer match and slot colours](04-printer-and-colours.md) | 01 | printer tools, Flashforge, preset utils | implementing (design approved 2026-09-26) |
+| 02 | [load_model: geometry only, honest reporting](02-load-model.md) | 01 | `Plater.cpp`, `MsgDialog.cpp`, load handler | merged 2026-09-26; pushed as batch 1 |
+| 03 | [Render, transforms, estimate](03-render-transforms-estimate.md) | 01 | `OrcaMCPPlateUtils.cpp`, `OrcaMCPCommon.cpp`, estimate handler | merged 2026-09-26; pushed as batch 1 |
+| 04 | [Printer match and slot colours](04-printer-and-colours.md) | 01 | printer tools, Flashforge, preset utils | merged 2026-09-26; pushed as batch 1 with 02-03 |
+| 04b | [Quit deadlock, busy-port crash](04b-shutdown-and-port.md) | 01–04 | `HttpServer`, `GUI_App` shutdown, `run_on_main_thread` | implementing (busy-port moved to 09; adds localhost-only bind) |
 | 05 | [Mesh health](05-mesh-health.md) | 01, 03 | new tool, `active_warnings`, `get_scene_info` | design approved 2026-09-26; queued behind 04 |
 | 06 | [Workflow tools](06-workflow-tools.md) | 01, 03 | bridge, slicing status, preset reads, paint remap, estimate breakdown | design approved 2026-09-26; queued |
 | 07 | [Sliced layer plan](07-layer-plan.md) | 01, 03 | `OrcaMCPFirstLayerPlan.cpp`, `render_plate_view` | design approved 2026-09-26; queued |
 | 08 | [Server instructions and hints](08-instructions-and-hints.md) | 01–07 | `initialize`, descriptions, result hints | not started |
+| 09 | [Several instances, switch between them](09-second-instance-crash.md) | 01–08 | port fallback, instance registry (with open file), bridge `list_instances` / `select_instance` | added 2026-09-26 by the user; design goes to the user; starts after all other coding |
 
-If time runs short, the priority is 01, 02, 03, 05, 08, 04, 06, 07. Anything unfinished moves to the
+If time runs short, the priority is 01, 02, 03, 04b, 05, 08, 04, 06, 07. Anything unfinished moves to the
 roadmap; nothing ships half-done.
 
 ## How to run them
@@ -81,7 +83,7 @@ roadmap; nothing ships half-done.
     `gh run list -R okets/OrcaMCP` first, and cancel redundant runs.
   - Docs-only commits carry `[skip ci]`.
 - **Weekend mode (user, 2026-09-26).** The orchestrator runs the release unattended and never waits
-  for CI. It pushes at three batch points (after 04, after 07, and the release push with 08 and the
+  for CI. It pushes at three batch points (after 04b, after 07, and the release push with 08 and the
   version bump) and fixes CI failures in the next sprint. It approves designs that stay inside their
   brief and the user's earlier decisions. When a question or approval genuinely belongs to the user,
   it pauses all work and leaves the question in the session.
