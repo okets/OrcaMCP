@@ -1,108 +1,23 @@
 #include "OrcaMCPMainThreadGate.hpp"
 
-#include <condition_variable>
-#include <exception>
-#include <mutex>
-#include <vector>
-
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
-struct MainThreadGate::State
-{
-    mutable std::mutex      mutex;
-    std::condition_variable changed;
-    bool                    closed  = false;
-    int                     running = 0; // calls whose work has started and not finished
-    std::vector<std::function<void()>> after_work; // posted once no work is running
-};
-
-// One call's progress. Guarded by State::mutex.
-struct MainThreadGate::Call
-{
-    bool               started = false;
-    bool               done    = false;
-    nlohmann::json     value;
-    std::exception_ptr error;
-};
-
-MainThreadGate::MainThreadGate(Post post) : m_state(std::make_shared<State>()), m_post(std::move(post)) {}
+MainThreadGate::MainThreadGate(Post post) : m_calls(std::move(post)) {}
 
 nlohmann::json MainThreadGate::call(Work work)
 {
-    if (is_closed())
+    // By reference: QueuedCalls never runs the work once this caller has been released, and waits for
+    // it once it has started.
+    nlohmann::json value;
+    if (!m_calls.run([&] { value = work(); }))
         throw McpShuttingDown();
-
-    // A close() that lands between the check above and this post is harmless: the wait below sees
-    // it, and the queued task sees it too and does nothing.
-    auto call = std::make_shared<Call>();
-    m_post([state = m_state, call, work = std::move(work), post = m_post]() { run_queued(*state, *call, work, post); });
-
-    std::unique_lock<std::mutex> lock(m_state->mutex);
-    m_state->changed.wait(lock, [&] { return call->done || (m_state->closed && !call->started); });
-    if (!call->done)
-        throw McpShuttingDown();
-    if (call->error)
-        std::rethrow_exception(call->error);
-    return std::move(call->value);
+    return value;
 }
 
-void MainThreadGate::run_queued(State& state, Call& call, const Work& work, const Post& post)
-{
-    {
-        std::lock_guard<std::mutex> lock(state.mutex);
-        if (state.closed)
-            return; // its caller has been released already
-        call.started = true;
-        ++state.running;
-    }
+bool MainThreadGate::close() { return m_calls.close(); }
 
-    nlohmann::json     value;
-    std::exception_ptr error;
-    try {
-        value = work();
-    } catch (...) {
-        error = std::current_exception();
-    }
+bool MainThreadGate::is_closed() const { return m_calls.is_closed(); }
 
-    std::vector<std::function<void()>> after_work;
-    {
-        std::lock_guard<std::mutex> lock(state.mutex);
-        call.value = std::move(value);
-        call.error = error;
-        call.done  = true;
-        if (--state.running == 0)
-            after_work.swap(state.after_work);
-    }
-    state.changed.notify_all();
-    for (auto& task : after_work)
-        post(std::move(task));
-}
-
-bool MainThreadGate::close()
-{
-    bool changed;
-    {
-        std::lock_guard<std::mutex> lock(m_state->mutex);
-        changed         = !m_state->closed;
-        m_state->closed = true;
-    }
-    m_state->changed.notify_all();
-    return changed;
-}
-
-bool MainThreadGate::is_closed() const
-{
-    std::lock_guard<std::mutex> lock(m_state->mutex);
-    return m_state->closed;
-}
-
-bool MainThreadGate::defer_until_work_ends(std::function<void()> task)
-{
-    std::lock_guard<std::mutex> lock(m_state->mutex);
-    if (m_state->running == 0)
-        return false;
-    m_state->after_work.push_back(std::move(task));
-    return true;
-}
+bool MainThreadGate::defer_until_work_ends(std::function<void()> task) { return m_calls.defer_until_work_ends(std::move(task)); }
 
 }}} // namespace Slic3r::GUI::OrcaMCP

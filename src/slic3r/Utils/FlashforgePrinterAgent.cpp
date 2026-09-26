@@ -375,14 +375,19 @@ bool FlashforgePrinterAgent::run_on_gui_thread(const std::function<void()>& fn) 
     }
     if (!queue_fn)
         return false;
-    if (wxIsMainThread()) {
-        fn();
-        return true;
+    try {
+        if (wxIsMainThread()) {
+            fn();
+            return true;
+        }
+        // Bounded so a busy or shutting-down GUI thread cannot wedge the print job for ever. A task given
+        // up on never runs `fn`, whose captures are this caller's locals (they used to be written to late).
+        return run_queued_and_wait(queue_fn, fn, std::chrono::seconds(10));
+    } catch (const std::exception& e) {
+        // What `fn` threw reaches this, the print job's thread: the job goes on without what `fn` read.
+        BOOST_LOG_TRIVIAL(warning) << "FlashforgePrinterAgent: the GUI-thread call failed: " << e.what();
+        return false;
     }
-
-    // Bounded so a busy or shutting-down GUI thread cannot wedge the print job for ever. A task given up
-    // on never runs `fn`, whose captures are this caller's locals (they used to be written to late).
-    return run_queued_and_wait(queue_fn, fn, std::chrono::seconds(10));
 }
 
 std::map<std::string, std::string> FlashforgePrinterAgent::build_upload_extended_info(const Flashforge&  host,

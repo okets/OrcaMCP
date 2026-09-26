@@ -5,6 +5,9 @@
 #include <functional>
 #include <future>
 #include <memory>
+#include <mutex>
+#include <stdexcept>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -19,20 +22,33 @@ using namespace std::chrono_literals;
 
 namespace {
 
-// A queue that keeps its tasks until the test runs them, on a thread of its own when asked.
+// A queue that keeps its tasks until the test runs them. Tasks may be queued from another thread.
 struct HeldQueue
 {
+    std::mutex                         mutex;
     std::vector<std::function<void()>> tasks;
 
     std::function<void(std::function<void()>)> queue()
     {
-        return [this](std::function<void()> task) { tasks.push_back(std::move(task)); };
+        return [this](std::function<void()> task) {
+            std::lock_guard<std::mutex> lock(mutex);
+            tasks.push_back(std::move(task));
+        };
+    }
+    size_t size()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return tasks.size();
     }
     void run_all()
     {
-        for (auto& task : tasks)
+        std::vector<std::function<void()>> due;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            due.swap(tasks);
+        }
+        for (auto& task : due)
             task();
-        tasks.clear();
     }
 };
 
@@ -79,4 +95,42 @@ TEST_CASE("a queued call that has started is waited for past the bound", "[Queue
 
     CHECK(ran);
     CHECK(finished);
+}
+
+TEST_CASE("what a queued call throws is rethrown to its caller, which is not left waiting", "[QueuedCall]")
+{
+    // The Flashforge print job waited for ever when the work threw: nothing marked it done.
+    auto queue = [](std::function<void()> task) { std::thread(std::move(task)).detach(); };
+    auto outcome = std::async(std::launch::async, [&]() -> std::string {
+        try {
+            run_queued_and_wait(queue, [] { throw std::runtime_error("no plate"); }, 5s);
+            return "returned";
+        } catch (const std::runtime_error& e) {
+            return std::string("threw ") + e.what();
+        }
+    });
+
+    REQUIRE(outcome.wait_for(5s) == std::future_status::ready);
+    CHECK(outcome.get() == "threw no plate");
+}
+
+TEST_CASE("closing releases a caller whose work has not started, and that work never runs", "[QueuedCall]")
+{
+    HeldQueue   queue;
+    QueuedCalls calls(queue.queue());
+    auto        written = std::make_shared<std::atomic<int>>(0);
+
+    auto ran = std::async(std::launch::async, [&] { return calls.run([written] { written->store(1); }); });
+    for (int i = 0; i < 5000 && queue.size() == 0; ++i) // wait until it is queued
+        std::this_thread::sleep_for(1ms);
+    REQUIRE(queue.size() == 1);
+    CHECK(calls.close());
+    REQUIRE(ran.wait_for(5s) == std::future_status::ready);
+    queue.run_all(); // the queue reaches it at last
+
+    CHECK_FALSE(ran.get());
+    CHECK(written->load() == 0);
+    CHECK_FALSE(calls.close()); // closed already
+    CHECK_FALSE(calls.run([written] { written->store(2); })); // refused at once
+    CHECK(queue.size() == 0);
 }

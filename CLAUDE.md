@@ -459,7 +459,10 @@ one at a time. All tool handlers use `run_on_main_thread()` which:
 - Blocks the HTTP thread until the GUI operation completes
 - Required for OpenGL rendering and wxWidgets operations
 - Goes through the app's `MainThreadGate` (`OrcaMCPMainThreadGate.cpp`), which queues the work with
-  `wxGetApp().CallAfter()` and waits for it
+  `wxGetApp().CallAfter()` and waits for it. Its handshake -- work that started is waited for, a caller
+  released before its work started never has it run, what the work throws is rethrown -- is
+  `QueuedCalls` (`src/slic3r/Utils/QueuedCall.hpp`), which the printer agents' bounded GUI-thread calls
+  use too (`run_queued_and_wait`)
 
 ```cpp
 template<typename Func>

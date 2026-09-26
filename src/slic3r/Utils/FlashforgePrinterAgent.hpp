@@ -134,7 +134,7 @@ private:
     std::map<std::string, std::string> build_upload_extended_info(const Flashforge&  host,
                                                                   const PrintParams& params) const;
     /// Runs `fn` on the GUI thread and waits for it (bounded). False when no marshaller is
-    /// registered or the GUI did not answer in time.
+    /// registered, the GUI did not answer in time, or `fn` threw.
     bool run_on_gui_thread(const std::function<void()>& fn) const;
 
     // Polling (worker thread).

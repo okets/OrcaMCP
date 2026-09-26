@@ -4,6 +4,7 @@
 #include <memory>
 #include <nlohmann/json.hpp>
 #include "OrcaMCPJsonRpcError.hpp"
+#include "slic3r/Utils/QueuedCall.hpp"
 
 // How an MCP call on the HTTP thread hands work to the main thread and waits for it, and how the
 // app's quit releases that wait. No wx: the main thread's queue is passed in, so the tests drive it
@@ -21,7 +22,7 @@ class MainThreadGate
 public:
     using Work = std::function<nlohmann::json()>;
     // Queues a task to run later on the main thread. It must not run the task before returning.
-    using Post = std::function<void(std::function<void()>)>;
+    using Post = QueuedCalls::Post;
 
     explicit MainThreadGate(Post post);
 
@@ -45,13 +46,9 @@ public:
     bool defer_until_work_ends(std::function<void()> task);
 
 private:
-    struct State;
-    struct Call;
-    static void run_queued(State& state, Call& call, const Work& work, const Post& post);
-
-    // Shared with every queued task, which can outlive both the caller it served and this gate.
-    std::shared_ptr<State> m_state;
-    Post                   m_post;
+    // The handshake itself (started, released, done, the exception) is QueuedCalls', shared with the
+    // printer agents' bounded GUI-thread calls.
+    QueuedCalls m_calls;
 };
 
 // The app's gate to the wx main thread, posting through wxGetApp().CallAfter (defined in
