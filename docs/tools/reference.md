@@ -1178,7 +1178,11 @@ collisions with other objects or the prime tower, and a part floating above the 
 
 **Which box.** `position` (the box's centre), `bounding_box`, `on_bed` and, in `get_scene_info`,
 the object's `printed_footprint` and `occupancy` footprint and height are all the object's exact
-box: every vertex of every instance, transformed. `move_object`'s `position` and
+box: every vertex of every instance, transformed. In `get_scene_info` each plate's entry for an
+object covers only the instances that plate holds, listed in `instances_on_plate` (on the entry and
+on its `occupancy` item); `instance_count` stays the object's total. Before v2.5.0.6 an object with a
+copy on another plate was reported under each plate with the box spanning both, so its footprint on
+plate 0 could be 347 mm wide. `move_object`'s `position` and
 `transform_objects`' `position` are read and written in the same box. Before v2.5.0.6 they used the
 mesh's own box turned with the object, whose corners stand off a rotated part: a T-shaped part
 tilted 30 degrees and resting on the bed read `min.z` -4 mm, with a footprint several millimetres

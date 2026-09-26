@@ -618,7 +618,9 @@ void OrcaMCPServer::register_builtin_tools()
         "plate also carries `occupancy`, the complete list of what stands on it in plate "
         "millimetres -- every object's printed footprint (brim included), the prime tower's "
         "footprint (brim included) when one is printed, and the printer's excluded bed areas. Use "
-        "`occupancy`, not `model_objects`, to work out where there is free space.",
+        "`occupancy`, not `model_objects`, to work out where there is free space. An object with "
+        "instances on several plates is listed under each by the instances there "
+        "(`instances_on_plate`): its bounding_box, position and footprint are theirs.",
         {
             {"type", "object"},
             {"properties", {
@@ -3427,7 +3429,8 @@ void OrcaMCPServer::register_builtin_tools()
                     PartPlate* plate = plate_list.get_plate(index);
                     const DynamicPrintConfig& print_cfg = wxGetApp().preset_bundle->prints.get_edited_preset().config;
                     for (ModelObject* obj : plate->get_objects_on_this_plate()) {
-                        const ObjectFootprint fp = OrcaMCPPlateUtils::GetObjectFootprint(*obj, print_cfg);
+                        const InstancesOnPlate here = instances_on_plate(*obj, model_object_index(obj), *plate);
+                        const ObjectFootprint  fp   = OrcaMCPPlateUtils::GetObjectFootprint(*obj, plate_box_of(*obj, here), print_cfg);
                         if (OrcaMCP::footprints_overlap(after.footprint, fp.rect))
                             conflicts.push_back({{"kind", "object"}, {"name", obj->name}});
                     }

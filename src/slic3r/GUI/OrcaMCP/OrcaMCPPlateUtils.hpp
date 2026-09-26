@@ -109,10 +109,13 @@ public:
     // only when a tower is actually printed, so "no tower here" cannot be misread as "tower at 0,0".
     static nlohmann::json PrimeTowerJson(const PrimeTowerState& state);
 
-    // `object`'s printed footprint, honouring its own per-object brim overrides before the global
-    // print settings. One implementation, used both by the scene report and by the collision check
-    // set_prime_tower_position runs, so the two cannot disagree about where an object ends.
-    static ObjectFootprint GetObjectFootprint(const ModelObject& object, const DynamicPrintConfig& print_cfg);
+    // `object`'s printed footprint over `body_box` -- on a plate, the box of the instances that plate
+    // holds (OrcaMCP::instances_on_plate) -- honouring its own per-object brim overrides before the
+    // global print settings. One implementation, used by the scene report, the first-layer plan and
+    // the collision check set_prime_tower_position runs, so they cannot disagree about where an
+    // object ends.
+    static ObjectFootprint GetObjectFootprint(const ModelObject& object, const BoundingBoxf3& body_box,
+                                              const DynamicPrintConfig& print_cfg);
 
     // Turntable preview - captures multiple views around the plate
     static nlohmann::json CaptureTurntablePreview(int plate_index, int view_count = 4,

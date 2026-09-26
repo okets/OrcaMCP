@@ -274,9 +274,46 @@ void transform_instances_on_bed(ModelObject& object, const Transform3d& world_tr
 
 const BoundingBoxf3& object_world_box(const ModelObject& object) { return object.bounding_box_exact(); }
 
+InstancesOnPlate instances_on_plate(const ModelObject& object, const std::function<bool(int)>& holds)
+{
+    InstancesOnPlate here;
+    for (size_t i = 0; i < object.instances.size(); ++i)
+        if (holds(int(i))) {
+            here.ids.push_back(int(i));
+            here.box.merge(object.instance_bounding_box(i));
+        }
+    return here;
+}
+
+InstancesOnPlate instances_on_plate(const ModelObject& object, int object_index, PartPlate& plate)
+{
+    return instances_on_plate(object, [&plate, object_index](int instance) { return plate.contain_instance(object_index, instance); });
+}
+
+BoundingBoxf3 plate_box_of(const ModelObject& object, const InstancesOnPlate& here)
+{
+    return here.box.defined ? here.box : object_world_box(object);
+}
+
+int model_object_index(const ModelObject* object)
+{
+    if (object == nullptr)
+        return -1;
+    const ModelObjectPtrs& objects = wxGetApp().model().objects;
+    for (size_t i = 0; i < objects.size(); ++i)
+        if (objects[i] == object || objects[i]->id() == object->id())
+            return int(i);
+    return -1;
+}
+
 nlohmann::json model_object_summary_json(const ModelObject& object, int object_index)
 {
-    const BoundingBoxf3 bbox   = object_world_box(object);
+    return model_object_summary_json(object, object_index, object_world_box(object));
+}
+
+nlohmann::json model_object_summary_json(const ModelObject& object, int object_index, const BoundingBoxf3& box)
+{
+    const BoundingBoxf3 bbox   = box;
     const Vec3d         center = bbox.center();
     const Vec3d         size   = bbox.size();
 

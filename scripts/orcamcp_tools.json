@@ -875,7 +875,7 @@
     },
     {
       "category": "Scene",
-      "description": "Get current project state: plates, objects, positions. Call first to get object_ids. Each plate also carries `occupancy`, the complete list of what stands on it in plate millimetres -- every object's printed footprint (brim included), the prime tower's footprint (brim included) when one is printed, and the printer's excluded bed areas. Use `occupancy`, not `model_objects`, to work out where there is free space.",
+      "description": "Get current project state: plates, objects, positions. Call first to get object_ids. Each plate also carries `occupancy`, the complete list of what stands on it in plate millimetres -- every object's printed footprint (brim included), the prime tower's footprint (brim included) when one is printed, and the printer's excluded bed areas. Use `occupancy`, not `model_objects`, to work out where there is free space. An object with instances on several plates is listed under each by the instances there (`instances_on_plate`): its bounding_box, position and footprint are theirs.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {

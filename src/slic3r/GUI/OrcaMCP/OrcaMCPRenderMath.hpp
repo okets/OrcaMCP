@@ -78,12 +78,6 @@ void frame_camera(Camera& camera, const Vec3d& position, const Vec3d& target, co
 // The view, projection and viewport `camera` draws with, as pick_facet and the overlays read them.
 CameraFrame camera_frame_of(const Camera& camera);
 
-// What a fit to one object frames on one plate: the union of the boxes of that object's instances
-// the plate holds, where `instance_plates[i]` is the plate instance i is on (-1: none). Undefined
-// when the plate holds none of them.
-BoundingBoxf3 object_fit_box(const std::vector<BoundingBoxf3>& instance_boxes, const std::vector<int>& instance_plates,
-                             int plate_index);
-
 // The error for a fit to an object the requested plate does not hold, naming the plate(s) its
 // instances are on instead, or that it is on none.
 std::string object_not_on_plate_message(int object_index, int plate_index, const std::vector<int>& instance_plates);

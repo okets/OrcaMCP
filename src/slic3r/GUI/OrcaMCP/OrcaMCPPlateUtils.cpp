@@ -182,25 +182,23 @@ static BoundingBoxf3 plate_contents_box(PartPlate& plate, const BoundingBoxf3& p
 }
 
 // What `fit: {object_index}` frames on `plate_index`: the exact boxes of that object's instances the
-// plate holds. Instance 0 alone used to be framed, even when it stood on another plate, so the camera
-// pointed at a spot this plate's picture draws nothing at.
+// plate holds (OrcaMCP::instances_on_plate, the same selection get_scene_info describes the plate by).
+// Instance 0 alone used to be framed, even when it stood on another plate, so the camera pointed at a
+// spot this plate's picture draws nothing at.
 static BoundingBoxf3 object_fit_box_on_plate(int object_index, int plate_index)
 {
     const ModelObjectPtrs& objects = wxGetApp().model().objects;
     if (object_index < 0 || size_t(object_index) >= objects.size())
         throw std::runtime_error("fit.object_index out of range");
-    PartPlateList&             plates = wxGetApp().plater()->get_partplate_list();
-    const ModelObject&         object = *objects[object_index];
-    std::vector<BoundingBoxf3> boxes;
-    std::vector<int>           on_plate;
-    for (size_t i = 0; i < object.instances.size(); ++i) {
-        boxes.push_back(object.instance_bounding_box(i));
+    PartPlateList&     plates = wxGetApp().plater()->get_partplate_list();
+    const ModelObject& object = *objects[object_index];
+    const OrcaMCP::InstancesOnPlate here = OrcaMCP::instances_on_plate(object, object_index, *plates.get_plate(plate_index));
+    if (here.box.defined)
+        return here.box;
+    std::vector<int> on_plate;
+    for (size_t i = 0; i < object.instances.size(); ++i)
         on_plate.push_back(plates.find_instance(object_index, int(i)));
-    }
-    const BoundingBoxf3 box = OrcaMCP::object_fit_box(boxes, on_plate, plate_index);
-    if (!box.defined)
-        throw std::runtime_error(OrcaMCP::object_not_on_plate_message(object_index, plate_index, on_plate));
-    return box;
+    throw std::runtime_error(OrcaMCP::object_not_on_plate_message(object_index, plate_index, on_plate));
 }
 
 // [x, y, z] or {x, y, z}, bed mm.
@@ -676,14 +674,15 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
 }
 
 
-ObjectFootprint OrcaMCPPlateUtils::GetObjectFootprint(const ModelObject& object, const DynamicPrintConfig& print_cfg)
+ObjectFootprint OrcaMCPPlateUtils::GetObjectFootprint(const ModelObject& object, const BoundingBoxf3& body_box,
+                                                      const DynamicPrintConfig& print_cfg)
 {
     ObjectFootprint out;
     out.brim_type = object_or_global_enum(object, print_cfg, "brim_type", "no_brim");
     out.brim      = OrcaMCP::object_brim_extent(out.brim_type,
                                                 object_or_global_float(object, print_cfg, "brim_width", 0.0),
                                                 object_or_global_float(object, print_cfg, "brim_object_gap", 0.0));
-    out.body = OrcaMCP::footprint_of(OrcaMCP::object_world_box(object));
+    out.body = OrcaMCP::footprint_of(body_box);
     out.rect = OrcaMCP::expand_footprint(out.body, out.brim.extent_mm);
     return out;
 }
@@ -834,22 +833,22 @@ nlohmann::json OrcaMCPPlateUtils::GetPlates(bool with_model_object_features) {
         // Loop through each ModelObject (now deduplicated)
         nlohmann::json objects_info = nlohmann::json::array();
         for (const auto& obj : plate->get_objects_on_this_plate()) {
-            // Find the object's index in model.objects (used for transform operations)
-            int object_index = -1;
-            for (size_t i = 0; i < model.objects.size(); ++i) {
-                if (model.objects[i] == obj) {
-                    object_index = static_cast<int>(i);
-                    break;
-                }
-            }
-            // Identity, transform and bounding box, exactly as load_model's loaded_objects reports them.
-            nlohmann::json object_info = OrcaMCP::model_object_summary_json(*obj, object_index);
-            const Vec3d    size        = OrcaMCP::object_world_box(*obj).size();
+            const int object_index = OrcaMCP::model_object_index(obj);  // the index transform tools take
+            // This plate's instances only: an object with copies on other plates is described here by
+            // the copies standing here, and says which they are. Its bounding box and footprint used to
+            // span every plate it had an instance on.
+            const OrcaMCP::InstancesOnPlate here = OrcaMCP::instances_on_plate(*obj, object_index, *plate);
+            const BoundingBoxf3 box = OrcaMCP::plate_box_of(*obj, here);
+
+            // Identity, transform and bounding box, as load_model's loaded_objects reports them.
+            nlohmann::json object_info = OrcaMCP::model_object_summary_json(*obj, object_index, box);
+            object_info["instances_on_plate"] = here.ids;
+            const Vec3d size = box.size();
 
             // The bounding box is the model; the brim is printed plastic beyond it. A neighbour
             // placed flush against the bounding box collides with the brim, so the printed extent
             // is reported alongside it rather than left for the caller to work out.
-            const ObjectFootprint footprint = GetObjectFootprint(*obj, print_cfg);
+            const ObjectFootprint footprint = GetObjectFootprint(*obj, box, print_cfg);
             object_info["brim"] = {
                 {"type", footprint.brim_type},
                 {"extent_mm", footprint.brim.extent_mm},
@@ -889,6 +888,7 @@ nlohmann::json OrcaMCPPlateUtils::GetPlates(bool with_model_object_features) {
                 {"kind", "object"},
                 {"name", obj->name},
                 {"object_index", object_index},
+                {"instances_on_plate", here.ids},
                 {"footprint", rect_to_json(footprint.rect)},
                 {"includes_brim", footprint.brim.extent_mm > 0.0},
                 {"footprint_is_exact", footprint.brim.exact},

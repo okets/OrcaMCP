@@ -12,6 +12,7 @@
 namespace Slic3r {
 class ModelObject;
 namespace GUI {
+class PartPlate;
 class Plater;
 namespace OrcaMCP {
 
@@ -133,12 +134,40 @@ void transform_instances_on_bed(ModelObject& object, const Transform3d& world_tr
 // min z -4 mm, its footprint too wide, with footprint_is_exact true.
 const BoundingBoxf3& object_world_box(const ModelObject& object);
 
+// The instances of one object a plate holds, and their exact world box. Every per-plate description
+// of an object is built from this -- get_scene_info's entry and occupancy footprint, the first-layer
+// plan, the prime tower's conflicts -- and a render's fit to the object frames it: an object with
+// instances on several plates is described under each plate by the instances there, never by the
+// box spanning them all. `holds(i)` says whether the plate holds instance i.
+struct InstancesOnPlate
+{
+    std::vector<int> ids;  // instance indices, ascending
+    BoundingBoxf3    box;  // the union of their exact boxes; undefined when there are none
+};
+InstancesOnPlate instances_on_plate(const ModelObject& object, const std::function<bool(int)>& holds);
+
+// The same, read from `plate`'s own instance list (PartPlate::contain_instance), the list
+// get_scene_info groups objects by. `object_index` is the object's index in the model.
+InstancesOnPlate instances_on_plate(const ModelObject& object, int object_index, PartPlate& plate);
+
+// The box a per-plate description of `object` uses: its instances' there, or the whole object's for
+// an object the plate lists without holding an instance of it (only a stale list does that).
+BoundingBoxf3 plate_box_of(const ModelObject& object, const InstancesOnPlate& here);
+
+// The index of `object` in the plater's model, matched by pointer or by ObjectID (a Print's copy of
+// an object carries the original's id), or -1.
+int model_object_index(const ModelObject* object);
+
 // One model object as every MCP response describes it: id, name, object_index (the index other
 // tools take), instance_count, volume_count, position (bounding-box centre), rotation_degrees and
 // scale of the first instance, and bounding_box {size_x, size_y, size_z, min, max}, in plate mm.
 // get_scene_info adds brim, footprint, layer-height and filament fields; load_model's
 // loaded_objects is exactly this.
 nlohmann::json model_object_summary_json(const ModelObject& object, int object_index);
+
+// The same with `box` for bounding_box and position: a per-plate entry passes the box of the
+// instances on that plate (instances_on_plate).
+nlohmann::json model_object_summary_json(const ModelObject& object, int object_index, const BoundingBoxf3& box);
 
 // Always returns {"count": N, "warnings": [{level, message, type}...]}.
 nlohmann::json get_active_warnings_json(Plater* plater);

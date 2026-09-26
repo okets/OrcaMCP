@@ -14,6 +14,7 @@
 #include "libslic3r/PrintConfig.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPCommon.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPPlateUtils.hpp"
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
@@ -99,17 +100,7 @@ std::vector<OverlayLabel> plan_labels(const FirstLayerPlan& plan)
 // --- from the Print --------------------------------------------------------------------------
 
 // The Print works on its own copy of the model, so pointers never match the plater's objects;
-// ObjectIDs survive the copy and do.
-static int model_object_index(const ModelObject* mo)
-{
-    if (mo == nullptr)
-        return -1;
-    const ModelObjectPtrs& objects = wxGetApp().model().objects;
-    for (size_t i = 0; i < objects.size(); ++i)
-        if (objects[i] == mo || objects[i]->id() == mo->id())
-            return int(i);
-    return -1;
-}
+// ObjectIDs survive the copy and do, which is what OrcaMCP::model_object_index matches by.
 
 static FirstLayerPlan plan_from_print(const Print& print)
 {
@@ -183,9 +174,11 @@ FirstLayerPlan collect_first_layer(PartPlate& plate, const DynamicPrintConfig& f
 
     std::vector<FootprintInput> footprints;
     for (const ModelObject* mo : plate.get_objects_on_this_plate()) {
-        const ObjectFootprint fp = OrcaMCPPlateUtils::GetObjectFootprint(*mo, full_config);
+        const int             object_index = model_object_index(mo);
+        const InstancesOnPlate here         = instances_on_plate(*mo, object_index, plate);
+        const ObjectFootprint  fp           = OrcaMCPPlateUtils::GetObjectFootprint(*mo, plate_box_of(*mo, here), full_config);
         FootprintInput in;
-        in.object_index   = model_object_index(mo);
+        in.object_index   = object_index;
         in.name           = mo->name;
         in.body           = BoundingBoxf3(Vec3d(fp.body.min.x(), fp.body.min.y(), 0.), Vec3d(fp.body.max.x(), fp.body.max.y(), 0.));
         in.brim_extent_mm = fp.brim.extent_mm;

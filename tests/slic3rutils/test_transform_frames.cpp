@@ -8,6 +8,7 @@
 #include "libslic3r/TriangleMesh.hpp"
 
 #include <cmath>
+#include <vector>
 
 // The frame the transform tools move, rotate, scale and mirror in. The handlers themselves need a
 // Plater, but the part that was wrong is pure geometry: whether a displacement written in plate
@@ -24,6 +25,8 @@ using Slic3r::ModelVolume;
 using Slic3r::Transform3d;
 using Slic3r::TriangleMesh;
 using Slic3r::Vec3d;
+using Slic3r::GUI::OrcaMCP::InstancesOnPlate;
+using Slic3r::GUI::OrcaMCP::instances_on_plate;
 using Slic3r::GUI::OrcaMCP::object_world_box;
 using Slic3r::GUI::OrcaMCP::should_drop_to_bed;
 using Slic3r::GUI::OrcaMCP::transform_instances_in_plate_frame;
@@ -367,8 +370,63 @@ TEST_CASE("a rotated object is reported by its exact box", "[transform_frames]")
     CHECK_THAT(summary["position"]["z"].get<double>(), WithinAbs(exact.center().z(), 1e-9));
 
     const Slic3r::GUI::ObjectFootprint footprint =
-        Slic3r::GUI::OrcaMCPPlateUtils::GetObjectFootprint(*built.object, Slic3r::DynamicPrintConfig());
+        Slic3r::GUI::OrcaMCPPlateUtils::GetObjectFootprint(*built.object, exact, Slic3r::DynamicPrintConfig());
     CHECK_THAT(footprint.body.min.x(), WithinAbs(exact.min.x(), 1e-9));
     CHECK_THAT(footprint.body.max.x(), WithinAbs(exact.max.x(), 1e-9));
     CHECK(footprint.body.size().x() < built.object->bounding_box_approx().size().x() - 1.0);
+}
+
+// One object, instances on several plates. Every per-plate description of it -- get_scene_info's
+// entry, its occupancy footprint, a render's fit -- is built from the instances that plate holds.
+// get_scene_info used to give the box spanning them all, so plate 0's footprint for a part with a
+// copy on plate 1 was 347 mm wide.
+
+namespace {
+
+// A 10 x 20 x 30 box with instances at x = 100, 400 and 150 (the second on "plate 1").
+RotatedObject make_three_instances()
+{
+    RotatedObject built;
+    built.object = built.model.add_object();
+    built.object->add_volume(TriangleMesh(Slic3r::its_make_cube(10.0, 20.0, 30.0)), false);
+    for (double x : {100.0, 400.0, 150.0})
+        built.object->add_instance()->set_offset(Vec3d(x, 100.0, 0.0));
+    return built;
+}
+
+} // namespace
+
+TEST_CASE("an object's instances on one plate are the ones that plate holds", "[transform_frames]")
+{
+    RotatedObject built = make_three_instances();
+    const auto on_plate_0 = [](int instance) { return instance != 1; };
+
+    const InstancesOnPlate here = instances_on_plate(*built.object, on_plate_0);
+    CHECK(here.ids == std::vector<int>{0, 2});
+    REQUIRE(here.box.defined);
+    check_box(here.box, Vec3d(100, 100, 0), Vec3d(160, 120, 30));
+
+    const InstancesOnPlate there = instances_on_plate(*built.object, [](int instance) { return instance == 1; });
+    CHECK(there.ids == std::vector<int>{1});
+    check_box(there.box, Vec3d(400, 100, 0), Vec3d(410, 120, 30));
+
+    const InstancesOnPlate nowhere = instances_on_plate(*built.object, [](int) { return false; });
+    CHECK(nowhere.ids.empty());
+    CHECK_FALSE(nowhere.box.defined);
+}
+
+TEST_CASE("an object's per-plate entry and footprint cover that plate's instances only", "[transform_frames]")
+{
+    RotatedObject built = make_three_instances();
+    const InstancesOnPlate here = instances_on_plate(*built.object, [](int instance) { return instance != 1; });
+
+    const nlohmann::json entry = Slic3r::GUI::OrcaMCP::model_object_summary_json(*built.object, 0, here.box);
+    CHECK_THAT(entry["bounding_box"]["max"]["x"].get<double>(), WithinAbs(160.0, 1e-9));  // not 410
+    CHECK_THAT(entry["position"]["x"].get<double>(), WithinAbs(130.0, 1e-9));
+    CHECK(entry["instance_count"] == 3);  // the object's, as get_object_info reports it
+
+    const Slic3r::GUI::ObjectFootprint footprint =
+        Slic3r::GUI::OrcaMCPPlateUtils::GetObjectFootprint(*built.object, here.box, Slic3r::DynamicPrintConfig());
+    CHECK_THAT(footprint.body.min.x(), WithinAbs(100.0, 1e-9));
+    CHECK_THAT(footprint.body.max.x(), WithinAbs(160.0, 1e-9));
 }
