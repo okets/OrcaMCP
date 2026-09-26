@@ -22,6 +22,8 @@ void OrcaMCPServer::register_builtin_tools()
     // Add your new tool
     register_tool({
         "my_new_tool",                        // Tool name
+        ToolCategory::Scene,                  // Required: a registration without one does not compile
+        "What it does, in 40 chars at most",  // Summary: get_server_info's catalogue line
         "Description of what the tool does",  // Description for tools/list
         {                                     // JSON Schema for parameters
             {"type", "object"},
@@ -329,6 +331,8 @@ Here's a complete example of a simple tool:
 // In register_builtin_tools():
 register_tool({
     "get_object_volume",
+    ToolCategory::Models,
+    "An object's volume in cubic millimeters",
     "Calculate the volume of an object in cubic millimeters",
     {
         {"type", "object"},

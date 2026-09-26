@@ -178,6 +178,8 @@ void OrcaMCPServer::register_printer_tools()
     // get_printers - Get list of available printers
     register_tool({
         "get_printers",
+        ToolCategory::Printers,
+        "Printers and print-host presets",
         "Get available printers and their status.",
         {
             {"type", "object"},
@@ -301,6 +303,8 @@ void OrcaMCPServer::register_printer_tools()
     // select_printer - Select a Bambu device by dev_id, or a physical printer (print host) by name
     register_tool({
         "select_printer",
+        ToolCategory::Printers,
+        "Select a Bambu device or a print host",
         "Select a printer: a Bambu device by dev_id, or a printer preset with a print host by name.",
         {
             {"type", "object"},
@@ -349,6 +353,8 @@ void OrcaMCPServer::register_printer_tools()
     // send_to_printer - Upload the sliced plate to the configured print host
     register_tool({
         "send_to_printer",
+        ToolCategory::Printers,
+        "Upload the plate AND START printing it",
         "Upload the sliced plate to the configured print host and START PRINTING IT: start_print defaults to true, so a bare call begins a print on real hardware. Pass start_print=false to upload only. The upload runs "
         "without any dialog: on a Flashforge printer with a material station the project's filaments are "
         "mapped onto the loaded slots automatically (pass material_mappings to choose the slots "
@@ -533,6 +539,8 @@ void OrcaMCPServer::register_printer_tools()
     // discover_printers - Find Flashforge printers on the local network
     register_tool({
         "discover_printers",
+        ToolCategory::Printers,
+        "Find Flashforge printers on the LAN",
         "Discover Flashforge printers on the local network via UDP broadcast.",
         {
             {"type", "object"},
@@ -567,6 +575,8 @@ void OrcaMCPServer::register_printer_tools()
     // add_physical_printer - Create or overwrite a physical printer and select it
     register_tool({
         "add_physical_printer",
+        ToolCategory::Printers,
+        "Save a print host as a printer preset",
         "Configure a print host on the current printer preset and save it as a user preset with this name.",
         {
             {"type", "object"},
@@ -645,6 +655,8 @@ void OrcaMCPServer::register_printer_tools()
     // get_printer_status - Live status from the configured print host (full detail for Flashforge)
     register_tool({
         "get_printer_status",
+        ToolCategory::Printers,
+        "Live printer state and temperatures",
         "Get live status from the configured print host: state, progress, temperatures, light, material "
         "station. Full detail is only available for Flashforge hosts; other host types report online/offline.",
         {
@@ -694,6 +706,8 @@ void OrcaMCPServer::register_printer_tools()
     // printer_control - Pause/resume/cancel the current job, toggle the light, or set temperatures
     register_tool({
         "printer_control",
+        ToolCategory::Printers,
+        "Pause, resume, cancel, light, temps",
         "Control the Flashforge printer: pause, resume or cancel the current job, turn the enclosure "
         "light on/off, or set bed/chamber/nozzle target temperatures.",
         {
@@ -803,6 +817,8 @@ void OrcaMCPServer::register_printer_tools()
     // list_printer_files - G-code files stored on the Flashforge printer
     register_tool({
         "list_printer_files",
+        ToolCategory::Printers,
+        "G-code files stored on the printer",
         "List G-code files stored on the Flashforge printer.",
         {
             {"type", "object"},
@@ -826,6 +842,8 @@ void OrcaMCPServer::register_printer_tools()
     // print_printer_file - Start printing a G-code file already on the Flashforge printer
     register_tool({
         "print_printer_file",
+        ToolCategory::Printers,
+        "Start printing a file on the printer",
         "Start printing a G-code file already stored on the Flashforge printer, with optional material "
         "station mapping.",
         {
@@ -919,6 +937,8 @@ void OrcaMCPServer::register_printer_tools()
     // match_project_to_printer - Make the project's filament slots say what the machine actually holds
     register_tool({
         "match_project_to_printer",
+        ToolCategory::Printers,
+        "Match slots to the printer's filaments",
         "Match the project's filament slots to the printer's material station: for every loaded slot, "
         "pick a filament preset of the material the printer reports and set that slot's colour to the "
         "colour it reports. Slots the printer reports as empty are left untouched. Fixes the two things "

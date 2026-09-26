@@ -29,6 +29,7 @@
 #include <cmath>
 #include <future>
 #include <set>
+#include <stdexcept>
 
 namespace Slic3r { namespace GUI {
 
@@ -36,7 +37,41 @@ using namespace Slic3r::GUI::OrcaMCP;
 
 // Static member initialization
 std::map<std::string, OrcaMCPServer::ToolDefinition> OrcaMCPServer::s_tools;
+bool OrcaMCPServer::s_tools_registered = false;
 bool OrcaMCPServer::s_initialized = false;
+
+const std::vector<OrcaMCPServer::ToolCategory>& OrcaMCPServer::all_tool_categories()
+{
+    static const std::vector<ToolCategory> categories = {
+        ToolCategory::Scene,     ToolCategory::Models,      ToolCategory::Transforms,      ToolCategory::Plates,
+        ToolCategory::Config,    ToolCategory::PerObject,   ToolCategory::LayerRanges,     ToolCategory::FilamentsColour,
+        ToolCategory::Painting,  ToolCategory::Slicing,     ToolCategory::Visualization,   ToolCategory::Printers,
+        ToolCategory::Adaptive,  ToolCategory::History,     ToolCategory::Info,
+    };
+    return categories;
+}
+
+const char* OrcaMCPServer::tool_category_name(ToolCategory category)
+{
+    switch (category) {
+    case ToolCategory::Scene:           return "Scene";
+    case ToolCategory::Models:          return "Models";
+    case ToolCategory::Transforms:      return "Transforms";
+    case ToolCategory::Plates:          return "Plates";
+    case ToolCategory::Config:          return "Config";
+    case ToolCategory::PerObject:       return "Per-Object";
+    case ToolCategory::LayerRanges:     return "Layer Ranges";
+    case ToolCategory::FilamentsColour: return "Filaments & colour";
+    case ToolCategory::Painting:        return "Painting";
+    case ToolCategory::Slicing:         return "Slicing";
+    case ToolCategory::Visualization:   return "Visualization";
+    case ToolCategory::Printers:        return "Printers";
+    case ToolCategory::Adaptive:        return "Adaptive";
+    case ToolCategory::History:         return "History";
+    case ToolCategory::Info:            return "Info";
+    }
+    return "Unknown";
+}
 
 void OrcaMCPServer::init()
 {
@@ -47,13 +82,39 @@ void OrcaMCPServer::init()
     // Clean up old preview files from previous sessions
     OrcaMCPPlateUtils::CleanupPreviews();
 
-    register_builtin_tools();
+    ensure_tools_registered();
     s_initialized = true;
+}
+
+void OrcaMCPServer::ensure_tools_registered()
+{
+    if (s_tools_registered) return;
+    try {
+        register_builtin_tools();
+    } catch (...) {
+        // A half-filled table would make the next attempt report a duplicate of whichever tool
+        // happened to register first, instead of the real fault.
+        s_tools.clear();
+        throw;
+    }
+    s_tools_registered = true;
+}
+
+const std::map<std::string, OrcaMCPServer::ToolDefinition>& OrcaMCPServer::registered_tools()
+{
+    ensure_tools_registered();
+    return s_tools;
 }
 
 void OrcaMCPServer::register_tool(const ToolDefinition& tool)
 {
-    s_tools[tool.name] = tool;
+    // Both are programming errors a unit test catches. A second registration used to replace the
+    // first silently, so two tools could share a name and only one of them was reachable.
+    if (s_tools.count(tool.name) != 0)
+        throw std::logic_error("OrcaMCPServer: tool '" + tool.name + "' is registered twice");
+    if (!tool.handler)
+        throw std::logic_error("OrcaMCPServer: tool '" + tool.name + "' has no handler");
+    s_tools.emplace(tool.name, tool);
     BOOST_LOG_TRIVIAL(debug) << "OrcaMCPServer: Registered tool '" << tool.name << "'";
 }
 
@@ -125,9 +186,16 @@ std::shared_ptr<HttpServer::Response> OrcaMCPServer::handle_request(
         return nullptr;  // Not for us
     }
 
-    // Ensure initialized
+    // Ensure initialized. Registration throws on a malformed tool table; that must fail this
+    // request, not escape onto the HTTP worker thread and take the process down.
     if (!s_initialized) {
-        init();
+        try {
+            init();
+        } catch (const std::exception& e) {
+            BOOST_LOG_TRIVIAL(error) << "OrcaMCPServer: " << e.what();
+            auto error = make_error_response(nlohmann::json(nullptr), -32603, std::string("Internal error: ") + e.what());
+            return std::make_shared<HttpServer::ResponseJson>(error.dump(), 200);
+        }
     }
 
     BOOST_LOG_TRIVIAL(debug) << "OrcaMCPServer: Handling " << method << " " << url;
@@ -374,6 +442,8 @@ void OrcaMCPServer::register_builtin_tools()
     // so nothing modal ever opens. The close is scheduled so this reply reaches the caller first.
     register_tool({
         "quit_app",
+        ToolCategory::Info,
+        "Quit the app with no dialog",
         "Quit OrcaMCP cleanly with no dialog. By default unsaved project changes are discarded; pass "
         "discard_changes=false to refuse while the project is dirty (call save_project first).",
         {
@@ -406,6 +476,8 @@ void OrcaMCPServer::register_builtin_tools()
 
     register_tool({
         "get_server_info",
+        ToolCategory::Info,
+        "This guide; pass section for the rest",
         "Get documentation about tools, concepts, and workflows",
         {
             {"type", "object"},
@@ -896,6 +968,8 @@ void OrcaMCPServer::register_builtin_tools()
     // get_scene_info - Get current project state
     register_tool({
         "get_scene_info",
+        ToolCategory::Scene,
+        "Plates, objects, bed and occupancy",
         "Get current project state: plates, objects, positions. Call first to get object_ids. Each "
         "plate also carries `occupancy`, the complete list of what stands on it in plate "
         "millimetres -- every object's printed footprint (brim included), the prime tower's "
@@ -953,6 +1027,8 @@ void OrcaMCPServer::register_builtin_tools()
     // get_presets - List the presets compatible with the selected printer
     register_tool({
         "get_presets",
+        ToolCategory::Config,
+        "List presets; filter by type/vendor/name",
         "List the printer, filament and print presets available for the selected printer. "
         "Returns names and identifying fields only; pass summary:false for full configs. "
         "Capped per type (default 25) -- narrow it with type/vendor/name_contains, or raise limit.",
@@ -1051,6 +1127,8 @@ void OrcaMCPServer::register_builtin_tools()
     // get_edited_presets - Get currently edited presets
     register_tool({
         "get_edited_presets",
+        ToolCategory::Config,
+        "Active presets and their unsaved edits",
         "Get currently edited presets with dirty (modified) options",
         {
             {"type", "object"},
@@ -1068,6 +1146,8 @@ void OrcaMCPServer::register_builtin_tools()
     // render_plate_view - Render plate thumbnail
     register_tool({
         "render_plate_view",
+        ToolCategory::Visualization,
+        "Render a plate or object to PNG",
         "Render a plate. Omit views for a contact sheet of iso, top and front fitted to the plate. A view is {preset: iso|top|front|back|left|right|low, fit: \"plate\" | {object_index}} or explicit {camera_position, target} in BED mm (the get_scene_info frame; plate N sits at plates[N].bounding_box) -- or add frame: \"plate_local\" to give them relative to the plate's front-left corner. Only the requested plate's volumes are drawn. Every view returns objects_in_frame, uniform_image (+hint), plate_origin and the camera; overlays (outline, 10 mm grid, origin, labels) are on by default. Use save_to_file=true for PNG paths.",
         {
             {"type", "object"},
@@ -1150,6 +1230,8 @@ void OrcaMCPServer::register_builtin_tools()
     // get_preview_base64 - Convert preview image to base64 (for remote clients)
     register_tool({
         "get_preview_base64",
+        ToolCategory::Visualization,
+        "A preview image as base64",
         "Convert preview image to base64. Use only if no filesystem access.",
         {
             {"type", "object"},
@@ -1171,6 +1253,8 @@ void OrcaMCPServer::register_builtin_tools()
     // select_preset - Select a preset
     register_tool({
         "select_preset",
+        ToolCategory::Config,
+        "Switch a preset, or one filament slot's",
         "Select a printer, filament, or print preset by name. With type 'filament', pass slot "
         "(1-based) to set just that filament slot, like the sidebar filament combo; without slot "
         "the filament tab switches whichever slot it is on and dirty preset changes are discarded.",
@@ -1237,6 +1321,8 @@ void OrcaMCPServer::register_builtin_tools()
     // apply_config - Apply print settings
     register_tool({
         "apply_config",
+        ToolCategory::Config,
+        "Change settings, several in one call",
         "Apply print settings. Batch multiple in one call. Types: print | filament | printer | project.",
         {
             {"type", "object"},
@@ -1385,6 +1471,8 @@ void OrcaMCPServer::register_builtin_tools()
     // clone_preset - Clone/duplicate an existing preset
     register_tool({
         "clone_preset",
+        ToolCategory::Config,
+        "Copy a preset under a new name",
         "Clone a preset with a new name.",
         {
             {"type", "object"},
@@ -1438,6 +1526,8 @@ void OrcaMCPServer::register_builtin_tools()
     // save_preset - Save dirty changes to a preset
     register_tool({
         "save_preset",
+        ToolCategory::Config,
+        "Save edited settings to a preset",
         "Save dirty changes to preset. Optionally save as new name.",
         {
             {"type", "object"},
@@ -1487,6 +1577,8 @@ void OrcaMCPServer::register_builtin_tools()
     // delete_preset - Delete a user-created preset
     register_tool({
         "delete_preset",
+        ToolCategory::Config,
+        "Delete a user preset",
         "Delete a user-created preset.",
         {
             {"type", "object"},
@@ -1534,6 +1626,8 @@ void OrcaMCPServer::register_builtin_tools()
     // reset_preset - Discard dirty changes and revert to saved state
     register_tool({
         "reset_preset",
+        ToolCategory::Config,
+        "Discard unsaved preset edits",
         "Discard unsaved preset changes.",
         {
             {"type", "object"},
@@ -1578,6 +1672,8 @@ void OrcaMCPServer::register_builtin_tools()
     // auto_orient - Auto-orient all objects
     register_tool({
         "auto_orient",
+        ToolCategory::Models,
+        "Auto-orient all objects for printing",
         "Automatically orient all objects for optimal printing",
         {
             {"type", "object"},
@@ -1614,6 +1710,8 @@ void OrcaMCPServer::register_builtin_tools()
     // arrange_objects - Arrange objects on plate
     register_tool({
         "arrange_objects",
+        ToolCategory::Models,
+        "Auto-arrange objects on the plates",
         "Automatically arrange all objects on the build plate",
         {
             {"type", "object"},
@@ -1650,6 +1748,8 @@ void OrcaMCPServer::register_builtin_tools()
     // undo - Undo last operation
     register_tool({
         "undo",
+        ToolCategory::History,
+        "Undo the last operation",
         "Undo the last operation.",
         {
             {"type", "object"},
@@ -1678,6 +1778,8 @@ void OrcaMCPServer::register_builtin_tools()
     // redo - Redo last undone operation
     register_tool({
         "redo",
+        ToolCategory::History,
+        "Redo the last undone operation",
         "Redo the last undone operation",
         {
             {"type", "object"},
@@ -1708,6 +1810,8 @@ void OrcaMCPServer::register_builtin_tools()
     // get_object_config - Get per-object settings
     register_tool({
         "get_object_config",
+        ToolCategory::PerObject,
+        "An object's setting overrides",
         "Get per-object setting overrides.",
         {
             {"type", "object"},
@@ -1750,6 +1854,8 @@ void OrcaMCPServer::register_builtin_tools()
     // set_object_config - Set per-object settings (supports batch)
     register_tool({
         "set_object_config",
+        ToolCategory::PerObject,
+        "Override settings for one object",
         "Set per-object setting overrides.",
         {
             {"type", "object"},
@@ -1932,6 +2038,8 @@ void OrcaMCPServer::register_builtin_tools()
     // reset_object_config - Remove per-object overrides
     register_tool({
         "reset_object_config",
+        ToolCategory::PerObject,
+        "Remove an object's setting overrides",
         "Remove per-object setting overrides.",
         {
             {"type", "object"},
@@ -2000,6 +2108,8 @@ void OrcaMCPServer::register_builtin_tools()
     // get_valid_config_keys - Get valid configuration keys for settings
     register_tool({
         "get_valid_config_keys",
+        ToolCategory::Config,
+        "Discover setting keys by category",
         "Get valid configuration keys.",
         {
             {"type", "object"},
@@ -2128,6 +2238,8 @@ void OrcaMCPServer::register_builtin_tools()
     // get_object_layer_ranges - Get layer-range-specific configs
     register_tool({
         "get_object_layer_ranges",
+        ToolCategory::LayerRanges,
+        "An object's per-height-range settings",
         "Get layer-range settings for an object. Range Z is measured from the object's own base, "
         "not from the bed, so it equals plate Z only while the object sits on the bed.",
         {
@@ -2179,6 +2291,8 @@ void OrcaMCPServer::register_builtin_tools()
     // set_object_layer_range - Set layer-range-specific settings
     register_tool({
         "set_object_layer_range",
+        ToolCategory::LayerRanges,
+        "Settings for a Z range of an object",
         "Set settings for a Z height range. z_min/z_max are measured from the object's own base, "
         "not from the bed, so they equal plate Z only while the object sits on the bed -- moving the "
         "object up does not move its ranges.",
@@ -2302,6 +2416,8 @@ void OrcaMCPServer::register_builtin_tools()
     // delete_object_layer_range - Remove layer-range config
     register_tool({
         "delete_object_layer_range",
+        ToolCategory::LayerRanges,
+        "Remove an object's layer ranges",
         "Remove layer range config. If z_min/z_max omitted, removes ALL ranges. Range Z is measured "
         "from the object's own base, not from the bed.",
         {
@@ -2370,6 +2486,8 @@ void OrcaMCPServer::register_builtin_tools()
     // apply_adaptive_layer_height - Apply VLH to objects (supports batch)
     register_tool({
         "apply_adaptive_layer_height",
+        ToolCategory::Adaptive,
+        "Variable layer height from geometry",
         "Apply Variable Layer Height based on geometry.",
         {
             {"type", "object"},
@@ -2519,6 +2637,8 @@ void OrcaMCPServer::register_builtin_tools()
     // clear_adaptive_layer_height - Remove VLH from objects (supports batch)
     register_tool({
         "clear_adaptive_layer_height",
+        ToolCategory::Adaptive,
+        "Back to a fixed layer height",
         "Remove Variable Layer Height, revert to fixed.",
         {
             {"type", "object"},
@@ -2621,6 +2741,8 @@ void OrcaMCPServer::register_builtin_tools()
     // slice_all - Start slicing
     register_tool({
         "slice_all",
+        ToolCategory::Slicing,
+        "Slice every plate, or the selected one",
         "Slice every plate in the project, the way the GUI's Slice All button does: one plate at a "
         "time until all are sliced. Pass all_plates=false to slice only the plate that is currently "
         "selected. Poll get_slicing_status until state is \"done\"; its plates array says which "
@@ -2702,6 +2824,8 @@ void OrcaMCPServer::register_builtin_tools()
     // export_gcode - Export G-code
     register_tool({
         "export_gcode",
+        ToolCategory::Slicing,
+        "Write the sliced plate's G-code",
         "Export G-code. Requires slicing complete.",
         {
             {"type", "object"},
@@ -2757,6 +2881,8 @@ void OrcaMCPServer::register_builtin_tools()
     // export_3mf - Export project as 3MF
     register_tool({
         "export_3mf",
+        ToolCategory::Scene,
+        "Write the project to a 3MF file",
         "Export project as 3MF file.",
         {
             {"type", "object"},
@@ -2828,6 +2954,8 @@ void OrcaMCPServer::register_builtin_tools()
     // save_project - Save current project
     register_tool({
         "save_project",
+        ToolCategory::Scene,
+        "Save the project, in place or as a copy",
         "Save the current project. Saves in place once the project has a file name; pass "
         "output_path to name it (or to save a copy under a new name).",
         {
@@ -2903,6 +3031,8 @@ void OrcaMCPServer::register_builtin_tools()
     // load_model - Import 3D model file
     register_tool({
         "load_model",
+        ToolCategory::Models,
+        "Import STL, 3MF, OBJ or STEP geometry",
         "Import a 3D model file (STL, 3MF, OBJ, STEP, etc.)",
         {
             {"type", "object"},
@@ -2961,6 +3091,8 @@ void OrcaMCPServer::register_builtin_tools()
     // get_slicing_status - Check slicing progress
     register_tool({
         "get_slicing_status",
+        ToolCategory::Slicing,
+        "Slicing state per plate; poll this",
         "Get the current slicing state: idle (not sliced), slicing (in progress) or done (the "
         "current plate has a valid slice result). Poll until state is done, then get_print_estimate. "
         "The plates array reports every plate's slice result, so a slice_all run can be followed "
@@ -3031,6 +3163,8 @@ void OrcaMCPServer::register_builtin_tools()
     // get_print_estimate - Get print time and filament estimates after slicing
     register_tool({
         "get_print_estimate",
+        ToolCategory::Slicing,
+        "Print time and filament for a plate",
         "Get print time and filament estimates for one plate. Pass plate_index to ask about a "
         "specific plate; omitted, it reports the plate that is currently selected. Requires a valid "
         "slice result for that plate (get_slicing_status state \"done\"). Tool/filament changes are "
@@ -3174,6 +3308,8 @@ void OrcaMCPServer::register_builtin_tools()
     // new_project - Create new project
     register_tool({
         "new_project",
+        ToolCategory::Scene,
+        "Start a new, empty project",
         "Create a new empty project.",
         {
             {"type", "object"},
@@ -3200,6 +3336,8 @@ void OrcaMCPServer::register_builtin_tools()
     // load_project - Load 3MF project file
     register_tool({
         "load_project",
+        ToolCategory::Scene,
+        "Open a 3MF as the project",
         "Load a 3MF project file",
         {
             {"type", "object"},
@@ -3274,6 +3412,8 @@ void OrcaMCPServer::register_builtin_tools()
     // add_plate - Create a new plate
     register_tool({
         "add_plate",
+        ToolCategory::Plates,
+        "Add a new plate",
         "Create a new plate.",
         {
             {"type", "object"},
@@ -3322,6 +3462,8 @@ void OrcaMCPServer::register_builtin_tools()
     // delete_plate - Delete a plate
     register_tool({
         "delete_plate",
+        ToolCategory::Plates,
+        "Delete a plate; its objects go unplaced",
         "Delete a plate. Cannot delete the last plate. Objects on it are NOT deleted and NOT moved to another plate: they are moved outside every plate, where get_scene_info lists them under unplaced_objects. Delete them first if you do not want them.",
         {
             {"type", "object"},
@@ -3398,6 +3540,8 @@ void OrcaMCPServer::register_builtin_tools()
     // select_plate - Select/switch to a plate
     register_tool({
         "select_plate",
+        ToolCategory::Plates,
+        "Make a plate the current one",
         "Select a plate as current.",
         {
             {"type", "object"},
@@ -3468,6 +3612,8 @@ void OrcaMCPServer::register_builtin_tools()
     // this tool speaks plate millimetres like every other tool here and converts.
     register_tool({
         "set_prime_tower_position",
+        ToolCategory::Plates,
+        "Move a plate's prime tower",
         "Move the prime tower on a plate. x/y are the front-left corner (min x, min y) of the "
         "tower BODY in plate millimetres -- the same frame get_object_info and get_scene_info "
         "report object bounding boxes in, and exactly what get_scene_info reports as "
@@ -3629,6 +3775,8 @@ void OrcaMCPServer::register_builtin_tools()
     // move_object - Move/translate an object
     register_tool({
         "move_object",
+        ToolCategory::Transforms,
+        "Move an object, in plate mm",
         "Move object by offset (relative) or to position (relative=false). X/Y/Z are plate "
         "millimetres along the plate's own axes -- the same frame get_object_info and this tool's "
         "own \"position\" report, and independent of how the object is rotated. Moving an object "
@@ -3769,6 +3917,8 @@ void OrcaMCPServer::register_builtin_tools()
     // rotate_object - Rotate an object
     register_tool({
         "rotate_object",
+        ToolCategory::Transforms,
+        "Rotate an object about plate axes",
         "Rotate object around the plate's X, Y and Z axes (degrees), not the object's own axes: a "
         "z=90 turns the object about the vertical whatever its current rotation is. Applied in the "
         "order X, then Y, then Z, about the object's bounding-box centre so it turns in place. The "
@@ -3889,6 +4039,8 @@ void OrcaMCPServer::register_builtin_tools()
     // scale_object - Scale an object
     register_tool({
         "scale_object",
+        ToolCategory::Transforms,
+        "Scale an object along plate axes",
         "Scale object along the plate's X, Y and Z axes, not the object's own: with uniform=false, "
         "z is the object's height above the bed whatever its rotation. uniform=true uses x for all "
         "axes and is frame-independent. Scaling is about the object's bounding-box centre, so it "
@@ -4026,6 +4178,8 @@ void OrcaMCPServer::register_builtin_tools()
     // transform_objects - Batch transform multiple objects
     register_tool({
         "transform_objects",
+        ToolCategory::Transforms,
+        "Move, rotate, scale many objects at once",
         "Batch transform multiple objects. Position, rotation and scale are all in the plate's own "
         "frame -- the same frame get_object_info reports -- not the object's local axes, and match "
         "move_object, rotate_object and scale_object exactly. Each result reports the plate that "
@@ -4217,6 +4371,8 @@ void OrcaMCPServer::register_builtin_tools()
     // mirror_object - Mirror an object across an axis
     register_tool({
         "mirror_object",
+        ToolCategory::Transforms,
+        "Mirror an object across a plate axis",
         "Mirror an object across a plate axis, not the object's own: axis=z flips it top to bottom "
         "on the bed whatever its rotation. Mirroring is about the object's bounding-box centre, so "
         "it stays where it is. The response reports the plate the object is on afterwards "
@@ -4310,6 +4466,8 @@ void OrcaMCPServer::register_builtin_tools()
     // clone_object - Duplicate an object
     register_tool({
         "clone_object",
+        ToolCategory::Transforms,
+        "Copy an object as instances or objects",
         "Clone object. duplicate=true for independent copies.",
         {
             {"type", "object"},
@@ -4509,6 +4667,8 @@ void OrcaMCPServer::register_builtin_tools()
     // get_object_info - Get lightweight info about a single object
     register_tool({
         "get_object_info",
+        ToolCategory::Models,
+        "One object's transform, volumes, slots",
         "Get info about a single object.",
         {
             {"type", "object"},
@@ -4602,6 +4762,8 @@ void OrcaMCPServer::register_builtin_tools()
     // rename_object - Rename an object
     register_tool({
         "rename_object",
+        ToolCategory::Models,
+        "Rename an object",
         "Rename an object for identification purposes",
         {
             {"type", "object"},
@@ -4647,6 +4809,8 @@ void OrcaMCPServer::register_builtin_tools()
     // delete_object - Remove an object from the scene
     register_tool({
         "delete_object",
+        ToolCategory::Transforms,
+        "Remove an object from the scene",
         "Remove an object from the scene",
         {
             {"type", "object"},
@@ -4694,6 +4858,8 @@ void OrcaMCPServer::register_builtin_tools()
     // set_object_printable - Toggle whether an object is included when slicing
     register_tool({
         "set_object_printable",
+        ToolCategory::Models,
+        "Include or skip an object when slicing",
         "Mark an object printable (included when slicing) or unprintable (skipped). "
         "Useful for excluding specific objects from a print without removing them from the scene.",
         {
@@ -4748,6 +4914,8 @@ void OrcaMCPServer::register_builtin_tools()
     // flatten_object - Lay object flat on its best face
     register_tool({
         "flatten_object",
+        ToolCategory::Transforms,
+        "Lay an object flat on its best face",
         "Automatically orient an object to lay flat on its best face for printing",
         {
             {"type", "object"},
@@ -4807,6 +4975,8 @@ void OrcaMCPServer::register_builtin_tools()
     // cut_object - Cut an object at a specified Z height
     register_tool({
         "cut_object",
+        ToolCategory::Transforms,
+        "Cut an object at a Z height",
         "Cut object at a Z height measured in plate mm (height above the bed), the same frame "
         "get_object_info reports -- the object's own rotation is accounted for. keep: below, above, "
         "or both.",
@@ -4919,6 +5089,8 @@ void OrcaMCPServer::register_builtin_tools()
     // set_gcode_view_type - Set the G-code preview visualization mode
     register_tool({
         "set_gcode_view_type",
+        ToolCategory::Visualization,
+        "Choose the G-code preview color mode",
         "Set G-code preview visualization mode. Requires sliced G-code. "
         "Available types: feature_type, speed, actual_speed, fan_speed, temperature, "
         "flow, actual_flow, layer_height, line_width, layer_time, layer_time_log, "

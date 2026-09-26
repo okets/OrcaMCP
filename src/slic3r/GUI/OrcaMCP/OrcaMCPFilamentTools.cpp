@@ -41,6 +41,8 @@ void OrcaMCPServer::register_filament_tools()
 {
     register_tool({
         "get_filaments",
+        ToolCategory::FilamentsColour,
+        "Filament slots, mixed slots, extruders",
         "List all filament slots (physical and mixed/virtual), extruder count, and filament-to-extruder map.",
         {{"type", "object"}, {"properties", nlohmann::json::object()}},
         [](const nlohmann::json&) -> nlohmann::json {
@@ -55,6 +57,8 @@ void OrcaMCPServer::register_filament_tools()
 
     register_tool({
         "set_mixed_filament",
+        ToolCategory::FilamentsColour,
+        "Create or edit a mixed filament slot",
         "Create or edit a mixed (virtual) filament slot that alternates two or three physical "
         "filaments by layer ratio. Requires a multi-filament printer profile.",
         {
@@ -116,6 +120,8 @@ void OrcaMCPServer::register_filament_tools()
 
     register_tool({
         "delete_mixed_filament",
+        ToolCategory::FilamentsColour,
+        "Delete a mixed filament slot",
         "Delete a mixed (virtual) filament slot.",
         {
             {"type", "object"},
@@ -148,6 +154,8 @@ void OrcaMCPServer::register_filament_tools()
     // So the whole-object form now clears the overrides, and the response says what happened.
     register_tool({
         "set_object_filament",
+        ToolCategory::FilamentsColour,
+        "Assign a filament to an object or volume",
         "Assign a filament slot (physical or mixed) to a whole object, or to one volume of it "
         "(volume_id). A volume's own slot beats the object's, so the whole-object form also clears "
         "the own slot of every part and, unless include_modifiers=false, of every modifier -- "
@@ -215,6 +223,8 @@ void OrcaMCPServer::register_filament_tools()
     // so every consumer refreshes. Found when "paint it white" had no white slot to paint with.
     register_tool({
         "set_filament_color",
+        ToolCategory::FilamentsColour,
+        "Set a slot's color as the plate shows it",
         "Set the colour of a filament slot as the plate shows it (sidebar swatch, 3D view, flush "
         "calculation). #RRGGBB or #RRGGBBAA. This is the project's per-slot colour, not the preset's.",
         {
@@ -271,6 +281,8 @@ void OrcaMCPServer::register_filament_tools()
 
     register_tool({
         "get_flush_volumes",
+        ToolCategory::FilamentsColour,
+        "Per-extruder flush-volume matrices",
         "Get the per-extruder flush-volume matrices (mL to purge switching from filament X to Y) "
         "and the flush multiplier used to scale them.",
         {{"type", "object"}, {"properties", nlohmann::json::object()}},
@@ -286,6 +298,8 @@ void OrcaMCPServer::register_filament_tools()
 
     register_tool({
         "set_flush_volumes",
+        ToolCategory::FilamentsColour,
+        "Overwrite one extruder's flush matrix",
         "Overwrite one extruder's full flush-volume matrix (NxN, N = physical filament count) "
         "and, optionally, that extruder's flush multiplier.",
         {
@@ -326,6 +340,8 @@ void OrcaMCPServer::register_filament_tools()
 
     register_tool({
         "auto_calc_flush_volumes",
+        ToolCategory::FilamentsColour,
+        "Recalculate flush volumes from colors",
         "Automatically recalculate flush-volume matrices for every physical filament and "
         "extruder from filament color/type compatibility.",
         {{"type", "object"}, {"properties", nlohmann::json::object()}},
@@ -341,6 +357,8 @@ void OrcaMCPServer::register_filament_tools()
 
     register_tool({
         "get_toolchanger_config",
+        ToolCategory::FilamentsColour,
+        "Toolchange and multi-extruder settings",
         "Get toolchanger / multi-extruder settings (retraction on toolchange, prime tower, "
         "filament map, ...) from the printer preset, print preset, and project config.",
         {{"type", "object"}, {"properties", nlohmann::json::object()}},
@@ -356,6 +374,8 @@ void OrcaMCPServer::register_filament_tools()
 
     register_tool({
         "suggest_color_mix",
+        ToolCategory::FilamentsColour,
+        "Closest filament mix for a target color",
         "Suggest the closest achievable 2-3 component filament mix for a target color, from "
         "the printer's loaded physical filaments. Optionally create the mixed slot.",
         {
@@ -478,6 +498,8 @@ void OrcaMCPServer::register_filament_tools()
 
     register_tool({
         "get_color_palette",
+        ToolCategory::FilamentsColour,
+        "Colors reachable by mixing loaded slots",
         "Enumerate an achievable palette of filament mixes (pairs, and optionally triples) from "
         "the printer's loaded physical filaments -- a shortlist to choose from before painting.",
         {

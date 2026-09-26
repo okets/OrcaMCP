@@ -634,6 +634,8 @@ void OrcaMCPServer::register_paint_tools()
 {
     register_tool({
         "paint_object",
+        ToolCategory::Painting,
+        "Paint color, support, seam, fuzzy skin",
         "Paint per-triangle annotations on an object, the same data the GUI paint gizmos write. "
         "mode selects which: color (multi-material / MMU segmentation), support, seam or "
         "fuzzy_skin. selection selects where: bands along a plate axis (an even split across a "
@@ -1185,6 +1187,8 @@ void OrcaMCPServer::register_paint_tools()
 
     register_tool({
         "clear_object_paint",
+        ToolCategory::Painting,
+        "Clear one or all paint annotations",
         "Reset a paint annotation on an object back to unpainted -- the equivalent of the paint "
         "gizmo's 'Remove all' button. mode picks which annotation; omit it to clear all four, "
         "which paint_object cannot do in one call. Clearing is instance-independent: paint lives "
@@ -1311,6 +1315,8 @@ void OrcaMCPServer::register_paint_tools()
 
     register_tool({
         "set_brim_ears",
+        ToolCategory::Painting,
+        "Place brim ears at plate points",
         "Place brim ears on an object -- the small tabs the brim adds at chosen points. Brim ears "
         "are NOT facet paint: they are points on the object (ModelObject::brim_points), so they "
         "have their own tool. Positions are PLATE millimetres, the same frame get_object_info "
@@ -1506,6 +1512,8 @@ void OrcaMCPServer::register_paint_tools()
 
     register_tool({
         "get_object_paint",
+        ToolCategory::Painting,
+        "Read back an object's paint and ears",
         "Read what is currently painted on an object: per-volume facet counts and surface "
         "coverage for each of the four paint modes (color, support, seam, fuzzy_skin), plus its "
         "brim ears. Coordinates are PLATE millimetres, the same frame get_object_info reports "
@@ -1607,6 +1615,8 @@ void OrcaMCPServer::register_paint_tools()
 
     register_tool({
         "get_object_components",
+        ToolCategory::Painting,
+        "List a part's connected mesh shells",
         "List the connected shells of each MODEL PART's mesh -- component id, facet count, area and a "
         "plate-frame bounding box. Parts only: modifiers, negative volumes and support blockers are "
         "not listed here, so this is not a census of the object's volumes; get_object_info's `volumes` "
@@ -1673,6 +1683,8 @@ void OrcaMCPServer::register_paint_tools()
 
     register_tool({
         "pick_facet",
+        ToolCategory::Painting,
+        "The facet a point, ray or pixel hits",
         "Find the facet a point, a ray, or a pixel of a render lands on. Give ONE of: point "
         "[x,y,z] (plate mm; snaps to the nearest surface), ray {origin, direction} (plate mm; "
         "first hit), or pixel [u,v] plus the `camera` object from a render_plate_view result "

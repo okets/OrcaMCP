@@ -348,19 +348,27 @@ build/arm64/tests/slic3rutils/RelWithDebInfo/slic3rutils_tests.app/Contents/MacO
 Find `register_builtin_tools()` and add:
 
 ```cpp
-register_tool("my_new_tool",
-    "Description of what the tool does",
+register_tool({
+    "my_new_tool",
+    ToolCategory::Scene,                    // required: without it the registration does not compile
+    "What it does, at most 40 characters",  // get_server_info's catalogue line
+    "Description of what the tool does",    // tools/list
     {
-        // JSON Schema for parameters
-        {"param1", {{"type", "string"}, {"description", "What param1 does"}}},
-        {"param2", {{"type", "integer"}, {"description", "What param2 does"}}}
+        {"type", "object"},
+        {"properties", {
+            {"param1", {{"type", "string"}, {"description", "What param1 does"}}},
+            {"param2", {{"type", "integer"}, {"description", "What param2 does"}}}
+        }},
+        {"required", {"param1"}}
     },
-    {"param1"},  // Required parameters
-    [this](const json& params) -> json {
+    [](const nlohmann::json& params) -> nlohmann::json {
         return handle_my_new_tool(params);
     }
-);
+});
 ```
+
+The category is one of CLAUDE.md's tool-table rows (`OrcaMCPServer::ToolCategory`). A second tool
+with the same name, or one without a handler, throws when the registry is built.
 
 ### 2. Implement the handler
 
