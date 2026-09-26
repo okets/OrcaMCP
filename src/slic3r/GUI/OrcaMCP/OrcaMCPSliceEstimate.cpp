@@ -2,6 +2,7 @@
 #include "OrcaMCPSliceEstimate.hpp"
 #include "libslic3r/Layer.hpp"
 #include "libslic3r/Print.hpp"
+#include "libslic3r/Slicing.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -134,6 +135,18 @@ LayerCounts count_print_layers(const Print& print)
     counts.object  = count_layers(print, true, false);
     counts.support = count_layers(print, false, true);
     return counts;
+}
+
+std::optional<size_t> count_profile_layers(const SlicingParameters& params, const std::vector<double>& profile, bool precise_z)
+{
+    if (profile.size() < 4)
+        return std::nullopt;
+    // generate_object_layers returns each layer as a bottom/top pair. Precise Z only realigns the
+    // last layers, and needs some to realign: cut without it first, and only then with it.
+    const std::vector<coordf_t> layers = generate_object_layers(params, profile, false);
+    if (!precise_z || layers.empty())
+        return layers.size() / 2;
+    return generate_object_layers(params, profile, true).size() / 2;
 }
 
 }}} // namespace Slic3r::GUI::OrcaMCP

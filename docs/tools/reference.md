@@ -1584,7 +1584,8 @@ Enable adaptive layer height for better surface quality.
 | `include_preview` | boolean | No | Include preview |
 
 Each object's result carries `estimated_layer_count`: the object layers the slicer will cut the new
-profile into (support and raft not included). Before v2.5.0.6 it was the height divided by the mean
+profile into (support and raft not included). A profile with fewer than two points has none to
+count: it reports `0` and says why in `estimated_layer_count_note`. Before v2.5.0.6 it was the height divided by the mean
 of the thinnest and thickest layer, which is not the mean layer height of a profile that is mostly
 one or the other.
 

@@ -5,9 +5,11 @@
 #include "slic3r/GUI/OrcaMCP/OrcaMCPSliceEstimate.hpp"
 #include "fff_print/test_helpers.hpp"
 #include "libslic3r/Print.hpp"
+#include "libslic3r/Slicing.hpp"
 
 #include <cmath>
 #include <map>
+#include <optional>
 #include <regex>
 #include <string>
 #include <vector>
@@ -204,4 +206,41 @@ TEST_CASE("printed layers of a by-object print add up every object and instance"
     CHECK(counts.support == 0);
     CHECK(counts.printed == 40);
     CHECK(int(counts.printed) == gcode_layer_count(gcode));
+}
+
+// apply_adaptive_layer_height's estimated_layer_count: the layers the new profile is cut into.
+// generate_object_layers asserts a non-empty profile, and with precise Z reads the last of its
+// layers, so a profile with nothing to cut must be caught before it gets there.
+
+namespace {
+
+Slic3r::SlicingParameters cube_slicing_parameters(Slic3r::Model& model, double size)
+{
+    Slic3r::ModelObject* object = model.add_object();
+    object->add_volume(Slic3r::TriangleMesh(Slic3r::its_make_cube(size, size, size)));
+    object->add_instance();
+    Slic3r::DynamicPrintConfig config = Slic3r::DynamicPrintConfig::full_print_config();
+    config.set_deserialize_strict({{"layer_height", 0.2}, {"initial_layer_print_height", 0.2}});
+    return Slic3r::PrintObject::slicing_parameters(config, *object, float(size), Slic3r::Vec3d::Ones());
+}
+
+} // namespace
+
+TEST_CASE("an adaptive profile's layers are counted as the slicer cuts them", "[orcamcp][estimate]")
+{
+    // 10 mm at a constant 0.2 mm, first layer 0.2 mm: 50 layers, with or without precise Z.
+    Slic3r::Model model;
+    const Slic3r::SlicingParameters params = cube_slicing_parameters(model, 10.0);
+    const std::vector<double> constant = {0.0, 0.2, 10.0, 0.2};
+    CHECK(count_profile_layers(params, constant, false) == std::optional<size_t>(50));
+    CHECK(count_profile_layers(params, constant, true) == std::optional<size_t>(50));
+}
+
+TEST_CASE("an adaptive profile with nothing to cut has no layer count", "[orcamcp][estimate]")
+{
+    Slic3r::Model model;
+    const Slic3r::SlicingParameters params = cube_slicing_parameters(model, 10.0);
+    CHECK_FALSE(count_profile_layers(params, {}, false).has_value());
+    CHECK_FALSE(count_profile_layers(params, {}, true).has_value());
+    CHECK_FALSE(count_profile_layers(params, {0.0, 0.2}, true).has_value());
 }

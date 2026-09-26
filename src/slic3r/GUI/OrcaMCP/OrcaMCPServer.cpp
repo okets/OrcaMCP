@@ -2229,22 +2229,24 @@ void OrcaMCPServer::register_builtin_tools()
                         }
                     }
 
-                    // The layers the slicer will cut this profile into: the same generate_object_layers
-                    // call PrintObject::slice makes, which returns each layer as a bottom/top pair.
-                    // Dividing the height by the mean of the thinnest and thickest layer, as this did,
-                    // is not the mean layer height of a profile that is mostly one or the other.
+                    // The layers the slicer will cut this profile into (count_profile_layers). Dividing
+                    // the height by the mean of the thinnest and thickest layer, as this did, is not the
+                    // mean layer height of a profile that is mostly one or the other.
                     const DynamicPrintConfig& object_config = obj->config.get();
                     const bool precise_z = object_config.has("precise_z_height")
                                                ? object_config.opt_bool("precise_z_height")
                                                : full_config.has("precise_z_height") && full_config.opt_bool("precise_z_height");
-                    const size_t layer_count = generate_object_layers(slicing_params, profile, precise_z).size() / 2;
+                    const std::optional<size_t> layer_count = count_profile_layers(slicing_params, profile, precise_z);
 
                     obj_result["status"] = "success";
                     obj_result["object_name"] = obj->name;
                     obj_result["vlh_enabled"] = true;
                     obj_result["min_layer_height"] = min_layer_height;
                     obj_result["max_layer_height"] = max_layer_height;
-                    obj_result["estimated_layer_count"] = layer_count;
+                    obj_result["estimated_layer_count"] = layer_count.value_or(0);
+                    if (!layer_count)
+                        obj_result["estimated_layer_count_note"] =
+                            "The adaptive profile has fewer than two points, so it has no layers to count.";
                     obj_result["profile_points"] = profile.size() / 2;
                     results.push_back(obj_result);
                 }

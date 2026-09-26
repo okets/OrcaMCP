@@ -8,6 +8,7 @@
 
 namespace Slic3r {
 class Print;
+struct SlicingParameters;
 namespace GUI { namespace OrcaMCP {
 
 // What one filament (one extruder index of the sliced result) is going to consume.
@@ -63,6 +64,12 @@ size_t count_distinct_heights(std::vector<double> zs);
 // whole plate, or -- printing by object -- each object's heights counted once per instance and
 // summed, since every copy is printed from the bed up again.
 LayerCounts count_print_layers(const Print& print);
+
+// The object layers a variable-layer-height `profile` (z, height pairs) is cut into, by the same
+// generate_object_layers call PrintObject::slice makes. Unset when the profile has fewer than two
+// points: generate_object_layers asserts against an empty one, and with `precise_z` it reads the
+// last of the layers it cut, of which there may be none.
+std::optional<size_t> count_profile_layers(const SlicingParameters& params, const std::vector<double>& profile, bool precise_z);
 
 }} // namespace GUI::OrcaMCP
 } // namespace Slic3r
