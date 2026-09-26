@@ -144,9 +144,15 @@ public:
 
     bool is_started() { return start_http_server; }
     void start();
-    void stop();
+    // Stops the server and joins its thread, waiting at most `join_timeout_ms` for a request that is
+    // still being handled. Past that the thread is left to finish on its own (see stop()).
+    static constexpr int default_stop_timeout_ms = 3000;
+    void stop(int join_timeout_ms = default_stop_timeout_ms);
     void set_port(boost::asio::ip::port_type new_port) { port = new_port; }
     boost::asio::ip::port_type get_port() const { return port; }
+    // Where the server listens while it is started (the port is the real one even when it was
+    // started on port 0); a default endpoint otherwise.
+    boost::asio::ip::tcp::endpoint local_endpoint() const;
 
     // Set request handler with full signature (method, url, body)
     void set_request_handler(const RequestHandlerFn& request_handler);

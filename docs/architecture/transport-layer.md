@@ -76,6 +76,7 @@ The bridge handles several error conditions:
 | Nothing listening | JSON-RPC error -32000 "Nothing is listening at {URL}. OrcaMCP is not running -- use the 'start_orca' tool." |
 | Reachable but the request failed | JSON-RPC error -32000 "OrcaSlicer is reachable but the request did not complete: ..." |
 | Timeout | JSON-RPC error -32000 "Request timed out" |
+| The app is quitting | JSON-RPC error -32002 "OrcaMCP is quitting, so this call was not run. Use start_orca to start it again." (from the app, passed through) |
 | Invalid JSON | JSON-RPC error -32700 "Parse error" |
 | HTTP error | JSON-RPC error with HTTP status |
 

@@ -407,6 +407,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/OpenGLManager.hpp
     GUI/OrcaMCP/OrcaMCPCommon.hpp
     GUI/OrcaMCP/OrcaMCPCommon.cpp
+    GUI/OrcaMCP/OrcaMCPMainThreadGate.hpp
+    GUI/OrcaMCP/OrcaMCPMainThreadGate.cpp
     GUI/OrcaMCP/OrcaMCPServer.hpp
     GUI/OrcaMCP/OrcaMCPServer.cpp
     GUI/OrcaMCP/OrcaMCPServerInfo.hpp

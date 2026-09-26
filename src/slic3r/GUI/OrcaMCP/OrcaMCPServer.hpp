@@ -87,6 +87,11 @@ public:
     // failed, and the same reason on every later call without trying again (see RunOnce).
     static std::string init();
 
+    // The app is quitting: refuse every later tool call (JSON-RPC -32002), and release the one that
+    // is waiting for the main thread. GUI_App::stop_http_server() calls this before it joins the
+    // server's thread, which that waiting call would otherwise hold forever.
+    static void shut_down();
+
     // Handle incoming HTTP requests for MCP endpoint
     static std::shared_ptr<HttpServer::Response> handle_request(
         const std::string& method,

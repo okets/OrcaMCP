@@ -3,7 +3,8 @@
 ## Overview
 
 OrcaMCP must bridge two threading models:
-1. **HTTP Server**: Multi-threaded, handles requests concurrently
+1. **HTTP Server**: one thread, which calls the request handler itself, so requests are served one
+   at a time
 2. **OrcaSlicer GUI**: Single-threaded, requires main thread for all operations
 
 This document explains how we safely execute MCP tool handlers.
@@ -35,30 +36,21 @@ This document explains how we safely execute MCP tool handlers.
 
 ## The Solution: run_on_main_thread()
 
-We use a promise/future pattern with wxWidgets' `CallAfter()`:
+Work is handed to the main thread through the app's `MainThreadGate`
+(`src/slic3r/GUI/OrcaMCP/OrcaMCPMainThreadGate.cpp`), which queues it with wxWidgets' `CallAfter()`
+and waits for it:
 
 ```cpp
-template<typename T>
-T run_on_main_thread(std::function<T()> func) {
-    // Create a promise to hold the result
-    std::promise<T> promise;
-    auto future = promise.get_future();
-
-    // Schedule work on main thread
-    wxGetApp().CallAfter([&promise, &func]() {
-        try {
-            // Execute on main thread, set result
-            promise.set_value(func());
-        } catch (...) {
-            // Propagate exceptions
-            promise.set_exception(std::current_exception());
-        }
-    });
-
-    // Block until main thread completes
-    return future.get();
+template<typename Func>
+nlohmann::json run_on_main_thread(Func&& func)
+{
+    return main_thread_gate().call(MainThreadGate::Work(std::forward<Func>(func)));
 }
 ```
+
+`MainThreadGate::call` queues a task that runs `func` on the main thread, then waits until the task
+has finished or the gate is closed. The task shares its state with the caller through a
+`shared_ptr`, so a caller that was released early (see Shutdown below) leaves nothing dangling.
 
 ## Execution Flow
 
@@ -73,14 +65,14 @@ HTTP Worker Thread                    Main Thread
       │                                    │
       │ ─────── CallAfter() ─────────────► │
       │                                    │
-      │ future.get()                       │ ◄─── Event loop picks up
+      │ waits on the gate                  │ ◄─── Event loop picks up
       │ (BLOCKED)                          │
       │                                    │ Execute closure:
       │                                    │   - Access Plater
       │                                    │   - Load model
       │                                    │   - Update GUI
       │                                    │
-      │ ◄──── promise.set_value() ──────── │
+      │ ◄──── result, and a notify ─────── │
       │                                    │
       │ (unblocked)                        │
       │ return result                      │
@@ -177,25 +169,43 @@ json handle_get_slicing_status(const json& params) {
 
 ## Exception Handling
 
-Exceptions in tool handlers are properly propagated:
+An exception thrown by the work on the main thread is caught there and rethrown on the HTTP thread by
+`MainThreadGate::call`. `handle_tools_call` turns it into a JSON-RPC error naming the tool (-32603),
+except `McpShuttingDown`, which `handle_request` answers as -32002 (below).
 
-```cpp
-wxGetApp().CallAfter([&promise, &func]() {
-    try {
-        promise.set_value(func());
-    } catch (...) {
-        // Capture any exception
-        promise.set_exception(std::current_exception());
-    }
-});
+## Shutdown
 
-// In HTTP handler:
-try {
-    return future.get();  // May throw
-} catch (const std::exception& e) {
-    return make_error_response(e.what());
-}
+Quitting joins the HTTP thread from the main thread (`GUI_App::stop_http_server` ->
+`HttpServer::stop`). A call waiting in `run_on_main_thread` is waiting for that same main thread, so
+before 2026-09-26 the two waited on each other forever: `quit_app`, or a Cmd-Q, with an agent polling
+left the app hung until it was killed.
+
 ```
+HTTP thread                               Main thread
+    │ get_slicing_status                      │ quit_app's Close(true)
+    │ run_on_main_thread: CallAfter(work) ──► │ queued behind the close
+    │ waits for the main thread               │ close handler -> MainFrame::shutdown
+    │                                         │ -> GUI_App::shutdown -> stop_http_server
+    │                                         │ -> HttpServer::stop -> join()
+    │ ...forever                              │ ...forever
+```
+
+What breaks the cycle, in order:
+
+1. The main frame's close handler sets `GUI_App::is_closing()`. From then on the gate does not run
+   queued work, and `tools/call` is refused: the handler resets the plater and tears the frame down
+   before the server stops.
+2. `GUI_App::stop_http_server()` calls `OrcaMCPServer::shut_down()`, which closes the gate. The
+   waiting call is released with `McpShuttingDown`, answered with JSON-RPC **-32002** ("OrcaMCP is
+   quitting, so this call was not run. Use start_orca to start it again."), and the HTTP thread goes
+   back to its loop. A call whose work has already started is waited for instead, since the work may
+   still be using what the caller owns.
+3. `HttpServer::stop` closes the listening socket and every connection, and joins with a bound of
+   3000 ms. A handler still running past it (one that is not waiting on the main thread, e.g. a slow
+   network call) is left to finish on its own; the app exits anyway.
+
+`tests/slic3rutils/test_mcp_shutdown.cpp` and `test_http_server.cpp` cover each step with a main
+thread that never runs its work.
 
 ## Common Pitfalls
 

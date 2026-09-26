@@ -1,6 +1,5 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPCommon.hpp
 #pragma once
-#include <future>
 #include <functional>
 #include <vector>
 #include <string>
@@ -8,6 +7,7 @@
 #include "libslic3r/BoundingBox.hpp"
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
+#include "OrcaMCPMainThreadGate.hpp"
 
 namespace Slic3r {
 class ModelObject;
@@ -16,21 +16,17 @@ class PartPlate;
 class Plater;
 namespace OrcaMCP {
 
+// The app's gate to the wx main thread: work goes through wxGetApp().CallAfter, and is not run once
+// the app has begun to quit (GUI_App::is_closing). OrcaMCPServer::shut_down() closes it.
+MainThreadGate& main_thread_gate();
+
 // Runs `func` on the wx main thread and blocks the calling HTTP worker until it returns.
-// `func` must return nlohmann::json. Exceptions propagate to the caller.
+// `func` must return nlohmann::json. Exceptions propagate to the caller. Once the app has begun to
+// quit this throws McpShuttingDown instead, without running `func` (MainThreadGate::call).
 template<typename Func>
 nlohmann::json run_on_main_thread(Func&& func)
 {
-    std::promise<nlohmann::json> promise;
-    auto future = promise.get_future();
-    wxGetApp().CallAfter([&promise, func = std::forward<Func>(func)]() {
-        try {
-            promise.set_value(func());
-        } catch (...) {
-            promise.set_exception(std::current_exception());
-        }
-    });
-    return future.get();
+    return main_thread_gate().call(MainThreadGate::Work(std::forward<Func>(func)));
 }
 
 // MCP clients do not all deliver scalars the same way: a client whose cached tool schema predates a

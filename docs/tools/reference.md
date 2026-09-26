@@ -91,7 +91,12 @@ not cover because the close did not come through MCP.
 |-----------|------|----------|-------------|
 | `discard_changes` | boolean | No | Default `true`: unsaved project changes are discarded. `false` refuses while the project is dirty, so call `save_project` first. |
 
-**Returns:** `{"status": "quitting"}`; the app exits within a few seconds.
+**Returns:** `{"status": "quitting"}`; the app exits within a few seconds, also while other calls are
+in flight (an agent's parallel calls, a poller). From the moment the app starts closing, every tool call
+is answered with JSON-RPC error -32002, "OrcaMCP is quitting, so this call was not run", and its work
+is not run; a call already running on the GUI thread is let finish. Let a running slice finish first
+(`get_slicing_status`): a quit mid-slice waits for the slice to cancel, and can crash the app on its
+way out (a known upstream bug; CLAUDE.md, Known Limitations).
 
 ---
 

@@ -73,6 +73,16 @@ The probe now returns one of three verdicts, and only the last one produces that
 
 So if you see it, nothing is listening on the port. Check `ORCAMCP_PORT`, and use `start_orca`.
 
+### "OrcaMCP is quitting, so this call was not run" (-32002)
+
+The app was closing when the call arrived, by `quit_app` or by someone quitting it in the GUI. The
+call's work was not run, so nothing changed in the scene. Once the app is gone, `start_orca` starts
+it again.
+
+Before v2.5.0.6-dev a call in flight at that moment could hang the app for good: the window closed,
+port 13618 kept listening, and every request went unanswered until the process was killed. If an
+older build does that, `kill` it; the project's unsaved changes are lost either way.
+
 ## Tool Errors
 
 ### "Invalid object_id"

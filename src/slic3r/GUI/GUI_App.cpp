@@ -7803,6 +7803,9 @@ void GUI_App::start_http_server(int port, const std::string& provider)
 
 void GUI_App::stop_http_server()
 {
+    // An MCP call on the server's thread may be waiting for this, the main, thread. Release it
+    // first: the join in HttpServer::stop would otherwise wait on a thread that waits on the joiner.
+    OrcaMCPServer::shut_down();
     m_http_server.stop();
 }
 

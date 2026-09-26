@@ -221,7 +221,7 @@ void HttpServer::start()
     });
 }
 
-void HttpServer::stop()
+void HttpServer::stop(int join_timeout_ms)
 {
     start_http_server = false;
     if (server_) {
@@ -234,9 +234,25 @@ void HttpServer::stop()
             io_server->io_service.stop();
         });
     }
-    if (m_http_server_thread.joinable())
-        m_http_server_thread.join();
+    // The posted stop runs only once the thread is back in its loop, so a request handler that never
+    // returns would hold this join forever -- and the app's exit with it, since this runs on the main
+    // thread, where a handler waiting on the main thread can never be served. Past the bound the
+    // thread is left to finish on its own, and the server it still runs in is deliberately leaked.
+    if (m_http_server_thread.joinable() &&
+        !m_http_server_thread.try_join_for(boost::chrono::milliseconds(join_timeout_ms))) {
+        BOOST_LOG_TRIVIAL(warning) << "HttpServer: a request on port " << port << " was still being handled after "
+                                   << join_timeout_ms << " ms; stopping without waiting for it";
+        m_http_server_thread.detach();
+        static_cast<void>(server_.release());
+        return;
+    }
     server_.reset();
+}
+
+boost::asio::ip::tcp::endpoint HttpServer::local_endpoint() const
+{
+    boost::system::error_code ec;
+    return server_ ? server_->acceptor.local_endpoint(ec) : boost::asio::ip::tcp::endpoint();
 }
 
 void HttpServer::set_request_handler(const RequestHandlerFn& request_handler)

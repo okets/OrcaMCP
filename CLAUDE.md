@@ -348,8 +348,9 @@ gh release upload v2.3.2.10 ./path/to/new/artifact.exe -R okets/OrcaMCP
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPModelLoad.cpp` | `load_model`'s decisions: what a file does to the scene (`load_file_kind`, `load_refusal`), the 3MF load type (`choose_3mf_load`, called by `Plater`'s `determine_load_type`) and the `loaded_objects` report, whose objects are `model_object_summary_json` (`OrcaMCPCommon.cpp`), shared with `get_scene_info` (unit-tested in `tests/slic3rutils/test_mcp_model_load.cpp`) |
 | `src/slic3r/Utils/ObicoLink.cpp` | Flashforge preset's Obico link: page link object and token-free MCP status (spec `docs/superpowers/specs/2026-09-15-obico-camera-source-design.md`) |
 | `src/slic3r/GUI/HttpServer.hpp` | HTTP server with JSON responses |
-| `src/slic3r/GUI/HttpServer.cpp` | POST body reading, ResponseJson |
-| `src/slic3r/GUI/GUI_App.cpp` | MCP route registration, HTTP server startup |
+| `src/slic3r/GUI/HttpServer.cpp` | POST body reading, ResponseJson, the bounded stop |
+| `src/slic3r/GUI/OrcaMCP/OrcaMCPMainThreadGate.cpp` | How a call hands work to the main thread and waits, and how quitting releases it (see "Threading Model"; unit-tested in `tests/slic3rutils/test_mcp_shutdown.cpp`) |
+| `src/slic3r/GUI/GUI_App.cpp` | MCP route registration, HTTP server startup, and the shutdown order (`stop_http_server`) |
 | `scripts/orcamcp-bridge.py` | stdio-to-HTTP bridge for Claude Code |
 
 ### Where the app's data lives
@@ -449,15 +450,36 @@ Commit the regenerated file with the change.
 
 ## Threading Model
 
-All tool handlers use `run_on_main_thread()` which:
-- Blocks the HTTP worker thread until GUI operation completes
+The HTTP server runs **one** thread, and it calls the request handler itself, so calls are served
+one at a time. All tool handlers use `run_on_main_thread()` which:
+- Blocks the HTTP thread until the GUI operation completes
 - Required for OpenGL rendering and wxWidgets operations
-- Uses `wxGetApp().CallAfter()` internally
+- Goes through the app's `MainThreadGate` (`OrcaMCPMainThreadGate.cpp`), which queues the work with
+  `wxGetApp().CallAfter()` and waits for it
 
 ```cpp
-template<typename T>
-T run_on_main_thread(std::function<T()> func);
+template<typename Func>
+nlohmann::json run_on_main_thread(Func&& func);  // throws McpShuttingDown once the app is quitting
 ```
+
+### Shutdown: never wait on something that waits on the main thread
+
+Quitting joins the HTTP thread from the main thread (`GUI_App::stop_http_server` ->
+`HttpServer::stop`). A call waiting in `run_on_main_thread` waits for the main thread, so a join with
+that call in flight waited forever: on 2026-09-26 `quit_app`, with a script polling
+`get_slicing_status`, left the app hung for 15 minutes. The rules that prevent it:
+
+- `GUI_App::stop_http_server()` calls `OrcaMCPServer::shut_down()` **before** it stops the server.
+  That closes the gate: the waiting call is released with `McpShuttingDown`, and every later tool
+  call is refused with JSON-RPC **-32002** ("OrcaMCP is quitting, so this call was not run. Use
+  start_orca to start it again."). A call whose work has already started is waited for, since its
+  work may still use what the caller owns.
+- Refusal starts earlier than that, as soon as the main frame's close handler sets
+  `GUI_App::is_closing()`: the gate does not run queued work once it is set, and `tools/call` is
+  refused. That handler resets the plater and tears the frame down before the server stops.
+- `HttpServer::stop` joins with a bound (`try_join_for`, 3000 ms). A handler still running past it
+  (one that is not waiting on the main thread, e.g. a slow network call) is left to finish on its
+  own thread, and its server is deliberately leaked; the app exits anyway.
 
 ---
 
@@ -476,6 +498,12 @@ T run_on_main_thread(std::function<T()> func);
 1. **Export paths**: `export_gcode`, `export_3mf` and `save_project` never open a file dialog (a modal would hang the MCP call); without a path they return an error / `cancelled`
 2. **Slicing progress**: `get_slicing_status` reports running/idle, not percentage
 3. **Threading**: Long operations may cause HTTP timeouts (120s default)
+4. **Quitting**: a tool call in flight when the app quits gets -32002 and was not run. A quit during
+   a slice waits for the slice to cancel (upstream's `BackgroundSlicingProcess::stop`; 1.5 s for a
+   tree-support slice on the -O0 dev build). **Wait for a slice to finish before `quit_app` or
+   `new_project`:** resetting the plater mid-slice can crash the app, because upstream's
+   `Plater::priv::reset` frees the plates' prints (`partplate_list.reinit()`) before it stops the
+   slicing thread (seen 2026-09-26 on the release and dev builds; not fixed here)
 
 ---
 
@@ -725,7 +753,13 @@ echo "I extruder-count mismatch in the Send dialog (reported upstream): $(gh iss
 echo "J startup reads recent-project thumbnails on the GUI thread (rel2506/02): $(U src/slic3r/GUI/MainFrame.cpp | awk '/FileHistory::LoadThumbnails\(\)$/{f=1} f&&/parallel_for/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
 echo "K Flashforge host ip:port keeps its port in the URL (rel2506/04):   $(U src/slic3r/Utils/Flashforge.cpp | grep -c 'const auto slash_pos = host.find')"
 echo "L Flashforge local API: no retry, failure log or next step (rel2506/04; 0 = bug): $(U src/slic3r/Utils/Flashforge.cpp | grep -c 'run_with_retry')"
+echo "M HttpServer::stop joins its thread with no bound (rel2506/04b):   $(U src/slic3r/GUI/HttpServer.cpp | awk '/^void HttpServer::stop/{f=1} f&&/_thread\.join\(\)/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
 ```
+
+Item M: upstream's `HttpServer` only ever serves the cloud login, on a port the OS picks, and its
+handler never waits on the main thread, so its unbounded join cannot deadlock there; ours can,
+because MCP calls wait on the main thread (see "Threading Model"). On "no", take upstream's code and
+re-check that the join is bounded.
 
 Item J: upstream opens every recent 3MF synchronously while building the main window, before
 post_init starts the MCP server. Our patch skips it for an agent launch (`GUI::is_agent_launch()`,
