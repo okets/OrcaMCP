@@ -6747,6 +6747,9 @@ struct Plater::priv
     PartPlateList partplate_list;
     //BBS: add a flag to ignore cancel event
     bool m_ignore_event{false};
+    // Orca: the plate being sliced was deleted (Plater::delete_plate), so the slice result still to come
+    // is no plate's: its completion must not mark the plate the process points at now.
+    bool m_slice_result_plate_deleted{false};
     bool m_slice_all{false};
     bool m_is_slicing {false};
     // Missing-plugin set signatures (sorted full refs joined by '\n'), one per notification. They
@@ -12708,7 +12711,10 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
     }
 
     //BBS: set the current plater's slice result to valid
-    if (!this->background_process.empty())
+    // Orca: unless the plate that was sliced has been deleted since (delete_plate): then the process
+    // points at another plate, whose own result is not this one.
+    const bool sliced_plate_deleted = std::exchange(m_slice_result_plate_deleted, false);
+    if (!this->background_process.empty() && !sliced_plate_deleted)
         this->background_process.get_current_plate()->update_slice_result_valid_state(evt.success());
 
     //BBS: update the action button according to the current plate's status
@@ -22109,15 +22115,23 @@ int Plater::delete_plate(int plate_index)
         index = p->partplate_list.get_curr_plate_index();
 
     take_snapshot("delete partplate");
-    // Orca: the plate's Print is deleted below, and the slicing thread may be using it; the current
-    // plate can change too, and with it the Print the background process would cancel. So stop the
-    // slice first: deleting the plate being sliced crashed the app (2026-09-26).
-    p->background_process.stop();
+    // Orca: the plate's Print is deleted below. When it is the one being sliced, stop the slice first
+    // (deleting it under the slicing thread crashed the app, 2026-09-26); the result still to come
+    // belongs to no plate any more. A slice of another plate goes on.
+    if (p->partplate_list.get_plate_count() > 1 && p->background_process.running() &&
+        p->background_process.get_current_plate() == p->partplate_list.get_plate(index)) {
+        p->background_process.stop();
+        p->m_slice_result_plate_deleted = true;
+    }
     ret = p->partplate_list.delete_plate(index);
 
     //BBS: update the current print to the current plate
-    p->partplate_list.update_slice_context_to_current_plate(p->background_process);
-    p->preview->update_gcode_result(p->partplate_list.get_current_slice_result());
+    // Orca: not while another plate is being sliced, as in select_plate: the slice would then be
+    // cancelled, or its result given, through another plate's Print.
+    if (p->background_process.can_switch_print()) {
+        p->partplate_list.update_slice_context_to_current_plate(p->background_process);
+        p->preview->update_gcode_result(p->partplate_list.get_current_slice_result());
+    }
     p->sidebar->obj_list()->reload_all_plates();
 
     // BBS update default view

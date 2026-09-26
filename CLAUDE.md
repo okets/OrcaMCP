@@ -860,8 +860,11 @@ a tree-support slice.
 
 Item P: the same in `Plater::delete_plate`: deleting the plate being sliced deleted its `Print` under
 the slicing thread (SIGSEGV, 2026-09-26), and a change of current plate repointed the background
-process. Ours stops the slice first. On "no", take upstream's and re-check `delete_plate` on the plate
-being sliced.
+process. Ours stops the slice only when it is the deleted plate's, repoints the process only when no
+slice runs (as `select_plate` does), and has `on_process_completed` skip the result of a plate that
+was deleted (`m_slice_result_plate_deleted`): it used to mark the plate the process then pointed at
+as not sliced. On "no", take upstream's and re-check `delete_plate` on the plate being sliced, and on
+another plate while one is sliced.
 
 Item Q: upstream's restore prompt treats every answer but Yes as No and deletes the crashed session's
 backup, including a prompt the app itself ended with `wxID_ABORT` (its system-logout handler, and our

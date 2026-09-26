@@ -800,7 +800,8 @@ Switch to a different plate.
 ---
 
 ### delete_plate
-Remove a plate from the project. A running slice is cancelled first.
+Remove a plate from the project. A slice of that plate is cancelled first; a slice of another plate
+goes on, and the other plates keep their slice results.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
