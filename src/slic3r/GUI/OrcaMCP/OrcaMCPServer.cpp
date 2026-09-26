@@ -3528,7 +3528,7 @@ void OrcaMCPServer::register_builtin_tools()
                 }
 
                 ModelObject* obj = model.objects[object_id];
-                BoundingBoxf3 bbox = obj->bounding_box_approx();
+                BoundingBoxf3 bbox = object_world_box(*obj);
                 Vec3d current_center = bbox.center();
 
                 // Relative: the offset for the specified axes (unspecified = 0 offset).
@@ -3557,7 +3557,7 @@ void OrcaMCPServer::register_builtin_tools()
                 plater->update();
 
                 // Get resulting state
-                BoundingBoxf3 new_bbox = obj->bounding_box_approx();
+                BoundingBoxf3 new_bbox = object_world_box(*obj);
                 Vec3d new_center = new_bbox.center();
                 Vec3d rotation = obj->instances[0]->get_rotation();
                 Vec3d scale = obj->instances[0]->get_scaling_factor();
@@ -3691,7 +3691,7 @@ void OrcaMCPServer::register_builtin_tools()
                 plater->update();
 
                 // Get resulting state
-                BoundingBoxf3 new_bbox = obj->bounding_box_approx();
+                BoundingBoxf3 new_bbox = object_world_box(*obj);
                 Vec3d new_center = new_bbox.center();
                 Vec3d rotation = obj->instances[0]->get_rotation();
                 Vec3d scale = obj->instances[0]->get_scaling_factor();
@@ -3827,7 +3827,7 @@ void OrcaMCPServer::register_builtin_tools()
                 plater->update();
 
                 // Get resulting state
-                BoundingBoxf3 new_bbox = obj->bounding_box_approx();
+                BoundingBoxf3 new_bbox = object_world_box(*obj);
                 Vec3d new_center = new_bbox.center();
                 Vec3d rotation = obj->instances[0]->get_rotation();
                 Vec3d scale_result = obj->instances[0]->get_scaling_factor();
@@ -3994,7 +3994,7 @@ void OrcaMCPServer::register_builtin_tools()
                     // Apply position (absolute, unspecified axes preserved)
                     if (t.contains("position")) {
                         auto pos = t["position"];
-                        BoundingBoxf3 bbox = obj->bounding_box_approx();
+                        BoundingBoxf3 bbox = object_world_box(*obj);
                         Vec3d current_center = bbox.center();
                         Vec3d target(
                             pos.contains("x") ? pos["x"].get<double>() : current_center.x(),
@@ -4041,7 +4041,7 @@ void OrcaMCPServer::register_builtin_tools()
                     }
 
                     ModelObject* obj = model.objects[object_id];
-                    BoundingBoxf3 bbox = obj->bounding_box_approx();
+                    BoundingBoxf3 bbox = object_world_box(*obj);
                     Vec3d center = bbox.center();
 
                     nlohmann::json entry = {
@@ -4389,7 +4389,7 @@ void OrcaMCPServer::register_builtin_tools()
                 ModelObject* obj = model.objects[object_id];
 
                 // Get bounding box (used for position and size)
-                BoundingBoxf3 bbox = obj->bounding_box_approx();
+                BoundingBoxf3 bbox = object_world_box(*obj);
                 Vec3d center = bbox.center();
                 Vec3d size = bbox.size();
 

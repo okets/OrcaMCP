@@ -1090,9 +1090,8 @@ void OrcaMCPServer::register_paint_tools()
                     {"coordinate_frame", "plate"},
                     // The same field name and shape get_object_paint reports (its per-volume
                     // "bounding_box"): the snug AABB of this call's actually-transformed volumes,
-                    // for this instance -- not get_object_info's looser bounding_box_approx
-                    // (corners of the untransformed AABB, unioned over every instance), which
-                    // agrees with this one only for a single unrotated instance. Reported here so
+                    // for this instance -- not get_object_info's box, which is the union over every
+                    // instance and agrees with this one only for a single instance. Reported here so
                     // an agent bands from the box these tools themselves use, never from the other
                     // one.
                     // The union of the per-volume boxes hop 2 computed, which is what

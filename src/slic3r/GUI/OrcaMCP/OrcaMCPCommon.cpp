@@ -161,10 +161,9 @@ void report_placement(nlohmann::json& result, int object_id)
 
     result["plate_index"] = plate_index >= 0 ? nlohmann::json(plate_index) : nlohmann::json(nullptr);
 
-    // The exact box, not bounding_box_approx(): that one transforms the mesh's own bounding box, and
-    // once an instance is rotated its corners sit below the lowest real point -- a T-shaped part
-    // tilted 30 degrees and dropped onto the bed read as 9 mm under it, on_bed false.
-    const BoundingBoxf3 object_bbox = object->bounding_box_exact();
+    // The exact box (object_world_box): the approximate one's corners sit below a tilted part's
+    // lowest real point, so a part dropped onto the bed read as under it, on_bed false.
+    const BoundingBoxf3 object_bbox = object_world_box(*object);
     const bool on_bed = plate != nullptr && object_within_plate(object_bbox, plate->get_plate_box());
     result["on_bed"]  = on_bed;
     if (!on_bed)
@@ -252,9 +251,11 @@ void transform_instances_on_bed(ModelObject& object, const Transform3d& world_tr
     }
 }
 
+const BoundingBoxf3& object_world_box(const ModelObject& object) { return object.bounding_box_exact(); }
+
 nlohmann::json model_object_summary_json(const ModelObject& object, int object_index)
 {
-    const BoundingBoxf3 bbox   = object.bounding_box_approx();
+    const BoundingBoxf3 bbox   = object_world_box(object);
     const Vec3d         center = bbox.center();
     const Vec3d         size   = bbox.size();
 

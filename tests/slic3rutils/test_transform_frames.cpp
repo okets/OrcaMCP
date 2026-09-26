@@ -2,6 +2,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "slic3r/GUI/OrcaMCP/OrcaMCPCommon.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPPlateUtils.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Geometry.hpp"
 #include "libslic3r/TriangleMesh.hpp"
@@ -23,6 +24,7 @@ using Slic3r::ModelVolume;
 using Slic3r::Transform3d;
 using Slic3r::TriangleMesh;
 using Slic3r::Vec3d;
+using Slic3r::GUI::OrcaMCP::object_world_box;
 using Slic3r::GUI::OrcaMCP::should_drop_to_bed;
 using Slic3r::GUI::OrcaMCP::transform_instances_in_plate_frame;
 using Slic3r::GUI::OrcaMCP::transform_instances_on_bed;
@@ -319,25 +321,54 @@ TEST_CASE("each instance is dropped by its own amount", "[transform_frames]")
     CHECK_THAT(built.object->instance_bounding_box(1).min.z(), WithinAbs(-10.0, 1e-6));
 }
 
-TEST_CASE("a tilted part dropped onto the bed touches it by its exact box", "[transform_frames]")
+namespace {
+
+// A T: a 10 x 10 x 40 stem under a 30 x 10 x 5 bar, tilted 30 degrees about the plate's Y and
+// dropped onto the bed. Its approximate box -- the mesh's own box, turned with the instance -- has
+// corners where the T has no material, below its lowest real point and wider than it.
+RotatedObject make_tilted_t()
 {
-    // A T: a 10 x 10 x 40 stem under a 30 x 10 x 5 bar. Tilted, its approximate box -- the mesh's own
-    // box, transformed -- has corners where the T has no material, below its lowest real point. The
-    // drop and on_bed both measure the exact geometry, so the part sits on the bed and says so.
-    Model        model;
-    ModelObject* object = model.add_object();
+    RotatedObject built;
+    built.object = built.model.add_object();
     TriangleMesh mesh(Slic3r::its_make_cube(10.0, 10.0, 40.0));
     TriangleMesh bar(Slic3r::its_make_cube(30.0, 10.0, 5.0));
     mesh.translate(10.0, 0.0, 0.0);
     bar.translate(0.0, 0.0, 40.0);
     mesh.merge(bar);
-    object->add_volume(mesh, false);
-    object->add_instance()->set_offset(Vec3d(100, 100, 0));
+    built.object->add_volume(mesh, false);
+    built.object->add_instance()->set_offset(Vec3d(100, 100, 0));
+    transform_instances_on_bed(*built.object, Geometry::rotation_transform(Vec3d(0, M_PI / 6.0, 0)));
+    return built;
+}
 
-    transform_instances_on_bed(*object, Geometry::rotation_transform(Vec3d(0, M_PI / 6.0, 0)));
+} // namespace
 
-    CHECK_THAT(object->bounding_box_exact().min.z(), WithinAbs(0.0, 1e-6));
-    CHECK(object->bounding_box_approx().min.z() < -1.0);  // why on_bed must not read this one
-    CHECK(Slic3r::GUI::OrcaMCP::object_within_plate(object->bounding_box_exact(),
+TEST_CASE("a tilted part dropped onto the bed touches it by its exact box", "[transform_frames]")
+{
+    RotatedObject built = make_tilted_t();
+    CHECK_THAT(object_world_box(*built.object).min.z(), WithinAbs(0.0, 1e-6));
+    CHECK(built.object->bounding_box_approx().min.z() < -1.0);  // why no tool may report this one
+    CHECK(Slic3r::GUI::OrcaMCP::object_within_plate(object_world_box(*built.object),
                                                     BoundingBoxf3(Vec3d(0, 0, 0), Vec3d(256, 256, 256))));
+}
+
+TEST_CASE("a rotated object is reported by its exact box", "[transform_frames]")
+{
+    // get_object_info, get_scene_info and load_model all describe an object through
+    // model_object_summary_json, and the occupancy footprint through GetObjectFootprint. On the
+    // tilted T both used to report the approximate box: min z below the bed while it rests on it.
+    RotatedObject       built = make_tilted_t();
+    const BoundingBoxf3 exact = object_world_box(*built.object);
+
+    const nlohmann::json summary = Slic3r::GUI::OrcaMCP::model_object_summary_json(*built.object, 0);
+    CHECK_THAT(summary["bounding_box"]["min"]["z"].get<double>(), WithinAbs(0.0, 1e-6));
+    CHECK_THAT(summary["bounding_box"]["min"]["x"].get<double>(), WithinAbs(exact.min.x(), 1e-9));
+    CHECK_THAT(summary["bounding_box"]["size_x"].get<double>(), WithinAbs(exact.size().x(), 1e-9));
+    CHECK_THAT(summary["position"]["z"].get<double>(), WithinAbs(exact.center().z(), 1e-9));
+
+    const Slic3r::GUI::ObjectFootprint footprint =
+        Slic3r::GUI::OrcaMCPPlateUtils::GetObjectFootprint(*built.object, Slic3r::DynamicPrintConfig());
+    CHECK_THAT(footprint.body.min.x(), WithinAbs(exact.min.x(), 1e-9));
+    CHECK_THAT(footprint.body.max.x(), WithinAbs(exact.max.x(), 1e-9));
+    CHECK(footprint.body.size().x() < built.object->bounding_box_approx().size().x() - 1.0);
 }

@@ -671,7 +671,7 @@ ObjectFootprint OrcaMCPPlateUtils::GetObjectFootprint(const ModelObject& object,
     out.brim      = OrcaMCP::object_brim_extent(out.brim_type,
                                                 object_or_global_float(object, print_cfg, "brim_width", 0.0),
                                                 object_or_global_float(object, print_cfg, "brim_object_gap", 0.0));
-    out.body = OrcaMCP::footprint_of(object.bounding_box_approx());
+    out.body = OrcaMCP::footprint_of(OrcaMCP::object_world_box(object));
     out.rect = OrcaMCP::expand_footprint(out.body, out.brim.extent_mm);
     return out;
 }
@@ -832,7 +832,7 @@ nlohmann::json OrcaMCPPlateUtils::GetPlates(bool with_model_object_features) {
             }
             // Identity, transform and bounding box, exactly as load_model's loaded_objects reports them.
             nlohmann::json object_info = OrcaMCP::model_object_summary_json(*obj, object_index);
-            const Vec3d    size        = obj->bounding_box_approx().size();
+            const Vec3d    size        = OrcaMCP::object_world_box(*obj).size();
 
             // The bounding box is the model; the brim is printed plastic beyond it. A neighbour
             // placed flush against the bounding box collides with the brim, so the printed extent
@@ -1022,7 +1022,7 @@ nlohmann::json OrcaMCPPlateUtils::GetCurrentProject(bool with_model_object_featu
             continue;
 
         const ModelObject* object = model.objects[i];
-        const BoundingBoxf3 bbox  = object->bounding_box_approx();
+        const BoundingBoxf3 bbox  = OrcaMCP::object_world_box(*object);
         unplaced.push_back(nlohmann::json{
             {"object_index", int(i)},
             {"id", std::to_string(object->id().id)},
@@ -1069,7 +1069,7 @@ nlohmann::json OrcaMCPPlateUtils::CaptureTurntablePreview(int plate_index, int v
     // Calculate bounding box of objects on this plate
     BoundingBoxf3 objects_box;
     for (const auto& obj : plate->get_objects_on_this_plate()) {
-        objects_box.merge(obj->bounding_box_approx());
+        objects_box.merge(OrcaMCP::object_world_box(*obj));
     }
 
     // Determine target (center of objects) and camera distance

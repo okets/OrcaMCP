@@ -1176,6 +1176,15 @@ correctly on plate 4 read as off the bed whenever another plate was selected.
 `on_bed` still only means "inside the plate in XY, and not sunk below Z". It does not check for
 collisions with other objects or the prime tower, and a part floating above the bed passes it.
 
+**Which box.** `position` (the box's centre), `bounding_box`, `on_bed` and, in `get_scene_info`,
+the object's `printed_footprint` and `occupancy` footprint and height are all the object's exact
+box: every vertex of every instance, transformed. `move_object`'s `position` and
+`transform_objects`' `position` are read and written in the same box. Before v2.5.0.6 they used the
+mesh's own box turned with the object, whose corners stand off a rotated part: a T-shaped part
+tilted 30 degrees and resting on the bed read `min.z` -4 mm, with a footprint several millimetres
+too wide labelled `footprint_is_exact: true`. The exact box is cached on the object, so only the
+first call after a change walks the mesh, and that walk costs the same as the old box's did.
+
 **Filament fields:** `filament` is the object's own slot. `filaments_used` is every slot the object
 actually prints with — volumes, painted facets and layer ranges — and `volumes` lists every volume
 of the object, not just the printable parts `get_object_components` shows:

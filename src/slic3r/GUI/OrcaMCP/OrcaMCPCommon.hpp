@@ -125,6 +125,14 @@ bool should_drop_to_bed(double min_z_before, double min_z_after);
 // uniform 1.49x scale about the centre of a 99 mm figurine put its feet 24 mm under the bed.
 void transform_instances_on_bed(ModelObject& object, const Transform3d& world_transform);
 
+// The box every MCP tool reports an object by, and reads and writes its position ("the
+// bounding-box centre") in: the exact world box of all its instances, ModelObject::bounding_box_exact,
+// which transforms every vertex and is cached until the object changes. Not bounding_box_approx():
+// that one turns the mesh's own box with each instance, and once an instance is rotated the turned
+// box's corners stand off the part -- a T-shaped part tilted 30 degrees and resting on the bed read
+// min z -4 mm, its footprint too wide, with footprint_is_exact true.
+const BoundingBoxf3& object_world_box(const ModelObject& object);
+
 // One model object as every MCP response describes it: id, name, object_index (the index other
 // tools take), instance_count, volume_count, position (bounding-box centre), rotation_degrees and
 // scale of the first instance, and bounding_box {size_x, size_y, size_z, min, max}, in plate mm.
