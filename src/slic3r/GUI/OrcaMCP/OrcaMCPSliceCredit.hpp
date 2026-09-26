@@ -4,27 +4,30 @@
 #include <string>
 
 // Which plate a slice's completion is credited to, and what a change to the plate list does to a
-// running slice. No wx: the tests drive it with plain numbers (tests/slic3rutils/test_slice_credit.cpp).
+// running slice. No wx: the tests drive it with plain values (tests/slic3rutils/test_slice_credit.cpp).
+//
+// A completion carries the print index of the Print it is about (PartPlateList's key, never reused)
+// and is credited to the plate that still holds it, or to none. The slice's own completion carries the
+// Print it started (BackgroundSlicingProcess::thread_proc), and so does the edit that cancelled it.
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
-// Where a completion event comes from.
-enum class CompletionKind
+// A plate Slice All reached but could not start (restart_background_process said no).
+struct PlateNotStarted
 {
-    sliced,          // the slicing thread ran a slice: finished, cancelled or failed
-    apply_cancelled, // an edit cancelled the running slice (Plater::priv::update_background_process)
-    already_sliced,  // "nothing to slice on this plate, go on": Slice All's skip, start_next_slice
+    int  credit_print_index = -1;    // the current plate's when its result really is valid, else -1: none
+    bool end_slice_all      = false; // the UI worker is busy (an arrange, an orient): end the run, not sliced
 };
 
-// The print index a completion carries: the key of the Print it is about, which PartPlateList never
-// reuses. The completion is credited to the plate that still holds it
-// (PartPlateList::find_plate_by_print_index), wherever that plate now stands, or to none once it has
-// been deleted. A slice, and the edit that cancelled it, are about the Print whose slice was started; a
-// skip is about the current plate, which was not started at all -- crediting it to the last started
-// Print marked that plate sliced with a result that was no longer its own.
-inline int completion_print_index(CompletionKind kind, int started_print_index, int current_plate_print_index)
+// "Already sliced" is credited only to a plate whose result is valid. When the start failed because the
+// UI worker was busy the plate was never sliced: crediting it marked it sliced with no G-code of its
+// own, and export or send would have used a stale file. Any other refusal (nothing to slice, an invalid
+// plate) credits nothing and lets the run go on to the next plate.
+inline PlateNotStarted plate_not_started(bool plate_result_valid, bool worker_busy, int current_plate_print_index)
 {
-    return kind == CompletionKind::already_sliced ? current_plate_print_index : started_print_index;
+    if (plate_result_valid)
+        return {current_plate_print_index, false};
+    return {-1, worker_busy};
 }
 
 // A plate deleted or moved while a slice runs, or the plate list rebuilt (undo, redo, a 3MF load). The

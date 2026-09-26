@@ -1432,7 +1432,8 @@ that is omitted.
 **Deleting a plate during the run** cancels it: the run walks the plates by position, which the
 deletion shifts. `delete_plate` says so (`slice_cancelled: true`, "the plate list changed during Slice
 All; the run was cancelled, call slice_all again"), and so do `undo` and `redo`, which rebuild the
-plate list. Plates sliced before keep their results. The plate
+plate list. A plate the run cannot start because the app is busy with another job (an arrange, say)
+ends the run with that plate not sliced, rather than counting it as sliced. Plates sliced before keep their results. The plate
 restored when the run ends is the one that was selected at the call, wherever it now stands, or none
 if it was the deleted one.
 

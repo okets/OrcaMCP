@@ -6756,8 +6756,9 @@ struct Plater::priv
     OrcaMCP::PlateListChangeDuringSlice m_plate_list_change;
     // Orca: runs `change` and, when asked, tells what the plate-list changes it made did to a slice.
     void report_plate_list_change(OrcaMCP::PlateListChangeDuringSlice* slice_change, const std::function<void()>& change);
-    // Orca: the print index a completion of this kind carries (OrcaMCPSliceCredit.hpp).
-    int completion_print_index(OrcaMCP::CompletionKind kind);
+    // Orca: Slice All reached a plate it could not start: credit it only if its result is valid, and
+    // end the run when the UI worker is busy (OrcaMCPSliceCredit.hpp, plate_not_started).
+    void post_plate_not_started();
     bool slicing_all_plates() const { return m_slice_all && m_is_slicing; } // Orca: a Slice All run is in progress
     bool m_slice_all{false};
     bool m_is_slicing {false};
@@ -10851,7 +10852,7 @@ unsigned int Plater::priv::update_background_process(bool force_validation, bool
             // Post the "canceled" callback message, so that it will be processed after any possible pending status bar update messages.
             SlicingProcessCompletedEvent evt(EVT_PROCESS_COMPLETED, 0,
                 SlicingProcessCompletedEvent::Cancelled, nullptr);
-            evt.set_print_index(completion_print_index(OrcaMCP::CompletionKind::apply_cancelled)); // Orca
+            evt.set_print_index(background_process.started_print_index()); // Orca: the slice it cancelled
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(" %1%, post an EVT_PROCESS_COMPLETED to main, status %2%")%__LINE__ %evt.status();
             wxQueueEvent(q, evt.Clone());
         }
@@ -12668,12 +12669,22 @@ void Plater::priv::report_plate_list_change(OrcaMCP::PlateListChangeDuringSlice*
         *slice_change = m_plate_list_change;
 }
 
-int Plater::priv::completion_print_index(OrcaMCP::CompletionKind kind)
+void Plater::priv::post_plate_not_started()
 {
-    int current_plate_print_index = -1;
-    if (PartPlate* plate = partplate_list.get_curr_plate(); plate != nullptr)
-        plate->get_print(nullptr, nullptr, &current_plate_print_index);
-    return OrcaMCP::completion_print_index(kind, background_process.started_print_index(), current_plate_print_index);
+    PartPlate* plate                     = partplate_list.get_curr_plate();
+    int        current_plate_print_index = -1;
+    plate->get_print(nullptr, nullptr, &current_plate_print_index);
+    const OrcaMCP::PlateNotStarted outcome =
+        OrcaMCP::plate_not_started(plate->is_slice_result_valid(), !m_worker.is_idle(), current_plate_print_index);
+    if (outcome.end_slice_all) {
+        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": the UI worker is busy, so plate %1% could not be sliced; "
+                                                                     "Slice All ends with it not sliced") % partplate_list.get_curr_plate_index();
+        m_slice_all = false;
+    }
+    SlicingProcessCompletedEvent evt(EVT_PROCESS_COMPLETED, 0, SlicingProcessCompletedEvent::Finished, nullptr);
+    evt.set_print_index(outcome.credit_print_index);
+    // Post the "complete" callback message, so that it will slice the next plate soon
+    wxQueueEvent(q, evt.Clone());
 }
 
 //BBS: add project slice logic
@@ -12756,7 +12767,7 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
     //BBS: set the current plater's slice result to valid
     // Orca: set it on the plate that still holds the Print this completion is about (its print index,
     // never reused), not on the plate the process points at now: a plate switch, deletion or move may
-    // have repointed it. None once that plate is gone (OrcaMCPSliceCredit.hpp).
+    // have repointed it. None once that plate is gone, or for no Print (-1) (OrcaMCPSliceCredit.hpp).
     if (const int sliced_plate = partplate_list.find_plate_by_print_index(evt.print_index());
         !this->background_process.empty() && sliced_plate >= 0)
         partplate_list.get_plate(sliced_plate)->update_slice_result_valid_state(evt.success());
@@ -19486,11 +19497,7 @@ void Plater::reslice()
     {
         //slice next
         BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": in slicing all, current plate %1% already sliced, skip to next") % p->m_cur_slice_plate ;
-        SlicingProcessCompletedEvent evt(EVT_PROCESS_COMPLETED, 0,
-            SlicingProcessCompletedEvent::Finished, nullptr);
-        evt.set_print_index(p->completion_print_index(OrcaMCP::CompletionKind::already_sliced)); // Orca
-        // Post the "complete" callback message, so that it will slice the next plate soon
-        wxQueueEvent(this, evt.Clone());
+        p->post_plate_not_started(); // Orca: credited only if it really is sliced
         p->m_is_slicing = true;
         if (p->m_cur_slice_plate == 0)
             reset_gcode_toolpaths();
@@ -19633,11 +19640,7 @@ int Plater::start_next_slice()
     if (!result)
     {
         //slice next
-        SlicingProcessCompletedEvent evt(EVT_PROCESS_COMPLETED, 0,
-                SlicingProcessCompletedEvent::Finished, nullptr);
-        evt.set_print_index(p->completion_print_index(OrcaMCP::CompletionKind::already_sliced)); // Orca
-        // Post the "complete" callback message, so that it will slice the next plate soon
-        wxQueueEvent(this, evt.Clone());
+        p->post_plate_not_started(); // Orca: credited only if it really is sliced
     }
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": restart_background_process returns %1%")%result;
 

@@ -814,7 +814,7 @@ public:
     //is locked
     bool is_locked(int index) { return m_plate_list[index]->is_locked();}
 
-    //find plate by print index, return -1 if not found
+    //find plate by print index, return -1 if not found (Orca: and for -1, no Print)
     int find_plate_by_print_index(int index);
 
     /*instance related operations*/

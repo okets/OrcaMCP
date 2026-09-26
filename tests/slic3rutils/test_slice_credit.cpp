@@ -7,19 +7,30 @@
 
 using namespace Slic3r::GUI::OrcaMCP;
 
-TEST_CASE("a skip is credited to the current plate, never to the last started print", "[SliceCredit]")
+TEST_CASE("a plate Slice All finds already sliced is credited to it, and the run goes on", "[SliceCredit]")
 {
-    // Slice All reaches plate 2, already sliced, and skips it. The last slice started was plate 1's
-    // (print 7), since invalidated by an edit: crediting the skip to it marked plate 1 sliced with a
-    // result that was no longer its own.
-    CHECK(completion_print_index(CompletionKind::already_sliced, /*started=*/7, /*current=*/9) == 9);
+    // Never to the last started Print: that plate may have been edited since, and would be marked
+    // sliced with a result that is no longer its own.
+    const auto outcome = plate_not_started(/*plate_result_valid=*/true, /*worker_busy=*/false, /*current=*/9);
+    CHECK(outcome.credit_print_index == 9);
+    CHECK_FALSE(outcome.end_slice_all);
+    CHECK(plate_not_started(true, /*worker_busy=*/true, 9).credit_print_index == 9); // nothing to start anyway
 }
 
-TEST_CASE("a slice, or an edit that cancels it, is about the print that was being sliced", "[SliceCredit]")
+TEST_CASE("a plate Slice All could not start while the UI worker is busy is not marked sliced", "[SliceCredit]")
 {
-    // Not the current plate's: a plate switch or deletion may have repointed the process since.
-    CHECK(completion_print_index(CompletionKind::sliced, /*started=*/7, /*current=*/9) == 7);
-    CHECK(completion_print_index(CompletionKind::apply_cancelled, 7, 9) == 7);
+    // An arrange or orient job held the worker: the plate was never sliced. The run ends there, the
+    // plate left unsliced, rather than marking it sliced with no G-code of its own.
+    const auto outcome = plate_not_started(/*plate_result_valid=*/false, /*worker_busy=*/true, 9);
+    CHECK(outcome.credit_print_index == -1);
+    CHECK(outcome.end_slice_all);
+}
+
+TEST_CASE("a plate Slice All could not start for any other reason is skipped, not credited", "[SliceCredit]")
+{
+    const auto outcome = plate_not_started(/*plate_result_valid=*/false, /*worker_busy=*/false, 9);
+    CHECK(outcome.credit_print_index == -1);
+    CHECK_FALSE(outcome.end_slice_all);
 }
 
 TEST_CASE("what several plate-list changes did adds up", "[SliceCredit]")

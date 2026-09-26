@@ -5257,6 +5257,9 @@ int PartPlateList::lock_plate(int index, bool state)
 int PartPlateList::find_plate_by_print_index(int print_index)
 {
 	int plate_index = -1;
+	// Orca: -1 is no Print, and a plate that has none (SLA) holds -1 too: never match it.
+	if (print_index < 0)
+		return plate_index;
 
 	for (unsigned int i = 0; i < (unsigned int)m_plate_list.size(); ++i)
 	{
