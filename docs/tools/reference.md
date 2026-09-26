@@ -234,7 +234,9 @@ A smooth timelapse or wrapping detection forces a tower even on a single-filamen
 reasons above account for that.
 
 **Open dialogs.** `open_dialogs` lists the titles of the dialogs the app is showing, innermost first
-(`[]` when none), and `system_dialog_open` is `true` while a system file chooser or alert is open. A
+(`[]` when none), `system_dialog_open` is `true` while a system file chooser or alert is open, and
+`untracked_modal_loop` is `true` while a modal window no dialog accounts for runs (`quit_app` refuses
+for both). A
 tool opens one only where its entry says so (`send_to_printer`'s Bambu dialog, or `direct: false`),
 but the user can open one, and after a crash the app starts with its "restore unsaved items?" prompt
 (`"OrcaMCP - Restore"`). Every modal dialog counts, the plain ones too (the flushing-volumes dialog,

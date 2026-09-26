@@ -130,14 +130,15 @@ std::vector<std::string> quit_notes(const ModalState& modal)
 {
     std::vector<std::string> notes;
     for (const std::string& title : modal.titles())
-        notes.push_back("The dialog '" + title + "' was open; it is closed unanswered, as when the system logs out.");
+        notes.push_back("The dialog '" + title + "' was open; it is closed unanswered, with its own No or Cancel.");
     return notes;
 }
 
 void add_open_dialogs(nlohmann::json& result, const ModalState& modal)
 {
-    result["open_dialogs"]       = modal.titles();
-    result["system_dialog_open"] = modal.system_dialog_open();
+    result["open_dialogs"]         = modal.titles();
+    result["system_dialog_open"]   = modal.system_dialog_open();
+    result["untracked_modal_loop"] = modal.untracked_modal_loop();
 }
 
 std::optional<nlohmann::json> open_dialog_warning(const ModalState& modal)
@@ -172,27 +173,30 @@ ModalUnwinder::ModalUnwinder(Hooks hooks, int max_turns) : m_hooks(std::move(hoo
 
 ModalUnwinder::Hold ModalUnwinder::hold_back(std::function<void()> close)
 {
-    const bool holding = m_turns > 0;
+    if (m_finished) { // a close after the last hold ended starts afresh
+        m_turns    = 0;
+        m_finished = false;
+        m_ended.clear();
+    }
     if (m_hooks.session_ending())
         return finish(Hold::go_on);
     const ModalState modal = m_hooks.modal_state();
     if (!modal.anything_open())
-        return finish(holding ? Hold::released : Hold::go_on);
+        return finish(Hold::go_on);
     if (m_turns >= m_max_turns)
         return finish(Hold::given_up);
     ++m_turns;
     end_innermost(modal);
     m_hooks.run_after_a_turn(std::move(close));
-    return holding ? Hold::held : Hold::first_held;
+    return Hold::held;
 }
 
-// The next close starts afresh, and no turn of this one is left to run.
+// The hold is over: no turn of it is left to run. Its turn count stays readable until the next close.
 ModalUnwinder::Hold ModalUnwinder::finish(Hold hold)
 {
     if (m_turns > 0)
         m_hooks.cancel_turn();
-    m_turns = 0;
-    m_ended.clear();
+    m_finished = true;
     return hold;
 }
 
@@ -209,5 +213,7 @@ void ModalUnwinder::end_innermost(const ModalState& modal)
     m_ended.push_back(innermost);
     m_hooks.end_dialog(innermost);
 }
+
+bool refuse_session_end(const ModalState& modal, bool can_veto) { return can_veto && modal.anything_open(); }
 
 }}} // namespace Slic3r::GUI::OrcaMCP

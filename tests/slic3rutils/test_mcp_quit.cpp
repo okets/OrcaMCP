@@ -78,16 +78,16 @@ struct FakeApp
 // went on.
 struct Close
 {
-    ModalUnwinder&    unwinder;
-    int               went_on = 0;
-    Hold              last    = Hold::go_on;
-    std::vector<Hold> seen;
+    ModalUnwinder&                   unwinder;
+    int                              went_on = 0;
+    Hold                             last    = Hold::go_on;
+    std::vector<std::pair<Hold, int>> seen; // each outcome, with the turns its hold had taken
 
     void operator()()
     {
         last = unwinder.hold_back([this] { (*this)(); });
-        seen.push_back(last);
-        if (ModalUnwinder::closes_now(last))
+        seen.emplace_back(last, unwinder.turns());
+        if (last == Hold::go_on)
             ++went_on;
     }
 };
@@ -118,19 +118,20 @@ TEST_CASE("a close while a dialog is open ends it, and goes on only once it has 
     Close         close{unwinder};
 
     close();
-    CHECK(close.last == Hold::first_held);
+    CHECK(close.last == Hold::held);
     CHECK(close.went_on == 0); // not inside the dialog's loop: that is the crash
     CHECK(app.ended == std::vector<std::uint64_t>{restore_prompt.id});
 
     REQUIRE(app.run_turn());
-    CHECK(close.last == Hold::released);
+    CHECK(close.last == Hold::go_on);
     CHECK(close.went_on == 1);
     CHECK(app.turns.empty());
 }
 
-TEST_CASE("a hold says when it starts and when it ends, and is quiet between", "[McpQuit][orcamcp]")
+TEST_CASE("a hold's turn count tells its first turn and its end from the turns between", "[McpQuit][orcamcp]")
 {
-    // The close handler logs the first and the last of these only, not one line per 50 ms turn.
+    // The close handler logs the first turn and the outcome only, not one line per 50 ms turn: held on
+    // turn 1 is the start, go_on after turns is the end, and go_on after none is a close never held.
     FakeApp app;
     app.dialogs        = {restore_prompt};
     app.refuses_to_end = true;
@@ -143,7 +144,11 @@ TEST_CASE("a hold says when it starts and when it ends, and is quiet between", "
     app.dialogs.clear(); // the user answered it
     REQUIRE(app.run_turn());
 
-    CHECK(close.seen == std::vector<Hold>{Hold::first_held, Hold::held, Hold::held, Hold::released});
+    using Seen = std::vector<std::pair<Hold, int>>;
+    CHECK(close.seen == Seen{{Hold::held, 1}, {Hold::held, 2}, {Hold::held, 3}, {Hold::go_on, 3}});
+
+    close(); // the next close, with nothing open
+    CHECK(close.seen.back() == std::pair<Hold, int>{Hold::go_on, 0});
 }
 
 TEST_CASE("stacked dialogs are ended innermost first, one per turn", "[McpQuit][orcamcp]")
@@ -204,7 +209,7 @@ TEST_CASE("a system dialog on top is never ended, and nothing under it is either
     Close         close{unwinder};
 
     close();
-    CHECK(close.last == Hold::first_held);
+    CHECK(close.last == Hold::held);
     REQUIRE(app.run_turn());
     CHECK(app.ended.empty()); // Preferences is not the innermost: ending it would leave an invisible modal
 
@@ -246,7 +251,7 @@ TEST_CASE("an unwinder that gave up starts afresh on the next close", "[McpQuit]
     REQUIRE(close.last == Hold::given_up);
 
     close(); // a new quit_app while the same dialog is still open
-    CHECK(close.last == Hold::first_held);
+    CHECK(close.last == Hold::held);
 
     app.dialogs.clear();
     close();
@@ -264,7 +269,7 @@ TEST_CASE("a close at the end of the system session is never held", "[McpQuit][o
     Close         close{unwinder};
 
     close();
-    REQUIRE(close.last == Hold::first_held);
+    REQUIRE(close.last == Hold::held);
     app.session_ending = true;
     close();
 
@@ -412,7 +417,7 @@ TEST_CASE("quit_app refuses while a modal loop runs that no dialog accounts for"
     CHECK(refusal->find("cannot identify") != std::string::npos);
 }
 
-TEST_CASE("new_project and load_project wait while the restore prompt is open", "[McpQuit][orcamcp]")
+TEST_CASE("new_project and load_project refuse while the restore prompt is open", "[McpQuit][orcamcp]")
 {
     CHECK_FALSE(pending_restore_refusal());
     {
@@ -433,6 +438,7 @@ TEST_CASE("get_scene_info and active_warnings name what is open", "[McpQuit][orc
     add_open_dialogs(none, nothing);
     CHECK(none["open_dialogs"] == nlohmann::json::array());
     CHECK(none["system_dialog_open"] == false);
+    CHECK(none["untracked_modal_loop"] == false);
     CHECK_FALSE(open_dialog_warning(nothing));
 
     ModalState modal;
@@ -459,4 +465,37 @@ TEST_CASE("get_scene_info and active_warnings name what is open", "[McpQuit][orc
     const auto system_warning = open_dialog_warning(system);
     REQUIRE(system_warning);
     CHECK((*system_warning)["message"].get<std::string>().find("system dialog") != std::string::npos);
+}
+
+TEST_CASE("get_scene_info reports a modal loop no dialog accounts for", "[McpQuit][orcamcp]")
+{
+    // quit_app refuses for it, so the scene must not look as if nothing were open.
+    ModalState modal;
+    modal.in_modal_loop = true;
+    nlohmann::json result;
+    add_open_dialogs(result, modal);
+
+    CHECK(result["open_dialogs"] == nlohmann::json::array());
+    CHECK(result["untracked_modal_loop"] == true);
+    const auto warning = open_dialog_warning(modal);
+    REQUIRE(warning);
+    CHECK((*warning)["message"].get<std::string>().find("cannot identify") != std::string::npos);
+}
+
+TEST_CASE("a quit request from the system is refused while a dialog is open", "[McpQuit][orcamcp]")
+{
+    // The Dock's Quit, a quit Apple Event and a logout arrive inside the dialog's event loop; closing
+    // the frame there is the teardown-under-a-dialog abort. macOS apps refuse instead, as wx does.
+    ModalState modal;
+    modal.dialogs       = {restore_prompt};
+    modal.in_modal_loop = true;
+    CHECK(refuse_session_end(modal, /*can_veto=*/true));
+    CHECK_FALSE(refuse_session_end(modal, /*can_veto=*/false)); // nothing to refuse with: go on
+
+    const ModalState nothing;
+    CHECK_FALSE(refuse_session_end(nothing, true));
+
+    ModalState untracked;
+    untracked.in_modal_loop = true;
+    CHECK(refuse_session_end(untracked, true));
 }

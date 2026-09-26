@@ -605,8 +605,8 @@ void OrcaMCPServer::register_builtin_tools()
         ToolCategory::Info,
         "Quit the app with no dialog",
         "Quit OrcaMCP cleanly with no dialog. By default unsaved project changes are discarded, and a "
-        "dialog the app is showing (get_scene_info's open_dialogs) is closed unanswered, as at a system "
-        "logout; the startup restore prompt keeps its backup for the next launch. Pass "
+        "dialog the app is showing (get_scene_info's open_dialogs) is closed unanswered, with its own No "
+        "or Cancel; the startup restore prompt keeps its backup for the next launch. Pass "
         "discard_changes=false to refuse while the project is dirty (call save_project first) or a "
         "dialog is open. A system file chooser or alert is never closed: quit_app refuses until the "
         "user closes it. If a dialog will not close within 10 s the app stays open with its changes "
@@ -682,7 +682,8 @@ void OrcaMCPServer::register_builtin_tools()
         "instances on several plates is listed under each by the instances there "
         "(`instances_on_plate`): its bounding_box, position and footprint are theirs. `open_dialogs` "
         "names any dialog the app is showing, waiting for the user (tool calls still run under it); "
-        "`system_dialog_open` is true while a system file chooser or alert is open.",
+        "`system_dialog_open` is true while a system file chooser or alert is open, `untracked_modal_loop` "
+        "while a modal window no dialog accounts for runs.",
         {
             {"type", "object"},
             {"properties", {

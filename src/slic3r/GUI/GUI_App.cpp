@@ -2979,6 +2979,16 @@ bool GUI_App::on_init_inner()
 
     wxGetApp().Bind(wxEVT_QUERY_END_SESSION, [this](auto & e) {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< "received wxEVT_QUERY_END_SESSION";
+        // Orca: a quit request (the Dock's Quit, a quit Apple Event, a logout) is refused while a dialog
+        // is open, as wx's own macOS handler does and macOS apps do. It arrives inside that dialog's
+        // event loop, where the close below tore the frame down and aborted the app; and ending the
+        // dialog would answer it for the user. The user answers it and quits again. A logout reports
+        // that the app cancelled it, and nothing is lost: nothing was torn down (OrcaMCPQuit.hpp).
+        if (OrcaMCP::refuse_session_end(OrcaMCP::current_modal_state(), e.CanVeto())) {
+            BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": quit refused, a dialog is open";
+            e.Veto();
+            return;
+        }
         if (mainframe) {
             wxCloseEvent e2(wxEVT_CLOSE_WINDOW);
             e2.SetCanVeto(true);
@@ -2988,11 +2998,6 @@ bool GUI_App::on_init_inner()
                 return;
             }
         }
-        // Orca: end the innermost dialog with its own "no" (Cancel, else No), not wxID_ABORT: callers that
-        // test for No or Cancel only took ABORT for yes, e.g. "Sync printer information?" synced. And only
-        // the innermost: DPIDialog refuses the others, and a plain wxDialog ended under another is hidden
-        // with its loop still running (OrcaMCPQuit.hpp).
-        OrcaMCP::end_innermost_dialog_unanswered();
     });
     // Orca: the process ends as soon as this event returns, so the main frame's close, which wx sends
     // from it, must run its teardown (the app config is saved there) now, not wait for a dialog.

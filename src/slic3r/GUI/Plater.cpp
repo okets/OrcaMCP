@@ -7840,8 +7840,8 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
                     const OrcaMCP::RestorePromptOpen restore_prompt_open;
                     result = MessageDialog(this->q, _L("Previously unsaved items have been detected. Do you want to restore them\?"), wxString(SLIC3R_APP_FULL_NAME) + " - " + _L("Restore"), wxYES_NO | wxYES_DEFAULT | wxCENTRE).ShowModal();
                 }
-                // Orca: closed unanswered by a quit (quit_app, or a system logout), not by the user: keep
-                // the backup, so the next launch asks again.
+                // Orca: closed unanswered by a quit (quit_app), not by the user: keep the backup, so the
+                // next launch asks again.
                 if (result != wxID_YES && OrcaMCP::closing_dialogs_to_quit())
                     return;
                 if (result == wxID_YES) {

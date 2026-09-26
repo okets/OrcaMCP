@@ -76,8 +76,8 @@ private:
 enum class Decline { cancel, no };
 Decline decline_answer(bool has_cancel_button, bool has_no_button, bool no_button_refuses);
 
-// True from the moment a quit (quit_app, or a system logout) ends a dialog unanswered, until that quit
-// gives up. The restore prompt reads it to keep its backup rather than delete it.
+// True from the moment a quit (quit_app) ends a dialog unanswered, until that quit gives up. The
+// restore prompt reads it to keep its backup rather than delete it.
 bool closing_dialogs_to_quit();
 void set_closing_dialogs_to_quit(bool closing);
 
@@ -107,7 +107,8 @@ std::optional<std::string> quit_refusal(const ModalState& modal, bool discard_ch
 // What quit_app tells its caller it is about to close unanswered.
 std::vector<std::string> quit_notes(const ModalState& modal);
 
-// get_scene_info's `open_dialogs` (the app's dialogs' titles) and `system_dialog_open`.
+// get_scene_info's `open_dialogs` (the app's dialogs' titles), `system_dialog_open` and
+// `untracked_modal_loop`.
 void add_open_dialogs(nlohmann::json& result, const ModalState& modal);
 
 // The active_warnings entry while something modal is open; nullopt otherwise.
@@ -136,13 +137,10 @@ public:
 
     enum class Hold
     {
-        go_on,      // nothing modal is open: close now
-        first_held, // do not close now: the first turn of a hold
-        held,       // still waiting for the dialogs to end
-        released,   // the dialogs have ended: close now
-        given_up,   // still modal after max_turns: do not close, and nothing is asked again
+        go_on,    // nothing modal is open (any more): close now
+        held,     // do not close now: the innermost dialog is ended, and the close is asked again later
+        given_up, // still modal after max_turns: do not close, and nothing is asked again
     };
-    static bool closes_now(Hold hold) { return hold == Hold::go_on || hold == Hold::released; }
 
     static constexpr int k_default_max_turns = 200;
 
@@ -151,6 +149,10 @@ public:
     // Asked by the close before anything is torn down; `close` is the close, to ask again.
     Hold hold_back(std::function<void()> close);
 
+    // The turns the latest hold has taken: 1 on its first, and still its count on the go_on or
+    // given_up that ends it; 0 for a close that was never held. Its log lines are told apart by it.
+    int turns() const { return m_turns; }
+
 private:
     Hold finish(Hold hold);
     void end_innermost(const ModalState& modal);
@@ -158,16 +160,20 @@ private:
     Hooks                      m_hooks;
     int                        m_max_turns;
     int                        m_turns = 0;
+    bool                       m_finished = false; // the latest hold has ended: the next close starts afresh
     std::vector<std::uint64_t> m_ended;
 };
+
+// A quit request from the system (the Dock's Quit, a quit Apple Event, a logout, wx's
+// wxEVT_QUERY_END_SESSION) is refused while anything modal is open, as wx's own macOS handler and macOS
+// apps do: it arrives inside the dialog's event loop, where closing the frame is the abort this file is
+// about. The user answers the dialog and quits again; nothing is torn down, so nothing is lost.
+bool refuse_session_end(const ModalState& modal, bool can_veto);
 
 // The app's side, defined in OrcaMCPQuitApp.cpp; main thread only.
 void           track_modal_dialogs();   // registers the hook that feeds the app's ModalStack; once, at startup
 ModalState     current_modal_state();
 ModalUnwinder& modal_unwinder();        // runs its turns on a timer
-// Ends the innermost dialog unanswered and returns true; false when there is none, or it is a
-// system one. What the app does to its dialogs at a system logout, and what the unwinder does per turn.
-bool end_innermost_dialog_unanswered();
 // Asked by the main frame's close handler, for a close that cannot be vetoed, before anything is torn
 // down: true while a dialog is open, when `close` is asked again after a turn (the innermost dialog
 // ended); false when the close may go on now. Logs the first turn and the outcome, and notes a quit

@@ -149,15 +149,6 @@ ModalState current_modal_state()
     return state;
 }
 
-bool end_innermost_dialog_unanswered()
-{
-    const auto open = tracked_dialogs().stack.innermost_first();
-    if (open.empty() || open.front().system)
-        return false;
-    end_dialog_unanswered(open.front().id);
-    return true;
-}
-
 ModalUnwinder& modal_unwinder()
 {
     // Never destroyed, like the MCP gate: a close can be held back while the app object is torn down.
@@ -170,23 +161,25 @@ ModalUnwinder& modal_unwinder()
 
 bool hold_close_while_modal(std::function<void()> close)
 {
-    const ModalUnwinder::Hold hold = modal_unwinder().hold_back(std::move(close));
+    ModalUnwinder&            unwinder = modal_unwinder();
+    const ModalUnwinder::Hold hold     = unwinder.hold_back(std::move(close));
+    const int                 turns    = unwinder.turns();
     switch (hold) {
-    case ModalUnwinder::Hold::first_held:
-        BOOST_LOG_TRIVIAL(info) << "OrcaMCP: the close waits for the open dialogs to end";
-        break;
-    case ModalUnwinder::Hold::released:
-        BOOST_LOG_TRIVIAL(info) << "OrcaMCP: the open dialogs have ended; the close goes on";
-        break;
+    case ModalUnwinder::Hold::held:
+        if (turns == 1)
+            BOOST_LOG_TRIVIAL(info) << "OrcaMCP: the close waits for the open dialogs to end";
+        return true;
+    case ModalUnwinder::Hold::go_on:
+        if (turns > 0)
+            BOOST_LOG_TRIVIAL(info) << "OrcaMCP: the open dialogs have ended; the close goes on";
+        return false;
     case ModalUnwinder::Hold::given_up:
         note_quit_failed(current_modal_state());
         set_closing_dialogs_to_quit(false);
         BOOST_LOG_TRIVIAL(error) << "OrcaMCP: " << quit_failed_warning()->at("message").get<std::string>();
-        break;
-    case ModalUnwinder::Hold::go_on:
-    case ModalUnwinder::Hold::held: break;
+        return true;
     }
-    return !ModalUnwinder::closes_now(hold);
+    return true;
 }
 
 }}} // namespace Slic3r::GUI::OrcaMCP

@@ -111,7 +111,7 @@ grep -hA1 -E '^\s*register_(bridge_)?tool\(\{' src/slic3r/GUI/OrcaMCP/*.cpp | gr
 
 | Category | Tools |
 |----------|-------|
-| **Scene** | `get_scene_info` (plates, objects with `filaments_used` — read that, not `extruder_id` — and each plate's full occupancy: object footprints with brim, the prime tower, excluded bed areas; `open_dialogs` / `system_dialog_open`: a dialog waiting for the user), `new_project`, `load_project` (both cancel a running slice; refused while the startup restore prompt waits), `save_project`, `export_3mf` |
+| **Scene** | `get_scene_info` (plates, objects with `filaments_used` — read that, not `extruder_id` — and each plate's full occupancy: object footprints with brim, the prime tower, excluded bed areas; `open_dialogs` / `system_dialog_open` / `untracked_modal_loop`: a dialog waiting for the user), `new_project`, `load_project` (both cancel a running slice; refused while the startup restore prompt waits), `save_project`, `export_3mf` |
 | **Models** | `load_model` (a 3MF is always geometry only: never its presets, never a rename; `.gcode` / `.gcode.3mf` only onto an empty scene, as a preview; returns `loaded_objects` in `get_scene_info`'s object shape, `filaments_added`; `multipart: merge\|separate`), `auto_orient`, `arrange_objects`, `get_object_info` (incl. every volume with its type and filament), `rename_object`, `set_object_printable` |
 | **Transforms** | `move_object`, `rotate_object`, `scale_object`, `mirror_object`, `flatten_object`, `clone_object`, `cut_object`, `delete_object`, `transform_objects` (rotate, scale, mirror and transform drop a resting object back onto the bed like the GUI; an explicit Z is kept) |
 | **Plates** | `add_plate`, `select_plate`, `delete_plate`, `set_prime_tower_position` |
@@ -520,11 +520,15 @@ that call in flight waited forever: on 2026-09-26 `quit_app`, with a script poll
     the app stays open, its unsaved changes kept (a forced close clears the dirty flag only once it is
     sure to go on), and every response's `active_warnings` carries a `QuitFailed` error until the next
     `quit_app`. The log has the first turn and the outcome, not each turn.
-  - **Unanswered, with the dialog's own no** (`end_innermost_dialog_unanswered`): its Cancel button if
-    it has one; else its No button, if that still says No or Cancel; else Cancel, what its close box
-    returns. Never `wxID_ABORT`: callers that test for No or Cancel only take it for yes. The restore
-    prompt tells a quit from a No by `closing_dialogs_to_quit()` and keeps its backup. The system-logout
-    handler (`GUI_App`, `wxEVT_QUERY_END_SESSION`) ends dialogs the same way.
+  - **Unanswered, with the dialog's own no** (`end_dialog_unanswered`, `OrcaMCPQuitApp.cpp`): its Cancel
+    button if it has one; else its No button, if that still says No or Cancel; else Cancel, what its
+    close box returns. Never `wxID_ABORT`: callers that test for No or Cancel only take it for yes. The
+    restore prompt tells a quit from a No by `closing_dialogs_to_quit()` and keeps its backup.
+  - **A quit request from the system is refused while a dialog is open** (`refuse_session_end`, in
+    GUI_App's `wxEVT_QUERY_END_SESSION` handler): the Dock's Quit, a quit Apple Event, a logout. It
+    arrives inside the dialog's loop, where the close tore the frame down and aborted, and ending the
+    dialog would answer it for the user. wx's own macOS handler refuses the same way; the user answers
+    and quits again, and a logout reports that the app cancelled it, with nothing torn down.
   - **Never at the end of the session.** The process ends as soon as `wxEVT_END_SESSION` returns, so a
     close from it is never held (`mark_session_ending`): its teardown, which saves the app config, runs
     at once.
@@ -898,10 +902,12 @@ backup, including a prompt the app itself closed to quit (its system-logout hand
 launch asks again, and marks the prompt open (`RestorePromptOpen`) so MCP's `new_project` /
 `load_project` wait for it. On "no", take upstream's handler and re-check both.
 
-Item S: upstream's `wxEVT_QUERY_END_SESSION` handler ends every dialog in `dialogStack` with
-`EndModal(wxID_ABORT)`. Callers that test only for No or Cancel take ABORT for yes ("Sync printer
-information?" syncs), and a dialog that is not the innermost is refused or only hidden. Ours ends the
-innermost with its own no (`OrcaMCP::end_innermost_dialog_unanswered`). On 0, take upstream's.
+Item S: upstream's `wxEVT_QUERY_END_SESSION` handler (the Dock's Quit, a quit Apple Event, a logout)
+closes the main frame while a dialog's modal loop is on the stack -- the teardown-under-a-dialog abort
+-- and then ends every dialog in `dialogStack` with `EndModal(wxID_ABORT)`, which callers that test
+only for No or Cancel take for yes ("Sync printer information?" syncs). Ours refuses the request while
+any dialog is open (`OrcaMCP::refuse_session_end`), as wx's own macOS handler does. On 0, take
+upstream's and re-check a Dock Quit with the restore prompt open.
 
 Item J: upstream opens every recent 3MF synchronously while building the main window, before
 post_init starts the MCP server. Our patch skips it for an agent launch (`GUI::is_agent_launch()`,
