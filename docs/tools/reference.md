@@ -94,7 +94,10 @@ not cover because the close did not come through MCP.
 **Returns:** `{"status": "quitting"}`; the app exits within a few seconds, also while other calls are
 in flight (an agent's parallel calls, a poller). From the moment the app starts closing, every tool call
 is answered with JSON-RPC error -32002, "OrcaMCP is quitting, so this call was not run", and its work
-is not run; a call already running on the GUI thread is let finish. Let a running slice finish first
+is not run; a call already running on the GUI thread is let finish, and one waiting on the network
+(`discover_printers`, a printer request) gives up within about a second with its tool error ("Request
+cancelled", "Printer discovery was cancelled"). `quit_app` is itself served after the call ahead of it:
+calls are answered one at a time. Let a running slice finish first
 (`get_slicing_status`): a quit mid-slice waits for the slice to cancel, and can crash the app on its
 way out (a known upstream bug; CLAUDE.md, Known Limitations).
 

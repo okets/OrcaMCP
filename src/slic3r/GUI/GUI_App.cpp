@@ -149,6 +149,8 @@
 
 // OrcaMCP Server for Claude Code integration
 #include "OrcaMCP/OrcaMCPServer.hpp"
+#include "OrcaMCP/OrcaMCPMainThreadGate.hpp"
+#include "../Utils/ThreadCancel.hpp"
 #include "OrcaMCP/MCPClientConfig.hpp"
 
 #include "slic3r/Utils/NetworkAgentFactory.hpp"
@@ -7772,6 +7774,9 @@ void GUI_App::start_http_server(const std::string& provider)
         // Route /mcp requests to MCP server; everything else is a cloud login's callback.
         m_http_server.set_request_handler([this](const std::string& method, const std::string& url, const std::string& body)
             -> std::shared_ptr<HttpServer::Response> {
+            // Every network call made for this request gives up once the app is quitting, so the
+            // server's thread is never held past the quit (HttpServer::stop waits for it).
+            const ScopedThreadCancelCheck quitting([] { return OrcaMCP::main_thread_gate().is_closed(); });
             if (url.find("/mcp") != std::string::npos) {
                 return OrcaMCPServer::handle_request(method, url, body);
             }
@@ -7797,6 +7802,13 @@ void GUI_App::stop_http_server()
     // An MCP call on the server's thread may be waiting for this, the main, thread. Release it
     // first: the join in HttpServer::stop would otherwise wait on a thread that waits on the joiner.
     OrcaMCPServer::shut_down();
+    if (OrcaMCPServer::inside_a_tool_call()) {
+        // This quit runs inside a tool call's work, which pumped the event loop into it: that call's
+        // caller, on the server's thread, waits for the work to return, so a join now would never end.
+        // OnExit stops the server, once the work has returned.
+        BOOST_LOG_TRIVIAL(warning) << "stop_http_server: inside an MCP tool call; the server is stopped at exit";
+        return;
+    }
     m_http_server.stop();
     m_login_server.stop();
 }

@@ -348,9 +348,10 @@ gh release upload v2.3.2.10 ./path/to/new/artifact.exe -R okets/OrcaMCP
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPModelLoad.cpp` | `load_model`'s decisions: what a file does to the scene (`load_file_kind`, `load_refusal`), the 3MF load type (`choose_3mf_load`, called by `Plater`'s `determine_load_type`) and the `loaded_objects` report, whose objects are `model_object_summary_json` (`OrcaMCPCommon.cpp`), shared with `get_scene_info` (unit-tested in `tests/slic3rutils/test_mcp_model_load.cpp`) |
 | `src/slic3r/Utils/ObicoLink.cpp` | Flashforge preset's Obico link: page link object and token-free MCP status (spec `docs/superpowers/specs/2026-09-15-obico-camera-source-design.md`) |
 | `src/slic3r/GUI/HttpServer.hpp` | HTTP server with JSON responses; listens on 127.0.0.1 only |
-| `src/slic3r/GUI/HttpServer.cpp` | POST body reading, ResponseJson, the bounded stop |
+| `src/slic3r/GUI/HttpServer.cpp` | POST body reading, ResponseJson, the stop that waits for handlers and lets replies out |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPMainThreadGate.cpp` | How a call hands work to the main thread and waits, and how quitting releases it (see "Threading Model"; unit-tested in `tests/slic3rutils/test_mcp_shutdown.cpp`) |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPLoginServer.cpp` | The cloud login's own callback server, kept apart from the MCP server (unit-tested in `tests/slic3rutils/test_http_server.cpp`) |
+| `src/slic3r/Utils/ThreadCancel.cpp` | The per-request cancel check a quit applies to blocking network calls on the HTTP thread (unit-tested in `tests/slic3rutils/test_thread_cancel.cpp`) |
 | `src/slic3r/GUI/GUI_App.cpp` | MCP route registration, HTTP server startup, and the shutdown order (`stop_http_server`) |
 | `scripts/orcamcp-bridge.py` | stdio-to-HTTP bridge for Claude Code |
 
@@ -477,9 +478,19 @@ that call in flight waited forever: on 2026-09-26 `quit_app`, with a script poll
   not run. Use start_orca to start it again."). `McpShuttingDown` is a `JsonRpcError`
   (`OrcaMCPJsonRpcError.hpp`), so it takes the one `JsonRpcError` path. A call whose work has already
   started is waited for, since its work may still use what the caller owns.
-- `HttpServer::stop` joins with a bound (`try_join_for`, 3000 ms). A handler still running past it
-  (one that is not waiting on the main thread, e.g. a slow network call) is left to finish on its
-  own thread, and its server is deliberately leaked; the app exits anyway.
+- **Never abandon a handler.** `HttpServer::stop` joins the server's thread, however long it takes (a
+  warning is logged after 3 s): a handler still running may use what the app destroys next. So no
+  handler on that thread may block past the quit. Waits on the main thread are released by the gate,
+  and every network call made for a request gives up once the gate is closed: the request's
+  `ScopedThreadCancelCheck` (`src/slic3r/Utils/ThreadCancel.hpp`, installed in `GUI_App`'s route)
+  aborts synchronous `Http` transfers within about a second, and stops `discover_printers`. A new
+  blocking call on that thread must honour `this_thread_cancelled()` or go through `Http`.
+- **Replies get out.** `HttpServer::stop` closes the listeners and idle connections at once, but lets a
+  reply that is being written finish, for up to 2 s, so the caller released by the quit reads its
+  -32002 rather than a reset.
+- **A quit inside a tool call's work** (the work pumped the event loop into a close) cannot join the
+  thread whose call waits on that work; `GUI_App::stop_http_server` sees it
+  (`OrcaMCPServer::inside_a_tool_call()`) and leaves the stop to `OnExit`.
 - Anything that stops or restarts an `HttpServer` from the main thread needs the same care. The
   cloud login's loopback callback has its own server (`LoginCallbackServer`,
   `OrcaMCPLoginServer.cpp`) and never stops, moves or re-routes the MCP one.
@@ -503,12 +514,17 @@ Both servers listen on **127.0.0.1 only**: MCP has no authentication and can sta
 1. **Export paths**: `export_gcode`, `export_3mf` and `save_project` never open a file dialog (a modal would hang the MCP call); without a path they return an error / `cancelled`
 2. **Slicing progress**: `get_slicing_status` reports running/idle, not percentage
 3. **Threading**: Long operations may cause HTTP timeouts (120s default)
-4. **Quitting**: a tool call in flight when the app quits gets -32002 and was not run. A quit during
-   a slice waits for the slice to cancel (upstream's `BackgroundSlicingProcess::stop`; 1.5 s for a
-   tree-support slice on the -O0 dev build). **Wait for a slice to finish before `quit_app` or
-   `new_project`:** resetting the plater mid-slice can crash the app, because upstream's
-   `Plater::priv::reset` frees the plates' prints (`partplate_list.reinit()`) before it stops the
-   slicing thread (seen 2026-09-26 on the release and dev builds; not fixed here)
+4. **Quitting**: a tool call waiting for the GUI when the app quits gets -32002 and was not run; one
+   blocked on the network gets its tool error ("Request cancelled", "Printer discovery was
+   cancelled") within about a second. `quit_app` itself is served after the call ahead of it on the
+   one HTTP thread, e.g. a `discover_printers` runs out its timeout first. A Bambu cloud sign-in
+   callback in flight is not cancellable (the network plugin's own calls) and holds the quit for as
+   long as they take. A quit during a slice waits for the slice to cancel (upstream's
+   `BackgroundSlicingProcess::stop`; 1.5 s for a tree-support slice on the -O0 dev build). **Wait
+   for a slice to finish before `quit_app` or `new_project`:** resetting the plater mid-slice can
+   crash the app, because upstream's `Plater::priv::reset` frees the plates' prints
+   (`partplate_list.reinit()`) before it stops the slicing thread (seen 2026-09-26 on the release and
+   dev builds; not fixed here)
 5. **Local only**: the MCP server listens on 127.0.0.1; it cannot be reached from another machine
 
 ---
@@ -759,15 +775,15 @@ echo "I extruder-count mismatch in the Send dialog (reported upstream): $(gh iss
 echo "J startup reads recent-project thumbnails on the GUI thread (rel2506/02): $(U src/slic3r/GUI/MainFrame.cpp | awk '/FileHistory::LoadThumbnails\(\)$/{f=1} f&&/parallel_for/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
 echo "K Flashforge host ip:port keeps its port in the URL (rel2506/04):   $(U src/slic3r/Utils/Flashforge.cpp | grep -c 'const auto slash_pos = host.find')"
 echo "L Flashforge local API: no retry, failure log or next step (rel2506/04; 0 = bug): $(U src/slic3r/Utils/Flashforge.cpp | grep -c 'run_with_retry')"
-echo "M HttpServer::stop joins its thread with no bound (rel2506/04b):   $(U src/slic3r/GUI/HttpServer.cpp | awk '/^void HttpServer::stop/{f=1} f&&/_thread\.join\(\)/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
+echo "M HttpServer::stop cuts a reply still being written (rel2506/04b): $(U src/slic3r/GUI/HttpServer.cpp | awk '/^void HttpServer::stop/{f=1} f&&/stop_all\(\)/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
 echo "N HttpServer listens on every interface (rel2506/04b):             $(U src/slic3r/GUI/HttpServer.hpp | grep -c 'acceptor(io_service, {boost::asio::ip::tcp::v4()')"
 ```
 
-Items M and N: upstream's `HttpServer` only ever serves the cloud login, on a port the OS picks, and
-its handler never waits on the main thread, so its unbounded join cannot deadlock there; ours can,
-because MCP calls wait on the main thread (see "Threading Model"). Upstream also binds all
-interfaces; we bind 127.0.0.1. On "no" / 0, take upstream's code and re-check that the join is
-bounded and the bind is loopback.
+Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
+written is cut (ours drains it, `IOServer::begin_stop`), and upstream binds all interfaces (we bind
+127.0.0.1). Our other `HttpServer` changes are features, not fixes: the second listener for the
+cloud login (`listen_also`) and the loopback endpoint helper. On "no" / 0, take upstream's code and
+re-check that a reply in flight still reaches its client and the bind is still loopback.
 
 Item J: upstream opens every recent 3MF synchronously while building the main window, before
 post_init starts the MCP server. Our patch skips it for an agent launch (`GUI::is_agent_launch()`,

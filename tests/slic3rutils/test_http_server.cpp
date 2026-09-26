@@ -1,32 +1,35 @@
+// HttpServer.hpp first: it pulls in boost/asio, which on Windows must see <windows.h> before the
+// libslic3r headers do (test_mcp_model_load.cpp, Build all run 36243478905).
+#include "slic3r/GUI/HttpServer.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPLoginServer.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPMainThreadGate.hpp"
+
 #include <catch2/catch_test_macros.hpp>
 
 #include <atomic>
 #include <chrono>
 #include <future>
+#include <sstream>
 #include <string>
-#include <thread>
 
 #include <boost/asio.hpp>
 #include <nlohmann/json.hpp>
 
-#include "slic3r/GUI/HttpServer.hpp"
-#include "slic3r/GUI/OrcaMCP/OrcaMCPLoginServer.hpp"
-#include "slic3r/GUI/OrcaMCP/OrcaMCPMainThreadGate.hpp"
-
 #include "mcp_thread_test_utils.hpp"
 
 // The HTTP server the MCP server and the cloud login answer on: where it listens, how it stops while
-// a request is still being handled, and that quitting with an MCP call in flight answers that call
-// and ends in bounded time (the 2026-09-26 quit_app deadlock).
+// a request is still being handled or a reply is still being written, and that quitting with an MCP
+// call in flight answers that call (the 2026-09-26 quit_app deadlock).
 //
-// Every test that blocks a handler releases it at the end, so a server that does not stop in time
-// fails the test instead of hanging the suite.
+// Every test that blocks a handler releases it at the end, so a server that does not stop fails the
+// test instead of hanging the suite.
 
 using namespace Slic3r::GUI;
 using namespace Slic3r::GUI::OrcaMCP;
 using namespace mcp_test;
 using namespace std::chrono_literals;
 using boost::asio::ip::tcp;
+using Clock = std::chrono::steady_clock;
 
 namespace {
 
@@ -39,9 +42,10 @@ unsigned short free_loopback_port()
 }
 
 // One HTTP request to 127.0.0.1:`port`, on a thread of its own. The future holds everything the
-// server sent before it closed the connection, or why the connection failed.
+// server sent before it closed the connection, or why the connection failed. With `read_after`, the
+// reply is not read until that latch opens.
 std::future<std::string> exchange(unsigned short port, const std::string& method, const std::string& path,
-                                  const std::string& body = std::string())
+                                  const std::string& body = std::string(), Latch* read_after = nullptr)
 {
     return std::async(std::launch::async, [=] {
         boost::asio::io_context   io;
@@ -53,6 +57,8 @@ std::future<std::string> exchange(unsigned short port, const std::string& method
         const std::string request = method + " " + path + " HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\n" +
                                     "Content-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
         boost::asio::write(socket, boost::asio::buffer(request), ec);
+        if (read_after != nullptr)
+            read_after->wait();
         std::string reply;
         boost::asio::read(socket, boost::asio::dynamic_buffer(reply), ec); // to the server's close
         return reply;
@@ -63,6 +69,8 @@ std::shared_ptr<HttpServer::Response> json_response(const nlohmann::json& body)
 {
     return std::make_shared<HttpServer::ResponseJson>(body.dump());
 }
+
+bool contains(const std::string& text, const std::string& part) { return text.find(part) != std::string::npos; }
 
 } // namespace
 
@@ -75,44 +83,67 @@ TEST_CASE("the HTTP server listens on this machine only", "[HttpServer]")
     const tcp::endpoint where = server.local_endpoint();
     CHECK(where.address().is_loopback());
     CHECK(where.port() != 0);
-    CHECK(exchange(where.port(), "GET", "/mcp").get().find("\"status\":\"ok\"") != std::string::npos);
+    CHECK(contains(exchange(where.port(), "GET", "/mcp").get(), "\"status\":\"ok\""));
 
     server.stop();
     CHECK_FALSE(server.is_started());
 }
 
-TEST_CASE("stopping the HTTP server takes at most its bound while a request is still being handled", "[HttpServer]")
+TEST_CASE("stopping the HTTP server waits for a request still being handled, and never abandons it", "[HttpServer]")
 {
-    Latch      entered, release;
-    HttpServer server(0);
-    server.set_request_handler([&entered, &release](const std::string&) {
+    // A handler still running may use what the app destroys next, so stop() must not return before it
+    // does -- not even past the point where it reports a slow stop.
+    Latch             entered;
+    std::atomic<bool> handler_returned{false};
+    HttpServer        server(0);
+    server.set_request_handler([&](const std::string&) {
         entered.open();
-        release.wait();
+        std::this_thread::sleep_for(std::chrono::milliseconds(HttpServer::slow_stop_warning_ms + 300));
+        handler_returned = true;
         return json_response({{"status", "late"}});
     });
     server.start();
 
     auto reply = exchange(server.local_endpoint().port(), "POST", "/mcp", "{}");
     REQUIRE(entered.wait_for(k_bound));
+    server.stop();
+    const bool handler_had_returned = handler_returned;
 
-    const auto started  = std::chrono::steady_clock::now();
-    auto       stopping = std::async(std::launch::async, [&server] { server.stop(200); });
-    const bool stopped  = stopping.wait_for(k_bound) == std::future_status::ready;
-    const auto took     = std::chrono::steady_clock::now() - started;
-
-    // Lets a server that is still joining finish, so the test ends either way. Past its bound stop()
-    // leaves the server's thread running inside this handler; the reply comes only after the handler
-    // has returned, so `server` outlives every use that thread makes of it.
-    release.open();
-    stopping.wait();
-    reply.wait();
-
-    CHECK(stopped);
-    CHECK(took < 1500ms);
+    CHECK(handler_had_returned);
     CHECK_FALSE(server.is_started());
+    CHECK(contains(reply.get(), "\"status\":\"late\""));
 }
 
-TEST_CASE("quitting with an MCP call waiting on the main thread answers the call and stops at once",
+TEST_CASE("a reply still being written when the server stops reaches its client whole", "[HttpServer]")
+{
+    // The stop is asked for while the handler is still running, as a quit does: the handler returns
+    // afterwards, and its reply is far larger than the socket's buffers, with a client slow to read.
+    const std::string blob(8 << 20, 'x');
+    Latch             entered, release, client_reads;
+    HttpServer        server(0);
+    server.set_request_handler([&](const std::string&) {
+        entered.open();
+        release.wait();
+        return json_response({{"blob", blob}});
+    });
+    server.start();
+
+    auto reply = exchange(server.local_endpoint().port(), "POST", "/mcp", "{}", &client_reads);
+    REQUIRE(entered.wait_for(k_bound));
+    auto stopping = std::async(std::launch::async, [&server] { server.stop(); });
+    std::this_thread::sleep_for(100ms); // the stop is queued behind the handler
+    release.open();
+    std::this_thread::sleep_for(300ms); // the reply is part-written and the stop has run
+    client_reads.open();
+
+    const bool stopped = stopping.wait_for(k_bound) == std::future_status::ready;
+    CHECK(stopped);
+    const std::string received = reply.get();
+    CHECK(received.size() > blob.size());
+    CHECK(contains(received, "\"}"));
+}
+
+TEST_CASE("quitting with an MCP call waiting on the main thread answers the call with -32002",
           "[HttpServer][McpShutdown]")
 {
     // The main thread never runs the call's work: it is the thread doing the quitting.
@@ -123,8 +154,8 @@ TEST_CASE("quitting with an MCP call waiting on the main thread answers the call
     server.set_request_handler([&gate](const std::string&, const std::string&, const std::string&) {
         try {
             return json_response(gate.call([] { return nlohmann::json{{"status", "ran"}}; }));
-        } catch (const McpShuttingDown& e) {
-            return json_response({{"error", e.what()}});
+        } catch (const JsonRpcError& e) {
+            return json_response({{"error", {{"code", e.code}, {"message", e.what()}}}});
         }
     });
     server.start();
@@ -132,14 +163,14 @@ TEST_CASE("quitting with an MCP call waiting on the main thread answers the call
     auto reply = exchange(server.local_endpoint().port(), "POST", "/mcp", R"({"jsonrpc":"2.0","id":1})");
     REQUIRE(main_thread.wait_for_tasks(1)); // the call is waiting for the main thread
 
-    // GUI_App::stop_http_server's order: release the waiting call, then stop the server.
-    const auto started  = std::chrono::steady_clock::now();
+    // The quit's order: close the gate (the main frame's close handler), then stop the server.
+    const auto started  = Clock::now();
     auto       quitting = std::async(std::launch::async, [&] {
         gate.close();
         server.stop();
     });
     const bool quit     = quitting.wait_for(k_bound) == std::future_status::ready;
-    const auto took     = std::chrono::steady_clock::now() - started;
+    const auto took     = Clock::now() - started;
     const bool answered = reply.wait_for(k_bound) == std::future_status::ready;
     if (!quit || !answered)
         main_thread.run_all(); // what never happens in the app: lets the test fail instead of hanging
@@ -150,7 +181,8 @@ TEST_CASE("quitting with an MCP call waiting on the main thread answers the call
     REQUIRE(answered);
     const std::string body = reply.get();
     INFO(body);
-    CHECK(body.find("OrcaMCP is quitting") != std::string::npos);
+    CHECK(contains(body, "\"code\":-32002"));
+    CHECK(contains(body, "OrcaMCP is quitting"));
 }
 
 TEST_CASE("a cloud login's callback server never stops, moves or re-routes the MCP server", "[HttpServer][Login]")

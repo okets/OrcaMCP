@@ -49,6 +49,7 @@ add_executable(${_TEST_NAME}_tests
     test_mcp_suppression.cpp
     test_mcp_shutdown.cpp
     test_http_server.cpp
+    test_thread_cancel.cpp
     ../fff_print/test_helpers.cpp
     )
 

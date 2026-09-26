@@ -35,6 +35,7 @@
 #include "slic3r/GUI/I18N.hpp"
 #include "slic3r/GUI/MsgDialog.hpp"
 #include "Http.hpp"
+#include "ThreadCancel.hpp"
 #include "TCPConsole.hpp"
 #include "SerialMessage.hpp"
 #include "SerialMessageType.hpp"
@@ -256,6 +257,11 @@ bool Flashforge::discover_printers(std::vector<FlashforgeDiscoveredPrinter>& pri
             auto       last_reply = start;
 
             while (true) {
+                // Orca: up to a minute of listening must not hold the app's quit (ThreadCancel.hpp)
+                if (this_thread_cancelled()) {
+                    msg = _(L("Printer discovery was cancelled."));
+                    return false;
+                }
                 const auto now = std::chrono::steady_clock::now();
                 if (std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count() >= timeout_ms)
                     break;
@@ -773,8 +779,8 @@ bool Flashforge::post_local_api_json_once(const std::string& url, const std::str
 // 100th after it, and the request that ends it.
 void Flashforge::log_local_api_outcome(const std::string& url, bool ok, const FlashforgeLocalApi::RequestFailure& failure, int attempts) const
 {
-    if (failure.cancelled)
-        return; // the user stopped it: neither a failure of the printer nor a sign it answers
+    if (failure.cancelled || this_thread_cancelled())
+        return; // the user, or the app's quit, stopped it: neither a failure of the printer nor a sign it answers
     const std::string& host = m_local_api_host;
     if (ok) {
         if (const int ended = FlashforgeLocalApi::failure_streaks().record_success(host); ended > 0)

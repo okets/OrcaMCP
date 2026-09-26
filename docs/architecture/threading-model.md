@@ -199,12 +199,22 @@ What breaks the cycle, in order:
    queued is never run, and every later `tools/call` is refused. That matters because the handler
    goes on to reset the plater and tear the frame down before the server stops. A call whose work has
    already started is waited for instead, since the work may still use what the caller owns.
-2. `HttpServer::stop` closes the listening socket and every connection, and joins with a bound of
-   3000 ms. A handler still running past it (one that is not waiting on the main thread, e.g. a slow
-   network call) is left to finish on its own; the app exits anyway.
+2. A call blocked on the network rather than on the main thread gives up too. `GUI_App`'s route puts a
+   `ScopedThreadCancelCheck` (`src/slic3r/Utils/ThreadCancel.hpp`) in scope for every request, tied to
+   the gate: synchronous `Http` transfers abort within about a second and report "Request
+   cancelled", and `discover_printers` stops listening. The call returns its tool error.
+3. `GUI_App::stop_http_server()` stops the server. `HttpServer::stop` closes the listeners and the idle
+   connections, lets a reply that is still being written finish (up to 2 s), and joins the thread.
+   It never abandons a handler that is still running, since the handler may use what the app
+   destroys next; past 3 s it logs that it is still waiting.
 
-`tests/slic3rutils/test_mcp_shutdown.cpp` and `test_http_server.cpp` cover each step with a main
-thread that never runs its work.
+When the quit itself runs inside a tool call's work (the work pumped the event loop into a close), the
+call's caller waits on that work, so the join would never end. `stop_http_server` sees it
+(`OrcaMCPServer::inside_a_tool_call()`) and leaves the stop to `OnExit`.
+
+`tests/slic3rutils/test_mcp_shutdown.cpp`, `test_http_server.cpp` and `test_thread_cancel.cpp` cover
+each step with a main thread that never runs its work, a server that never answers, and a client slow
+to read.
 
 ## Common Pitfalls
 

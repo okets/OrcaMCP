@@ -117,6 +117,7 @@ void session::process_request()
     resp->write_response(ssOut);
     std::shared_ptr<std::string> str = std::make_shared<std::string>(ssOut.str());
 
+    replying = true;
     async_write(socket, boost::asio::buffer(str->c_str(), str->length()),
                 [this, self, str](const boost::beast::error_code& e, std::size_t s) {
         std::cout << "done" << std::endl;
@@ -160,8 +161,15 @@ void session::read_next_line()
 
 void HttpServer::IOServer::do_accept()
 {
-    acceptor.async_accept([this](boost::system::error_code ec, boost::asio::ip::tcp::socket socket) {
-        if (!acceptor.is_open()) {
+    accept_on(acceptor, nullptr);
+}
+
+// One listener's accept loop. `keep_alive` owns a listener that replace_also() can drop while an
+// accept on it is still pending; the server's own acceptor lives as long as the server.
+void HttpServer::IOServer::accept_on(Acceptor& listener, std::shared_ptr<Acceptor> keep_alive)
+{
+    listener.async_accept([this, &listener, keep_alive](boost::system::error_code ec, boost::asio::ip::tcp::socket socket) {
+        if (!listener.is_open()) {
             return;
         }
 
@@ -170,7 +178,50 @@ void HttpServer::IOServer::do_accept()
             start(ss);
         }
 
-        do_accept();
+        accept_on(listener, keep_alive);
+    });
+}
+
+// On the server's thread, which owns every listener once it runs.
+void HttpServer::IOServer::replace_also(std::shared_ptr<Acceptor> listener)
+{
+    boost::system::error_code ec;
+    if (also)
+        also->close(ec);
+    also = stopping ? nullptr : std::move(listener);
+    if (also)
+        accept_on(*also, also);
+}
+
+// Stops listening, and closes every connection that is not in the middle of its reply. A reply
+// already being written is let finish -- the caller of an MCP request the quit released gets its
+// -32002 rather than a reset -- for up to reply_drain_ms; the loop ends as the last one does.
+void HttpServer::IOServer::begin_stop()
+{
+    boost::system::error_code ec;
+    acceptor.cancel(ec);
+    acceptor.close(ec);
+    replace_also(nullptr);
+    stopping = true;
+
+    for (auto it = sessions.begin(); it != sessions.end();) {
+        if ((*it)->is_replying()) {
+            ++it;
+            continue;
+        }
+        (*it)->stop();
+        it = sessions.erase(it);
+    }
+    if (sessions.empty()) {
+        io_service.stop();
+        return;
+    }
+    drain_timer.expires_after(std::chrono::milliseconds(reply_drain_ms));
+    drain_timer.async_wait([this](const boost::system::error_code& e) {
+        if (e)
+            return;
+        stop_all();
+        io_service.stop();
     });
 }
 
@@ -184,6 +235,8 @@ void HttpServer::IOServer::stop(std::shared_ptr<session> session)
 {
     sessions.erase(session);
     session->stop();
+    if (stopping && sessions.empty())
+        io_service.stop(); // the last reply stop() was waiting for is out
 }
 
 void HttpServer::IOServer::stop_all()
@@ -221,32 +274,37 @@ void HttpServer::start()
     });
 }
 
-void HttpServer::stop(int join_timeout_ms)
+void HttpServer::stop()
 {
     start_http_server = false;
     if (server_) {
         IOServer* io_server = server_.get();
-        boost::asio::post(io_server->io_service, [io_server] {
-            boost::system::error_code ec;
-            io_server->acceptor.cancel(ec);
-            io_server->acceptor.close(ec);
-            io_server->stop_all();
-            io_server->io_service.stop();
-        });
+        boost::asio::post(io_server->io_service, [io_server] { io_server->begin_stop(); });
     }
-    // The posted stop runs only once the thread is back in its loop, so a request handler that never
-    // returns would hold this join forever -- and the app's exit with it, since this runs on the main
-    // thread, where a handler waiting on the main thread can never be served. Past the bound the
-    // thread is left to finish on its own, and the server it still runs in is deliberately leaked.
+    // The posted stop runs once the thread is back in its loop, so this waits for a request that is
+    // still being handled; it never leaves the thread behind, since the handler may be using what the
+    // app destroys next. Blocking handlers keep the wait short: an MCP call waiting on the main
+    // thread is released by OrcaMCPServer::shut_down(), and the network calls made for a request give
+    // up once the app is quitting (ScopedThreadCancelCheck). What is left is a slow quit, reported.
     if (m_http_server_thread.joinable() &&
-        !m_http_server_thread.try_join_for(boost::chrono::milliseconds(join_timeout_ms))) {
-        BOOST_LOG_TRIVIAL(warning) << "HttpServer: a request on port " << port << " was still being handled after "
-                                   << join_timeout_ms << " ms; stopping without waiting for it";
-        m_http_server_thread.detach();
-        static_cast<void>(server_.release());
-        return;
+        !m_http_server_thread.try_join_for(boost::chrono::milliseconds(slow_stop_warning_ms))) {
+        BOOST_LOG_TRIVIAL(warning) << "HttpServer: still waiting for a request on port " << port << " to finish";
+        m_http_server_thread.join();
     }
     server_.reset();
+}
+
+bool HttpServer::listen_also(boost::asio::ip::port_type also_port)
+{
+    if (!server_)
+        return false;
+    // Bound here, so a busy port throws to the caller as it does from start().
+    std::shared_ptr<IOServer::Acceptor> listener;
+    if (also_port != 0)
+        listener = std::make_shared<IOServer::Acceptor>(server_->io_service, loopback_endpoint(also_port));
+    IOServer* io_server = server_.get();
+    boost::asio::post(io_server->io_service, [io_server, listener] { io_server->replace_also(listener); });
+    return true;
 }
 
 boost::asio::ip::tcp::endpoint HttpServer::local_endpoint() const

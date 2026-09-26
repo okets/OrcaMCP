@@ -144,15 +144,23 @@ public:
 
     bool is_started() { return start_http_server; }
     void start();
-    // Stops the server and joins its thread, waiting at most `join_timeout_ms` for a request that is
-    // still being handled. Past that the thread is left to finish on its own (see stop()).
-    static constexpr int default_stop_timeout_ms = 3000;
-    void stop(int join_timeout_ms = default_stop_timeout_ms);
+    // Stops listening and joins the server's thread. A request still being handled is waited for,
+    // never abandoned: its handler may be using what the app destroys next. A reply that is still
+    // being written gets up to reply_drain_ms to reach its client before its connection is closed.
+    void stop();
     void set_port(boost::asio::ip::port_type new_port) { port = new_port; }
     boost::asio::ip::port_type get_port() const { return port; }
     // Where the server listens while it is started (the port is the real one even when it was
     // started on port 0); a default endpoint otherwise.
     boost::asio::ip::tcp::endpoint local_endpoint() const;
+    // Also listens on `also_port`, with the same handler and on the same thread, until stop() or the
+    // next call; 0 stops that listener. The cloud login's callback uses it, so login callbacks and MCP
+    // calls are served one at a time, as when both shared one port. Returns false when the server is
+    // not started; throws what binding throws.
+    bool listen_also(boost::asio::ip::port_type also_port);
+
+    static constexpr int reply_drain_ms       = 2000;
+    static constexpr int slow_stop_warning_ms = 3000;
 
     // Set request handler with full signature (method, url, body)
     void set_request_handler(const RequestHandlerFn& request_handler);
@@ -165,19 +173,32 @@ public:
     static std::shared_ptr<Response> auth_handle_request(const std::string& url, const std::string& provider);
 
 private:
+    // Loopback only: the MCP server can load files, change presets and start prints, and has no
+    // authentication, so nothing off this machine may reach it; the login callback is local too.
+    static boost::asio::ip::tcp::endpoint loopback_endpoint(boost::asio::ip::port_type port)
+    {
+        return {boost::asio::ip::address_v4::loopback(), port};
+    }
+
     class IOServer
     {
     public:
+        using Acceptor = boost::asio::ip::tcp::acceptor;
+
         HttpServer&                        server;
         boost::asio::io_service            io_service;
-        boost::asio::ip::tcp::acceptor     acceptor;
+        Acceptor                           acceptor;
         std::set<std::shared_ptr<session>> sessions;
+        std::shared_ptr<Acceptor>          also;                     // listen_also's listener
+        boost::asio::steady_timer          drain_timer{io_service};  // bounds stop()'s drain
+        bool                               stopping = false;
 
-        // Loopback only: the MCP server can load files, change presets and start prints, and has no
-        // authentication, so nothing off this machine may reach it; the login callback is local too.
-        IOServer(HttpServer& server) : server(server), acceptor(io_service, {boost::asio::ip::address_v4::loopback(), server.port}) {}
+        IOServer(HttpServer& server) : server(server), acceptor(io_service, loopback_endpoint(server.port)) {}
 
         void do_accept();
+        void accept_on(Acceptor& listener, std::shared_ptr<Acceptor> keep_alive);
+        void replace_also(std::shared_ptr<Acceptor> listener);
+        void begin_stop();
 
         void start(std::shared_ptr<session> session);
         void stop(std::shared_ptr<session> session);
@@ -198,6 +219,7 @@ class session : public std::enable_shared_from_this<session>
     boost::asio::streambuf buff;
     http_headers headers;
     std::string body;
+    bool replying = false; // Orca: its reply is being written, so stop() lets it finish
 
     void read_first_line();
     void read_next_line();
@@ -209,6 +231,7 @@ public:
 
     void start();
     void stop();
+    bool is_replying() const { return replying; }
 };
 
 std::string url_get_param(const std::string& url, const std::string& key);

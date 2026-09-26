@@ -1,4 +1,5 @@
 #include "Http.hpp"
+#include "ThreadCancel.hpp"
 
 #include <cstdlib>
 #include <functional>
@@ -123,6 +124,7 @@ struct Http::priv
     std::string headers;
 	size_t limit;
 	bool cancel;
+	bool cancelled_by_thread = false; // Orca: by the thread's ScopedThreadCancelCheck, not by cancel()
     std::unique_ptr<form_file> putFile;
 
 	std::thread io_thread;
@@ -261,6 +263,13 @@ int Http::priv::xfercb(void *userp, curl_off_t dltotal, curl_off_t dlnow, curl_o
 	}
 
 	if (cb_cancel) { self->cancel = true; }
+
+	// Orca: a blocking transfer gives up once its thread is cancelled (the app is quitting, see
+	// ThreadCancel.hpp); perform() then reports it to the error callback.
+	if (!self->cancel && this_thread_cancelled()) {
+		self->cancel              = true;
+		self->cancelled_by_thread = true;
+	}
 
 	return self->cancel;
 }
@@ -473,7 +482,10 @@ void Http::priv::http_perform()
 
 	if (res != CURLE_OK) {
 		if (res == CURLE_ABORTED_BY_CALLBACK) {
-			if (cancel) {
+			if (cancelled_by_thread) {
+				// Orca: an error, so a caller that never set on_progress does not read it as success
+				if (errorfn) { errorfn(std::move(buffer), "Request cancelled", 0); }
+			} else if (cancel) {
 				// The abort comes from the request being cancelled programatically
 				Progress dummyprogress(0, 0, 0, 0, std::string());
 				bool cancel = true;
