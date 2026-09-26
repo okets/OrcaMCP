@@ -48,13 +48,13 @@ gave were wrong; the prompts carry the corrected facts.
 
 | # | Prompt | Needs merged first | Touches mostly | Status |
 |---|--------|--------------------|----------------|--------|
-| 01 | [Tool-list foundation](01-tool-list-foundation.md) | — | every `register_tool`, `get_server_info`, bridge, golden file | merged 2026-09-26 |
+| 01 | [Tool-list foundation](01-tool-list-foundation.md) | — | every `register_tool`, `get_server_info`, bridge, golden file | merged and pushed 2026-09-26; Build all green (run 36229581923) |
 | 02 | [load_model: geometry only, honest reporting](02-load-model.md) | 01 | `Plater.cpp`, `MsgDialog.cpp`, load handler | merged locally 2026-09-26 (push with batch 1) |
-| 03 | [Render, transforms, estimate](03-render-transforms-estimate.md) | 01 | `OrcaMCPPlateUtils.cpp`, `OrcaMCPCommon.cpp`, estimate handler | design approved 2026-09-26; queued behind 02 |
-| 04 | [Printer match and slot colours](04-printer-and-colours.md) | 01 | printer tools, Flashforge, preset utils | design approved 2026-09-26; queued behind 03 (merge last of 02-04) |
+| 03 | [Render, transforms, estimate](03-render-transforms-estimate.md) | 01 | `OrcaMCPPlateUtils.cpp`, `OrcaMCPCommon.cpp`, estimate handler | merged locally 2026-09-26 (push with batch 1) |
+| 04 | [Printer match and slot colours](04-printer-and-colours.md) | 01 | printer tools, Flashforge, preset utils | implementing (design approved 2026-09-26) |
 | 05 | [Mesh health](05-mesh-health.md) | 01, 03 | new tool, `active_warnings`, `get_scene_info` | design approved 2026-09-26; queued behind 04 |
-| 06 | [Workflow tools](06-workflow-tools.md) | 01, 03 | bridge, slicing status, preset reads, paint remap, estimate breakdown | not started |
-| 07 | [Sliced layer plan](07-layer-plan.md) | 01, 03 | `OrcaMCPFirstLayerPlan.cpp`, `render_plate_view` | not started |
+| 06 | [Workflow tools](06-workflow-tools.md) | 01, 03 | bridge, slicing status, preset reads, paint remap, estimate breakdown | design approved 2026-09-26; queued |
+| 07 | [Sliced layer plan](07-layer-plan.md) | 01, 03 | `OrcaMCPFirstLayerPlan.cpp`, `render_plate_view` | design approved 2026-09-26; queued |
 | 08 | [Server instructions and hints](08-instructions-and-hints.md) | 01–07 | `initialize`, descriptions, result hints | not started |
 
 If time runs short, the priority is 01, 02, 03, 05, 08, 04, 06, 07. Anything unfinished moves to the
@@ -99,6 +99,13 @@ roadmap; nothing ships half-done.
   live OrcaSlicer without asking (user, 2026-09-26).
 - **The user's preset library now holds embedded Bambu presets**, e.g.
   `Bambu Lab A1 0.4 nozzle(Kuromi head.3mf)`. Don't delete them without asking.
+- **Screenshots are allowed for this weekend session only** (user, 2026-09-26). The user keeps
+  sensitive windows minimized. Capture or crop to the OrcaSlicer window, delete images after the check.
+  (Earlier the same day a full-screen capture caught a WhatsApp window; it was deleted at once.)
+- **macOS Accessibility is NOT granted** to this session's tools (a scripted Tab press was refused), so
+  no agent can switch OrcaSlicer's tabs; a Preview-tab check needs the user's click.
+- **The dev build is unoptimized** (`-O0`, upstream CMake): slicing is 20-70x slower than the release.
+  A six-minute tree-support slice on 2026-09-26 looked like a stall; the release did it in 5 s.
 - **Never call `send_to_printer`**: on Flashforge it uploads and starts the print.
 - **The local build tree is stale.** `libslic3r_version.h` says 2.5.0.4-dev while `version.inc`
   says 2.5.0.5-dev, so the first build reconfigures and takes longer.

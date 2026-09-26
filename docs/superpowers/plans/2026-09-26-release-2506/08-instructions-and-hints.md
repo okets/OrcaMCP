@@ -168,6 +168,15 @@ In the session of 2026-09-26 (transcript
     prompts). A scratch directory under `/tmp/claude-501/` works.
   - Before trusting a result, check the running binary is the one you built: a stale instance can
     answer on port 13618.
+- **Screenshots: allowed for this weekend session only** (user, 2026-09-26; they keep sensitive windows
+  minimized). Use them only to check OrcaSlicer's own state. Capture just the OrcaSlicer window, or
+  crop to it, when you can. Delete the images once the check is done, and never quote or describe
+  other apps' content. Outside this session the default is no screenshots. Prefer MCP renders when
+  they answer the question.
+- **The dev build is unoptimized.** `RelWithDebInfo` compiles at `-O0` here (upstream
+  `CMakeLists.txt:742-750`), so slicing, especially tree supports, runs 20-70x slower than the release.
+  For live checks, slice small models without tree support. Never read a slow slice as a stall or a
+  regression without first timing the same case on `/Applications/OrcaMCP.app` on a data-dir copy.
 - **Test MCP behaviour through the `mcp__orca-slicer__*` tools**, not curl.
 - **Never call `send_to_printer`**: on Flashforge it uploads *and starts* the print. Never call
   `printer_control` or `print_printer_file`.
