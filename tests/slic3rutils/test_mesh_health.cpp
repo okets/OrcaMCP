@@ -282,7 +282,7 @@ TEST_CASE("The mesh numbers are one JSON shape, and features adds the object's v
     CHECK_THAT(mesh_features_json(*f.object)["volume_mm3"].get<double>(), WithinAbs(8000.0, 1e-3));
 }
 
-TEST_CASE("get_mesh_health lists a multi-shell part's shells, largest first, in plate millimetres", "[MeshHealth][orcamcp]")
+TEST_CASE("get_mesh_health lists a multi-shell part's shells, most facets first, in plate millimetres", "[MeshHealth][orcamcp]")
 {
     indexed_triangle_set its = its_make_cube(2.0, 2.0, 2.0);
     its_merge(its, translated(its_make_sphere(1.0, PI / 8.0), Vec3f(10.f, 0.f, 0.f)));

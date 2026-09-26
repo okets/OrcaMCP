@@ -79,7 +79,7 @@ struct MeshHealthReport
 MeshHealthReport mesh_health_report(const ModelObject& object, int object_id);
 
 // Each job's part gets `shell_list`: {total, listed, coordinate_frame: "plate", instance_id: 0,
-// shells: [component_json...] (the largest `max_listed`, largest first), note}.
+// shells: [component_json...] (the `max_listed` with the most facets, most first), note}.
 constexpr int k_listed_shells = 10;
 void add_shell_lists(MeshHealthReport& report, int max_listed = k_listed_shells);
 

@@ -94,7 +94,7 @@ TEST_CASE("summarize_components reports facet counts, plate bounding boxes and a
     CHECK_THAT(summary[1].bbox.max.x(), WithinAbs(16.0, 1e-9));
 }
 
-TEST_CASE("shells_largest_first lists the biggest shell first and keeps discovery order on ties",
+TEST_CASE("shells_most_facets_first lists the shell with the most facets first and keeps discovery order on ties",
           "[orcamcp][select]")
 {
     // A 12-facet cube first in facet order, then a sphere of many more facets 20 mm away.
@@ -103,7 +103,7 @@ TEST_CASE("shells_largest_first lists the biggest shell first and keeps discover
     const int sphere_facets     = int(sphere.indices.size());
     Slic3r::its_merge(its, sphere);
 
-    const std::vector<ComponentInfo> shells = shells_largest_first(its, Transform3d::Identity());
+    const std::vector<ComponentInfo> shells = shells_most_facets_first(its, Transform3d::Identity());
     REQUIRE(shells.size() == 2);
     CHECK(shells[0].component == 1);  // the sphere, found second, listed first
     CHECK(shells[0].facet_count == sphere_facets);
@@ -111,7 +111,7 @@ TEST_CASE("shells_largest_first lists the biggest shell first and keeps discover
     CHECK(shells[1].facet_count == 12);
 
     // Two shells of 12 facets each: ascending id, as they were found.
-    const std::vector<ComponentInfo> tie = shells_largest_first(two_cubes(), Transform3d::Identity());
+    const std::vector<ComponentInfo> tie = shells_most_facets_first(two_cubes(), Transform3d::Identity());
     REQUIRE(tie.size() == 2);
     CHECK(tie[0].component == 0);
     CHECK(tie[1].component == 1);
@@ -119,7 +119,7 @@ TEST_CASE("shells_largest_first lists the biggest shell first and keeps discover
 
 TEST_CASE("component_json reports a shell's id, facet count, area and plate box", "[orcamcp][select]")
 {
-    const std::vector<ComponentInfo> shells = shells_largest_first(two_cubes(), Transform3d::Identity());
+    const std::vector<ComponentInfo> shells = shells_most_facets_first(two_cubes(), Transform3d::Identity());
     REQUIRE(shells.size() == 2);
 
     const nlohmann::json j = component_json(shells[1]);

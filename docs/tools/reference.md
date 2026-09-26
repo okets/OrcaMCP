@@ -497,8 +497,10 @@ language; `mesh_warning_reason` is the one line the sidebar shows.
   `facets`, `shells` and `volume_mm3` count model parts only.
 - Repair counts exist only for a mesh loaded from a 3MF that recorded them (its `mesh_stat`). An STL
   is repaired silently on import and records nothing, so a repaired STL reports clean.
-- A model part with more than one shell also gets `shell_list`: its 10 largest shells, largest
-  first, in plate millimetres (instance 0). The ids are `get_object_components`' ids, which
+- A model part with more than one shell also gets `shell_list`: the 10 shells with the most
+  facets, most first, each with its area and bounding box in plate millimetres (instance 0). Facet
+  count is not size: a coarse body can have fewer facets than a fine fragment, so read `area_mm2`
+  and `bounding_box` to tell which shell is the stray one. The ids are `get_object_components`' ids, which
   `paint_object {selection: "component"}` takes; `get_object_components` lists every shell.
   Listing shells runs a flood fill off the GUI thread; on millions of facets it takes seconds.
 
@@ -541,7 +543,7 @@ language; `mesh_warning_reason` is the one line the sidebar shows.
                                {"component": 1, "facet_count": 12, "area_mm2": 6.0,
                                 "bounding_box": {"min": {"x": 137.0, "y": 127.5, "z": 0.0},
                                                  "max": {"x": 138.0, "y": 128.5, "z": 1.0}}}],
-                    "note": "Largest first, at most 10. get_object_components lists every shell; its ids are these, the ones paint_object {selection: \"component\"} takes."}}
+                    "note": "Most facets first, at most 10; area_mm2 and bounding_box say which is small. get_object_components lists every shell; its ids are these, the ones paint_object {selection: \"component\"} takes."}}
   ]
 }
 ```
@@ -2181,7 +2183,7 @@ of the object's volumes and its `volume_id`s are not contiguous when the object 
 **Response includes:** `coordinate_frame` (`"plate"`), `instance_id`, and `volumes` — one
 entry per volume, each `{volume_id, name, original_facets, bounding_box, component_count,
 components}`, where `bounding_box` is that volume's own plate-frame box and each component is
-`{component, facet_count, area_mm2, bounding_box}`, largest first. Component ids are stable
+`{component, facet_count, area_mm2, bounding_box}`, most facets first. Component ids are stable
 for a given mesh (discovery order by lowest facet index), so
 `paint_object {selection: "component", component: <id>, volume_id}` reliably paints exactly
 that shell. On a mesh of millions of facets this takes seconds; it runs off the GUI thread,

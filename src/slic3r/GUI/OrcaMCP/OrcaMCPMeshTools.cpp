@@ -55,8 +55,9 @@ void OrcaMCPServer::register_mesh_tools()
         "each recorded repair count. An object's open_edges and repairs count every volume, as the "
         "list does; its facets, shells and volume_mm3 count model parts only. Repair counts exist "
         "only for a mesh loaded from a 3MF that recorded them: an STL is repaired silently on import "
-        "and records none. A part with more than one shell also gets `shell_list`, its 10 largest "
-        "shells in plate millimetres (instance 0); get_object_components lists them all.",
+        "and records none. A part with more than one shell also gets `shell_list`: the 10 shells with "
+        "the most facets, each with its area and plate-millimetre bounding box (instance 0); "
+        "get_object_components lists them all.",
         {
             {"type", "object"},
             {"properties", {

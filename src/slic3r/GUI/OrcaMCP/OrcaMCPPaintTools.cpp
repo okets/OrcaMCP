@@ -1644,7 +1644,7 @@ void OrcaMCPServer::register_paint_tools()
             // Worker thread: the flood fill over the neighbour index, per volume.
             nlohmann::json volumes = nlohmann::json::array();
             for (const PaintPlanVolume& pv : plan.volumes) {
-                const std::vector<ComponentInfo> shells     = shells_largest_first(pv.mesh->its, pv.to_plate);
+                const std::vector<ComponentInfo> shells     = shells_most_facets_first(pv.mesh->its, pv.to_plate);
                 nlohmann::json                   components = nlohmann::json::array();
                 for (const ComponentInfo& c : shells)
                     components.push_back(component_json(c));

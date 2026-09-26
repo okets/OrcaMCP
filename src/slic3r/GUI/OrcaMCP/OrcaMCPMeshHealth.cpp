@@ -159,7 +159,7 @@ MeshHealthReport mesh_health_report(const ModelObject& object, int object_id)
 void add_shell_lists(MeshHealthReport& report, int max_listed)
 {
     for (const ShellListJob& job : report.shell_jobs) {
-        const std::vector<ComponentInfo> shells = shells_largest_first(job.mesh->its, job.to_plate);
+        const std::vector<ComponentInfo> shells = shells_most_facets_first(job.mesh->its, job.to_plate);
         const std::size_t                listed = std::min(shells.size(), std::size_t(std::max(max_listed, 0)));
 
         nlohmann::json listed_shells = nlohmann::json::array();
@@ -172,9 +172,10 @@ void add_shell_lists(MeshHealthReport& report, int max_listed)
             {"coordinate_frame", "plate"},
             {"instance_id", 0},
             {"shells", std::move(listed_shells)},
-            {"note", "Largest first, at most " + std::to_string(max_listed) +
-                         ". get_object_components lists every shell; its ids are these, the ones "
-                         "paint_object {selection: \"component\"} takes."}};
+            {"note", "Most facets first, at most " + std::to_string(max_listed) +
+                         "; area_mm2 and bounding_box say which is small. get_object_components lists "
+                         "every shell; its ids are these, the ones paint_object {selection: \"component\"} "
+                         "takes."}};
     }
 }
 

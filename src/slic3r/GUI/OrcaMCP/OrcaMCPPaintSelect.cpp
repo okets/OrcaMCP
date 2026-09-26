@@ -73,7 +73,7 @@ std::vector<ComponentInfo> summarize_components(const indexed_triangle_set& its,
     return out;
 }
 
-std::vector<ComponentInfo> shells_largest_first(const indexed_triangle_set& its, const Transform3d& to_plate)
+std::vector<ComponentInfo> shells_most_facets_first(const indexed_triangle_set& its, const Transform3d& to_plate)
 {
     int                        count  = 0;
     const std::vector<int>     ids    = facet_component_ids(its, count);

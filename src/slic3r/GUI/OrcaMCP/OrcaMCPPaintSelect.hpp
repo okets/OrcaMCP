@@ -41,10 +41,11 @@ std::vector<ComponentInfo> summarize_components(const indexed_triangle_set& its,
                                                 int                         component_count,
                                                 const Transform3d&          to_plate);
 
-// Every shell of `its`, largest facet count first -- the shell a caller is looking for is rarely the
-// smallest sliver -- with equal counts in ascending id, in the frame `to_plate` maps into. The one
-// list both get_object_components and get_mesh_health report from, so their ids agree.
-std::vector<ComponentInfo> shells_largest_first(const indexed_triangle_set& its, const Transform3d& to_plate);
+// Every shell of `its`, most facets first -- the shell a caller is looking for is rarely the
+// smallest sliver -- with equal counts in ascending id, in the frame `to_plate` maps into. Facets,
+// not size: a coarse body can have fewer facets than a fine fragment, which area and bbox tell
+// apart. The one list both get_object_components and get_mesh_health report from, so their ids agree.
+std::vector<ComponentInfo> shells_most_facets_first(const indexed_triangle_set& its, const Transform3d& to_plate);
 
 // {"min": {x, y, z}, "max": {x, y, z}}
 nlohmann::json bbox_json(const BoundingBoxf3& bbox);
