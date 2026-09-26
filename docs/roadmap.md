@@ -133,6 +133,33 @@ config key and current value ("what does this do?", "change this one").
 **Why later:** it needs a map from wx widgets back to option keys (`Field` / `OptionsGroup`), which
 is separate from 3D and object-list pointing.
 
+### Slicing and plate-lifecycle behaviours left as upstream has them
+
+Found by prompt 04c on 2026-09-27. These are upstream behaviours, not crashes, so they were
+deliberately left alone. Each is a candidate for a small fork fix (with a probe line), or for an
+upstream issue if the user wants one filed.
+
+- **Restarting Slice All.** `slice_all` (all plates) during a running Slice All restarts the run from
+  plate 0.
+- **Undo and the "sliced" flag.** Undo restores each plate's "sliced" flag from the snapshot, so a
+  plate sliced after the undo point shows as not sliced.
+- **The Slice All flag is never cleared.** Upstream never clears it at the end of a run; other GUI
+  paths clear it before slicing. Only MCP's single-plate path was fixed.
+- **A busy worker between plates.** Slice All doesn't wait for a busy UI worker between plates. The
+  fork now ends the run and says so, but doesn't retry.
+- **No cancel tool.** MCP has no tool to cancel a running slice or Slice All.
+- **Tool calls run while a dialog is open.** Tool calls still run while a user-facing modal is open.
+  `get_scene_info` reports it (prompt 04c), but tools don't refuse; that is a product decision. For
+  example, answering the restore prompt later can load the backup over an agent's project.
+- **Closing a dialog with its close box.** Many upstream Yes/No callers only check for No, so
+  closing the dialog with the close box goes ahead (`Tab.cpp`, the sync-printer dialog,
+  `PrintHostDialogs`). This is a possible upstream issue.
+- **Windows logout with a dialog open.** wx's Windows end-session handler deletes every top-level
+  window. With a stack-allocated dialog open at logout, that likely crashes, in upstream too. It is
+  unverified; it needs a Windows machine.
+- **Slow cancel in organic tree supports.** They check for cancel only between phases (47 s on the
+  -O0 dev build). This is upstream algorithm code.
+
 ### 3D toolpath render
 
 **What:** render the sliced G-code from any camera, coloured by feature, speed or tool, with a layer

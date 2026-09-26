@@ -93,7 +93,7 @@ instances?", "also have it list the open file."
      - quit one: it drops off the list;
      - kill one with a signal: its stale entry is ignored.
    - Probe letters in CLAUDE.md's "Carried upstream fixes" block: J–N are taken (prompts 02, 04, 04b),
-     O–Q by 04c, and R by 04b's CORS/Host fix. Start at S, and check the block for the real last letter.
+     O–Q and S by 04c, and R by 04b's CORS/Host fix. Start at T, and check the block for the real last letter.
 7. **Docs.**
    - CLAUDE.md: the Architecture section, the tool table and count, the probe lines for upstream code
      changed, and the Known Limitations entry about the shared data directory.
