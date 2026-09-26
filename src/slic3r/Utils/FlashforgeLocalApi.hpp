@@ -1,6 +1,10 @@
 #ifndef slic3r_Utils_FlashforgeLocalApi_hpp_
 #define slic3r_Utils_FlashforgeLocalApi_hpp_
 
+#include <chrono>
+#include <functional>
+#include <map>
+#include <mutex>
 #include <string>
 
 namespace Slic3r { namespace FlashforgeLocalApi {
@@ -21,6 +25,77 @@ std::string host_of(const std::string& address);
 
 // "http://<host>:8898/<path>" for `address`, as host_of reads it.
 std::string url_of(const std::string& address, const std::string& path);
+
+// ── When a request fails ────────────────────────────────────────────────────────────────────────
+
+// One failed request, as Http reported it.
+struct RequestFailure
+{
+    // Http's text for a failure before any HTTP response, "curl:<summary>:\n<detail>\n[Error N]".
+    // Empty when the printer answered, with an HTTP error status or an API error code.
+    std::string error;
+    unsigned    http_status{0};
+    long        elapsed_ms{0};
+    // The API's own refusal ("Flashforge local API error 1: ..."), when it answered with one.
+    std::string api_error;
+};
+
+constexpr int kCurlCouldntResolveHost = 6;
+constexpr int kCurlCouldntConnect     = 7;
+constexpr int kCurlOperationTimedout  = 28;
+
+// The curl code at the end of Http's error text; 0 when there is none (an HTTP error status, or text
+// Http did not write).
+int curl_code_of(const std::string& error);
+
+// curl's own description of what failed: the middle line of Http's text. Empty when curl gave none,
+// which curl 7.75 does exactly when connect() failed at once on this computer, before any packet
+// reached the printer. When the printer itself refuses, it reads "Failed to connect to ...".
+std::string curl_detail_of(const std::string& error);
+
+// Whether a request that failed with `curl_code` on its `attempt`-th try (1-based) is made again:
+// once, and only when the TCP connection was never made. Nothing reached the printer then, so
+// repeating it cannot repeat a command, and this holds for every local-API request.
+bool should_retry(int curl_code, int attempt);
+constexpr std::chrono::milliseconds kRetryDelay{500};
+
+// One attempt: true on success, otherwise fills in how it failed.
+using AttemptFn = std::function<bool(RequestFailure&)>;
+using SleepFn   = std::function<void(std::chrono::milliseconds)>;
+
+// Runs `attempt`, and again after kRetryDelay (slept through `sleep`) while should_retry says so.
+// `last_failure` is the final attempt's failure; `attempts` is how many were made.
+bool run_with_retry(const AttemptFn& attempt, const SleepFn& sleep, RequestFailure& last_failure, int& attempts);
+
+// What the agent or the user reads when a request never got an HTTP answer: the host and port, what
+// happened, and what to do next. `failure.error` must carry a curl code.
+std::string describe_failure(const std::string& host, const RequestFailure& failure, int attempts);
+
+// The warning logged for a failed request: URL, curl code and detail, HTTP status, elapsed time,
+// attempts. Never a body -- the request body holds the printer's check code.
+std::string failure_log_line(const std::string& url, const RequestFailure& failure, int attempts);
+
+// Whether the `consecutive`-th failure in a row for one host is logged: the first, then every 100th.
+// A status poll against an unreachable printer would otherwise write a warning every five seconds.
+bool should_log_failure(int consecutive);
+
+// Consecutive failed requests per host, for should_log_failure and the "answers again" line.
+// Thread-safe: the agent's poll, the Device page's poll and MCP calls all record into one.
+class FailureStreaks
+{
+public:
+    // The streak's length, this failure included.
+    int record_failure(const std::string& host);
+    // The length of the streak this success ended; 0 when there was none.
+    int record_success(const std::string& host);
+
+private:
+    std::mutex                 m_mutex;
+    std::map<std::string, int> m_streaks;
+};
+
+// The process-wide streaks every Flashforge host records into.
+FailureStreaks& failure_streaks();
 
 }} // namespace Slic3r::FlashforgeLocalApi
 

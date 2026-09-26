@@ -677,25 +677,69 @@ bool Flashforge::upload_local_api(PrintHostUpload upload_data, ProgressFn progre
     return res;
 }
 
+// Every local-API call goes through here: a connection that was never made is tried once more (it
+// cannot have reached the printer, so this is safe for control and print commands too), a failure is
+// logged without its body, and one that never got an HTTP answer is described with host, port and
+// the next step to take.
 bool Flashforge::request_local_api_json(const std::string& path, const std::string& body, std::string& response_body, wxString& error_msg) const
 {
-    bool ok = true;
-    auto http = Http::post(make_http_url(path));
+    const std::string                 url = make_http_url(path);
+    FlashforgeLocalApi::RequestFailure failure;
+    int                               attempts = 0;
+    const bool ok = FlashforgeLocalApi::run_with_retry(
+        [&](FlashforgeLocalApi::RequestFailure& attempt_failure) {
+            return post_local_api_json_once(url, body, response_body, error_msg, attempt_failure);
+        },
+        [](std::chrono::milliseconds delay) { std::this_thread::sleep_for(delay); }, failure, attempts);
+
+    log_local_api_outcome(url, ok, failure, attempts);
+    if (!ok && FlashforgeLocalApi::curl_code_of(failure.error) != 0)
+        error_msg = GUI::from_u8(FlashforgeLocalApi::describe_failure(extract_host_name(), failure, attempts));
+    return ok;
+}
+
+bool Flashforge::post_local_api_json_once(const std::string& url, const std::string& body, std::string& response_body, wxString& error_msg, FlashforgeLocalApi::RequestFailure& failure) const
+{
+    bool       ok      = true;
+    const auto started = std::chrono::steady_clock::now();
+    error_msg.clear(); // a retry that succeeds must not leave the first attempt's message behind
+    auto       http    = Http::post(url);
     http.header("Content-Type", "application/json")
         .set_post_body(body)
         .timeout_max(15)
-        .on_complete([&](std::string body_text, unsigned) {
+        .on_complete([&](std::string body_text, unsigned status) {
             response_body = std::move(body_text);
-            if (!validate_local_api_response(response_body, error_msg))
-                ok = false;
+            if (!validate_local_api_response(response_body, error_msg)) {
+                failure.http_status = status;
+                failure.api_error   = error_msg.ToUTF8().data();
+                ok                  = false;
+            }
         })
         .on_error([&](std::string body_text, std::string error, unsigned status) {
-            response_body = std::move(body_text);
-            error_msg     = format_error(response_body, error, status);
-            ok            = false;
+            response_body       = std::move(body_text);
+            error_msg           = format_error(response_body, error, status);
+            failure.error       = std::move(error);
+            failure.http_status = status;
+            ok                  = false;
         })
         .perform_sync();
+    failure.elapsed_ms = long(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count());
     return ok;
+}
+
+// Warning level, because that is what the app logs by default: the first failure of a streak, every
+// 100th after it, and the request that ends it.
+void Flashforge::log_local_api_outcome(const std::string& url, bool ok, const FlashforgeLocalApi::RequestFailure& failure, int attempts) const
+{
+    const std::string host = extract_host_name();
+    if (ok) {
+        if (const int ended = FlashforgeLocalApi::failure_streaks().record_success(host); ended > 0)
+            BOOST_LOG_TRIVIAL(warning) << "[Flashforge HTTP] " << host << " answers again after " << ended << " failed request(s)";
+        return;
+    }
+    const int streak = FlashforgeLocalApi::failure_streaks().record_failure(host);
+    if (FlashforgeLocalApi::should_log_failure(streak))
+        BOOST_LOG_TRIVIAL(warning) << FlashforgeLocalApi::failure_log_line(url, failure, attempts) << " [" << streak << " in a row]";
 }
 
 std::string Flashforge::make_http_url(const std::string& path) const

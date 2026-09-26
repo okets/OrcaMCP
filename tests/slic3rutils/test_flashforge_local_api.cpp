@@ -2,6 +2,11 @@
 
 #include "slic3r/Utils/FlashforgeLocalApi.hpp"
 
+#include <chrono>
+#include <functional>
+#include <string>
+#include <vector>
+
 // How the Flashforge local API is reached. The printer is never contacted here: every rule is
 // decided from plain strings and numbers.
 
@@ -32,4 +37,158 @@ TEST_CASE("url_of always targets the local API port", "[flashforge]")
     CHECK(url_of("10.0.0.100", "detail") == "http://10.0.0.100:8898/detail");
     CHECK(url_of("10.0.0.100:8080", "detail") == "http://10.0.0.100:8898/detail");
     CHECK(url_of("http://printer.local:80/", "gcodeList") == "http://printer.local:8898/gcodeList");
+}
+
+// What Http hands on_error for a failure before any HTTP response: "curl:<summary>:\n<detail>\n[Error N]".
+// curl 7.75 leaves <detail> empty when connect() fails at once on this computer, and fills it when
+// the printer itself refuses; that difference is the whole diagnosis of the 2026-09-26 failure.
+static const char* kImmediateConnectFailure = "curl:Couldn't connect to server:\n\n[Error 7]";
+static const char* kRefused =
+    "curl:Couldn't connect to server:\nFailed to connect to 10.0.0.100 port 8898: Connection refused\n[Error 7]";
+static const char* kTimeout = "curl:Timeout was reached:\nConnection timed out after 10001 milliseconds\n[Error 28]";
+static const char* kUnresolved = "curl:Couldn't resolve host name:\nCould not resolve host: printer.local\n[Error 6]";
+
+TEST_CASE("curl_code_of reads the code Http appends, and 0 when there is none", "[flashforge]")
+{
+    CHECK(curl_code_of(kImmediateConnectFailure) == 7);
+    CHECK(curl_code_of(kTimeout) == 28);
+    CHECK(curl_code_of("") == 0);                          // an HTTP error status carries no curl text
+    CHECK(curl_code_of("Error reading file for file upload") == 0);
+    CHECK(curl_code_of("curl:odd:\n\n[Error x]") == 0);
+}
+
+TEST_CASE("curl_detail_of is empty exactly when curl described nothing", "[flashforge]")
+{
+    CHECK(curl_detail_of(kImmediateConnectFailure).empty());
+    CHECK(curl_detail_of(kRefused) == "Failed to connect to 10.0.0.100 port 8898: Connection refused");
+    CHECK(curl_detail_of("").empty());
+}
+
+TEST_CASE("should_retry retries a connection that was never made, once", "[flashforge]")
+{
+    CHECK(should_retry(kCurlCouldntConnect, 1));
+    CHECK_FALSE(should_retry(kCurlCouldntConnect, 2));
+    // A timeout may have reached the printer, and a resolve failure will not fix itself in 500 ms.
+    CHECK_FALSE(should_retry(kCurlOperationTimedout, 1));
+    CHECK_FALSE(should_retry(kCurlCouldntResolveHost, 1));
+    CHECK_FALSE(should_retry(0, 1));
+}
+
+namespace {
+
+// A fake request: fails with `errors[i]` on attempt i, succeeds once the list runs out.
+struct ScriptedRequest
+{
+    std::vector<std::string> errors;
+    int                      calls = 0;
+    bool operator()(RequestFailure& failure)
+    {
+        if (calls >= int(errors.size())) {
+            ++calls;
+            return true;
+        }
+        failure       = {};
+        failure.error = errors[calls++];
+        return false;
+    }
+};
+
+} // namespace
+
+TEST_CASE("run_with_retry recovers from one refused connection", "[flashforge]")
+{
+    ScriptedRequest request{{kRefused}};
+    std::vector<std::chrono::milliseconds> slept;
+    RequestFailure failure;
+    int            attempts = 0;
+
+    CHECK(run_with_retry(std::ref(request), [&](std::chrono::milliseconds d) { slept.push_back(d); }, failure, attempts));
+    CHECK(attempts == 2);
+    REQUIRE(slept.size() == 1);
+    CHECK(slept.front() == kRetryDelay);
+}
+
+TEST_CASE("run_with_retry gives up after the second refused connection", "[flashforge]")
+{
+    ScriptedRequest request{{kRefused, kImmediateConnectFailure}};
+    RequestFailure  failure;
+    int             attempts = 0;
+
+    CHECK_FALSE(run_with_retry(std::ref(request), [](std::chrono::milliseconds) {}, failure, attempts));
+    CHECK(attempts == 2);
+    CHECK(failure.error == kImmediateConnectFailure); // the last failure is the one reported
+}
+
+TEST_CASE("run_with_retry does not repeat a timeout", "[flashforge]")
+{
+    ScriptedRequest request{{kTimeout}};
+    RequestFailure  failure;
+    int             attempts = 0;
+
+    CHECK_FALSE(run_with_retry(std::ref(request), [](std::chrono::milliseconds) { FAIL("slept"); }, failure, attempts));
+    CHECK(attempts == 1);
+}
+
+TEST_CASE("describe_failure names the host, the port and a next step", "[flashforge]")
+{
+    RequestFailure immediate{kImmediateConnectFailure, 0, 3};
+    const std::string at_once = describe_failure("10.0.0.100", immediate, 2);
+    CHECK(at_once.find("10.0.0.100:8898") != std::string::npos);
+    CHECK(at_once.find("3 ms") != std::string::npos);
+    CHECK(at_once.find("tried 2 times") != std::string::npos);
+    CHECK(at_once.find("not on the network") != std::string::npos);
+    CHECK(at_once.find("print_host") != std::string::npos);
+#ifdef __APPLE__
+    CHECK(at_once.find("System Settings > Privacy & Security > Local Network") != std::string::npos);
+#else
+    CHECK(at_once.find("Local Network") == std::string::npos);
+#endif
+
+    const std::string refused = describe_failure("10.0.0.100", RequestFailure{kRefused, 0, 40}, 2);
+    CHECK(refused.find("10.0.0.100:8898") != std::string::npos);
+    CHECK(refused.find("Connection refused") != std::string::npos);
+    CHECK(refused.find("another device") != std::string::npos);
+
+    const std::string timeout = describe_failure("10.0.0.100", RequestFailure{kTimeout, 0, 15002}, 1);
+    CHECK(timeout.find("did not answer within 15 s") != std::string::npos);
+    CHECK(timeout.find("tried") == std::string::npos); // one attempt says nothing about retrying
+
+    const std::string unresolved = describe_failure("printer.local", RequestFailure{kUnresolved, 0, 5}, 1);
+    CHECK(unresolved.find("printer.local") != std::string::npos);
+    CHECK(unresolved.find("IP address") != std::string::npos);
+}
+
+TEST_CASE("failure_log_line carries the URL, the curl code and the timing, never a body", "[flashforge]")
+{
+    RequestFailure failure{kImmediateConnectFailure, 0, 3};
+    const std::string line = failure_log_line("http://10.0.0.100:8898/detail", failure, 2);
+    CHECK(line.find("http://10.0.0.100:8898/detail") != std::string::npos);
+    CHECK(line.find("curl 7") != std::string::npos);
+    CHECK(line.find("HTTP 0") != std::string::npos);
+    CHECK(line.find("3 ms") != std::string::npos);
+    CHECK(line.find("2 attempt") != std::string::npos);
+
+    RequestFailure api{"", 200, 12, "Flashforge local API error 1: check code wrong"};
+    CHECK(failure_log_line("http://10.0.0.100:8898/detail", api, 1).find("check code wrong") != std::string::npos);
+}
+
+TEST_CASE("should_log_failure logs a streak's first failure and then every 100th", "[flashforge]")
+{
+    CHECK(should_log_failure(1));
+    CHECK_FALSE(should_log_failure(2));
+    CHECK_FALSE(should_log_failure(99));
+    CHECK(should_log_failure(100));
+    CHECK(should_log_failure(200));
+    CHECK_FALSE(should_log_failure(0));
+}
+
+TEST_CASE("FailureStreaks counts failures per host and reports the streak a success ends", "[flashforge]")
+{
+    FailureStreaks streaks;
+    CHECK(streaks.record_failure("10.0.0.100") == 1);
+    CHECK(streaks.record_failure("10.0.0.100") == 2);
+    CHECK(streaks.record_failure("10.0.0.101") == 1);
+    CHECK(streaks.record_success("10.0.0.100") == 2);
+    CHECK(streaks.record_success("10.0.0.100") == 0);
+    CHECK(streaks.record_failure("10.0.0.100") == 1);
 }

@@ -10,6 +10,7 @@
 #include "SerialMessage.hpp"
 #include "SerialMessageType.hpp"
 #include "FlashforgeApi.hpp"
+#include "FlashforgeLocalApi.hpp"
 #include "../../libslic3r/PrintConfig.hpp"
 
 namespace Slic3r {
@@ -81,6 +82,9 @@ private:
     bool upload_local_api(PrintHostUpload upload_data, ProgressFn progress_fn, ErrorFn error_fn) const;
     bool test_local_api(wxString& msg) const;
     bool request_local_api_json(const std::string& path, const std::string& body, std::string& response_body, wxString& error_msg) const;
+    // One POST to the local API; request_local_api_json retries it and reports the outcome.
+    bool post_local_api_json_once(const std::string& url, const std::string& body, std::string& response_body, wxString& error_msg, FlashforgeLocalApi::RequestFailure& failure) const;
+    void log_local_api_outcome(const std::string& url, bool ok, const FlashforgeLocalApi::RequestFailure& failure, int attempts) const;
     // The precondition every local-API method shares: true when the credentials are there, false
     // with `msg` set to the one message all of them used to spell out for themselves.
     bool require_local_api_credentials(wxString& msg) const;
