@@ -6,6 +6,7 @@
 #include "libslic3r/AppConfig.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/TriangleMesh.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPCommon.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPModelLoad.hpp"
 
 // What load_model does with a 3MF. On 2026-09-26 a load_model of a Blender-exported 3MF onto an
@@ -69,6 +70,7 @@ namespace {
 using Slic3r::Model;
 using Slic3r::ModelObject;
 using Slic3r::GUI::OrcaMCP::loaded_objects_json;
+using Slic3r::GUI::OrcaMCP::model_object_summary_json;
 using Slic3r::GUI::OrcaMCP::object_ids;
 using Catch::Matchers::WithinAbs;
 
@@ -95,14 +97,32 @@ TEST_CASE("loaded_objects names only the objects the load added, by their scene 
 
     const nlohmann::json loaded = loaded_objects_json(model, before);
     REQUIRE(loaded.size() == 1);
-    CHECK(loaded[0]["object_id"] == 2);
+    CHECK(loaded[0]["object_index"] == 2);
     CHECK(loaded[0]["name"] == "Kuromi one piece");
     CHECK(loaded[0]["volume_count"] == 4);
     CHECK_THAT(loaded[0]["scale"]["x"].get<double>(), WithinAbs(0.5, 1e-9));
     CHECK_THAT(loaded[0]["scale"]["z"].get<double>(), WithinAbs(0.5, 1e-9));
-    CHECK_THAT(loaded[0]["size_mm"]["x"].get<double>(), WithinAbs(5.0, 1e-9));
-    CHECK_THAT(loaded[0]["size_mm"]["y"].get<double>(), WithinAbs(10.0, 1e-9));
-    CHECK_THAT(loaded[0]["size_mm"]["z"].get<double>(), WithinAbs(15.0, 1e-9));
+    CHECK_THAT(loaded[0]["bounding_box"]["size_x"].get<double>(), WithinAbs(5.0, 1e-9));
+    CHECK_THAT(loaded[0]["bounding_box"]["size_y"].get<double>(), WithinAbs(10.0, 1e-9));
+    CHECK_THAT(loaded[0]["bounding_box"]["size_z"].get<double>(), WithinAbs(15.0, 1e-9));
+}
+
+// get_scene_info and load_model describe an object with one serializer, so the same object reads
+// the same in both: an agent that learned get_scene_info's object_index and bounding_box.size_x
+// finds them under those names in loaded_objects too.
+TEST_CASE("a loaded object reads exactly as get_scene_info's summary of it", "[McpModelLoad][orcamcp][load]")
+{
+    Model model;
+    const auto before = object_ids(model);
+    ModelObject* added = add_box(model, "part", 2.0, 1);
+
+    const nlohmann::json loaded  = loaded_objects_json(model, before);
+    const nlohmann::json summary = model_object_summary_json(*added, 0);
+    REQUIRE(loaded.size() == 1);
+    CHECK(loaded[0] == summary);
+    for (const char* field : {"id", "name", "object_index", "instance_count", "volume_count", "position",
+                              "rotation_degrees", "scale", "bounding_box"})
+        CHECK(summary.contains(field));
 }
 
 TEST_CASE("a load that added nothing reports no loaded objects", "[McpModelLoad][orcamcp][load]")

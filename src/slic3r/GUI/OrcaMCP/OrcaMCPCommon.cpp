@@ -219,6 +219,41 @@ void transform_instances_in_plate_frame(ModelObject& object, const Transform3d& 
 }
 
 // Helper to get active warnings as JSON object (always includes count, even if 0)
+nlohmann::json model_object_summary_json(const ModelObject& object, int object_index)
+{
+    const BoundingBoxf3 bbox   = object.bounding_box_approx();
+    const Vec3d         center = bbox.center();
+    const Vec3d         size   = bbox.size();
+
+    nlohmann::json summary = {
+        {"id", std::to_string(object.id().id)},
+        {"name", object.name},
+        {"object_index", object_index},
+        {"instance_count", static_cast<int>(object.instances.size())},
+        {"volume_count", static_cast<int>(object.volumes.size())},
+        // Position is the bounding-box centre, which stays accurate after any transform.
+        {"position", {{"x", center.x()}, {"y", center.y()}, {"z", center.z()}}},
+        {"bounding_box",
+         {{"size_x", size.x()},
+          {"size_y", size.y()},
+          {"size_z", size.z()},
+          {"min", {{"x", bbox.min.x()}, {"y", bbox.min.y()}, {"z", bbox.min.z()}}},
+          {"max", {{"x", bbox.max.x()}, {"y", bbox.max.y()}, {"z", bbox.max.z()}}}}}};
+
+    // The first (primary) instance's transform. rotation_degrees reflects the UI/initial rotation
+    // only: MCP rotations are applied to the geometry.
+    if (!object.instances.empty()) {
+        const ModelInstance& instance = *object.instances.front();
+        const Vec3d          rotation = instance.get_rotation();
+        const Vec3d          scale    = instance.get_scaling_factor();
+        summary["rotation_degrees"]   = {{"x", Geometry::rad2deg(rotation.x())},
+                                         {"y", Geometry::rad2deg(rotation.y())},
+                                         {"z", Geometry::rad2deg(rotation.z())}};
+        summary["scale"]              = {{"x", scale.x()}, {"y", scale.y()}, {"z", scale.z()}};
+    }
+    return summary;
+}
+
 nlohmann::json get_active_warnings_json(Plater* plater) {
     nlohmann::json result;
     nlohmann::json warnings_array = nlohmann::json::array();

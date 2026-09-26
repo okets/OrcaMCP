@@ -9,7 +9,6 @@
 
 namespace Slic3r {
 class Model;
-class ModelObject;
 namespace GUI { namespace OrcaMCP {
 
 // How a 3MF imported into the scene is loaded: as a project (its embedded printer, filament and
@@ -29,13 +28,9 @@ ThreeMfLoad choose_3mf_load(const std::string& setting, bool scene_has_objects, 
 // from the ones already there (every load path appends, but compare ids, not counts).
 std::set<ObjectID> object_ids(const Model& model);
 
-// load_model's loaded_objects: one entry per object in `model` whose id is not in `before`.
+// load_model's loaded_objects: one model_object_summary_json (OrcaMCPCommon.hpp) per object in
+// `model` whose id is not in `before`, so an object reads the same here as in get_scene_info.
 nlohmann::json loaded_objects_json(const Model& model, const std::set<ObjectID>& before);
-
-// One loaded_objects entry: object_id (the scene index other tools take), name, the first
-// instance's scale, the bounding-box size in mm (as get_scene_info measures it) and volume_count.
-// Add per-object load findings here.
-nlohmann::json loaded_object_json(const ModelObject& object, size_t object_id);
 
 }} // namespace GUI::OrcaMCP
 } // namespace Slic3r

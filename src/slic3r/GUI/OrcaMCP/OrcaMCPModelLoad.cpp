@@ -1,5 +1,6 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPModelLoad.cpp
 #include "OrcaMCPModelLoad.hpp"
+#include "OrcaMCPCommon.hpp"
 
 #include "libslic3r/AppConfig.hpp"
 #include "libslic3r/Model.hpp"
@@ -31,19 +32,8 @@ nlohmann::json loaded_objects_json(const Model& model, const std::set<ObjectID>&
     nlohmann::json loaded = nlohmann::json::array();
     for (size_t i = 0; i < model.objects.size(); ++i)
         if (before.count(model.objects[i]->id()) == 0)
-            loaded.push_back(loaded_object_json(*model.objects[i], i));
+            loaded.push_back(model_object_summary_json(*model.objects[i], static_cast<int>(i)));
     return loaded;
-}
-
-nlohmann::json loaded_object_json(const ModelObject& object, size_t object_id)
-{
-    const Vec3d scale = object.instances.empty() ? Vec3d::Ones() : object.instances.front()->get_scaling_factor();
-    const Vec3d size  = object.bounding_box_approx().size();
-    return {{"object_id", object_id},
-            {"name", object.name},
-            {"scale", {{"x", scale.x()}, {"y", scale.y()}, {"z", scale.z()}}},
-            {"size_mm", {{"x", size.x()}, {"y", size.y()}, {"z", size.z()}}},
-            {"volume_count", object.volumes.size()}};
 }
 
 }}} // namespace Slic3r::GUI::OrcaMCP

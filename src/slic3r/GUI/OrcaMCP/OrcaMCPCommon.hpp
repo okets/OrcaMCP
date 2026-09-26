@@ -112,6 +112,13 @@ void rehome_and_report_placement(nlohmann::json& result, int object_id);
 // synchronize_unselected_instances does.
 void transform_instances_in_plate_frame(ModelObject& object, const Transform3d& world_transform);
 
+// One model object as every MCP response describes it: id, name, object_index (the index other
+// tools take), instance_count, volume_count, position (bounding-box centre), rotation_degrees and
+// scale of the first instance, and bounding_box {size_x, size_y, size_z, min, max}, in plate mm.
+// get_scene_info adds brim, footprint, layer-height and filament fields; load_model's
+// loaded_objects is exactly this.
+nlohmann::json model_object_summary_json(const ModelObject& object, int object_index);
+
 // Always returns {"count": N, "warnings": [{level, message, type}...]}.
 nlohmann::json get_active_warnings_json(Plater* plater);
 

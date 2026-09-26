@@ -1,5 +1,6 @@
 #include "OrcaMCPPlateUtils.hpp"
 #include "OrcaMCPPlateOccupancy.hpp"
+#include "OrcaMCPCommon.hpp"
 #include "slic3r/GUI/GLCanvas3D.hpp"
 #include "slic3r/GUI/OpenGLManager.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPRenderOverlay.hpp"
@@ -821,10 +822,6 @@ nlohmann::json OrcaMCPPlateUtils::GetPlates(bool with_model_object_features) {
         // Loop through each ModelObject (now deduplicated)
         nlohmann::json objects_info = nlohmann::json::array();
         for (const auto& obj : plate->get_objects_on_this_plate()) {
-            nlohmann::json object_info;
-            object_info["id"] = std::to_string(obj->id().id);
-            object_info["name"] = obj->name;
-
             // Find the object's index in model.objects (used for transform operations)
             int object_index = -1;
             for (size_t i = 0; i < model.objects.size(); ++i) {
@@ -833,46 +830,9 @@ nlohmann::json OrcaMCPPlateUtils::GetPlates(bool with_model_object_features) {
                     break;
                 }
             }
-            object_info["object_index"] = object_index;
-            object_info["instance_count"] = static_cast<int>(obj->instances.size());
-
-            // Get bounding box first (used for position and size)
-            BoundingBoxf3 bbox = obj->bounding_box_approx();
-            Vec3d center = bbox.center();
-            Vec3d size = bbox.size();
-
-            // Position uses bounding box center (accurate after transforms)
-            object_info["position"] = {
-                {"x", center.x()},
-                {"y", center.y()},
-                {"z", center.z()}
-            };
-
-            // Add transform info from first instance (primary instance)
-            // Note: rotation_degrees reflects UI/initial rotation only - MCP rotations are applied to geometry
-            if (!obj->instances.empty()) {
-                auto* inst = obj->instances[0];
-                Vec3d rotation = inst->get_rotation();
-                Vec3d scale = inst->get_scaling_factor();
-
-                object_info["rotation_degrees"] = {
-                    {"x", Geometry::rad2deg(rotation.x())},
-                    {"y", Geometry::rad2deg(rotation.y())},
-                    {"z", Geometry::rad2deg(rotation.z())}
-                };
-                object_info["scale"] = {
-                    {"x", scale.x()},
-                    {"y", scale.y()},
-                    {"z", scale.z()}
-                };
-            }
-            object_info["bounding_box"] = {
-                {"size_x", size.x()},
-                {"size_y", size.y()},
-                {"size_z", size.z()},
-                {"min", {{"x", bbox.min.x()}, {"y", bbox.min.y()}, {"z", bbox.min.z()}}},
-                {"max", {{"x", bbox.max.x()}, {"y", bbox.max.y()}, {"z", bbox.max.z()}}}
-            };
+            // Identity, transform and bounding box, exactly as load_model's loaded_objects reports them.
+            nlohmann::json object_info = OrcaMCP::model_object_summary_json(*obj, object_index);
+            const Vec3d    size        = obj->bounding_box_approx().size();
 
             // The bounding box is the model; the brim is printed plastic beyond it. A neighbour
             // placed flush against the bounding box collides with the brim, so the printed extent
