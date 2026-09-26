@@ -621,7 +621,8 @@ void OrcaMCPServer::register_builtin_tools()
             {"properties", {
                 {"with_model_object_features", {
                     {"type", "boolean"},
-                    {"description", "Include overhang, volume, etc."}
+                    {"description", "Reserved: adds an empty `features` object to each model object. No "
+                                    "mesh analysis is computed yet."}
                 }},
                 {"include_preview", {
                     {"type", "boolean"},

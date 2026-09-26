@@ -94,7 +94,7 @@ Get current project state including plates, objects, and positions.
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `with_model_object_features` | boolean | No | Include detailed mesh features (increases response size) |
+| `with_model_object_features` | boolean | No | Reserved: adds an empty `features` object to each model object. No mesh analysis is computed yet. |
 | `include_preview` | boolean | No | Include turntable preview path |
 
 **Example:**

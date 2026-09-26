@@ -892,7 +892,7 @@
             "type": "integer"
           },
           "with_model_object_features": {
-            "description": "Include overhang, volume, etc.",
+            "description": "Reserved: adds an empty `features` object to each model object. No mesh analysis is computed yet.",
             "type": "boolean"
           }
         },
