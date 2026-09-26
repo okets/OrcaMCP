@@ -139,6 +139,13 @@ public:
     // calls export_selections, so every MCP path must too.
     static void RefreshAfterProjectConfigChange();
 
+    // Saves that per-printer snapshot (PresetBundle::export_selections) for the selected printer: the
+    // one place every MCP write of those keys persists them. It is also where a printer switch takes
+    // the plate's filament colours from when remember_printer_config is on (Tab::select_preset ->
+    // PresetBundle::update_selections), so a colour written without it is replaced by the older
+    // snapshot on the next switch back to this printer.
+    static void PersistProjectSnapshot();
+
     // Sets one filament slot's colour the way the sidebar's own colour picker does
     // (PlaterPresetComboBox::sync_colour_config): filament_colour, filament_multi_colour and
     // filament_colour_type together, then RefreshAfterProjectConfigChange(). `config_index` is the

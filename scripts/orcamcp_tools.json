@@ -2066,7 +2066,7 @@
     },
     {
       "category": "Filaments & colour",
-      "description": "Set the colour of a filament slot as the plate shows it (sidebar swatch, 3D view, flush calculation). #RRGGBB or #RRGGBBAA. This is the project's per-slot colour, not the preset's.",
+      "description": "Set the colour of a filament slot as the plate shows it (sidebar swatch, 3D view, flush calculation). #RRGGBB or #RRGGBBAA. This is the project's per-slot colour, not the preset's. It is saved for the selected printer, so switching to another printer and back brings it back. A gradient slot becomes this one flat colour, and the response then has flattened: true.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {

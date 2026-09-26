@@ -488,8 +488,13 @@ void OrcaMCPPresetConfigUtils::RefreshAfterProjectConfigChange() {
     // Several project_config keys survive a restart only through the per-printer app-config
     // snapshot; see the header. Without this, an MCP write of a filament colour or a flush volume
     // is forgotten the next time OrcaSlicer starts.
-    wxGetApp().preset_bundle->export_selections(*wxGetApp().app_config);
+    PersistProjectSnapshot();
     wxPostEvent(&wxGetApp().sidebar(), SimpleEvent(EVT_SCHEDULE_BACKGROUND_PROCESS, &wxGetApp().sidebar()));
+}
+
+void OrcaMCPPresetConfigUtils::PersistProjectSnapshot()
+{
+    wxGetApp().preset_bundle->export_selections(*wxGetApp().app_config);
 }
 
 namespace {
@@ -586,7 +591,7 @@ bool OrcaMCPPresetConfigUtils::SelectFilamentSlotPreset(int slot, const std::str
 
     bundle->set_filament_preset(idx, presetName);
     plater->update_project_dirty_from_presets();
-    bundle->export_selections(*wxGetApp().app_config);
+    PersistProjectSnapshot();
     sidebar.update_dynamic_filament_list();
     plater->on_filament_change(idx);
 

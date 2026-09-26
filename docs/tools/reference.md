@@ -68,9 +68,16 @@ this tool existed.
 
 **Example:** `{"name": "set_filament_color", "arguments": {"slot": 4, "color": "#FFFFFF"}}`
 
-**Returns:** `{"status": "success", "slot": 4, "color": "#FFFFFF", "previous_color": "#BEBEBE"}`.
+**Returns:** `{"status": "success", "slot": 4, "color": "#FFFFFF", "previous_color": "#BEBEBE"}`,
+plus `"flattened": true` when the slot held a gradient (multi-colour) that this flat colour replaced.
 Pair it with `select_preset` (`type: filament`, `slot`) to put a material on the spool, then
 `paint_object` or `set_object_filament` to use it.
+
+The colour is saved for the selected printer, the way the sidebar's colour picker saves it. That
+matters because a printer switch (with *Remember printer configuration* on, the default) replaces
+every slot's colour with the ones last saved for the printer switched to; `select_preset
+{type: printer}` reports which it applied. Switching away and back therefore brings back the colour
+set here.
 
 ---
 

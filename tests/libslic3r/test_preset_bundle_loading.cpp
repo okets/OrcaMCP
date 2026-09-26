@@ -261,6 +261,43 @@ TEST_CASE("Selected printer uses its default or saved bed type", "[Preset][Bundl
     CHECK(app_config.get_printer_setting("Test Printer", "curr_bed_type") == std::to_string(static_cast<int>(expected_bed_type)));
 }
 
+// Tab::select_preset runs update_selections on a printer switch when remember_printer_config is on:
+// the plate's filament colours become the ones last saved for the new printer. So a colour an MCP
+// tool writes survives a switch away and back only if the tool also saves the snapshot, as
+// set_filament_color now does through export_selections.
+TEST_CASE("A printer's saved filament colours come back after a switch to another printer and back", "[Preset][Bundle]")
+{
+    PresetBundle bundle;
+    add_inmemory_preset(bundle.printers, "Printer A");
+    add_inmemory_preset(bundle.printers, "Printer B");
+    AppConfig app_config;
+
+    const auto switch_printer = [&](const std::string& name) {
+        REQUIRE(bundle.printers.select_preset_by_name(name, true));
+        bundle.update_selections(app_config);
+    };
+    const auto colours = [&]() { return bundle.project_config.option<ConfigOptionStrings>("filament_colour")->values; };
+
+    switch_printer("Printer A");
+    bundle.export_selections(app_config); // Printer A's snapshot as it was before the colour change
+    bundle.project_config.option<ConfigOptionStrings>("filament_colour")->values = {"#1A1A1A"};
+
+    SECTION("saved with the snapshot") {
+        bundle.export_selections(app_config);
+
+        switch_printer("Printer B");
+        CHECK(colours() == std::vector<std::string>{"#26A69A"}); // nothing saved for B: upstream's default
+
+        switch_printer("Printer A");
+        CHECK(colours() == std::vector<std::string>{"#1A1A1A"});
+    }
+    SECTION("not saved: the switch back restores the older snapshot") {
+        switch_printer("Printer B");
+        switch_printer("Printer A");
+        CHECK(colours() != std::vector<std::string>{"#1A1A1A"});
+    }
+}
+
 TEST_CASE("find_preset resolves a system preset's renamed_from", "[Preset][Rename]")
 {
     RenameTestCollection coll;

@@ -4,6 +4,7 @@
 #include "OrcaMCPServer.hpp"
 #include "OrcaMCPCommon.hpp"
 #include "OrcaMCPFilamentUtils.hpp"
+#include "OrcaMCPPresetConfigUtils.hpp"
 #include "OrcaMCPColorRecipe.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/PresetComboBoxes.hpp"
@@ -226,7 +227,9 @@ void OrcaMCPServer::register_filament_tools()
         ToolCategory::FilamentsColour,
         "Set a slot's color as the plate shows it",
         "Set the colour of a filament slot as the plate shows it (sidebar swatch, 3D view, flush "
-        "calculation). #RRGGBB or #RRGGBBAA. This is the project's per-slot colour, not the preset's.",
+        "calculation). #RRGGBB or #RRGGBBAA. This is the project's per-slot colour, not the preset's. It is "
+        "saved for the selected printer, so switching to another printer and back brings it back. A "
+        "gradient slot becomes this one flat colour, and the response then has flattened: true.",
         {
             {"type", "object"},
             {"properties", {
@@ -247,32 +250,35 @@ void OrcaMCPServer::register_filament_tools()
                 return nlohmann::json{{"status", "error"}, {"message", "color must be #RRGGBB or #RRGGBBAA"}};
             for (char& c : color) c = char(std::toupper(static_cast<unsigned char>(c)));
             return run_on_main_thread([slot, color]() -> nlohmann::json {
-                DynamicPrintConfig& project_config = wxGetApp().preset_bundle->project_config;
-                auto* head = project_config.option<ConfigOptionStrings>("filament_colour");
-                auto* pack = project_config.option<ConfigOptionStrings>("filament_multi_colour");
+                const DynamicPrintConfig& project_config = wxGetApp().preset_bundle->project_config;
+                const auto* head = project_config.option<ConfigOptionStrings>("filament_colour");
                 if (head == nullptr || slot < 1 || size_t(slot) > head->values.size())
                     return nlohmann::json{{"status", "error"},
                                           {"message", "slot out of range; the project has " + std::to_string(head ? head->values.size() : 0) + " filament slot(s)"}};
-                const size_t idx      = size_t(slot - 1);
+                const size_t      idx = size_t(slot - 1);
                 const std::string was = head->values[idx];
 
-                auto* new_head = static_cast<ConfigOptionStrings*>(head->clone());
-                new_head->values[idx] = color;
-                DynamicPrintConfig new_cfg;
-                new_cfg.set_key_value("filament_colour", new_head);
-                if (pack != nullptr && pack->values.size() > idx) {
-                    auto* new_pack = static_cast<ConfigOptionStrings*>(pack->clone());
-                    new_pack->values[idx] = color;  // a plain colour: the multi-colour pack is that one colour
-                    new_cfg.set_key_value("filament_multi_colour", new_pack);
-                }
-                project_config.apply(new_cfg);
-                wxGetApp().plater()->on_config_change(new_cfg);
+                // All three colour keys, the way the sidebar's picker writes them; a gradient slot
+                // becomes this one flat colour and the response says so.
+                bool        flattened = false;
+                std::string error;
+                if (!OrcaMCPPresetConfigUtils::StageProjectFilamentColor(idx, color, flattened, error))
+                    return nlohmann::json{{"status", "error"}, {"message", error}};
+
+                DynamicPrintConfig changed;
+                changed.apply_only(project_config, {"filament_colour", "filament_multi_colour", "filament_colour_type"});
+                wxGetApp().plater()->on_config_change(changed);
                 wxGetApp().sidebar().update_presets(Preset::TYPE_FILAMENT);
                 auto* evt = new wxCommandEvent(EVT_FILAMENT_COLOR_CHANGED);
                 evt->SetInt(int(idx));
                 wxQueueEvent(wxGetApp().plater(), evt);
+                // Saved for this printer, so a switch to another printer and back brings it back
+                // instead of the colours saved before.
+                OrcaMCPPresetConfigUtils::PersistProjectSnapshot();
 
                 nlohmann::json r = {{"status", "success"}, {"slot", slot}, {"color", color}, {"previous_color", was}};
+                if (flattened)
+                    r["flattened"] = true;
                 r["active_warnings"] = get_active_warnings_json(wxGetApp().plater());
                 return r;
             });
