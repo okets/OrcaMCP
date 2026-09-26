@@ -1751,11 +1751,10 @@ and yellow at 30/70 land on the orange-red `#F9A05A`. Use `suggest_color_mix`’
 All four tools take and report **plate millimetres** — the same coordinate *frame*
 `get_object_info` reports its `bounding_box` and `position` in. They are never object-local.
 But for the *numbers*, use `paint_object`'s or `get_object_paint`'s own `bounding_box` in
-their responses, not `get_object_info`'s: that one is a looser box (the untransformed AABB's
-corners, transformed, then unioned over every instance) and matches these tools' snug,
-single-instance box only for one unrotated instance — under rotation it is strictly larger,
-and with more than one instance it spans all of them. Band from the box these tools report,
-not from `get_object_info`. A facet belongs to the band or region containing its
+their responses, not `get_object_info`'s: that one spans every instance of the object, and
+matches these tools' single-instance box only when the object has one instance. Band from the box
+these tools report, not from `get_object_info`. (Before v2.5.0.6 `get_object_info`'s box was also
+looser under rotation: the untransformed box's corners, transformed. It is now the exact box.) A facet belongs to the band or region containing its
 **centroid**, so a triangle is painted whole or not at all.
 
 Paint is stored on the *volume*, so it applies to every instance of an object. `instance_id`
@@ -1978,9 +1977,9 @@ accept that with a caveat, `instance_id != 0` is rejected outright.
 
 Positions are plate millimetres, the same frame `get_object_info` reports its `bounding_box`
 in — but for the numbers, use *this* response's own `bounding_box` (or `get_object_paint`'s),
-not `get_object_info`'s: that one is a looser box (untransformed-AABB corners, unioned over
-every instance) and only matches this tool's for a single unrotated instance. This one is
-always instance 0's, the same instance brim ears themselves resolve through.
+not `get_object_info`'s: that one spans every instance of the object, and matches this tool's
+only when the object has one instance. This one is always instance 0's, the same instance brim
+ears themselves resolve through.
 
 **Response includes:** `object_id`, `coordinate_frame` (`"plate"`), `instance_id` (always
 `0`), `bounding_box` (the object's model-part footprint through instance 0, same field name

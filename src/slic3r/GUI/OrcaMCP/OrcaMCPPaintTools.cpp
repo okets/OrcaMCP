@@ -648,8 +648,8 @@ void OrcaMCPServer::register_paint_tools()
         "ALL COORDINATES ARE PLATE MILLIMETRES -- the same frame get_object_info reports its "
         "bounding_box and position in, not object-local coordinates. But for the numbers, use "
         "THIS call's own bounding_box in the response (or get_object_paint's), not "
-        "get_object_info's: that one is a looser box (untransformed-AABB corners, unioned over "
-        "every instance) and only matches this tool's for a single unrotated instance. A facet "
+        "get_object_info's: that one spans every instance of the object, and matches this tool's, "
+        "which is instance_id's alone, only when the object has one instance. A facet "
         "belongs to the band or region containing its centroid. Paint lives on the volume, so it "
         "applies to every instance; instance_id only says whose transform reads your "
         "coordinates. Verify with get_object_paint, undo with undo, reset with clear_object_paint.",
@@ -1152,7 +1152,7 @@ void OrcaMCPServer::register_paint_tools()
                                                  : " and kept their previous state.";
                     if (request.selection == "bands")
                         // The symptom of banding from too wide a range (e.g. get_object_info's
-                        // looser bounding_box instead of this response's own): facets outside
+                        // all-instance bounding_box instead of this response's own): facets outside
                         // axis_range are not painted. Previously this count was reported for every
                         // selection except bands -- the one where a mistyped from/to is most
                         // likely (M9).
@@ -1320,9 +1320,9 @@ void OrcaMCPServer::register_paint_tools()
         "are NOT facet paint: they are points on the object (ModelObject::brim_points), so they "
         "have their own tool. Positions are PLATE millimetres, the same frame get_object_info "
         "reports its bounding_box in -- but for the numbers, use THIS call's own bounding_box in "
-        "the response (or get_object_paint's), not get_object_info's: that one is a looser box "
-        "(untransformed-AABB corners, unioned over every instance) and only matches this tool's "
-        "for a single unrotated instance. Only x and y matter, because an ear always sits on the "
+        "the response (or get_object_paint's), not get_object_info's: that one spans every "
+        "instance of the object, and matches this tool's, instance 0's, only when the object has "
+        "one instance. Only x and y matter, because an ear always sits on the "
         "bottom of the object. Brim ears are stored per object, not per instance, and slicing "
         "resolves them through instance 0 only, so instance_id must be 0 (or omitted), and this "
         "response's bounding_box is always instance 0's regardless. Pass an empty points array "
@@ -1480,8 +1480,7 @@ void OrcaMCPServer::register_paint_tools()
                     // The same field name and shape paint_object and get_object_paint report
                     // (bbox_json of a plate-frame BoundingBoxf3), so an agent placing ears near an
                     // edge reads it from the box these tools actually use, not from
-                    // get_object_info's looser one (untransformed-AABB corners, unioned over every
-                    // instance). Always instance 0's, the same instance brim_points resolve
+                    // get_object_info's, which spans every instance. Always instance 0's, the same instance brim_points resolve
                     // through -- target.instance_idx is already guaranteed 0 above.
                     {"bounding_box", bbox_json(object_plate_bbox(*target.object, target.instance_idx))},
                     {"brim_ear_count", int(target.object->brim_points.size())},
