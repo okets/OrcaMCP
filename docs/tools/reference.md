@@ -1506,7 +1506,7 @@ explicit camera be given relative to the plate's front-left corner.
 **Returns** an array with one entry per view (or one contact-sheet entry):
 ```json
 [{
-  "file_path": "/private/var/folders/xx/T/orcamcp_render_1789763152_1_0.png",
+  "file_path": "/private/var/folders/xx/T/orcamcp_render_1790422180_48213_1_0.png",
   "frame": "bed_mm",
   "plate_origin": [307.2, 0.0],
   "objects_in_frame": [
@@ -1571,7 +1571,7 @@ a change it had made, so a retry applied it twice.
 **Example:**
 ```json
 {"name": "get_preview_base64", "arguments": {
-  "path": "/private/var/folders/xx/T/orcamcp_preview_1790418216_2_turntable.jpg"
+  "path": "/private/var/folders/xx/T/orcamcp_preview_1790422180_48213_2_turntable.jpg"
 }}
 ```
 
@@ -1580,13 +1580,13 @@ a change it had made, so a retry applied it twice.
 {
   "status": "success",
   "preview_base64": "data:image/jpeg;base64,/9j/4AAQSkZJRg...",
-  "source_path": "/private/var/folders/xx/T/orcamcp_preview_1790418216_2_turntable.jpg"
+  "source_path": "/private/var/folders/xx/T/orcamcp_preview_1790422180_48213_2_turntable.jpg"
 }
 ```
 
 **Security:** Only the images this server wrote can be converted: an `orcamcp_preview_*` or
-`orcamcp_render_*` PNG or JPEG directly inside the system temp directory, checked after `..` and
-links are resolved. Every other path is rejected. Before v2.5.0.6 the check only looked for the
+`orcamcp_render_*` PNG or JPEG named the way it names them (`<prefix><time>_<pid>_<sequence>_<tag>`),
+directly inside the system temp directory, checked after `..` and links are resolved. Every other path is rejected. Before v2.5.0.6 the check only looked for the
 prefix anywhere in the path, so `<anywhere>/orcamcp_render_/../<file>` passed.
 
 ---

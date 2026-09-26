@@ -19,12 +19,18 @@ inline constexpr std::string_view k_preview_image_prefix = "orcamcp_preview_";
 // literal "/tmp/", which is not a directory on Windows.
 std::string mcp_image_directory();
 
-// A new path in mcp_image_directory() for one image: "<prefix><time>_<sequence>_<tag><extension>".
-// The per-process sequence number keeps images made within the same second from overwriting each
-// other. `prefix` is one of the two above.
+// A new path in mcp_image_directory() for one image:
+// "<prefix><time>_<pid>_<sequence>_<tag><extension>". The sequence keeps images one process makes in
+// the same second apart, and the process id keeps two OrcaMCPs writing in the same second apart,
+// since each counts its sequence from 0. `prefix` is one of the two above; `tag` is letters and digits.
 std::string new_mcp_image_path(std::string_view prefix, const std::string& tag, const std::string& extension);
 
-// True for the file name of an image this server writes: either prefix, .png or .jpg.
+// This process's id, as image names carry it.
+long mcp_process_id();
+
+// True for the file name of an image this server writes: either prefix, then numbers and a tag in
+// the shape new_mcp_image_path writes (or the shape without a process id older builds wrote, so their
+// images are still cleaned up), then .png or .jpg.
 bool is_mcp_image_file_name(const std::string& file_name);
 
 // True when `path` is such an image directly inside mcp_image_directory(): the only files

@@ -3,6 +3,7 @@
 #include <chrono>
 #include <ctime>
 #include <fstream>
+#include <regex>
 #include <stdexcept>
 
 #include <boost/filesystem.hpp>
@@ -26,11 +27,26 @@ TEST_CASE("images are written to the temp directory under names that never repea
     CHECK(is_mcp_image_file_name(fs::path(first).filename().string()));
 }
 
+TEST_CASE("an image name carries the process that wrote it", "[orcamcp][ImageFiles]")
+{
+    // Two OrcaMCPs writing in the same second each count their sequence from 0, so time and sequence
+    // alone collided across processes: "<prefix><time>_<pid>_<sequence>_<tag><extension>".
+    namespace fs = boost::filesystem;
+    const std::string name = fs::path(new_mcp_image_path(k_render_image_prefix, "0", ".png")).filename().string();
+    std::smatch       parts;
+    REQUIRE(std::regex_match(name, parts, std::regex("orcamcp_render_([0-9]+)_([0-9]+)_([0-9]+)_0\\.png")));
+    CHECK(parts[2].str() == std::to_string(mcp_process_id()));
+}
+
 TEST_CASE("only this server's image names count as its images", "[orcamcp][ImageFiles]")
 {
-    CHECK(is_mcp_image_file_name("orcamcp_render_1789763152_1_0.png"));
+    CHECK(is_mcp_image_file_name("orcamcp_render_1790422180_48213_2_0.png"));       // time, pid, sequence, tag
+    CHECK(is_mcp_image_file_name("orcamcp_preview_1790422180_48213_0_turntable.jpg"));
+    CHECK(is_mcp_image_file_name("orcamcp_render_1789763152_1_0.png"));             // older builds: no pid
     CHECK(is_mcp_image_file_name("orcamcp_preview_1789763152_0_grid.jpg"));
     CHECK_FALSE(is_mcp_image_file_name("orcamcp_render_1789763152_1_0.txt"));
+    CHECK_FALSE(is_mcp_image_file_name("orcamcp_render_evil.png"));                 // the prefix alone is not enough
+    CHECK_FALSE(is_mcp_image_file_name("orcamcp_render_1.png"));
     CHECK_FALSE(is_mcp_image_file_name("my_orcamcp_render_1.png"));
     CHECK_FALSE(is_mcp_image_file_name("id_rsa"));
 }

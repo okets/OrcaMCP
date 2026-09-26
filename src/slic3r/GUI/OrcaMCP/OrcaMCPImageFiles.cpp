@@ -1,10 +1,16 @@
 #include "OrcaMCPImageFiles.hpp"
 
-#include <boost/algorithm/string/predicate.hpp>
 #include <boost/filesystem.hpp>
 
 #include <atomic>
 #include <ctime>
+#include <regex>
+
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
@@ -27,16 +33,26 @@ std::string mcp_image_directory() { return image_directory().string(); }
 std::string new_mcp_image_path(std::string_view prefix, const std::string& tag, const std::string& extension)
 {
     static std::atomic<unsigned> s_sequence{0};
-    const std::string name = std::string(prefix) + std::to_string(std::time(nullptr)) + "_" + std::to_string(s_sequence.fetch_add(1)) +
-                             "_" + tag + extension;
+    const std::string name = std::string(prefix) + std::to_string(std::time(nullptr)) + "_" + std::to_string(mcp_process_id()) +
+                             "_" + std::to_string(s_sequence.fetch_add(1)) + "_" + tag + extension;
     return (image_directory() / name).string();
+}
+
+long mcp_process_id()
+{
+#ifdef _WIN32
+    return long(_getpid());
+#else
+    return long(getpid());
+#endif
 }
 
 bool is_mcp_image_file_name(const std::string& file_name)
 {
-    const bool ours  = boost::starts_with(file_name, k_render_image_prefix) || boost::starts_with(file_name, k_preview_image_prefix);
-    const bool image = boost::ends_with(file_name, ".png") || boost::ends_with(file_name, ".jpg");
-    return ours && image;
+    // <prefix><time>_[<pid>_]<sequence>_<tag>.<png|jpg>: the pid is optional so older builds' images,
+    // written without one, are still recognised and cleaned up.
+    static const std::regex k_name("(orcamcp_render_|orcamcp_preview_)[0-9]+(_[0-9]+){1,2}_[A-Za-z0-9]+\\.(png|jpg)");
+    return std::regex_match(file_name, k_name);
 }
 
 bool is_mcp_image_path(const std::string& path)
