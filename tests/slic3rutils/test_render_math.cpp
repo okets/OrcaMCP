@@ -224,6 +224,35 @@ TEST_CASE("fit_zoom_to_box has nothing to fit in an empty box", "[RenderMath]")
     CHECK(fit_zoom_to_box(Vec3d(0., -100., 50.), Vec3d::Zero(), Vec3d::UnitZ(), BoundingBoxf3(), 512, 512, k_fit_margin) == 0.0);
 }
 
+TEST_CASE("a volume partly off its plate is still in the plate's picture", "[RenderMath]")
+{
+    const BoundingBoxf3 overhanging(Vec3d(250., 100., 0.), Vec3d(300., 140., 30.));
+    CHECK(belongs_in_plate_view(true, true, overhanging));
+    CHECK_FALSE(belongs_in_plate_view(false, true, overhanging));  // not printable
+    CHECK_FALSE(belongs_in_plate_view(true, false, overhanging));  // another plate's
+    CHECK_FALSE(belongs_in_plate_view(true, true, BoundingBoxf3(Vec3d(0., 0., -20.), Vec3d(10., 10., -1.))));  // under the bed
+}
+
+TEST_CASE("the blank-picture hint names what was missing", "[RenderMath]")
+{
+    const BoundingBoxf3 plate(Vec3d(0., 0., 0.), Vec3d(270., 270., 300.));
+
+    const std::string empty_scene = uniform_image_hint({0, 0, true}, 0, plate);
+    CHECK(empty_scene.find("no model volumes") != std::string::npos);
+
+    const std::string other_plate = uniform_image_hint({3, 0, true}, 2, plate);
+    CHECK(other_plate.find("3 model volume(s)") != std::string::npos);
+    CHECK(other_plate.find("plate 2") != std::string::npos);
+    CHECK(other_plate.find("get_scene_info") != std::string::npos);
+
+    const std::string looked_away = uniform_image_hint({3, 2, true}, 0, plate);
+    CHECK(looked_away.find("none inside this view") != std::string::npos);
+
+    const std::string stale = uniform_image_hint({0, 0, false}, 0, plate);
+    CHECK(stale.find("could not be refreshed") != std::string::npos);
+    CHECK(looked_away.find("could not be refreshed") == std::string::npos);
+}
+
 // Where the images go. They used to be written to a literal /tmp/, which is not a directory on
 // Windows, and the render files were never cleaned up.
 

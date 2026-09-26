@@ -792,7 +792,7 @@ void OrcaMCPServer::register_builtin_tools()
         "render_plate_view",
         ToolCategory::Visualization,
         "Render a plate or object to PNG",
-        "Render a plate. Omit views for a contact sheet of iso, top and front fitted to the plate. A view is {preset: iso|top|front|back|left|right|low, fit: \"plate\" | {object_index}} or explicit {camera_position, target} in BED mm (the get_scene_info frame; plate N sits at plates[N].bounding_box) -- or add frame: \"plate_local\" to give them relative to the plate's front-left corner. Only the requested plate's volumes are drawn. Every view returns objects_in_frame, uniform_image (+hint), plate_origin and the camera; overlays (outline, 10 mm grid, origin, labels) are on by default. Use save_to_file=true for PNG paths.",
+        "Render a plate. Omit views for a contact sheet of iso, top and front fitted to the plate. A view is {preset: iso|top|front|back|left|right|low, fit: \"plate\" | {object_index}} or explicit {camera_position, target} in BED mm (the get_scene_info frame; plate N sits at plates[N].bounding_box) -- or add frame: \"plate_local\" to give them relative to the plate's front-left corner. The requested plate's objects are drawn, including any hanging over its edge, from the 3D scene whichever tab the app shows. Every view returns objects_in_frame, uniform_image (+hint), plate_origin and the camera; overlays (outline, 10 mm grid, origin, labels) are on by default. Use save_to_file=true for PNG paths.",
         {
             {"type", "object"},
             {"properties", {
@@ -2436,9 +2436,10 @@ void OrcaMCPServer::register_builtin_tools()
                     s_slice_all_restore_plate    = plate_at_call;
                     SimpleEvent slice_all_event(EVT_GLTOOLBAR_SLICE_ALL);
                     plater->GetEventHandler()->ProcessEvent(slice_all_event);
-                    // on_action_slice_all also switches the app to the G-code preview. The plate
-                    // renderers read whichever canvas is showing, so a caller that was looking at the
-                    // 3D scene is put back there; a caller already in the preview is left alone.
+                    // on_action_slice_all also switches the app to the G-code preview. An MCP slice
+                    // leaves the user's tab as it found it: a caller that was looking at the 3D scene
+                    // is put back there, and one already in the preview is left alone. (The renderers
+                    // draw from the 3D view whatever tab shows, so they no longer depend on this.)
                     if (!was_preview_shown)
                         plater->select_view_3D("3D");
                 } else {
@@ -4595,7 +4596,10 @@ void OrcaMCPServer::register_builtin_tools()
                     inst->printable = printable;
 
                 wxGetApp().obj_list()->update_printable_state(object_id, 0);
-                wxGetApp().plater()->canvas3D()->update_instance_printable_state_for_object(static_cast<size_t>(object_id));
+                // The 3D view's canvas, as the object list uses (GUI_ObjectList.cpp): canvas3D() is
+                // whichever canvas is showing, and the Preview canvas holds no model volumes, so from
+                // the Preview tab the 3D view -- and every render drawn from it -- kept the old state.
+                plater->get_view3D_canvas3D()->update_instance_printable_state_for_object(static_cast<size_t>(object_id));
                 plater->update();
 
                 return nlohmann::json{

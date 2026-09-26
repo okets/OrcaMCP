@@ -75,6 +75,24 @@ void frame_camera(Camera& camera, const Vec3d& position, const Vec3d& target, co
 // The view, projection and viewport `camera` draws with, as pick_facet and the overlays read them.
 CameraFrame camera_frame_of(const Camera& camera);
 
+// Whether a volume of the 3D view belongs in one plate's picture: printable, on that plate (its
+// instance is one the plate holds, partly outside it or not, or it is that plate's own wipe tower),
+// and reaching above the bed. The same membership get_scene_info reports plates from, so an object
+// listed on plate N is drawn in plate N's picture.
+bool belongs_in_plate_view(bool printable, bool on_plate, const BoundingBoxf3& volume_box);
+
+// What a render found to draw, for the hint beside uniform_image.
+struct RenderCounts
+{
+    size_t scene_volumes = 0;     // model volumes in the 3D view's scene, any plate
+    size_t drawn         = 0;     // of those, the ones drawn in this plate's picture
+    bool   scene_current = true;  // false: the hidden 3D view could not be brought up to date
+};
+
+// Why a picture came out as one flat colour: the 3D view had no model volumes at all, none of them
+// were on this plate, or they were drawn and the camera looked elsewhere. `plate_box` is bed mm.
+std::string uniform_image_hint(const RenderCounts& counts, int plate_index, const BoundingBoxf3& plate_box);
+
 // Where render_plate_view and the turntable previews write their images: the platform's temp
 // directory, as boost::filesystem reports it. It used to be a literal "/tmp/", which is not a
 // directory on Windows.

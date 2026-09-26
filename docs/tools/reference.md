@@ -1467,7 +1467,7 @@ starts at x ≈ 307. A camera aimed at another plate's area returns a flat image
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `plate_index` | integer | Yes | Plate to render (0-based). Only its volumes are drawn. |
+| `plate_index` | integer | Yes | Plate to render (0-based). Its objects are drawn, including any hanging over its edge. |
 | `views` | array | No | Views to render. **Omit for a contact sheet** of `iso`, `top` and `front` fitted to the plate, composed side by side into one image. |
 | `save_to_file` | boolean | No | Write a PNG to the system temp directory and return its path (recommended) instead of inline base64. |
 | `resolution` | integer | No | Pixels per view side (default 512, 32–2048). Prefer `fit` to an object over more pixels. |
@@ -1512,9 +1512,13 @@ explicit camera be given relative to the plate's front-left corner.
 - `objects_in_frame` lists every volume that projects into the view, with its bounding box in
   image pixels (top-left origin). `clipped` means the box extends past the frame or behind the
   camera.
-- `uniform_image: true` means the picture is a single flat colour, and `hint` says why: which
-  plate the camera should be aimed at, or that the plate has nothing printable. Check it before
-  reading the image.
+- `uniform_image: true` means the picture is a single flat colour, and `hint` says why: the 3D
+  scene has no model volumes at all, none of them are printable on this plate (with a pointer to
+  `get_scene_info`), or they were drawn and the camera looked elsewhere (with the plate's extent to
+  aim at). Check it before reading the image.
+- Pictures are drawn from the 3D scene whichever tab the app is showing, and the tab is left as it
+  is. Before v2.5.0.6 they were drawn from the canvas on screen: after a slice switched the app to
+  Preview, every render came back blank with "no printable volumes".
 - A preset or `fit` frames the whole box it fits, height included, with a little room on every
   side, so a fitted object is never `clipped`. Before v2.5.0.6 the zoom ignored the height and was
   sized for the wrong view direction, so a tall object came back `clipped` with a full-frame box.

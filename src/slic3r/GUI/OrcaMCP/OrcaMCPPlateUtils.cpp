@@ -160,26 +160,23 @@ static void append_render_report(nlohmann::json& entry, const RenderReport& repo
     }
     entry["objects_in_frame"] = in_frame;
     entry["uniform_image"]    = report.uniform_image;
-    if (report.uniform_image) {
-        char buf[256];
-        if (report.drawn.empty())
-            std::snprintf(buf, sizeof(buf), "plate %d has no printable volumes; nothing to draw", plate_index);
-        else
-            std::snprintf(buf, sizeof(buf),
-                          "%zu volume(s) on plate %d but none inside this view; plate %d spans x [%.0f, %.0f] y [%.0f, %.0f] bed mm -- aim the camera there or use a preset",
-                          report.drawn.size(), plate_index, plate_index, plate.min.x(), plate.max.x(), plate.min.y(), plate.max.y());
-        entry["hint"] = buf;
-    }
+    if (report.uniform_image)
+        entry["hint"] = OrcaMCP::uniform_image_hint({report.scene_volumes, report.drawn.size(), report.scene_current},
+                                                    plate_index, plate);
 }
 
-// The plate footprint, as tall as its tallest object (at least 10 mm, so an empty plate still frames).
+// The plate's footprint, as tall as its tallest object (at least 10 mm, so an empty plate still
+// frames), widened to take in any of its instances that hang over the edge -- they are drawn, so
+// they are framed too.
 static BoundingBoxf3 plate_contents_box(PartPlate& plate, const BoundingBoxf3& plate_box)
 {
-    double top = plate_box.min.z() + 10.0;
-    for (const ModelObject* mo : plate.get_objects_on_this_plate())
-        for (size_t i = 0; i < mo->instances.size(); ++i)
-            top = std::max(top, mo->instance_bounding_box(i).max.z());
-    return BoundingBoxf3(plate_box.min, Vec3d(plate_box.max.x(), plate_box.max.y(), top));
+    BoundingBoxf3 box(plate_box.min, Vec3d(plate_box.max.x(), plate_box.max.y(), plate_box.min.z() + 10.0));
+    const ModelObjectPtrs& objects = wxGetApp().model().objects;
+    for (size_t oi = 0; oi < objects.size(); ++oi)
+        for (size_t ii = 0; ii < objects[oi]->instances.size(); ++ii)
+            if (plate.contain_instance(int(oi), int(ii)))
+                box.merge(objects[oi]->instance_bounding_box(ii));
+    return box;
 }
 
 // [x, y, z] or {x, y, z}, bed mm.
@@ -446,6 +443,40 @@ struct OffscreenRenderTarget
     }
 };
 
+// The canvas every picture is drawn from: the 3D view's, whatever tab is showing.
+//
+// Plater::canvas3D() is the canvas on screen, which is the Preview canvas once a slice has switched
+// the app to Preview -- and in FFF mode that canvas holds no model volumes at all, its shells live in
+// the G-code viewer (GLCanvas3D::load_shells). Every render then came back a flat colour, reported
+// as "no printable volumes" with the object sitting on the plate. The Assemble tab showed the
+// assembly's positions instead. Upstream's own thumbnails draw from the 3D view for the same reason
+// (Plater::priv::generate_thumbnail).
+//
+// While hidden, the 3D view postpones scene reloads (GLCanvas3D::reload_scene), so after an edit
+// made from another tab its volumes are stale; one pending reload is done here, as the 3D view's own
+// first visible render would do it. reload_scene makes the 3D view's canvas current, which works on
+// a hidden canvas: every canvas shares one GL context (OpenGLManager::init_glcontext), wxWidgets'
+// Cocoa SetCurrent only points that context at the canvas's view, and the picture is drawn into our
+// own framebuffer, not the canvas's. GTK/EGL may refuse SetCurrent on a hidden canvas; the reload
+// then stays delayed and `scene_current` says so. The shared context goes back to the canvas on
+// screen afterwards, so the visible tab carries on exactly as it was.
+static GLCanvas3D* scene_canvas(bool& scene_current)
+{
+    Plater*     plater = wxGetApp().plater();
+    GLCanvas3D* canvas = plater->get_view3D_canvas3D();
+    if (canvas == nullptr)
+        return nullptr;
+    if (canvas->is_reload_delayed()) {
+        canvas->reload_scene(true);
+        if (GLCanvas3D* shown = plater->get_current_canvas3D(); shown != nullptr && shown != canvas)
+            shown->make_current_for_postinit();
+        BOOST_LOG_TRIVIAL(info) << "RenderThumbnail: the hidden 3D view had a scene reload pending; "
+                                << (canvas->is_reload_delayed() ? "it could not be refreshed" : "refreshed it");
+    }
+    scene_current = !canvas->is_reload_delayed();
+    return canvas;
+}
+
 void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
     const Vec3d& camera_position, const Vec3d& target, int plate_index,
     RenderCameraInfo* out_camera)
@@ -461,7 +492,6 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
     using OrcaMCP::wipe_tower_color;
     using OrcaMCP::is_uniform_rgba;
     const Camera::EType camera_type = Camera::EType::Perspective;  // Fixed camera type
-    const ThumbnailsParams thumbnail_params = { {}, false, true, true, true, 0};  // Fixed params
 
     GLShaderProgram* shader = wxGetApp().get_shader("thumbnail");
     if (shader == nullptr) {
@@ -471,44 +501,43 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
 
     ModelObjectPtrs& model_objects = GUI::wxGetApp().model().objects;
     std::vector<ColorRGBA> extruder_colors = wxGetApp().plater()->get_extruders_colors();
-    auto canvas3D = wxGetApp().plater()->canvas3D();
+    bool scene_current = true;
+    GLCanvas3D* canvas3D = scene_canvas(scene_current);
+    if (canvas3D == nullptr)
+        return;
     const GLVolumeCollection& volumes = canvas3D->get_volumes();
     PartPlate* plate = wxGetApp().plater()->get_partplate_list().get_plate(plate_index);
 
     bool ban_light = false;
     static ColorRGBA curr_color;
 
-    // Calculate visible volumes
-    GLVolumePtrs visible_volumes;
-    int plate_idx = thumbnail_params.plate_id;
     BoundingBoxf3 plate_build_volume = plate->get_plate_box();
     plate_build_volume.min -= Vec3d(1,1,1) * Slic3r::BuildVolume::SceneEpsilon;
     plate_build_volume.max += Vec3d(1,1,1) * Slic3r::BuildVolume::SceneEpsilon;
 
-    auto is_visible = [plate_idx, plate_build_volume](const GLVolume& v) {
-        bool ret = v.printable;
-        if (plate_idx >= 0) {
-            BoundingBoxf3 plate_bbox = plate_build_volume;
-            plate_bbox.min(2) = -1e10;
-            const BoundingBoxf3& volume_bbox = v.transformed_convex_hull_bounding_box();
-            ret &= plate_bbox.contains(volume_bbox) && (volume_bbox.max(2) > 0);
-        } else {
-            ret &= (!v.shader_outside_printer_detection_enabled || !v.is_outside);
-        }
-        return ret;
-    };
-
+    // The volumes of this plate: what the plate holds, not what fits inside its box. The test used to
+    // be containment in the plate's box, height included, so an object hanging over an edge -- the
+    // one an agent most needs to see -- vanished from the picture, and the hint then blamed the plate
+    // for having nothing printable on it.
+    //
     // The prime tower is drawn, not skipped. It is printed plastic occupying bed area, and leaving
     // it out of the picture is the same blindness the structured report had: a plan view used to
     // check a layout showed a clear band where the tower was standing. Each plate's tower is a
-    // separate volume (obj_idx 1000 + plate_id) and is_visible's containment test against this
-    // plate's build volume is what keeps the other plates' towers out.
+    // separate volume, obj_idx 1000 + plate_id.
+    auto on_this_plate = [plate, plate_index](const GLVolume& v) {
+        const int object_id = v.composite_id.object_id;
+        return v.is_wipe_tower ? object_id - 1000 == plate_index
+                               : plate->contain_instance(object_id, v.composite_id.instance_id);
+    };
+    GLVolumePtrs visible_volumes;
+    size_t       scene_volumes = 0;
     for (const GLVolume* vol : volumes.volumes) {
-        if (!vol->is_modifier && (!thumbnail_params.parts_only || vol->composite_id.volume_id >= 0)) {
-            if (is_visible(*vol)) {
-                visible_volumes.emplace_back(const_cast<GLVolume*>(vol));
-            }
-        }
+        if (vol->is_modifier || vol->composite_id.volume_id < 0)
+            continue;  // model parts and the tower only, as upstream's thumbnails draw
+        if (!vol->is_wipe_tower)
+            ++scene_volumes;
+        if (OrcaMCP::belongs_in_plate_view(vol->printable, on_this_plate(*vol), vol->transformed_convex_hull_bounding_box()))
+            visible_volumes.emplace_back(const_cast<GLVolume*>(vol));
     }
 
     // What the camera frames when the caller did not say (a custom camera, the turntable): the drawn
@@ -610,6 +639,8 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
     if (report != nullptr) {
         report->uniform_image = is_uniform_rgba(thumbnail_data.pixels, thumbnail_data.width, thumbnail_data.height);
         report->plate_box     = plate->get_plate_box();
+        report->scene_volumes = scene_volumes;
+        report->scene_current = scene_current;
     }
     BOOST_LOG_TRIVIAL(info) << "RenderThumbnail: read " << thumbnail_data.width << "x" << thumbnail_data.height
                             << " from " << (offscreen.ok ? "offscreen framebuffer" : "current framebuffer")
