@@ -771,7 +771,9 @@ of type `OpenDialog` naming it (`open_dialog_warning`, `OrcaMCPQuit.cpp`); `get_
 titles in `open_dialogs`. A `quit_app` that could not close a dialog within 10 s leaves an `error` of
 type `QuitFailed` there until the next `quit_app`: the app is still running, its changes kept. A Slice
 All run that stopped early because another job (an arrange, an orient) was running leaves a `warning` of
-type `SliceAllEndedEarly` naming the plate, until the next Slice All.
+type `SliceAllEndedEarly` naming the plate, until the next slice, plate-list change or project. A
+slice the plate list's safety net cancelled (see probe P) is told once, as a `warning` of type
+`SliceCancelled` naming the path that freed its plate.
 
 **Endpoints with active_warnings:** `get_scene_info`, `slice_all`, `get_slicing_status`, `get_print_estimate`, `load_model`, `arrange_objects`, `auto_orient`, all transform tools, `undo`, `redo`
 
@@ -866,7 +868,7 @@ echo "M HttpServer::stop cuts a reply still being written (rel2506/04b): $(U src
 echo "N HttpServer listens on every interface (rel2506/04b):             $(U src/slic3r/GUI/HttpServer.hpp | grep -c 'acceptor(io_service, {boost::asio::ip::tcp::v4()')"
 echo "R HttpServer serves a request without reading its Origin (rel2506/04b): $( { U src/slic3r/GUI/HttpServer.hpp; U src/slic3r/GUI/HttpServer.cpp; } | grep -qi '"origin"' && echo no || echo yes)"
 echo "O priv::reset frees the prints before it stops the slice (rel2506/04c): $(U src/slic3r/GUI/Plater.cpp | awk '/^void Plater::priv::reset\(bool/{f=1} f&&/background_process\.(stop|reset)\(\)/{print "no"; exit} f&&/partplate_list\.reinit\(\)/{print "yes"; exit}')"
-echo "P a Print the slice uses is freed unchecked / init() reuses print indices / an unstarted plate is marked sliced (rel2506/04c): $(U src/slic3r/GUI/PartPlate.cpp | awk '/^int PartPlateList::destroy_print\(int/{f=1} f&&/before_free|stop/{print "no"; exit} f&&/delete it->second/{print "yes"; exit}') / $(U src/slic3r/GUI/PartPlate.cpp | awk '/^void PartPlateList::init\(\)/{f=1} f&&/m_print_index = 0;/{print "yes"; exit} f&&/^}/{print "no"; exit}') / $(U src/slic3r/GUI/Plater.cpp | awk '/int Plater::start_next_slice\(\)/{f=1} f&&/finished\(\)|post_plate_not_started/{print "no"; exit} f&&/wxQueueEvent/{print "yes"; exit}')"
+echo "P a Print the slice uses is freed unchecked / init() reuses print indices / a completion credits the current plate as posted (rel2506/04c): $(U src/slic3r/GUI/PartPlate.cpp | awk '/^int PartPlateList::destroy_print\(int/{f=1} f&&/before_free|stop/{print "no"; exit} f&&/delete it->second/{print "yes"; exit}') / $(U src/slic3r/GUI/PartPlate.cpp | awk '/^void PartPlateList::init\(\)/{f=1} f&&/m_print_index = 0;/{print "yes"; exit} f&&/^}/{print "no"; exit}') / $(U src/slic3r/GUI/Plater.cpp | grep -c 'get_current_plate()->update_slice_result_valid_state(evt.success())')"
 echo "Q restore prompt closed by a quit deletes the backup (rel2506/04c):  $(U src/slic3r/GUI/Plater.cpp | awk '/EVT_RESTORE_PROJECT, \[this/{f=1} f&&/closing_dialogs_to_quit|wxID_ABORT/{print "no"; exit} f&&/remove_all\(last\)/{print "yes"; exit}')"
 echo "S the logout handler ends dialogs with wxID_ABORT (rel2506/04c):    $(U src/slic3r/GUI/GUI_App.cpp | grep -c 'EndModal(wxID_ABORT)')"
 ```
@@ -898,24 +900,29 @@ deleted its `Print` under the slicing thread (SIGSEGV, 2026-09-26); undo and red
 freed plate; a move or an arrange that recycles empty plates reorders the plates Slice All walks by
 index. Ours stops the slice, and cancels a Slice All run, once the change is sure to happen
 (`PartPlateList::before_plate_list_change` in `delete_plate` after its checks, `move_plate_to_index`,
-`load_from_3mf_structure`, and `StackImpl::load_snapshot` right before it resets the plates), all
-through `Plater::priv::stop_slice_for_plate_list_change`, which reports a cancel only for a slice
-still in progress (`BackgroundSlicingProcess::stop`'s `cancelled_a_slice`), then repoints the process
-at the current plate. MCP's `delete_plate`, `undo` and `redo` report what it did (`slice_cancelled`).
-Under those stops is a safety net: `PartPlateList::clear`, `destroy_print` and `delete_plate` tell a
-hook the Plater installs (`set_before_free`) what they are about to free, and a slice running on it
-is stopped there with a warning naming the path, whatever the caller. A completion is credited by the
-print index it carries (`SlicingProcessCompletedEvent::print_index`) to the plate that still holds it
-(`find_plate_by_print_index`, which never matches -1, a plate with no Print), not to the plate the
-process points at when it is handled, which upstream marks. Upstream's Slice All also posts a
-"finished" for a plate it could not start (`restart_background_process` returns false when the UI
-worker is busy, as well as when the Print is already finished) and so marks a never-sliced plate
-sliced; ours credits it when its Print is finished, and otherwise ends the run on a busy worker
-(`Plater::priv::post_plate_not_started`, `OrcaMCP::plate_not_started`; `get_slicing_status` says
-`slice_run.ended_early`). And `PartPlateList::init()` no longer restarts print indices at 0, so a new
-project's plate never takes an old one's. For each "no", take upstream's and re-check that part:
-`delete_plate` and undo "add plate" during a slice, a completion queued across `new_project`, Slice
-All while an arrange runs.
+`load_from_3mf_structure`, and `Plater::priv::undo_redo_to` before the jump, whose topmost snapshot
+reads the plates' filament maps the slicing thread writes), all through
+`Plater::priv::stop_slice_for_plate_list_change`, which reports a cancel only for a slice still in
+progress (`BackgroundSlicingProcess::stop`'s `cancelled_a_slice`), then repoints the process at the
+current plate. MCP's `delete_plate`, `undo` and `redo` report what it did (`slice_cancelled`). A jump
+whose snapshot load throws leaves the plate list usable (`PartPlateList::rebuild_if_unusable`) and the
+process on a plate that exists (`recover_from_failed_jump`). Under those stops is a safety net:
+`PartPlateList::clear`, `destroy_print` and `delete_plate` tell a hook the Plater installs
+(`set_before_free`) what they are about to free, and a slice running on it is stopped there with a
+warning naming the path, whatever the caller (MCP tells it once: `SliceCancelled`). A completion is
+credited by the print index it carries (`SlicingProcessCompletedEvent::print_index`) to the plate that
+still holds it, and decided when it is handled, not when it was posted
+(`OrcaMCP::credit_completion`): marked sliced only if that plate's current Print is finished and it
+passed validation (`is_apply_result_invalid`, and not a start refused for a failed one). Upstream
+marks whichever plate the process points at by then, with whatever the event said. Upstream's Slice
+All also posts a "finished" for a plate it could not start (`restart_background_process` returns
+false when the UI worker is busy, as well as when the Print is already finished) and so marks a
+never-sliced plate sliced; ours ends the run on a busy worker (`Plater::priv::post_plate_not_started`,
+`OrcaMCP::plate_not_started`; `get_slicing_status` says `slice_run.ended_early`). And
+`PartPlateList::init()` no longer restarts print indices at 0, so a new project's plate never takes an
+old one's. For each "no" (or 0), take upstream's and re-check that part: `delete_plate` and undo "add
+plate" during a slice, a completion queued across `new_project`, Slice All after re-selecting the
+same preset, Slice All while an arrange runs.
 
 Item Q: upstream's restore prompt treats every answer but Yes as No and deletes the crashed session's
 backup, including a prompt the app itself closed to quit (its system-logout handler, and our

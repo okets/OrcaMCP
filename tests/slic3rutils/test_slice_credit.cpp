@@ -13,29 +13,57 @@
 // freed under the slicing thread crashes the app.
 
 using namespace Slic3r::GUI::OrcaMCP;
-using Outcome = PlateNotStarted::Outcome;
+namespace {
+PlateAtCompletion plate_with(bool print_finished, bool validation_ok)
+{
+    return {/*exists=*/true, /*print_empty=*/false, print_finished, validation_ok};
+}
+} // namespace
 
-TEST_CASE("a plate Slice All cannot start is sliced when its Print is finished, whatever its flag says", "[SliceCredit]")
+TEST_CASE("a completion marks its plate sliced only if, when it is handled, the plate's Print is finished and valid", "[SliceCredit]")
+{
+    CHECK(credit_completion(plate_with(/*print_finished=*/true, /*validation_ok=*/true), /*succeeded=*/true) ==
+          CompletionCredit::sliced);
+}
+
+TEST_CASE("a completion whose Print was invalidated after it was posted marks its plate not sliced", "[SliceCredit]")
+{
+    // An undo, an arrange or an edit between the post and the handling left the Print unfinished: its
+    // G-code is stale, whatever the completion said when it was posted.
+    CHECK(credit_completion(plate_with(/*print_finished=*/false, true), /*succeeded=*/true) == CompletionCredit::not_sliced);
+}
+
+TEST_CASE("a plate that failed validation is never marked sliced, though its Print is finished", "[SliceCredit]")
+{
+    // A start refused for a failed validation, or a plate whose objects no longer fit: its G-code is not
+    // one it may print.
+    CHECK(credit_completion(plate_with(true, /*validation_ok=*/false), true) == CompletionCredit::not_sliced);
+}
+
+TEST_CASE("a cancelled or failed slice marks its plate not sliced", "[SliceCredit]")
+{
+    CHECK(credit_completion(plate_with(true, true), /*succeeded=*/false) == CompletionCredit::not_sliced);
+}
+
+TEST_CASE("a completion for a plate that is gone, or has nothing to slice, marks nothing", "[SliceCredit]")
+{
+    CHECK(credit_completion(PlateAtCompletion{}, true) == CompletionCredit::none);
+    // An empty Print: no objects, or a plate loaded from a .gcode.3mf, which keeps its own flag.
+    CHECK(credit_completion({/*exists=*/true, /*print_empty=*/true, false, true}, true) == CompletionCredit::none);
+}
+
+TEST_CASE("a plate Slice All cannot start is already sliced when its Print is finished, whatever its flag says", "[SliceCredit]")
 {
     // Re-selecting the same preset, or a Tab reset, clears the plate's "sliced" flag and leaves its
-    // Print finished, with its G-code: the run credits it as sliced, as upstream's "use the previous
-    // result" does, and goes on without slicing it again.
-    const auto finished = plate_not_started(/*print_finished=*/true, /*worker_busy=*/false, /*print_index=*/9);
-    CHECK(finished.outcome == Outcome::already_sliced);
-    CHECK(finished.credit_print_index == 9);
-
-    const auto finished_while_busy = plate_not_started(true, /*worker_busy=*/true, 9); // nothing to start anyway
-    CHECK(finished_while_busy.outcome == Outcome::already_sliced);
-    CHECK(finished_while_busy.credit_print_index == 9);
+    // Print finished, with its G-code: the run goes on without slicing it again.
+    CHECK(plate_not_started(/*print_finished=*/true, /*worker_busy=*/false, /*validation_ok=*/true) == PlateNotStarted::already_sliced);
+    CHECK(plate_not_started(true, /*worker_busy=*/true, true) == PlateNotStarted::already_sliced); // nothing to start anyway
 }
 
 TEST_CASE("a plate Slice All could not start while the UI worker is busy is not sliced, and the run ends", "[SliceCredit]")
 {
-    // An arrange or an orient held the worker, so the plate's Print was never finished: the run ends
-    // there, the plate left unsliced, rather than marking it sliced with no G-code of its own.
-    const auto busy = plate_not_started(/*print_finished=*/false, /*worker_busy=*/true, 9);
-    CHECK(busy.outcome == Outcome::run_ended);
-    CHECK(busy.credit_print_index == -1);
+    // An arrange or an orient held the worker, so the plate's Print was never finished.
+    CHECK(plate_not_started(/*print_finished=*/false, /*worker_busy=*/true, true) == PlateNotStarted::run_ended);
 
     const auto ended = slice_all_ended_by_busy_worker(/*plate_index=*/2);
     CHECK(ended.plate_index == 2);
@@ -44,19 +72,36 @@ TEST_CASE("a plate Slice All could not start while the UI worker is busy is not 
     CHECK(text.find("call slice_all again") != std::string::npos);
 }
 
-TEST_CASE("a plate Slice All could not start for any other reason is skipped, not credited", "[SliceCredit]")
+TEST_CASE("a plate Slice All could not start for a failed validation or with nothing to slice is skipped", "[SliceCredit]")
 {
-    const auto skipped = plate_not_started(/*print_finished=*/false, /*worker_busy=*/false, 9);
-    CHECK(skipped.outcome == Outcome::skipped);
-    CHECK(skipped.credit_print_index == -1);
+    CHECK(plate_not_started(/*print_finished=*/true, false, /*validation_ok=*/false) == PlateNotStarted::invalid);
+    CHECK(plate_not_started(/*print_finished=*/false, /*worker_busy=*/false, true) == PlateNotStarted::skipped);
 }
 
 TEST_CASE("the log says what happens to a plate Slice All could not start", "[SliceCredit]")
 {
     // Upstream logs "already sliced, skip to next" for every refusal, a busy worker's included.
-    CHECK(plate_not_started_log(plate_not_started(true, false, 9), 1).find("plate 1 is already sliced") != std::string::npos);
-    CHECK(plate_not_started_log(plate_not_started(false, false, 9), 1).find("not sliced, skipped") != std::string::npos);
-    CHECK(plate_not_started_log(plate_not_started(false, true, 9), 1).find("the run ends here") != std::string::npos);
+    CHECK(plate_not_started_log(PlateNotStarted::already_sliced, 1).find("plate 1 is already sliced") != std::string::npos);
+    CHECK(plate_not_started_log(PlateNotStarted::invalid, 1).find("failed validation") != std::string::npos);
+    CHECK(plate_not_started_log(PlateNotStarted::skipped, 1).find("skipped") != std::string::npos);
+    CHECK(plate_not_started_log(PlateNotStarted::run_ended, 1).find("the run ends here") != std::string::npos);
+}
+
+TEST_CASE("slicing one plate is refused while a Slice All run is in progress", "[SliceCredit]")
+{
+    // It would end the run half done, with no word said.
+    CHECK_FALSE(single_plate_slice_refusal(/*run_plate_index=*/-1, 3));
+    const auto refusal = single_plate_slice_refusal(/*run_plate_index=*/1, 3);
+    REQUIRE(refusal);
+    CHECK(refusal->find("a Slice All run is in progress (plate 2 of 3)") != std::string::npos);
+    CHECK(refusal->find("wait for it") != std::string::npos);
+}
+
+TEST_CASE("a slice the safety net cancelled is told with the path that freed its plate", "[SliceCredit]")
+{
+    const std::string text = slice_cancelled_by_free_text("PartPlateList::reinit");
+    CHECK(text.find("a slice was cancelled because PartPlateList::reinit freed") != std::string::npos);
+    CHECK(text.find("call slice_all again") != std::string::npos);
 }
 
 TEST_CASE("what several plate-list changes did adds up", "[SliceCredit]")

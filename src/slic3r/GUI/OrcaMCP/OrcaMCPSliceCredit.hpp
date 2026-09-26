@@ -8,48 +8,91 @@
 // Which plate a slice's completion is credited to, and what a change to the plate list does to a
 // running slice. No wx: the tests drive it with plain values (tests/slic3rutils/test_slice_credit.cpp).
 //
-// A completion carries the print index of the Print it is about (PartPlateList's key, never reused)
-// and is credited to the plate that still holds it, or to none. The slice's own completion carries the
-// Print it started (BackgroundSlicingProcess::thread_proc), and so does the edit that cancelled it.
+// A completion carries the print index of the Print it is about (PartPlateList's key, never reused).
+// The slice's own completion carries the Print it started (BackgroundSlicingProcess::thread_proc), the
+// edit that cancelled it the same, and Slice All's "could not start this plate" the current plate's.
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
-// A plate Slice All reached but could not start (restart_background_process said no).
-struct PlateNotStarted
+// What the plate holding a completion's print index is like when the completion is handled.
+struct PlateAtCompletion
 {
-    enum class Outcome
-    {
-        already_sliced, // its Print is finished: credited as sliced, and the run goes on
-        skipped,        // nothing to start (an empty plate): not sliced, and the run goes on
-        run_ended,      // the UI worker is busy: not sliced, and the run ends here
-    };
-    Outcome outcome            = Outcome::skipped;
-    int     credit_print_index = -1; // the plate's print index when it is already sliced, else -1: none
+    bool exists         = false; // a plate still holds that print index
+    bool print_empty    = true;  // its Print has nothing to slice (no objects, or a plate from a .gcode.3mf)
+    bool print_finished = false; // its current Print is finished, with its G-code
+    bool validation_ok  = false; // it passed validation (PartPlate::is_apply_result_invalid is false), and
+                                 // the start was not refused for a failed one
 };
+enum class CompletionCredit
+{
+    none,       // leave the plate's "sliced" flag as it is
+    sliced,     // mark it sliced
+    not_sliced, // mark it not sliced
+};
+// The credit is decided when the completion is handled, never when it was posted: in between an edit,
+// an undo or an arrange may have invalidated the Print, or moved or deleted the plate, and its G-code is
+// then stale. A plate is marked sliced only when it is still there, its current Print is finished and
+// it passed validation, for a completion that succeeded; otherwise it is marked not sliced. A plate gone
+// is left alone, and so is one whose Print is empty, as upstream leaves it.
+inline CompletionCredit credit_completion(const PlateAtCompletion& plate, bool completion_succeeded)
+{
+    if (!plate.exists || plate.print_empty)
+        return CompletionCredit::none;
+    if (completion_succeeded && plate.print_finished && plate.validation_ok)
+        return CompletionCredit::sliced;
+    return CompletionCredit::not_sliced;
+}
 
+// A plate Slice All reached but could not start (restart_background_process said no): what the run
+// does. The plate itself is credited by credit_completion when the completion posted for it is handled.
+enum class PlateNotStarted
+{
+    already_sliced, // its Print is finished: the run goes on
+    invalid,        // it failed validation: not sliced, and the run goes on
+    run_ended,      // the UI worker is busy (an arrange, an orient): not sliced, and the run ends here
+    skipped,        // nothing to start (an empty plate): the run goes on
+};
 // Upstream's "use the previous result", decided by the Print rather than by the plate's "sliced" flag:
 // a Tab reset or re-selecting the same preset clears the flag and leaves the Print finished, with its
-// G-code, and such a plate is sliced. A Print not finished was not sliced. When the start was refused
-// because the UI worker is busy (an arrange, an orient) the run ends with that plate not sliced, rather
-// than marking it sliced with no G-code of its own; any other refusal skips the plate.
-inline PlateNotStarted plate_not_started(bool print_finished, bool worker_busy, int print_index)
+// G-code. A Print not finished was not sliced: on a busy worker the run ends there rather than marking
+// the plate sliced with no G-code of its own.
+inline PlateNotStarted plate_not_started(bool print_finished, bool worker_busy, bool validation_ok)
 {
+    if (!validation_ok)
+        return PlateNotStarted::invalid;
     if (print_finished)
-        return {PlateNotStarted::Outcome::already_sliced, print_index};
-    return {worker_busy ? PlateNotStarted::Outcome::run_ended : PlateNotStarted::Outcome::skipped, -1};
+        return PlateNotStarted::already_sliced;
+    return worker_busy ? PlateNotStarted::run_ended : PlateNotStarted::skipped;
 }
 
 // The log line for it, saying what happens to the plate (`plate_index`, 0-based) and the run.
-inline std::string plate_not_started_log(const PlateNotStarted& not_started, int plate_index)
+inline std::string plate_not_started_log(PlateNotStarted not_started, int plate_index)
 {
     const std::string plate = "Slice All: plate " + std::to_string(plate_index);
-    switch (not_started.outcome) {
-    case PlateNotStarted::Outcome::already_sliced: return plate + " is already sliced (its Print is finished): credited as sliced";
-    case PlateNotStarted::Outcome::skipped: return plate + " has nothing to slice: not sliced, skipped";
-    case PlateNotStarted::Outcome::run_ended:
+    switch (not_started) {
+    case PlateNotStarted::already_sliced: return plate + " is already sliced (its Print is finished); the run goes on";
+    case PlateNotStarted::invalid: return plate + " failed validation: not sliced, skipped";
+    case PlateNotStarted::run_ended:
         return plate + " could not be started, the UI worker is busy: not sliced, and the run ends here";
+    case PlateNotStarted::skipped: return plate + " has nothing to slice: skipped";
     }
     return plate;
+}
+
+// Why slice_all(all_plates=false) refuses: a Slice All run is on `run_plate_index` (0-based, -1: none).
+// Slicing one plate then would end the run half done, with no word said.
+inline std::optional<std::string> single_plate_slice_refusal(int run_plate_index, int plate_count)
+{
+    if (run_plate_index < 0)
+        return std::nullopt;
+    return "a Slice All run is in progress (plate " + std::to_string(run_plate_index + 1) + " of " + std::to_string(plate_count) +
+           "); wait for it (get_slicing_status) or cancel it in the app";
+}
+
+// A slice the safety net cancelled (frees_what_the_slice_uses), reported once by the next response.
+inline std::string slice_cancelled_by_free_text(const std::string& caller)
+{
+    return "a slice was cancelled because " + caller + " freed the plate or Print it was running on; call slice_all again";
 }
 
 // A Slice All run that ended before its last plate, for get_slicing_status and active_warnings.

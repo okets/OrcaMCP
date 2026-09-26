@@ -52,6 +52,9 @@ public:
 	// -1 for none. It is credited to the plate that still holds that print index (on_process_completed).
 	int  		print_index() const { return m_print_index; }
 	void 		set_print_index(int print_index) { m_print_index = print_index; }
+	// Orca: posted for a start refused because the plate failed validation: never credited as sliced.
+	bool 		start_refused_invalid() const { return m_start_refused_invalid; }
+	void 		set_start_refused_invalid(bool refused) { m_start_refused_invalid = refused; }
 	bool 		finished()  const { return m_status == Finished; }
 	bool 		success()   const { return m_status == Finished; }
 	bool 		cancelled() const { return m_status == Cancelled; }
@@ -70,6 +73,7 @@ private:
 	StatusType 			m_status;
 	std::exception_ptr 	m_exception;
 	int 				m_print_index = -1; // Orca: see print_index()
+	bool 				m_start_refused_invalid = false; // Orca
 };
 
 //BBS: move it to plater.hpp

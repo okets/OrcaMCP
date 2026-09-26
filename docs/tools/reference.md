@@ -1432,7 +1432,12 @@ was called again and reports it as `restored_selected_plate`. This matters becau
 that is omitted.
 
 **A plate already sliced** (its slice finished, and nothing changed it since, even if a preset was
-selected again) is counted as sliced without slicing it again.
+selected again) is counted as sliced without slicing it again. A plate is only ever counted as sliced
+if, when its slice (or skip) is taken in, its current slice is finished and it passes validation: an
+edit, an undo or an arrange in between leaves it not sliced.
+
+**`all_plates: false` during a Slice All run is refused** ("a Slice All run is in progress (plate 2
+of 3); wait for it ..."): slicing one plate would end the run half done.
 
 **Deleting a plate during the run** cancels it: the run walks the plates by position, which the
 deletion shifts. `delete_plate` says so (`slice_cancelled: true`, "the plate list changed during Slice

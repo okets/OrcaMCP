@@ -2482,6 +2482,9 @@ void OrcaMCPServer::register_builtin_tools()
                 // Suppress any dialogs during slicing initiation
                 McpDialogSuppressionGuard suppression_guard;
                 const bool slice_every_plate = all_plates && plate_count > 1;
+                if (!slice_every_plate)
+                    if (auto refusal = single_plate_slice_refusal(plater->slice_all_plate_in_progress(), plate_count))
+                        return nlohmann::json{{"status", "error"}, {"message", *refusal}};
                 // Plater::reslice() slices the *current* plate and nothing else, which is what
                 // this tool used to do under the name slice_all: with four plates and plate 4
                 // selected it left plates 1-3 with no slice result and reported success.

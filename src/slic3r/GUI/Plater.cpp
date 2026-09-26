@@ -6756,14 +6756,18 @@ struct Plater::priv
     OrcaMCP::PlateListChangeDuringSlice m_plate_list_change;
     // Orca: runs `change` and, when asked, tells what the plate-list changes it made did to a slice.
     void report_plate_list_change(OrcaMCP::PlateListChangeDuringSlice* slice_change, const std::function<void()>& change);
-    // Orca: Slice All reached a plate it could not start: credit it only if its Print is finished, and
-    // end the run when the UI worker is busy (OrcaMCPSliceCredit.hpp, plate_not_started).
-    void post_plate_not_started();
-    // Orca: the Slice All run that ended before its last plate, until the next run starts.
+    // Orca: Slice All reached a plate it could not start (`state`: update_background_process's): ends
+    // the run when the UI worker is busy, and posts the completion that credits the plate, or not, when it
+    // is handled (OrcaMCPSliceCredit.hpp, plate_not_started, credit_completion).
+    void post_plate_not_started(unsigned int state);
+    // Orca: the Slice All run that ended before its last plate; cleared by any new slice, plate-list
+    // change or project, so the plate it names is still that one.
     std::optional<OrcaMCP::SliceAllEndedEarly> m_slice_all_ended_early;
-    // Orca: the safety net under the callers' stops (PartPlateList::set_before_free).
+    // Orca: the safety net under the callers' stops (PartPlateList::set_before_free), and the slice it
+    // cancelled, told once by the next MCP response's active_warnings.
     void stop_slice_running_on(const std::vector<const PartPlate*>& plates, const std::vector<const PrintBase*>& prints,
                                const char* caller);
+    std::optional<std::string> m_slice_cancelled_by_free;
     // Orca: an undo or redo whose snapshot load threw: leaves the plate list usable and the slicing
     // process pointed at a plate that exists, then throws, saying what state the app is left in.
     [[noreturn]] void recover_from_failed_jump(const std::exception& failure);
@@ -12661,6 +12665,20 @@ bool Plater::priv::warnings_dialog()
 
 }
 
+// Orca: what a completion's credit is decided on (OrcaMCPSliceCredit.hpp, credit_completion). Finished
+// is BackgroundSlicingProcess::finished's test, on the plate's own Print and result.
+static OrcaMCP::PlateAtCompletion plate_at_completion(PartPlate* plate)
+{
+    if (plate == nullptr)
+        return {};
+    PrintBase*   print  = nullptr;
+    GCodeResult* result = nullptr;
+    plate->get_print(&print, &result, nullptr);
+    const bool empty    = print == nullptr || print->empty();
+    const bool finished = !empty && print->finished() && result != nullptr && !result->moves.empty();
+    return {/*exists=*/true, empty, finished, /*validation_ok=*/!plate->is_apply_result_invalid()};
+}
+
 OrcaMCP::PlateListChangeDuringSlice Plater::priv::stop_slice_for_plate_list_change()
 {
     const bool slicing_all = slicing_all_plates();
@@ -12673,6 +12691,7 @@ OrcaMCP::PlateListChangeDuringSlice Plater::priv::stop_slice_for_plate_list_chan
     if (change.slice_all_cancelled)
         m_slice_all = false; // the completion still to come ends the run
     m_plate_list_change |= change;
+    m_slice_all_ended_early.reset(); // the plate it names may move or go
     return change;
 }
 
@@ -12701,21 +12720,22 @@ void Plater::priv::stop_slice_running_on(const std::vector<const PartPlate*>& pl
         return;
     BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": " << caller
                                << " frees the plate or Print a slice is running on, and nothing stopped the slice first; stopping it now";
-    stop_slice_for_plate_list_change();
+    const OrcaMCP::PlateListChangeDuringSlice change = stop_slice_for_plate_list_change();
+    if (change.slice_cancelled || change.slice_all_cancelled)
+        m_slice_cancelled_by_free = OrcaMCP::slice_cancelled_by_free_text(caller);
 }
 
-void Plater::priv::post_plate_not_started()
+void Plater::priv::post_plate_not_started(unsigned int state)
 {
     PartPlate* plate       = partplate_list.get_curr_plate();
     const int  plate_index = partplate_list.get_curr_plate_index();
     int        print_index = -1;
     plate->get_print(nullptr, nullptr, &print_index);
-    // The Print decides, not the plate's flag: finished (with its G-code) is sliced, as restart_background_process
-    // found it when it would not start it again.
-    const bool                     print_finished = background_process.get_current_plate() == plate && background_process.finished();
-    const OrcaMCP::PlateNotStarted not_started    = OrcaMCP::plate_not_started(print_finished, !m_worker.is_idle(), print_index);
+    const bool                     validation_ok = (state & UPDATE_BACKGROUND_PROCESS_INVALID) == 0;
+    const OrcaMCP::PlateNotStarted not_started =
+        OrcaMCP::plate_not_started(plate_at_completion(plate).print_finished, !m_worker.is_idle(), validation_ok);
     BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": " << OrcaMCP::plate_not_started_log(not_started, plate_index);
-    if (not_started.outcome == OrcaMCP::PlateNotStarted::Outcome::run_ended) {
+    if (not_started == OrcaMCP::PlateNotStarted::run_ended) {
         m_slice_all             = false;
         m_slice_all_ended_early = OrcaMCP::slice_all_ended_by_busy_worker(plate_index);
         // Told to the user here, and to MCP by get_slicing_status and active_warnings (Plater::slice_all_ended_early).
@@ -12725,7 +12745,8 @@ void Plater::priv::post_plate_not_started()
                                                                  plate_index + 1).ToUTF8().data());
     }
     SlicingProcessCompletedEvent evt(EVT_PROCESS_COMPLETED, 0, SlicingProcessCompletedEvent::Finished, nullptr);
-    evt.set_print_index(not_started.credit_print_index);
+    evt.set_print_index(print_index); // credited, or not, when it is handled
+    evt.set_start_refused_invalid(!validation_ok);
     // Post the "complete" callback message, so that it will slice the next plate soon
     wxQueueEvent(q, evt.Clone());
 }
@@ -12808,12 +12829,21 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
     }
 
     //BBS: set the current plater's slice result to valid
-    // Orca: set it on the plate that still holds the Print this completion is about (its print index,
-    // never reused), not on the plate the process points at now: a plate switch, deletion or move may
-    // have repointed it. None once that plate is gone, or for no Print (-1) (OrcaMCPSliceCredit.hpp).
-    if (const int sliced_plate = partplate_list.find_plate_by_print_index(evt.print_index());
-        !this->background_process.empty() && sliced_plate >= 0)
-        partplate_list.get_plate(sliced_plate)->update_slice_result_valid_state(evt.success());
+    // Orca: on the plate that still holds the Print this completion is about (its print index, never
+    // reused), not on the plate the process points at now, and decided now, not when it was posted: the
+    // plate is marked sliced only if its current Print is finished and it passed validation
+    // (OrcaMCPSliceCredit.hpp, credit_completion).
+    {
+        const int  credited_index = partplate_list.find_plate_by_print_index(evt.print_index());
+        PartPlate* credited       = credited_index >= 0 ? partplate_list.get_plate(credited_index) : nullptr;
+        OrcaMCP::PlateAtCompletion at_completion = plate_at_completion(credited);
+        at_completion.validation_ok              = at_completion.validation_ok && !evt.start_refused_invalid();
+        switch (OrcaMCP::credit_completion(at_completion, evt.success())) {
+        case OrcaMCP::CompletionCredit::sliced: credited->update_slice_result_valid_state(true); break;
+        case OrcaMCP::CompletionCredit::not_sliced: credited->update_slice_result_valid_state(false); break;
+        case OrcaMCP::CompletionCredit::none: break;
+        }
+    }
 
     //BBS: update the action button according to the current plate's status
     bool ready_to_slice = !this->partplate_list.get_curr_plate()->is_slice_result_valid();
@@ -19484,6 +19514,7 @@ bool Plater::is_multi_extruder_ams_empty()
 void Plater::reslice()
 {
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", Line %1%: enter, process_completed_with_error=%2%")%__LINE__ %p->process_completed_with_error;
+    p->m_slice_all_ended_early.reset(); // Orca: a new slice: the plate it named may be sliced now
     // There is "invalid data" button instead "slice now"
     if (p->process_completed_with_error == p->partplate_list.get_curr_plate_index())
     {
@@ -19561,7 +19592,7 @@ void Plater::reslice()
     if ((!result) && p->m_slice_all && (p->m_cur_slice_plate < (p->partplate_list.get_plate_count() - 1)))
     {
         //slice next
-        p->post_plate_not_started(); // Orca: credited only if it really is sliced, and logs what happens
+        p->post_plate_not_started(state); // Orca: credited only if it really is sliced, and logs what happens
         p->m_is_slicing = true;
         if (p->m_cur_slice_plate == 0)
             reset_gcode_toolpaths();
@@ -19704,7 +19735,7 @@ int Plater::start_next_slice()
     if (!result)
     {
         //slice next
-        p->post_plate_not_started(); // Orca: credited only if it really is sliced, and logs what happens
+        p->post_plate_not_started(state); // Orca: credited only if it really is sliced, and logs what happens
     }
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": restart_background_process returns %1%")%result;
 
@@ -22280,6 +22311,13 @@ OrcaMCP::PlateListChangeDuringSlice Plater::stop_slice_for_plate_list_change() {
 const OrcaMCP::SliceAllEndedEarly* Plater::slice_all_ended_early() const
 {
     return p->m_slice_all_ended_early ? &*p->m_slice_all_ended_early : nullptr;
+}
+int Plater::slice_all_plate_in_progress() const { return p->slicing_all_plates() ? p->m_cur_slice_plate : -1; }
+std::optional<std::string> Plater::take_slice_cancelled_by_free()
+{
+    std::optional<std::string> note;
+    note.swap(p->m_slice_cancelled_by_free);
+    return note;
 }
 
 //BBS: update slicing context

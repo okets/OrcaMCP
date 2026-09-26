@@ -2,6 +2,7 @@
 #define slic3r_Plater_hpp_
 
 #include <functional>
+#include <optional>
 #include <map>
 #include <memory>
 #include <string>
@@ -844,6 +845,10 @@ public:
     OrcaMCP::PlateListChangeDuringSlice stop_slice_for_plate_list_change();
     // Orca: the Slice All run that ended before its last plate (the UI worker was busy), until the next run.
     const OrcaMCP::SliceAllEndedEarly* slice_all_ended_early() const; // nullptr: none
+    // Orca: the plate a Slice All run is on (0-based), -1 when none runs.
+    int slice_all_plate_in_progress() const;
+    // Orca: a slice the safety net cancelled, told once: taking it clears it.
+    std::optional<std::string> take_slice_cancelled_by_free();
     //BBS: update slicing context
     void update_slicing_context_to_current_partplate();
     //BBS: show object info

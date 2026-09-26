@@ -392,6 +392,9 @@ nlohmann::json get_active_warnings_json(Plater* plater) {
         warnings_array.push_back(std::move(*quit_failed));
     if (const SliceAllEndedEarly* ended = plater != nullptr ? plater->slice_all_ended_early() : nullptr)
         warnings_array.push_back({{"level", "warning"}, {"message", slice_all_ended_early_text(*ended)}, {"type", "SliceAllEndedEarly"}});
+    // Told once, by the first response after the safety net cancelled a slice.
+    if (auto cancelled = plater != nullptr ? plater->take_slice_cancelled_by_free() : std::nullopt)
+        warnings_array.push_back({{"level", "warning"}, {"message", *cancelled}, {"type", "SliceCancelled"}});
 
     result["count"] = warnings_array.size();
     result["warnings"] = warnings_array;
