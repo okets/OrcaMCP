@@ -87,9 +87,14 @@ file(TO_NATIVE_PATH "${SLIC3R_RESOURCES_DIR}" SLIC3R_RESOURCES_DIR_WIN)
 # Copy bridge scripts from scripts/ to resources/scripts/ for app bundle
 # This ensures the canonical version in scripts/ is always used. orcamcp_tools.json is the tool
 # list the bridge serves while the app is down, generated from the app's own tool registry.
-file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/scripts/orcamcp-bridge.py"
-          "${CMAKE_CURRENT_SOURCE_DIR}/scripts/orcamcp_tools.json"
-     DESTINATION "${SLIC3R_RESOURCES_DIR}/scripts")
+# configure_file rather than file(COPY): it makes each source a configure dependency, so the next
+# build re-runs CMake and re-copies after either file changes. file(COPY) copied only when CMake
+# happened to be reconfigured, and a regenerated tool list stayed stale in the bundle (and in the
+# ~/.orcamcp/ copy MCPClientConfig makes from it).
+foreach(_orcamcp_bridge_file orcamcp-bridge.py orcamcp_tools.json)
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/scripts/${_orcamcp_bridge_file}"
+                   "${SLIC3R_RESOURCES_DIR}/scripts/${_orcamcp_bridge_file}" COPYONLY)
+endforeach()
 
 if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   message(STATUS "No build type selected, default to Release")
