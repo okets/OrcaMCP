@@ -10,36 +10,19 @@ framework disconnects.
 Run from the repo root:  python3 -m unittest discover -s scripts/tests -t scripts
 """
 
-import importlib.util
-import json
 import os
 import sys
 import tempfile
 import unittest
 from unittest import mock
 
-REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-BRIDGE_PATH = os.path.join(REPO_ROOT, "scripts", "orcamcp-bridge.py")
-TOOLS_FILE = os.path.join(REPO_ROOT, "scripts", "orcamcp_tools.json")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from bridge_test_support import BRIDGE_PATH, load_bridge, load_manifest  # noqa: E402
 
 
-def load_bridge():
-    """The bridge's filename has a hyphen, so it cannot be imported by name."""
-    spec = importlib.util.spec_from_file_location("orcamcp_bridge", BRIDGE_PATH)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def load_manifest():
-    with open(TOOLS_FILE, encoding="utf-8") as f:
-        return json.load(f)
-
-
-def simulated_live_response(manifest):
+def simulated_live_response(bridge, manifest):
     """What the app's tools/list answers, if it is the build orcamcp_tools.json was generated from."""
-    tools = [{"name": t["name"], "description": t["description"], "inputSchema": t["inputSchema"]}
-             for t in manifest["server_tools"]]
+    tools = [bridge.list_entry(t) for t in manifest["server_tools"]]
     return {"jsonrpc": "2.0", "id": 1, "result": {"tools": tools}}
 
 
@@ -52,7 +35,7 @@ class OfflineAndOnlineListsTests(unittest.TestCase):
         self.bridge = load_bridge()
         self.manifest = load_manifest()
         self.offline = self.bridge.get_full_tools_list()
-        self.online = self.bridge.adopt_live_tools(simulated_live_response(self.manifest))["result"]["tools"]
+        self.online = self.bridge.adopt_live_tools(simulated_live_response(self.bridge, self.manifest))["result"]["tools"]
 
     def test_offline_and_online_lists_have_the_same_names_and_descriptions(self):
         self.assertEqual(fingerprint(self.offline), fingerprint(self.online))

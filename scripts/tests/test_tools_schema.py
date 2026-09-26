@@ -11,24 +11,12 @@ Run from the repo root:  python3 -m unittest discover -s scripts/tests -t script
 
 import json
 import os
+import sys
 import unittest
 import urllib.request
 
-SCRIPTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TOOLS_FILE = os.path.join(SCRIPTS, "orcamcp_tools.json")
-
-# CLAUDE.md's tool table, in the registry's order (OrcaMCPServer::ToolCategory).
-CATEGORIES = {
-    "Scene", "Models", "Transforms", "Plates", "Config", "Per-Object", "Layer Ranges",
-    "Filaments & colour", "Painting", "Slicing", "Visualization", "Printers", "Adaptive",
-    "History", "Info",
-}
-MAX_SUMMARY_LENGTH = 40  # OrcaMCPServer::max_summary_length
-
-
-def load_manifest():
-    with open(TOOLS_FILE, encoding="utf-8") as f:
-        return json.load(f)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from bridge_test_support import load_manifest  # noqa: E402
 
 
 def all_tools(manifest):
@@ -69,11 +57,12 @@ class ManifestShapeTests(unittest.TestCase):
                 self.assertEqual(names, sorted(names))
 
     def test_every_tool_has_a_category_a_summary_a_description_and_a_schema(self):
+        # Which categories exist and how long a summary may be are the registry's rules, checked
+        # by test_mcp_tool_list.cpp; here only that every field the bridge and agents read is there.
         for tool in all_tools(self.manifest):
             with self.subTest(tool=tool["name"]):
-                self.assertIn(tool["category"], CATEGORIES)
+                self.assertTrue(tool["category"])
                 self.assertTrue(tool["summary"])
-                self.assertLessEqual(len(tool["summary"]), MAX_SUMMARY_LENGTH)
                 self.assertTrue(tool["description"])
                 self.assertEqual(tool["inputSchema"]["type"], "object")
                 self.assertIn("properties", tool["inputSchema"])

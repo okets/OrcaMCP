@@ -11,7 +11,6 @@ unreachable from a session whose running server had them (when that list was a h
 tools_schema.py).
 """
 
-import importlib.util
 import io
 import json
 import os
@@ -20,19 +19,8 @@ import unittest
 from contextlib import redirect_stdout
 from unittest import mock
 
-REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-BRIDGE_PATH = os.path.join(REPO_ROOT, "scripts", "orcamcp-bridge.py")
-
-
-def load_bridge():
-    """The bridge's filename has a hyphen, so it cannot be imported by name."""
-    scripts_dir = os.path.join(REPO_ROOT, "scripts")
-    if scripts_dir not in sys.path:
-        sys.path.insert(0, scripts_dir)
-    spec = importlib.util.spec_from_file_location("orcamcp_bridge", BRIDGE_PATH)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from bridge_test_support import load_bridge  # noqa: E402
 
 
 class ListChangedCapabilityTests(unittest.TestCase):
