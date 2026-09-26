@@ -11,6 +11,9 @@
 #include "libslic3r/PresetBundle.hpp"
 
 #include <algorithm>
+#include <boost/algorithm/string/classification.hpp>
+#include <boost/algorithm/string/split.hpp>
+#include <boost/algorithm/string/predicate.hpp>
 #include <cctype>
 #include <memory>
 
@@ -566,11 +569,64 @@ bool OrcaMCPPresetConfigUtils::WriteProjectFilamentColor(size_t             conf
     return true;
 }
 
-const char* printer_switch_colors_source(bool remember_printer_config, bool printer_changes, bool has_saved_colors)
+namespace {
+
+// upstream's colour for a slot update_selections has no saved colour for (PresetBundle.cpp).
+constexpr const char* kPaddedFilamentColor = "#26A69A";
+
+bool same_color(const std::vector<std::string>& colors, size_t i, const std::string& color)
 {
-    if (!remember_printer_config || !printer_changes)
-        return "kept";
-    return has_saved_colors ? "remembered" : "default";
+    return i < colors.size() && boost::algorithm::iequals(colors[i], color);
+}
+
+// The plate's colour per slot, as project_config holds it.
+std::vector<std::string> project_filament_colors()
+{
+    const auto* colors = wxGetApp().preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour");
+    return colors != nullptr ? colors->values : std::vector<std::string>();
+}
+
+// The colours last saved for `printer`, split the way PresetBundle::update_selections splits them.
+std::vector<std::string> saved_filament_colors(const std::string& printer)
+{
+    const std::string joined = wxGetApp().app_config->get_printer_setting(printer, "filament_colors");
+    std::vector<std::string> colors;
+    if (!joined.empty())
+        boost::algorithm::split(colors, joined, boost::algorithm::is_any_of(","));
+    return colors;
+}
+
+} // namespace
+
+std::vector<std::string> printer_switch_color_sources(const std::vector<std::string>& before,
+                                                      const std::vector<std::string>& after,
+                                                      const std::vector<std::string>& saved)
+{
+    std::vector<std::string> sources;
+    for (size_t i = 0; i < after.size(); ++i) {
+        if (same_color(before, i, after[i]))
+            sources.emplace_back("unchanged");
+        else if (same_color(saved, i, after[i]))
+            sources.emplace_back("remembered");
+        else if (i >= saved.size() && boost::algorithm::iequals(after[i], kPaddedFilamentColor))
+            sources.emplace_back("default");
+        else
+            sources.emplace_back("other");
+    }
+    return sources;
+}
+
+std::string summarize_color_sources(const std::vector<std::string>& sources)
+{
+    std::string shared;
+    for (const std::string& source : sources) {
+        if (source == "unchanged")
+            continue;
+        if (!shared.empty() && shared != source)
+            return "mixed";
+        shared = source;
+    }
+    return shared.empty() ? "unchanged" : shared;
 }
 
 void OrcaMCPPresetConfigUtils::SelectPreset(const std::string& type, const std::string& presetName) {
@@ -593,20 +649,28 @@ nlohmann::json OrcaMCPPresetConfigUtils::SelectPrinterPreset(const std::string& 
         return {{"status", "error"}, {"message", "No printer preset named '" + name + "'"}};
     const std::string target = preset->name;
 
-    // Decided before the switch: afterwards the selected printer is the new one.
-    AppConfig*        app_config    = wxGetApp().app_config;
-    const char*       colors_source = printer_switch_colors_source(
-        app_config->get_bool("remember_printer_config"), bundle->printers.get_selected_preset_name() != target,
-        !app_config->get_printer_setting(target, "filament_colors").empty());
+    // Read before the switch: the colours it may replace, and the ones saved for the new printer
+    // (a later export_selections overwrites the saved list with whatever the plate then shows).
+    const std::vector<std::string> before = project_filament_colors();
+    const std::vector<std::string> saved  = saved_filament_colors(target);
 
     SelectPreset("printer", target);
     if (bundle->printers.get_selected_preset_name() != target)
         return {{"status", "error"}, {"message", "Failed to select printer preset '" + target + "'"}};
 
+    const std::vector<std::string> after   = project_filament_colors();
+    const std::vector<std::string> sources = printer_switch_color_sources(before, after, saved);
+
+    nlohmann::json filaments = OrcaMCP::describe_filaments()["filaments"];
+    for (size_t i = 0; i < filaments.size() && i < sources.size(); ++i) {
+        filaments[i]["color_source"] = sources[i];
+        if (i < before.size())
+            filaments[i]["previous_color"] = before[i];
+    }
     return {{"status", "success"},
             {"printer", target},
-            {"colors_source", colors_source},
-            {"filaments", OrcaMCP::describe_filaments()["filaments"]}};
+            {"colors_source", summarize_color_sources(sources)},
+            {"filaments", std::move(filaments)}};
 }
 
 bool OrcaMCPPresetConfigUtils::SelectFilamentSlotPreset(int slot, const std::string& presetName, std::string& error)

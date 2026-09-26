@@ -914,10 +914,11 @@ void OrcaMCPServer::register_builtin_tools()
         "Select a printer, filament, or print preset by name. With type 'filament', pass slot "
         "(1-based) to set just that filament slot, like the sidebar filament combo; without slot "
         "the filament tab switches whichever slot it is on and dirty preset changes are discarded. "
-        "With type 'printer', the response lists the resulting filaments (slot, preset, colour) and "
-        "colors_source: 'remembered' when the switch applied the colours last saved for that printer "
-        "(Remember printer configuration, on by default), 'default' when none were saved and every "
-        "slot took the default colour, 'kept' when the colours did not change.",
+        "With type 'printer', the response lists the resulting filaments (slot, preset, colour, "
+        "previous_color) and, per slot, color_source as observed across the switch: 'unchanged', "
+        "'remembered' (the colour last saved for that printer, applied by Remember printer configuration, "
+        "on by default), 'default' (#26A69A for a slot nothing was saved for) or 'other'. colors_source "
+        "sums them up, 'mixed' when they differ.",
         {
             {"type", "object"},
             {"properties", {

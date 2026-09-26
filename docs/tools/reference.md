@@ -943,14 +943,20 @@ Switch to a different preset.
 {
   "status": "success",
   "printer": "C5P",
-  "colors_source": "remembered",
-  "filaments": [{"slot": 1, "preset": "Flashforge PETG Pro @FF C5P", "type": "PETG", "color": "#1A1A1A", "is_mixed": false}]
+  "colors_source": "mixed",
+  "filaments": [
+    {"slot": 1, "preset": "Flashforge PETG Pro @FF C5P", "type": "PETG", "color": "#1A1A1A",
+     "previous_color": "#D4AF37", "color_source": "remembered", "is_mixed": false},
+    {"slot": 2, "preset": "Flashforge PLA Silk @FF C5P", "type": "PLA", "color": "#26A69A",
+     "color_source": "default", "is_mixed": false}
+  ]
 }
 ```
-`colors_source` is `remembered` (the colours last saved for that printer), `default` (none were saved,
-so every slot took `#26A69A`) or `kept` (the printer did not change, or the preference is off).
-`set_filament_color` and `select_preset {slot}` save the colours for the selected printer, so a
-switch away and back returns them. An unknown printer name is an error.
+Each slot's `color_source` is observed, by comparing the colours before and after the switch:
+`unchanged`, `remembered` (the colour last saved for that printer), `default` (`#26A69A`, upstream's
+fill for a slot nothing was saved for) or `other`. `colors_source` sums them up: `unchanged`, the
+one source every changed slot shares, or `mixed`. `set_filament_color` and `select_preset {slot}`
+save the colours for the selected printer, so a switch away and back returns them. An unknown printer name is an error.
 
 ---
 

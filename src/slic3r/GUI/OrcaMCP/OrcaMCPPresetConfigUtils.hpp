@@ -29,12 +29,19 @@ struct PresetQuery
 // An empty filter matches everything, including a preset with no vendor at all.
 bool preset_query_matches(const std::string& name, const std::string& vendor, const PresetQuery& query);
 
-// Where the plate's filament colours come from after a switch of printer preset. With
-// remember_printer_config on (the default), Tab::select_preset runs PresetBundle::update_selections,
-// which replaces them with the colours last saved for the new printer ("remembered") or, when none
-// were saved, upstream's #26A69A for every slot ("default"). Otherwise, and when the printer does not
-// change, they are kept ("kept"). Pure.
-const char* printer_switch_colors_source(bool remember_printer_config, bool printer_changes, bool has_saved_colors);
+// Where each slot's colour came from in a switch of printer preset, observed by comparing the
+// plate's colours `before` and `after` it against `saved`, the colours last saved for the new printer
+// (app config, printer setting filament_colors). With Remember printer configuration on,
+// Tab::select_preset runs PresetBundle::update_selections, which replaces the colours with `saved`
+// and pads a slot it does not cover with #26A69A. Per slot: "unchanged" (the colour it had before),
+// "remembered" (the saved one), "default" (the padding), or "other". Case-insensitive. Pure.
+std::vector<std::string> printer_switch_color_sources(const std::vector<std::string>& before,
+                                                      const std::vector<std::string>& after,
+                                                      const std::vector<std::string>& saved);
+
+// The switch as one word: "unchanged" when no slot changed, the one source every changed slot shares
+// ("remembered", "default" or "other"), or "mixed". Pure.
+std::string summarize_color_sources(const std::vector<std::string>& sources);
 
 // How many presets of one type the query matched, and how many of them the response carries.
 // They differ only when the cap truncated the list -- and the true total is the number a caller
@@ -179,9 +186,10 @@ public:
                                           std::string& error);
     static void SelectPreset(const std::string& type, const std::string& presetName);
     // Switches the printer preset as SelectPreset does and reports what the switch left in the plate's
-    // filament slots, which upstream may have replaced (see printer_switch_colors_source):
-    //   {"status": "success", "printer": <name>, "colors_source": "remembered"|"default"|"kept",
-    //    "filaments": [{slot, preset, type, color, ...}]}
+    // filament slots, which upstream may have replaced (see printer_switch_color_sources):
+    //   {"status": "success", "printer": <name>,
+    //    "colors_source": "unchanged"|"remembered"|"default"|"other"|"mixed",
+    //    "filaments": [{slot, preset, type, color, color_source, previous_color, ...}]}
     // or {"status": "error", "message": ...} when no printer preset has that name or it did not take.
     // Main thread only.
     static nlohmann::json SelectPrinterPreset(const std::string& name);
