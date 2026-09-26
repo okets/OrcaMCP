@@ -853,7 +853,8 @@ Item O: upstream's `Plater::priv::reset` calls `partplate_list.reinit()`, which 
 `Print` -- the one the slicing thread is using too -- and repoints the background process at a new
 one, before `background_process.reset()` stops the slice. The stop then cancelled the new `Print`
 while the thread ran on in freed memory: quit, New Project (Cmd-N skips the menu's "not while
-slicing" check) or Open during a slice crashed or froze the app (2026-09-26, release and dev builds).
+slicing" check) or Open during a slice crashed the app, SIGSEGV on the slicing thread (2026-09-26,
+release and dev builds).
 Ours stops the slice just before `reinit()`. On "no", take upstream's order and re-check a quit during
 a tree-support slice.
 
