@@ -42,6 +42,7 @@ add_executable(${_TEST_NAME}_tests
     test_first_layer_plan.cpp
     test_filament_model.cpp
     test_mcp_tool_list.cpp
+    test_mcp_model_load.cpp
     ../fff_print/test_helpers.cpp
     )
 

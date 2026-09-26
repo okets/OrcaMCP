@@ -183,6 +183,7 @@
 #include "FilamentMapDialog.hpp"
 #include "CloneDialog.hpp"
 #include "PurgeModeDialog.hpp"
+#include "OrcaMCP/OrcaMCPModelLoad.hpp"
 
 #include "DeviceCore/DevFilaSystem.h"
 #include "DeviceCore/DevManager.h"
@@ -15262,7 +15263,7 @@ int Plater::new_project(bool skip_confirm, bool silent, const wxString& project_
     return wxID_YES;
 }
 
-LoadType determine_load_type(std::string filename, std::string override_setting = "");
+LoadType determine_load_type(std::string filename, bool scene_has_objects = false);
 
 // BBS: FIXME, missing resotre logic
 void Plater::load_project(wxString const& filename2,
@@ -17539,28 +17540,23 @@ bool Plater::load_files(const wxArrayString& filenames)
     return res;
 }
 
-LoadType determine_load_type(std::string filename, std::string override_setting)
+// Orca MCP: the setting-vs-scene decision is OrcaMCP::choose_3mf_load (unit-tested). Under MCP it is
+// always geometry: only load_model reaches this (load_project loads with "<silence>"), and opening
+// the file as a project would reset the scene, apply its embedded presets and rename the project.
+LoadType determine_load_type(std::string filename, bool scene_has_objects)
 {
-    std::string setting;
+    using OrcaMCP::ThreeMfLoad;
+    const bool        automated = is_mcp_dialog_suppression_enabled();
+    const ThreeMfLoad decision  = OrcaMCP::choose_3mf_load(wxGetApp().app_config->get(SETTING_PROJECT_LOAD_BEHAVIOUR),
+                                                           scene_has_objects, automated);
 
-    if (override_setting != "") {
-        setting = override_setting;
-    } else {
-        setting = wxGetApp().app_config->get(SETTING_PROJECT_LOAD_BEHAVIOUR);
-    }
-
-    if (setting == OPTION_PROJECT_LOAD_BEHAVIOUR_LOAD_GEOMETRY) {
+    if (decision == ThreeMfLoad::ImportGeometry) {
+        if (automated)
+            add_mcp_suppressed_message("The 3MF was imported as geometry only: its printer, filament and process presets "
+                                       "were not applied and the project name is unchanged. Use load_project to open it "
+                                       "as a project.");
         return LoadType::LoadGeometry;
-    } else if (setting == OPTION_PROJECT_LOAD_BEHAVIOUR_ALWAYS_ASK) {
-        // MCP automation: this dialog is modal and would block the GUI thread while the MCP
-        // handler waits. Only load_model reaches it (load_project loads silently), so import
-        // the geometry, which is what that tool means and never discards the current project.
-        if (is_mcp_dialog_suppression_enabled()) {
-            add_mcp_suppressed_message("Project load behaviour prompt suppressed: the 3MF was imported as geometry only. "
-                                       "Use load_project to open it as a full project.");
-            return LoadType::LoadGeometry;
-        }
-
+    } else if (decision == ThreeMfLoad::AskUser) {
         ProjectDropDialog dlg(filename);
         if (dlg.ShowModal() == wxID_OK) {
             int      choice    = dlg.get_action();
@@ -17586,8 +17582,7 @@ bool Plater::open_3mf_file(const fs::path &file_path)
     }
 
     bool not_empty_plate = !model().objects.empty();
-    bool load_setting_ask_when_relevant = wxGetApp().app_config->get(SETTING_PROJECT_LOAD_BEHAVIOUR) == OPTION_PROJECT_LOAD_BEHAVIOUR_ASK_WHEN_RELEVANT;
-    LoadType load_type = determine_load_type(filename, (not_empty_plate && load_setting_ask_when_relevant) ? OPTION_PROJECT_LOAD_BEHAVIOUR_ALWAYS_ASK : "");
+    LoadType load_type = determine_load_type(filename, not_empty_plate);
 
     if (load_type == LoadType::Unknown) return false;
 
