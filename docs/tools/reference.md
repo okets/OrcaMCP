@@ -1505,6 +1505,7 @@ explicit camera be given relative to the plate's front-left corner.
   "objects_in_frame": [
     {"object_index": 8, "name": "Top Frame-SOLID-2", "screen_bbox": [206, 184, 437, 315], "clipped": false}
   ],
+  "scene_current": true,
   "uniform_image": false,
   "overlays": {"outline": true, "grid": true, "origin": true, "labels": true, "excluded": true},
   "camera": {"preset": "low", "fit": {"object_index": 8}, "input_frame": "bed_mm",
@@ -1520,7 +1521,9 @@ explicit camera be given relative to the plate's front-left corner.
   `get_scene_info`), or they were drawn and the camera looked elsewhere (with the plate's extent to
   aim at). Check it before reading the image.
 - Pictures are drawn from the 3D scene whichever tab the app is showing, and the tab is left as it
-  is. Before v2.5.0.6 they were drawn from the canvas on screen: after a slice switched the app to
+  is. `scene_current` says whether that scene was up to date: `false`, with a `warning` line, means
+  the hidden 3D view could not be refreshed (possible on Linux, where a hidden canvas may refuse
+  its GL context), so the picture may not show the latest changes. Before v2.5.0.6 they were drawn from the canvas on screen: after a slice switched the app to
   Preview, every render came back blank with "no printable volumes".
 - A preset or `fit` frames the whole box it fits, height included, with a little room on every
   side, so a fitted object is never `clipped`. Before v2.5.0.6 the zoom ignored the height and was

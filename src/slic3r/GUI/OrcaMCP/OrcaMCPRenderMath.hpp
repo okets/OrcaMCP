@@ -89,6 +89,10 @@ struct RenderScene
     bool   current       = true;  // false: the hidden 3D view could not be brought up to date
 };
 
+// {"scene_current": bool}, and a "warning" line when it is false: the fields every render reports,
+// blank or not, since a picture of a stale scene is a picture of the wrong thing.
+nlohmann::json render_scene_json(const RenderScene& scene);
+
 // Why a picture came out as one flat colour: the 3D view had no model volumes at all, none of them
 // were on this plate (`drawn` is 0), or they were drawn and the camera looked elsewhere.
 // `plate_box` is bed mm.

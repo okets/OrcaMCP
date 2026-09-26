@@ -205,6 +205,21 @@ bool belongs_in_plate_view(bool printable, bool on_plate, const BoundingBoxf3& v
     return printable && on_plate && volume_box.max.z() > 0.;
 }
 
+namespace {
+
+const char* k_stale_scene_text = "the hidden 3D view could not be refreshed, so its scene may be out of date; showing the "
+                                 "Prepare tab once refreshes it";
+
+} // namespace
+
+nlohmann::json render_scene_json(const RenderScene& scene)
+{
+    nlohmann::json out = {{"scene_current", scene.current}};
+    if (!scene.current)
+        out["warning"] = std::string("This picture may not show the latest changes: ") + k_stale_scene_text + ".";
+    return out;
+}
+
 std::string uniform_image_hint(const RenderScene& scene, size_t drawn, int plate_index, const BoundingBoxf3& plate_box)
 {
     char buf[320];
@@ -220,7 +235,7 @@ std::string uniform_image_hint(const RenderScene& scene, size_t drawn, int plate
                       drawn, plate_index, plate_index, plate_box.min.x(), plate_box.max.x(), plate_box.min.y(), plate_box.max.y());
     std::string hint = buf;
     if (!scene.current)
-        hint += " (the hidden 3D view could not be refreshed, so its scene may be out of date; showing the Prepare tab once refreshes it)";
+        hint += std::string(" (") + k_stale_scene_text + ")";
     return hint;
 }
 

@@ -249,3 +249,17 @@ TEST_CASE("the blank-picture hint names what was missing", "[RenderMath]")
     CHECK(stale.find("could not be refreshed") != std::string::npos);
     CHECK(looked_away.find("could not be refreshed") == std::string::npos);
 }
+
+TEST_CASE("every render says whether the 3D view it drew was current", "[RenderMath]")
+{
+    // A picture of a stale scene is not blank, so the hint beside uniform_image never shows; the
+    // render has to say so itself.
+    const nlohmann::json current = render_scene_json({3, true});
+    CHECK(current["scene_current"] == true);
+    CHECK_FALSE(current.contains("warning"));
+
+    const nlohmann::json stale = render_scene_json({3, false});
+    CHECK(stale["scene_current"] == false);
+    REQUIRE(stale.contains("warning"));
+    CHECK(stale["warning"].get<std::string>().find("could not be refreshed") != std::string::npos);
+}

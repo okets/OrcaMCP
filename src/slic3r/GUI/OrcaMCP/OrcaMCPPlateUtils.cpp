@@ -141,8 +141,9 @@ static std::string save_image_to_file(const wxImage& image, int view_index, bool
 
 // The numbers that make a picture checkable without looking at it. `frame` says which coordinates
 // everything is in; `plate_origin` lets an agent convert plate-local numbers itself;
-// `objects_in_frame` names what is visible and where in the image; `uniform_image` says the
-// picture shows nothing, and `hint` says why -- the case that cost fifteen blind renders once.
+// `objects_in_frame` names what is visible and where in the image; `scene_current` says whether the
+// 3D view it was drawn from was up to date; `uniform_image` says the picture shows nothing, and
+// `hint` says why -- the case that cost fifteen blind renders once.
 static void append_render_report(nlohmann::json& entry, const RenderReport& report, const OrcaMCP::CameraFrame& camera, int plate_index)
 {
     const BoundingBoxf3& plate = report.plate_box;
@@ -160,6 +161,7 @@ static void append_render_report(nlohmann::json& entry, const RenderReport& repo
                             {"clipped", sb.clipped}});
     }
     entry["objects_in_frame"] = in_frame;
+    entry.update(OrcaMCP::render_scene_json(report.scene));
     entry["uniform_image"]    = report.uniform_image;
     if (report.uniform_image)
         entry["hint"] = OrcaMCP::uniform_image_hint(report.scene, report.drawn.size(), plate_index, plate);
