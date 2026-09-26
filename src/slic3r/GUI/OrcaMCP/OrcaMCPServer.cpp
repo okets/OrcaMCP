@@ -8,6 +8,7 @@
 #include "OrcaMCPSliceEstimate.hpp"
 #include "OrcaMCPServerInfo.hpp"
 #include "OrcaMCPModelLoad.hpp"
+#include "OrcaMCPRequestGuard.hpp"
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Plater.hpp"
@@ -295,7 +296,7 @@ std::shared_ptr<HttpServer::Response> OrcaMCPServer::handle_request(
     const std::string& body)
 {
     // Only handle /mcp endpoint
-    if (url.find("/mcp") == std::string::npos) {
+    if (!is_mcp_url(url)) {
         return nullptr;  // Not for us
     }
 

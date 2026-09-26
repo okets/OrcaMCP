@@ -351,6 +351,7 @@ gh release upload v2.3.2.10 ./path/to/new/artifact.exe -R okets/OrcaMCP
 | `src/slic3r/GUI/HttpServer.cpp` | POST body reading, ResponseJson, the stop that waits for handlers and lets replies out |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPMainThreadGate.cpp` | How a call hands work to the main thread and waits, and how quitting releases it (see "Threading Model"; unit-tested in `tests/slic3rutils/test_mcp_shutdown.cpp`) |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPLoginServer.cpp` | Where the cloud login's callback is answered: a second port of the MCP server, on its thread (unit-tested in `tests/slic3rutils/test_http_server.cpp`) |
+| `src/slic3r/GUI/OrcaMCP/OrcaMCPRequestGuard.cpp` | Which requests the server answers: no web page's and no DNS-rebound one on `/mcp`, login callbacks only where a login listens (see "Security"; unit-tested in `tests/slic3rutils/test_mcp_request_guard.cpp`) |
 | `src/slic3r/Utils/ThreadCancel.cpp` | The per-request cancel check a quit applies to blocking network calls on the HTTP thread (unit-tested in `tests/slic3rutils/test_thread_cancel.cpp`) |
 | `src/slic3r/GUI/GUI_App.cpp` | MCP route registration, HTTP server startup, and the shutdown order (`stop_http_server`) |
 | `scripts/orcamcp-bridge.py` | stdio-to-HTTP bridge for Claude Code |
@@ -499,6 +500,30 @@ that call in flight waited forever: on 2026-09-26 `quit_app`, with a script poll
   care.
 
 Both servers listen on **127.0.0.1 only**: MCP has no authentication and can start prints.
+
+### Security: web pages never reach MCP
+
+Loopback alone does not keep out the browser, which runs on this machine too: any site could POST a
+tool call to `http://localhost:13618/mcp` as a plain-text request (no CORS preflight) and start a
+print. So every request passes `OrcaMCP::app_request_guard` (`OrcaMCPRequestGuard.cpp`, installed
+with `HttpServer::set_request_guard` in `GUI_App::start_http_server`) before any handler sees it:
+
+- **An `/mcp` request carrying an `Origin` header is refused**: HTTP 403, JSON-RPC **-32003**. Browsers
+  send `Origin` on every cross-origin fetch and form post; the bridge, curl and other local MCP clients
+  send none. No page in the app calls `/mcp` (Device tab, printer and Obico pages, Home, every script
+  under `resources/web`; checked 2026-09-26), so no origin is allowed. A new page that needs MCP
+  must be added to the rule deliberately.
+- **An `/mcp` request whose `Host` is not `127.0.0.1:<port>`, `localhost:<port>` or `[::1]:<port>` is
+  refused** the same way, against DNS rebinding (an attacker's name pointed at 127.0.0.1 makes its
+  page same-origin, with no `Origin`, but with that name in `Host`).
+- **A cloud-login callback is answered only on a port a login is listening on**
+  (`LoginCallbackServer::listens_on`), 404 elsewhere. The callbacks are browser navigations from the
+  cloud's page, so they get neither rule above; but the MCP port used to answer them always, and a
+  page could have made the browser deliver a forged callback there, signing the user in to someone
+  else's account.
+- **No reply carries `Access-Control-Allow-*`**, so no page can read one either.
+
+The bridge sends no `Origin` and names `localhost` or `127.0.0.1` (`scripts/tests/test_bridge_request_headers.py`).
 
 ---
 
@@ -780,6 +805,7 @@ echo "K Flashforge host ip:port keeps its port in the URL (rel2506/04):   $(U sr
 echo "L Flashforge local API: no retry, failure log or next step (rel2506/04; 0 = bug): $(U src/slic3r/Utils/Flashforge.cpp | grep -c 'run_with_retry')"
 echo "M HttpServer::stop cuts a reply still being written (rel2506/04b): $(U src/slic3r/GUI/HttpServer.cpp | awk '/^void HttpServer::stop/{f=1} f&&/stop_all\(\)/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
 echo "N HttpServer listens on every interface (rel2506/04b):             $(U src/slic3r/GUI/HttpServer.hpp | grep -c 'acceptor(io_service, {boost::asio::ip::tcp::v4()')"
+echo "R HttpServer can refuse a request before its handler (rel2506/04b; 0 = upstream cannot): $(U src/slic3r/GUI/HttpServer.hpp | grep -c 'set_request_guard')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -787,6 +813,11 @@ written is cut (ours drains it, `IOServer::begin_stop`), and upstream binds all 
 127.0.0.1). Our other `HttpServer` changes are features, not fixes: the second listener for the
 cloud login (`listen_also`) and the loopback endpoint helper. On "no" / 0, take upstream's code and
 re-check that a reply in flight still reaches its client and the bind is still loopback.
+
+Item R: our request guard lives in upstream's `HttpServer` (`set_request_guard`, called from
+`session::process_request` with the request's `Origin`, `Host` and arrival port; `http_headers::value`).
+Upstream has no such hook and answers any page that reaches it. On a non-zero, check whether upstream's
+hook can carry `OrcaMCP::app_request_guard` instead of ours.
 
 Item J: upstream opens every recent 3MF synchronously while building the main window, before
 post_init starts the MCP server. Our patch skips it for an agent launch (`GUI::is_agent_launch()`,

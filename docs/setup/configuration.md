@@ -206,7 +206,8 @@ v2.5.0.6-dev it listened on every interface):
 ### No Authentication
 
 The MCP server has no authentication:
-- Any local process can call any tool
+- Any local process can call any tool; a web page cannot (a request with an `Origin` header, or with
+  a `Host` other than `127.0.0.1`, `localhost` or `[::1]` on its port, is refused with 403)
 - Tools can load/export files anywhere the user has access
 - Tools can send to configured printers
 

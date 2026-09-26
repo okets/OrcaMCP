@@ -3,6 +3,7 @@
 // HttpServer.hpp first: it pulls in boost/asio, which on Windows must see <windows.h> before other
 // headers do.
 #include "slic3r/GUI/HttpServer.hpp"
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -40,6 +41,11 @@ public:
     // server is not started.
     bool listen(int port, const std::string& provider);
 
+    // True when a login is listening on `port`: the port the last successful listen() asked for,
+    // which may be the MCP server's own. Before any login, false everywhere, so the MCP server does
+    // not answer login callbacks nobody is waiting for (OrcaMCPRequestGuard.hpp).
+    bool listens_on(boost::asio::ip::port_type port) const { return port != 0 && port == m_port.load(); }
+
     // The login callback at `url`, answered for the provider of the login in progress. Called on the
     // MCP server's thread, by its routes that are not /mcp.
     std::shared_ptr<HttpServer::Response> answer(const std::string& url) const;
@@ -53,6 +59,7 @@ private:
     const MainThreadGate& m_quit_gate;
     mutable std::mutex    m_provider_mutex;
     std::string           m_provider;
+    std::atomic<int>      m_port{0}; // read on the MCP server's thread
 };
 
 }}} // namespace Slic3r::GUI::OrcaMCP

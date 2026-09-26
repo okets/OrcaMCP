@@ -272,7 +272,9 @@ The HTTP server listens on 127.0.0.1 only, for the MCP server and the cloud logi
 - Suitable for single-user development machine
 
 ### No Authentication
-- Anyone with localhost access can call tools
+- Anyone with localhost access can call tools, except a web page: `/mcp` refuses a request with an
+  `Origin` header, or with a `Host` other than `127.0.0.1`, `localhost` or `[::1]` on its port (403,
+  JSON-RPC -32003; `OrcaMCPRequestGuard.cpp`), and no reply carries `Access-Control-Allow-*`
 - Tools can modify files on disk (export, load)
 - Tools can interact with printers
 

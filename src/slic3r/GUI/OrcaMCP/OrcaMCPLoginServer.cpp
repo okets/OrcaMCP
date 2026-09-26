@@ -13,7 +13,10 @@ bool LoginCallbackServer::listen(int port, const std::string& provider)
     if (!m_mcp_server.is_started())
         return false;
     const bool own_port = port == m_mcp_server.get_port();
-    return m_mcp_server.listen_also(own_port ? 0 : static_cast<boost::asio::ip::port_type>(port));
+    if (!m_mcp_server.listen_also(own_port ? 0 : static_cast<boost::asio::ip::port_type>(port)))
+        return false;
+    m_port = port;
+    return true;
 }
 
 std::shared_ptr<HttpServer::Response> LoginCallbackServer::answer(const std::string& url) const

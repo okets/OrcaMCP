@@ -111,7 +111,14 @@ void session::process_request()
     std::cout << std::endl;
 
     const std::string url_str = Http::url_decode(headers.get_url());
-    const auto resp = server.server.m_request_handler(headers.get_method(), url_str, body);
+    std::shared_ptr<HttpServer::Response> resp;
+    if (const auto& guard = server.server.m_request_guard) {
+        boost::system::error_code ec;
+        resp = guard({headers.get_method(), url_str, headers.value("origin"), headers.value("host"),
+                      socket.local_endpoint(ec).port()});
+    }
+    if (!resp)
+        resp = server.server.m_request_handler(headers.get_method(), url_str, body);
 
     std::stringstream ssOut;
     resp->write_response(ssOut);
@@ -564,6 +571,7 @@ void HttpServer::ResponseJson::write_response(std::stringstream& ssOut)
         case 200: status_text = "OK"; break;
         case 201: status_text = "Created"; break;
         case 400: status_text = "Bad Request"; break;
+        case 403: status_text = "Forbidden"; break;
         case 404: status_text = "Not Found"; break;
         case 405: status_text = "Method Not Allowed"; break;
         case 500: status_text = "Internal Server Error"; break;
@@ -571,10 +579,8 @@ void HttpServer::ResponseJson::write_response(std::stringstream& ssOut)
     }
 
     ssOut << "HTTP/1.1 " << status_code << " " << status_text << std::endl;
+    // No Access-Control-Allow-* headers: no web page may read an MCP reply (OrcaMCPRequestGuard.hpp).
     ssOut << "Content-Type: application/json" << std::endl;
-    ssOut << "Access-Control-Allow-Origin: *" << std::endl;
-    ssOut << "Access-Control-Allow-Methods: GET, POST, OPTIONS" << std::endl;
-    ssOut << "Access-Control-Allow-Headers: Content-Type" << std::endl;
     ssOut << "Content-Length: " << json_str.length() << std::endl;
     ssOut << std::endl;
     ssOut << json_str;

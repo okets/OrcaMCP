@@ -3,6 +3,7 @@
 #include "slic3r/GUI/HttpServer.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPLoginServer.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPMainThreadGate.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPRequestGuard.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -43,9 +44,11 @@ unsigned short free_loopback_port()
 
 // One HTTP request to 127.0.0.1:`port`, on a thread of its own. The future holds everything the
 // server sent before it closed the connection, or why the connection failed. With `read_after`, the
-// reply is not read until that latch opens.
+// reply is not read until that latch opens. `headers` are sent as they are, one "Name: value\r\n"
+// each; left empty, the request names localhost:`port`, as the bridge's and curl's do.
 std::future<std::string> exchange(unsigned short port, const std::string& method, const std::string& path,
-                                  const std::string& body = std::string(), Latch* read_after = nullptr)
+                                  const std::string& body = std::string(), Latch* read_after = nullptr,
+                                  const std::string& headers = std::string())
 {
     return std::async(std::launch::async, [=] {
         boost::asio::io_context   io;
@@ -54,7 +57,8 @@ std::future<std::string> exchange(unsigned short port, const std::string& method
         socket.connect({boost::asio::ip::address_v4::loopback(), port}, ec);
         if (ec)
             return "connect failed: " + ec.message();
-        const std::string request = method + " " + path + " HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\n" +
+        const std::string head    = headers.empty() ? "Host: localhost:" + std::to_string(port) + "\r\n" : headers;
+        const std::string request = method + " " + path + " HTTP/1.1\r\n" + head + "Content-Type: application/json\r\n" +
                                     "Content-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
         boost::asio::write(socket, boost::asio::buffer(request), ec);
         if (read_after != nullptr)
@@ -259,12 +263,17 @@ TEST_CASE("a cloud login moves between ports without stopping, moving or re-rout
     };
 
     const unsigned short first = free_loopback_port();
+    CHECK_FALSE(login.listens_on(first)); // no login yet: the guard answers no callback anywhere
     REQUIRE(login.listen(first, "bbl"));
+    CHECK(login.listens_on(first));
+    CHECK_FALSE(login.listens_on(mcp_port));
     CHECK(contains(exchange(first, "GET", "/callback?code=1").get(), "\"login\":\"bbl\""));
     check_mcp_untouched();
 
     const unsigned short second = free_loopback_port();
     REQUIRE(login.listen(second, "orca"));
+    CHECK(login.listens_on(second));
+    CHECK_FALSE(login.listens_on(first));
     CHECK(contains(exchange(second, "GET", "/callback?code=2").get(), "\"login\":\"orca\""));
     CHECK(exchange(first, "GET", "/callback").get().find("connect failed") == 0);
     check_mcp_untouched();
@@ -286,10 +295,12 @@ TEST_CASE("a cloud login that asks for the MCP server's port never binds it", "[
     mcp.set_request_handler(app_routes(login, [] { return json_response({{"mcp", true}}); }));
 
     CHECK_FALSE(login.listen(mcp_port, "bbl")); // before the MCP server is up
+    CHECK_FALSE(login.listens_on(mcp_port));
     mcp.start();
     CHECK(mcp.local_endpoint().port() == mcp_port);
 
     REQUIRE(login.listen(mcp_port, "bbl"));
+    CHECK(login.listens_on(mcp_port));
     CHECK(contains(exchange(mcp_port, "GET", "/callback?code=3").get(), "\"login\":\"bbl\""));
     CHECK(contains(exchange(mcp_port, "GET", "/mcp").get(), "\"mcp\":true"));
     mcp.stop();
@@ -310,4 +321,39 @@ TEST_CASE("a cloud login's callback that arrives while the app is quitting never
     login.answer("/callback?code=4")->write_response(page);
     CHECK(contains(page.str(), "OrcaSlicer is quitting"));
     CHECK(sign_in.calls == 0);
+}
+
+TEST_CASE("the MCP server refuses a web page's request and a rebound one before any tool sees them", "[HttpServer][McpRequestGuard]")
+{
+    // What GUI_App installs, on a real server: the headers come off the wire.
+    std::atomic<int>     mcp_calls{0};
+    const unsigned short mcp_port = free_loopback_port();
+    HttpServer           mcp(mcp_port);
+    mcp.set_request_guard(app_request_guard(mcp_port, [](boost::asio::ip::port_type) { return false; }));
+    mcp.set_request_handler([&](const std::string&, const std::string&, const std::string&) {
+        ++mcp_calls;
+        return json_response({{"mcp", true}});
+    });
+    mcp.start();
+    const std::string port = std::to_string(mcp_port);
+    const std::string call = R"({"jsonrpc":"2.0","id":1,"method":"tools/list"})";
+
+    const std::string from_page = exchange(mcp_port, "POST", "/mcp", call, nullptr,
+                                           "Host: localhost:" + port + "\r\nOrigin: http://evil.example\r\n").get();
+    CHECK(from_page.rfind("HTTP/1.1 403 Forbidden", 0) == 0);
+    CHECK(contains(from_page, "\"code\":-32003"));
+
+    const std::string rebound = exchange(mcp_port, "POST", "/mcp", call, nullptr, "Host: evil.example:" + port + "\r\n").get();
+    CHECK(rebound.rfind("HTTP/1.1 403 Forbidden", 0) == 0);
+    CHECK(mcp_calls == 0);
+
+    const std::string from_bridge = exchange(mcp_port, "POST", "/mcp", call).get();
+    CHECK(contains(from_bridge, "\"mcp\":true"));
+    const std::string from_curl = exchange(mcp_port, "POST", "/mcp", call, nullptr, "Host: 127.0.0.1:" + port + "\r\n").get();
+    CHECK(contains(from_curl, "\"mcp\":true"));
+    CHECK(mcp_calls == 2);
+
+    // No login is listening, so the MCP port answers no login callback.
+    CHECK(exchange(mcp_port, "GET", "/callback?access_token=x").get().rfind("HTTP/1.1 404", 0) == 0);
+    mcp.stop();
 }

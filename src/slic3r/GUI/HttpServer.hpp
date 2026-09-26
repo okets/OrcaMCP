@@ -5,6 +5,7 @@
 #include <cctype>
 #include <iostream>
 #include <mutex>
+#include <optional>
 #include <stack>
 
 #include <boost/beast/core.hpp>
@@ -36,6 +37,12 @@ class http_headers
 public:
     std::string get_url() { return url; }
     std::string get_method() { return method; }
+    // Orca: a header's value, by its lowercase name; nothing when the request did not send it.
+    std::optional<std::string> value(const std::string& name) const
+    {
+        const auto it = headers.find(name);
+        return it == headers.end() ? std::nullopt : std::optional<std::string>(it->second);
+    }
 
     int content_length()
     {
@@ -135,6 +142,18 @@ public:
     // Request handler type that includes method, URL, and body
     using RequestHandlerFn = std::function<std::shared_ptr<Response>(const std::string& method, const std::string& url, const std::string& body)>;
 
+    // Orca: what a request guard sees of a request, before the handler does.
+    struct RequestInfo
+    {
+        std::string                method;
+        std::string                url;        // decoded, as the handler gets it
+        std::optional<std::string> origin;     // the Origin header, sent by browsers on cross-origin requests
+        std::optional<std::string> host;       // the Host header
+        boost::asio::ip::port_type local_port; // the port the request came in on
+    };
+    // Returns the response that refuses the request, or nullptr to let the handler answer it.
+    using RequestGuardFn = std::function<std::shared_ptr<Response>(const RequestInfo&)>;
+
 
     HttpServer(boost::asio::ip::port_type port = LOCALHOST_PORT);
     ~HttpServer();
@@ -167,6 +186,10 @@ public:
 
     // Legacy: Set request handler with URL only (for backward compatibility)
     void set_request_handler(const std::function<std::shared_ptr<Response>(const std::string&)>& request_handler);
+
+    // Orca: every request is shown to `guard` before the handler, which never sees one it refuses.
+    // Set it before start(). OrcaMCP's refuses MCP requests from web pages (OrcaMCPRequestGuard.hpp).
+    void set_request_guard(const RequestGuardFn& guard) { m_request_guard = guard; }
 
     // Default handler for BBL authentication
     static std::shared_ptr<Response> bbl_auth_handle_request(const std::string& method, const std::string& url, const std::string& body);
@@ -209,6 +232,7 @@ private:
     std::unique_ptr<IOServer> server_{nullptr};
 
     RequestHandlerFn m_request_handler{&HttpServer::bbl_auth_handle_request};
+    RequestGuardFn   m_request_guard;
 };
 
 class session : public std::enable_shared_from_this<session>

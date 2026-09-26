@@ -83,6 +83,19 @@ Before v2.5.0.6-dev a call in flight at that moment could hang the app for good:
 port 13618 kept listening, and every request went unanswered until the process was killed. If an
 older build does that, `kill` it; the project's unsaved changes are lost either way.
 
+### "OrcaMCP does not answer web pages" / "answers only requests addressed to 127.0.0.1" (HTTP 403, -32003)
+
+By design, since v2.5.0.6-dev. The app refuses any `/mcp` request that carries an `Origin` header (a
+web page's fetch or form post) or whose `Host` is not `127.0.0.1:13618`, `localhost:13618` or
+`[::1]:13618` (DNS rebinding): a page in your browser could otherwise start a print. The bridge and
+curl send neither, so they are not affected. If you see it:
+
+- from a browser-based MCP client (an "inspector" page): use a local client, such as the bridge;
+- from a script: do not set an `Origin` header, and address `localhost` or `127.0.0.1`, not a host
+  name or LAN address that happens to reach this machine.
+
+A request to any other path on port 13618 gets 404 unless a cloud login is in progress there.
+
 ### Can't reach OrcaMCP from another machine
 
 By design. The app listens on 127.0.0.1 only (`lsof -nP -iTCP:13618 -sTCP:LISTEN` shows
