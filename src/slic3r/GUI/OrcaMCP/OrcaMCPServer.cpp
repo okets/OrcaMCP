@@ -717,7 +717,8 @@ void OrcaMCPServer::register_builtin_tools()
         "`system_dialog_open` is true while a system file chooser or alert is open, `untracked_modal_loop` "
         "while a modal window no dialog accounts for runs. Every object carries `mesh_warning`, true when "
         "the object list shows its warning icon (open edges or recorded repairs), with "
-        "`mesh_warning_reason`, the list's one-line reason.",
+        "`mesh_warning_reason`, the list's one-line reason; each such object also adds a MeshErrors "
+        "warning to this response's active_warnings, saying what an agent can do about it.",
         {
             {"type", "object"},
             {"properties", {
@@ -758,8 +759,10 @@ void OrcaMCPServer::register_builtin_tools()
                     result["preview_hint"] = "Check the preview image to get a visual overview of objects on the current plate.";
 
                 add_open_dialogs(result, current_modal_state());
-                // Always include active warnings section
+                // Always include active warnings section, and here, where objects are reported, the
+                // objects the object list flags with its warning icon.
                 result["active_warnings"] = get_active_warnings_json(wxGetApp().plater());
+                add_warnings(result["active_warnings"], mesh_error_warnings(wxGetApp().plater()->model(), mesh_health));
 
                 return result;
             });
@@ -2832,6 +2835,7 @@ void OrcaMCPServer::register_builtin_tools()
                 report_project_rename(response, info_messages, project_before,
                                       into_u8(plater->get_project_filename(".3mf")));
                 response["active_warnings"] = get_active_warnings_json(plater);
+                add_warnings(response["active_warnings"], mesh_error_warnings(plater->model(), flagged_object_indices(loaded_objects)));
                 if (!info_messages.empty())
                     response["info_messages"] = info_messages;
                 return response;

@@ -417,7 +417,27 @@ TEST_CASE("get_mesh_health leaves the tooltip and reason out of a row without th
     CHECK_FALSE(c.contains("mesh_warning_reason"));
 }
 
-TEST_CASE("active_warnings lists every object that shows the warning icon, with its tooltip", "[MeshHealth][orcamcp]")
+// The object list's "Click the icon to repair model object" is advice for a mouse. What an agent is
+// told instead: MCP cannot repair, and what the slicer does with such a mesh.
+TEST_CASE("An agent is told what it can do about a flagged mesh, never to click the icon", "[MeshHealth][orcamcp]")
+{
+    OnePartObject hole{TriangleMesh(cube_missing_facet())};
+    OnePartObject repaired{TriangleMesh(its_make_cube(10.0, 10.0, 10.0), reversed_facets(1))};
+    OnePartObject clean{TriangleMesh(its_make_cube(10.0, 10.0, 10.0))};
+
+    const std::string hole_advice = mesh_warning_advice(object_mesh_health(*hole.object));
+    CHECK(hole_advice.find("cannot repair") != std::string::npos);
+    CHECK(hole_advice.find("2 mm") != std::string::npos);  // the slicer's per-layer gap closing
+    CHECK(hole_advice.find("Click") == std::string::npos);
+
+    const std::string repaired_advice = mesh_warning_advice(object_mesh_health(*repaired.object));
+    CHECK(repaired_advice.find("prints as it is") != std::string::npos);
+    CHECK(repaired_advice.find("Click") == std::string::npos);
+
+    CHECK(mesh_warning_advice(object_mesh_health(*clean.object)).empty());
+}
+
+TEST_CASE("A MeshErrors warning names the object, the list's reason and what to do", "[MeshHealth][orcamcp]")
 {
     Model model;
     for (int i = 0; i < 3; ++i) {
@@ -426,16 +446,54 @@ TEST_CASE("active_warnings lists every object that shows the warning icon, with 
         object->add_volume(i == 1 ? TriangleMesh(cube_missing_facet()) : TriangleMesh(its_make_cube(10.0, 10.0, 10.0)));
         object->add_instance();
     }
+    const std::vector<MeshHealth> health = model_mesh_health(model);
 
-    const nlohmann::json entries = mesh_warning_entries(model);
+    const nlohmann::json entries = mesh_error_warnings(model, health);
     REQUIRE(entries.size() == 1);
-    CHECK(entries[0] == nlohmann::json{{"level", "warning"},
-                                       {"type", "MeshErrors"},
-                                       {"object_id", 1},
-                                       {"object_name", "Object 1"},
-                                       {"message", k_hole_tooltip}});
+    const nlohmann::json& entry = entries[0];
+    CHECK(entry["level"] == "warning");
+    CHECK(entry["type"] == "MeshErrors");
+    CHECK(entry["object_id"] == 1);
+    CHECK(entry["object_name"] == "Object 1");
+    const std::string message = entry["message"];
+    CHECK(message.rfind("Error: 3 non-manifold edges. ", 0) == 0);  // the list's reason first
+    CHECK(message.find(mesh_warning_advice(health[1])) != std::string::npos);
+    CHECK(message.find("get_mesh_health {object_id: 1}") != std::string::npos);
+    CHECK(message.find("Click") == std::string::npos);
 
-    CHECK(mesh_warning_entries(Model()).empty());
+    // load_model's form: only the objects it names, read on the spot -- the flagged ones among the
+    // objects it describes.
+    nlohmann::json described = nlohmann::json::array();
+    for (int i = 0; i < 3; ++i)
+        described.push_back(model_object_summary_json(*model.objects[std::size_t(i)], i));
+    CHECK(flagged_object_indices(described) == std::vector<int>{1});
+    CHECK(mesh_error_warnings(model, flagged_object_indices(described)) == entries);
+    CHECK(mesh_error_warnings(model, std::vector<int>{0, 1}) == entries);
+    CHECK(mesh_error_warnings(model, std::vector<int>{0, 2}).empty());
+    CHECK(mesh_error_warnings(Model(), std::vector<MeshHealth>{}).empty());
+}
+
+TEST_CASE("Warnings added to an active_warnings section keep its count true", "[MeshHealth][orcamcp]")
+{
+    nlohmann::json section = {{"count", 1}, {"warnings", {{{"type", "ValidateWarning"}}}}};
+    add_warnings(section, nlohmann::json::array({{{"type", "MeshErrors"}}, {{"type", "MeshErrors"}}}));
+    CHECK(section["count"] == 3);
+    CHECK(section["warnings"].size() == 3);
+    CHECK(section["warnings"][2]["type"] == "MeshErrors");
+
+    add_warnings(section, nlohmann::json::array());
+    CHECK(section["count"] == 3);
+}
+
+TEST_CASE("get_mesh_health tells an agent what it can do about a flagged object", "[MeshHealth][orcamcp]")
+{
+    OnePartObject hole{TriangleMesh(cube_missing_facet())};
+    const nlohmann::json r = mesh_health_report(*hole.object, 0).response;
+    CHECK(r["advice"] == mesh_warning_advice(object_mesh_health(*hole.object)));
+    CHECK(r["tooltip"] == k_hole_tooltip);  // the GUI's own text stays exact
+
+    OnePartObject clean{TriangleMesh(its_make_cube(10.0, 10.0, 10.0))};
+    CHECK_FALSE(mesh_health_report(*clean.object, 0).response.contains("advice"));
 }
 
 TEST_CASE("Every object description flags the warning icon, with the reason when it shows", "[MeshHealth][orcamcp]")

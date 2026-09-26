@@ -63,10 +63,23 @@ nlohmann::json mesh_features_json(const MeshHealth& object_health);
 // warning icon -- and, only then, `mesh_warning_reason`, the list's one-line reason.
 void add_mesh_warning(nlohmann::json& out, const MeshHealth& object_health);
 
-// active_warnings' mesh entries: {level: "warning", type: "MeshErrors", object_id, object_name,
-// message: <the icon's tooltip>}, one for every object of `model` whose warning icon shows. The icon
-// is no pop-up notification, so the notification manager never reports it.
-nlohmann::json mesh_warning_entries(const Model& model);
+// What an agent can do about a row with the icon, in place of the tooltip's GUI-only "click the
+// icon": MCP cannot repair a mesh, and what slicing does with one. English; empty without the icon.
+std::string mesh_warning_advice(const MeshHealth& health);
+
+// A MeshErrors warning for an object the list flags: {level: "warning", type: "MeshErrors",
+// object_id, object_name, message: <the reason, the advice, and where the numbers are>}. The icon is
+// scene state no MCP tool can clear, so only get_scene_info and load_model report these, never
+// every tool's active_warnings.
+nlohmann::json mesh_error_warning(const ModelObject& object, int object_id, const MeshHealth& health);
+// One for every object of `model` whose icon shows, from its health read once (model_mesh_health)...
+nlohmann::json mesh_error_warnings(const Model& model, const std::vector<MeshHealth>& health);
+// ...or for the objects `object_indices` names, read here (load_model's newly added objects).
+nlohmann::json mesh_error_warnings(const Model& model, const std::vector<int>& object_indices);
+
+// The object_index of every object description in `objects` (model_object_summary_json entries,
+// such as loaded_objects) whose mesh_warning is true.
+std::vector<int> flagged_object_indices(const nlohmann::json& objects);
 
 // A model part get_mesh_health lists the shells of (one with more than one): its mesh -- the
 // shared_ptr keeps it alive if the model drops it -- and the transform that puts it on the plate.

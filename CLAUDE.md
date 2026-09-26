@@ -776,10 +776,15 @@ type `SliceAllEndedEarly` naming the plate, until the next slice, plate-list cha
 slice the plate list's safety net cancelled (see probe P) is told once, as a `warning` of type
 `SliceCancelled` naming the path that freed its plate.
 
-Every object the object list shows its warning icon for (open edges, or repairs a 3MF recorded) adds a
-`warning` of type `MeshErrors` with `object_id`, `object_name` and, as `message`, the icon's tooltip
-word for word (`mesh_warning_entries`, `OrcaMCPMeshHealth.cpp`). The icon is not a pop-up, so the
-notification manager never reported it; `get_mesh_health` explains it.
+The object list's mesh warning icon (open edges, or repairs a 3MF recorded) is scene state no MCP tool
+can clear, so it is **not** in every tool's `active_warnings`: a permanent entry there would keep
+`count` above 0 on every call, `get_slicing_status`'s polls included. It is reported where objects
+are: each object entry's `mesh_warning` / `mesh_warning_reason` (`get_scene_info`, `load_model`'s
+`loaded_objects`), and `get_mesh_health`. Only `get_scene_info` (every flagged object) and `load_model`
+(the flagged objects it added) also add a `warning` of type `MeshErrors`, with `object_id`,
+`object_name` and a `message` that gives the list's reason and what an agent can do -- MCP cannot
+repair, and slicing closes each layer's outline across gaps of up to 2 mm -- in place of the GUI
+tooltip's "Click the icon to repair model object" (`mesh_error_warnings`, `OrcaMCPMeshHealth.cpp`).
 
 **Endpoints with active_warnings:** `get_scene_info`, `slice_all`, `get_slicing_status`, `get_print_estimate`, `load_model`, `arrange_objects`, `auto_orient`, all transform tools, `undo`, `redo`
 

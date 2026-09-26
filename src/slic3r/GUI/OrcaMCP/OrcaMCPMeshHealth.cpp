@@ -121,20 +121,58 @@ void add_mesh_warning(nlohmann::json& out, const MeshHealth& object_health)
         out["mesh_warning_reason"] = mesh_warning_reason(object_health);
 }
 
-nlohmann::json mesh_warning_entries(const Model& model)
+std::string mesh_warning_advice(const MeshHealth& health)
+{
+    if (!health.warning)
+        return {};
+    if (health.manifold())
+        return "The repairs were made when the mesh was loaded; it is closed and prints as it is.";
+    // TriangleMeshSlicer's make_loops closes each layer's open outlines across gaps of up to 2 mm
+    // (chain_open_polylines_close_gaps, max_gap); an outline it cannot close is left out of that layer.
+    return "MCP cannot repair a mesh: the GUI's repair is not exposed. Slicing closes each layer's outline "
+           "across gaps of up to 2 mm, so a hole that small usually prints closed; a wider one can leave "
+           "that outline out of a layer, so check the sliced preview there.";
+}
+
+nlohmann::json mesh_error_warning(const ModelObject& object, int object_id, const MeshHealth& health)
+{
+    return {{"level", "warning"},
+            {"type", "MeshErrors"},
+            {"object_id", object_id},
+            {"object_name", object.name},
+            {"message", mesh_warning_reason(health) + " " + mesh_warning_advice(health) + " Details: get_mesh_health {object_id: " +
+                            std::to_string(object_id) + "}."}};
+}
+
+nlohmann::json mesh_error_warnings(const Model& model, const std::vector<MeshHealth>& health)
 {
     nlohmann::json entries = nlohmann::json::array();
-    for (std::size_t i = 0; i < model.objects.size(); ++i) {
-        const ModelObject& object = *model.objects[i];
-        const MeshHealth   health = object_mesh_health(object);
-        if (health.warning)
-            entries.push_back({{"level", "warning"},
-                               {"type", "MeshErrors"},
-                               {"object_id", int(i)},
-                               {"object_name", object.name},
-                               {"message", mesh_warning_tooltip(health)}});
+    for (std::size_t i = 0; i < model.objects.size() && i < health.size(); ++i)
+        if (health[i].warning)
+            entries.push_back(mesh_error_warning(*model.objects[i], int(i), health[i]));
+    return entries;
+}
+
+nlohmann::json mesh_error_warnings(const Model& model, const std::vector<int>& object_indices)
+{
+    nlohmann::json entries = nlohmann::json::array();
+    for (int i : object_indices) {
+        if (i < 0 || std::size_t(i) >= model.objects.size())
+            continue;
+        const ModelObject& object = *model.objects[std::size_t(i)];
+        if (const MeshHealth health = object_mesh_health(object); health.warning)
+            entries.push_back(mesh_error_warning(object, i, health));
     }
     return entries;
+}
+
+std::vector<int> flagged_object_indices(const nlohmann::json& objects)
+{
+    std::vector<int> indices;
+    for (const nlohmann::json& object : objects)
+        if (object.value("mesh_warning", false))
+            indices.push_back(object.value("object_index", -1));
+    return indices;
 }
 
 MeshHealthReport mesh_health_report(const ModelObject& object, int object_id)
@@ -144,6 +182,8 @@ MeshHealthReport mesh_health_report(const ModelObject& object, int object_id)
     const MeshHealth object_health = object_mesh_health(object);
     r = {{"status", "success"}, {"object_id", object_id}, {"object_name", object.name}};
     add_row_state(r, object_health);
+    if (object_health.warning)
+        r["advice"] = mesh_warning_advice(object_health);
     r["summary"] = mesh_features_json(object_health);
 
     nlohmann::json volumes = nlohmann::json::array();

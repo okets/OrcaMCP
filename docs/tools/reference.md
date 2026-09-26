@@ -190,8 +190,9 @@ multi-filament however `extruder_id` reads.
 Every object, in `model_objects` and in `unplaced_objects`, carries `mesh_warning`: `true` when the
 object list shows its warning icon, because its mesh has open edges or a 3MF recorded repairs to it.
 Then `mesh_warning_reason` is the list's one-line reason (`"Error: 25 non-manifold edges."`), and
-`active_warnings` carries a `MeshErrors` entry with the icon's full tooltip. `get_mesh_health` has
-the numbers and each volume's share; `with_model_object_features` adds the object's numbers here.
+this response's `active_warnings` carries a `MeshErrors` entry for the object saying what an agent can
+do about it. `get_mesh_health` has the numbers and each volume's share; `with_model_object_features`
+adds the object's numbers here.
 
 #### Occupancy: everything standing on the plate
 
@@ -434,7 +435,7 @@ G-code preview, model files are refused too; `new_project` returns to an editabl
 | `filaments_added` | Filament slots the import added, because the model uses more filaments than the scene had (0 when none) |
 | `project_renamed_to` | Present only if the project's name changed: never for a model file, and always for a G-code preview (named after the file, so a later `save_project {}` writes there) |
 | `info_messages` | What happened, then what the slicer would have shown. A 3MF import says whether the file carried presets that were not applied. A prompt that offered a choice ends with the answer given, e.g. `"Object too large: ... scale it down to fit the print bed automatically? (auto-answered Yes)"`; the multi-part question also names the other `multipart` value |
-| `active_warnings` | As for every scene tool |
+| `active_warnings` | As for every scene tool, plus a `MeshErrors` warning for each object it added that the object list flags with its warning icon |
 
 A 20 mm cube exported 1000 times too large, on a 256 mm bed:
 
@@ -491,7 +492,11 @@ facets, and loose parts or stray shells, for one object and each of its volumes.
 The icon state and its tooltip come from the object list's own code (`mesh_errors_info` in
 `GUI_ObjectList.cpp`), so this reports exactly what the GUI shows: the icon appears when a mesh has
 open edges or recorded repairs. `tooltip` is the icon's tooltip word for word, in the app's
-language; `mesh_warning_reason` is the one line the sidebar shows.
+language -- its last line, "Click the icon to repair model object", is for the GUI;
+`mesh_warning_reason` is the one line the sidebar shows. A flagged object also gets `advice`, what an
+agent can do: MCP cannot repair a mesh, and slicing closes each layer's outline across gaps of up to
+2 mm (`TriangleMeshSlicer`), so a small hole usually prints closed and a wider one may not. A mesh
+that is only repaired (no open edges) prints as it is.
 
 - An object's `open_edges` and repairs count every volume, modifiers included, as the list does. Its
   `facets`, `shells` and `volume_mm3` count model parts only.
@@ -523,6 +528,7 @@ language; `mesh_warning_reason` is the one line the sidebar shows.
   "mesh_warning": true,
   "tooltip": "Remaining errors:\n\t3 non-manifold edges\n\nClick the icon to repair model object",
   "mesh_warning_reason": "Error: 3 non-manifold edges.",
+  "advice": "MCP cannot repair a mesh: the GUI's repair is not exposed. Slicing closes each layer's outline across gaps of up to 2 mm, so a hole that small usually prints closed; a wider one can leave that outline out of a layer, so check the sliced preview there.",
   "summary": {"facets": 1215, "shells": 2, "open_edges": 3, "manifold": false, "repaired": false,
               "errors_repaired": 0,
               "repaired_errors": {"edges_fixed": 0, "degenerate_facets": 0, "facets_removed": 0,
@@ -2457,7 +2463,7 @@ Many tools return an `active_warnings` section in their response, providing visi
 | `SlicingSeriousWarning` | Serious slicing issue |
 | `ValidateError` | Validation failed |
 | `PlaterWarning` | General plater warning |
-| `MeshErrors` | The object list shows its warning icon for an object: open edges or recorded repairs. `message` is the icon's tooltip word for word; the entry also carries `object_id` and `object_name`. `get_mesh_health` has the numbers |
+| `MeshErrors` | The object list shows its warning icon for an object: open edges or recorded repairs. Only `get_scene_info` (every flagged object) and `load_model` (the flagged objects it added) report it, because no tool can clear it. `message` gives the list's reason and what an agent can do (MCP cannot repair; slicing closes each layer's outline across gaps up to 2 mm); the entry also carries `object_id` and `object_name`. `get_mesh_health` has the numbers |
 
 **Note:** The `count` field is always present (even when 0) to help agents confirm issues have been resolved.
 

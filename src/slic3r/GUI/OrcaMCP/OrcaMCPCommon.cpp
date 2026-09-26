@@ -400,11 +400,6 @@ nlohmann::json get_active_warnings_json(Plater* plater) {
             }
         }
     }
-    // The object list's warning icon: shown beside an object, never as a pop-up, so the
-    // notification manager above does not know of it.
-    if (plater)
-        for (nlohmann::json& mesh : mesh_warning_entries(plater->model()))
-            warnings_array.push_back(std::move(mesh));
     if (auto open_dialog = open_dialog_warning(current_modal_state()))
         warnings_array.push_back(std::move(*open_dialog));
     if (auto quit_failed = quit_failed_warning())
@@ -418,6 +413,13 @@ nlohmann::json get_active_warnings_json(Plater* plater) {
     result["count"] = warnings_array.size();
     result["warnings"] = warnings_array;
     return result;
+}
+
+void add_warnings(nlohmann::json& active_warnings, const nlohmann::json& entries)
+{
+    for (const nlohmann::json& entry : entries)
+        active_warnings["warnings"].push_back(entry);
+    active_warnings["count"] = active_warnings["warnings"].size();
 }
 
 void add_preview_to(nlohmann::json& result, const std::function<nlohmann::json()>& capture)
