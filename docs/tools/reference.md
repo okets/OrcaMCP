@@ -1425,6 +1425,10 @@ was called again and reports it as `restored_selected_plate`. This matters becau
 `get_print_estimate` takes an optional `plate_index` and answers about the selected plate only when
 that is omitted.
 
+**Deleting a plate during the run.** The run goes on with every remaining plate: a plate deleted
+while it is being sliced is dropped, and the run moves to the next. The plate restored at the end is
+the one that was selected at the call, wherever it now stands, or none if it was the deleted one.
+
 Until v2.3.2, `slice_all` sliced only the current plate despite its name: a four-plate project was
 left with three unsliced plates and no error.
 

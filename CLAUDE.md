@@ -885,9 +885,12 @@ Item P: the same in `Plater::delete_plate`: deleting the plate being sliced dele
 the slicing thread (SIGSEGV, 2026-09-26), and a change of current plate repointed the background
 process. Ours stops the slice only when it is the deleted plate's, repoints the process only when no
 slice runs (as `select_plate` does), and has `on_process_completed` skip the result of a plate that
-was deleted (`m_slice_result_plate_deleted`): it used to mark the plate the process then pointed at
-as not sliced. On "no", take upstream's and re-check `delete_plate` on the plate being sliced, and on
-another plate while one is sliced.
+was deleted: a completion belongs to the plate whose `Print` was started
+(`BackgroundSlicingProcess::started_print`, matched against the live plates), not to the plate the
+process points at by then, which it used to mark. Slice All walks by index, so deleting a plate at or
+before the one it is slicing moves its place back (`OrcaMCP::slice_all_position_after_delete`), and a
+deleted plate's cancel lets the walk go on. On "no", take upstream's and re-check `delete_plate` on the
+plate being sliced, on another plate while one is sliced, and on plate 0 during Slice All.
 
 Item Q: upstream's restore prompt treats every answer but Yes as No and deletes the crashed session's
 backup, including a prompt the app itself closed to quit (its system-logout handler, and our

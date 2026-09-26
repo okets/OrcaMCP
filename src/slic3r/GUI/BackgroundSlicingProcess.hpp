@@ -94,6 +94,11 @@ public:
 	bool can_switch_print();
 	void set_current_plate(GUI::PartPlate* plate) { m_current_plate = plate; }
 	GUI::PartPlate* get_current_plate() { return m_current_plate; }
+	// Orca: the Print whose slice was started last (start()). A completion is that Print's plate's even
+	// once the process points at another plate: a plate switch or delete_plate can repoint it while the
+	// result is still to be handled. Only compared with the live plates' Prints, never dereferenced: the
+	// plate may have been deleted.
+	const PrintBase* started_print() const { return m_started_print; }
 	GCodeProcessorResult* get_current_gcode_result() { return m_gcode_result;}
 
 	// The following wxCommandEvent will be sent to the UI thread / Plater window, when the slicing is finished
@@ -275,6 +280,7 @@ private:
 
 	//BBS: partplate related
 	GUI::PartPlate* m_current_plate;
+	const PrintBase* m_started_print = nullptr; // Orca: see started_print()
 	PrinterTechnology m_printer_tech = ptUnknown;
 	bool m_internal_cancelled = false;
 

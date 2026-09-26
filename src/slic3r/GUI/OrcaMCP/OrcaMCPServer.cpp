@@ -192,7 +192,7 @@ bool mcp_gui_ready(std::string& reason)
     return true;
 }
 
-// The plate slice_all was asked to come back to, or -1 when nothing is pending.
+// The plate slice_all was asked to come back to, or nullptr when nothing is pending.
 //
 // Slicing every plate walks the plate selection from the first plate to the last: upstream's own
 // chaining selects the next plate each time one finishes (Plater::priv::on_process_completed). Every
@@ -201,8 +201,19 @@ bool mcp_gui_ready(std::string& reason)
 // reading plate 4's estimate believing it is plate 1's. get_slicing_status puts the selection back
 // when the run ends, and says so in its response.
 //
-// Only ever read or written on the GUI thread, from inside run_on_main_thread.
-int s_slice_all_restore_plate = -1;
+// The plate itself, not its index: deleting a plate during the run moves every later plate down, and
+// the index then named another plate. Only compared with the live plates, never dereferenced, since it
+// may have been deleted. Only ever read or written on the GUI thread, from inside run_on_main_thread.
+const PartPlate* s_slice_all_restore_plate = nullptr;
+
+// The index of that plate now, or -1 when it has been deleted.
+int index_of_plate(PartPlateList& plate_list, const PartPlate* wanted)
+{
+    for (int i = 0; i < plate_list.get_plate_count(); ++i)
+        if (plate_list.get_plate(i) == wanted)
+            return i;
+    return -1;
+}
 
 // What load_model tells the agent about the multi-part question it answered for it: the other
 // value of its multipart parameter, which is the only way to the other outcome.
@@ -2473,7 +2484,7 @@ void OrcaMCPServer::register_builtin_tools()
                     // posted, so the kick-off still happens inside the suppression guard, exactly as
                     // the reslice() call it replaces did.
                     const bool was_preview_shown = plater->is_preview_shown();
-                    s_slice_all_restore_plate    = plate_at_call;
+                    s_slice_all_restore_plate    = plate_list.get_plate(plate_at_call);
                     SimpleEvent slice_all_event(EVT_GLTOOLBAR_SLICE_ALL);
                     plater->GetEventHandler()->ProcessEvent(slice_all_event);
                     // on_action_slice_all also switches the app to the G-code preview. An MCP slice
@@ -2483,7 +2494,7 @@ void OrcaMCPServer::register_builtin_tools()
                     if (!was_preview_shown)
                         plater->select_view_3D("3D");
                 } else {
-                    s_slice_all_restore_plate = -1;
+                    s_slice_all_restore_plate = nullptr;
                     plater->reslice();
                 }
                 auto info_messages = suppression_guard.messages();
@@ -2829,11 +2840,10 @@ void OrcaMCPServer::register_builtin_tools()
                 // run finishes or stops. So "not running" here means the whole slice_all run is over,
                 // not merely that one plate finished, and this is the first moment it is safe to put
                 // the caller's plate back. See s_slice_all_restore_plate.
-                if (!is_running && s_slice_all_restore_plate >= 0) {
-                    const int restore_to      = s_slice_all_restore_plate;
-                    s_slice_all_restore_plate = -1;
-                    if (restore_to >= 0 && restore_to < plate_list.get_plate_count() &&
-                        restore_to != plate_list.get_curr_plate_index()) {
+                if (!is_running && s_slice_all_restore_plate != nullptr) {
+                    const int restore_to      = index_of_plate(plate_list, s_slice_all_restore_plate);
+                    s_slice_all_restore_plate = nullptr;
+                    if (restore_to >= 0 && restore_to != plate_list.get_curr_plate_index()) {
                         plater->select_plate(restore_to);
                         result["restored_selected_plate"] = restore_to;
                     }

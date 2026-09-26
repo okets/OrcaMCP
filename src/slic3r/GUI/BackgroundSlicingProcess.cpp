@@ -555,6 +555,7 @@ bool BackgroundSlicingProcess::start()
     if (!this->idle())
         throw Slic3r::RuntimeError("Cannot start a background task, the worker thread is not idle.");
     m_state = STATE_STARTED;
+    m_started_print = m_print; // Orca: the Print this slice's completion belongs to
     m_print->set_cancel_callback([this]() { this->stop_internal(); });
     lck.unlock();
     m_condition.notify_one();
