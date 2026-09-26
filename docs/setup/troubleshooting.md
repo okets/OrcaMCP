@@ -130,6 +130,28 @@ So if you see it, nothing is listening on the port. Check `ORCAMCP_PORT`, and us
    - Ensure OrcaSlicer can read the file
    - Check file permissions
 
+### "Could not connect to the printer at …:8898: the connection failed after N ms, before reaching the printer"
+
+The Flashforge local API call never left this computer: `connect()` failed at once. There are two
+usual causes, and a TCP connect from a terminal tells them apart:
+
+```bash
+python3 -c "import socket; socket.create_connection(('10.0.0.100', 8898), 3); print('reachable')"
+```
+
+1. **The terminal cannot reach it either.** The printer is off the network: asleep, off, lost its
+   Wi-Fi, or on a new IP address. macOS then fails every connection at once for about 20 s at a
+   time (`net.link.ether.inet.host_down_time`). Wake the printer and check the IP address on its
+   screen. This is what happened on 2026-09-26.
+2. **The terminal reaches it, the app does not.** macOS's Local Network permission is blocking the
+   app. A freshly built binary does not inherit the installed app's permission: a dev build
+   launched from `build/arm64` failed this way on 2026-09-26 while the terminal and the installed
+   app both reached the printer. Allow it in System Settings > Privacy & Security > Local Network.
+
+Meanwhile `match_project_to_printer` and `get_printer_status` fall back to the printer's last status
+from this session, labelled `source: cached` with its age. The app log has one warning per streak of
+failures, starting `[Flashforge HTTP] POST`, with the curl code and the elapsed time.
+
 ## Slicing Issues
 
 ### Slicing never completes
