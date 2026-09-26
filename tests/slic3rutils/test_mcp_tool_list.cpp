@@ -239,3 +239,48 @@ TEST_CASE("The tool-name check also reads plain text", "[orcamcp][tools]")
     CHECK(unknown.front().token == "export_gcodes");
     CHECK(unknown.front().where == "text");
 }
+
+// ==================== BRIDGE-ONLY TOOLS ====================
+//
+// start_orca launches the app, so the app cannot serve it; orcamcp-bridge.py answers it. Its text
+// still lives in the registry, with every other tool's, so it exists in exactly one place.
+
+TEST_CASE("start_orca is registered as a bridge-only tool", "[orcamcp][tools]")
+{
+    const auto& tools = OrcaMCPServer::registered_tools();
+    REQUIRE(tools.count("start_orca") == 1);
+    const ToolDefinition& start_orca = tools.at("start_orca");
+    CHECK(start_orca.bridge_only);
+    CHECK(start_orca.category == ToolCategory::Info);
+
+    size_t bridge_only = 0;
+    for (const auto& [name, tool] : tools)
+        bridge_only += tool.bridge_only ? 1 : 0;
+    CHECK(bridge_only == 1);
+}
+
+TEST_CASE("tools/list leaves bridge-only tools to the bridge", "[orcamcp][tools]")
+{
+    const nlohmann::json  tools_list = OrcaMCPServer::handle_tools_list();
+    std::set<std::string> listed;
+    for (const auto& tool : tools_list.at("tools"))
+        listed.insert(tool.at("name").get<std::string>());
+
+    for (const auto& [name, tool] : OrcaMCPServer::registered_tools()) {
+        INFO("tool " << name);
+        CHECK(listed.count(name) == (tool.bridge_only ? 0 : 1));
+    }
+}
+
+TEST_CASE("A bridge-only tool called on the app says the bridge answers it", "[orcamcp][tools]")
+{
+    const nlohmann::json response = OrcaMCPServer::registered_tools().at("start_orca").handler(nlohmann::json::object());
+    CHECK(response.value("status", "") == "error");
+    CHECK(response.value("message", "").find("bridge") != std::string::npos);
+}
+
+TEST_CASE("get_server_info names the bridge-only tools", "[orcamcp][tools]")
+{
+    CHECK(get_server_info().at("bridge_only") == nlohmann::json::array({"start_orca"}));
+    CHECK(get_server_info({{"section", "all"}}).at("bridge_only") == nlohmann::json::array({"start_orca"}));
+}

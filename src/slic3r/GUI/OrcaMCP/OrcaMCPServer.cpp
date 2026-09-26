@@ -313,7 +313,10 @@ nlohmann::json OrcaMCPServer::handle_tools_list()
 {
     nlohmann::json tools_array = nlohmann::json::array();
 
-    for (const auto& [name, tool] : s_tools) {
+    for (const auto& [name, tool] : registered_tools()) {
+        if (tool.bridge_only)
+            continue;  // the bridge adds these itself
+
         // Ensure schema is valid JSON Schema draft 2020-12
         nlohmann::json schema = tool.input_schema;
 
@@ -4702,8 +4705,39 @@ void OrcaMCPServer::register_builtin_tools()
     register_filament_tools();
     register_printer_tools();
     register_paint_tools();
+    register_bridge_tools();
 
     BOOST_LOG_TRIVIAL(info) << "OrcaMCPServer: Registered " << s_tools.size() << " tools";
+}
+
+void OrcaMCPServer::register_bridge_tool(ToolDefinition tool)
+{
+    tool.bridge_only = true;
+    tool.handler     = [name = tool.name](const nlohmann::json&) -> nlohmann::json {
+        return {{"status", "error"},
+                {"message", name + " is answered by the OrcaMCP bridge (orcamcp-bridge.py), not by the app. Call it "
+                                   "through the bridge."}};
+    };
+    register_tool(tool);
+}
+
+// Tools orcamcp-bridge.py answers itself, because the app cannot. They are declared here so their
+// text lives with every other tool's, and reach the bridge through scripts/orcamcp_tools.json; the
+// bridge's BRIDGE_HANDLERS table maps each name to its Python handler.
+void OrcaMCPServer::register_bridge_tools()
+{
+    // start_orca - launch the app. It is the bridge's entry point while the app is not running.
+    register_bridge_tool({
+        "start_orca",
+        ToolCategory::Info,
+        "Launch OrcaMCP and wait until it is up",
+        "Start the OrcaMCP application. Use this first when OrcaMCP is not running. The tool will launch "
+        "OrcaMCP and wait for it to be ready. Once started, all other tools become available.",
+        {
+            {"type", "object"},
+            {"properties", nlohmann::json::object()}
+        }
+    });
 }
 
 }} // namespace Slic3r::GUI

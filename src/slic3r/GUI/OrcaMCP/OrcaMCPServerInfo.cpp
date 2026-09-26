@@ -433,6 +433,16 @@ json tool_catalogue(const ToolMap& tools)
     return catalogue;
 }
 
+// The tools orcamcp-bridge.py answers itself: listed like any other, but served only through it.
+json bridge_only_tools(const ToolMap& tools)
+{
+    json names = json::array();
+    for (const auto& [name, tool] : tools)
+        if (tool.bridge_only)
+            names.push_back(name);
+    return names;
+}
+
 // Each section's size in bytes, so a caller can see what a fetch costs before making it.
 json section_index()
 {
@@ -448,6 +458,7 @@ json default_response(const ToolMap& tools)
         {"server", server()},
         {"quick_start", quick_start()},
         {"tools", tool_catalogue(tools)},
+        {"bridge_only", bridge_only_tools(tools)},
         {"sections", section_index()},
         {"more", "Pass section=<a name from sections> for one of them, or section=all for everything."}
     };
@@ -458,7 +469,8 @@ json every_section(const ToolMap& tools)
     json response = json{
         {"server", server()},
         {"quick_start", quick_start()},
-        {"tools", tool_catalogue(tools)}
+        {"tools", tool_catalogue(tools)},
+        {"bridge_only", bridge_only_tools(tools)}
     };
     for (const Section& section : documentation_sections())
         response[section.name] = section.content();

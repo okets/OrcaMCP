@@ -3,49 +3,53 @@
 Reference for the MCP tools available in OrcaMCP. The authoritative tool count and the
 command that regenerates it live in `CLAUDE.md`, so it is not repeated here.
 
-Two pre-existing gaps, neither of them new: the Quick Reference Table below omits several
-printer tools entirely (`get_printer_status`, `printer_control`, `discover_printers`,
-`add_physical_printer`, `list_printer_files`, `print_printer_file`,
-`match_project_to_printer`), and several tools it does list — `get_filaments`,
-`set_mixed_filament`, `get_flush_volumes` among them — have no dedicated section below.
-`CLAUDE.md`'s table is the complete list.
+The table below is every tool, grouped by the category each one declares in the registry; the
+same grouping, with a one-line summary per tool, is what `get_server_info` returns. Several tools
+it lists -- `get_filaments`, `set_mixed_filament`, `get_flush_volumes` among them -- have no
+dedicated section below yet.
 
 ## Quick Reference Table
 
 | Category | Tools |
 |----------|-------|
-| **Bridge** | `start_orca` |
-| **Information** | `get_server_info`, `get_scene_info`, `get_slicing_status` |
-| **Project** | `new_project`, `load_project`, `save_project`, `export_3mf` |
-| **Models** | `load_model`, `auto_orient`, `arrange_objects` |
-| **Transforms** | `move_object`, `rotate_object`, `scale_object`, `mirror_object`, `flatten_object` |
-| **Object Ops** | `clone_object`, `cut_object`, `delete_object`, `rename_object`, `transform_objects` |
+| **Scene** | `get_scene_info`, `new_project`, `load_project`, `save_project`, `export_3mf` |
+| **Models** | `load_model`, `auto_orient`, `arrange_objects`, `get_object_info`, `rename_object`, `set_object_printable` |
+| **Transforms** | `move_object`, `rotate_object`, `scale_object`, `mirror_object`, `flatten_object`, `clone_object`, `cut_object`, `delete_object`, `transform_objects` |
 | **Plates** | `add_plate`, `select_plate`, `delete_plate`, `set_prime_tower_position` |
-| **Presets** | `get_presets`, `get_edited_presets`, `select_preset`, `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset`, `get_valid_config_keys` |
-| **Filament & Colour** | `get_filaments`, `set_mixed_filament`, `delete_mixed_filament`, `set_object_filament`, `get_flush_volumes`, `set_flush_volumes`, `auto_calc_flush_volumes`, `get_toolchanger_config`, `suggest_color_mix`, `get_color_palette` |
-| **Per-Object** | `get_object_info`, `get_object_config`, `set_object_config`, `reset_object_config` |
+| **Config** | `get_presets`, `get_edited_presets`, `select_preset`, `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset`, `get_valid_config_keys` |
+| **Per-Object** | `get_object_config`, `set_object_config`, `reset_object_config` |
 | **Layer Ranges** | `get_object_layer_ranges`, `set_object_layer_range`, `delete_object_layer_range` |
-| **Slicing** | `slice_all`, `export_gcode`, `get_print_estimate` |
-| **Visualization** | `render_plate_view`, `get_preview_base64` |
-| **Adaptive** | `apply_adaptive_layer_height`, `clear_adaptive_layer_height` |
+| **Filaments & colour** | `get_filaments`, `set_object_filament`, `set_mixed_filament`, `delete_mixed_filament`, `set_filament_color`, `get_flush_volumes`, `set_flush_volumes`, `auto_calc_flush_volumes`, `get_toolchanger_config`, `suggest_color_mix`, `get_color_palette` |
 | **Painting** | `paint_object`, `get_object_paint`, `clear_object_paint`, `set_brim_ears`, `get_object_components`, `pick_facet` |
-| **Printers** | `get_printers`, `select_printer`, `send_to_printer` |
+| **Slicing** | `slice_all`, `get_slicing_status`, `export_gcode`, `get_print_estimate` |
+| **Visualization** | `render_plate_view`, `get_preview_base64`, `set_gcode_view_type` |
+| **Printers** | `get_printers`, `select_printer`, `add_physical_printer`, `discover_printers`, `send_to_printer`, `get_printer_status`, `printer_control`, `list_printer_files`, `print_printer_file`, `match_project_to_printer` |
+| **Adaptive** | `apply_adaptive_layer_height`, `clear_adaptive_layer_height` |
 | **History** | `undo`, `redo` |
+| **Info** | `get_server_info`, `quit_app`, `start_orca` (bridge-only) |
 
 ---
 
 ## Information Tools
 
 ### get_server_info
-Get comprehensive documentation about the server, tools, and workflows.
+The tool catalogue and the server's documentation. The catalogue is generated from the tool
+registry on every call, so it names every tool the build has, bridge-only ones included.
 
-**Parameters:** None
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `section` | string | No | `concepts`, `suggested_flows`, `tool_examples`, `warnings_and_best_practices`, `settings`, or `all`. Omit for the default response. |
 
-**Returns:** Complete documentation including quick start, workflow examples, and tool usage.
+**Returns:** Without `section` (about 5.6 KB): `server` (name, version from `version.inc`),
+`quick_start`, `tools` (every tool's one-line summary, grouped by category), `bridge_only` (tools
+the bridge answers itself), and `sections` (each section's name and size in bytes). With a
+section name, just that section; with `all`, everything (about 20 KB).
 
-**Example:**
+**Examples:**
 ```json
 {"name": "get_server_info", "arguments": {}}
+{"name": "get_server_info", "arguments": {"section": "suggested_flows"}}
 ```
 
 ---

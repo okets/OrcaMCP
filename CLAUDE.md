@@ -79,7 +79,7 @@ cd build && ctest --output-on-failure
                                                              │  OrcaMCPServer  │
                                                              │                 │
                                                              │ - JSON-RPC 2.0  │
-                                                             │ - 76 MCP Tools  │
+                                                             │ - Tool registry │
                                                              │ - Thread-safe   │
                                                              └─────────────────┘
 ```
@@ -99,13 +99,14 @@ cd build && ctest --output-on-failure
 
 **Status**: Complete & Tested ✓
 
-### MCP Tools (79 registered, 80 reachable)
+### MCP Tools (79 in the app, 80 reachable)
 
-The server registers 79; the bridge adds `start_orca`, which launches OrcaSlicer and
-so cannot live inside it. To regenerate this count after adding a tool:
+The registry holds 80: the app serves 79 through `tools/list`, and `start_orca`, which launches
+OrcaSlicer and so cannot be answered by it, is registered as bridge-only and served by the bridge.
+Every tool's category is the row it sits in below. To regenerate the counts after adding a tool:
 
 ```bash
-grep -hA1 -E '^\s*register_tool\(\{' src/slic3r/GUI/OrcaMCP/*.cpp | grep -coE '^\s*"[a-z0-9_]+",'
+grep -hA1 -E '^\s*register_(bridge_)?tool\(\{' src/slic3r/GUI/OrcaMCP/*.cpp | grep -coE '^\s*"[a-z0-9_]+",'
 ```
 
 | Category | Tools |
@@ -124,8 +125,7 @@ grep -hA1 -E '^\s*register_tool\(\{' src/slic3r/GUI/OrcaMCP/*.cpp | grep -coE '^
 | **Printers** | `get_printers`, `select_printer`, `add_physical_printer` (incl. optional Obico URL/token for Flashforge), `discover_printers`, `send_to_printer`, `get_printer_status`, `printer_control`, `list_printer_files`, `print_printer_file`, `match_project_to_printer` |
 | **Adaptive** | `apply_adaptive_layer_height`, `clear_adaptive_layer_height` |
 | **History** | `undo`, `redo` |
-| **Info** | `get_server_info`, `quit_app` (closes the app with no dialog; discards unsaved changes unless `discard_changes=false`) |
-| **Bridge only** | `start_orca` |
+| **Info** | `get_server_info` (every tool's summary by category; `section` fetches the rest of the docs), `quit_app` (closes the app with no dialog; discards unsaved changes unless `discard_changes=false`), `start_orca` (bridge-only) |
 
 ---
 

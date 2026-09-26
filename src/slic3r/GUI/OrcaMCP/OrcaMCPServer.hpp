@@ -16,6 +16,10 @@ namespace Slic3r { namespace GUI {
  *
  * Implements the MCP protocol over HTTP for Claude Code integration.
  * Exposes slicer functionality as MCP tools.
+ *
+ * The tool registry below is the one source of every tool's text: tools/list, get_server_info's
+ * catalogue and the bridge's list (scripts/orcamcp_tools.json, checked against the registry by
+ * tests/slic3rutils/test_mcp_tool_list.cpp) are all generated from it.
  */
 class OrcaMCPServer
 {
@@ -52,7 +56,8 @@ public:
         std::string summary;          // get_server_info's catalogue line: one line, at most 40 characters
         std::string description;
         nlohmann::json input_schema;  // JSON Schema for parameters
-        ToolHandler handler;
+        ToolHandler handler;          // left empty by register_bridge_tool, which supplies its own
+        bool bridge_only = false;     // served by orcamcp-bridge.py, never by tools/list
     };
     static constexpr size_t max_summary_length = 40;
 
@@ -69,17 +74,19 @@ public:
     // registered, or a tool with no handler.
     static void register_tool(const ToolDefinition& tool);
 
-    // Every registered tool, keyed by name. Registers them first if
+    // Every registered tool, bridge-only ones included, keyed by name. Registers them first if
     // nothing has yet; unlike init() it has no other side effect, so a unit test can call it.
     static const std::map<std::string, ToolDefinition>& registered_tools();
 
     // The version every MCP surface reports: SoftFever_VERSION, from version.inc.
     static std::string version();
 
+    // tools/list: every registered tool except the bridge-only ones.
+    static nlohmann::json handle_tools_list();
+
 private:
     // MCP protocol handlers
     static nlohmann::json handle_initialize(const nlohmann::json& params);
-    static nlohmann::json handle_tools_list();
     static nlohmann::json handle_tools_call(const nlohmann::json& params);
 
     // Tool-specific handlers
@@ -97,6 +104,11 @@ private:
     // Register every tool once, with no other side effect
     static void ensure_tools_registered();
 
+    // Register a tool the bridge answers itself (start_orca launches this app, so the app cannot
+    // serve it). Its text lives here with every other tool's; the bridge reads it from
+    // scripts/orcamcp_tools.json. Called on the app, its handler says the bridge answers it.
+    static void register_bridge_tool(ToolDefinition tool);
+
     // Register all built-in tools
     static void register_builtin_tools();
     // Filament and mixed-filament tools (OrcaMCPFilamentTools.cpp)
@@ -105,6 +117,8 @@ private:
     static void register_printer_tools();
     // Facet painting and brim ears (OrcaMCPPaintTools.cpp)
     static void register_paint_tools();
+    // Tools orcamcp-bridge.py answers itself (start_orca)
+    static void register_bridge_tools();
 };
 
 }} // namespace Slic3r::GUI
