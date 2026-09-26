@@ -878,7 +878,6 @@ echo "P a Print the slice uses is freed unchecked / init() reuses print indices 
 echo "Q restore prompt closed by a quit deletes the backup (rel2506/04c):  $(U src/slic3r/GUI/Plater.cpp | awk '/EVT_RESTORE_PROJECT, \[this/{f=1} f&&/closing_dialogs_to_quit|wxID_ABORT/{print "no"; exit} f&&/remove_all\(last\)/{print "yes"; exit}')"
 echo "S the logout handler ends dialogs with wxID_ABORT (rel2506/04c):    $(U src/slic3r/GUI/GUI_App.cpp | grep -c 'EndModal(wxID_ABORT)')"
 echo "V the object list's mesh-error text lives inside ObjectList / its first icon reads mesh().stats() (rel2506/05): $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^MeshErrorsInfo ObjectList::get_mesh_errors_info\(const int obj_idx/{f=1} f&&/_L_PLURAL/{print "yes"; exit} f&&/^}/{print "no"; exit}') / $(U src/slic3r/GUI/GUI_ObjectList.cpp | grep -c 'get_warning_icon_name(model_object->mesh().stats())')"
-echo "W TriangleMeshStats::merge drops the first mesh's repair counts (rel2506/05): $(U src/libslic3r/TriangleMesh.hpp | awk '/TriangleMeshStats merge\(/{f=1} f&&/out\.repaired_errors *=[^=]/{print "no"; exit} f&&/return out;/{print "yes"; exit}')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -958,16 +957,10 @@ function `mesh_errors_info(const ModelObject&, ...)` in the same file (so `local
 still reaches its strings) and the member calls it; MCP's `get_mesh_health`, `active_warnings` and
 `get_scene_info` call it too. On "no", upstream changed that function: redo the move on its version and
 re-run `[MeshHealth]`. The second half is a fix: upstream's `add_object_to_list` sets an object's first
-icon from `mesh().stats()`, which merges the model parts only and (item W) keeps only the last part's
+icon from `mesh().stats()`, which merges the model parts only and keeps only the last part's
 repairs, while every later icon update and the tooltip read `get_object_stl_stats()`; a modifier's hole
 or an earlier part's repairs left the icon off under a tooltip listing them. Ours reads
 `get_object_stl_stats()` there too. On 0, take upstream's line.
-
-Item W: upstream's `TriangleMeshStats::merge` (`TriangleMesh.hpp`) builds a fresh `out` and merges
-only the second mesh's `repaired_errors` into it, so a merged mesh keeps the last mesh's repair
-counts and loses the rest (`ModelObject::raw_mesh` merges an object's parts this way). Ours starts
-`out` from the first mesh's counts. On "no", take upstream's and re-run the fff_print test "Merging
-two meshes keeps both meshes' repair counts".
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices

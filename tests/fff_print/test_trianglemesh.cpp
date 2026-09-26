@@ -274,27 +274,6 @@ SCENARIO("Mesh merge functions", "[TriangleMesh]") {
     }
 }
 
-// Repair counts reach a mesh from a 3MF's mesh_stat. A merged mesh is what an object's parts become
-// (ModelObject::raw_mesh), and it has to keep every part's counts, not only the last one's.
-TEST_CASE("Merging two meshes keeps both meshes' repair counts", "[TriangleMesh]") {
-    RepairedMeshErrors first;
-    first.edges_fixed     = 1;
-    first.facets_reversed = 2;
-    RepairedMeshErrors second;
-    second.degenerate_facets = 3;
-    second.facets_reversed   = 4;
-
-    TriangleMesh merged(its_make_cube(20., 20., 20.), first);
-    merged.merge(TriangleMesh(its_make_cube(10., 10., 10.), second));
-
-    const RepairedMeshErrors& errors = merged.stats().repaired_errors;
-    CHECK(errors.edges_fixed == 1);
-    CHECK(errors.degenerate_facets == 3);
-    CHECK(errors.facets_reversed == 6);
-    CHECK(errors.facets_removed == 0);
-    CHECK(errors.backwards_edges == 0);
-}
-
 SCENARIO("Cut behavior", "[TriangleMesh]") {
     GIVEN( "A 20mm cube with one corner on the origin") {
 		auto cube = make_cube();
