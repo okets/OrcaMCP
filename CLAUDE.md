@@ -632,7 +632,7 @@ The `count` field is always present (even when 0) to help confirm issues have be
 | `ORCAMCP_PORT` | `13618` | OrcaSlicer HTTP server port |
 | `ORCAMCP_TIMEOUT` | `120` | Request timeout in seconds |
 | `ORCAMCP_DEBUG` | (unset) | Enable debug logging to stderr |
-| `ORCAMCP_SKIP_CLOUD_LOGIN` | (set by `start_orca`) | App-side: skip the Orca cloud silent sign-in at startup. That sign-in reads the keychain synchronously on the GUI thread; on macOS it raises a permission prompt per freshly built binary and, with the screen locked, blocks the app before the MCP server starts. Set it yourself when launching the app for an agent. |
+| `ORCAMCP_SKIP_CLOUD_LOGIN` | (set by `start_orca`) | App-side: marks an agent launch (`GUI::is_agent_launch()`), so startup waits on nothing a person must answer. It skips the Orca cloud silent sign-in, which reads the keychain synchronously on the GUI thread (on macOS a permission prompt per freshly built binary), and the recent-project thumbnails, which open every recent 3MF on the GUI thread (for projects in `~/Documents`, a macOS privacy prompt per fresh binary; Home then shows no thumbnails). Either prompt, unanswered, blocks the app before the MCP server starts. Set it yourself when launching the app for an agent. |
 
 ---
 
@@ -704,7 +704,13 @@ echo "F error panel: Wrap( without Layout() (f5ff97bfa1):             $(U src/sl
 echo "G dead [this] capture CameraPopup (merge 476df4364e):            $(U src/slic3r/GUI/CameraPopup.cpp | grep -c 'Bind(wxEVT_TOGGLEBUTTON, \[this\](wxCommandEvent &e)')"
 echo "H dead [this] capture StatusPanel (merge 476df4364e):            $(U src/slic3r/GUI/StatusPanel.cpp | grep -c 'm_bmToggleBtn_timelapse->Bind(wxEVT_TOGGLEBUTTON, \[this\]')"
 echo "I extruder-count mismatch in the Send dialog (reported upstream): $(gh issue view 15758 -R OrcaSlicer/OrcaSlicer --json state -q .state 2>/dev/null || echo unknown)"
+echo "J startup reads recent-project thumbnails on the GUI thread (rel2506/02): $(U src/slic3r/GUI/MainFrame.cpp | awk '/FileHistory::LoadThumbnails\(\)$/{f=1} f&&/parallel_for/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
 ```
+
+Item J: upstream opens every recent 3MF synchronously while building the main window, before
+post_init starts the MCP server. Our patch skips it for an agent launch (`GUI::is_agent_launch()`,
+`MainFrame.cpp`). "no" means upstream moved the load off the GUI thread: re-check whether our skip
+is still needed.
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices

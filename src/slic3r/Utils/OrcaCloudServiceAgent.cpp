@@ -1,6 +1,7 @@
 #include "OrcaCloudServiceAgent.hpp"
 #include "Http.hpp"
 #include "libslic3r/Utils.hpp"
+#include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "libslic3r/AppConfig.hpp"
 
@@ -643,7 +644,7 @@ int OrcaCloudServiceAgent::start()
     // the prompt cannot be answered and the app never reaches the point where its MCP server starts
     // (seen 2026-09-19: two instances blocked in SecKeychainFindGenericPassword). The bridge sets
     // this variable when it launches the app. It changes nothing for a normally launched app.
-    if (const char* skip = std::getenv("ORCAMCP_SKIP_CLOUD_LOGIN"); skip != nullptr && *skip != '\0' && std::string(skip) != "0") {
+    if (GUI::is_agent_launch()) {
         BOOST_LOG_TRIVIAL(info) << "OrcaCloudServiceAgent: ORCAMCP_SKIP_CLOUD_LOGIN set, skipping silent sign-in";
         return 0;
     }

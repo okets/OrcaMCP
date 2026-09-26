@@ -8,6 +8,7 @@
 #ifdef __APPLE__
 #include "slic3r/Utils/MacDarkMode.hpp"
 #endif
+#include <cstdlib>
 #include <map>
 #include <string>
 
@@ -108,6 +109,11 @@ int mcp_answer_for(long style, const std::string& prompt_key) {
         if (auto it = s_mcp_prompt_answers.find(prompt_key); it != s_mcp_prompt_answers.end())
             return it->second;
     return mcp_default_answer(style);
+}
+
+bool is_agent_launch() {
+    const char* value = std::getenv("ORCAMCP_SKIP_CLOUD_LOGIN");
+    return value != nullptr && *value != '\0' && std::string(value) != "0";
 }
 
 std::string mcp_list_summary(const std::vector<std::string>& items, size_t max_items) {

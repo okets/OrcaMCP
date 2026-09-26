@@ -2871,7 +2871,12 @@ void MainFrame::init_menubar_as_editor()
         {
             m_recent_projects.AddFileToHistory(from_u8(project));
         }
-        m_recent_projects.LoadThumbnails();
+        // Orca MCP: LoadThumbnails opens every recent 3MF on this thread, before the MCP server starts.
+        // For a project in ~/Documents a freshly built binary waits there on a macOS privacy prompt,
+        // which nobody answers when an agent launched the app. Skip it then; Home lists the projects
+        // without thumbnails.
+        if (!is_agent_launch())
+            m_recent_projects.LoadThumbnails();
 
         Bind(wxEVT_UPDATE_UI, [this](wxUpdateUIEvent& evt) { evt.Enable(can_open_project() && (m_recent_projects.GetCount() > 0)); }, recent_projects_submenu->GetId());
 

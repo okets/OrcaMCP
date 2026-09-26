@@ -75,6 +75,10 @@ inline constexpr const char* MCP_PROMPT_MULTIPART = "multipart"; // load a file'
 void set_mcp_prompt_answer(const std::string& key, int answer_id);
 void clear_mcp_prompt_answers();
 int mcp_answer_for(long style, const std::string& prompt_key);
+// True when the app was launched for an agent: the bridge's start_orca sets ORCAMCP_SKIP_CLOUD_LOGIN
+// (to anything but "" or "0"). Such a launch has nobody at the screen, so startup must not wait on
+// anything a person has to answer, such as a keychain or macOS privacy prompt.
+bool is_agent_launch();
 void show_substitutions_info(const PresetsConfigSubstitutions& presets_config_substitutions);
 void show_substitutions_info(const ConfigSubstitutions& config_substitutions, const std::string& filename);
 
