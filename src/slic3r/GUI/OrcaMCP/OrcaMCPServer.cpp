@@ -2473,30 +2473,31 @@ void OrcaMCPServer::register_builtin_tools()
                 // Suppress any dialogs during slicing initiation
                 McpDialogSuppressionGuard suppression_guard;
                 const bool slice_every_plate = all_plates && plate_count > 1;
-                if (slice_every_plate) {
-                    // Plater::reslice() slices the *current* plate and nothing else, which is what
-                    // this tool used to do under the name slice_all: with four plates and plate 4
-                    // selected it left plates 1-3 with no slice result and reported success.
-                    //
-                    // The per-plate chaining lives behind Plater::priv::m_slice_all, which only
-                    // on_action_slice_all sets, so the plate walk is driven by dispatching the same
-                    // event the Slice All button posts (MainFrame.cpp). Dispatched rather than
-                    // posted, so the kick-off still happens inside the suppression guard, exactly as
-                    // the reslice() call it replaces did.
-                    const bool was_preview_shown = plater->is_preview_shown();
+                // Plater::reslice() slices the *current* plate and nothing else, which is what
+                // this tool used to do under the name slice_all: with four plates and plate 4
+                // selected it left plates 1-3 with no slice result and reported success.
+                //
+                // The per-plate chaining lives behind Plater::priv::m_slice_all, which only
+                // on_action_slice_all sets, so the plate walk is driven by dispatching the same
+                // event the Slice All button posts (MainFrame.cpp). One plate is sliced by the Slice
+                // Plate button's event, which clears that flag: a bare reslice() left it set after a
+                // Slice All run, and the plate's completion was taken for a step of that run (it went
+                // on to the plates after, and a plate-list change reported a Slice All cancelled).
+                // Dispatched rather than posted, so the kick-off still happens inside the suppression
+                // guard.
+                const bool was_preview_shown = plater->is_preview_shown();
+                if (slice_every_plate)
                     plate_list.get_plate(plate_at_call)->get_print(nullptr, nullptr, &s_slice_all_restore_print_index);
-                    SimpleEvent slice_all_event(EVT_GLTOOLBAR_SLICE_ALL);
-                    plater->GetEventHandler()->ProcessEvent(slice_all_event);
-                    // on_action_slice_all also switches the app to the G-code preview. An MCP slice
-                    // leaves the user's tab as it found it: a caller that was looking at the 3D scene
-                    // is put back there, and one already in the preview is left alone. (The renderers
-                    // draw from the 3D view whatever tab shows, so they no longer depend on this.)
-                    if (!was_preview_shown)
-                        plater->select_view_3D("3D");
-                } else {
+                else
                     s_slice_all_restore_print_index = -1;
-                    plater->reslice();
-                }
+                SimpleEvent slice_event(slice_every_plate ? EVT_GLTOOLBAR_SLICE_ALL : EVT_GLTOOLBAR_SLICE_PLATE);
+                plater->GetEventHandler()->ProcessEvent(slice_event);
+                // Both handlers also switch the app to the G-code preview. An MCP slice leaves the
+                // user's tab as it found it: a caller that was looking at the 3D scene is put back
+                // there, and one already in the preview is left alone. (The renderers draw from the 3D
+                // view whatever tab shows, so they no longer depend on this.)
+                if (!was_preview_shown)
+                    plater->select_view_3D("3D");
                 auto info_messages = suppression_guard.messages();
 
                 nlohmann::json result = {
