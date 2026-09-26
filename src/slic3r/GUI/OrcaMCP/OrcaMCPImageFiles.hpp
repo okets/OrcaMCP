@@ -5,6 +5,8 @@
 // are this server's, and which of them get_preview_base64 may read. Filesystem only: no GL, no wx.
 // Unit-tested in tests/slic3rutils/test_mcp_image_files.cpp.
 
+#include <chrono>
+#include <cstddef>
 #include <string>
 #include <string_view>
 
@@ -28,6 +30,16 @@ bool is_mcp_image_file_name(const std::string& file_name);
 // True when `path` is such an image directly inside mcp_image_directory(): the only files
 // get_preview_base64 will read. A name check alone let "<anywhere>/orcamcp_render_/../<file>" through.
 bool is_mcp_image_path(const std::string& path);
+
+// How old an image must be before startup deletes it: old enough that no running server is still
+// handing it out. Another OrcaMCP running at the same time writes into the same directory, and its
+// images are not this one's to delete.
+inline constexpr std::chrono::hours k_stale_image_age{1};
+
+// Deletes this server's images (is_mcp_image_file_name) in `directory` last written more than
+// `min_age` ago, and returns how many went. Anything else is left alone, and a missing or unreadable
+// directory removes nothing.
+size_t remove_stale_mcp_images(const std::string& directory, std::chrono::seconds min_age);
 
 }}} // namespace Slic3r::GUI::OrcaMCP
 

@@ -1027,25 +1027,20 @@ nlohmann::json OrcaMCPPlateUtils::GetCurrentProject(bool with_model_object_featu
 void OrcaMCPPlateUtils::CleanupTempImages() {
     namespace fs = boost::filesystem;
     try {
-        std::vector<fs::path> directories{fs::path(OrcaMCP::mcp_image_directory())};
+        // Only images older than k_stale_image_age: another OrcaMCP running at the same time writes
+        // into the same directory, and the render it made a minute ago is not this one's to delete.
+        std::vector<std::string> directories{OrcaMCP::mcp_image_directory()};
 #ifndef _WIN32
         // Older builds wrote to a literal /tmp, which on macOS is not the temp directory.
         boost::system::error_code ec;
-        if (fs::is_directory("/tmp", ec) && fs::weakly_canonical("/tmp", ec) != directories.front())
+        if (fs::is_directory("/tmp", ec) && fs::weakly_canonical("/tmp", ec).string() != directories.front())
             directories.emplace_back("/tmp");
 #endif
         size_t removed = 0;
-        for (const fs::path& directory : directories) {
-            if (!fs::is_directory(directory))
-                continue;
-            for (fs::directory_iterator it(directory); it != fs::directory_iterator(); ++it) {
-                boost::system::error_code remove_ec;
-                if (fs::is_regular_file(*it) && OrcaMCP::is_mcp_image_file_name(it->path().filename().string()) &&
-                    fs::remove(it->path(), remove_ec))
-                    ++removed;
-            }
-        }
-        BOOST_LOG_TRIVIAL(info) << "OrcaMCP: removed " << removed << " render and preview image(s) from earlier sessions";
+        for (const std::string& directory : directories)
+            removed += OrcaMCP::remove_stale_mcp_images(directory, OrcaMCP::k_stale_image_age);
+        BOOST_LOG_TRIVIAL(info) << "OrcaMCP: removed " << removed << " render and preview image(s) older than "
+                                << OrcaMCP::k_stale_image_age.count() << " h";
     } catch (const std::exception& e) {
         BOOST_LOG_TRIVIAL(warning) << "OrcaMCP: failed to clean up render and preview images: " << e.what();
     }

@@ -50,4 +50,23 @@ bool is_mcp_image_path(const std::string& path)
     return !ec && is_mcp_image_file_name(resolved.filename().string()) && resolved.parent_path() == image_directory();
 }
 
+size_t remove_stale_mcp_images(const std::string& directory, std::chrono::seconds min_age)
+{
+    namespace fs = boost::filesystem;
+    boost::system::error_code ec;
+    if (!fs::is_directory(directory, ec))
+        return 0;
+    const std::time_t cutoff  = std::time(nullptr) - std::time_t(min_age.count());
+    size_t            removed = 0;
+    for (fs::directory_iterator it(directory, ec), end; !ec && it != end; it.increment(ec)) {
+        const fs::path& path = it->path();
+        if (!fs::is_regular_file(path, ec) || !is_mcp_image_file_name(path.filename().string()))
+            continue;
+        const std::time_t written = fs::last_write_time(path, ec);
+        if (!ec && written < cutoff && fs::remove(path, ec))
+            ++removed;
+    }
+    return removed;
+}
+
 }}} // namespace Slic3r::GUI::OrcaMCP

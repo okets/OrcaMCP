@@ -120,7 +120,8 @@ public:
                                                    int resolution = 128);
 
     // Removes the render and preview images earlier sessions left in the temp directory (call on
-    // startup): every orcamcp_render_* and orcamcp_preview_* image, not only the previews.
+    // startup): orcamcp_render_* and orcamcp_preview_* images older than an hour, so the images of
+    // another OrcaMCP running at the same time survive.
     static void CleanupTempImages();
 
 private:

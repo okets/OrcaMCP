@@ -1526,8 +1526,8 @@ explicit camera be given relative to the plate's front-left corner.
   side, so a fitted object is never `clipped`. Before v2.5.0.6 the zoom ignored the height and was
   sized for the wrong view direction, so a tall object came back `clipped` with a full-frame box.
 - Files go to the system temp directory (`$TMPDIR` on macOS, `%TEMP%` on Windows, usually `/tmp`
-  on Linux), not a literal `/tmp`, and the app removes the render and preview images of earlier
-  sessions when it starts.
+  on Linux), not a literal `/tmp`. When the app starts it removes render and preview images older
+  than an hour; younger ones may belong to another OrcaMCP running at the same time.
 - `camera` is what `pick_facet` needs to turn a pixel back into a ray; pass it unchanged. On a
   contact sheet each entry under `views` carries its own `camera`, `column` and `x_offset` to add
   to a pixel's x first.
