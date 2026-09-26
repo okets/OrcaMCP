@@ -795,11 +795,15 @@ void FlashforgePrinterAgent::dispatch_message(const std::string& dev_id, const s
     OnMessageFn   local_fn;
     OnMessageFn   cloud_fn;
     QueueOnMainFn queue_fn;
+    std::string   model_id;
+    std::string   firmware;
     {
         std::lock_guard<std::recursive_mutex> lock(m_state_mutex);
         local_fn = m_on_local_message_fn;
         cloud_fn = m_on_message_fn;
         queue_fn = m_queue_on_main_fn;
+        model_id = m_model_id;
+        firmware = m_firmware_version;
     }
 
     if (!local_fn && !cloud_fn) {
@@ -807,10 +811,13 @@ void FlashforgePrinterAgent::dispatch_message(const std::string& dev_id, const s
         return;
     }
 
-    auto dispatch = [this, dev_id, payload, sync_machine, local_fn, cloud_fn]() {
+    // Everything by value, and no `this`: the GUI thread can run the task after this agent is gone.
+    // Quitting destroys the agents (NetworkAgentFactory::clear_printer_agent_cache) while a status
+    // push may still be queued, and a task that read the agent then aborted the quit (2026-09-26).
+    auto dispatch = [dev_id, payload, sync_machine, model_id, firmware, local_fn, cloud_fn]() {
         // Before the payload, not after: parse_json reads printer_type while it parses.
         if (sync_machine)
-            sync_machine_object(dev_id);
+            sync_machine_object(dev_id, model_id, firmware);
         if (local_fn)
             local_fn(dev_id, payload);
         else
@@ -823,7 +830,8 @@ void FlashforgePrinterAgent::dispatch_message(const std::string& dev_id, const s
         dispatch();
 }
 
-void FlashforgePrinterAgent::sync_machine_object(const std::string& dev_id) const
+void FlashforgePrinterAgent::sync_machine_object(const std::string& dev_id, const std::string& model_id,
+                                                 const std::string& firmware)
 {
     DeviceManager* dev_manager = GUI::wxGetApp().getDeviceManager();
     if (!dev_manager)
@@ -831,15 +839,6 @@ void FlashforgePrinterAgent::sync_machine_object(const std::string& dev_id) cons
     MachineObject* obj = dev_manager->get_my_machine(dev_id);
     if (!obj)
         return;
-
-    std::string model_id;
-    std::string firmware;
-    {
-        std::lock_guard<std::recursive_mutex> lock(m_state_mutex);
-        model_id = m_model_id;
-        firmware = m_firmware_version;
-    }
-
 
     // GUI_App::select_machine seeds printer_type from the preset's *display* name, which no
     // printer-type table knows; the vendor model_id is what update_sync_status compares against.

@@ -152,8 +152,9 @@ private:
     void dispatch_printer_connected(const std::string& dev_id);
 
     /// GUI thread only. Fills in the MachineObject fields the Device tab needs but a Bambu-shaped
-    /// `push_status` cannot carry, exactly as MoonrakerPrinterAgent does after its own pushes.
-    void sync_machine_object(const std::string& dev_id) const;
+    /// `push_status` cannot carry, exactly as MoonrakerPrinterAgent does after its own pushes. Static:
+    /// it runs from a queued task that may outlive the agent, so it is given what it reads.
+    static void sync_machine_object(const std::string& dev_id, const std::string& model_id, const std::string& firmware);
 
     std::shared_ptr<Flashforge> get_host() const;
 
