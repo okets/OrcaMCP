@@ -1,5 +1,6 @@
 #include "OrcaMCPServer.hpp"
 #include "OrcaMCPCommon.hpp"
+#include "OrcaMCPMeshHealth.hpp"
 #include "OrcaMCPPresetConfigUtils.hpp"
 #include "OrcaMCPPlateUtils.hpp"
 #include "OrcaMCPImageFiles.hpp"
@@ -748,7 +749,9 @@ void OrcaMCPServer::register_builtin_tools()
             int preview_views = params.value("preview_views", 4);
             int preview_resolution = params.value("preview_resolution", 256);
             return run_on_main_thread([with_features, include_preview, preview_views, preview_resolution]() {
-                nlohmann::json result = OrcaMCPPlateUtils::GetCurrentProject(with_features);
+                // Read once: every object entry's mesh_warning and features come from it.
+                const std::vector<MeshHealth> mesh_health = model_mesh_health(wxGetApp().plater()->model());
+                nlohmann::json result = OrcaMCPPlateUtils::GetCurrentProject(with_features, mesh_health);
 
                 add_turntable_preview_if_requested(result, include_preview, preview_views, preview_resolution);
                 if (result.contains("preview_path"))

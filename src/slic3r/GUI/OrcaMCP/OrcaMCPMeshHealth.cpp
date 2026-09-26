@@ -22,35 +22,11 @@ std::string one_line(const wxString& text)
     return line;
 }
 
-int model_part_facets(const ModelObject& object)
-{
-    int facets = 0;
-    for (const ModelVolume* volume : object.volumes)
-        if (volume->is_model_part())
-            facets += int(volume->mesh().facets_count());
-    return facets;
-}
-
-// The stats-derived numbers, and what the list shows for the same row (vol_idx -1: the object).
-MeshHealth mesh_health(const ModelObject& object, int vol_idx, const TriangleMeshStats& stats, int facets)
+MeshHealth health_of(const TriangleMeshStats& stats)
 {
     MeshHealth health;
-    health.facets          = facets;
-    health.shells          = stats.number_of_parts;
-    health.open_edges      = stats.open_edges;
-    health.repaired_errors = stats.repaired_errors;
-    health.errors_repaired = object.get_repaired_errors_count(vol_idx);
-
-    const MeshErrorsInfo row = mesh_errors_info(stats);
-    health.warning           = !row.warning_icon_name.empty();
-    if (health.warning) {
-        // Asked for the sidebar line, the list leaves the tooltip's "click the icon" line off, so the
-        // tooltip comes from the call above.
-        wxString sidebar;
-        mesh_errors_info(stats, &sidebar);
-        health.tooltip = into_u8(row.tooltip);
-        health.reason  = one_line(sidebar);
-    }
+    health.stats   = stats;
+    health.warning = !get_warning_icon_name(stats).empty();
     return health;
 }
 
@@ -63,19 +39,18 @@ nlohmann::json repaired_errors_json(const RepairedMeshErrors& errors)
             {"backwards_edges", errors.backwards_edges}};
 }
 
-// mesh_warning, tooltip and mesh_warning_reason: the list's row, as get_mesh_health reports it.
+// mesh_warning, and tooltip and mesh_warning_reason when it is true: a row of get_mesh_health.
 void add_row_state(nlohmann::json& out, const MeshHealth& health)
 {
-    out["mesh_warning"]        = health.warning;
-    out["tooltip"]             = health.tooltip;
-    out["mesh_warning_reason"] = health.reason;
+    out["mesh_warning"] = health.warning;
+    if (health.warning) {
+        out["tooltip"]             = mesh_warning_tooltip(health);
+        out["mesh_warning_reason"] = mesh_warning_reason(health);
+    }
 }
 
-nlohmann::json volume_json(const ModelObject& object, int volume_idx)
+nlohmann::json volume_json(const ModelVolume& volume, int volume_idx, const MeshHealth& health)
 {
-    const ModelVolume& volume = *object.volumes[std::size_t(volume_idx)];
-    const MeshHealth   health = volume_mesh_health(object, volume_idx);
-
     nlohmann::json out = {{"volume_id", volume_idx}, {"name", volume.name}, {"type", volume_type_name(volume.type())}};
     out.update(mesh_numbers_json(health));
     add_row_state(out, health);
@@ -84,41 +59,66 @@ nlohmann::json volume_json(const ModelObject& object, int volume_idx)
 
 } // namespace
 
+int MeshHealth::errors_repaired() const { return repaired_errors_count(stats.repaired_errors); }
+
 MeshHealth object_mesh_health(const ModelObject& object)
 {
-    return mesh_health(object, -1, object.get_object_stl_stats(), model_part_facets(object));
+    TriangleMeshStats stats = object.get_object_stl_stats();
+    stats.number_of_facets  = uint32_t(object.facets_count());
+    return health_of(stats);
 }
 
 MeshHealth volume_mesh_health(const ModelObject& object, int volume_idx)
 {
-    const TriangleMesh& mesh = object.volumes[std::size_t(volume_idx)]->mesh();
-    return mesh_health(object, volume_idx, mesh.stats(), int(mesh.facets_count()));
+    return health_of(object.volumes[std::size_t(volume_idx)]->mesh().stats());
+}
+
+std::vector<MeshHealth> model_mesh_health(const Model& model)
+{
+    std::vector<MeshHealth> health;
+    health.reserve(model.objects.size());
+    for (const ModelObject* object : model.objects)
+        health.push_back(object_mesh_health(*object));
+    return health;
+}
+
+std::string mesh_warning_tooltip(const MeshHealth& health)
+{
+    return health.warning ? into_u8(mesh_errors_info(health.stats).tooltip) : std::string();
+}
+
+std::string mesh_warning_reason(const MeshHealth& health)
+{
+    if (!health.warning)
+        return {};
+    wxString sidebar;
+    mesh_errors_info(health.stats, &sidebar);
+    return one_line(sidebar);
 }
 
 nlohmann::json mesh_numbers_json(const MeshHealth& health)
 {
-    return {{"facets", health.facets},
-            {"shells", health.shells},
-            {"open_edges", health.open_edges},
+    return {{"facets", health.facets()},
+            {"shells", health.shells()},
+            {"open_edges", health.open_edges()},
             {"manifold", health.manifold()},
             {"repaired", health.repaired()},
-            {"errors_repaired", health.errors_repaired},
-            {"repaired_errors", repaired_errors_json(health.repaired_errors)}};
+            {"errors_repaired", health.errors_repaired()},
+            {"repaired_errors", repaired_errors_json(health.stats.repaired_errors)}};
 }
 
-nlohmann::json mesh_features_json(const ModelObject& object)
+nlohmann::json mesh_features_json(const MeshHealth& object_health)
 {
-    nlohmann::json features = mesh_numbers_json(object_mesh_health(object));
-    features["volume_mm3"]  = object.get_object_stl_stats().volume;
+    nlohmann::json features = mesh_numbers_json(object_health);
+    features["volume_mm3"]  = object_health.stats.volume;
     return features;
 }
 
-void add_mesh_warning(nlohmann::json& out, const ModelObject& object)
+void add_mesh_warning(nlohmann::json& out, const MeshHealth& object_health)
 {
-    const MeshHealth health = object_mesh_health(object);
-    out["mesh_warning"]     = health.warning;
-    if (health.warning)
-        out["mesh_warning_reason"] = health.reason;
+    out["mesh_warning"] = object_health.warning;
+    if (object_health.warning)
+        out["mesh_warning_reason"] = mesh_warning_reason(object_health);
 }
 
 nlohmann::json mesh_warning_entries(const Model& model)
@@ -132,7 +132,7 @@ nlohmann::json mesh_warning_entries(const Model& model)
                                {"type", "MeshErrors"},
                                {"object_id", int(i)},
                                {"object_name", object.name},
-                               {"message", health.tooltip}});
+                               {"message", mesh_warning_tooltip(health)}});
     }
     return entries;
 }
@@ -141,17 +141,19 @@ MeshHealthReport mesh_health_report(const ModelObject& object, int object_id)
 {
     MeshHealthReport report;
     nlohmann::json&  r = report.response;
+    const MeshHealth object_health = object_mesh_health(object);
     r = {{"status", "success"}, {"object_id", object_id}, {"object_name", object.name}};
-    add_row_state(r, object_mesh_health(object));
-    r["summary"] = mesh_features_json(object);
+    add_row_state(r, object_health);
+    r["summary"] = mesh_features_json(object_health);
 
     nlohmann::json volumes = nlohmann::json::array();
     for (std::size_t i = 0; i < object.volumes.size(); ++i) {
-        volumes.push_back(volume_json(object, int(i)));
+        const ModelVolume& volume = *object.volumes[i];
+        const MeshHealth   health = volume_mesh_health(object, int(i));
+        volumes.push_back(volume_json(volume, int(i), health));
         // The shells get_object_components lists: model parts only, and only when there is more
         // than one -- a single shell is the whole part, and the flood fill is the slow half.
-        const ModelVolume& volume = *object.volumes[i];
-        if (volume.is_model_part() && volume.mesh().stats().number_of_parts > 1)
+        if (volume.is_model_part() && health.shells() > 1)
             report.shell_jobs.push_back({i, volume.mesh_ptr(), volume_to_plate(object, volume, 0)});
     }
     r["volumes"] = std::move(volumes);

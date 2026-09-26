@@ -808,7 +808,15 @@ nlohmann::json OrcaMCPPlateUtils::PrimeTowerJson(const PrimeTowerState& state)
     return j;
 }
 
-nlohmann::json OrcaMCPPlateUtils::GetPlates(bool with_model_object_features) {
+// The health read once for the call, by object index; an object the model does not list there (a
+// stale plate list) is read on the spot.
+static OrcaMCP::MeshHealth health_at(const std::vector<OrcaMCP::MeshHealth>& mesh_health, int object_index, const ModelObject& object)
+{
+    return object_index >= 0 && size_t(object_index) < mesh_health.size() ? mesh_health[size_t(object_index)] :
+                                                                              OrcaMCP::object_mesh_health(object);
+}
+
+nlohmann::json OrcaMCPPlateUtils::GetPlates(bool with_model_object_features, const std::vector<OrcaMCP::MeshHealth>& mesh_health) {
     nlohmann::json j = nlohmann::json::array();
 
     Plater* plater = wxGetApp().plater();  // Get plater instance
@@ -841,8 +849,10 @@ nlohmann::json OrcaMCPPlateUtils::GetPlates(bool with_model_object_features) {
             const OrcaMCP::InstancesOnPlate here = OrcaMCP::instances_on_plate(*obj, object_index, *plate);
             const BoundingBoxf3 box = OrcaMCP::plate_box_of(*obj, here);
 
+            const OrcaMCP::MeshHealth health = health_at(mesh_health, object_index, *obj);
+
             // Identity, box, transform and instances_on_plate, all from this plate's copies.
-            nlohmann::json object_info = OrcaMCP::model_object_summary_json(*obj, object_index, here);
+            nlohmann::json object_info = OrcaMCP::model_object_summary_json(*obj, object_index, here, health);
             const Vec3d size = box.size();
 
             // The bounding box is the model; the brim is printed plastic beyond it. A neighbour
@@ -863,9 +873,11 @@ nlohmann::json OrcaMCPPlateUtils::GetPlates(bool with_model_object_features) {
             object_info["vlh_profile_points"] = obj->layer_height_profile.empty() ? 0 :
                 static_cast<int>(obj->layer_height_profile.get().size() / 2);
 
-            if (with_model_object_features) {
-                object_info["features"] = GetModelObjectFeaturesJson(obj);
-            }
+            // The mesh-health numbers behind mesh_warning. No overhang analysis: a sum of
+            // downward-facing facet area would count the faces standing on the bed and ignore the
+            // support threshold, bridges and self-support, and only slicing answers that.
+            if (with_model_object_features)
+                object_info["features"] = OrcaMCP::mesh_features_json(health);
 
             auto object_grid_config = &(obj->config);
             int extruder_id = -1;  // Default extruder ID
@@ -940,13 +952,6 @@ nlohmann::json OrcaMCPPlateUtils::GetPlates(bool with_model_object_features) {
     return j;
 }
 
-nlohmann::json OrcaMCPPlateUtils::GetModelObjectFeaturesJson(const ModelObject* obj) {
-    // The mesh-health numbers behind mesh_warning, as get_mesh_health's summary. No overhang
-    // analysis: a sum of downward-facing facet area would count the faces standing on the bed and
-    // ignore the support threshold, bridges and self-support, and only slicing answers that.
-    return OrcaMCP::mesh_features_json(*obj);
-}
-
 std::string sorted_volumes_hash_code(const Model& model) {
     nlohmann::json volumes = nlohmann::json::array();
 
@@ -993,7 +998,8 @@ std::string sorted_volumes_hash_code(const Model& model) {
     return md5_ss.str();
 }
 
-nlohmann::json OrcaMCPPlateUtils::GetCurrentProject(bool with_model_object_features) {
+nlohmann::json OrcaMCPPlateUtils::GetCurrentProject(bool with_model_object_features,
+                                                    const std::vector<OrcaMCP::MeshHealth>& mesh_health) {
     Plater* plater = wxGetApp().plater();
     const Model& model = plater->model();  // Get model from plater
 
@@ -1021,7 +1027,7 @@ nlohmann::json OrcaMCPPlateUtils::GetCurrentProject(bool with_model_object_featu
         {"max_y", bed_box.max.y()},
         {"max_z", bed_box.max.z()}
     };
-    j["plates"] = GetPlates(with_model_object_features);
+    j["plates"] = GetPlates(with_model_object_features, mesh_health);
 
     // Objects that belong to no plate at all. `plates` is walked plate by plate, so anything sitting
     // outside every one of them was simply invisible here -- which is where deleting a plate leaves
@@ -1044,7 +1050,7 @@ nlohmann::json OrcaMCPPlateUtils::GetCurrentProject(bool with_model_object_featu
             {"reason", "Not on any plate. Deleting a plate moves its objects here rather than "
                        "removing them; use delete_object, or move it onto a plate."}
         };
-        OrcaMCP::add_mesh_warning(entry, *object);
+        OrcaMCP::add_mesh_warning(entry, health_at(mesh_health, int(i), *object));
         unplaced.push_back(std::move(entry));
     }
     j["unplaced_objects"] = std::move(unplaced);

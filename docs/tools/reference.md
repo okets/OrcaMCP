@@ -548,7 +548,8 @@ language; `mesh_warning_reason` is the one line the sidebar shows.
 }
 ```
 
-With no icon, `mesh_warning` is false and `tooltip` and `mesh_warning_reason` are empty strings.
+Every row, the object and each volume, has `mesh_warning`; `tooltip` and `mesh_warning_reason` are
+there only when it is `true`, the same shape `get_scene_info` and `load_model` use for their objects.
 
 ---
 

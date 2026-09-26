@@ -322,7 +322,8 @@ namespace {
 // One description of `object`: its identity, `box` for bounding_box and position (the box's centre,
 // which stays accurate after any transform), and instance `instance_idx`'s rotation and scale --
 // the instance's own, which the MCP transforms write to as the GUI's gizmos do.
-nlohmann::json object_summary_json(const ModelObject& object, int object_index, const BoundingBoxf3& box, size_t instance_idx)
+nlohmann::json object_summary_json(const ModelObject& object, int object_index, const BoundingBoxf3& box, size_t instance_idx,
+                                   const MeshHealth& health)
 {
     const Vec3d center = box.center();
     const Vec3d size   = box.size();
@@ -350,7 +351,7 @@ nlohmann::json object_summary_json(const ModelObject& object, int object_index, 
                                          {"z", Geometry::rad2deg(rotation.z())}};
         summary["scale"]              = {{"x", scale.x()}, {"y", scale.y()}, {"z", scale.z()}};
     }
-    add_mesh_warning(summary, object);
+    add_mesh_warning(summary, health);
     return summary;
 }
 
@@ -358,14 +359,25 @@ nlohmann::json object_summary_json(const ModelObject& object, int object_index, 
 
 nlohmann::json model_object_summary_json(const ModelObject& object, int object_index)
 {
-    return object_summary_json(object, object_index, object_world_box(object), 0);
+    return model_object_summary_json(object, object_index, object_mesh_health(object));
+}
+
+nlohmann::json model_object_summary_json(const ModelObject& object, int object_index, const MeshHealth& health)
+{
+    return object_summary_json(object, object_index, object_world_box(object), 0, health);
 }
 
 nlohmann::json model_object_summary_json(const ModelObject& object, int object_index, const InstancesOnPlate& here)
 {
+    return model_object_summary_json(object, object_index, here, object_mesh_health(object));
+}
+
+nlohmann::json model_object_summary_json(const ModelObject& object, int object_index, const InstancesOnPlate& here,
+                                         const MeshHealth& health)
+{
     // The first copy on this plate: instance 0 may stand on another plate, turned or scaled otherwise.
     const size_t   first   = here.ids.empty() ? 0 : size_t(here.ids.front());
-    nlohmann::json summary = object_summary_json(object, object_index, plate_box_of(object, here), first);
+    nlohmann::json summary = object_summary_json(object, object_index, plate_box_of(object, here), first, health);
     summary["instances_on_plate"] = here.ids;
     return summary;
 }

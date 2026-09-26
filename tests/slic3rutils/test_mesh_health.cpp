@@ -173,17 +173,17 @@ TEST_CASE("Mesh health reports a hole's numbers with the list's icon and tooltip
     OnePartObject f{TriangleMesh(cube_missing_facet())};
 
     const MeshHealth h = object_mesh_health(*f.object);
-    CHECK(h.facets == 11);
-    CHECK(h.shells == 1);
-    CHECK(h.open_edges == 3);
+    CHECK(h.facets() == 11);
+    CHECK(h.shells() == 1);
+    CHECK(h.open_edges() == 3);
     CHECK_FALSE(h.manifold());
     CHECK_FALSE(h.repaired());
-    CHECK(h.errors_repaired == 0);
+    CHECK(h.errors_repaired() == 0);
     CHECK(h.warning);
     // The list's own text, word for word, from the same function the list calls.
-    CHECK(h.tooltip == utf8(GUI::mesh_errors_info(f.object->get_object_stl_stats()).tooltip));
-    CHECK(h.tooltip == k_hole_tooltip);
-    CHECK(h.reason == "Error: 3 non-manifold edges.");
+    CHECK(mesh_warning_tooltip(h) == utf8(GUI::mesh_errors_info(f.object->get_object_stl_stats()).tooltip));
+    CHECK(mesh_warning_tooltip(h) == k_hole_tooltip);
+    CHECK(mesh_warning_reason(h) == "Error: 3 non-manifold edges.");
 }
 
 TEST_CASE("Mesh health of a clean mesh has no warning, tooltip or reason", "[MeshHealth][orcamcp]")
@@ -191,13 +191,13 @@ TEST_CASE("Mesh health of a clean mesh has no warning, tooltip or reason", "[Mes
     OnePartObject f{TriangleMesh(its_make_cube(10.0, 10.0, 10.0))};
 
     const MeshHealth h = object_mesh_health(*f.object);
-    CHECK(h.facets == 12);
-    CHECK(h.shells == 1);
+    CHECK(h.facets() == 12);
+    CHECK(h.shells() == 1);
     CHECK(h.manifold());
     CHECK_FALSE(h.repaired());
     CHECK_FALSE(h.warning);
-    CHECK(h.tooltip.empty());
-    CHECK(h.reason.empty());
+    CHECK(mesh_warning_tooltip(h).empty());
+    CHECK(mesh_warning_reason(h).empty());
 }
 
 TEST_CASE("Two disjoint cubes in one part are two shells, and no warning", "[MeshHealth][orcamcp]")
@@ -205,8 +205,8 @@ TEST_CASE("Two disjoint cubes in one part are two shells, and no warning", "[Mes
     OnePartObject f{TriangleMesh(separate_cubes(2))};
 
     const MeshHealth h = object_mesh_health(*f.object);
-    CHECK(h.shells == 2);
-    CHECK(h.facets == 24);
+    CHECK(h.shells() == 2);
+    CHECK(h.facets() == 24);
     CHECK(h.manifold());
     CHECK_FALSE(h.warning);
 }
@@ -216,13 +216,14 @@ TEST_CASE("Recorded repairs are reported field by field, with the list's count",
     OnePartObject f{TriangleMesh(its_make_cube(10.0, 10.0, 10.0), reversed_facets(1))};
 
     const MeshHealth h = object_mesh_health(*f.object);
-    CHECK(h.repaired_errors.facets_reversed == 1);
-    CHECK(h.errors_repaired == 1);
+    CHECK(h.stats.repaired_errors.facets_reversed == 1);
+    CHECK(h.errors_repaired() == 1);
+    CHECK(h.errors_repaired() == f.object->get_repaired_errors_count());
     CHECK(h.repaired());
     CHECK(h.manifold());
     CHECK(h.warning);
-    CHECK(h.tooltip == "1 error repaired\n\nClick the icon to repair model object");
-    CHECK(h.reason == "1 error repaired");
+    CHECK(mesh_warning_tooltip(h) == "1 error repaired\n\nClick the icon to repair model object");
+    CHECK(mesh_warning_reason(h) == "1 error repaired");
 }
 
 TEST_CASE("A reason naming a hole and repairs is one line", "[MeshHealth][orcamcp]")
@@ -231,7 +232,7 @@ TEST_CASE("A reason naming a hole and repairs is one line", "[MeshHealth][orcamc
     errors.edges_fixed = 2;
     OnePartObject f{TriangleMesh(cube_missing_facet(), errors)};
 
-    CHECK(object_mesh_health(*f.object).reason == "Error: 3 non-manifold edges. 2 errors repaired");
+    CHECK(mesh_warning_reason(object_mesh_health(*f.object)) == "Error: 3 non-manifold edges. 2 errors repaired");
 }
 
 TEST_CASE("An STL loaded with a reversed facet is repaired silently and records nothing", "[MeshHealth][orcamcp]")
@@ -250,9 +251,9 @@ TEST_CASE("An STL loaded with a reversed facet is repaired silently and records 
     model.objects.front()->add_instance();
 
     const MeshHealth h = object_mesh_health(*model.objects.front());
-    CHECK(h.facets == 12);
-    CHECK(h.shells == 1);
-    CHECK(h.open_edges == 0);
+    CHECK(h.facets() == 12);
+    CHECK(h.shells() == 1);
+    CHECK(h.open_edges() == 0);
     CHECK_FALSE(h.repaired());
     CHECK_FALSE(h.warning);
 }
@@ -264,15 +265,33 @@ TEST_CASE("An object's health counts every volume's errors and only the parts' f
     f.object->add_volume(TriangleMesh(cube_missing_facet()), ModelVolumeType::PARAMETER_MODIFIER);
 
     const MeshHealth object = object_mesh_health(*f.object);
-    CHECK(object.facets == 12);
-    CHECK(object.shells == 1);
-    CHECK(object.open_edges == 3);
+    CHECK(object.facets() == 12);
+    CHECK(object.shells() == 1);
+    CHECK(object.open_edges() == 3);
     CHECK(object.warning);
 
     CHECK_FALSE(volume_mesh_health(*f.object, 0).warning);
-    CHECK(volume_mesh_health(*f.object, 1).shells == 2);
-    CHECK(volume_mesh_health(*f.object, 2).open_edges == 3);
-    CHECK(volume_mesh_health(*f.object, 2).tooltip == k_hole_tooltip);
+    CHECK(volume_mesh_health(*f.object, 1).shells() == 2);
+    CHECK(volume_mesh_health(*f.object, 1).facets() == 24);
+    CHECK(volume_mesh_health(*f.object, 2).open_edges() == 3);
+    CHECK(mesh_warning_tooltip(volume_mesh_health(*f.object, 2)) == k_hole_tooltip);
+}
+
+TEST_CASE("A model's mesh health is one reading per object, by object index", "[MeshHealth][orcamcp]")
+{
+    Model model;
+    for (bool hole : {false, true}) {
+        ModelObject* object = model.add_object();
+        object->add_volume(hole ? TriangleMesh(cube_missing_facet()) : TriangleMesh(its_make_cube(10.0, 10.0, 10.0)));
+        object->add_instance();
+    }
+
+    const std::vector<MeshHealth> health = model_mesh_health(model);
+    REQUIRE(health.size() == 2);
+    CHECK_FALSE(health[0].warning);
+    CHECK(health[1].warning);
+    CHECK(health[1].open_edges() == 3);
+    CHECK(model_mesh_health(Model()).empty());
 }
 
 TEST_CASE("The mesh numbers are one JSON shape, and features adds the object's volume", "[MeshHealth][orcamcp]")
@@ -293,14 +312,14 @@ TEST_CASE("The mesh numbers are one JSON shape, and features adds the object's v
                                       {"facets_reversed", 1},
                                       {"backwards_edges", 0}}}});
 
-    nlohmann::json features = mesh_features_json(*f.object);
+    nlohmann::json features = mesh_features_json(object_mesh_health(*f.object));
     CHECK_THAT(features["volume_mm3"].get<double>(), WithinAbs(1000.0, 1e-3));
     features.erase("volume_mm3");
     CHECK(features == numbers);
 
     // The object's volume is its first instance's, scaled as the list's sidebar measures it.
     f.object->instances.front()->set_scaling_factor(Vec3d(2.0, 2.0, 2.0));
-    CHECK_THAT(mesh_features_json(*f.object)["volume_mm3"].get<double>(), WithinAbs(8000.0, 1e-3));
+    CHECK_THAT(mesh_features_json(object_mesh_health(*f.object))["volume_mm3"].get<double>(), WithinAbs(8000.0, 1e-3));
 }
 
 TEST_CASE("get_mesh_health lists a multi-shell part's shells, most facets first, in plate millimetres", "[MeshHealth][orcamcp]")
@@ -319,8 +338,6 @@ TEST_CASE("get_mesh_health lists a multi-shell part's shells, most facets first,
     CHECK(r["status"] == "success");
     CHECK(r["object_id"] == 7);
     CHECK(r["object_name"] == "Test object");
-    CHECK(r["mesh_warning"] == false);
-    CHECK(r["tooltip"] == "");
     CHECK(r["summary"]["shells"] == 2);
     REQUIRE(r["volumes"].size() == 2);
 
@@ -374,7 +391,30 @@ TEST_CASE("get_mesh_health reports a hole's icon, tooltip and reason for the obj
     CHECK(r["summary"]["open_edges"] == 3);
     CHECK(r["volumes"][0]["mesh_warning"] == true);
     CHECK(r["volumes"][0]["tooltip"] == k_hole_tooltip);
+    CHECK(r["volumes"][0]["mesh_warning_reason"] == "Error: 3 non-manifold edges.");
     CHECK(r["volumes"][0]["open_edges"] == 3);
+}
+
+// One shape everywhere: mesh_warning always, and the text that explains it only when it is true.
+TEST_CASE("get_mesh_health leaves the tooltip and reason out of a row without the icon", "[MeshHealth][orcamcp]")
+{
+    OnePartObject f{TriangleMesh(its_make_cube(10.0, 10.0, 10.0))};
+    f.object->add_volume(TriangleMesh(cube_missing_facet()), ModelVolumeType::PARAMETER_MODIFIER);
+
+    MeshHealthReport report = mesh_health_report(*f.object, 0);
+    const nlohmann::json& r = report.response;
+    CHECK(r["mesh_warning"] == true);  // the object row counts the modifier's hole
+    const nlohmann::json& part = r["volumes"][0];
+    CHECK(part["mesh_warning"] == false);
+    CHECK_FALSE(part.contains("tooltip"));
+    CHECK_FALSE(part.contains("mesh_warning_reason"));
+    CHECK(r["volumes"][1]["mesh_warning"] == true);
+
+    OnePartObject clean{TriangleMesh(its_make_cube(10.0, 10.0, 10.0))};
+    const nlohmann::json c = mesh_health_report(*clean.object, 0).response;
+    CHECK(c["mesh_warning"] == false);
+    CHECK_FALSE(c.contains("tooltip"));
+    CHECK_FALSE(c.contains("mesh_warning_reason"));
 }
 
 TEST_CASE("active_warnings lists every object that shows the warning icon, with its tooltip", "[MeshHealth][orcamcp]")
@@ -404,17 +444,19 @@ TEST_CASE("Every object description flags the warning icon, with the reason when
     OnePartObject hole{TriangleMesh(cube_missing_facet())};
 
     nlohmann::json out;
-    add_mesh_warning(out, *clean.object);
+    add_mesh_warning(out, object_mesh_health(*clean.object));
     CHECK(out == nlohmann::json{{"mesh_warning", false}});
 
     out = nlohmann::json::object();
-    add_mesh_warning(out, *hole.object);
+    add_mesh_warning(out, object_mesh_health(*hole.object));
     CHECK(out == nlohmann::json{{"mesh_warning", true}, {"mesh_warning_reason", "Error: 3 non-manifold edges."}});
 
-    // get_scene_info's objects and load_model's loaded_objects are this summary.
+    // get_scene_info's objects and load_model's loaded_objects are this summary. Given the health
+    // read once for the whole scene, it says the same as reading it itself.
     const nlohmann::json summary = model_object_summary_json(*hole.object, 0);
     CHECK(summary["mesh_warning"] == true);
     CHECK(summary["mesh_warning_reason"] == "Error: 3 non-manifold edges.");
+    CHECK(model_object_summary_json(*hole.object, 0, object_mesh_health(*hole.object)) == summary);
     CHECK(model_object_summary_json(*clean.object, 0)["mesh_warning"] == false);
     CHECK_FALSE(model_object_summary_json(*clean.object, 0).contains("mesh_warning_reason"));
 }

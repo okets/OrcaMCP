@@ -49,9 +49,9 @@ void OrcaMCPServer::register_mesh_tools()
         "Mesh errors, shells, the warning icon",
         "Mesh errors behind the object list's warning icon: open edges (holes, non-manifold), "
         "repaired facets, and loose parts or stray shells, for one object and each of its volumes. "
-        "Returns mesh_warning (whether the icon shows), `tooltip` (the icon's tooltip, exactly as the "
-        "GUI shows it, in the app's language) and mesh_warning_reason (the sidebar's one line), with "
-        "the numbers behind them: facets, shells, open_edges, manifold, repaired, errors_repaired and "
+        "Every row -- the object and each volume -- has mesh_warning (whether the icon shows) and, only "
+        "when it is true, `tooltip` (the icon's tooltip, exactly as the GUI shows it, in the app's "
+        "language) and mesh_warning_reason (the sidebar's one line); with them come the numbers: facets, shells, open_edges, manifold, repaired, errors_repaired and "
         "each recorded repair count. An object's open_edges and repairs count every volume, as the "
         "list does; its facets, shells and volume_mm3 count model parts only. Repair counts exist "
         "only for a mesh loaded from a 3MF that recorded them: an STL is repaired silently on import "

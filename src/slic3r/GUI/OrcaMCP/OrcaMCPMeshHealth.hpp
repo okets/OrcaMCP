@@ -17,42 +17,51 @@ class Model;
 class ModelObject;
 namespace GUI { namespace OrcaMCP {
 
-// What the object list says about a mesh -- its warning icon and the icon's tooltip -- and the
-// numbers behind it, for an object's row or one of its volumes' rows. Read from the model alone,
-// through the list's own mesh_errors_info (GUI_ObjectList.hpp), so it needs no GUI and never
-// disagrees with the list. The tooltip and reason are in the app's language; the numbers are not.
+// What the object list says about a mesh -- whether it shows its warning icon -- and the numbers
+// behind it, for an object's row or one of its volumes' rows. Read from the model alone, through
+// the list's own functions (GUI_ObjectList.hpp), so it needs no GUI and never disagrees with the
+// list. Reading one costs a pass over the object's volumes and builds no text: the text below is
+// built only for a caller that reports it.
 struct MeshHealth
 {
-    int                facets          = 0;     // an object's: its model parts' facets
-    int                shells          = 0;     // connected pieces; an object's: its model parts'
-    int                open_edges      = 0;     // edges with one facet; an object's: every volume's, as the list counts
-    RepairedMeshErrors repaired_errors;         // recorded repairs; an object's: every volume's
-    int                errors_repaired = 0;     // their sum, the number the tooltip states
-    bool               warning         = false; // the list shows its warning icon
-    std::string        tooltip;                 // the icon's tooltip, exactly; empty without the icon
-    std::string        reason;                  // the list's sidebar line, on one line; empty without the icon
+    // The stats the list reads for the row: an object's get_object_stl_stats() -- open edges and
+    // repairs of every volume, shells and volume of its model parts only -- with number_of_facets
+    // (which that leaves 0) filled in from its model parts, or a volume's mesh().stats().
+    TriangleMeshStats stats;
+    bool              warning = false;  // the list shows its warning icon
 
-    bool manifold() const { return open_edges == 0; }
-    bool repaired() const { return repaired_errors.repaired(); }
+    int  facets() const { return int(stats.number_of_facets); }
+    int  shells() const { return stats.number_of_parts; }
+    int  open_edges() const { return stats.open_edges; }
+    bool manifold() const { return stats.manifold(); }
+    bool repaired() const { return stats.repaired(); }
+    int  errors_repaired() const;  // the repair count the tooltip states
 };
 
 // The object's row in the object list.
 MeshHealth object_mesh_health(const ModelObject& object);
 // The row of volume `volume_idx` (an index into object.volumes).
 MeshHealth volume_mesh_health(const ModelObject& object, int volume_idx);
+// Every object's row, indexed as model.objects: what a scene-wide report reads once and passes on.
+std::vector<MeshHealth> model_mesh_health(const Model& model);
+
+// The icon's tooltip, exactly as the list shows it (its last line is the GUI's "click the icon"),
+// and the list's sidebar line, on one line. In the app's language; empty for a row without the icon.
+std::string mesh_warning_tooltip(const MeshHealth& health);
+std::string mesh_warning_reason(const MeshHealth& health);
 
 // The numbers every report shares: {facets, shells, open_edges, manifold, repaired, errors_repaired,
 // repaired_errors: {edges_fixed, degenerate_facets, facets_removed, facets_reversed, backwards_edges}}.
 nlohmann::json mesh_numbers_json(const MeshHealth& health);
 
-// get_scene_info's `features` and get_mesh_health's `summary`: the object's numbers plus volume_mm3,
-// its model parts' volume at the first instance's scale (the list's sidebar figure; only approximate
-// while the mesh has open edges).
-nlohmann::json mesh_features_json(const ModelObject& object);
+// get_scene_info's `features` and get_mesh_health's `summary`, from an object's health: its numbers
+// plus volume_mm3, its model parts' volume at the first instance's scale (the list's sidebar figure;
+// only approximate while the mesh has open edges).
+nlohmann::json mesh_features_json(const MeshHealth& object_health);
 
 // Sets `mesh_warning` on a per-object description -- true when the object list shows the object's
 // warning icon -- and, only then, `mesh_warning_reason`, the list's one-line reason.
-void add_mesh_warning(nlohmann::json& out, const ModelObject& object);
+void add_mesh_warning(nlohmann::json& out, const MeshHealth& object_health);
 
 // active_warnings' mesh entries: {level: "warning", type: "MeshErrors", object_id, object_name,
 // message: <the icon's tooltip>}, one for every object of `model` whose warning icon shows. The icon
@@ -69,7 +78,9 @@ struct ShellListJob
 };
 
 // get_mesh_health's response before the shell lists, and the parts that still need one. Built on
-// the GUI thread; add_shell_lists does the flood fill, which can take seconds, off it.
+// the GUI thread; add_shell_lists does the flood fill, which can take seconds, off it. Every row --
+// the object and each volume -- has mesh_warning, and tooltip and mesh_warning_reason only when it
+// is true: the one shape every per-object description uses.
 struct MeshHealthReport
 {
     nlohmann::json            response;

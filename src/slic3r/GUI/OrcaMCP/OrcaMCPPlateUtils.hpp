@@ -8,6 +8,7 @@
 #include "slic3r/GUI/Camera.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Plater.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPMeshHealth.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPPaintSelect.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPRenderMath.hpp"
 #include "libslic3r/Color.hpp"
@@ -98,7 +99,10 @@ struct ObjectFootprint
 class OrcaMCPPlateUtils {
 public:
     static nlohmann::json RenderPlateView(const nlohmann::json& params);
-    static nlohmann::json GetCurrentProject(const bool with_model_object_features);
+    // `mesh_health` is model_mesh_health(model), read once for the call: every object entry's
+    // mesh_warning, and its features when asked for, come from it.
+    static nlohmann::json GetCurrentProject(const bool with_model_object_features,
+                                            const std::vector<OrcaMCP::MeshHealth>& mesh_health);
 
     // Reads the prime tower's state on `plate_index`. `full_config` is passed in because building
     // it is the expensive part and the per-plate loop only needs one.
@@ -138,8 +142,7 @@ private:
         const Vec3d& camera_position, const Vec3d& target, int plate_index,
         RenderCameraInfo* out_camera, const RenderOptions& options, RenderReport* report);
 
-    static nlohmann::json GetPlates(bool with_model_object_features);
-    static nlohmann::json GetModelObjectFeaturesJson(const ModelObject* obj);
+    static nlohmann::json GetPlates(bool with_model_object_features, const std::vector<OrcaMCP::MeshHealth>& mesh_health);
 };
 
 }} // namespace Slic3r::GUI

@@ -15,6 +15,7 @@ namespace GUI {
 class PartPlate;
 class Plater;
 namespace OrcaMCP {
+struct MeshHealth;
 
 // Runs `func` on the wx main thread and blocks the calling HTTP worker until it returns.
 // `func` must return nlohmann::json. Exceptions propagate to the caller. Once the app has begun to
@@ -153,15 +154,19 @@ int model_object_index(const ModelObject* object);
 // One model object as every MCP response describes it: id, name, object_index (the index other
 // tools take), instance_count, volume_count, position (bounding-box centre), rotation_degrees and
 // scale of the first instance, bounding_box {size_x, size_y, size_z, min, max}, in plate mm, and
-// mesh_warning (with mesh_warning_reason when true: add_mesh_warning, OrcaMCPMeshHealth.hpp).
+// mesh_warning (with mesh_warning_reason when true: add_mesh_warning, OrcaMCPMeshHealth.hpp). A
+// caller describing many objects reads their health once (model_mesh_health) and passes it in.
 // get_scene_info adds brim, footprint, layer-height and filament fields; load_model's
 // loaded_objects is exactly this.
 nlohmann::json model_object_summary_json(const ModelObject& object, int object_index);
+nlohmann::json model_object_summary_json(const ModelObject& object, int object_index, const MeshHealth& health);
 
 // The same object as one plate's entry describes it: bounding_box and position are those of the
 // instances `here` covers (instances_on_plate), rotation_degrees and scale are the first of them,
 // and instances_on_plate lists them.
 nlohmann::json model_object_summary_json(const ModelObject& object, int object_index, const InstancesOnPlate& here);
+nlohmann::json model_object_summary_json(const ModelObject& object, int object_index, const InstancesOnPlate& here,
+                                         const MeshHealth& health);
 
 // Always returns {"count": N, "warnings": [{level, message, type}...]}. A MeshErrors entry (an object
 // the object list shows its warning icon for) also carries object_id and object_name.
