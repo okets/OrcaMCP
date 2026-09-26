@@ -85,9 +85,10 @@ set(SLIC3R_RESOURCES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/resources")
 file(TO_NATIVE_PATH "${SLIC3R_RESOURCES_DIR}" SLIC3R_RESOURCES_DIR_WIN)
 
 # Copy bridge scripts from scripts/ to resources/scripts/ for app bundle
-# This ensures the canonical version in scripts/ is always used
+# This ensures the canonical version in scripts/ is always used. orcamcp_tools.json is the tool
+# list the bridge serves while the app is down, generated from the app's own tool registry.
 file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/scripts/orcamcp-bridge.py"
-          "${CMAKE_CURRENT_SOURCE_DIR}/scripts/tools_schema.py"
+          "${CMAKE_CURRENT_SOURCE_DIR}/scripts/orcamcp_tools.json"
      DESTINATION "${SLIC3R_RESOURCES_DIR}/scripts")
 
 if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)

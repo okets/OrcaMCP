@@ -278,13 +278,14 @@ bool MCPClientConfig::ensure_bridge_script_copied(std::string& error)
         boost::filesystem::path src_dir =
             boost::filesystem::path(resources_dir()) / "scripts";
 
-        // Copy both bridge script and tools schema
+        // Copy the bridge script and the tool list it reads (orcamcp_tools.json): the bridge
+        // cannot serve a single tool, start_orca included, without it
         if (!copy_file_if_newer(src_dir / "orcamcp-bridge.py",
                                 dst_dir / "orcamcp-bridge.py", error))
             return false;
 
-        if (!copy_file_if_newer(src_dir / "tools_schema.py",
-                                dst_dir / "tools_schema.py", error))
+        if (!copy_file_if_newer(src_dir / "orcamcp_tools.json",
+                                dst_dir / "orcamcp_tools.json", error))
             return false;
 
         return true;

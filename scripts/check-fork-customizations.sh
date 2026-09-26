@@ -201,6 +201,11 @@ check "the bridge script is packaged" \
     'orcamcp-bridge\.py' \
     "Without it an installed OrcaMCP cannot be driven by an agent at all."
 
+check "the bridge's tool list is packaged" \
+    CMakeLists.txt \
+    'orcamcp_tools\.json' \
+    "The bridge reads every tool's text from it, start_orca included; without it an agent cannot start the app."
+
 # The guard can only catch a bad merge if CI still runs it, and the job that runs it lives in a
 # file upstream also edits -- so the guard is exactly as revertible as everything it protects.
 # It checks itself last, because a merge that drops this job makes every check above silent.
