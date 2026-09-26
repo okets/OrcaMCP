@@ -24,6 +24,7 @@
 #include <wx/stattext.h>
 #include <wx/textctrl.h>
 #include <wx/checkbox.h>
+#include <wx/thread.h>
 
 #include <boost/beast/core/detail/base64.hpp>
 #include <curl/curl.h>
@@ -685,7 +686,8 @@ bool Flashforge::upload_local_api(PrintHostUpload upload_data, ProgressFn progre
 }
 
 // Every local-API call goes through here: a connection that was never made is tried once more (it
-// cannot have reached the printer, so this is safe for control and print commands too), a failure is
+// cannot have reached the printer, so this is safe for control and print commands too) -- except on
+// the GUI thread, where the send dialog reads the material station and must not sleep -- a failure is
 // logged without its body, and one that never got an HTTP answer is described with host, port and
 // the next step to take.
 bool Flashforge::request_local_api_json(const std::string& path, const std::string& body, std::string& response_body, wxString& error_msg) const
@@ -697,7 +699,8 @@ bool Flashforge::request_local_api_json(const std::string& path, const std::stri
         [&](FlashforgeLocalApi::RequestFailure& attempt_failure) {
             return post_local_api_json_once(url, body, response_body, error_msg, attempt_failure);
         },
-        [](std::chrono::milliseconds delay) { std::this_thread::sleep_for(delay); }, failure, attempts);
+        [](std::chrono::milliseconds delay) { std::this_thread::sleep_for(delay); },
+        /*may_wait=*/!wxThread::IsMain(), failure, attempts);
 
     log_local_api_outcome(url, ok, failure, attempts);
     if (!ok && FlashforgeLocalApi::curl_code_of(failure.error) != 0)

@@ -126,18 +126,18 @@ std::string curl_detail_of(const std::string& error)
     return boost::algorithm::trim_copy(lines[1]);
 }
 
-bool should_retry(int curl_code, int attempt)
+bool should_retry(int curl_code, int attempt, bool may_wait)
 {
-    return curl_code == kCurlCouldntConnect && attempt == 1;
+    return may_wait && curl_code == kCurlCouldntConnect && attempt == 1;
 }
 
-bool run_with_retry(const AttemptFn& attempt, const SleepFn& sleep, RequestFailure& last_failure, int& attempts)
+bool run_with_retry(const AttemptFn& attempt, const SleepFn& sleep, bool may_wait, RequestFailure& last_failure, int& attempts)
 {
     for (attempts = 1;; ++attempts) {
         last_failure = {};
         if (attempt(last_failure))
             return true;
-        if (!should_retry(curl_code_of(last_failure.error), attempts))
+        if (!should_retry(curl_code_of(last_failure.error), attempts, may_wait))
             return false;
         sleep(kRetryDelay);
     }

@@ -59,8 +59,9 @@ std::string curl_detail_of(const std::string& error);
 
 // Whether a request that failed with `curl_code` on its `attempt`-th try (1-based) is made again:
 // once, and only when the TCP connection was never made. Nothing reached the printer then, so
-// repeating it cannot repeat a command, and this holds for every local-API request.
-bool should_retry(int curl_code, int attempt);
+// repeating it cannot repeat a command, and this holds for every local-API request. Never when the
+// caller may not wait (`may_wait` false: the GUI thread, which the send dialog reads slots from).
+bool should_retry(int curl_code, int attempt, bool may_wait);
 constexpr std::chrono::milliseconds kRetryDelay{500};
 
 // One attempt: true on success, otherwise fills in how it failed.
@@ -69,7 +70,7 @@ using SleepFn   = std::function<void(std::chrono::milliseconds)>;
 
 // Runs `attempt`, and again after kRetryDelay (slept through `sleep`) while should_retry says so.
 // `last_failure` is the final attempt's failure; `attempts` is how many were made.
-bool run_with_retry(const AttemptFn& attempt, const SleepFn& sleep, RequestFailure& last_failure, int& attempts);
+bool run_with_retry(const AttemptFn& attempt, const SleepFn& sleep, bool may_wait, RequestFailure& last_failure, int& attempts);
 
 // What the agent or the user reads when a request never got an HTTP answer: the host and port, what
 // happened, and what to do next. `failure.error` must carry a curl code.

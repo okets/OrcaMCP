@@ -96,12 +96,18 @@ TEST_CASE("curl_detail_of is empty exactly when curl described nothing", "[flash
 
 TEST_CASE("should_retry retries a connection that was never made, once", "[flashforge]")
 {
-    CHECK(should_retry(kCurlCouldntConnect, 1));
-    CHECK_FALSE(should_retry(kCurlCouldntConnect, 2));
+    CHECK(should_retry(kCurlCouldntConnect, 1, /*may_wait=*/true));
+    CHECK_FALSE(should_retry(kCurlCouldntConnect, 2, true));
     // A timeout may have reached the printer, and a resolve failure will not fix itself in 500 ms.
-    CHECK_FALSE(should_retry(kCurlOperationTimedout, 1));
-    CHECK_FALSE(should_retry(kCurlCouldntResolveHost, 1));
-    CHECK_FALSE(should_retry(0, 1));
+    CHECK_FALSE(should_retry(kCurlOperationTimedout, 1, true));
+    CHECK_FALSE(should_retry(kCurlCouldntResolveHost, 1, true));
+    CHECK_FALSE(should_retry(0, 1, true));
+}
+
+TEST_CASE("should_retry never waits on a caller that may not block", "[flashforge]")
+{
+    // The GUI thread: the send dialog reads the material station from it.
+    CHECK_FALSE(should_retry(kCurlCouldntConnect, 1, /*may_wait=*/false));
 }
 
 namespace {
@@ -132,7 +138,7 @@ TEST_CASE("run_with_retry recovers from one refused connection", "[flashforge]")
     RequestFailure failure;
     int            attempts = 0;
 
-    CHECK(run_with_retry(std::ref(request), [&](std::chrono::milliseconds d) { slept.push_back(d); }, failure, attempts));
+    CHECK(run_with_retry(std::ref(request), [&](std::chrono::milliseconds d) { slept.push_back(d); }, /*may_wait=*/true, failure, attempts));
     CHECK(attempts == 2);
     REQUIRE(slept.size() == 1);
     CHECK(slept.front() == kRetryDelay);
@@ -144,7 +150,7 @@ TEST_CASE("run_with_retry gives up after the second refused connection", "[flash
     RequestFailure  failure;
     int             attempts = 0;
 
-    CHECK_FALSE(run_with_retry(std::ref(request), [](std::chrono::milliseconds) {}, failure, attempts));
+    CHECK_FALSE(run_with_retry(std::ref(request), [](std::chrono::milliseconds) {}, /*may_wait=*/true, failure, attempts));
     CHECK(attempts == 2);
     CHECK(failure.error == kImmediateConnectFailure); // the last failure is the one reported
 }
@@ -155,8 +161,19 @@ TEST_CASE("run_with_retry does not repeat a timeout", "[flashforge]")
     RequestFailure  failure;
     int             attempts = 0;
 
-    CHECK_FALSE(run_with_retry(std::ref(request), [](std::chrono::milliseconds) { FAIL("slept"); }, failure, attempts));
+    CHECK_FALSE(run_with_retry(std::ref(request), [](std::chrono::milliseconds) { FAIL("slept"); }, /*may_wait=*/true, failure, attempts));
     CHECK(attempts == 1);
+}
+
+TEST_CASE("run_with_retry makes one attempt for a caller that may not block", "[flashforge]")
+{
+    ScriptedRequest request{{kRefused}};
+    RequestFailure  failure;
+    int             attempts = 0;
+
+    CHECK_FALSE(run_with_retry(std::ref(request), [](std::chrono::milliseconds) { FAIL("slept"); }, /*may_wait=*/false, failure, attempts));
+    CHECK(attempts == 1);
+    CHECK(request.calls == 1);
 }
 
 TEST_CASE("describe_failure names the host, the port and a next step", "[flashforge]")
