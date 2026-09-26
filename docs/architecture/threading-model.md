@@ -202,15 +202,19 @@ What breaks the cycle, in order:
 2. A call blocked on the network rather than on the main thread gives up too. `GUI_App`'s route puts a
    `ScopedThreadCancelCheck` (`src/slic3r/Utils/ThreadCancel.hpp`) in scope for every request, tied to
    the gate: synchronous `Http` transfers abort within about a second and report "Request
-   cancelled", and `discover_printers` stops listening. The call returns its tool error.
+   cancelled", `discover_printers` stops listening, and a `TCPConsole` exchange ends within 100 ms.
+   The call returns its tool error.
 3. `GUI_App::stop_http_server()` stops the server. `HttpServer::stop` closes the listeners and the idle
    connections, lets a reply that is still being written finish (up to 2 s), and joins the thread.
    It never abandons a handler that is still running, since the handler may use what the app
-   destroys next; past 3 s it logs that it is still waiting.
+   destroys next. It waits 5 s: past that, a call that could not be cancelled (the Bambu network
+   plugin's, in a login callback) still holds the thread, so the process ends there
+   (`GUI_App::end_process_under_running_server_thread`: the config saved, the logs flushed,
+   `std::_Exit(0)`) rather than destroy what that call may use. The window has closed already.
 
-When the quit itself runs inside a tool call's work (the work pumped the event loop into a close), the
-call's caller waits on that work, so the join would never end. `stop_http_server` sees it
-(`OrcaMCPServer::inside_a_tool_call()`) and leaves the stop to `OnExit`.
+A close that arrives inside a tool call's work (the work pumped the event loop into it) never gets
+this far: the main frame's close handler defers itself (`OrcaMCPServer::defer_until_tool_call_returns`)
+and closes again once the work has returned, so the teardown never runs under it.
 
 The cloud login's callback port is a second listener on the same server and thread
 (`HttpServer::listen_also`, `LoginCallbackServer`), so there is one thread to join, login callbacks

@@ -288,7 +288,10 @@ void OrcaMCPServer::shut_down()
     main_thread_gate().close();
 }
 
-bool OrcaMCPServer::inside_a_tool_call() { return main_thread_gate().work_in_progress(); }
+bool OrcaMCPServer::defer_until_tool_call_returns(std::function<void()> task)
+{
+    return main_thread_gate().defer_until_work_ends(std::move(task));
+}
 
 std::shared_ptr<HttpServer::Response> OrcaMCPServer::handle_request(
     const std::string& method,

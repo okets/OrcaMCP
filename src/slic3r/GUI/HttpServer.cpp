@@ -205,6 +205,8 @@ void HttpServer::IOServer::replace_also(std::shared_ptr<Acceptor> listener)
 // -32002 rather than a reset -- for up to reply_drain_ms; the loop ends as the last one does.
 void HttpServer::IOServer::begin_stop()
 {
+    if (stopping)
+        return; // a second stop() after a bounded one timed out
     boost::system::error_code ec;
     acceptor.cancel(ec);
     acceptor.close(ec);
@@ -281,7 +283,7 @@ void HttpServer::start()
     });
 }
 
-void HttpServer::stop()
+bool HttpServer::stop(std::chrono::milliseconds bound)
 {
     start_http_server = false;
     if (server_) {
@@ -292,13 +294,19 @@ void HttpServer::stop()
     // still being handled; it never leaves the thread behind, since the handler may be using what the
     // app destroys next. Blocking handlers keep the wait short: an MCP call waiting on the main
     // thread is released by OrcaMCPServer::shut_down(), and the network calls made for a request give
-    // up once the app is quitting (ScopedThreadCancelCheck). What is left is a slow quit, reported.
-    if (m_http_server_thread.joinable() &&
-        !m_http_server_thread.try_join_for(boost::chrono::milliseconds(slow_stop_warning_ms))) {
-        BOOST_LOG_TRIVIAL(warning) << "HttpServer: still waiting for a request on port " << port << " to finish";
-        m_http_server_thread.join();
+    // up once the app is quitting (ScopedThreadCancelCheck). One that cannot be cancelled -- the Bambu
+    // network plugin's -- is what `bound` is for.
+    if (m_http_server_thread.joinable()) {
+        if (bound == no_bound) {
+            m_http_server_thread.join();
+        } else if (!m_http_server_thread.try_join_for(boost::chrono::milliseconds(bound.count()))) {
+            BOOST_LOG_TRIVIAL(warning) << "HttpServer: a request on port " << port << " was still being handled after "
+                                       << bound.count() << " ms";
+            return false;
+        }
     }
     server_.reset();
+    return true;
 }
 
 bool HttpServer::listen_also(boost::asio::ip::port_type also_port)

@@ -2,6 +2,7 @@
 // libslic3r headers do.
 #include "slic3r/GUI/HttpServer.hpp"
 #include "slic3r/Utils/Http.hpp"
+#include "slic3r/Utils/TCPConsole.hpp"
 #include "slic3r/Utils/ThreadCancel.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -94,4 +95,36 @@ TEST_CASE("an HTTP request whose thread is not cancelled completes as before", "
     const ScopedThreadCancelCheck check([] { return false; });
     CHECK(get_on_this_thread(url) == R"(complete {"ok":true})");
     server.stop();
+}
+
+TEST_CASE("a TCP console exchange gives up once its thread is cancelled, not after its timeouts", "[ThreadCancel]")
+{
+    // A printer that accepts the connection and never answers: the legacy Flashforge and MKS path waits
+    // up to 10 s per step for it.
+    boost::asio::io_context        io;
+    boost::asio::ip::tcp::acceptor printer(io, {boost::asio::ip::address_v4::loopback(), 0});
+    boost::asio::ip::tcp::socket   connection(io);
+    auto accepted = std::async(std::launch::async, [&] {
+        boost::system::error_code ec;
+        printer.accept(connection, ec);
+        return !ec;
+    });
+
+    std::atomic<bool> quitting{false};
+    auto              exchange = std::async(std::launch::async, [&] {
+        Utils::TCPConsole console("127.0.0.1", std::to_string(printer.local_endpoint().port()));
+        console.enqueue_cmd(Utils::SerialMessage("M105", Utils::SerialMessageType::Command));
+        const ScopedThreadCancelCheck check([&] { return quitting.load(); });
+        const bool ok = console.run_queue();
+        return std::make_pair(ok, console.error_message());
+    });
+    REQUIRE(accepted.wait_for(k_bound) == std::future_status::ready);
+    std::this_thread::sleep_for(200ms); // connected, command sent, waiting for the answer
+    quitting = true;
+    const bool gave_up = exchange.wait_for(1s) == std::future_status::ready;
+
+    CHECK(gave_up);
+    const auto [ok, error] = exchange.get(); // a console that did not give up ends at its read timeout
+    CHECK_FALSE(ok);
+    CHECK(error == boost::asio::error::make_error_code(boost::asio::error::operation_aborted).message());
 }

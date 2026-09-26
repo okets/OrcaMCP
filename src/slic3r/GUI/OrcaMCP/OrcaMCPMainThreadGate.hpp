@@ -38,14 +38,16 @@ public:
     void close();
     bool is_closed() const;
 
-    // True while a call's work is running. Asked on the main thread, that means the asker is inside
-    // that work -- it pumped the event loop into a quit -- and the work's caller is still waiting.
-    bool work_in_progress() const;
+    // While a call's work is running, keeps `task` to post to the main thread once the work has
+    // finished, and returns true; otherwise does nothing and returns false. Asked on the main thread,
+    // "running" means the asker is inside that work (it pumped the event loop): the main frame's close
+    // handler defers itself this way, so the teardown never runs under the work.
+    bool defer_until_work_ends(std::function<void()> task);
 
 private:
     struct State;
     struct Call;
-    static void run_queued(State& state, Call& call, const Work& work);
+    static void run_queued(State& state, Call& call, const Work& work, const Post& post);
 
     // Shared with every queued task, which can outlive both the caller it served and this gate.
     std::shared_ptr<State> m_state;

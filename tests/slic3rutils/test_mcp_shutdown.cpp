@@ -134,26 +134,48 @@ TEST_CASE("work that has started runs to its end, and its caller waits for it, e
     CHECK(call.outcome() == "value \"finished\"");
 }
 
-TEST_CASE("the gate knows while a call's work is running", "[McpShutdown][orcamcp]")
+TEST_CASE("a close that arrives inside a call's work waits until the work has returned", "[McpShutdown][orcamcp]")
 {
-    // A quit that finds work running is inside that work, and must not join the HTTP thread yet
-    // (GUI_App::stop_http_server).
+    // The main frame's close handler defers itself this way when the work pumped the event loop into
+    // it, so the plater is never reset and the frame never torn down under the running work.
     RunningMainThread main_thread;
     MainThreadGate    gate(main_thread.post());
-    Latch             started, finish;
-    CHECK_FALSE(gate.work_in_progress());
+    Latch             started, finish, closed;
+    std::atomic<bool> work_returned{false};
+    std::atomic<bool> closed_after_work{false};
 
     BackgroundCall call(gate, [&] {
         started.open();
         finish.wait();
+        work_returned = true;
         return nlohmann::json("finished");
     });
     started.wait();
-    CHECK(gate.work_in_progress());
 
+    const bool deferred = gate.defer_until_work_ends([&] {
+        closed_after_work = work_returned.load();
+        closed.open();
+    });
+    const bool closed_early = closed.wait_for(100ms);
     finish.open();
+
+    CHECK(deferred);
+    CHECK_FALSE(closed_early);
+    REQUIRE(closed.wait_for(k_bound));
+    CHECK(closed_after_work);
     REQUIRE(call.ended_within(k_bound));
-    CHECK_FALSE(gate.work_in_progress());
+}
+
+TEST_CASE("a close with no call's work running is not deferred", "[McpShutdown][orcamcp]")
+{
+    RunningMainThread main_thread;
+    MainThreadGate    gate(main_thread.post());
+    std::atomic<bool> ran{false};
+
+    CHECK_FALSE(gate.defer_until_work_ends([&] { ran = true; }));
+    CHECK(gate.call([] { return nlohmann::json("done"); }) == "done"); // a call that ran and returned
+    CHECK_FALSE(gate.defer_until_work_ends([&] { ran = true; }));
+    CHECK_FALSE(ran); // the caller closes at once instead
 }
 
 TEST_CASE("a call returns what its work returned, and rethrows what it threw", "[McpShutdown][orcamcp]")

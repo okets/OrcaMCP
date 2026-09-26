@@ -16,6 +16,7 @@
 #include "TCPConsole.hpp"
 #include "SerialMessage.hpp"
 #include "SerialMessageType.hpp"
+#include "ThreadCancel.hpp"
 
 using boost::asio::steady_timer;
 using boost::asio::ip::tcp;
@@ -178,6 +179,13 @@ bool TCPConsole::run_queue()
         // TODO: Rewrite to more graceful way using deadlime_timer
         bool timeout = false;
         while (!(timeout = is_deadline_over()) && !m_io_context.stopped()) {
+            // Orca: every wait (connect, write, each read) is a 100 ms slice of this loop, so a cancelled
+            // thread -- the app is quitting, see ThreadCancel.hpp -- gives up within one slice instead of
+            // waiting out a 5-10 s timeout per step.
+            if (!m_error_code && this_thread_cancelled()) {
+                BOOST_LOG_TRIVIAL(info) << "TCPConsole: exchange with " << m_host_name << ":" << m_port_name << " cancelled";
+                m_error_code = make_error_code(boost::asio::error::operation_aborted);
+            }
             if (m_error_code) {
                 m_io_context.stop();
             }

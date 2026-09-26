@@ -479,19 +479,25 @@ that call in flight waited forever: on 2026-09-26 `quit_app`, with a script poll
   not run. Use start_orca to start it again."). `McpShuttingDown` is a `JsonRpcError`
   (`OrcaMCPJsonRpcError.hpp`), so it takes the one `JsonRpcError` path. A call whose work has already
   started is waited for, since its work may still use what the caller owns.
-- **Never abandon a handler.** `HttpServer::stop` joins the server's thread, however long it takes (a
-  warning is logged after 3 s): a handler still running may use what the app destroys next. So no
-  handler on that thread may block past the quit. Waits on the main thread are released by the gate,
-  and every network call made for a request gives up once the gate is closed: the request's
-  `ScopedThreadCancelCheck` (`src/slic3r/Utils/ThreadCancel.hpp`, installed in `GUI_App`'s route)
-  aborts synchronous `Http` transfers within about a second, and stops `discover_printers`. A new
-  blocking call on that thread must honour `this_thread_cancelled()` or go through `Http`.
+- **Never abandon a handler, and still bound the quit.** A handler still running may use what the app
+  destroys next, so no handler on the server's thread may block past the quit. Waits on the main
+  thread are released by the gate, and every blocking call made for a request gives up once the gate
+  is closed: the request's `ScopedThreadCancelCheck` (`src/slic3r/Utils/ThreadCancel.hpp`, installed in
+  `GUI_App`'s route) aborts synchronous `Http` transfers within about a second, stops
+  `discover_printers`, and ends a `TCPConsole` exchange (legacy Flashforge, MKS) within 100 ms. A new
+  blocking call on that thread must honour `this_thread_cancelled()` or go through `Http`/`TCPConsole`.
+  What cannot be cancelled -- the Bambu network plugin's calls inside a login callback -- is bounded:
+  `GUI_App::stop_http_server` gives `HttpServer::stop` 5 s, and when a request still holds the thread
+  then, the server is left alone and the process ends at once (`end_process_under_running_server_thread`:
+  config saved, logs flushed, `std::_Exit(0)`), without the teardown the stuck call could be using.
+  MainFrame::shutdown has saved the app config before that point; nothing after it saves user data.
 - **Replies get out.** `HttpServer::stop` closes the listeners and idle connections at once, but lets a
   reply that is being written finish, for up to 2 s, so the caller released by the quit reads its
   -32002 rather than a reset.
-- **A quit inside a tool call's work** (the work pumped the event loop into a close) cannot join the
-  thread whose call waits on that work; `GUI_App::stop_http_server` sees it
-  (`OrcaMCPServer::inside_a_tool_call()`) and leaves the stop to `OnExit`.
+- **A close inside a tool call's work** (the work pumped the event loop into it) is deferred: the main
+  frame's close handler asks `OrcaMCPServer::defer_until_tool_call_returns` and, while the work runs,
+  vetoes or returns, to close again once the work has returned. The plater is never reset, nor the
+  frame torn down, under a running tool call.
 - **The cloud login shares the MCP server's thread.** Its callback port is a second listener on the MCP
   server (`HttpServer::listen_also`, `LoginCallbackServer` in `OrcaMCPLoginServer.cpp`), so login
   callbacks and MCP calls are served one at a time, as when they shared one port. A login never
@@ -550,8 +556,8 @@ The bridge sends no `Origin` and names `localhost` or `127.0.0.1` (`scripts/test
    blocked on the network gets its tool error ("Request cancelled", "Printer discovery was
    cancelled") within about a second. `quit_app` itself is served after the call ahead of it on the
    one HTTP thread, e.g. a `discover_printers` runs out its timeout first. A Bambu cloud sign-in
-   callback in flight is not cancellable (the network plugin's own calls) and holds the quit for as
-   long as they take. A quit during a slice waits for the slice to cancel (upstream's
+   callback in flight is not cancellable (the network plugin's own calls); if it still runs 5 s into
+   the quit, the process ends there, without its teardown (the config is saved first). A quit during a slice waits for the slice to cancel (upstream's
    `BackgroundSlicingProcess::stop`; 1.5 s for a tree-support slice on the -O0 dev build). **Wait
    for a slice to finish before `quit_app` or `new_project`:** resetting the plater mid-slice can
    crash the app, because upstream's `Plater::priv::reset` frees the plates' prints

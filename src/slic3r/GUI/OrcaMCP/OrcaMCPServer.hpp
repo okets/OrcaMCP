@@ -90,10 +90,10 @@ public:
     // GUI_App::stop_http_server() again before it joins the server's thread. Idempotent.
     static void shut_down();
 
-    // True while a tool call's work is running on the main thread. Asked on the main thread, that
-    // means the asker is inside that work (it pumped the event loop into a quit), and joining the
-    // server's thread now would wait on the call that is waiting on the asker.
-    static bool inside_a_tool_call();
+    // Called on the main thread from inside a tool call's work (the work pumped the event loop into
+    // it): keeps `task` until the work has returned, and returns true; otherwise returns false. The
+    // main frame's close handler defers itself so, and never tears the GUI down under a tool call.
+    static bool defer_until_tool_call_returns(std::function<void()> task);
 
     // Handle incoming HTTP requests for MCP endpoint
     static std::shared_ptr<HttpServer::Response> handle_request(

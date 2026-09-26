@@ -117,13 +117,13 @@ TEST_CASE("the HTTP server listens on this machine only", "[HttpServer]")
 TEST_CASE("stopping the HTTP server waits for a request still being handled, and never abandons it", "[HttpServer]")
 {
     // A handler still running may use what the app destroys next, so stop() must not return before it
-    // does -- not even past the point where it reports a slow stop.
+    // does.
     Latch             entered;
     std::atomic<bool> handler_returned{false};
     HttpServer        server(0);
     server.set_request_handler([&](const std::string&) {
         entered.open();
-        std::this_thread::sleep_for(std::chrono::milliseconds(HttpServer::slow_stop_warning_ms + 300));
+        std::this_thread::sleep_for(500ms);
         handler_returned = true;
         return json_response({{"status", "late"}});
     });
@@ -136,6 +136,34 @@ TEST_CASE("stopping the HTTP server waits for a request still being handled, and
 
     CHECK(handler_had_returned);
     CHECK_FALSE(server.is_started());
+    CHECK(contains(reply.get(), "\"status\":\"late\""));
+}
+
+TEST_CASE("a bounded stop leaves a request it could not wait out running, with its server, and says so", "[HttpServer]")
+{
+    // A call that cannot be cancelled (the Bambu network plugin's) must bound the quit, but its thread
+    // must not be abandoned under a server that is then destroyed: stop() reports it, and the caller
+    // ends the process instead (GUI_App::stop_http_server).
+    Latch      entered, release;
+    HttpServer server(0);
+    server.set_request_handler([&](const std::string&) {
+        entered.open();
+        release.wait();
+        return json_response({{"status", "late"}});
+    });
+    server.start();
+    auto reply = exchange(server.local_endpoint().port(), "POST", "/mcp", "{}");
+    REQUIRE(entered.wait_for(k_bound));
+
+    const auto started = Clock::now();
+    const bool stopped = server.stop(200ms);
+    const auto took    = Clock::now() - started;
+    CHECK_FALSE(stopped);
+    CHECK(took < 1s);
+    CHECK(server.local_endpoint().port() != 0); // the server is left as it was, not torn down
+
+    release.open();
+    CHECK(server.stop()); // without a bound, it waits the request out
     CHECK(contains(reply.get(), "\"status\":\"late\""));
 }
 

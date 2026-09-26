@@ -572,6 +572,18 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
     // declare events
     Bind(wxEVT_CLOSE_WINDOW, [this](wxCloseEvent& event) {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< ": mainframe received close_widow event";
+        // Orca: a close that arrives inside an MCP tool call's work (the work pumped the event loop
+        // into it) is asked again once the work has returned, so the teardown below never runs under it.
+        const bool forced = !event.CanVeto();
+        if (OrcaMCPServer::defer_until_tool_call_returns([forced] {
+                if (wxGetApp().mainframe != nullptr)
+                    wxGetApp().mainframe->Close(forced);
+            })) {
+            if (event.CanVeto())
+                event.Veto();
+            BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": close deferred until the running MCP tool call returns";
+            return;
+        }
         if (event.CanVeto() && m_plater->get_view3D_canvas3D()->get_gizmos_manager().is_in_editing_mode(true)) {
             // prevents to open the save dirty project dialog
             event.Veto();

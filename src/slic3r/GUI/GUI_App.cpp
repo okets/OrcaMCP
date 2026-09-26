@@ -7808,14 +7808,28 @@ void GUI_App::stop_http_server()
     // An MCP call on the server's thread may be waiting for this, the main, thread. Release it
     // first: the join in HttpServer::stop would otherwise wait on a thread that waits on the joiner.
     OrcaMCPServer::shut_down();
-    if (OrcaMCPServer::inside_a_tool_call()) {
-        // This quit runs inside a tool call's work, which pumped the event loop into it: that call's
-        // caller, on the server's thread, waits for the work to return, so a join now would never end.
-        // OnExit stops the server, once the work has returned.
-        BOOST_LOG_TRIVIAL(warning) << "stop_http_server: inside an MCP tool call; the server is stopped at exit";
-        return;
-    }
-    m_http_server.stop();
+    if (!m_http_server.stop(std::chrono::seconds(5)))
+        end_process_under_running_server_thread();
+}
+
+// A request that cannot be cancelled -- a Bambu network plugin call inside a cloud-login callback --
+// still holds the server's thread five seconds into the quit. Waiting longer can hang the quit for
+// good, and going on would destroy the agent, the preset bundle and the app while that call may still
+// use them. So the process ends here, without the teardown. Nothing is lost by it: the last user data
+// a quit saves, the app config, was saved by MainFrame::shutdown before this, and is saved again here
+// in case this quit did not come through the main frame. std::_Exit, not exit: exit runs the static
+// destructors the stuck thread could touch, and quick_exit adds nothing here. The window has closed
+// already; the user sees the app end a few seconds after they quit it.
+void GUI_App::end_process_under_running_server_thread()
+{
+    BOOST_LOG_TRIVIAL(warning) << "stop_http_server: a request is still running on the HTTP server's thread; "
+                                  "ending the process now, without the teardown it could still be using";
+    if (app_config != nullptr && app_config->dirty())
+        app_config->save();
+    flush_logs();
+    std::cout.flush();
+    std::cerr.flush();
+    std::_Exit(EXIT_SUCCESS);
 }
 
 #ifdef __linux__

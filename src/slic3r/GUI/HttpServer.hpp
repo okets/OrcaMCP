@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <iostream>
 #include <mutex>
 #include <optional>
@@ -163,10 +164,14 @@ public:
 
     bool is_started() { return start_http_server; }
     void start();
-    // Stops listening and joins the server's thread. A request still being handled is waited for,
-    // never abandoned: its handler may be using what the app destroys next. A reply that is still
-    // being written gets up to reply_drain_ms to reach its client before its connection is closed.
-    void stop();
+    // Stops listening and joins the server's thread. A request still being handled is waited for up
+    // to `bound` (without one, for as long as it takes), and never abandoned: its handler may be
+    // using what the app destroys next. When the bound passes first this returns false, and leaves the
+    // thread and the server running: the caller must then not destroy the server, and ends the process
+    // instead (GUI_App::stop_http_server). A reply that is still being written gets up to
+    // reply_drain_ms to reach its client before its connection is closed.
+    static constexpr std::chrono::milliseconds no_bound = std::chrono::milliseconds::max();
+    bool stop(std::chrono::milliseconds bound = no_bound);
     void set_port(boost::asio::ip::port_type new_port) { port = new_port; }
     boost::asio::ip::port_type get_port() const { return port; }
     // Where the server listens while it is started (the port is the real one even when it was
@@ -178,8 +183,7 @@ public:
     // not started; throws what binding throws.
     bool listen_also(boost::asio::ip::port_type also_port);
 
-    static constexpr int reply_drain_ms       = 2000;
-    static constexpr int slow_stop_warning_ms = 3000;
+    static constexpr int reply_drain_ms = 2000;
 
     // Set request handler with full signature (method, url, body)
     void set_request_handler(const RequestHandlerFn& request_handler);
