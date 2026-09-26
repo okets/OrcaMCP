@@ -146,8 +146,9 @@ What the tests enforce, with no app running:
 
 - `tests/slic3rutils/test_mcp_tool_list.cpp` (`[orcamcp][tools]`, run by CI's unit-test jobs on
   every platform):
-  - a registration without a category does not compile, and a duplicate name or a missing
-    handler throws;
+  - a registration without a category does not compile, and a duplicate name or an app tool
+    without a handler throws;
+  - `tools/call` refuses a bridge-only or unknown tool with JSON-RPC error -32602;
   - every summary is one line of at most 40 characters;
   - the golden file equals the registry: any name, category, summary, description or schema
     that differs fails, naming the tool and the field;
@@ -158,7 +159,10 @@ What the tests enforce, with no app running:
 - `scripts/tests/` (`python3 -m unittest discover -s scripts/tests -t scripts`, run by the fork's
   `Python tests` workflow on pushes to `mcp`): the bridge's offline and online lists are identical
   in names, descriptions and order; `start_orca`'s text appears nowhere in the bridge; every
-  bridge tool has a Python handler and every handler a tool.
+  bridge tool has a Python handler and every handler a tool; a missing or malformed file never
+  stops the bridge, which then offers a fallback `start_orca` whose description names the file.
+- CI: Build all also runs on a change to `scripts/orcamcp_tools.json` alone, since only its C++
+  tests can compare the file with the registry.
 
 Adding a bridge-only tool: a `register_bridge_tool({...})` in `OrcaMCPServer::register_bridge_tools()`
 (same fields as any tool, no handler), its Python handler in `BRIDGE_HANDLERS` in
