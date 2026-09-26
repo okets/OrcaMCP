@@ -6756,9 +6756,11 @@ struct Plater::priv
     OrcaMCP::PlateListChangeDuringSlice m_plate_list_change;
     // Orca: runs `change` and, when asked, tells what the plate-list changes it made did to a slice.
     void report_plate_list_change(OrcaMCP::PlateListChangeDuringSlice* slice_change, const std::function<void()>& change);
-    // Orca: Slice All reached a plate it could not start: credit it only if its result is valid, and
+    // Orca: Slice All reached a plate it could not start: credit it only if its Print is finished, and
     // end the run when the UI worker is busy (OrcaMCPSliceCredit.hpp, plate_not_started).
     void post_plate_not_started();
+    // Orca: the Slice All run that ended before its last plate, until the next run starts.
+    std::optional<OrcaMCP::SliceAllEndedEarly> m_slice_all_ended_early;
     // Orca: the safety net under the callers' stops (PartPlateList::set_before_free).
     void stop_slice_running_on(const std::vector<const PartPlate*>& plates, const std::vector<const PrintBase*>& prints,
                                const char* caller);
@@ -10291,6 +10293,7 @@ void Plater::priv::reset(bool apply_presets_change)
     // the slicing thread ran on in freed memory: quitting, or a new or loaded project, during a slice
     // crashed or froze the app.
     this->background_process.stop();
+    m_slice_all_ended_early.reset(); // Orca: its plates are gone
 
     //BBS: clear the partplate list's object before object cleared
     partplate_list.reinit();
@@ -12700,18 +12703,26 @@ void Plater::priv::stop_slice_running_on(const std::vector<const PartPlate*>& pl
 
 void Plater::priv::post_plate_not_started()
 {
-    PartPlate* plate                     = partplate_list.get_curr_plate();
-    int        current_plate_print_index = -1;
-    plate->get_print(nullptr, nullptr, &current_plate_print_index);
-    const OrcaMCP::PlateNotStarted outcome =
-        OrcaMCP::plate_not_started(plate->is_slice_result_valid(), !m_worker.is_idle(), current_plate_print_index);
-    if (outcome.end_slice_all) {
-        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": the UI worker is busy, so plate %1% could not be sliced; "
-                                                                     "Slice All ends with it not sliced") % partplate_list.get_curr_plate_index();
-        m_slice_all = false;
+    PartPlate* plate       = partplate_list.get_curr_plate();
+    const int  plate_index = partplate_list.get_curr_plate_index();
+    int        print_index = -1;
+    plate->get_print(nullptr, nullptr, &print_index);
+    // The Print decides, not the plate's flag: finished (with its G-code) is sliced, as restart_background_process
+    // found it when it would not start it again.
+    const bool                     print_finished = background_process.get_current_plate() == plate && background_process.finished();
+    const OrcaMCP::PlateNotStarted not_started    = OrcaMCP::plate_not_started(print_finished, !m_worker.is_idle(), print_index);
+    BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": " << OrcaMCP::plate_not_started_log(not_started, plate_index);
+    if (not_started.outcome == OrcaMCP::PlateNotStarted::Outcome::run_ended) {
+        m_slice_all             = false;
+        m_slice_all_ended_early = OrcaMCP::slice_all_ended_by_busy_worker(plate_index);
+        // Told to the user here, and to MCP by get_slicing_status and active_warnings (Plater::slice_all_ended_early).
+        notification_manager->push_notification(NotificationType::CustomNotification,
+                                                NotificationManager::NotificationLevel::ImportantNotificationLevel,
+                                                wxString::Format(_L("Slice All stopped at plate %d: another job was running. Slice again to finish it."),
+                                                                 plate_index + 1).ToUTF8().data());
     }
     SlicingProcessCompletedEvent evt(EVT_PROCESS_COMPLETED, 0, SlicingProcessCompletedEvent::Finished, nullptr);
-    evt.set_print_index(outcome.credit_print_index);
+    evt.set_print_index(not_started.credit_print_index);
     // Post the "complete" callback message, so that it will slice the next plate soon
     wxQueueEvent(q, evt.Clone());
 }
@@ -13019,6 +13030,7 @@ void Plater::priv::on_action_slice_all(SimpleEvent&)
         m_slice_all = true;
         m_slice_all_only_has_gcode = true;
         m_cur_slice_plate = 0;
+        m_slice_all_ended_early.reset(); // Orca
         //select plate
         q->select_plate(m_cur_slice_plate);
         q->reslice();
@@ -19520,8 +19532,7 @@ void Plater::reslice()
     if ((!result) && p->m_slice_all && (p->m_cur_slice_plate < (p->partplate_list.get_plate_count() - 1)))
     {
         //slice next
-        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": in slicing all, current plate %1% already sliced, skip to next") % p->m_cur_slice_plate ;
-        p->post_plate_not_started(); // Orca: credited only if it really is sliced
+        p->post_plate_not_started(); // Orca: credited only if it really is sliced, and logs what happens
         p->m_is_slicing = true;
         if (p->m_cur_slice_plate == 0)
             reset_gcode_toolpaths();
@@ -19664,7 +19675,7 @@ int Plater::start_next_slice()
     if (!result)
     {
         //slice next
-        p->post_plate_not_started(); // Orca: credited only if it really is sliced
+        p->post_plate_not_started(); // Orca: credited only if it really is sliced, and logs what happens
     }
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": restart_background_process returns %1%")%result;
 
@@ -22237,6 +22248,10 @@ bool Plater::is_background_process_slicing() const
 }
 
 OrcaMCP::PlateListChangeDuringSlice Plater::stop_slice_for_plate_list_change() { return p->stop_slice_for_plate_list_change(); }
+const OrcaMCP::SliceAllEndedEarly* Plater::slice_all_ended_early() const
+{
+    return p->m_slice_all_ended_early ? &*p->m_slice_all_ended_early : nullptr;
+}
 
 //BBS: update slicing context
 void Plater::update_slicing_context_to_current_partplate()

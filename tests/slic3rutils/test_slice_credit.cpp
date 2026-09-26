@@ -13,31 +13,50 @@
 // freed under the slicing thread crashes the app.
 
 using namespace Slic3r::GUI::OrcaMCP;
+using Outcome = PlateNotStarted::Outcome;
 
-TEST_CASE("a plate Slice All finds already sliced is credited to it, and the run goes on", "[SliceCredit]")
+TEST_CASE("a plate Slice All cannot start is sliced when its Print is finished, whatever its flag says", "[SliceCredit]")
 {
-    // Never to the last started Print: that plate may have been edited since, and would be marked
-    // sliced with a result that is no longer its own.
-    const auto outcome = plate_not_started(/*plate_result_valid=*/true, /*worker_busy=*/false, /*current=*/9);
-    CHECK(outcome.credit_print_index == 9);
-    CHECK_FALSE(outcome.end_slice_all);
-    CHECK(plate_not_started(true, /*worker_busy=*/true, 9).credit_print_index == 9); // nothing to start anyway
+    // Re-selecting the same preset, or a Tab reset, clears the plate's "sliced" flag and leaves its
+    // Print finished, with its G-code: the run credits it as sliced, as upstream's "use the previous
+    // result" does, and goes on without slicing it again.
+    const auto finished = plate_not_started(/*print_finished=*/true, /*worker_busy=*/false, /*print_index=*/9);
+    CHECK(finished.outcome == Outcome::already_sliced);
+    CHECK(finished.credit_print_index == 9);
+
+    const auto finished_while_busy = plate_not_started(true, /*worker_busy=*/true, 9); // nothing to start anyway
+    CHECK(finished_while_busy.outcome == Outcome::already_sliced);
+    CHECK(finished_while_busy.credit_print_index == 9);
 }
 
-TEST_CASE("a plate Slice All could not start while the UI worker is busy is not marked sliced", "[SliceCredit]")
+TEST_CASE("a plate Slice All could not start while the UI worker is busy is not sliced, and the run ends", "[SliceCredit]")
 {
-    // An arrange or orient job held the worker: the plate was never sliced. The run ends there, the
-    // plate left unsliced, rather than marking it sliced with no G-code of its own.
-    const auto outcome = plate_not_started(/*plate_result_valid=*/false, /*worker_busy=*/true, 9);
-    CHECK(outcome.credit_print_index == -1);
-    CHECK(outcome.end_slice_all);
+    // An arrange or an orient held the worker, so the plate's Print was never finished: the run ends
+    // there, the plate left unsliced, rather than marking it sliced with no G-code of its own.
+    const auto busy = plate_not_started(/*print_finished=*/false, /*worker_busy=*/true, 9);
+    CHECK(busy.outcome == Outcome::run_ended);
+    CHECK(busy.credit_print_index == -1);
+
+    const auto ended = slice_all_ended_by_busy_worker(/*plate_index=*/2);
+    CHECK(ended.plate_index == 2);
+    const std::string text = slice_all_ended_early_text(ended);
+    CHECK(text.find("Slice All stopped at plate 2") != std::string::npos);
+    CHECK(text.find("call slice_all again") != std::string::npos);
 }
 
 TEST_CASE("a plate Slice All could not start for any other reason is skipped, not credited", "[SliceCredit]")
 {
-    const auto outcome = plate_not_started(/*plate_result_valid=*/false, /*worker_busy=*/false, 9);
-    CHECK(outcome.credit_print_index == -1);
-    CHECK_FALSE(outcome.end_slice_all);
+    const auto skipped = plate_not_started(/*print_finished=*/false, /*worker_busy=*/false, 9);
+    CHECK(skipped.outcome == Outcome::skipped);
+    CHECK(skipped.credit_print_index == -1);
+}
+
+TEST_CASE("the log says what happens to a plate Slice All could not start", "[SliceCredit]")
+{
+    // Upstream logs "already sliced, skip to next" for every refusal, a busy worker's included.
+    CHECK(plate_not_started_log(plate_not_started(true, false, 9), 1).find("plate 1 is already sliced") != std::string::npos);
+    CHECK(plate_not_started_log(plate_not_started(false, false, 9), 1).find("not sliced, skipped") != std::string::npos);
+    CHECK(plate_not_started_log(plate_not_started(false, true, 9), 1).find("the run ends here") != std::string::npos);
 }
 
 TEST_CASE("what several plate-list changes did adds up", "[SliceCredit]")

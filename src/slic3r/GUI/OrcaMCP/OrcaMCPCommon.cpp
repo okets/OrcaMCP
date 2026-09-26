@@ -1,6 +1,7 @@
 #include "OrcaMCPCommon.hpp"
 #include "OrcaMCPPlateUtils.hpp"
 #include "OrcaMCPQuit.hpp"
+#include "OrcaMCPSliceCredit.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/GUI/NotificationManager.hpp"
@@ -389,6 +390,8 @@ nlohmann::json get_active_warnings_json(Plater* plater) {
         warnings_array.push_back(std::move(*open_dialog));
     if (auto quit_failed = quit_failed_warning())
         warnings_array.push_back(std::move(*quit_failed));
+    if (const SliceAllEndedEarly* ended = plater != nullptr ? plater->slice_all_ended_early() : nullptr)
+        warnings_array.push_back({{"level", "warning"}, {"message", slice_all_ended_early_text(*ended)}, {"type", "SliceAllEndedEarly"}});
 
     result["count"] = warnings_array.size();
     result["warnings"] = warnings_array;

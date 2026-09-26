@@ -2885,6 +2885,10 @@ void OrcaMCPServer::register_builtin_tools()
                 result["plates"]             = plates;
                 result["plates_sliced"]      = plates_sliced;
                 result["plates_total"]       = plate_count;
+                // A Slice All run that ended before its last plate says where and why, until the next run.
+                result["slice_run"] = {{"ended_early", false}};
+                if (const SliceAllEndedEarly* ended = plater->slice_all_ended_early())
+                    result["slice_run"] = {{"ended_early", true}, {"stopped_at_plate", ended->plate_index}, {"reason", ended->reason}};
                 result["active_warnings"]    = get_active_warnings_json(plater);
 
                 return result;

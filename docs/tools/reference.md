@@ -265,6 +265,7 @@ Check slicing progress, for the selected plate and for every plate.
   ],
   "plates_sliced": 2,
   "plates_total": 2,
+  "slice_run": {"ended_early": false},
   "active_warnings": {"count": 0, "warnings": []}
 }
 ```
@@ -278,6 +279,7 @@ Check slicing progress, for the selected plate and for every plate.
 | `plates` | Every plate's slice-result flag, so a multi-plate run can be followed plate by plate (and a plate that failed can be identified) |
 | `plates_sliced` / `plates_total` | How many of the plates have a valid result |
 | `restored_selected_plate` | Present only on the poll that ends a `slice_all` run over every plate: the plate that was selected when `slice_all` was called has been selected again |
+| `slice_run` | `ended_early: true`, with `stopped_at_plate` and `reason`, when the last Slice All run stopped before its last plate because another job (an arrange, an orient) was running; that plate and the ones after it are not sliced. `active_warnings` carries a `SliceAllEndedEarly` warning then too. Cleared when the next Slice All starts; call `slice_all` again |
 
 **Usage:** Poll every 2-3 seconds after `slice_all` until `state` is `done`, then call
 `get_print_estimate`. `is_slicing: false` on its own does **not** mean the slice finished - it is
@@ -1429,11 +1431,15 @@ was called again and reports it as `restored_selected_plate`. This matters becau
 `get_print_estimate` takes an optional `plate_index` and answers about the selected plate only when
 that is omitted.
 
+**A plate already sliced** (its slice finished, and nothing changed it since, even if a preset was
+selected again) is counted as sliced without slicing it again.
+
 **Deleting a plate during the run** cancels it: the run walks the plates by position, which the
 deletion shifts. `delete_plate` says so (`slice_cancelled: true`, "the plate list changed during Slice
 All; the run was cancelled, call slice_all again"), and so do `undo` and `redo`, which rebuild the
-plate list. A plate the run cannot start because the app is busy with another job (an arrange, say)
-ends the run with that plate not sliced, rather than counting it as sliced. Plates sliced before keep their results. The plate
+plate list; a slice that had already finished is not reported as cancelled. A plate the run cannot
+start because the app is busy with another job (an arrange, say) ends the run with that plate not
+sliced, rather than counting it as sliced: `get_slicing_status` says `slice_run.ended_early`. Plates sliced before keep their results. The plate
 restored when the run ends is the one that was selected at the call, wherever it now stands, or none
 if it was the deleted one.
 

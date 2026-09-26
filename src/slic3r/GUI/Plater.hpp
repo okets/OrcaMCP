@@ -93,7 +93,7 @@ class FinishSyncAmsDialog;
 using t_optgroups = std::vector <std::shared_ptr<ConfigOptionsGroup>>;
 
 class Plater;
-namespace OrcaMCP { struct PlateListChangeDuringSlice; }
+namespace OrcaMCP { struct PlateListChangeDuringSlice; struct SliceAllEndedEarly; }
 enum class ActionButtonType : int;
 
 // Sentinel filament id meaning "use the slot the sidebar context menu was opened on"
@@ -842,6 +842,8 @@ public:
     // Orca: called by PartPlateList before it frees or reorders Prints or plates: stops a slice, and
     // cancels a Slice All run (OrcaMCPSliceCredit.hpp).
     OrcaMCP::PlateListChangeDuringSlice stop_slice_for_plate_list_change();
+    // Orca: the Slice All run that ended before its last plate (the UI worker was busy), until the next run.
+    const OrcaMCP::SliceAllEndedEarly* slice_all_ended_early() const; // nullptr: none
     //BBS: update slicing context
     void update_slicing_context_to_current_partplate();
     //BBS: show object info

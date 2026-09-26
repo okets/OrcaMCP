@@ -17,19 +17,55 @@ namespace Slic3r { namespace GUI { namespace OrcaMCP {
 // A plate Slice All reached but could not start (restart_background_process said no).
 struct PlateNotStarted
 {
-    int  credit_print_index = -1;    // the current plate's when its result really is valid, else -1: none
-    bool end_slice_all      = false; // the UI worker is busy (an arrange, an orient): end the run, not sliced
+    enum class Outcome
+    {
+        already_sliced, // its Print is finished: credited as sliced, and the run goes on
+        skipped,        // nothing to start (an empty plate): not sliced, and the run goes on
+        run_ended,      // the UI worker is busy: not sliced, and the run ends here
+    };
+    Outcome outcome            = Outcome::skipped;
+    int     credit_print_index = -1; // the plate's print index when it is already sliced, else -1: none
 };
 
-// "Already sliced" is credited only to a plate whose result is valid. When the start failed because the
-// UI worker was busy the plate was never sliced: crediting it marked it sliced with no G-code of its
-// own, and export or send would have used a stale file. Any other refusal (nothing to slice, an invalid
-// plate) credits nothing and lets the run go on to the next plate.
-inline PlateNotStarted plate_not_started(bool plate_result_valid, bool worker_busy, int current_plate_print_index)
+// Upstream's "use the previous result", decided by the Print rather than by the plate's "sliced" flag:
+// a Tab reset or re-selecting the same preset clears the flag and leaves the Print finished, with its
+// G-code, and such a plate is sliced. A Print not finished was not sliced. When the start was refused
+// because the UI worker is busy (an arrange, an orient) the run ends with that plate not sliced, rather
+// than marking it sliced with no G-code of its own; any other refusal skips the plate.
+inline PlateNotStarted plate_not_started(bool print_finished, bool worker_busy, int print_index)
 {
-    if (plate_result_valid)
-        return {current_plate_print_index, false};
-    return {-1, worker_busy};
+    if (print_finished)
+        return {PlateNotStarted::Outcome::already_sliced, print_index};
+    return {worker_busy ? PlateNotStarted::Outcome::run_ended : PlateNotStarted::Outcome::skipped, -1};
+}
+
+// The log line for it, saying what happens to the plate (`plate_index`, 0-based) and the run.
+inline std::string plate_not_started_log(const PlateNotStarted& not_started, int plate_index)
+{
+    const std::string plate = "Slice All: plate " + std::to_string(plate_index);
+    switch (not_started.outcome) {
+    case PlateNotStarted::Outcome::already_sliced: return plate + " is already sliced (its Print is finished): credited as sliced";
+    case PlateNotStarted::Outcome::skipped: return plate + " has nothing to slice: not sliced, skipped";
+    case PlateNotStarted::Outcome::run_ended:
+        return plate + " could not be started, the UI worker is busy: not sliced, and the run ends here";
+    }
+    return plate;
+}
+
+// A Slice All run that ended before its last plate, for get_slicing_status and active_warnings.
+struct SliceAllEndedEarly
+{
+    int         plate_index = -1; // 0-based: the plate it stopped at, not sliced
+    std::string reason;
+};
+// The run_ended outcome's: the plate could not be started while the UI worker was busy.
+inline SliceAllEndedEarly slice_all_ended_by_busy_worker(int plate_index)
+{
+    return {plate_index, "another job (an arrange or an orient) was running"};
+}
+inline std::string slice_all_ended_early_text(const SliceAllEndedEarly& ended)
+{
+    return "Slice All stopped at plate " + std::to_string(ended.plate_index) + ": " + ended.reason + "; call slice_all again";
 }
 
 // A plate deleted or moved while a slice runs, or the plate list rebuilt (undo, redo, a 3MF load). The
