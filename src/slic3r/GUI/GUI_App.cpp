@@ -7786,15 +7786,14 @@ void GUI_App::start_http_server(const std::string& provider)
     }
 }
 
-// The cloud login's callback server. It has one of its own, so a login never stops, moves or
-// re-routes the MCP server (it used to do all three, leaving MCP gone until the app restarted).
+// The cloud login's callback server: the MCP server, which listens on the login's port too
+// (LoginCallbackServer). A login never stops, moves or re-routes the MCP server -- it used to do all
+// three, leaving MCP gone until the app restarted -- and never binds its port: the MCP server is
+// started first when a login comes before post_init() did.
 void GUI_App::start_http_server(int port, const std::string& provider)
 {
-    if (port <= 0) {
-        start_http_server(provider);
-        port = m_http_server.get_port();
-    }
-    m_login_server.listen(port, provider);
+    start_http_server(provider);
+    m_login_server.listen(port > 0 ? port : m_http_server.get_port(), provider);
 }
 
 void GUI_App::stop_http_server()
@@ -7810,7 +7809,6 @@ void GUI_App::stop_http_server()
         return;
     }
     m_http_server.stop();
-    m_login_server.stop();
 }
 
 #ifdef __linux__

@@ -15,6 +15,7 @@
 #include "slic3r/GUI/Jobs/UpgradeNetworkJob.hpp"
 #include "slic3r/GUI/HttpServer.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPLoginServer.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPMainThreadGate.hpp"
 #include "../Utils/PrintHost.hpp"
 
 #include <wx/app.h>
@@ -340,8 +341,9 @@ private:
     bool             m_show_error_msgdlg{false};
     wxString         m_info_dialog_content;
     HttpServer       m_http_server;    // MCP, on LOCALHOST_PORT
-    // The cloud login's loopback callback, on the port the login picks; never touches m_http_server.
-    OrcaMCP::LoginCallbackServer m_login_server{m_http_server, &HttpServer::auth_handle_request, ORCA_CLOUD_PROVIDER};
+    // The cloud login's loopback callback: a second port of m_http_server, served on its thread.
+    OrcaMCP::LoginCallbackServer m_login_server{m_http_server, &HttpServer::auth_handle_request, ORCA_CLOUD_PROVIDER,
+                                                OrcaMCP::main_thread_gate()};
     bool             m_show_gcode_window{true};
     boost::thread    m_check_network_thread;
 public:

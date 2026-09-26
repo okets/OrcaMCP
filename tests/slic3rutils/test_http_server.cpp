@@ -72,6 +72,27 @@ std::shared_ptr<HttpServer::Response> json_response(const nlohmann::json& body)
 
 bool contains(const std::string& text, const std::string& part) { return text.find(part) != std::string::npos; }
 
+// A sign-in handler that records what it was asked, and answers with its provider.
+struct FakeSignIn
+{
+    std::atomic<int> calls{0};
+    LoginCallbackServer::AuthHandler handler()
+    {
+        return [this](const std::string& url, const std::string& provider) {
+            ++calls;
+            return json_response({{"login", provider}, {"url", url}});
+        };
+    }
+};
+
+// GUI_App::start_http_server's routes: /mcp is MCP, anything else a login callback.
+HttpServer::RequestHandlerFn app_routes(LoginCallbackServer& login, std::function<std::shared_ptr<HttpServer::Response>()> mcp)
+{
+    return [&login, mcp](const std::string&, const std::string& url, const std::string&) {
+        return contains(url, "/mcp") ? mcp() : login.answer(url);
+    };
+}
+
 } // namespace
 
 TEST_CASE("the HTTP server listens on this machine only", "[HttpServer]")
@@ -185,47 +206,108 @@ TEST_CASE("quitting with an MCP call waiting on the main thread answers the call
     CHECK(contains(body, "OrcaMCP is quitting"));
 }
 
-TEST_CASE("a cloud login's callback server never stops, moves or re-routes the MCP server", "[HttpServer][Login]")
+TEST_CASE("a cloud login's callbacks are served one at a time with MCP calls", "[HttpServer][Login]")
 {
+    // They share the MCP server's thread, as they did when both shared one port: a sign-in never runs
+    // while an MCP call is in progress.
+    HeldMainThread quit_queue;
+    MainThreadGate quit_gate(quit_queue.post());
+    FakeSignIn     sign_in;
+    Latch          mcp_entered, mcp_release;
+
     const unsigned short mcp_port = free_loopback_port();
     HttpServer           mcp(mcp_port);
-    LoginCallbackServer  login(mcp,
-                              [](const std::string& url, const std::string& provider) {
-                                  return json_response({{"login", provider}, {"url", url}});
-                              },
-                              "orca");
-    mcp.set_request_handler([&login](const std::string&, const std::string& url, const std::string&) {
-        return url.find("/mcp") != std::string::npos ? json_response({{"mcp", true}}) : login.answer(url);
-    });
+    LoginCallbackServer  login(mcp, sign_in.handler(), "orca", quit_gate);
+    mcp.set_request_handler(app_routes(login, [&] {
+        mcp_entered.open();
+        mcp_release.wait();
+        return json_response({{"mcp", true}});
+    }));
+    mcp.start();
+    const unsigned short login_port = free_loopback_port();
+    REQUIRE(login.listen(login_port, "bbl"));
+
+    auto mcp_reply = exchange(mcp_port, "POST", "/mcp", "{}");
+    REQUIRE(mcp_entered.wait_for(k_bound));
+    auto login_reply = exchange(login_port, "GET", "/callback?code=1");
+    const bool signed_in_early = login_reply.wait_for(300ms) == std::future_status::ready;
+    const int  calls_while_mcp = sign_in.calls;
+    mcp_release.open();
+
+    CHECK_FALSE(signed_in_early);
+    CHECK(calls_while_mcp == 0);
+    CHECK(contains(mcp_reply.get(), "\"mcp\":true"));
+    CHECK(contains(login_reply.get(), "\"login\":\"bbl\""));
+    mcp.stop();
+}
+
+TEST_CASE("a cloud login moves between ports without stopping, moving or re-routing the MCP server", "[HttpServer][Login]")
+{
+    HeldMainThread quit_queue;
+    MainThreadGate quit_gate(quit_queue.post());
+    FakeSignIn     sign_in;
+
+    const unsigned short mcp_port = free_loopback_port();
+    HttpServer           mcp(mcp_port);
+    LoginCallbackServer  login(mcp, sign_in.handler(), "orca", quit_gate);
+    mcp.set_request_handler(app_routes(login, [] { return json_response({{"mcp", true}}); }));
     mcp.start();
     auto check_mcp_untouched = [&] {
         CHECK(mcp.is_started());
         CHECK(mcp.local_endpoint().port() == mcp_port);
-        CHECK(exchange(mcp_port, "GET", "/mcp").get().find("\"mcp\":true") != std::string::npos);
+        CHECK(contains(exchange(mcp_port, "GET", "/mcp").get(), "\"mcp\":true"));
     };
 
-    SECTION("on a port of its own, the login answers there")
-    {
-        const unsigned short first = free_loopback_port();
-        login.listen(first, "bbl");
-        CHECK(exchange(first, "GET", "/callback?code=1").get().find("\"login\":\"bbl\"") != std::string::npos);
-        check_mcp_untouched();
-
-        const unsigned short second = free_loopback_port();
-        login.listen(second, "orca");
-        CHECK(exchange(second, "GET", "/callback?code=2").get().find("\"login\":\"orca\"") != std::string::npos);
-        CHECK(exchange(first, "GET", "/callback").get().find("connect failed") == 0);
-        check_mcp_untouched();
-    }
-
-    SECTION("on the MCP server's port, the MCP server answers the callback for the login's provider")
-    {
-        login.listen(mcp_port, "bbl");
-        CHECK(exchange(mcp_port, "GET", "/callback?code=3").get().find("\"login\":\"bbl\"") != std::string::npos);
-        check_mcp_untouched();
-    }
-
-    login.stop();
+    const unsigned short first = free_loopback_port();
+    REQUIRE(login.listen(first, "bbl"));
+    CHECK(contains(exchange(first, "GET", "/callback?code=1").get(), "\"login\":\"bbl\""));
     check_mcp_untouched();
+
+    const unsigned short second = free_loopback_port();
+    REQUIRE(login.listen(second, "orca"));
+    CHECK(contains(exchange(second, "GET", "/callback?code=2").get(), "\"login\":\"orca\""));
+    CHECK(exchange(first, "GET", "/callback").get().find("connect failed") == 0);
+    check_mcp_untouched();
+
     mcp.stop();
+}
+
+TEST_CASE("a cloud login that asks for the MCP server's port never binds it", "[HttpServer][Login]")
+{
+    // A login can be told LOCALHOST_PORT: the MCP server answers it there, and a login before the MCP
+    // server is up binds nothing, so the MCP server can still start on its own port.
+    HeldMainThread quit_queue;
+    MainThreadGate quit_gate(quit_queue.post());
+    FakeSignIn     sign_in;
+
+    const unsigned short mcp_port = free_loopback_port();
+    HttpServer           mcp(mcp_port);
+    LoginCallbackServer  login(mcp, sign_in.handler(), "orca", quit_gate);
+    mcp.set_request_handler(app_routes(login, [] { return json_response({{"mcp", true}}); }));
+
+    CHECK_FALSE(login.listen(mcp_port, "bbl")); // before the MCP server is up
+    mcp.start();
+    CHECK(mcp.local_endpoint().port() == mcp_port);
+
+    REQUIRE(login.listen(mcp_port, "bbl"));
+    CHECK(contains(exchange(mcp_port, "GET", "/callback?code=3").get(), "\"login\":\"bbl\""));
+    CHECK(contains(exchange(mcp_port, "GET", "/mcp").get(), "\"mcp\":true"));
+    mcp.stop();
+}
+
+TEST_CASE("a cloud login's callback that arrives while the app is quitting never reaches the sign-in", "[HttpServer][Login]")
+{
+    // A sign-in makes network calls that a quit would then have to wait for.
+    HeldMainThread quit_queue;
+    MainThreadGate quit_gate(quit_queue.post());
+    FakeSignIn     sign_in;
+
+    HttpServer          mcp(0);
+    LoginCallbackServer login(mcp, sign_in.handler(), "orca", quit_gate);
+    quit_gate.close();
+
+    std::stringstream page;
+    login.answer("/callback?code=4")->write_response(page);
+    CHECK(contains(page.str(), "OrcaSlicer is quitting"));
+    CHECK(sign_in.calls == 0);
 }

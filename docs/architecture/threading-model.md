@@ -212,6 +212,10 @@ When the quit itself runs inside a tool call's work (the work pumped the event l
 call's caller waits on that work, so the join would never end. `stop_http_server` sees it
 (`OrcaMCPServer::inside_a_tool_call()`) and leaves the stop to `OnExit`.
 
+The cloud login's callback port is a second listener on the same server and thread
+(`HttpServer::listen_also`, `LoginCallbackServer`), so there is one thread to join, login callbacks
+are served one at a time with MCP calls, and moving the login to another port joins nothing.
+
 `tests/slic3rutils/test_mcp_shutdown.cpp`, `test_http_server.cpp` and `test_thread_cancel.cpp` cover
 each step with a main thread that never runs its work, a server that never answers, and a client slow
 to read.

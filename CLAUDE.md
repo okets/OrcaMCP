@@ -350,7 +350,7 @@ gh release upload v2.3.2.10 ./path/to/new/artifact.exe -R okets/OrcaMCP
 | `src/slic3r/GUI/HttpServer.hpp` | HTTP server with JSON responses; listens on 127.0.0.1 only |
 | `src/slic3r/GUI/HttpServer.cpp` | POST body reading, ResponseJson, the stop that waits for handlers and lets replies out |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPMainThreadGate.cpp` | How a call hands work to the main thread and waits, and how quitting releases it (see "Threading Model"; unit-tested in `tests/slic3rutils/test_mcp_shutdown.cpp`) |
-| `src/slic3r/GUI/OrcaMCP/OrcaMCPLoginServer.cpp` | The cloud login's own callback server, kept apart from the MCP server (unit-tested in `tests/slic3rutils/test_http_server.cpp`) |
+| `src/slic3r/GUI/OrcaMCP/OrcaMCPLoginServer.cpp` | Where the cloud login's callback is answered: a second port of the MCP server, on its thread (unit-tested in `tests/slic3rutils/test_http_server.cpp`) |
 | `src/slic3r/Utils/ThreadCancel.cpp` | The per-request cancel check a quit applies to blocking network calls on the HTTP thread (unit-tested in `tests/slic3rutils/test_thread_cancel.cpp`) |
 | `src/slic3r/GUI/GUI_App.cpp` | MCP route registration, HTTP server startup, and the shutdown order (`stop_http_server`) |
 | `scripts/orcamcp-bridge.py` | stdio-to-HTTP bridge for Claude Code |
@@ -491,9 +491,12 @@ that call in flight waited forever: on 2026-09-26 `quit_app`, with a script poll
 - **A quit inside a tool call's work** (the work pumped the event loop into a close) cannot join the
   thread whose call waits on that work; `GUI_App::stop_http_server` sees it
   (`OrcaMCPServer::inside_a_tool_call()`) and leaves the stop to `OnExit`.
-- Anything that stops or restarts an `HttpServer` from the main thread needs the same care. The
-  cloud login's loopback callback has its own server (`LoginCallbackServer`,
-  `OrcaMCPLoginServer.cpp`) and never stops, moves or re-routes the MCP one.
+- **The cloud login shares the MCP server's thread.** Its callback port is a second listener on the MCP
+  server (`HttpServer::listen_also`, `LoginCallbackServer` in `OrcaMCPLoginServer.cpp`), so login
+  callbacks and MCP calls are served one at a time, as when they shared one port. A login never
+  stops, moves or re-routes the MCP server, never binds its port, and is refused once the gate is
+  closed. Anything else that stops or restarts an `HttpServer` from the main thread needs the same
+  care.
 
 Both servers listen on **127.0.0.1 only**: MCP has no authentication and can start prints.
 
