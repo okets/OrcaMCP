@@ -29,6 +29,7 @@ add_executable(${_TEST_NAME}_tests
     test_project_match.cpp
     test_slice_estimate.cpp
     test_preset_query.cpp
+    test_printer_switch.cpp
     test_config_value_shape.cpp
     test_hex_color.cpp
     test_color_recipe.cpp

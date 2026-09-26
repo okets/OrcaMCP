@@ -935,6 +935,22 @@ Switch to a different preset.
 |-----------|------|----------|-------------|
 | `type` | string | Yes | "printer", "filament", or "print" |
 | `name` | string | Yes | Preset name |
+| `slot` | integer | No | With `type: filament`: the 1-based filament slot to set, like the sidebar combo |
+
+**Returns (`type: printer`):** what the switch left in the filament slots, because upstream's
+*Remember printer configuration* (on by default) replaces every slot's colour on a printer switch:
+```json
+{
+  "status": "success",
+  "printer": "C5P",
+  "colors_source": "remembered",
+  "filaments": [{"slot": 1, "preset": "Flashforge PETG Pro @FF C5P", "type": "PETG", "color": "#1A1A1A", "is_mixed": false}]
+}
+```
+`colors_source` is `remembered` (the colours last saved for that printer), `default` (none were saved,
+so every slot took `#26A69A`) or `kept` (the printer did not change, or the preference is off).
+`set_filament_color` and `select_preset {slot}` save the colours for the selected printer, so a
+switch away and back returns them. An unknown printer name is an error.
 
 ---
 
@@ -2089,12 +2105,16 @@ live.
 ---
 
 ### select_printer
-Select a printer by device ID.
+Select a Bambu device by device ID, or a printer preset with a print host by name.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `dev_id` | string | Yes | Device ID from `get_printers` |
+| `dev_id` | string | One of the two | Bambu device ID from `get_printers` |
+| `physical_printer` | string | One of the two | Printer preset with a print host, as listed by `get_printers` |
+
+A switch of printer preset also returns `colors_source` and `filaments`, as `select_preset
+{type: printer}` does.
 
 ---
 

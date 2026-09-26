@@ -352,7 +352,9 @@ void OrcaMCPServer::register_printer_tools()
         "select_printer",
         ToolCategory::Printers,
         "Select a Bambu device or a print host",
-        "Select a printer: a Bambu device by dev_id, or a printer preset with a print host by name.",
+        "Select a printer: a Bambu device by dev_id, or a printer preset with a print host by name. A "
+        "switch of printer preset also reports the resulting filaments and colors_source, as select_preset "
+        "{type: printer} does.",
         {
             {"type", "object"},
             {"properties", {

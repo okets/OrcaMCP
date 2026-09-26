@@ -1,5 +1,6 @@
 #include "OrcaMCPPresetConfigUtils.hpp"
 #include "OrcaMCPCommon.hpp"
+#include "OrcaMCPFilamentUtils.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Tab.hpp"
 #include "slic3r/GUI/Plater.hpp"
@@ -550,6 +551,13 @@ bool OrcaMCPPresetConfigUtils::WriteProjectFilamentColor(size_t             conf
     return true;
 }
 
+const char* printer_switch_colors_source(bool remember_printer_config, bool printer_changes, bool has_saved_colors)
+{
+    if (!remember_printer_config || !printer_changes)
+        return "kept";
+    return has_saved_colors ? "remembered" : "default";
+}
+
 void OrcaMCPPresetConfigUtils::SelectPreset(const std::string& type, const std::string& presetName) {
     Preset::Type preset_type = GetPresetTypeFromString(type);
 
@@ -559,6 +567,31 @@ void OrcaMCPPresetConfigUtils::SelectPreset(const std::string& type, const std::
     if (tab != nullptr) {
         tab->select_preset(presetName, false, std::string(), false);
     }
+}
+
+nlohmann::json OrcaMCPPresetConfigUtils::SelectPrinterPreset(const std::string& name)
+{
+    PresetBundle* bundle = wxGetApp().preset_bundle;
+    // find_preset follows a renamed preset to its current name, which is the one that ends up selected.
+    const Preset* preset = bundle->printers.find_preset(name, false);
+    if (preset == nullptr)
+        return {{"status", "error"}, {"message", "No printer preset named '" + name + "'"}};
+    const std::string target = preset->name;
+
+    // Decided before the switch: afterwards the selected printer is the new one.
+    AppConfig*        app_config    = wxGetApp().app_config;
+    const char*       colors_source = printer_switch_colors_source(
+        app_config->get_bool("remember_printer_config"), bundle->printers.get_selected_preset_name() != target,
+        !app_config->get_printer_setting(target, "filament_colors").empty());
+
+    SelectPreset("printer", target);
+    if (bundle->printers.get_selected_preset_name() != target)
+        return {{"status", "error"}, {"message", "Failed to select printer preset '" + target + "'"}};
+
+    return {{"status", "success"},
+            {"printer", target},
+            {"colors_source", colors_source},
+            {"filaments", OrcaMCP::describe_filaments()["filaments"]}};
 }
 
 bool OrcaMCPPresetConfigUtils::SelectFilamentSlotPreset(int slot, const std::string& presetName, std::string& error)

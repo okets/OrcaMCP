@@ -1899,7 +1899,7 @@
     },
     {
       "category": "Config",
-      "description": "Select a printer, filament, or print preset by name. With type 'filament', pass slot (1-based) to set just that filament slot, like the sidebar filament combo; without slot the filament tab switches whichever slot it is on and dirty preset changes are discarded.",
+      "description": "Select a printer, filament, or print preset by name. With type 'filament', pass slot (1-based) to set just that filament slot, like the sidebar filament combo; without slot the filament tab switches whichever slot it is on and dirty preset changes are discarded. With type 'printer', the response lists the resulting filaments (slot, preset, colour) and colors_source: 'remembered' when the switch applied the colours last saved for that printer (Remember printer configuration, on by default), 'default' when none were saved and every slot took the default colour, 'kept' when the colours did not change.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -1932,7 +1932,7 @@
     },
     {
       "category": "Printers",
-      "description": "Select a printer: a Bambu device by dev_id, or a printer preset with a print host by name.",
+      "description": "Select a printer: a Bambu device by dev_id, or a printer preset with a print host by name. A switch of printer preset also reports the resulting filaments and colors_source, as select_preset {type: printer} does.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {

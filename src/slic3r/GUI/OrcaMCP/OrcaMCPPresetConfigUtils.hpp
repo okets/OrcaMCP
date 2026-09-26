@@ -29,6 +29,13 @@ struct PresetQuery
 // An empty filter matches everything, including a preset with no vendor at all.
 bool preset_query_matches(const std::string& name, const std::string& vendor, const PresetQuery& query);
 
+// Where the plate's filament colours come from after a switch of printer preset. With
+// remember_printer_config on (the default), Tab::select_preset runs PresetBundle::update_selections,
+// which replaces them with the colours last saved for the new printer ("remembered") or, when none
+// were saved, upstream's #26A69A for every slot ("default"). Otherwise, and when the printer does not
+// change, they are kept ("kept"). Pure.
+const char* printer_switch_colors_source(bool remember_printer_config, bool printer_changes, bool has_saved_colors);
+
 // How many presets of one type the query matched, and how many of them the response carries.
 // They differ only when the cap truncated the list -- and the true total is the number a caller
 // needs to know its filter was too wide, which is exactly what a truncated array cannot tell it.
@@ -166,6 +173,13 @@ public:
     static bool StageProjectFilamentColor(size_t config_index, const std::string& color, bool& flattened,
                                           std::string& error);
     static void SelectPreset(const std::string& type, const std::string& presetName);
+    // Switches the printer preset as SelectPreset does and reports what the switch left in the plate's
+    // filament slots, which upstream may have replaced (see printer_switch_colors_source):
+    //   {"status": "success", "printer": <name>, "colors_source": "remembered"|"default"|"kept",
+    //    "filaments": [{slot, preset, type, color, ...}]}
+    // or {"status": "error", "message": ...} when no printer preset has that name or it did not take.
+    // Main thread only.
+    static nlohmann::json SelectPrinterPreset(const std::string& name);
     // Sets one filament slot (1-based) to `presetName`, mirroring the sidebar filament combo
     // (Plater::priv::on_select_preset's TYPE_FILAMENT branch) instead of the filament tab, so a
     // multi-filament printer can have each slot targeted individually. Validates the slot range

@@ -579,13 +579,20 @@ nlohmann::json select_print_host_preset(const std::string& name)
     if (config_string(live_printer_config(*preset), "print_host").empty())
         return {{"status", "error"}, {"message", "Preset " + name + " has no print host configured"}};
 
+    nlohmann::json switched;
     if (printers.get_edited_preset().name != name) {
-        OrcaMCPPresetConfigUtils::SelectPreset("printer", name);
-        if (printers.get_edited_preset().name != name)
-            return {{"status", "error"}, {"message", "Failed to select printer preset '" + name + "'"}};
+        switched = OrcaMCPPresetConfigUtils::SelectPrinterPreset(name);
+        if (switched["status"] != "success")
+            return switched;
     }
 
-    return print_host_response(name);
+    nlohmann::json response = print_host_response(name);
+    // What the switch did to the slot colours, exactly as select_preset {type: printer} reports it.
+    if (switched.is_object()) {
+        response["colors_source"] = switched["colors_source"];
+        response["filaments"]     = switched["filaments"];
+    }
+    return response;
 }
 
 std::string save_print_host_preset(const std::string&                name,
