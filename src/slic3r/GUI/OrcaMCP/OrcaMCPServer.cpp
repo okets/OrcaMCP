@@ -297,18 +297,20 @@ nlohmann::json step_through_history(bool undo, bool include_preview)
 {
     Plater*                    plater = wxGetApp().plater();
     PlateListChangeDuringSlice slice_change;
-    nlohmann::json             result;
     try {
         if (undo)
             plater->undo(&slice_change);
         else
             plater->redo(&slice_change);
-        result = {{"status", "success"}};
     } catch (const std::exception& e) {
-        // The snapshot load may throw after it stopped a slice: say both.
-        result = {{"status", "error"}, {"message", std::string(undo ? "undo" : "redo") + " failed: " + e.what()}};
+        // The snapshot load failed. The Plater left the plate list usable and the slicing process on a
+        // plate that exists, and its message says what state the app is in; nothing else here reads the
+        // scene, and no preview is made of it. The slice it stopped before the jump is told too.
+        nlohmann::json error = {{"status", "error"}, {"message", std::string(undo ? "undo" : "redo") + " failed: " + e.what()}};
+        add_slice_cancelled(error, slice_change);
+        return error;
     }
-    result["active_warnings"] = get_active_warnings_json(plater);
+    nlohmann::json result = {{"status", "success"}, {"active_warnings", get_active_warnings_json(plater)}};
     add_slice_cancelled(result, slice_change);
     add_turntable_preview_if_requested(result, include_preview);
     return result;

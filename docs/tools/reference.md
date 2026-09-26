@@ -2310,7 +2310,9 @@ checked the same way.
 Undo the last operation. It rebuilds the plate list, so a slice in progress is cancelled first, and a
 Slice All run with it: the response then carries `slice_cancelled: true` and an `info_messages` line
 saying so; call `slice_all` again. If the undo fails, the error response says so too when it had
-already stopped a slice.
+already stopped a slice, and its message says what state the app is left in (the plate list is kept
+usable: if the failed load left it without a plate, it is rebuilt as one plate). No preview is made
+then.
 
 **Parameters:** None
 

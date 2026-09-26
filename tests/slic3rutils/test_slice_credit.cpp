@@ -185,3 +185,20 @@ TEST_CASE("the plate list tells its hook about every plate and Print before it f
         CHECK(log.prints.empty());
     }
 }
+
+TEST_CASE("a plate list a failed load left with no plate is rebuilt as a usable one", "[SliceCredit]")
+{
+    // An undo's snapshot load that throws after it reset the plates leaves none: the app would index
+    // plate 0 of an empty list, and the slicing process points at a freed plate.
+    Slic3r::Model              model;
+    Slic3r::GUI::PartPlateList list(nullptr, &model, Slic3r::ptFFF);
+    CHECK_FALSE(list.rebuild_if_unusable()); // a sound list is left as it is
+    CHECK(list.get_plate_count() == 1);
+
+    list.reset(false);
+    REQUIRE(list.get_plate_count() == 0);
+    CHECK(list.rebuild_if_unusable());
+    REQUIRE(list.get_plate_count() == 1);
+    CHECK(print_of(list, 0) != nullptr);
+    CHECK(list.get_curr_plate_index() == 0);
+}

@@ -1025,9 +1025,6 @@ void StackImpl::load_snapshot(size_t timestamp, Slic3r::Model& model, Slic3r::GU
 		std::vector<std::string> previous_gcode_paths;
 		plate_list.get_sliced_result(previous_slice_result, previous_gcode_paths);
 
-		// Orca: every PartPlate is deleted here and read back, and Prints no plate holds any more are
-		// freed after: stop a slice first, as for any plate-list change (it uses its plate and Print).
-		plate_list.before_plate_list_change();
 		plate_list.reset(false);
 		this->load_mutable_object<Slic3r::GUI::PartPlateList>(plate_list.id(), plate_list);
 		plate_list.rebuild_plates_after_deserialize(previous_slice_result, previous_gcode_paths);

@@ -6764,6 +6764,9 @@ struct Plater::priv
     // Orca: the safety net under the callers' stops (PartPlateList::set_before_free).
     void stop_slice_running_on(const std::vector<const PartPlate*>& plates, const std::vector<const PrintBase*>& prints,
                                const char* caller);
+    // Orca: an undo or redo whose snapshot load threw: leaves the plate list usable and the slicing
+    // process pointed at a plate that exists, then throws, saying what state the app is left in.
+    [[noreturn]] void recover_from_failed_jump(const std::exception& failure);
     bool slicing_all_plates() const { return m_slice_all && m_is_slicing; } // Orca: a Slice All run is in progress
     bool m_slice_all{false};
     bool m_is_slicing {false};
@@ -14659,6 +14662,20 @@ void Plater::priv::redo()
     }
 }
 
+void Plater::priv::recover_from_failed_jump(const std::exception& failure)
+{
+    // The load may have thrown after it reset the plates: none left, or plates without their Print, and
+    // the slicing process pointing at a freed one (the slice was stopped before the jump).
+    std::string state = "the plate list is as the failed load left it";
+    if (partplate_list.rebuild_if_unusable()) {
+        partplate_list.reload_all_objects();
+        state = "the plate list was left unusable and was rebuilt as one plate; objects outside it are unplaced";
+    }
+    q->update_slicing_context_to_current_partplate();
+    BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": the undo/redo jump failed: " << failure.what() << "; " << state;
+    throw Slic3r::RuntimeError(std::string(failure.what()) + "; " + state);
+}
+
 void Plater::priv::undo_redo_to(size_t time_to_load)
 {
     const std::vector<UndoRedo::Snapshot> &snapshots = this->undo_redo_stack().snapshots();
@@ -14744,11 +14761,23 @@ void Plater::priv::undo_redo_to(std::vector<UndoRedo::Snapshot>::const_iterator 
 
     // Make a copy of the snapshot, undo/redo could invalidate the iterator
     const UndoRedo::Snapshot snapshot_copy = *it_snapshot;
-    // Do the jump in time. Orca: the snapshot load stops a slice right before it frees the plates
-    // (UndoRedo.cpp, StackImpl::load_snapshot).
-    if (it_snapshot->timestamp < this->undo_redo_stack().active_snapshot_time() ?
+    // Orca: the jump deletes every PartPlate and reads them back, freeing Prints no plate holds any more,
+    // and an undo from the top first takes a snapshot of the plates, reading the filament maps the
+    // slicing thread writes. So a slice is stopped before either, as for any plate-list change -- only
+    // when the jump will happen: its snapshot is on the stack (undo() and redo() come here only then).
+    const std::vector<UndoRedo::Snapshot>& stack_snapshots = this->undo_redo_stack().snapshots();
+    if (std::binary_search(stack_snapshots.begin(), stack_snapshots.end(), UndoRedo::Snapshot(it_snapshot->timestamp)))
+        stop_slice_for_plate_list_change();
+    // Do the jump in time.
+    bool jumped = false;
+    try {
+        jumped = it_snapshot->timestamp < this->undo_redo_stack().active_snapshot_time() ?
         this->undo_redo_stack().undo(model, get_current_canvas3D()->get_canvas_type() == GLCanvas3D::CanvasAssembleView ? assemble_view->get_canvas3d()->get_selection() : this->view3D->get_canvas3d()->get_selection(), get_current_canvas3D()->get_canvas_type() == GLCanvas3D::CanvasAssembleView ? assemble_view->get_canvas3d()->get_gizmos_manager() : this->view3D->get_canvas3d()->get_gizmos_manager(), this->partplate_list, top_snapshot_data, it_snapshot->timestamp) :
-        this->undo_redo_stack().redo(model, get_current_canvas3D()->get_canvas_type() == GLCanvas3D::CanvasAssembleView ? assemble_view->get_canvas3d()->get_gizmos_manager() : this->view3D->get_canvas3d()->get_gizmos_manager(), this->partplate_list, it_snapshot->timestamp)) {
+        this->undo_redo_stack().redo(model, get_current_canvas3D()->get_canvas_type() == GLCanvas3D::CanvasAssembleView ? assemble_view->get_canvas3d()->get_gizmos_manager() : this->view3D->get_canvas3d()->get_gizmos_manager(), this->partplate_list, it_snapshot->timestamp);
+    } catch (const std::exception& failure) {
+        recover_from_failed_jump(failure); // Orca: throws
+    }
+    if (jumped) {
         // Orca: the process still points at a PartPlate the jump deleted: point it at the current plate.
         q->update_slicing_context_to_current_partplate();
         if (printer_technology_changed) {
