@@ -2,6 +2,7 @@
 
 #include "Flashforge.hpp"
 #include "FlashforgeApi.hpp"
+#include "FlashforgeLocalApi.hpp"
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
@@ -36,22 +37,6 @@ uint64_t now_ms()
 {
     return static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
-}
-
-/// The bare host of a `dev_id`-style address. DeviceManager builds those as `host[:printhost_port]`
-/// (MachineObject::dev_id_from_address), but the Flashforge local API always lives on its own fixed
-/// port, so the trailing `:port` has to come off before Flashforge builds a URL from it.
-std::string host_name_of(const std::string& address)
-{
-    std::string host = address;
-    if (const auto scheme = host.find("://"); scheme != std::string::npos)
-        host = host.substr(scheme + 3);
-    if (const auto slash = host.find('/'); slash != std::string::npos)
-        host = host.substr(0, slash);
-    // Only a trailing IPv4/hostname port; an unbracketed IPv6 literal is not a shape dev_id ever has.
-    if (const auto colon = host.rfind(':'); colon != std::string::npos && host.find(':') == colon)
-        host = host.substr(0, colon);
-    return host;
 }
 
 std::string json_string(const nlohmann::json& obj, const char* key)
@@ -120,8 +105,10 @@ int FlashforgePrinterAgent::connect_printer(std::string dev_id, std::string dev_
 
     Preset&            preset = preset_bundle->printers.get_edited_preset();
     DynamicPrintConfig config = preset.config;
+    // DeviceManager builds dev_ip as `host[:printhost_port]` (MachineObject::dev_id_from_address);
+    // the local API lives on its own port, so only the host is kept.
     if (!dev_ip.empty())
-        config.set_key_value("print_host", new ConfigOptionString(host_name_of(dev_ip)));
+        config.set_key_value("print_host", new ConfigOptionString(FlashforgeLocalApi::host_of(dev_ip)));
 
     auto host = std::make_shared<Flashforge>(&config);
     if (!host->has_local_api_credentials()) {

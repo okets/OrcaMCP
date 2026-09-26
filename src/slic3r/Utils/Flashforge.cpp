@@ -38,6 +38,7 @@
 #include "SerialMessage.hpp"
 #include "SerialMessageType.hpp"
 #include "FlashforgeApi.hpp"
+#include "FlashforgeLocalApi.hpp"
 
 namespace fs = boost::filesystem;
 namespace pt = boost::property_tree;
@@ -310,7 +311,7 @@ bool Flashforge::test(wxString& msg) const
 
     BOOST_LOG_TRIVIAL(debug) << boost::format("[Flashforge Serial] testing connection");
     // Utils::TCPConsole console(m_host, m_console_port);
-    Utils::TCPConsole client(m_host, m_console_port);
+    Utils::TCPConsole client(extract_host_name(), m_console_port);
     client.enqueue_cmd(controlCommand);
     bool res = client.run_queue();
     if (!res) {
@@ -341,7 +342,7 @@ wxString Flashforge::get_test_failed_msg(wxString& msg) const
 bool Flashforge::connect(wxString& msg) const
 {
     
-    Utils::TCPConsole client(m_host, m_console_port);
+    Utils::TCPConsole client(extract_host_name(), m_console_port);
 
     client.enqueue_cmd(controlCommand);
     client.enqueue_cmd(deviceInfoCommand);
@@ -369,7 +370,7 @@ bool Flashforge::connect(wxString& msg) const
 
 bool Flashforge::start_print(wxString& msg, const std::string& filename) const
 {
-    Utils::TCPConsole            client(m_host, m_console_port);
+    Utils::TCPConsole            client(extract_host_name(), m_console_port);
     const std::string            safe_filename = sanitize_flashforge_filename(filename);
     Slic3r::Utils::SerialMessage startPrintCommand = {(boost::format("~M23 0:/user/%1%") % safe_filename).str(), Slic3r::Utils::Command};
     client.enqueue_cmd(startPrintCommand);
@@ -392,7 +393,7 @@ bool Flashforge::upload(PrintHostUpload upload_data, ProgressFn progress_fn, Err
     bool res = true;
     wxString errormsg;
 
-    Utils::TCPConsole client(m_host, m_console_port);
+    Utils::TCPConsole client(extract_host_name(), m_console_port);
 
     try {
 
@@ -699,35 +700,14 @@ bool Flashforge::request_local_api_json(const std::string& path, const std::stri
 
 std::string Flashforge::make_http_url(const std::string& path) const
 {
-    return (boost::format("http://%1%:8898/%2%") % extract_host_name() % path).str();
+    return FlashforgeLocalApi::url_of(m_host, path);
 }
 
+// A print_host written as "ip:port" without a scheme used to keep its port here, so the local API URL
+// came out as http://ip:port:8898/... FlashforgeLocalApi::host_of is the one parser the agent uses too.
 std::string Flashforge::extract_host_name() const
 {
-    std::string host = m_host;
-    if (host.find("://") == std::string::npos) {
-        const auto slash_pos = host.find('/');
-        if (slash_pos != std::string::npos)
-            host = host.substr(0, slash_pos);
-        return host;
-    }
-
-    std::string out = host;
-    CURLU*       hurl = curl_url();
-    if (!hurl)
-        return host;
-
-    const auto rc = curl_url_set(hurl, CURLUPART_URL, host.c_str(), 0);
-    if (rc == CURLUE_OK) {
-        char* raw_host = nullptr;
-        if (curl_url_get(hurl, CURLUPART_HOST, &raw_host, 0) == CURLUE_OK && raw_host != nullptr) {
-            out = raw_host;
-            curl_free(raw_host);
-        }
-    }
-
-    curl_url_cleanup(hurl);
-    return out;
+    return FlashforgeLocalApi::host_of(m_host);
 }
 
 int Flashforge::get_err_code_from_body(const std::string& body) const

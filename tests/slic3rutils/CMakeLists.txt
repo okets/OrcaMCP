@@ -20,6 +20,7 @@ add_executable(${_TEST_NAME}_tests
     test_plugin_cloud_metadata.cpp
     test_plugin_audit.cpp
     test_flashforge_api.cpp
+    test_flashforge_local_api.cpp
     test_flashforge_console.cpp
     test_flashforge_live.cpp
     test_obico_link.cpp

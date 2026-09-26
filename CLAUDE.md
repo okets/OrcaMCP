@@ -723,6 +723,7 @@ echo "G dead [this] capture CameraPopup (merge 476df4364e):            $(U src/s
 echo "H dead [this] capture StatusPanel (merge 476df4364e):            $(U src/slic3r/GUI/StatusPanel.cpp | grep -c 'm_bmToggleBtn_timelapse->Bind(wxEVT_TOGGLEBUTTON, \[this\]')"
 echo "I extruder-count mismatch in the Send dialog (reported upstream): $(gh issue view 15758 -R OrcaSlicer/OrcaSlicer --json state -q .state 2>/dev/null || echo unknown)"
 echo "J startup reads recent-project thumbnails on the GUI thread (rel2506/02): $(U src/slic3r/GUI/MainFrame.cpp | awk '/FileHistory::LoadThumbnails\(\)$/{f=1} f&&/parallel_for/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
+echo "K Flashforge host ip:port keeps its port in the URL (rel2506/04):   $(U src/slic3r/Utils/Flashforge.cpp | grep -c 'const auto slash_pos = host.find')"
 ```
 
 Item J: upstream opens every recent 3MF synchronously while building the main window, before
