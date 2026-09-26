@@ -280,7 +280,7 @@ TEST_CASE("A bridge-only tool called on the app is a JSON-RPC error that points 
     try {
         OrcaMCPServer::handle_tools_call({{"name", "start_orca"}, {"arguments", nlohmann::json::object()}});
         FAIL("start_orca was answered by the app");
-    } catch (const OrcaMCPServer::JsonRpcError& e) {
+    } catch (const Slic3r::GUI::OrcaMCP::JsonRpcError& e) {
         CHECK(e.code == -32602);
         CHECK(std::string(e.what()).find("bridge") != std::string::npos);
     }
@@ -293,7 +293,7 @@ TEST_CASE("A call to an unknown tool is a JSON-RPC invalid-params error, not an 
         try {
             OrcaMCPServer::handle_tools_call(params);
             FAIL("the call was answered");
-        } catch (const OrcaMCPServer::JsonRpcError& e) {
+        } catch (const Slic3r::GUI::OrcaMCP::JsonRpcError& e) {
             CHECK(e.code == -32602);
         }
     }

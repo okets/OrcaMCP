@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <array>
-#include <cctype>
+#include <string_view>
+
+#include <boost/algorithm/string/predicate.hpp>
 #include <nlohmann/json.hpp>
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
@@ -11,24 +13,24 @@ namespace {
 
 constexpr int k_forbidden_error = -32003;
 
-std::string lowercase(std::string text)
-{
-    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return char(std::tolower(c)); });
-    return text;
-}
+// The names a request may address this machine by. Host names are case-insensitive.
+constexpr std::array<std::string_view, 3> k_local_host_names{"127.0.0.1", "localhost", "[::1]"};
 
-// Host names are case-insensitive; the port must be the MCP server's own.
 bool names_this_machine(const std::string& host, unsigned port)
 {
-    const std::string                  wanted_port = ":" + std::to_string(port);
-    const std::array<std::string, 3>   names{"127.0.0.1", "localhost", "[::1]"};
-    const std::string                  given = lowercase(host);
-    return std::any_of(names.begin(), names.end(), [&](const std::string& name) { return given == name + wanted_port; });
+    const std::string wanted_port = ":" + std::to_string(port);
+    return std::any_of(k_local_host_names.begin(), k_local_host_names.end(),
+                       [&](std::string_view name) { return boost::iequals(host, std::string(name) + wanted_port); });
 }
 
 } // namespace
 
-bool is_mcp_url(const std::string& url) { return url.find("/mcp") != std::string::npos; }
+// The path only: a login callback may carry "/mcp" in its query, e.g. in a redirect URL.
+bool is_mcp_url(const std::string& url)
+{
+    const std::string_view path = std::string_view(url).substr(0, url.find_first_of("?#"));
+    return path == "/mcp" || boost::starts_with(path, "/mcp/");
+}
 
 std::optional<std::string> mcp_request_refusal(const std::optional<std::string>& origin, const std::optional<std::string>& host,
                                                unsigned port)

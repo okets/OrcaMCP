@@ -77,9 +77,6 @@ public:
     };
     static constexpr size_t max_summary_length = 40;
 
-    // A request failure with its own JSON-RPC error code (OrcaMCPJsonRpcError.hpp).
-    using JsonRpcError = OrcaMCP::JsonRpcError;
-
     // Initialize the MCP server and register all tools, once. Empty on success; otherwise why it
     // failed, and the same reason on every later call without trying again (see RunOnce).
     static std::string init();
@@ -115,7 +112,7 @@ public:
     // tools/list: every registered tool except the bridge-only ones.
     static nlohmann::json handle_tools_list();
 
-    // tools/call. A missing or unknown tool name, or a bridge-only tool, throws JsonRpcError -32602.
+    // tools/call. A missing or unknown tool name, or a bridge-only tool, throws OrcaMCP::JsonRpcError -32602.
     static nlohmann::json handle_tools_call(const nlohmann::json& params);
 
     // A tool as tools/list serves it: name, description and a normalised inputSchema.

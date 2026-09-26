@@ -282,10 +282,8 @@ nlohmann::json select_preset_now(const std::string& type, const std::string& nam
 
 void OrcaMCPServer::shut_down()
 {
-    if (main_thread_gate().is_closed())
-        return;
-    BOOST_LOG_TRIVIAL(info) << "OrcaMCPServer: the app is quitting; tool calls are refused from now on";
-    main_thread_gate().close();
+    if (main_thread_gate().close())
+        BOOST_LOG_TRIVIAL(info) << "OrcaMCPServer: the app is quitting; tool calls are refused from now on";
 }
 
 bool OrcaMCPServer::defer_until_tool_call_returns(std::function<void()> task)

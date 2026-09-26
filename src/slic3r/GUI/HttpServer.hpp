@@ -222,7 +222,6 @@ private:
 
         IOServer(HttpServer& server) : server(server), acceptor(io_service, loopback_endpoint(server.port)) {}
 
-        void do_accept();
         void accept_on(Acceptor& listener, std::shared_ptr<Acceptor> keep_alive);
         void replace_also(std::shared_ptr<Acceptor> listener);
         void begin_stop();

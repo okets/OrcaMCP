@@ -31,7 +31,8 @@
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
-// True for the URLs the MCP server answers; every other URL is a cloud-login callback.
+// True for the URLs the MCP server answers, by their path alone: /mcp, or below it. Every other URL is
+// a cloud-login callback, including one whose query mentions /mcp.
 bool is_mcp_url(const std::string& url);
 
 // Why an MCP request must be refused, or nothing when it may be served.

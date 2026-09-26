@@ -166,11 +166,6 @@ void session::read_next_line()
     });
 }
 
-void HttpServer::IOServer::do_accept()
-{
-    accept_on(acceptor, nullptr);
-}
-
 // One listener's accept loop. `keep_alive` owns a listener that replace_also() can drop while an
 // accept on it is still pending; the server's own acceptor lives as long as the server.
 void HttpServer::IOServer::accept_on(Acceptor& listener, std::shared_ptr<Acceptor> keep_alive)
@@ -277,7 +272,7 @@ void HttpServer::start()
         set_current_thread_name("http_server");
         io_server->acceptor.listen();
 
-        io_server->do_accept();
+        io_server->accept_on(io_server->acceptor, nullptr);
 
         io_server->io_service.run();
     });

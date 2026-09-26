@@ -38,6 +38,19 @@ HttpServer::RequestInfo request(const std::string& url, std::optional<std::strin
 
 } // namespace
 
+TEST_CASE("only the /mcp path is the MCP endpoint, whatever a query says", "[McpRequestGuard][orcamcp]")
+{
+    CHECK(is_mcp_url("/mcp"));
+    CHECK(is_mcp_url("/mcp?x=1"));
+    CHECK(is_mcp_url("/mcp/"));
+    CHECK(is_mcp_url("/mcp#top"));
+    CHECK_FALSE(is_mcp_url("/callback?redirect_url=http://localhost:13618/mcp"));
+    CHECK_FALSE(is_mcp_url("/?next=/mcp"));
+    CHECK_FALSE(is_mcp_url("/mcpx"));
+    CHECK_FALSE(is_mcp_url("/login/mcp"));
+    CHECK_FALSE(is_mcp_url(""));
+}
+
 TEST_CASE("an MCP request from a local client, addressed to this machine, is served", "[McpRequestGuard][orcamcp]")
 {
     const std::string host = GENERATE("127.0.0.1:13618", "localhost:13618", "[::1]:13618", "LocalHost:13618");
@@ -103,9 +116,12 @@ TEST_CASE("the app's guard refuses web pages on MCP, and login callbacks where n
     // A login callback on the MCP port, with no login listening there: a page could have forged it.
     CHECK(written(guard(request("/callback?access_token=x", std::nullopt, std::string("localhost:13618")))).rfind("HTTP/1.1 404", 0) == 0);
 
-    // Once a login listens on its port, its callbacks pass there -- browser navigations, no Host rule.
+    // Once a login listens on its port, its callbacks pass there -- browser navigations, no Host rule --
+    // even one whose query mentions /mcp.
     login_port = k_login_port;
     CHECK(guard(request("/callback?code=1", std::nullopt, std::string("127.0.0.1:41172"), k_login_port)) == nullptr);
+    CHECK(guard(request("/callback?code=1&redirect_url=http://localhost:13618/mcp", std::string("https://cloud.example"),
+                        std::string("127.0.0.1:41172"), k_login_port)) == nullptr);
     CHECK(written(guard(request("/callback?code=1", std::nullopt, std::string("localhost:13618")))).rfind("HTTP/1.1 404", 0) == 0);
 
     // A login told the MCP port is answered there.

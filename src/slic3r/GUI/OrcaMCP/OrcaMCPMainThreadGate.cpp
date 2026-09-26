@@ -78,13 +78,16 @@ void MainThreadGate::run_queued(State& state, Call& call, const Work& work, cons
         post(std::move(task));
 }
 
-void MainThreadGate::close()
+bool MainThreadGate::close()
 {
+    bool changed;
     {
         std::lock_guard<std::mutex> lock(m_state->mutex);
+        changed         = !m_state->closed;
         m_state->closed = true;
     }
     m_state->changed.notify_all();
+    return changed;
 }
 
 bool MainThreadGate::is_closed() const

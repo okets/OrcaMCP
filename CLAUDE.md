@@ -530,7 +530,8 @@ with `HttpServer::set_request_guard` in `GUI_App::start_http_server`) before any
   the user in to someone else's account. The Orca cloud's code callback is also checked against the
   state and PKCE verifier its dialog issued (`OrcaCloudServiceAgent::exchange_auth_code`); Bambu's
   `access_token` and `ticket` callbacks carry no state to check, so closing the route is their only
-  guard.
+  guard. `/mcp` is matched on the path alone, so a callback whose query mentions `/mcp` stays a
+  callback.
 - **No reply carries `Access-Control-Allow-*`**, so no page can read one either.
 
 The bridge sends no `Origin` and names `localhost` or `127.0.0.1` (`scripts/tests/test_bridge_request_headers.py`).
@@ -815,7 +816,7 @@ echo "K Flashforge host ip:port keeps its port in the URL (rel2506/04):   $(U sr
 echo "L Flashforge local API: no retry, failure log or next step (rel2506/04; 0 = bug): $(U src/slic3r/Utils/Flashforge.cpp | grep -c 'run_with_retry')"
 echo "M HttpServer::stop cuts a reply still being written (rel2506/04b): $(U src/slic3r/GUI/HttpServer.cpp | awk '/^void HttpServer::stop/{f=1} f&&/stop_all\(\)/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
 echo "N HttpServer listens on every interface (rel2506/04b):             $(U src/slic3r/GUI/HttpServer.hpp | grep -c 'acceptor(io_service, {boost::asio::ip::tcp::v4()')"
-echo "R HttpServer can refuse a request before its handler (rel2506/04b; 0 = upstream cannot): $(U src/slic3r/GUI/HttpServer.hpp | grep -c 'set_request_guard')"
+echo "R HttpServer serves a request without reading its Origin (rel2506/04b): $( { U src/slic3r/GUI/HttpServer.hpp; U src/slic3r/GUI/HttpServer.cpp; } | grep -qi '"origin"' && echo no || echo yes)"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -824,10 +825,11 @@ written is cut (ours drains it, `IOServer::begin_stop`), and upstream binds all 
 cloud login (`listen_also`) and the loopback endpoint helper. On "no" / 0, take upstream's code and
 re-check that a reply in flight still reaches its client and the bind is still loopback.
 
-Item R: our request guard lives in upstream's `HttpServer` (`set_request_guard`, called from
-`session::process_request` with the request's `Origin`, `Host` and arrival port; `http_headers::value`).
-Upstream has no such hook and answers any page that reaches it. On a non-zero, check whether upstream's
-hook can carry `OrcaMCP::app_request_guard` instead of ours.
+Item R: upstream's `HttpServer` never reads a request's `Origin` header, so it serves whatever page
+reaches it. Ours passes every request's `Origin`, `Host` and arrival port to a guard before the handler
+(`set_request_guard`, called from `session::process_request`; `http_headers::value`), and
+`OrcaMCP::app_request_guard` refuses web pages. On "no", upstream reads `Origin` somewhere: see whether
+its check can replace our hook.
 
 Item J: upstream opens every recent 3MF synchronously while building the main window, before
 post_init starts the MCP server. Our patch skips it for an agent launch (`GUI::is_agent_launch()`,

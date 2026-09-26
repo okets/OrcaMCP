@@ -79,13 +79,13 @@ TEST_CASE("a closed gate refuses a call at once and queues nothing", "[McpShutdo
 {
     HeldMainThread main_thread;
     MainThreadGate gate(main_thread.post());
-    gate.close();
+    CHECK(gate.close()); // this call closed it
 
     CHECK(gate.is_closed());
     CHECK_THROWS_AS(gate.call([] { return nlohmann::json("ran"); }), McpShuttingDown);
     CHECK(main_thread.size() == 0);
 
-    gate.close(); // closing twice is harmless
+    CHECK_FALSE(gate.close()); // closing twice is harmless, and says it changed nothing
     CHECK(gate.is_closed());
 }
 

@@ -33,9 +33,9 @@ public:
 
     // Refuses every later call, and releases every caller whose work has not started with
     // McpShuttingDown. A released caller's queued task does nothing when the main thread reaches it.
-    // Idempotent; safe from any thread. Once closed, it stays closed: this is the app's one "quitting"
-    // signal.
-    void close();
+    // Safe from any thread. Once closed, it stays closed: this is the app's one "quitting" signal.
+    // Returns true when this call closed it, false when it was closed already.
+    bool close();
     bool is_closed() const;
 
     // While a call's work is running, keeps `task` to post to the main thread once the work has
