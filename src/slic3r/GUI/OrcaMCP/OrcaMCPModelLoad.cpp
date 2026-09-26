@@ -8,6 +8,7 @@
 #include "libslic3r/AppConfig.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Utils.hpp"
+#include "libslic3r/miniz_extension.hpp"
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
@@ -46,6 +47,26 @@ ThreeMfLoad choose_3mf_load(const std::string& setting, bool scene_has_objects, 
         (setting == OPTION_PROJECT_LOAD_BEHAVIOUR_ASK_WHEN_RELEVANT && scene_has_objects))
         return ThreeMfLoad::AskUser;
     return ThreeMfLoad::OpenProject;
+}
+
+bool threemf_carries_presets(const std::string& path)
+{
+    mz_zip_archive zip;
+    mz_zip_zero_struct(&zip);
+    if (!open_zip_reader(&zip, path))
+        return false;
+    const bool carries = mz_zip_reader_locate_file(&zip, "Metadata/project_settings.config", nullptr, 0) >= 0 ||
+                         mz_zip_reader_locate_file(&zip, "Metadata/Slic3r_PE.config", nullptr, 0) >= 0;
+    close_zip_reader(&zip);
+    return carries;
+}
+
+std::string threemf_import_message(bool carries_presets)
+{
+    if (!carries_presets)
+        return "The 3MF was imported as geometry.";
+    return "The 3MF was imported as geometry only: the printer, filament and process presets it carries were not "
+           "applied, and the project name is unchanged. Use load_project to open it as a project.";
 }
 
 std::set<ObjectID> object_ids(const Model& model)

@@ -6,8 +6,10 @@
 #include "libslic3r/AppConfig.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/TriangleMesh.hpp"
+#include "libslic3r/miniz_extension.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPCommon.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPModelLoad.hpp"
+#include "test_utils.hpp"
 
 // What load_model does with a 3MF. On 2026-09-26 a load_model of a Blender-exported 3MF onto an
 // empty scene opened it as a project: the file's embedded Bambu A1 presets replaced the user's
@@ -75,6 +77,8 @@ using Slic3r::GUI::OrcaMCP::loaded_objects_json;
 using Slic3r::GUI::OrcaMCP::LoadFileKind;
 using Slic3r::GUI::OrcaMCP::model_object_summary_json;
 using Slic3r::GUI::OrcaMCP::object_ids;
+using Slic3r::GUI::OrcaMCP::threemf_carries_presets;
+using Slic3r::GUI::OrcaMCP::threemf_import_message;
 using Catch::Matchers::WithinAbs;
 
 ModelObject* add_box(Model& model, const std::string& name, double scale = 1.0, int volumes = 1)
@@ -179,4 +183,40 @@ TEST_CASE("under MCP a sliced 3MF bundle opens as a project onto an empty scene 
     CHECK(choose_3mf_load(load_all, empty_scene, gui, sliced) == ThreeMfLoad::OpenProject);
     CHECK(choose_3mf_load(always_ask, empty_scene, gui, sliced) == ThreeMfLoad::AskUser);
     CHECK(choose_3mf_load(load_geometry, empty_scene, gui, sliced) == ThreeMfLoad::ImportGeometry);
+}
+
+// The "presets were not applied" line used to be recorded before the load, for every 3MF, even
+// when the import then failed or the file carried no presets at all.
+TEST_CASE("a 3MF carries presets only when it has a project config", "[McpModelLoad][orcamcp][load]")
+{
+    CHECK(threemf_carries_presets(std::string(TEST_DATA_DIR) + "/test_3mf/bambu_embedded_preset.3mf"));
+
+    ScopedTemporaryFile geometry_only(".3mf");
+    {
+        mz_zip_archive zip;
+        mz_zip_zero_struct(&zip);
+        REQUIRE(Slic3r::open_zip_writer(&zip, geometry_only.string()));
+        const std::string model_xml = "<model unit=\"millimeter\"/>";
+        REQUIRE(mz_zip_writer_add_mem(&zip, "3D/3dmodel.model", model_xml.data(), model_xml.size(), MZ_DEFAULT_COMPRESSION));
+        REQUIRE(mz_zip_writer_finalize_archive(&zip));
+        REQUIRE(Slic3r::close_zip_writer(&zip));
+    }
+    CHECK_FALSE(threemf_carries_presets(geometry_only.string()));
+    CHECK_FALSE(threemf_carries_presets("/nonexistent/file.3mf"));
+}
+
+TEST_CASE("the import message mentions presets only when the file carried some", "[McpModelLoad][orcamcp][load]")
+{
+    const std::string with_presets = threemf_import_message(true);
+    CHECK(with_presets.find("presets") != std::string::npos);
+    CHECK(with_presets.find("load_project") != std::string::npos);
+    CHECK(threemf_import_message(false) == "The 3MF was imported as geometry.");
+}
+
+TEST_CASE("a load that added nothing reports no loaded objects", "[McpModelLoad][orcamcp][load]")
+{
+    Model model;
+    add_box(model, "already here");
+    CHECK(loaded_objects_json(model, object_ids(model)).empty());
+    CHECK(loaded_objects_json(Model(), {}).empty());
 }

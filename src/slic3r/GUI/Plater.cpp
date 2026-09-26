@@ -17569,16 +17569,11 @@ bool Plater::load_files(const wxArrayString& filenames)
 LoadType determine_load_type(std::string filename, bool scene_has_objects)
 {
     using OrcaMCP::ThreeMfLoad;
-    const bool        automated = is_mcp_dialog_suppression_enabled();
-    const bool        sliced    = OrcaMCP::load_file_kind(filename) == OrcaMCP::LoadFileKind::SlicedBundle;
-    const ThreeMfLoad decision  = OrcaMCP::choose_3mf_load(wxGetApp().app_config->get(SETTING_PROJECT_LOAD_BEHAVIOUR),
-                                                           scene_has_objects, automated, sliced);
+    const bool        sliced   = OrcaMCP::load_file_kind(filename) == OrcaMCP::LoadFileKind::SlicedBundle;
+    const ThreeMfLoad decision = OrcaMCP::choose_3mf_load(wxGetApp().app_config->get(SETTING_PROJECT_LOAD_BEHAVIOUR),
+                                                          scene_has_objects, is_mcp_dialog_suppression_enabled(), sliced);
 
     if (decision == ThreeMfLoad::ImportGeometry) {
-        if (automated)
-            add_mcp_suppressed_message("The 3MF was imported as geometry only: its printer, filament and process presets "
-                                       "were not applied and the project name is unchanged. Use load_project to open it "
-                                       "as a project.");
         return LoadType::LoadGeometry;
     } else if (decision == ThreeMfLoad::AskUser) {
         ProjectDropDialog dlg(filename);

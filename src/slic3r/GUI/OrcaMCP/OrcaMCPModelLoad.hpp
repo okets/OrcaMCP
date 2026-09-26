@@ -38,6 +38,14 @@ enum class ThreeMfLoad { OpenProject, ImportGeometry, AskUser };
 ThreeMfLoad choose_3mf_load(const std::string& setting, bool scene_has_objects, bool automated,
                             bool sliced_bundle = false);
 
+// Whether a 3MF carries print settings of its own (a project config: BambuStudio/Orca's
+// Metadata/project_settings.config or PrusaSlicer's Metadata/Slic3r_PE.config). False for a
+// geometry-only 3MF and for anything that is not a readable zip.
+bool threemf_carries_presets(const std::string& path);
+
+// What load_model says after importing a 3MF's geometry.
+std::string threemf_import_message(bool carries_presets);
+
 // The ids of the objects in `model`, taken before a load so the objects it adds can be told apart
 // from the ones already there (every load path appends, but compare ids, not counts).
 std::set<ObjectID> object_ids(const Model& model);

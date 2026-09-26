@@ -220,7 +220,8 @@ std::string load_success_message(LoadFileKind kind, const std::string& file_path
     if (kind != LoadFileKind::Model)
         return "The scene is now a preview of this file's G-code: nothing can be edited or added. Call "
                "new_project to go back to an editable scene.";
-    return std::string();
+    return boost::iends_with(file_path, ".3mf") ? threemf_import_message(threemf_carries_presets(file_path))
+                                                : std::string();
 }
 
 // Why a load that did not throw still failed.
