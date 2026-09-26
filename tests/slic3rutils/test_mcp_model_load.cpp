@@ -1,8 +1,11 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <string>
 
 #include "libslic3r/AppConfig.hpp"
+#include "libslic3r/Model.hpp"
+#include "libslic3r/TriangleMesh.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPModelLoad.hpp"
 
 // What load_model does with a 3MF. On 2026-09-26 a load_model of a Blender-exported 3MF onto an
@@ -26,7 +29,7 @@ constexpr bool gui = false;
 constexpr bool mcp = true;
 } // namespace
 
-TEST_CASE("under MCP a 3MF is imported as geometry whatever the setting and the scene", "[orcamcp][load]")
+TEST_CASE("under MCP a 3MF is imported as geometry whatever the setting and the scene", "[McpModelLoad][orcamcp][load]")
 {
     for (const std::string& setting : {load_all, ask_when_relevant, always_ask, load_geometry}) {
         for (bool scene_has_objects : {empty_scene, with_objects}) {
@@ -36,7 +39,7 @@ TEST_CASE("under MCP a 3MF is imported as geometry whatever the setting and the 
     }
 }
 
-TEST_CASE("in the GUI the project load behaviour setting decides, as upstream", "[orcamcp][load]")
+TEST_CASE("in the GUI the project load behaviour setting decides, as upstream", "[McpModelLoad][orcamcp][load]")
 {
     CHECK(choose_3mf_load(load_all, empty_scene, gui) == ThreeMfLoad::OpenProject);
     CHECK(choose_3mf_load(load_all, with_objects, gui) == ThreeMfLoad::OpenProject);
@@ -52,9 +55,60 @@ TEST_CASE("in the GUI the project load behaviour setting decides, as upstream", 
     CHECK(choose_3mf_load(load_geometry, with_objects, gui) == ThreeMfLoad::ImportGeometry);
 }
 
-TEST_CASE("an unset or unknown setting opens the project, as upstream's fallthrough does", "[orcamcp][load]")
+TEST_CASE("an unset or unknown setting opens the project, as upstream's fallthrough does", "[McpModelLoad][orcamcp][load]")
 {
     CHECK(choose_3mf_load("", empty_scene, gui) == ThreeMfLoad::OpenProject);
     CHECK(choose_3mf_load("something_new", with_objects, gui) == ThreeMfLoad::OpenProject);
     CHECK(choose_3mf_load("", with_objects, mcp) == ThreeMfLoad::ImportGeometry);
+}
+
+// What load_model returns about the objects it added. The response used to say only "success", so
+// an agent could not tell that a 3MF's four objects had been merged into one, or that a model had
+// been scaled by 0.00328 to fit the bed, without asking get_scene_info and guessing which was new.
+namespace {
+using Slic3r::Model;
+using Slic3r::ModelObject;
+using Slic3r::GUI::OrcaMCP::loaded_objects_json;
+using Slic3r::GUI::OrcaMCP::object_ids;
+using Catch::Matchers::WithinAbs;
+
+ModelObject* add_box(Model& model, const std::string& name, double scale = 1.0, int volumes = 1)
+{
+    ModelObject* object = model.add_object();
+    object->name        = name;
+    for (int i = 0; i < volumes; ++i)
+        object->add_volume(Slic3r::TriangleMesh(Slic3r::its_make_cube(10.0, 20.0, 30.0)), false);
+    object->add_instance()->set_scaling_factor(Slic3r::Vec3d(scale, scale, scale));
+    object->invalidate_bounding_box();
+    return object;
+}
+} // namespace
+
+TEST_CASE("loaded_objects names only the objects the load added, by their scene index", "[McpModelLoad][orcamcp][load]")
+{
+    Model model;
+    add_box(model, "already here");
+    add_box(model, "also here");
+    const auto before = object_ids(model);
+
+    add_box(model, "Kuromi one piece", 0.5, 4);
+
+    const nlohmann::json loaded = loaded_objects_json(model, before);
+    REQUIRE(loaded.size() == 1);
+    CHECK(loaded[0]["object_id"] == 2);
+    CHECK(loaded[0]["name"] == "Kuromi one piece");
+    CHECK(loaded[0]["volume_count"] == 4);
+    CHECK_THAT(loaded[0]["scale"]["x"].get<double>(), WithinAbs(0.5, 1e-9));
+    CHECK_THAT(loaded[0]["scale"]["z"].get<double>(), WithinAbs(0.5, 1e-9));
+    CHECK_THAT(loaded[0]["size_mm"]["x"].get<double>(), WithinAbs(5.0, 1e-9));
+    CHECK_THAT(loaded[0]["size_mm"]["y"].get<double>(), WithinAbs(10.0, 1e-9));
+    CHECK_THAT(loaded[0]["size_mm"]["z"].get<double>(), WithinAbs(15.0, 1e-9));
+}
+
+TEST_CASE("a load that added nothing reports no loaded objects", "[McpModelLoad][orcamcp][load]")
+{
+    Model model;
+    add_box(model, "already here");
+    CHECK(loaded_objects_json(model, object_ids(model)).empty());
+    CHECK(loaded_objects_json(Model(), {}).empty());
 }

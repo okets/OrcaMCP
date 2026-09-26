@@ -6,6 +6,7 @@
 #include "OrcaMCPFilamentUtils.hpp"
 #include "OrcaMCPSliceEstimate.hpp"
 #include "OrcaMCPServerInfo.hpp"
+#include "OrcaMCPModelLoad.hpp"
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Plater.hpp"
@@ -2638,29 +2639,52 @@ void OrcaMCPServer::register_builtin_tools()
                 wxArrayString files;
                 files.Add(wxString::FromUTF8(file_path));
 
+                // What the scene held before, so the response can say what this load changed.
+                const std::set<ObjectID> objects_before   = object_ids(plater->model());
+                const size_t             filaments_before = wxGetApp().preset_bundle->filament_presets.size();
+                const std::string        project_before   = into_u8(plater->get_project_filename(".3mf"));
+
                 // Suppress dialogs and capture info messages
                 McpDialogSuppressionGuard suppression_guard;
-                bool result = plater->load_files(files);
+                const bool loaded = plater->load_files(files);
                 auto info_messages = suppression_guard.messages();
 
+                // load_files reports true for a 3MF or ZIP that added nothing (a suppressed ZIP
+                // picker, a file without geometry), so "success" also needs an object to show for it.
+                // A G-code file is a preview, not objects.
+                const nlohmann::json loaded_objects = loaded_objects_json(plater->model(), objects_before);
+                const bool is_gcode = boost::iends_with(file_path, ".gcode") || boost::iends_with(file_path, ".g");
                 nlohmann::json response;
-                if (result) {
-                    response = {
-                        {"status", "success"},
-                        {"file", file_path},
-                        {"active_warnings", get_active_warnings_json(plater)}
-                    };
-                    // Add turntable preview if requested
+                if (loaded && (!loaded_objects.empty() || is_gcode)) {
+                    response = {{"status", "success"}, {"file", file_path}, {"loaded_objects", loaded_objects}};
                     add_turntable_preview_if_requested(response, include_preview);
                 } else {
-                    response = {
-                        {"status", "error"},
-                        {"message", "Failed to load model file"},
-                        {"active_warnings", get_active_warnings_json(plater)}
-                    };
+                    response = {{"status", "error"},
+                                {"message", loaded ? "The file loaded, but added no objects to the scene; "
+                                                     "info_messages says why when the slicer did."
+                                                   : "Failed to load model file"}};
                 }
 
-                // Add any captured info messages
+                // Importing geometry that uses more filaments than the scene has adds the missing
+                // filament slots, as the GUI's import does: that changes the project, so report it.
+                const size_t filaments_after = wxGetApp().preset_bundle->filament_presets.size();
+                const size_t filaments_added = filaments_after > filaments_before ? filaments_after - filaments_before : 0;
+                response["filaments_added"]  = filaments_added;
+                if (filaments_added > 0)
+                    info_messages.push_back("The model uses more filaments than the scene had: " +
+                                            std::to_string(filaments_added) + " filament slot(s) were added, " +
+                                            std::to_string(filaments_after) + " in all. get_filaments lists them.");
+
+                // load_model never names the project (a 3MF is imported as geometry), but if a load
+                // path ever does, say so: save_project writes to the project's name.
+                const std::string project_after = into_u8(plater->get_project_filename(".3mf"));
+                if (project_after != project_before) {
+                    response["project_renamed_to"] = project_after;
+                    info_messages.push_back("The project is now named " + project_after +
+                                            ": save_project and the GUI's Save both write there from now on.");
+                }
+
+                response["active_warnings"] = get_active_warnings_json(plater);
                 if (!info_messages.empty()) {
                     response["info_messages"] = info_messages;
                 }

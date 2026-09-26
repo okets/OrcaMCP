@@ -14,7 +14,7 @@
 
 using namespace Slic3r::GUI;
 
-TEST_CASE("a suppressed Yes/No prompt is answered Yes, and anything else OK", "[orcamcp][suppression]")
+TEST_CASE("a suppressed Yes/No prompt is answered Yes, and anything else OK", "[McpSuppression][orcamcp][suppression]")
 {
     CHECK(mcp_default_answer(wxYES | wxNO) == wxID_YES);
     CHECK(mcp_default_answer(wxYES) == wxID_YES);  // "Object too large" past 10000x offers only Yes
@@ -24,7 +24,7 @@ TEST_CASE("a suppressed Yes/No prompt is answered Yes, and anything else OK", "[
     CHECK(mcp_default_answer(wxOK | wxICON_INFORMATION) == wxID_OK);
 }
 
-TEST_CASE("only a prompt with a choice records an answer", "[orcamcp][suppression]")
+TEST_CASE("only a prompt with a choice records an answer", "[McpSuppression][orcamcp][suppression]")
 {
     CHECK(mcp_prompt_offers_choice(wxYES | wxNO));
     CHECK(mcp_prompt_offers_choice(wxYES | wxICON_QUESTION));
@@ -33,7 +33,7 @@ TEST_CASE("only a prompt with a choice records an answer", "[orcamcp][suppressio
     CHECK_FALSE(mcp_prompt_offers_choice(wxOK | wxICON_WARNING));
 }
 
-TEST_CASE("answers are named the way the buttons read", "[orcamcp][suppression]")
+TEST_CASE("answers are named the way the buttons read", "[McpSuppression][orcamcp][suppression]")
 {
     CHECK(mcp_answer_label(wxID_YES) == "Yes");
     CHECK(mcp_answer_label(wxID_NO) == "No");
@@ -41,7 +41,7 @@ TEST_CASE("answers are named the way the buttons read", "[orcamcp][suppression]"
     CHECK(mcp_answer_label(wxID_CANCEL) == "Cancel");
 }
 
-TEST_CASE("an answered prompt reads '<prompt> (auto-answered <answer>)'", "[orcamcp][suppression]")
+TEST_CASE("an answered prompt reads '<prompt> (auto-answered <answer>)'", "[McpSuppression][orcamcp][suppression]")
 {
     CHECK(mcp_answered_prompt("Object too large: scale it down?", "Yes") ==
           "Object too large: scale it down? (auto-answered Yes)");
@@ -55,7 +55,7 @@ TEST_CASE("an answered prompt reads '<prompt> (auto-answered <answer>)'", "[orca
     clear_mcp_suppressed_messages();
 }
 
-TEST_CASE("a list of affected items is cut to a readable length", "[orcamcp][suppression]")
+TEST_CASE("a list of affected items is cut to a readable length", "[McpSuppression][orcamcp][suppression]")
 {
     CHECK(mcp_list_summary({}, 8).empty());
     CHECK(mcp_list_summary({"layer_height"}, 8) == "layer_height");
