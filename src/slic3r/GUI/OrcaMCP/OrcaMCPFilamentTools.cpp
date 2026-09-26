@@ -219,8 +219,8 @@ void OrcaMCPServer::register_filament_tools()
 
     // set_filament_color - the plate's per-slot colour. apply_config edits the filament *preset*,
     // which is not what the sidebar swatches, the 3D volumes and the render palette show; those read
-    // project_config's filament_colour. This writes it the way the sidebar's colour picker does
-    // (PresetComboBoxes.cpp: apply to project_config, on_config_change, EVT_FILAMENT_COLOR_CHANGED),
+    // project_config's filament_colour. This writes it through the shared WriteProjectFilamentColor
+    // and then announces it the way the sidebar's colour picker does (EVT_FILAMENT_COLOR_CHANGED),
     // so every consumer refreshes. Found when "paint it white" had no white slot to paint with.
     register_tool({
         "set_filament_color",
@@ -258,23 +258,14 @@ void OrcaMCPServer::register_filament_tools()
                 const size_t      idx = size_t(slot - 1);
                 const std::string was = head->values[idx];
 
-                // All three colour keys, the way the sidebar's picker writes them; a gradient slot
-                // becomes this one flat colour and the response says so.
+                // The shared write: all three colour keys (a gradient slot becomes this one flat
+                // colour, and the response says so), the plater's refresh, the project-dirty flag,
+                // the mixed swatches, the per-printer snapshot and the background process.
                 bool        flattened = false;
                 std::string error;
-                if (!OrcaMCPPresetConfigUtils::StageProjectFilamentColor(idx, color, flattened, error))
+                if (!OrcaMCPPresetConfigUtils::WriteProjectFilamentColor(idx, color, flattened, error))
                     return nlohmann::json{{"status", "error"}, {"message", error}};
-
-                DynamicPrintConfig changed;
-                changed.apply_only(project_config, {"filament_colour", "filament_multi_colour", "filament_colour_type"});
-                wxGetApp().plater()->on_config_change(changed);
-                wxGetApp().sidebar().update_presets(Preset::TYPE_FILAMENT);
-                auto* evt = new wxCommandEvent(EVT_FILAMENT_COLOR_CHANGED);
-                evt->SetInt(int(idx));
-                wxQueueEvent(wxGetApp().plater(), evt);
-                // Saved for this printer, so a switch to another printer and back brings it back
-                // instead of the colours saved before.
-                OrcaMCPPresetConfigUtils::PersistProjectSnapshot();
+                OrcaMCPPresetConfigUtils::NotifyFilamentColorChanged(idx);
 
                 nlohmann::json r = {{"status", "success"}, {"slot", slot}, {"color", color}, {"previous_color", was}};
                 if (flattened)

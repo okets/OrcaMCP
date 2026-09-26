@@ -482,6 +482,13 @@ ApplyConfigResult OrcaMCPPresetConfigUtils::ApplyConfig(const nlohmann::json& it
 
 void OrcaMCPPresetConfigUtils::RefreshAfterProjectConfigChange() {
     Plater* plater = wxGetApp().plater();
+    // The plater's own reaction to a colour change -- the 3D scene, the object list's colours, both
+    // filament lists -- runs only for keys that differ from its config, so it comes first: the line
+    // after it copies the colours into that config and would leave nothing to differ.
+    DynamicPrintConfig colours;
+    colours.apply_only(wxGetApp().preset_bundle->project_config,
+                       {"filament_colour", "filament_multi_colour", "filament_colour_type"}, /*ignore_nonexistent=*/true);
+    plater->on_config_change(colours);
     plater->update_filament_colors_in_full_config();
     wxGetApp().sidebar().update_dynamic_filament_list();
     wxGetApp().sidebar().update_mixed_filament_list();
@@ -491,6 +498,14 @@ void OrcaMCPPresetConfigUtils::RefreshAfterProjectConfigChange() {
     // is forgotten the next time OrcaSlicer starts.
     PersistProjectSnapshot();
     wxPostEvent(&wxGetApp().sidebar(), SimpleEvent(EVT_SCHEDULE_BACKGROUND_PROCESS, &wxGetApp().sidebar()));
+}
+
+void OrcaMCPPresetConfigUtils::NotifyFilamentColorChanged(size_t config_index)
+{
+    wxGetApp().sidebar().update_presets(Preset::TYPE_FILAMENT);
+    auto* evt = new wxCommandEvent(EVT_FILAMENT_COLOR_CHANGED);
+    evt->SetInt(int(config_index));
+    wxQueueEvent(wxGetApp().plater(), evt);
 }
 
 void OrcaMCPPresetConfigUtils::PersistProjectSnapshot()

@@ -153,6 +153,11 @@ public:
     // snapshot on the next switch back to this printer.
     static void PersistProjectSnapshot();
 
+    // What the sidebar's colour picker announces after one slot's colour changed, beyond
+    // RefreshAfterProjectConfigChange: the filament combos redraw their swatch, and
+    // EVT_FILAMENT_COLOR_CHANGED recalculates that slot's flush volumes when auto-calculation is on.
+    static void NotifyFilamentColorChanged(size_t config_index);
+
     // Sets one filament slot's colour the way the sidebar's own colour picker does
     // (PlaterPresetComboBox::sync_colour_config): filament_colour, filament_multi_colour and
     // filament_colour_type together, then RefreshAfterProjectConfigChange(). `config_index` is the
