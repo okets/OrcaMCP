@@ -67,11 +67,13 @@ double fit_zoom_to_box(const Vec3d& position, const Vec3d& target, const Vec3d& 
                        int width, int height, double margin);
 
 // Points `camera` from `position` at `target` and zooms it so the whole of `fit` is in frame, with
-// a depth range covering both `scene` and `fit`. Call it after set_type and set_viewport. The single
+// a depth range covering both `fit` and `drawn` -- the plate and every volume the picture will draw,
+// which reach past the plate when an object hangs over its edge. Call it after set_type and
+// set_viewport. The single
 // camera set-up behind every render_plate_view picture and turntable view. It uses Camera's matrix
 // arithmetic only, none of its GL calls, so it is tested without a GL context.
 void frame_camera(Camera& camera, const Vec3d& position, const Vec3d& target, const BoundingBoxf3& fit,
-                  const BoundingBoxf3& scene);
+                  const BoundingBoxf3& drawn);
 
 // The view, projection and viewport `camera` draws with, as pick_facet and the overlays read them.
 CameraFrame camera_frame_of(const Camera& camera);

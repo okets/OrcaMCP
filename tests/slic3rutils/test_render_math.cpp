@@ -152,13 +152,19 @@ namespace {
 const BoundingBoxf3 k_plate(Vec3d(0., 0., 0.), Vec3d(270., 270., 300.));
 
 // What RenderThumbnail does with its Camera, minus the GL calls.
-CameraFrame framed(const Vec3d& position, const Vec3d& target, const BoundingBoxf3& fit, int w = 512, int h = 512)
+CameraFrame framed(const Vec3d& position, const Vec3d& target, const BoundingBoxf3& fit,
+                   const BoundingBoxf3& drawn, int w = 512, int h = 512)
 {
     Slic3r::GUI::Camera camera;
     camera.set_type(Slic3r::GUI::Camera::EType::Perspective);
     camera.set_viewport(0, 0, w, h);
-    frame_camera(camera, position, target, fit, k_plate);
+    frame_camera(camera, position, target, fit, drawn);
     return camera_frame_of(camera);
+}
+
+CameraFrame framed(const Vec3d& position, const Vec3d& target, const BoundingBoxf3& fit, int w = 512, int h = 512)
+{
+    return framed(position, target, fit, k_plate, w, h);
 }
 
 // How much of the image the box's larger screen dimension spans, 0..1.
@@ -262,4 +268,48 @@ TEST_CASE("every render says whether the 3D view it drew was current", "[RenderM
     CHECK(stale["scene_current"] == false);
     REQUIRE(stale.contains("warning"));
     CHECK(stale["warning"].get<std::string>().find("could not be refreshed") != std::string::npos);
+}
+
+namespace {
+
+// Where a point falls between the near (-1) and far (+1) planes of `camera`.
+double ndc_depth(const CameraFrame& camera, const Vec3d& p)
+{
+    const Eigen::Vector4d clip = camera.projection * (camera.view * Eigen::Vector4d(p.x(), p.y(), p.z(), 1.0));
+    return clip.z() / clip.w();
+}
+
+bool within_depth_range(const CameraFrame& camera, const BoundingBoxf3& box)
+{
+    for (int i = 0; i < 8; ++i) {
+        const Vec3d corner((i & 1) ? box.max.x() : box.min.x(), (i & 2) ? box.max.y() : box.min.y(),
+                           (i & 4) ? box.max.z() : box.min.z());
+        const double d = ndc_depth(camera, corner);
+        if (!(d >= -1.0 && d <= 1.0))
+            return false;
+    }
+    return true;
+}
+
+} // namespace
+
+TEST_CASE("the depth range covers every drawn volume, not only the plate and the fit", "[RenderMath]")
+{
+    // An object fit, looking from the front, while another object hangs far off the back of the
+    // plate: it is drawn, so it must not be cut open by the far plane.
+    const BoundingBoxf3 fitted(Vec3d(118., 118., 0.), Vec3d(138., 138., 20.));
+    const BoundingBoxf3 overhang(Vec3d(100., 240., 0.), Vec3d(150., 700., 60.));
+    Vec3d position, target;
+    preset_camera(CameraPreset::Front, fitted, position, target);
+
+    Slic3r::GUI::Camera plate_only;
+    plate_only.set_type(Slic3r::GUI::Camera::EType::Perspective);
+    plate_only.set_viewport(0, 0, 512, 512);
+    frame_camera(plate_only, position, target, fitted, k_plate);
+    CHECK_FALSE(within_depth_range(camera_frame_of(plate_only), overhang));  // what went wrong
+
+    BoundingBoxf3 drawn = k_plate;
+    drawn.merge(overhang);
+    CHECK(within_depth_range(framed(position, target, fitted, drawn), overhang));
+    CHECK(within_depth_range(framed(position, target, fitted, drawn), fitted));
 }

@@ -167,7 +167,7 @@ double fit_zoom_to_box(const Vec3d& position, const Vec3d& target, const Vec3d& 
 }
 
 void frame_camera(Camera& camera, const Vec3d& position, const Vec3d& target, const BoundingBoxf3& fit,
-                  const BoundingBoxf3& scene)
+                  const BoundingBoxf3& drawn)
 {
     // look_at comes first: the zoom depends on the direction the box is seen from. A zoom sized
     // before it is sized for the Camera's default orientation instead, which is how tall objects
@@ -178,7 +178,7 @@ void frame_camera(Camera& camera, const Vec3d& position, const Vec3d& target, co
     // view whose view matrix pick_facet could not invert. stable_camera_up falls back to +Y for
     // exactly that case and returns +Z for every other view.
     const Vec3d up = stable_camera_up(position, target);
-    camera.set_scene_box(scene);
+    camera.set_scene_box(drawn);
     camera.look_at(position, target, up);
     const std::array<int, 4>& viewport = camera.get_viewport();
     const double zoom = fit_zoom_to_box(position, target, up, fit, viewport[2], viewport[3], k_fit_margin);
@@ -186,7 +186,7 @@ void frame_camera(Camera& camera, const Vec3d& position, const Vec3d& target, co
         camera.set_zoom(zoom);
     // Near and far planes around everything that may be drawn, the fitted box included when it
     // reaches past the plate.
-    BoundingBoxf3 depth_box = scene;
+    BoundingBoxf3 depth_box = drawn;
     depth_box.merge(fit);
     camera.apply_projection(depth_box);
 }

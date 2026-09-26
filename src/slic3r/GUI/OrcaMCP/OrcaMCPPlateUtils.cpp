@@ -542,11 +542,17 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
             visible_volumes.emplace_back(const_cast<GLVolume*>(vol));
     }
 
+    // Everything the picture draws: the plate, and every volume on it, some of which may hang past it.
+    // The depth range must cover all of it, or an overhanging part is cut open by the far plane.
+    BoundingBoxf3 drawn_box;
+    for (const GLVolume* vol : visible_volumes)
+        drawn_box.merge(vol->transformed_convex_hull_bounding_box());
+    BoundingBoxf3 depth_box = plate_build_volume;
+    depth_box.merge(drawn_box);
+
     // What the camera frames when the caller did not say (a custom camera, the turntable): the drawn
     // volumes with 20% room on each side, which the turntable's corner labels need, or else the plate.
-    BoundingBoxf3 volumes_box;
-    for (const GLVolume* vol : visible_volumes)
-        volumes_box.merge(vol->transformed_convex_hull_bounding_box());
+    BoundingBoxf3 volumes_box = drawn_box;
     if (volumes_box.defined) {
         const Vec3d padding = volumes_box.size() * 0.20;
         volumes_box.min -= padding;
@@ -564,7 +570,7 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
     camera.set_type(camera_type);
     camera.set_viewport(0, 0, thumbnail_data.width, thumbnail_data.height);
     camera.apply_viewport();
-    OrcaMCP::frame_camera(camera, camera_position, target, fit_box, plate_build_volume);
+    OrcaMCP::frame_camera(camera, camera_position, target, fit_box, depth_box);
     const Transform3d& view_matrix       = camera.get_view_matrix();
     const Transform3d& projection_matrix = camera.get_projection_matrix();
 
