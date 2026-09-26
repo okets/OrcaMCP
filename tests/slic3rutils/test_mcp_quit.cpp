@@ -274,21 +274,22 @@ TEST_CASE("a hold that ends drops the turn still pending", "[McpQuit][orcamcp]")
     CHECK(app.cancelled_turns >= 1);
 }
 
-TEST_CASE("the end of the session leaves the frame alone while a dialog is open", "[McpQuit][orcamcp]")
+TEST_CASE("a hold reads what is modal once, and hands that to the close handler", "[McpQuit][orcamcp]")
 {
-    // wx's own handler would close the frame, whose teardown then ran inside the dialog's loop and
-    // aborted. The system ends the process as soon as the event returns, so the config is saved and
-    // nothing else is done.
-    ModalState modal;
-    modal.dialogs       = {restore_prompt};
-    modal.in_modal_loop = true;
-    const auto open = respond_to_end_session(modal);
-    CHECK(open.save_config_now);
-    CHECK_FALSE(open.close_frame);
-
-    const auto nothing = respond_to_end_session(ModalState{});
-    CHECK(nothing.close_frame);
-    CHECK_FALSE(nothing.save_config_now); // the teardown saves it
+    // The close handler logs and notes a give-up from the state the hold decided on, not a second read.
+    FakeApp app;
+    app.dialogs = {preferences};
+    int reads   = 0;
+    auto hooks  = app.hooks();
+    hooks.modal_state = [&] {
+        ++reads;
+        return app.state();
+    };
+    ModalUnwinder unwinder(hooks);
+    CHECK(unwinder.hold_back([] {}) == Hold::held);
+    CHECK(reads == 1);
+    REQUIRE(unwinder.modal().dialogs.size() == 1);
+    CHECK(unwinder.modal().dialogs.front().title == "Preferences");
 }
 
 TEST_CASE("a quit that gave up is reported until the next quit_app", "[McpQuit][orcamcp]")
@@ -494,46 +495,26 @@ TEST_CASE("get_scene_info reports a modal loop no dialog accounts for", "[McpQui
     CHECK((*warning)["message"].get<std::string>().find("cannot identify") != std::string::npos);
 }
 
-TEST_CASE("a quit request from the system closes the app normally when nothing is open", "[McpQuit][orcamcp]")
+TEST_CASE("the end of a system session closes the app normally when nothing is open", "[McpQuit][orcamcp]")
 {
-    const ModalState nothing;
-    for (bool can_veto : {true, false}) {
-        const auto response = respond_to_session_end(nothing, can_veto);
-        CHECK(response.close_frame);
-        CHECK_FALSE(response.refuse);
-        CHECK_FALSE(response.save_config_now); // the teardown saves it
-    }
+    // The quit request (wxEVT_QUERY_END_SESSION) and the session's end (wxEVT_END_SESSION) close the
+    // main frame as any quit does; its teardown saves the config.
+    CHECK(session_end_closes_frame(ModalState{}));
 }
 
-TEST_CASE("a quit request from the system is refused while a dialog is open, the config saved first", "[McpQuit][orcamcp]")
+TEST_CASE("the end of a system session never closes the frame while a dialog is open", "[McpQuit][orcamcp]")
 {
     // The Dock's Quit, a quit Apple Event and a logout arrive inside the dialog's event loop; closing
-    // the frame there is the teardown-under-a-dialog abort. macOS apps refuse instead, as wx does, and
-    // the config is saved in case the system ends the process regardless.
+    // the frame there is the teardown-under-a-dialog abort. So both handlers leave the frame alone and
+    // save the config at once; the quit request is refused when it can be, as wx does on macOS.
     ModalState modal;
     modal.dialogs       = {restore_prompt};
     modal.in_modal_loop = true;
-    const auto response = respond_to_session_end(modal, /*can_veto=*/true);
-    CHECK(response.refuse);
-    CHECK_FALSE(response.close_frame);
-    CHECK(response.save_config_now);
+    CHECK_FALSE(session_end_closes_frame(modal));
 
     ModalState untracked;
     untracked.in_modal_loop = true;
-    CHECK(respond_to_session_end(untracked, true).refuse);
-}
-
-TEST_CASE("a session end that cannot be refused, with a dialog open, only saves the config", "[McpQuit][orcamcp]")
-{
-    // A Windows critical shutdown: the process is about to end. The frame's teardown would run inside
-    // the dialog's loop, so it is left out; what the app must not lose, the config, is saved.
-    ModalState modal;
-    modal.dialogs       = {restore_prompt};
-    modal.in_modal_loop = true;
-    const auto response = respond_to_session_end(modal, /*can_veto=*/false);
-    CHECK(response.save_config_now);
-    CHECK_FALSE(response.refuse);
-    CHECK_FALSE(response.close_frame);
+    CHECK_FALSE(session_end_closes_frame(untracked));
 }
 
 TEST_CASE("the close handler logs why each hold outcome came about", "[McpQuit][orcamcp]")
@@ -542,9 +523,20 @@ TEST_CASE("the close handler logs why each hold outcome came about", "[McpQuit][
     modal.dialogs       = {restore_prompt};
     modal.in_modal_loop = true;
 
-    CHECK(hold_log_line(Hold::held, 1, modal).find("'OrcaMCP - Restore'") != std::string::npos);
-    CHECK(hold_log_line(Hold::held, 2, modal).empty()); // quiet between the first turn and the last
-    CHECK(hold_log_line(Hold::go_on, 0, ModalState{}).find("nothing modal is open") != std::string::npos);
-    CHECK(hold_log_line(Hold::go_on, 3, ModalState{}).find("closed after 3 turn") != std::string::npos);
-    CHECK(hold_log_line(Hold::given_up, 200, modal).find("still open") != std::string::npos);
+    using Level = HoldLog::Level;
+    CHECK(hold_log(Hold::held, 1, modal).text.find("'OrcaMCP - Restore'") != std::string::npos);
+    CHECK(hold_log(Hold::held, 1, modal).level == Level::info);
+    CHECK(hold_log(Hold::held, 2, modal).text.empty()); // quiet between the first turn and the last
+    CHECK(hold_log(Hold::go_on, 3, ModalState{}).text.find("closed after 3 turn") != std::string::npos);
+    CHECK(hold_log(Hold::go_on, 3, ModalState{}).level == Level::info);
+    CHECK(hold_log(Hold::given_up, 200, modal).text.find("still open") != std::string::npos);
+    CHECK(hold_log(Hold::given_up, 200, modal).level == Level::error);
+}
+
+TEST_CASE("an ordinary close, with nothing modal open, logs at debug", "[McpQuit][orcamcp]")
+{
+    // Every quit passes the close handler; only a hold, a refusal or a give-up is worth an info line.
+    const HoldLog log = hold_log(Hold::go_on, 0, ModalState{});
+    CHECK(log.text.find("nothing modal is open") != std::string::npos);
+    CHECK(log.level == HoldLog::Level::debug);
 }

@@ -519,20 +519,20 @@ that call in flight waited forever: on 2026-09-26 `quit_app`, with a script poll
     main one. It gives up after 10 s rather than tear the frame down under a loop that will not end:
     the app stays open, its unsaved changes kept (a forced close clears the dirty flag only once it is
     sure to go on), and every response's `active_warnings` carries a `QuitFailed` error until the next
-    `quit_app`. The log has the first turn and every outcome with its reason (`hold_log_line`), not
-    each turn.
+    `quit_app`. The log has the first turn and every outcome with its reason (`hold_log`), not
+    each turn; an ordinary close, nothing open, at debug.
   - **Unanswered, with the dialog's own no** (`end_dialog_unanswered`, `OrcaMCPQuitApp.cpp`): its Cancel
     button if it has one; else its No button, if that still says No or Cancel; else Cancel, what its
     close box returns. Never `wxID_ABORT`: callers that test for No or Cancel only take it for yes. The
     restore prompt tells a quit from a No by `closing_dialogs_to_quit()` and keeps its backup.
   - **A quit request from the system never tears the frame down under a dialog**
-    (`respond_to_session_end`, in GUI_App's `wxEVT_QUERY_END_SESSION` handler): the Dock's Quit, a quit
+    (`session_end_closes_frame`, in GUI_App's `wxEVT_QUERY_END_SESSION` handler): the Dock's Quit, a quit
     Apple Event, a logout. It arrives inside the dialog's loop, where the close tore the frame down and
     aborted, and ending the dialog would answer it for the user. So with a dialog open the app config is
     saved and the logs flushed at once (the system may end the process anyway: a Windows critical
     shutdown ignores a refusal), and the request is refused when it can be, as wx's own macOS handler
     does; the user answers and quits again. With nothing open the frame closes as for any quit.
-  - **Nor at the end of the session** (`respond_to_end_session`, GUI_App's `wxEVT_END_SESSION`
+  - **Nor at the end of the session** (the same `session_end_closes_frame`, GUI_App's `wxEVT_END_SESSION`
     handler), which follows a request the app did not refuse or could not (the process ends as soon as
     it returns). With nothing open wx closes the frame as usual. With a dialog open wx's own handler
     would `Close(true)` the frame inside the dialog's loop, the abort above, so the frame is left alone:
@@ -921,7 +921,7 @@ Item S: upstream's `wxEVT_QUERY_END_SESSION` handler (the Dock's Quit, a quit Ap
 closes the main frame while a dialog's modal loop is on the stack -- the teardown-under-a-dialog abort
 -- and then ends every dialog in `dialogStack` with `EndModal(wxID_ABORT)`, which callers that test
 only for No or Cancel take for yes ("Sync printer information?" syncs). Ours never closes the frame
-while a dialog is open (`OrcaMCP::respond_to_session_end`): it saves the config and refuses the
+while a dialog is open (`OrcaMCP::session_end_closes_frame`): it saves the config and refuses the
 request, as wx's own macOS handler does. On 0, take upstream's and re-check a Dock Quit with the
 restore prompt open.
 

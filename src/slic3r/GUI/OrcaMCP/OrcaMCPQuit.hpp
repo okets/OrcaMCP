@@ -146,6 +146,8 @@ public:
     // The turns the latest hold has taken: 1 on its first, and still its count on the go_on or
     // given_up that ends it; 0 for a close that was never held. Its log lines are told apart by it.
     int turns() const { return m_turns; }
+    // What was modal when the latest hold_back decided, before it ended a dialog.
+    const ModalState& modal() const { return m_modal; }
 
 private:
     Hold finish(Hold hold);
@@ -154,41 +156,32 @@ private:
     Hooks                      m_hooks;
     int                        m_max_turns;
     int                        m_turns = 0;
+    ModalState                 m_modal;
     bool                       m_finished = false; // the latest hold has ended: the next close starts afresh
     std::vector<std::uint64_t> m_ended;
 };
 
 // The close handler's log line for a hold's outcome, with its reason: what it waits for, that the
-// dialogs closed, that nothing was open, or why it gave up. Empty for the turns between the first and
-// the last, so a 10 s hold is two lines, not 200.
-std::string hold_log_line(ModalUnwinder::Hold hold, int turns, const ModalState& modal);
-
-// What a quit request from the system does (the Dock's Quit, a quit Apple Event, a logout: wx's
-// wxEVT_QUERY_END_SESSION). With nothing modal open, the main frame closes as for any quit. With a
-// dialog open the request arrives inside its event loop, where closing the frame is the abort this
-// file is about, so the frame is not closed there: the app config is saved and the logs flushed at
-// once, in case the system ends the process anyway (a Windows critical shutdown ignores a refusal),
-// and the request is refused when it can be, as wx's own macOS handler and macOS apps do. The user
-// answers the dialog and quits again.
-struct SessionEndResponse
+// dialogs closed, that nothing was open, or why it gave up. An ordinary close (nothing was open) logs at
+// debug, holds at info, a give-up as an error. Empty text for the turns between the first and the last,
+// so a 10 s hold is two lines, not 200.
+struct HoldLog
 {
-    bool save_config_now = false; // save the app config and flush the logs, before anything else
-    bool refuse          = false; // veto the request
-    bool close_frame     = false; // close the main frame, its full teardown
+    enum class Level { debug, info, error };
+    Level       level = Level::info;
+    std::string text;
 };
-SessionEndResponse respond_to_session_end(const ModalState& modal, bool can_veto);
+HoldLog hold_log(ModalUnwinder::Hold hold, int turns, const ModalState& modal);
 
-// What the end of the system session does (wx's wxEVT_END_SESSION, after a quit request it did not
-// refuse, or one it could not: the system ends the process as soon as this returns). With nothing
-// modal open, wx's own handler closes the main frame, its full teardown. With a dialog open that
-// teardown would run inside the dialog's loop and abort, so the frame is left alone: the config is
-// saved (again: the request may never have reached the app), and the system ends the process.
-struct EndSessionResponse
-{
-    bool save_config_now = false;
-    bool close_frame     = false; // let wx close the main frame
-};
-EndSessionResponse respond_to_end_session(const ModalState& modal);
+// What the system's end of a session does: its quit request (wx's wxEVT_QUERY_END_SESSION: the Dock's
+// Quit, a quit Apple Event, a logout) and the end that follows (wxEVT_END_SESSION, after a request the
+// app did not refuse or could not: the process ends as soon as it returns). True when the main frame
+// may close, its full teardown, as for any quit: nothing modal is open. With a dialog open both arrive
+// inside its event loop, where closing the frame is the abort this file is about, so the frame is left
+// alone: the handlers save the app config and flush the logs at once, in case the system ends the
+// process anyway (a Windows critical shutdown ignores a refusal), and the request is refused when it
+// can be, as wx's own macOS handler and macOS apps do. The user answers the dialog and quits again.
+bool session_end_closes_frame(const ModalState& modal);
 
 // The app's side, defined in OrcaMCPQuitApp.cpp; main thread only.
 void           track_modal_dialogs();   // registers the hook that feeds the app's ModalStack; once, at startup

@@ -177,13 +177,13 @@ ModalUnwinder::Hold ModalUnwinder::hold_back(std::function<void()> close)
         m_finished = false;
         m_ended.clear();
     }
-    const ModalState modal = m_hooks.modal_state();
-    if (!modal.anything_open())
+    m_modal = m_hooks.modal_state();
+    if (!m_modal.anything_open())
         return finish(Hold::go_on);
     if (m_turns >= m_max_turns)
         return finish(Hold::given_up);
     ++m_turns;
-    end_innermost(modal);
+    end_innermost(m_modal);
     m_hooks.run_after_a_turn(std::move(close));
     return Hold::held;
 }
@@ -211,31 +211,21 @@ void ModalUnwinder::end_innermost(const ModalState& modal)
     m_hooks.end_dialog(innermost);
 }
 
-SessionEndResponse respond_to_session_end(const ModalState& modal, bool can_veto)
-{
-    if (!modal.anything_open())
-        return {/*save_config_now=*/false, /*refuse=*/false, /*close_frame=*/true};
-    return {/*save_config_now=*/true, /*refuse=*/can_veto, /*close_frame=*/false};
-}
+bool session_end_closes_frame(const ModalState& modal) { return !modal.anything_open(); }
 
-EndSessionResponse respond_to_end_session(const ModalState& modal)
+HoldLog hold_log(ModalUnwinder::Hold hold, int turns, const ModalState& modal)
 {
-    if (!modal.anything_open())
-        return {/*save_config_now=*/false, /*close_frame=*/true};
-    return {/*save_config_now=*/true, /*close_frame=*/false};
-}
-
-std::string hold_log_line(ModalUnwinder::Hold hold, int turns, const ModalState& modal)
-{
+    using Level = HoldLog::Level;
     switch (hold) {
     case ModalUnwinder::Hold::held:
-        return turns == 1 ? "the close waits: the app is showing " + describe(modal) : std::string();
+        return {Level::info, turns == 1 ? "the close waits: the app is showing " + describe(modal) : std::string()};
     case ModalUnwinder::Hold::go_on:
-        return turns == 0 ? std::string("nothing modal is open; the close goes on")
-                          : "the open dialogs closed after " + std::to_string(turns) + " turn(s); the close goes on";
-    case ModalUnwinder::Hold::given_up: return quit_failure_text(modal);
+        if (turns == 0)
+            return {Level::debug, "nothing modal is open; the close goes on"};
+        return {Level::info, "the open dialogs closed after " + std::to_string(turns) + " turn(s); the close goes on"};
+    case ModalUnwinder::Hold::given_up: return {Level::error, quit_failure_text(modal)};
     }
-    return std::string();
+    return {};
 }
 
 }}} // namespace Slic3r::GUI::OrcaMCP

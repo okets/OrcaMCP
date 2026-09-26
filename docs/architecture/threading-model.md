@@ -227,7 +227,7 @@ per 50 ms timer turn, and the close goes on once the main loop runs again. It gi
 leaving a `QuitFailed` active warning (`test_mcp_quit.cpp`). A quit from the system (the Dock, a
 logout) is never turned into a close inside a dialog's loop at all: the request is refused when it
 can be, and at the end of the session the frame is left alone and the config saved
-(`respond_to_session_end`, `respond_to_end_session`). Both this and the tool-call deferral ask the
+(`session_end_closes_frame`). Both this and the tool-call deferral ask the
 same close again.
 
 The cloud login's callback port is a second listener on the same server and thread

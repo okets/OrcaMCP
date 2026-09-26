@@ -163,18 +163,23 @@ bool hold_close_while_modal(std::function<void()> close)
 {
     ModalUnwinder&            unwinder = modal_unwinder();
     const ModalUnwinder::Hold hold     = unwinder.hold_back(std::move(close));
-    const ModalState          modal    = current_modal_state();
-    if (const std::string line = hold_log_line(hold, unwinder.turns(), modal); !line.empty()) {
-        if (hold == ModalUnwinder::Hold::given_up)
-            BOOST_LOG_TRIVIAL(error) << "OrcaMCP: " << line;
-        else
-            BOOST_LOG_TRIVIAL(info) << "OrcaMCP: " << line;
+    const HoldLog             log      = hold_log(hold, unwinder.turns(), unwinder.modal());
+    if (!log.text.empty()) {
+        switch (log.level) {
+        case HoldLog::Level::debug: BOOST_LOG_TRIVIAL(debug) << "OrcaMCP: " << log.text; break;
+        case HoldLog::Level::info: BOOST_LOG_TRIVIAL(info) << "OrcaMCP: " << log.text; break;
+        case HoldLog::Level::error: BOOST_LOG_TRIVIAL(error) << "OrcaMCP: " << log.text; break;
+        }
     }
-    if (hold == ModalUnwinder::Hold::given_up) {
-        note_quit_failed(modal);
+    switch (hold) {
+    case ModalUnwinder::Hold::go_on: return false;
+    case ModalUnwinder::Hold::held: return true;
+    case ModalUnwinder::Hold::given_up:
+        note_quit_failed(unwinder.modal());
         set_closing_dialogs_to_quit(false);
+        return true;
     }
-    return hold != ModalUnwinder::Hold::go_on;
+    return false;
 }
 
 }}} // namespace Slic3r::GUI::OrcaMCP
