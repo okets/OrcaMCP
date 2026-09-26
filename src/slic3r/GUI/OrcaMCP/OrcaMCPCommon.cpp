@@ -16,9 +16,8 @@ namespace Slic3r { namespace GUI { namespace OrcaMCP {
 MainThreadGate& main_thread_gate()
 {
     // Never destroyed: the HTTP thread can still reach it while the app object is being torn down.
-    static MainThreadGate* const gate = new MainThreadGate(
-        [](std::function<void()> task) { wxGetApp().CallAfter(std::move(task)); },
-        [] { return wxGetApp().is_closing(); });
+    static MainThreadGate* const gate =
+        new MainThreadGate([](std::function<void()> task) { wxGetApp().CallAfter(std::move(task)); });
     return *gate;
 }
 

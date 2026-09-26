@@ -192,15 +192,14 @@ HTTP thread                               Main thread
 
 What breaks the cycle, in order:
 
-1. The main frame's close handler sets `GUI_App::is_closing()`. From then on the gate does not run
-   queued work, and `tools/call` is refused: the handler resets the plater and tears the frame down
-   before the server stops.
-2. `GUI_App::stop_http_server()` calls `OrcaMCPServer::shut_down()`, which closes the gate. The
-   waiting call is released with `McpShuttingDown`, answered with JSON-RPC **-32002** ("OrcaMCP is
-   quitting, so this call was not run. Use start_orca to start it again."), and the HTTP thread goes
-   back to its loop. A call whose work has already started is waited for instead, since the work may
-   still be using what the caller owns.
-3. `HttpServer::stop` closes the listening socket and every connection, and joins with a bound of
+1. The main frame's close handler, where it sets `set_closing(true)` (the close can no longer be
+   vetoed), calls `OrcaMCPServer::shut_down()`, which closes the gate: the app's one "quitting"
+   signal. The waiting call is released with `McpShuttingDown`, answered with JSON-RPC **-32002**
+   ("OrcaMCP is quitting, so this call was not run. Use start_orca to start it again."), work still
+   queued is never run, and every later `tools/call` is refused. That matters because the handler
+   goes on to reset the plater and tear the frame down before the server stops. A call whose work has
+   already started is waited for instead, since the work may still use what the caller owns.
+2. `HttpServer::stop` closes the listening socket and every connection, and joins with a bound of
    3000 ms. A handler still running past it (one that is not waiting on the main thread, e.g. a slow
    network call) is left to finish on its own; the app exits anyway.
 

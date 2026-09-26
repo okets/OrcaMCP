@@ -156,12 +156,11 @@ namespace {
 // startup checks below are kept anyway -- they are two pointer reads, and they keep this honest if
 // the server is ever started earlier.
 //
-// At quit there is one, and mcp_quitting() covers it, not this. The main frame's close handler
-// resets the plater and tears the frame down (MainFrame::shutdown) *before* GUI_App::shutdown()
-// stops the server, so the server is still accepting calls while the GUI goes away. Work queued
-// then is refused rather than run: the main-thread gate checks GUI_App::is_closing() before it
-// runs anything, and OrcaMCPServer::shut_down() releases a call still waiting before the server's
-// thread is joined.
+// At quit there is one, and the main-thread gate covers it, not this. The main frame's close
+// handler resets the plater and tears the frame down (MainFrame::shutdown) *before*
+// GUI_App::shutdown() stops the server, so the server still accepts calls while the GUI goes away.
+// The handler closes the gate first (OrcaMCPServer::shut_down): from then on a tool call is refused
+// with -32002, and work already queued is not run.
 //
 // tools/list, initialize and ping are deliberately *not* gated: an MCP client sends them while
 // connecting, and answering them early is harmless (the tool table is static).
@@ -189,15 +188,6 @@ bool mcp_gui_ready(std::string& reason)
         return false;
     }
     return true;
-}
-
-// True once the app has begun to quit: the main frame's close handler has set is_closing(), or
-// OrcaMCPServer::shut_down() has closed the main-thread gate. A tool call is refused from then on.
-bool mcp_quitting()
-{
-    if (main_thread_gate().is_closed())
-        return true;
-    return wxApp::GetInstance() != nullptr && wxGetApp().is_closing();
 }
 
 // The plate slice_all was asked to come back to, or -1 when nothing is pending.
@@ -291,9 +281,13 @@ nlohmann::json select_preset_now(const std::string& type, const std::string& nam
 
 void OrcaMCPServer::shut_down()
 {
+    if (main_thread_gate().is_closed())
+        return;
     BOOST_LOG_TRIVIAL(info) << "OrcaMCPServer: the app is quitting; tool calls are refused from now on";
     main_thread_gate().close();
 }
+
+bool OrcaMCPServer::inside_a_tool_call() { return main_thread_gate().work_in_progress(); }
 
 std::shared_ptr<HttpServer::Response> OrcaMCPServer::handle_request(
     const std::string& method,
@@ -369,7 +363,7 @@ std::shared_ptr<HttpServer::Response> OrcaMCPServer::handle_request(
         } else if (rpc_method == "tools/list") {
             result = handle_tools_list();
         } else if (rpc_method == "tools/call") {
-            if (mcp_quitting())
+            if (main_thread_gate().is_closed())
                 throw McpShuttingDown();
             std::string not_ready_reason;
             if (!mcp_gui_ready(not_ready_reason)) {
@@ -391,11 +385,6 @@ std::shared_ptr<HttpServer::Response> OrcaMCPServer::handle_request(
 
     } catch (const JsonRpcError& e) {
         auto error = make_error_response(id, e.code, e.what());
-        return std::make_shared<HttpServer::ResponseJson>(error.dump(), 200);
-    } catch (const McpShuttingDown& e) {
-        // -32002: the app is quitting. Not "starting up" (-32001): retrying will not help, starting
-        // the app again will.
-        auto error = make_error_response(id, -32002, e.what());
         return std::make_shared<HttpServer::ResponseJson>(error.dump(), 200);
     } catch (const std::exception& e) {
         BOOST_LOG_TRIVIAL(error) << "OrcaMCPServer: Error handling " << rpc_method << ": " << e.what();
@@ -506,8 +495,8 @@ nlohmann::json OrcaMCPServer::handle_tools_call(const nlohmann::json& params)
     nlohmann::json tool_result;
     try {
         tool_result = it->second.handler(arguments);
-    } catch (const McpShuttingDown&) {
-        throw; // handle_request answers it as "quitting" (-32002), not as this tool failing
+    } catch (const JsonRpcError&) {
+        throw; // its own code, e.g. McpShuttingDown's -32002: not "this tool failed"
     } catch (const std::exception& e) {
         throw std::runtime_error("Tool '" + tool_name + "' failed: " + e.what());
     } catch (...) {

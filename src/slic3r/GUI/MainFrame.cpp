@@ -58,6 +58,7 @@
 #include "GUI_ObjectList.hpp"
 #include "NotificationManager.hpp"
 #include "MarkdownTip.hpp"
+#include "OrcaMCP/OrcaMCPServer.hpp"
 #include "NetworkTestDialog.hpp"
 #include "ConfigWizard.hpp"
 #include "Widgets/WebView.hpp"
@@ -620,6 +621,10 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
         MarkdownTip::ExitTip();
         // Prevent queued selection/UI refresh work from running as normal during reset.
         wxGetApp().set_closing(true);
+        // Orca: the close can no longer be vetoed, so MCP stops here, before the teardown below: a tool
+        // call waiting on this thread is released, new ones are refused, and network calls made for a
+        // request give up (the server's thread is joined at the end, in GUI_App::stop_http_server).
+        OrcaMCPServer::shut_down();
 
         m_plater->reset();
         this->shutdown();

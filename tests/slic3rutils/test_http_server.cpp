@@ -2,10 +2,7 @@
 
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
-#include <deque>
 #include <future>
-#include <mutex>
 #include <string>
 #include <thread>
 
@@ -16,6 +13,8 @@
 #include "slic3r/GUI/OrcaMCP/OrcaMCPLoginServer.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPMainThreadGate.hpp"
 
+#include "mcp_thread_test_utils.hpp"
+
 // The HTTP server the MCP server and the cloud login answer on: where it listens, how it stops while
 // a request is still being handled, and that quitting with an MCP call in flight answers that call
 // and ends in bounded time (the 2026-09-26 quit_app deadlock).
@@ -25,12 +24,11 @@
 
 using namespace Slic3r::GUI;
 using namespace Slic3r::GUI::OrcaMCP;
+using namespace mcp_test;
 using namespace std::chrono_literals;
 using boost::asio::ip::tcp;
 
 namespace {
-
-constexpr auto k_bound = 2s;
 
 // A port nothing listens on right now, on the loopback address.
 unsigned short free_loopback_port()
@@ -65,66 +63,6 @@ std::shared_ptr<HttpServer::Response> json_response(const nlohmann::json& body)
 {
     return std::make_shared<HttpServer::ResponseJson>(body.dump());
 }
-
-class Latch
-{
-public:
-    void open()
-    {
-        {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            m_open = true;
-        }
-        m_changed.notify_all();
-    }
-    void wait()
-    {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        m_changed.wait(lock, [&] { return m_open; });
-    }
-    bool wait_for(std::chrono::milliseconds bound)
-    {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        return m_changed.wait_for(lock, bound, [&] { return m_open; });
-    }
-
-private:
-    std::mutex              m_mutex;
-    std::condition_variable m_changed;
-    bool                    m_open = false;
-};
-
-// A main thread that runs nothing until told to, like the real one while it joins the HTTP thread.
-class HeldMainThread
-{
-public:
-    MainThreadGate::Post post()
-    {
-        return [this](std::function<void()> task) {
-            {
-                std::lock_guard<std::mutex> lock(m_mutex);
-                m_tasks.push_back(std::move(task));
-            }
-            m_queued.open();
-        };
-    }
-    bool wait_for_a_task() { return m_queued.wait_for(k_bound); }
-    void run_all()
-    {
-        std::deque<std::function<void()>> tasks;
-        {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            tasks.swap(m_tasks);
-        }
-        for (auto& task : tasks)
-            task();
-    }
-
-private:
-    std::mutex                        m_mutex;
-    std::deque<std::function<void()>> m_tasks;
-    Latch                             m_queued;
-};
 
 } // namespace
 
@@ -192,7 +130,7 @@ TEST_CASE("quitting with an MCP call waiting on the main thread answers the call
     server.start();
 
     auto reply = exchange(server.local_endpoint().port(), "POST", "/mcp", R"({"jsonrpc":"2.0","id":1})");
-    REQUIRE(main_thread.wait_for_a_task()); // the call is waiting for the main thread
+    REQUIRE(main_thread.wait_for_tasks(1)); // the call is waiting for the main thread
 
     // GUI_App::stop_http_server's order: release the waiting call, then stop the server.
     const auto started  = std::chrono::steady_clock::now();

@@ -2,14 +2,12 @@
 
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
-#include <deque>
 #include <future>
-#include <mutex>
 #include <string>
 #include <thread>
 
 #include "slic3r/GUI/OrcaMCP/OrcaMCPMainThreadGate.hpp"
+#include "mcp_thread_test_utils.hpp"
 
 // How an MCP call waits for the main thread, and how quitting releases it. On 2026-09-26 quit_app,
 // with a script polling get_slicing_status, hung the app for 15 minutes: the main thread was joining
@@ -20,102 +18,10 @@
 // hanging the suite.
 
 using namespace Slic3r::GUI::OrcaMCP;
+using namespace mcp_test;
 using namespace std::chrono_literals;
 
 namespace {
-
-constexpr auto k_bound = 2s; // far longer than any correct release takes
-
-// A main thread that runs nothing until told to: what the real one looks like while it is blocked
-// joining the HTTP thread.
-class HeldMainThread
-{
-public:
-    MainThreadGate::Post post()
-    {
-        return [this](std::function<void()> task) {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            m_tasks.push_back(std::move(task));
-            m_changed.notify_all();
-        };
-    }
-
-    bool wait_for_tasks(size_t count)
-    {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        return m_changed.wait_for(lock, k_bound, [&] { return m_tasks.size() >= count; });
-    }
-
-    size_t size()
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        return m_tasks.size();
-    }
-
-    // Runs, on the calling thread, every task queued so far.
-    void run_all()
-    {
-        std::deque<std::function<void()>> tasks;
-        {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            tasks.swap(m_tasks);
-        }
-        for (auto& task : tasks)
-            task();
-    }
-
-private:
-    std::mutex                        m_mutex;
-    std::condition_variable           m_changed;
-    std::deque<std::function<void()>> m_tasks;
-};
-
-// A main thread that runs every task as it arrives, on a thread of its own.
-class RunningMainThread
-{
-public:
-    RunningMainThread() : m_thread([this] { loop(); }) {}
-    ~RunningMainThread()
-    {
-        {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            m_stopping = true;
-        }
-        m_changed.notify_all();
-        m_thread.join();
-    }
-
-    MainThreadGate::Post post()
-    {
-        return [this](std::function<void()> task) {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            m_tasks.push_back(std::move(task));
-            m_changed.notify_all();
-        };
-    }
-
-private:
-    void loop()
-    {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        while (true) {
-            m_changed.wait(lock, [&] { return m_stopping || !m_tasks.empty(); });
-            if (m_tasks.empty())
-                return;
-            auto task = std::move(m_tasks.front());
-            m_tasks.pop_front();
-            lock.unlock();
-            task();
-            lock.lock();
-        }
-    }
-
-    std::mutex                        m_mutex;
-    std::condition_variable           m_changed;
-    std::deque<std::function<void()>> m_tasks;
-    bool                              m_stopping = false;
-    std::thread                       m_thread;
-};
 
 // A gate.call made the way the HTTP thread makes it: on a thread of its own. Its outcome reads
 // "value <json>", "shutting down" or "error <what>".
@@ -145,30 +51,6 @@ private:
     std::promise<std::string> m_outcome;
     std::future<std::string>  m_future;
     std::thread               m_thread;
-};
-
-// A gate that can be held shut and opened from another thread.
-class Latch
-{
-public:
-    void open()
-    {
-        {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            m_open = true;
-        }
-        m_changed.notify_all();
-    }
-    void wait()
-    {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        m_changed.wait(lock, [&] { return m_open; });
-    }
-
-private:
-    std::mutex              m_mutex;
-    std::condition_variable m_changed;
-    bool                    m_open = false;
 };
 
 } // namespace
@@ -209,6 +91,8 @@ TEST_CASE("a closed gate refuses a call at once and queues nothing", "[McpShutdo
 
 TEST_CASE("work its caller was released from is not run when the main thread reaches it", "[McpShutdown][orcamcp]")
 {
+    // The main frame's close handler closes the gate before it tears the GUI down, so work still
+    // queued then must not run against the half-closed GUI.
     HeldMainThread main_thread;
     MainThreadGate gate(main_thread.post());
     std::atomic<bool> ran{false};
@@ -250,6 +134,28 @@ TEST_CASE("work that has started runs to its end, and its caller waits for it, e
     CHECK(call.outcome() == "value \"finished\"");
 }
 
+TEST_CASE("the gate knows while a call's work is running", "[McpShutdown][orcamcp]")
+{
+    // A quit that finds work running is inside that work, and must not join the HTTP thread yet
+    // (GUI_App::stop_http_server).
+    RunningMainThread main_thread;
+    MainThreadGate    gate(main_thread.post());
+    Latch             started, finish;
+    CHECK_FALSE(gate.work_in_progress());
+
+    BackgroundCall call(gate, [&] {
+        started.open();
+        finish.wait();
+        return nlohmann::json("finished");
+    });
+    started.wait();
+    CHECK(gate.work_in_progress());
+
+    finish.open();
+    REQUIRE(call.ended_within(k_bound));
+    CHECK_FALSE(gate.work_in_progress());
+}
+
 TEST_CASE("a call returns what its work returned, and rethrows what it threw", "[McpShutdown][orcamcp]")
 {
     RunningMainThread main_thread;
@@ -264,16 +170,13 @@ TEST_CASE("a call returns what its work returned, and rethrows what it threw", "
     }
 }
 
-TEST_CASE("work that reaches the main thread while the app is quitting is not run", "[McpShutdown][orcamcp]")
+TEST_CASE("a call refused because the app is quitting is a JSON-RPC error with its own code", "[McpShutdown][orcamcp]")
 {
-    // The main frame's close handler tears the GUI down before the gate is closed; work queued then
-    // must not run against it.
-    RunningMainThread main_thread;
-    std::atomic<bool> quitting{false};
-    MainThreadGate    gate(main_thread.post(), [&] { return quitting.load(); });
-    std::atomic<bool> ran{false};
-
-    quitting = true;
-    CHECK_THROWS_AS(gate.call([&] { ran = true; return nlohmann::json("ran"); }), McpShuttingDown);
-    CHECK_FALSE(ran);
+    // handle_request answers every JsonRpcError the same way, with its code: -32002, not -32603.
+    try {
+        throw McpShuttingDown();
+    } catch (const JsonRpcError& e) {
+        CHECK(e.code == -32002);
+        CHECK(std::string(e.what()).find("OrcaMCP is quitting") == 0);
+    }
 }

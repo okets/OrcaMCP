@@ -9,6 +9,7 @@
 #include <vector>
 #include "nlohmann/json.hpp"
 #include "slic3r/GUI/HttpServer.hpp"
+#include "OrcaMCPJsonRpcError.hpp"
 
 namespace Slic3r { namespace GUI {
 
@@ -76,21 +77,23 @@ public:
     };
     static constexpr size_t max_summary_length = 40;
 
-    // A request failure with its own JSON-RPC error code, where -32603 Internal error would be wrong.
-    struct JsonRpcError : std::runtime_error
-    {
-        JsonRpcError(int code, const std::string& message) : std::runtime_error(message), code(code) {}
-        int code;
-    };
+    // A request failure with its own JSON-RPC error code (OrcaMCPJsonRpcError.hpp).
+    using JsonRpcError = OrcaMCP::JsonRpcError;
 
     // Initialize the MCP server and register all tools, once. Empty on success; otherwise why it
     // failed, and the same reason on every later call without trying again (see RunOnce).
     static std::string init();
 
-    // The app is quitting: refuse every later tool call (JSON-RPC -32002), and release the one that
-    // is waiting for the main thread. GUI_App::stop_http_server() calls this before it joins the
-    // server's thread, which that waiting call would otherwise hold forever.
+    // The app is quitting: refuse every later tool call (JSON-RPC -32002), release the one that is
+    // waiting for the main thread, and make every network call made for a request give up. The main
+    // frame's close handler calls this as soon as the close can no longer be vetoed, and
+    // GUI_App::stop_http_server() again before it joins the server's thread. Idempotent.
     static void shut_down();
+
+    // True while a tool call's work is running on the main thread. Asked on the main thread, that
+    // means the asker is inside that work (it pumped the event loop into a quit), and joining the
+    // server's thread now would wait on the call that is waiting on the asker.
+    static bool inside_a_tool_call();
 
     // Handle incoming HTTP requests for MCP endpoint
     static std::shared_ptr<HttpServer::Response> handle_request(

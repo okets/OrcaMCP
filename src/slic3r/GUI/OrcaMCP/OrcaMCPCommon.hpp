@@ -16,10 +16,6 @@ class PartPlate;
 class Plater;
 namespace OrcaMCP {
 
-// The app's gate to the wx main thread: work goes through wxGetApp().CallAfter, and is not run once
-// the app has begun to quit (GUI_App::is_closing). OrcaMCPServer::shut_down() closes it.
-MainThreadGate& main_thread_gate();
-
 // Runs `func` on the wx main thread and blocks the calling HTTP worker until it returns.
 // `func` must return nlohmann::json. Exceptions propagate to the caller. Once the app has begun to
 // quit this throws McpShuttingDown instead, without running `func` (MainThreadGate::call).

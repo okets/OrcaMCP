@@ -470,14 +470,13 @@ Quitting joins the HTTP thread from the main thread (`GUI_App::stop_http_server`
 that call in flight waited forever: on 2026-09-26 `quit_app`, with a script polling
 `get_slicing_status`, left the app hung for 15 minutes. The rules that prevent it:
 
-- `GUI_App::stop_http_server()` calls `OrcaMCPServer::shut_down()` **before** it stops the server.
-  That closes the gate: the waiting call is released with `McpShuttingDown`, and every later tool
-  call is refused with JSON-RPC **-32002** ("OrcaMCP is quitting, so this call was not run. Use
-  start_orca to start it again."). A call whose work has already started is waited for, since its
-  work may still use what the caller owns.
-- Refusal starts earlier than that, as soon as the main frame's close handler sets
-  `GUI_App::is_closing()`: the gate does not run queued work once it is set, and `tools/call` is
-  refused. That handler resets the plater and tears the frame down before the server stops.
+- **One signal.** The main frame's close handler calls `OrcaMCPServer::shut_down()` right where it
+  sets `set_closing(true)`, once the close can no longer be vetoed (`MainFrame.cpp`). That closes the
+  gate: the waiting call is released with `McpShuttingDown`, work still queued is never run, and
+  every later tool call is refused with JSON-RPC **-32002** ("OrcaMCP is quitting, so this call was
+  not run. Use start_orca to start it again."). `McpShuttingDown` is a `JsonRpcError`
+  (`OrcaMCPJsonRpcError.hpp`), so it takes the one `JsonRpcError` path. A call whose work has already
+  started is waited for, since its work may still use what the caller owns.
 - `HttpServer::stop` joins with a bound (`try_join_for`, 3000 ms). A handler still running past it
   (one that is not waiting on the main thread, e.g. a slow network call) is left to finish on its
   own thread, and its server is deliberately leaked; the app exits anyway.
