@@ -69,12 +69,19 @@ std::string mcp_answer_label(int answer_id);
 // "a, b, c and 4 more": at most max_items of `items`, for naming what a suppressed prompt affected.
 std::string mcp_list_summary(const std::vector<std::string>& items, size_t max_items);
 // Per-prompt answers. A tool that knows how one prompt should be answered sets it by key for the
-// rest of its McpDialogSuppressionGuard; a MsgDialog tagged with that key (set_mcp_prompt_key) then
-// takes it instead of mcp_default_answer. mcp_answer_for is the answer a suppressed MsgDialog gives.
+// rest of its McpDialogSuppressionGuard, optionally with a note for the agent (how to get the other
+// outcome); a MsgDialog tagged with that key (set_mcp_prompt_key) then takes it instead of
+// mcp_default_answer. mcp_answer_for is the answer a suppressed MsgDialog gives, and its text as
+// recorded: "Yes", or "Yes; <note>".
 inline constexpr const char* MCP_PROMPT_MULTIPART = "multipart"; // load a file's objects as one object's parts?
-void set_mcp_prompt_answer(const std::string& key, int answer_id);
+struct McpAnswer
+{
+    int         id;
+    std::string text;
+};
+void set_mcp_prompt_answer(const std::string& key, int answer_id, const std::string& note = std::string());
 void clear_mcp_prompt_answers();
-int mcp_answer_for(long style, const std::string& prompt_key);
+McpAnswer mcp_answer_for(long style, const std::string& prompt_key);
 // True when the app was launched for an agent: the bridge's start_orca sets ORCAMCP_SKIP_CLOUD_LOGIN
 // (to anything but "" or "0"). Such a launch has nobody at the screen, so startup must not wait on
 // anything a person has to answer, such as a keychain or macOS privacy prompt.

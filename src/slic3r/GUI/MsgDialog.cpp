@@ -87,12 +87,12 @@ int MsgDialog::ShowModal()
     if (is_mcp_dialog_suppression_enabled()) {
         // Capture the message, and for a prompt that offered a choice, the answer given to it.
         const std::string prompt = m_mcp_message.ToUTF8().data();
-        const int         answer = mcp_answer_for(m_style, m_mcp_prompt_key);
+        const McpAnswer   answer = mcp_answer_for(m_style, m_mcp_prompt_key);
         if (mcp_prompt_offers_choice(m_style))
-            add_mcp_suppressed_answer(prompt, mcp_answer_label(answer));
+            add_mcp_suppressed_answer(prompt, answer.text);
         else
             add_mcp_suppressed_message(prompt);
-        return answer;
+        return answer.id;
     }
 
     // Normal behavior - show the dialog

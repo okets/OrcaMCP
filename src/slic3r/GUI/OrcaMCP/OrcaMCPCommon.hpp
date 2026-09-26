@@ -138,7 +138,10 @@ struct McpDialogSuppressionGuard
         set_mcp_dialog_suppression(m_was_enabled);
     }
     std::vector<std::string> messages() const { return get_mcp_suppressed_messages(); }
-    void answer_prompt(const std::string& key, int answer_id) { set_mcp_prompt_answer(key, answer_id); }
+    void answer_prompt(const std::string& key, int answer_id, const std::string& note = std::string())
+    {
+        set_mcp_prompt_answer(key, answer_id, note);
+    }
 
 private:
     bool m_was_enabled;

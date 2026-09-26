@@ -44,7 +44,12 @@ namespace GUI {
 // MCP dialog suppression state
 static bool s_mcp_dialog_suppression = false;
 static std::vector<std::string> s_mcp_suppressed_messages;
-static std::map<std::string, int> s_mcp_prompt_answers;
+struct McpPromptAnswer
+{
+    int         id;
+    std::string note;
+};
+static std::map<std::string, McpPromptAnswer> s_mcp_prompt_answers;
 
 // Note: this only flips the flag. Clearing the collected messages is McpDialogSuppressionGuard's
 // job, so that a nested guard does not discard the messages its caller is still collecting.
@@ -96,19 +101,22 @@ std::string mcp_answer_label(int answer_id) {
     }
 }
 
-void set_mcp_prompt_answer(const std::string& key, int answer_id) {
-    s_mcp_prompt_answers[key] = answer_id;
+void set_mcp_prompt_answer(const std::string& key, int answer_id, const std::string& note) {
+    s_mcp_prompt_answers[key] = {answer_id, note};
 }
 
 void clear_mcp_prompt_answers() {
     s_mcp_prompt_answers.clear();
 }
 
-int mcp_answer_for(long style, const std::string& prompt_key) {
+McpAnswer mcp_answer_for(long style, const std::string& prompt_key) {
     if (!prompt_key.empty())
-        if (auto it = s_mcp_prompt_answers.find(prompt_key); it != s_mcp_prompt_answers.end())
-            return it->second;
-    return mcp_default_answer(style);
+        if (auto it = s_mcp_prompt_answers.find(prompt_key); it != s_mcp_prompt_answers.end()) {
+            const McpPromptAnswer& chosen = it->second;
+            return {chosen.id, mcp_answer_label(chosen.id) + (chosen.note.empty() ? "" : "; " + chosen.note)};
+        }
+    const int id = mcp_default_answer(style);
+    return {id, mcp_answer_label(id)};
 }
 
 bool is_agent_launch() {

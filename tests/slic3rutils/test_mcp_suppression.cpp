@@ -70,13 +70,35 @@ TEST_CASE("a list of affected items is cut to a readable length", "[McpSuppressi
 TEST_CASE("a keyed prompt takes the answer its caller set, and only that prompt", "[McpSuppression][orcamcp][suppression]")
 {
     clear_mcp_prompt_answers();
-    CHECK(mcp_answer_for(wxYES | wxNO, MCP_PROMPT_MULTIPART) == wxID_YES);
+    CHECK(mcp_answer_for(wxYES | wxNO, MCP_PROMPT_MULTIPART).id == wxID_YES);
 
     set_mcp_prompt_answer(MCP_PROMPT_MULTIPART, wxID_NO);
-    CHECK(mcp_answer_for(wxYES | wxNO, MCP_PROMPT_MULTIPART) == wxID_NO);
-    CHECK(mcp_answer_for(wxYES | wxNO, "") == wxID_YES);                 // an untagged prompt
-    CHECK(mcp_answer_for(wxYES | wxNO, "some_other_prompt") == wxID_YES);
+    CHECK(mcp_answer_for(wxYES | wxNO, MCP_PROMPT_MULTIPART).id == wxID_NO);
+    CHECK(mcp_answer_for(wxYES | wxNO, "").id == wxID_YES);                 // an untagged prompt
+    CHECK(mcp_answer_for(wxYES | wxNO, "some_other_prompt").id == wxID_YES);
 
     clear_mcp_prompt_answers();
-    CHECK(mcp_answer_for(wxYES | wxNO, MCP_PROMPT_MULTIPART) == wxID_YES);
+    CHECK(mcp_answer_for(wxYES | wxNO, MCP_PROMPT_MULTIPART).id == wxID_YES);
+}
+
+// Found in the orchestrator's acceptance pass: "(auto-answered Yes)" told an agent the objects had
+// been merged, but not that it could have kept them apart. A tool that sets a keyed answer can add
+// the way to the other outcome, and the recorded answer carries it.
+TEST_CASE("a keyed answer can say how to get the other outcome", "[McpSuppression][orcamcp][suppression]")
+{
+    clear_mcp_prompt_answers();
+    set_mcp_prompt_answer(MCP_PROMPT_MULTIPART, wxID_YES,
+                          "pass multipart: \"separate\" to keep them as separate objects");
+    const McpAnswer merged = mcp_answer_for(wxYES | wxNO, MCP_PROMPT_MULTIPART);
+    CHECK(merged.id == wxID_YES);
+    CHECK(mcp_answered_prompt("Multi-part object detected: load as one object?", merged.text) ==
+          "Multi-part object detected: load as one object? "
+          "(auto-answered Yes; pass multipart: \"separate\" to keep them as separate objects)");
+
+    // Without a note, and for an untagged prompt, the answer is the button alone.
+    set_mcp_prompt_answer(MCP_PROMPT_MULTIPART, wxID_NO);
+    CHECK(mcp_answer_for(wxYES | wxNO, MCP_PROMPT_MULTIPART).text == "No");
+    CHECK(mcp_answer_for(wxYES | wxNO, "").text == "Yes");
+    CHECK(mcp_answer_for(wxOK, "").text == "OK");
+    clear_mcp_prompt_answers();
 }

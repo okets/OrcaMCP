@@ -196,6 +196,14 @@ bool mcp_gui_ready(std::string& reason)
 // Only ever read or written on the GUI thread, from inside run_on_main_thread.
 int s_slice_all_restore_plate = -1;
 
+// What load_model tells the agent about the multi-part question it answered for it: the other
+// value of its multipart parameter, which is the only way to the other outcome.
+std::string multipart_answer_note(int answer_id)
+{
+    return answer_id == wxID_YES ? "pass multipart: \"separate\" to keep them as separate objects"
+                                 : "pass multipart: \"merge\" to load them as one object's parts";
+}
+
 } // namespace
 
 std::shared_ptr<HttpServer::Response> OrcaMCPServer::handle_request(
@@ -2658,7 +2666,7 @@ void OrcaMCPServer::register_builtin_tools()
 
                 // Suppress dialogs and capture info messages
                 McpDialogSuppressionGuard suppression_guard;
-                suppression_guard.answer_prompt(MCP_PROMPT_MULTIPART, multipart_answer);
+                suppression_guard.answer_prompt(MCP_PROMPT_MULTIPART, multipart_answer, multipart_answer_note(multipart_answer));
                 const bool loaded = plater->load_files(files);
                 auto info_messages = suppression_guard.messages();
 
