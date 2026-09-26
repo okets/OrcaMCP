@@ -1,6 +1,7 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPModelLoad.hpp
 #pragma once
 #include <cstddef>
+#include <optional>
 #include <set>
 #include <string>
 #include <nlohmann/json.hpp>
@@ -11,6 +12,17 @@ namespace Slic3r {
 class Model;
 namespace GUI { namespace OrcaMCP {
 
+// What loading a file does to the scene. A model file adds objects. A G-code file (.gcode, .g)
+// and a sliced 3MF bundle (.gcode.3mf) replace the whole scene with a preview of their G-code:
+// the plater drops its objects and the project takes the file's name.
+enum class LoadFileKind { Model, GcodePreview, SlicedBundle };
+LoadFileKind load_file_kind(const std::string& path);
+
+// Why load_model must not load a file of `kind` into the current scene, or nothing when it may.
+// A preview load would discard the objects already there; objects cannot be added to a scene that
+// is a G-code preview. The reason tells the agent what to call instead.
+std::optional<std::string> load_refusal(LoadFileKind kind, bool scene_has_objects, bool scene_is_preview);
+
 // How a 3MF imported into the scene is loaded: as a project (its embedded printer, filament and
 // process presets become active, the scene is reset and the project takes the file's name), as
 // geometry appended to the scene, or by asking the user with the ProjectDropDialog.
@@ -19,10 +31,12 @@ enum class ThreeMfLoad { OpenProject, ImportGeometry, AskUser };
 // The decision Plater::open_3mf_file makes for one 3MF, as a pure function.
 // `setting` is the app's project_load_behaviour (load_all, ask_when_relevant, always_ask,
 // load_geometry_only), `scene_has_objects` whether the plater already holds objects, and
-// `automated` whether MCP dialog suppression is on. Under MCP the answer is always geometry: the
+// `automated` whether MCP dialog suppression is on. Under MCP a model 3MF is always geometry: the
 // tool that reaches this is load_model, and opening a project instead would silently swap the
-// user's presets and rename the project. load_project opens a 3MF as a project on its own path.
-ThreeMfLoad choose_3mf_load(const std::string& setting, bool scene_has_objects, bool automated);
+// user's presets and rename the project. A sliced bundle has no geometry to import, only G-code to
+// preview, so under MCP it opens as a project, and only onto an empty scene (load_refusal).
+ThreeMfLoad choose_3mf_load(const std::string& setting, bool scene_has_objects, bool automated,
+                            bool sliced_bundle = false);
 
 // The ids of the objects in `model`, taken before a load so the objects it adds can be told apart
 // from the ones already there (every load path appends, but compare ids, not counts).

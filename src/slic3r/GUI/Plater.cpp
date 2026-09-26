@@ -17561,15 +17561,18 @@ bool Plater::load_files(const wxArrayString& filenames)
     return res;
 }
 
-// Orca MCP: the setting-vs-scene decision is OrcaMCP::choose_3mf_load (unit-tested). Under MCP it is
-// always geometry: only load_model reaches this (load_project loads with "<silence>"), and opening
-// the file as a project would reset the scene, apply its embedded presets and rename the project.
+// Orca MCP: the setting-vs-scene decision is OrcaMCP::choose_3mf_load (unit-tested). Under MCP a
+// model 3MF is always geometry: only load_model reaches this (load_project loads with "<silence>"),
+// and opening the file as a project would reset the scene, apply its embedded presets and rename
+// the project. A sliced .gcode.3mf opens as a project, onto an empty scene only; load_model reports
+// either outcome.
 LoadType determine_load_type(std::string filename, bool scene_has_objects)
 {
     using OrcaMCP::ThreeMfLoad;
     const bool        automated = is_mcp_dialog_suppression_enabled();
+    const bool        sliced    = OrcaMCP::load_file_kind(filename) == OrcaMCP::LoadFileKind::SlicedBundle;
     const ThreeMfLoad decision  = OrcaMCP::choose_3mf_load(wxGetApp().app_config->get(SETTING_PROJECT_LOAD_BEHAVIOUR),
-                                                           scene_has_objects, automated);
+                                                           scene_has_objects, automated, sliced);
 
     if (decision == ThreeMfLoad::ImportGeometry) {
         if (automated)

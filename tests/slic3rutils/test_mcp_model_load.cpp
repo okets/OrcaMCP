@@ -69,7 +69,10 @@ TEST_CASE("an unset or unknown setting opens the project, as upstream's fallthro
 namespace {
 using Slic3r::Model;
 using Slic3r::ModelObject;
+using Slic3r::GUI::OrcaMCP::load_file_kind;
+using Slic3r::GUI::OrcaMCP::load_refusal;
 using Slic3r::GUI::OrcaMCP::loaded_objects_json;
+using Slic3r::GUI::OrcaMCP::LoadFileKind;
 using Slic3r::GUI::OrcaMCP::model_object_summary_json;
 using Slic3r::GUI::OrcaMCP::object_ids;
 using Catch::Matchers::WithinAbs;
@@ -125,10 +128,55 @@ TEST_CASE("a loaded object reads exactly as get_scene_info's summary of it", "[M
         CHECK(summary.contains(field));
 }
 
-TEST_CASE("a load that added nothing reports no loaded objects", "[McpModelLoad][orcamcp][load]")
+// load_model never replaces the scene it was given. A G-code file or a sliced 3MF bundle does not
+// add objects: loading one resets the plater to a preview of its G-code. Before this, a .gcode
+// passed to load_model silently discarded the objects on the plate and reported success.
+TEST_CASE("files that replace the scene with a G-code preview are told apart from models", "[McpModelLoad][orcamcp][load]")
 {
-    Model model;
-    add_box(model, "already here");
-    CHECK(loaded_objects_json(model, object_ids(model)).empty());
-    CHECK(loaded_objects_json(Model(), {}).empty());
+    CHECK(load_file_kind("/tmp/part.stl") == LoadFileKind::Model);
+    CHECK(load_file_kind("/tmp/project.3mf") == LoadFileKind::Model);
+    CHECK(load_file_kind("/tmp/part.step") == LoadFileKind::Model);
+    CHECK(load_file_kind("/tmp/plate.gcode") == LoadFileKind::GcodePreview);
+    CHECK(load_file_kind("/tmp/PLATE.GCODE") == LoadFileKind::GcodePreview);
+    CHECK(load_file_kind("/tmp/plate.g") == LoadFileKind::GcodePreview);
+    CHECK(load_file_kind("/tmp/plate_1.gcode.3mf") == LoadFileKind::SlicedBundle);
+    CHECK(load_file_kind("/tmp/Plate_1.GCODE.3MF") == LoadFileKind::SlicedBundle);
+}
+
+TEST_CASE("a preview load is refused onto a scene with objects, and geometry onto a preview", "[McpModelLoad][orcamcp][load]")
+{
+    constexpr bool preview = true;
+    constexpr bool editing = false;
+
+    for (LoadFileKind kind : {LoadFileKind::GcodePreview, LoadFileKind::SlicedBundle}) {
+        const auto refused = load_refusal(kind, with_objects, editing);
+        REQUIRE(refused);
+        CHECK(refused->find("new_project") != std::string::npos);
+        CHECK(refused->find("save_project") != std::string::npos);
+        CHECK_FALSE(load_refusal(kind, empty_scene, editing));
+        CHECK_FALSE(load_refusal(kind, empty_scene, preview)); // one preview replaces another
+    }
+
+    const auto onto_preview = load_refusal(LoadFileKind::Model, empty_scene, preview);
+    REQUIRE(onto_preview);
+    CHECK(onto_preview->find("G-code preview") != std::string::npos);
+    CHECK(onto_preview->find("new_project") != std::string::npos);
+    CHECK_FALSE(load_refusal(LoadFileKind::Model, with_objects, editing));
+    CHECK_FALSE(load_refusal(LoadFileKind::Model, empty_scene, editing));
+}
+
+// Forcing every automated 3MF to geometry broke sliced bundles: a .gcode.3mf has no objects to
+// import, so it failed with "added no objects" where it used to open its sliced preview.
+TEST_CASE("under MCP a sliced 3MF bundle opens as a project onto an empty scene only", "[McpModelLoad][orcamcp][load]")
+{
+    constexpr bool sliced = true;
+    for (const std::string& setting : {load_all, ask_when_relevant, always_ask, load_geometry}) {
+        INFO("setting " << setting);
+        CHECK(choose_3mf_load(setting, empty_scene, mcp, sliced) == ThreeMfLoad::OpenProject);
+        CHECK(choose_3mf_load(setting, with_objects, mcp, sliced) == ThreeMfLoad::ImportGeometry);
+    }
+    // The GUI decides as before, bundle or not.
+    CHECK(choose_3mf_load(load_all, empty_scene, gui, sliced) == ThreeMfLoad::OpenProject);
+    CHECK(choose_3mf_load(always_ask, empty_scene, gui, sliced) == ThreeMfLoad::AskUser);
+    CHECK(choose_3mf_load(load_geometry, empty_scene, gui, sliced) == ThreeMfLoad::ImportGeometry);
 }
