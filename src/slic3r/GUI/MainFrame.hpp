@@ -186,6 +186,9 @@ class MainFrame : public DPIFrame
         size_t FindFileInHistory(const wxString &file);
 
         void LoadThumbnails();
+        // Orca MCP: leave the existing entries without thumbnails (reading them at startup can block
+        // on a macOS privacy prompt) but load a thumbnail for every project added from now on.
+        void SkipExistingThumbnails() { m_load_called = true; }
 
         void SetMaxFiles(int max);
     private:
