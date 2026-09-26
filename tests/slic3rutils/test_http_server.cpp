@@ -13,6 +13,7 @@
 #include <nlohmann/json.hpp>
 
 #include "slic3r/GUI/HttpServer.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPLoginServer.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPMainThreadGate.hpp"
 
 // The HTTP server the MCP server and the cloud login answer on: where it listens, how it stops while
@@ -30,6 +31,14 @@ using boost::asio::ip::tcp;
 namespace {
 
 constexpr auto k_bound = 2s;
+
+// A port nothing listens on right now, on the loopback address.
+unsigned short free_loopback_port()
+{
+    boost::asio::io_context io;
+    tcp::acceptor           probe(io, {boost::asio::ip::address_v4::loopback(), 0});
+    return probe.local_endpoint().port();
+}
 
 // One HTTP request to 127.0.0.1:`port`, on a thread of its own. The future holds everything the
 // server sent before it closed the connection, or why the connection failed.
@@ -204,4 +213,49 @@ TEST_CASE("quitting with an MCP call waiting on the main thread answers the call
     const std::string body = reply.get();
     INFO(body);
     CHECK(body.find("OrcaMCP is quitting") != std::string::npos);
+}
+
+TEST_CASE("a cloud login's callback server never stops, moves or re-routes the MCP server", "[HttpServer][Login]")
+{
+    const unsigned short mcp_port = free_loopback_port();
+    HttpServer           mcp(mcp_port);
+    LoginCallbackServer  login(mcp,
+                              [](const std::string& url, const std::string& provider) {
+                                  return json_response({{"login", provider}, {"url", url}});
+                              },
+                              "orca");
+    mcp.set_request_handler([&login](const std::string&, const std::string& url, const std::string&) {
+        return url.find("/mcp") != std::string::npos ? json_response({{"mcp", true}}) : login.answer(url);
+    });
+    mcp.start();
+    auto check_mcp_untouched = [&] {
+        CHECK(mcp.is_started());
+        CHECK(mcp.local_endpoint().port() == mcp_port);
+        CHECK(exchange(mcp_port, "GET", "/mcp").get().find("\"mcp\":true") != std::string::npos);
+    };
+
+    SECTION("on a port of its own, the login answers there")
+    {
+        const unsigned short first = free_loopback_port();
+        login.listen(first, "bbl");
+        CHECK(exchange(first, "GET", "/callback?code=1").get().find("\"login\":\"bbl\"") != std::string::npos);
+        check_mcp_untouched();
+
+        const unsigned short second = free_loopback_port();
+        login.listen(second, "orca");
+        CHECK(exchange(second, "GET", "/callback?code=2").get().find("\"login\":\"orca\"") != std::string::npos);
+        CHECK(exchange(first, "GET", "/callback").get().find("connect failed") == 0);
+        check_mcp_untouched();
+    }
+
+    SECTION("on the MCP server's port, the MCP server answers the callback for the login's provider")
+    {
+        login.listen(mcp_port, "bbl");
+        CHECK(exchange(mcp_port, "GET", "/callback?code=3").get().find("\"login\":\"bbl\"") != std::string::npos);
+        check_mcp_untouched();
+    }
+
+    login.stop();
+    check_mcp_untouched();
+    mcp.stop();
 }

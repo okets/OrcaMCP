@@ -7766,39 +7766,30 @@ void GUI_App::on_stealth_mode_enter()
 
 void GUI_App::start_http_server(const std::string& provider)
 {
+    // A login callback that reaches this server is answered for `provider`, until a login names its own.
+    m_login_server.set_provider(provider);
     if (!m_http_server.is_started()) {
-        // Route /mcp requests to MCP server; everything else to provider-specific auth.
-        m_http_server.set_request_handler([provider](const std::string& method, const std::string& url, const std::string& body)
+        // Route /mcp requests to MCP server; everything else is a cloud login's callback.
+        m_http_server.set_request_handler([this](const std::string& method, const std::string& url, const std::string& body)
             -> std::shared_ptr<HttpServer::Response> {
             if (url.find("/mcp") != std::string::npos) {
                 return OrcaMCPServer::handle_request(method, url, body);
             }
-            return HttpServer::auth_handle_request(url, provider);
+            return m_login_server.answer(url);
         });
         m_http_server.start();
     }
 }
 
+// The cloud login's callback server. It has one of its own, so a login never stops, moves or
+// re-routes the MCP server (it used to do all three, leaving MCP gone until the app restarted).
 void GUI_App::start_http_server(int port, const std::string& provider)
 {
     if (port <= 0) {
         start_http_server(provider);
-        return;
+        port = m_http_server.get_port();
     }
-
-    m_http_server.set_request_handler([provider](const std::string& url) {
-        return HttpServer::auth_handle_request(url, provider);
-    });
-
-    if (m_http_server.is_started()) {
-        if (m_http_server.get_port() == static_cast<boost::asio::ip::port_type>(port)) {
-            return;
-        }
-        m_http_server.stop();
-    }
-
-    m_http_server.set_port(static_cast<boost::asio::ip::port_type>(port));
-    m_http_server.start();
+    m_login_server.listen(port, provider);
 }
 
 void GUI_App::stop_http_server()
@@ -7807,6 +7798,7 @@ void GUI_App::stop_http_server()
     // first: the join in HttpServer::stop would otherwise wait on a thread that waits on the joiner.
     OrcaMCPServer::shut_down();
     m_http_server.stop();
+    m_login_server.stop();
 }
 
 #ifdef __linux__

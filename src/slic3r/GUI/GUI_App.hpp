@@ -14,6 +14,7 @@
 #include "slic3r/Utils/CloudProvider.hpp"
 #include "slic3r/GUI/Jobs/UpgradeNetworkJob.hpp"
 #include "slic3r/GUI/HttpServer.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPLoginServer.hpp"
 #include "../Utils/PrintHost.hpp"
 
 #include <wx/app.h>
@@ -338,7 +339,9 @@ private:
     std::chrono::steady_clock::time_point m_last_401_error_time;
     bool             m_show_error_msgdlg{false};
     wxString         m_info_dialog_content;
-    HttpServer       m_http_server;
+    HttpServer       m_http_server;    // MCP, on LOCALHOST_PORT
+    // The cloud login's loopback callback, on the port the login picks; never touches m_http_server.
+    OrcaMCP::LoginCallbackServer m_login_server{m_http_server, &HttpServer::auth_handle_request, ORCA_CLOUD_PROVIDER};
     bool             m_show_gcode_window{true};
     boost::thread    m_check_network_thread;
 public:

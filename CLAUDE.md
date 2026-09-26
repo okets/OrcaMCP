@@ -350,6 +350,7 @@ gh release upload v2.3.2.10 ./path/to/new/artifact.exe -R okets/OrcaMCP
 | `src/slic3r/GUI/HttpServer.hpp` | HTTP server with JSON responses; listens on 127.0.0.1 only |
 | `src/slic3r/GUI/HttpServer.cpp` | POST body reading, ResponseJson, the bounded stop |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPMainThreadGate.cpp` | How a call hands work to the main thread and waits, and how quitting releases it (see "Threading Model"; unit-tested in `tests/slic3rutils/test_mcp_shutdown.cpp`) |
+| `src/slic3r/GUI/OrcaMCP/OrcaMCPLoginServer.cpp` | The cloud login's own callback server, kept apart from the MCP server (unit-tested in `tests/slic3rutils/test_http_server.cpp`) |
 | `src/slic3r/GUI/GUI_App.cpp` | MCP route registration, HTTP server startup, and the shutdown order (`stop_http_server`) |
 | `scripts/orcamcp-bridge.py` | stdio-to-HTTP bridge for Claude Code |
 
@@ -480,6 +481,9 @@ that call in flight waited forever: on 2026-09-26 `quit_app`, with a script poll
 - `HttpServer::stop` joins with a bound (`try_join_for`, 3000 ms). A handler still running past it
   (one that is not waiting on the main thread, e.g. a slow network call) is left to finish on its
   own thread, and its server is deliberately leaked; the app exits anyway.
+- Anything that stops or restarts an `HttpServer` from the main thread needs the same care. The
+  cloud login's loopback callback has its own server (`LoginCallbackServer`,
+  `OrcaMCPLoginServer.cpp`) and never stops, moves or re-routes the MCP one.
 
 Both servers listen on **127.0.0.1 only**: MCP has no authentication and can start prints.
 
