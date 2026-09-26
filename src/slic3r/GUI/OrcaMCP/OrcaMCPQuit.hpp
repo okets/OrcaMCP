@@ -164,11 +164,20 @@ private:
     std::vector<std::uint64_t> m_ended;
 };
 
-// A quit request from the system (the Dock's Quit, a quit Apple Event, a logout, wx's
-// wxEVT_QUERY_END_SESSION) is refused while anything modal is open, as wx's own macOS handler and macOS
-// apps do: it arrives inside the dialog's event loop, where closing the frame is the abort this file is
-// about. The user answers the dialog and quits again; nothing is torn down, so nothing is lost.
-bool refuse_session_end(const ModalState& modal, bool can_veto);
+// What a quit request from the system does (the Dock's Quit, a quit Apple Event, a logout: wx's
+// wxEVT_QUERY_END_SESSION). With nothing modal open, the main frame closes as for any quit. With a
+// dialog open the request arrives inside its event loop, where closing the frame is the abort this
+// file is about, so the frame is not closed there: the app config is saved and the logs flushed at
+// once, in case the system ends the process anyway (a Windows critical shutdown ignores a refusal),
+// and the request is refused when it can be, as wx's own macOS handler and macOS apps do. The user
+// answers the dialog and quits again.
+struct SessionEndResponse
+{
+    bool save_config_now = false; // save the app config and flush the logs, before anything else
+    bool refuse          = false; // veto the request
+    bool close_frame     = false; // close the main frame, its full teardown
+};
+SessionEndResponse respond_to_session_end(const ModalState& modal, bool can_veto);
 
 // The app's side, defined in OrcaMCPQuitApp.cpp; main thread only.
 void           track_modal_dialogs();   // registers the hook that feeds the app's ModalStack; once, at startup

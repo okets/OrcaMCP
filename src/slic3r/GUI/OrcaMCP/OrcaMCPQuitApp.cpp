@@ -171,7 +171,9 @@ bool hold_close_while_modal(std::function<void()> close)
         return true;
     case ModalUnwinder::Hold::go_on:
         if (turns > 0)
-            BOOST_LOG_TRIVIAL(info) << "OrcaMCP: the open dialogs have ended; the close goes on";
+            BOOST_LOG_TRIVIAL(info) << (session_ending() ? "OrcaMCP: the system session is ending; the close goes on "
+                                                           "without waiting for the open dialogs"
+                                                         : "OrcaMCP: the open dialogs have closed; the close goes on");
         return false;
     case ModalUnwinder::Hold::given_up:
         note_quit_failed(current_modal_state());

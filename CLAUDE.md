@@ -524,11 +524,13 @@ that call in flight waited forever: on 2026-09-26 `quit_app`, with a script poll
     button if it has one; else its No button, if that still says No or Cancel; else Cancel, what its
     close box returns. Never `wxID_ABORT`: callers that test for No or Cancel only take it for yes. The
     restore prompt tells a quit from a No by `closing_dialogs_to_quit()` and keeps its backup.
-  - **A quit request from the system is refused while a dialog is open** (`refuse_session_end`, in
-    GUI_App's `wxEVT_QUERY_END_SESSION` handler): the Dock's Quit, a quit Apple Event, a logout. It
-    arrives inside the dialog's loop, where the close tore the frame down and aborted, and ending the
-    dialog would answer it for the user. wx's own macOS handler refuses the same way; the user answers
-    and quits again, and a logout reports that the app cancelled it, with nothing torn down.
+  - **A quit request from the system never tears the frame down under a dialog**
+    (`respond_to_session_end`, in GUI_App's `wxEVT_QUERY_END_SESSION` handler): the Dock's Quit, a quit
+    Apple Event, a logout. It arrives inside the dialog's loop, where the close tore the frame down and
+    aborted, and ending the dialog would answer it for the user. So with a dialog open the app config is
+    saved and the logs flushed at once (the system may end the process anyway: a Windows critical
+    shutdown ignores a refusal), and the request is refused when it can be, as wx's own macOS handler
+    does; the user answers and quits again. With nothing open the frame closes as for any quit.
   - **Never at the end of the session.** The process ends as soon as `wxEVT_END_SESSION` returns, so a
     close from it is never held (`mark_session_ending`): its teardown, which saves the app config, runs
     at once.
@@ -906,9 +908,10 @@ launch asks again, and marks the prompt open (`RestorePromptOpen`) so MCP's `new
 Item S: upstream's `wxEVT_QUERY_END_SESSION` handler (the Dock's Quit, a quit Apple Event, a logout)
 closes the main frame while a dialog's modal loop is on the stack -- the teardown-under-a-dialog abort
 -- and then ends every dialog in `dialogStack` with `EndModal(wxID_ABORT)`, which callers that test
-only for No or Cancel take for yes ("Sync printer information?" syncs). Ours refuses the request while
-any dialog is open (`OrcaMCP::refuse_session_end`), as wx's own macOS handler does. On 0, take
-upstream's and re-check a Dock Quit with the restore prompt open.
+only for No or Cancel take for yes ("Sync printer information?" syncs). Ours never closes the frame
+while a dialog is open (`OrcaMCP::respond_to_session_end`): it saves the config and refuses the
+request, as wx's own macOS handler does. On 0, take upstream's and re-check a Dock Quit with the
+restore prompt open.
 
 Item J: upstream opens every recent 3MF synchronously while building the main window, before
 post_init starts the MCP server. Our patch skips it for an agent launch (`GUI::is_agent_launch()`,

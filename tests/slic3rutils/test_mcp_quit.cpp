@@ -482,20 +482,44 @@ TEST_CASE("get_scene_info reports a modal loop no dialog accounts for", "[McpQui
     CHECK((*warning)["message"].get<std::string>().find("cannot identify") != std::string::npos);
 }
 
-TEST_CASE("a quit request from the system is refused while a dialog is open", "[McpQuit][orcamcp]")
+TEST_CASE("a quit request from the system closes the app normally when nothing is open", "[McpQuit][orcamcp]")
+{
+    const ModalState nothing;
+    for (bool can_veto : {true, false}) {
+        const auto response = respond_to_session_end(nothing, can_veto);
+        CHECK(response.close_frame);
+        CHECK_FALSE(response.refuse);
+        CHECK_FALSE(response.save_config_now); // the teardown saves it
+    }
+}
+
+TEST_CASE("a quit request from the system is refused while a dialog is open, the config saved first", "[McpQuit][orcamcp]")
 {
     // The Dock's Quit, a quit Apple Event and a logout arrive inside the dialog's event loop; closing
-    // the frame there is the teardown-under-a-dialog abort. macOS apps refuse instead, as wx does.
+    // the frame there is the teardown-under-a-dialog abort. macOS apps refuse instead, as wx does, and
+    // the config is saved in case the system ends the process regardless.
     ModalState modal;
     modal.dialogs       = {restore_prompt};
     modal.in_modal_loop = true;
-    CHECK(refuse_session_end(modal, /*can_veto=*/true));
-    CHECK_FALSE(refuse_session_end(modal, /*can_veto=*/false)); // nothing to refuse with: go on
-
-    const ModalState nothing;
-    CHECK_FALSE(refuse_session_end(nothing, true));
+    const auto response = respond_to_session_end(modal, /*can_veto=*/true);
+    CHECK(response.refuse);
+    CHECK_FALSE(response.close_frame);
+    CHECK(response.save_config_now);
 
     ModalState untracked;
     untracked.in_modal_loop = true;
-    CHECK(refuse_session_end(untracked, true));
+    CHECK(respond_to_session_end(untracked, true).refuse);
+}
+
+TEST_CASE("a session end that cannot be refused, with a dialog open, only saves the config", "[McpQuit][orcamcp]")
+{
+    // A Windows critical shutdown: the process is about to end. The frame's teardown would run inside
+    // the dialog's loop, so it is left out; what the app must not lose, the config, is saved.
+    ModalState modal;
+    modal.dialogs       = {restore_prompt};
+    modal.in_modal_loop = true;
+    const auto response = respond_to_session_end(modal, /*can_veto=*/false);
+    CHECK(response.save_config_now);
+    CHECK_FALSE(response.refuse);
+    CHECK_FALSE(response.close_frame);
 }

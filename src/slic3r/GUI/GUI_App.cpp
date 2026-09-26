@@ -2979,16 +2979,21 @@ bool GUI_App::on_init_inner()
 
     wxGetApp().Bind(wxEVT_QUERY_END_SESSION, [this](auto & e) {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< "received wxEVT_QUERY_END_SESSION";
-        // Orca: a quit request (the Dock's Quit, a quit Apple Event, a logout) is refused while a dialog
-        // is open, as wx's own macOS handler does and macOS apps do. It arrives inside that dialog's
-        // event loop, where the close below tore the frame down and aborted the app; and ending the
-        // dialog would answer it for the user. The user answers it and quits again. A logout reports
-        // that the app cancelled it, and nothing is lost: nothing was torn down (OrcaMCPQuit.hpp).
-        if (OrcaMCP::refuse_session_end(OrcaMCP::current_modal_state(), e.CanVeto())) {
+        // Orca: with a dialog open, a quit request (the Dock's Quit, a quit Apple Event, a logout) comes
+        // inside that dialog's event loop, where the close below tore the frame down and aborted the app;
+        // and ending the dialog would answer it for the user. So the frame is not closed: the config is
+        // saved at once, in case the system ends the process anyway, and the request is refused when it
+        // can be, as wx's own macOS handler does. The user answers the dialog and quits again
+        // (OrcaMCPQuit.hpp, respond_to_session_end).
+        const OrcaMCP::SessionEndResponse response = OrcaMCP::respond_to_session_end(OrcaMCP::current_modal_state(), e.CanVeto());
+        if (response.save_config_now)
+            save_config_and_flush_logs();
+        if (response.refuse) {
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": quit refused, a dialog is open";
             e.Veto();
-            return;
         }
+        if (!response.close_frame)
+            return;
         if (mainframe) {
             wxCloseEvent e2(wxEVT_CLOSE_WINDOW);
             e2.SetCanVeto(true);
@@ -7838,13 +7843,20 @@ void GUI_App::stop_http_server()
 // in case this quit did not come through the main frame. std::_Exit, not exit: exit runs the static
 // destructors the stuck thread could touch, and quick_exit adds nothing here. The window has closed
 // already; the user sees the app end a few seconds after they quit it.
+// What the app must not lose when it ends without its teardown: the app config (MainFrame::shutdown
+// saves it on a normal quit), and the logs.
+void GUI_App::save_config_and_flush_logs()
+{
+    if (app_config != nullptr && app_config->dirty())
+        app_config->save();
+    flush_logs();
+}
+
 void GUI_App::end_process_under_running_server_thread()
 {
     BOOST_LOG_TRIVIAL(warning) << "stop_http_server: a request is still running on the HTTP server's thread; "
                                   "ending the process now, without the teardown it could still be using";
-    if (app_config != nullptr && app_config->dirty())
-        app_config->save();
-    flush_logs();
+    save_config_and_flush_logs();
     std::cout.flush();
     std::cerr.flush();
     std::_Exit(EXIT_SUCCESS);

@@ -214,6 +214,11 @@ void ModalUnwinder::end_innermost(const ModalState& modal)
     m_hooks.end_dialog(innermost);
 }
 
-bool refuse_session_end(const ModalState& modal, bool can_veto) { return can_veto && modal.anything_open(); }
+SessionEndResponse respond_to_session_end(const ModalState& modal, bool can_veto)
+{
+    if (!modal.anything_open())
+        return {/*save_config_now=*/false, /*refuse=*/false, /*close_frame=*/true};
+    return {/*save_config_now=*/true, /*refuse=*/can_veto, /*close_frame=*/false};
+}
 
 }}} // namespace Slic3r::GUI::OrcaMCP
