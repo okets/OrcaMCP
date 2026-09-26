@@ -13,7 +13,7 @@ dedicated section below yet.
 | Category | Tools |
 |----------|-------|
 | **Scene** | `get_scene_info`, `new_project`, `load_project`, `save_project`, `export_3mf` |
-| **Models** | `load_model`, `auto_orient`, `arrange_objects`, `get_object_info`, `rename_object`, `set_object_printable` |
+| **Models** | `load_model`, `auto_orient`, `arrange_objects`, `get_object_info`, `get_mesh_health`, `rename_object`, `set_object_printable` |
 | **Transforms** | `move_object`, `rotate_object`, `scale_object`, `mirror_object`, `flatten_object`, `clone_object`, `cut_object`, `delete_object`, `transform_objects` |
 | **Plates** | `add_plate`, `select_plate`, `delete_plate`, `set_prime_tower_position` |
 | **Config** | `get_presets`, `get_edited_presets`, `select_preset`, `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset`, `get_valid_config_keys` |
@@ -471,6 +471,72 @@ Automatically arrange objects on the plate.
 | `include_preview` | boolean | No | Include preview after operation |
 
 **Note:** Async operation.
+
+---
+
+### get_mesh_health
+Mesh errors behind the object list's warning icon: open edges (holes, non-manifold), repaired
+facets, and loose parts or stray shells, for one object and each of its volumes.
+
+The icon state and its tooltip come from the object list's own code (`mesh_errors_info` in
+`GUI_ObjectList.cpp`), so this reports exactly what the GUI shows: the icon appears when a mesh has
+open edges or recorded repairs. `tooltip` is the icon's tooltip word for word, in the app's
+language; `mesh_warning_reason` is the one line the sidebar shows.
+
+- An object's `open_edges` and repairs count every volume, modifiers included, as the list does. Its
+  `facets`, `shells` and `volume_mm3` count model parts only.
+- Repair counts exist only for a mesh loaded from a 3MF that recorded them (its `mesh_stat`). An STL
+  is repaired silently on import and records nothing, so a repaired STL reports clean.
+- A model part with more than one shell also gets `shell_list`: its 10 largest shells, largest
+  first, in plate millimetres (instance 0). The ids are `get_object_components`' ids, which
+  `paint_object {selection: "component"}` takes; `get_object_components` lists every shell.
+  Listing shells runs a flood fill off the GUI thread; on millions of facets it takes seconds.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `object_id` | integer | Yes | Object index (0-based) |
+
+**Example:**
+```json
+{"name": "get_mesh_health", "arguments": {"object_id": 0}}
+```
+
+**Response** (a part with a hole and a stray shell):
+```json
+{
+  "status": "success",
+  "object_id": 0,
+  "object_name": "bracket",
+  "mesh_warning": true,
+  "tooltip": "Remaining errors:\n\t3 non-manifold edges\n\nClick the icon to repair model object",
+  "mesh_warning_reason": "Error: 3 non-manifold edges.",
+  "summary": {"facets": 1215, "shells": 2, "open_edges": 3, "manifold": false, "repaired": false,
+              "errors_repaired": 0,
+              "repaired_errors": {"edges_fixed": 0, "degenerate_facets": 0, "facets_removed": 0,
+                                  "facets_reversed": 0, "backwards_edges": 0},
+              "volume_mm3": 1000.5},
+  "volumes": [
+    {"volume_id": 0, "name": "bracket", "type": "part",
+     "facets": 1215, "shells": 2, "open_edges": 3, "manifold": false, "repaired": false,
+     "errors_repaired": 0, "repaired_errors": {"edges_fixed": 0, "degenerate_facets": 0,
+     "facets_removed": 0, "facets_reversed": 0, "backwards_edges": 0},
+     "mesh_warning": true,
+     "tooltip": "Remaining errors:\n\t3 non-manifold edges\n\nClick the icon to repair model object",
+     "mesh_warning_reason": "Error: 3 non-manifold edges.",
+     "shell_list": {"total": 2, "listed": 2, "coordinate_frame": "plate", "instance_id": 0,
+                    "shells": [{"component": 0, "facet_count": 1203, "area_mm2": 600.2,
+                                "bounding_box": {"min": {"x": 118.0, "y": 123.0, "z": 0.0},
+                                                 "max": {"x": 128.0, "y": 133.0, "z": 10.0}}},
+                               {"component": 1, "facet_count": 12, "area_mm2": 6.0,
+                                "bounding_box": {"min": {"x": 137.0, "y": 127.5, "z": 0.0},
+                                                 "max": {"x": 138.0, "y": 128.5, "z": 1.0}}}],
+                    "note": "Largest first, at most 10. get_object_components lists every shell; its ids are these, the ones paint_object {selection: \"component\"} takes."}}
+  ]
+}
+```
+
+With no icon, `mesh_warning` is false and `tooltip` and `mesh_warning_reason` are empty strings.
 
 ---
 

@@ -99,9 +99,9 @@ cd build && ctest --output-on-failure
 
 **Status**: Complete & Tested ✓
 
-### MCP Tools (79 in the app, 80 reachable)
+### MCP Tools (80 in the app, 81 reachable)
 
-The registry holds 80: the app serves 79 through `tools/list`, and `start_orca`, which launches
+The registry holds 81: the app serves 80 through `tools/list`, and `start_orca`, which launches
 OrcaSlicer and so cannot be answered by it, is registered as bridge-only and served by the bridge.
 Every tool's category is the row it sits in below. To regenerate the counts after adding a tool:
 
@@ -112,7 +112,7 @@ grep -hA1 -E '^\s*register_(bridge_)?tool\(\{' src/slic3r/GUI/OrcaMCP/*.cpp | gr
 | Category | Tools |
 |----------|-------|
 | **Scene** | `get_scene_info` (plates, objects with `filaments_used` — read that, not `extruder_id` — and each plate's full occupancy: object footprints with brim, the prime tower, excluded bed areas; `open_dialogs` / `system_dialog_open` / `untracked_modal_loop`: a dialog waiting for the user), `new_project`, `load_project` (both cancel a running slice; refused while the startup restore prompt waits), `save_project`, `export_3mf` |
-| **Models** | `load_model` (a 3MF is always geometry only: never its presets, never a rename; `.gcode` / `.gcode.3mf` only onto an empty scene, as a preview; returns `loaded_objects` in `get_scene_info`'s object shape, `filaments_added`; `multipart: merge\|separate`), `auto_orient`, `arrange_objects`, `get_object_info` (incl. every volume with its type and filament), `rename_object`, `set_object_printable` |
+| **Models** | `load_model` (a 3MF is always geometry only: never its presets, never a rename; `.gcode` / `.gcode.3mf` only onto an empty scene, as a preview; returns `loaded_objects` in `get_scene_info`'s object shape, `filaments_added`; `multipart: merge\|separate`), `auto_orient`, `arrange_objects`, `get_object_info` (incl. every volume with its type and filament), `get_mesh_health` (mesh errors behind the object list's warning icon: the icon state, its exact tooltip, open edges, recorded repairs, shells, per object and per volume), `rename_object`, `set_object_printable` |
 | **Transforms** | `move_object`, `rotate_object`, `scale_object`, `mirror_object`, `flatten_object`, `clone_object`, `cut_object`, `delete_object`, `transform_objects` (rotate, scale, mirror and transform drop a resting object back onto the bed like the GUI; an explicit Z is kept) |
 | **Plates** | `add_plate`, `select_plate`, `delete_plate`, `set_prime_tower_position` |
 | **Config** | `get_presets`, `get_edited_presets`, `select_preset` (`type: printer` returns the resulting `filaments`, each with its observed `color_source`: `unchanged`/`remembered`/`default`/`other`), `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset`, `get_valid_config_keys` |
@@ -349,6 +349,7 @@ gh release upload v2.3.2.10 ./path/to/new/artifact.exe -R okets/OrcaMCP
 | `src/slic3r/Utils/ObicoLink.cpp` | Flashforge preset's Obico link: page link object and token-free MCP status (spec `docs/superpowers/specs/2026-09-15-obico-camera-source-design.md`) |
 | `src/slic3r/GUI/HttpServer.hpp` | HTTP server with JSON responses; listens on 127.0.0.1 only |
 | `src/slic3r/GUI/HttpServer.cpp` | POST body reading, ResponseJson, the stop that waits for handlers and lets replies out |
+| `src/slic3r/GUI/OrcaMCP/OrcaMCPMeshHealth.cpp` | Mesh health as the object list reports it: the warning icon and its exact tooltip through the list's own `mesh_errors_info` (`GUI_ObjectList.cpp`), the numbers behind them, and `get_mesh_health`'s shell lists (unit-tested in `tests/slic3rutils/test_mesh_health.cpp`); the tool itself is `OrcaMCPMeshTools.cpp` |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPMainThreadGate.hpp` | How a call hands work to the main thread and waits, and how quitting releases it: the gate is `QueuedCalls` (`src/slic3r/Utils/QueuedCall.hpp`), with `call_through` for a tool's json (see "Threading Model"; unit-tested in `tests/slic3rutils/test_mcp_shutdown.cpp`, `test_queued_call.cpp`) |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPQuit.cpp` | Quitting while a modal dialog is open: which dialogs are open, ending the innermost unanswered, holding the close until they are gone, and `quit_app`'s refusals (unit-tested in `tests/slic3rutils/test_mcp_quit.cpp`); the wx side (modal hook, turn timer) is `OrcaMCPQuitApp.cpp` |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPLoginServer.cpp` | Where the cloud login's callback is answered: a second port of the MCP server, on its thread (unit-tested in `tests/slic3rutils/test_http_server.cpp`) |

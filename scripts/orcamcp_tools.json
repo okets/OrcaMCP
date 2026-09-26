@@ -646,6 +646,26 @@
       "summary": "Per-extruder flush-volume matrices"
     },
     {
+      "category": "Models",
+      "description": "Mesh errors behind the object list's warning icon: open edges (holes, non-manifold), repaired facets, and loose parts or stray shells, for one object and each of its volumes. Returns mesh_warning (whether the icon shows), `tooltip` (the icon's tooltip, exactly as the GUI shows it, in the app's language) and mesh_warning_reason (the sidebar's one line), with the numbers behind them: facets, shells, open_edges, manifold, repaired, errors_repaired and each recorded repair count. An object's open_edges and repairs count every volume, as the list does; its facets, shells and volume_mm3 count model parts only. Repair counts exist only for a mesh loaded from a 3MF that recorded them: an STL is repaired silently on import and records none. A part with more than one shell also gets `shell_list`, its 10 largest shells in plate millimetres (instance 0); get_object_components lists them all.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "object_id": {
+            "description": "Object index (0-based)",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "object_id"
+        ],
+        "type": "object"
+      },
+      "name": "get_mesh_health",
+      "summary": "Mesh errors, shells, the warning icon"
+    },
+    {
       "category": "Painting",
       "description": "List the connected shells of each MODEL PART's mesh -- component id, facet count, area and a plate-frame bounding box. Parts only: modifiers, negative volumes and support blockers are not listed here, so this is not a census of the object's volumes; get_object_info's `volumes` is, with each volume's type and filament. A generated or assembled model often has a feature (a bag, a wheel) as its own shell; paint_object {selection: \"component\", component: <id>} paints exactly that shell. Ids are stable for a given mesh: discovery order by lowest facet index. Coordinates are PLATE millimetres. On a mesh of millions of facets this takes seconds; it runs off the GUI thread, so other tools keep answering meanwhile.",
       "inputSchema": {

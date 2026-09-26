@@ -153,6 +153,8 @@ private:
     static void register_printer_tools();
     // Facet painting and brim ears (OrcaMCPPaintTools.cpp)
     static void register_paint_tools();
+    // Mesh errors and the object list's warning icon (OrcaMCPMeshTools.cpp)
+    static void register_mesh_tools();
     // Tools orcamcp-bridge.py answers itself (start_orca)
     static void register_bridge_tools();
 };
