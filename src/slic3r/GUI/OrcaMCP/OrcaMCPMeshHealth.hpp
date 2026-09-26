@@ -50,6 +50,11 @@ nlohmann::json mesh_numbers_json(const MeshHealth& health);
 // while the mesh has open edges).
 nlohmann::json mesh_features_json(const ModelObject& object);
 
+// active_warnings' mesh entries: {level: "warning", type: "MeshErrors", object_id, object_name,
+// message: <the icon's tooltip>}, one for every object of `model` whose warning icon shows. The icon
+// is no pop-up notification, so the notification manager never reports it.
+nlohmann::json mesh_warning_entries(const Model& model);
+
 // A model part get_mesh_health lists the shells of (one with more than one): its mesh -- the
 // shared_ptr keeps it alive if the model drops it -- and the transform that puts it on the plate.
 struct ShellListJob

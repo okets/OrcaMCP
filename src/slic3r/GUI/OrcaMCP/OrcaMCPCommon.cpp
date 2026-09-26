@@ -1,4 +1,5 @@
 #include "OrcaMCPCommon.hpp"
+#include "OrcaMCPMeshHealth.hpp"
 #include "OrcaMCPPlateUtils.hpp"
 #include "OrcaMCPQuit.hpp"
 #include "OrcaMCPSliceCredit.hpp"
@@ -386,6 +387,11 @@ nlohmann::json get_active_warnings_json(Plater* plater) {
             }
         }
     }
+    // The object list's warning icon: shown beside an object, never as a pop-up, so the
+    // notification manager above does not know of it.
+    if (plater)
+        for (nlohmann::json& mesh : mesh_warning_entries(plater->model()))
+            warnings_array.push_back(std::move(mesh));
     if (auto open_dialog = open_dialog_warning(current_modal_state()))
         warnings_array.push_back(std::move(*open_dialog));
     if (auto quit_failed = quit_failed_warning())

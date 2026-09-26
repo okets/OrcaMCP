@@ -354,3 +354,24 @@ TEST_CASE("get_mesh_health reports a hole's icon, tooltip and reason for the obj
     CHECK(r["volumes"][0]["tooltip"] == k_hole_tooltip);
     CHECK(r["volumes"][0]["open_edges"] == 3);
 }
+
+TEST_CASE("active_warnings lists every object that shows the warning icon, with its tooltip", "[MeshHealth][orcamcp]")
+{
+    Model model;
+    for (int i = 0; i < 3; ++i) {
+        ModelObject* object = model.add_object();
+        object->name        = "Object " + std::to_string(i);
+        object->add_volume(i == 1 ? TriangleMesh(cube_missing_facet()) : TriangleMesh(its_make_cube(10.0, 10.0, 10.0)));
+        object->add_instance();
+    }
+
+    const nlohmann::json entries = mesh_warning_entries(model);
+    REQUIRE(entries.size() == 1);
+    CHECK(entries[0] == nlohmann::json{{"level", "warning"},
+                                       {"type", "MeshErrors"},
+                                       {"object_id", 1},
+                                       {"object_name", "Object 1"},
+                                       {"message", k_hole_tooltip}});
+
+    CHECK(mesh_warning_entries(Model()).empty());
+}

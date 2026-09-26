@@ -162,7 +162,8 @@ nlohmann::json model_object_summary_json(const ModelObject& object, int object_i
 // and instances_on_plate lists them.
 nlohmann::json model_object_summary_json(const ModelObject& object, int object_index, const InstancesOnPlate& here);
 
-// Always returns {"count": N, "warnings": [{level, message, type}...]}.
+// Always returns {"count": N, "warnings": [{level, message, type}...]}. A MeshErrors entry (an object
+// the object list shows its warning icon for) also carries object_id and object_name.
 nlohmann::json get_active_warnings_json(Plater* plater);
 
 // Adds the preview `capture` makes to `result`: preview_path, or preview_error when capture fails,

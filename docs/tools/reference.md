@@ -2444,6 +2444,7 @@ Many tools return an `active_warnings` section in their response, providing visi
 | `SlicingSeriousWarning` | Serious slicing issue |
 | `ValidateError` | Validation failed |
 | `PlaterWarning` | General plater warning |
+| `MeshErrors` | The object list shows its warning icon for an object: open edges or recorded repairs. `message` is the icon's tooltip word for word; the entry also carries `object_id` and `object_name`. `get_mesh_health` has the numbers |
 
 **Note:** The `count` field is always present (even when 0) to help agents confirm issues have been resolved.
 

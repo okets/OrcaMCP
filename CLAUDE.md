@@ -776,6 +776,11 @@ type `SliceAllEndedEarly` naming the plate, until the next slice, plate-list cha
 slice the plate list's safety net cancelled (see probe P) is told once, as a `warning` of type
 `SliceCancelled` naming the path that freed its plate.
 
+Every object the object list shows its warning icon for (open edges, or repairs a 3MF recorded) adds a
+`warning` of type `MeshErrors` with `object_id`, `object_name` and, as `message`, the icon's tooltip
+word for word (`mesh_warning_entries`, `OrcaMCPMeshHealth.cpp`). The icon is not a pop-up, so the
+notification manager never reported it; `get_mesh_health` explains it.
+
 **Endpoints with active_warnings:** `get_scene_info`, `slice_all`, `get_slicing_status`, `get_print_estimate`, `load_model`, `arrange_objects`, `auto_orient`, all transform tools, `undo`, `redo`
 
 The `count` field is always present (even when 0) to help confirm issues have been resolved.

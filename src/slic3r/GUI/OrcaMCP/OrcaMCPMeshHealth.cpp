@@ -111,6 +111,22 @@ nlohmann::json mesh_features_json(const ModelObject& object)
     return features;
 }
 
+nlohmann::json mesh_warning_entries(const Model& model)
+{
+    nlohmann::json entries = nlohmann::json::array();
+    for (std::size_t i = 0; i < model.objects.size(); ++i) {
+        const ModelObject& object = *model.objects[i];
+        const MeshHealth   health = object_mesh_health(object);
+        if (health.warning)
+            entries.push_back({{"level", "warning"},
+                               {"type", "MeshErrors"},
+                               {"object_id", int(i)},
+                               {"object_name", object.name},
+                               {"message", health.tooltip}});
+    }
+    return entries;
+}
+
 MeshHealthReport mesh_health_report(const ModelObject& object, int object_id)
 {
     MeshHealthReport report;
