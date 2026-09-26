@@ -900,7 +900,7 @@ Item Q: upstream's restore prompt treats every answer but Yes as No and deletes 
 backup, including a prompt the app itself closed to quit (its system-logout handler, and our
 `quit_app`). Ours returns when `OrcaMCP::closing_dialogs_to_quit()` and keeps the backup, so the next
 launch asks again, and marks the prompt open (`RestorePromptOpen`) so MCP's `new_project` /
-`load_project` wait for it. On "no", take upstream's handler and re-check both.
+`load_project` refuse while it is open. On "no", take upstream's handler and re-check both.
 
 Item S: upstream's `wxEVT_QUERY_END_SESSION` handler (the Dock's Quit, a quit Apple Event, a logout)
 closes the main frame while a dialog's modal loop is on the stack -- the teardown-under-a-dialog abort
