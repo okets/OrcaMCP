@@ -1515,6 +1515,9 @@ explicit camera be given relative to the plate's front-left corner.
 - `uniform_image: true` means the picture is a single flat colour, and `hint` says why: which
   plate the camera should be aimed at, or that the plate has nothing printable. Check it before
   reading the image.
+- A preset or `fit` frames the whole box it fits, height included, with a little room on every
+  side, so a fitted object is never `clipped`. Before v2.5.0.6 the zoom ignored the height and was
+  sized for the wrong view direction, so a tall object came back `clipped` with a full-frame box.
 - Files go to the system temp directory (`$TMPDIR` on macOS, `%TEMP%` on Windows, usually `/tmp`
   on Linux), not a literal `/tmp`, and the app removes the render and preview images of earlier
   sessions when it starts.

@@ -340,7 +340,7 @@ gh release upload v2.3.2.10 ./path/to/new/artifact.exe -R okets/OrcaMCP
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPServerInfo.cpp` | `get_server_info`: the catalogue generated from the registry, and the documentation sections |
 | `scripts/orcamcp_tools.json` | Golden tool list, generated from the registry; the bridge serves it offline (see "Tool list") |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPPlateUtils.cpp` | Plate rendering (`render_plate_view`), turntable previews. Draws into its own framebuffer. |
-| `src/slic3r/GUI/OrcaMCP/OrcaMCPRenderMath.cpp` | Pure render math: pixel projection, palette, camera presets, grid, temp image paths (unit-tested in `tests/slic3rutils/test_render_math.cpp`) |
+| `src/slic3r/GUI/OrcaMCP/OrcaMCPRenderMath.cpp` | Pure render math: pixel projection, palette, camera presets and fit (`frame_camera`), grid, temp image paths (unit-tested in `tests/slic3rutils/test_render_math.cpp`) |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPRenderOverlay.cpp` | 2D overlays on finished renders: outline, grid, origin, labels, excluded areas |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPFirstLayerPlan.cpp` | Top-down first-layer plan from the sliced `Print` (brim, support, wipe tower) with footprint fallback |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPPresetConfigUtils.cpp` | Preset/config management |

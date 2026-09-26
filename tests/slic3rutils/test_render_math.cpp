@@ -7,6 +7,7 @@
 #include <boost/filesystem.hpp>
 
 #include "slic3r/GUI/OrcaMCP/OrcaMCPRenderMath.hpp"
+#include "slic3r/GUI/Camera.hpp"
 
 using namespace Slic3r;
 using namespace Slic3r::GUI::OrcaMCP;
@@ -142,6 +143,85 @@ TEST_CASE("grid segments cover the plate at the step, majors every n", "[RenderM
         CHECK(s.a.x() <= 563.2 + 1e-9);
     }
     CHECK(grid_segments(BoundingBoxf3(Vec3d(0., 0., 0.), Vec3d(10., 10., 0.)), 0.0, 5).empty());
+}
+
+// Framing. The renderer used to size its zoom from the fitted box flattened to z = 0, along the
+// Camera's default orientation, before look_at turned it to the requested view: the object's height
+// never entered into it, so a figurine taller than it was wide overflowed every edge of an
+// object-fit render and came back `clipped`, its screen box the full [0, 0, 512, 512].
+
+namespace {
+
+const BoundingBoxf3 k_plate(Vec3d(0., 0., 0.), Vec3d(270., 270., 300.));
+
+// What RenderThumbnail does with its Camera, minus the GL calls.
+CameraFrame framed(const Vec3d& position, const Vec3d& target, const BoundingBoxf3& fit, int w = 512, int h = 512)
+{
+    Slic3r::GUI::Camera camera;
+    camera.set_type(Slic3r::GUI::Camera::EType::Perspective);
+    camera.set_viewport(0, 0, w, h);
+    frame_camera(camera, position, target, fit, k_plate);
+    return camera_frame_of(camera);
+}
+
+// How much of the image the box's larger screen dimension spans, 0..1.
+double fill_of(const ScreenBBox& sb, int w = 512, int h = 512)
+{
+    return std::max((sb.x1 - sb.x0) / w, (sb.y1 - sb.y0) / h);
+}
+
+} // namespace
+
+TEST_CASE("every preset frames the whole box without clipping it", "[RenderMath]")
+{
+    // A figurine taller than wide (the case that clipped), a flat plate-sized sheet and a cube.
+    const BoundingBoxf3 box = GENERATE(BoundingBoxf3(Vec3d(110., 115., 0.), Vec3d(160., 155., 99.)),
+                                       BoundingBoxf3(Vec3d(30., 30., 0.), Vec3d(240., 240., 5.)),
+                                       BoundingBoxf3(Vec3d(125., 125., 0.), Vec3d(145., 145., 20.)));
+    const std::string name = GENERATE(as<std::string>{}, "iso", "top", "front", "back", "left", "right", "low");
+    DYNAMIC_SECTION(name << " on " << box.size().transpose())
+    {
+        CameraPreset preset;
+        REQUIRE(camera_preset_from_string(name, preset));
+        Vec3d position, target;
+        preset_camera(preset, box, position, target);
+
+        const ScreenBBox sb = screen_bbox_of(framed(position, target, box), box);
+        CHECK(sb.visible);
+        CHECK_FALSE(sb.clipped);
+        // Framed, not merely somewhere in view. "low" aims below the centre, at the first layers, so
+        // the box sits off-centre in its frame and cannot fill it.
+        if ((target - box.center()).norm() < 1e-9)
+            CHECK(fill_of(sb) > 0.6);
+    }
+}
+
+TEST_CASE("a camera aimed off the box's centre still fits the box", "[RenderMath]")
+{
+    // The turntable's camera looks at 40% of the objects' height, not their centre.
+    const BoundingBoxf3 box(Vec3d(100., 100., 0.), Vec3d(140., 130., 80.));
+    const Vec3d target(120., 115., 16.);
+    const Vec3d position = target + Vec3d(250., 0., 175.);
+
+    const ScreenBBox sb = screen_bbox_of(framed(position, target, box), box);
+    CHECK(sb.visible);
+    CHECK_FALSE(sb.clipped);
+}
+
+TEST_CASE("framing a wide image leaves the height as the limit", "[RenderMath]")
+{
+    const BoundingBoxf3 box(Vec3d(110., 115., 0.), Vec3d(160., 155., 99.));
+    Vec3d position, target;
+    preset_camera(CameraPreset::Front, box, position, target);
+
+    const ScreenBBox sb = screen_bbox_of(framed(position, target, box, 1024, 256), box);
+    CHECK_FALSE(sb.clipped);
+    CHECK((sb.y1 - sb.y0) / 256. > 0.6);
+}
+
+TEST_CASE("fit_zoom_to_box has nothing to fit in an empty box", "[RenderMath]")
+{
+    CHECK(fit_zoom_to_box(Vec3d(0., -100., 50.), Vec3d::Zero(), Vec3d::UnitZ(), BoundingBoxf3(), 512, 512, k_fit_margin) == 0.0);
 }
 
 // Where the images go. They used to be written to a literal /tmp/, which is not a directory on

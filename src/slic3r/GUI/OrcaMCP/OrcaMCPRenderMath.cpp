@@ -1,4 +1,6 @@
 #include "OrcaMCPRenderMath.hpp"
+#include "OrcaMCPPlateOccupancy.hpp"  // stable_camera_up
+#include "slic3r/GUI/Camera.hpp"
 
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/filesystem.hpp>
@@ -7,6 +9,7 @@
 #include <atomic>
 #include <cmath>
 #include <ctime>
+#include <limits>
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
@@ -125,6 +128,80 @@ void preset_camera(CameraPreset preset, const BoundingBoxf3& fit, Vec3d& positio
         target.z() = fit.min.z() + 0.15 * size.z();
         break;
     }
+}
+
+double fit_zoom_to_box(const Vec3d& position, const Vec3d& target, const Vec3d& up, const BoundingBoxf3& box,
+                       int width, int height, double margin)
+{
+    if (!box.defined || width <= 0 || height <= 0 || !(margin > 0.))
+        return 0.;
+    // Camera::look_at's basis: unit_z points from the target back to the camera.
+    const double distance = (position - target).norm();
+    const Vec3d  unit_z   = (position - target).normalized();
+    const Vec3d  unit_x   = up.cross(unit_z).normalized();
+    const Vec3d  unit_y   = unit_z.cross(unit_x).normalized();
+    if (!(distance > 0.) || !unit_x.allFinite() || !unit_y.allFinite())
+        return 0.;
+
+    // Camera::apply_projection spans (width / 2) / zoom mm either side of the axis at the target's
+    // distance, so a point `x` mm off the axis there lands at the image edge when zoom = (width / 2) / x.
+    const double half_w = 0.5 * width / margin;
+    const double half_h = 0.5 * height / margin;
+    double       zoom   = std::numeric_limits<double>::max();
+    auto limit = [&zoom](double half_extent, double offset) {
+        if (offset > 0.)
+            zoom = std::min(zoom, half_extent / offset);
+    };
+    for (int i = 0; i < 8; ++i) {
+        const Vec3d corner((i & 1) ? box.max.x() : box.min.x(),
+                           (i & 2) ? box.max.y() : box.min.y(),
+                           (i & 4) ? box.max.z() : box.min.z());
+        const Vec3d  rel   = corner - position;
+        const double x     = std::abs(rel.dot(unit_x));
+        const double y     = std::abs(rel.dot(unit_y));
+        const double depth = -rel.dot(unit_z);  // along the view, from the camera
+        limit(half_w, x);                       // orthographic: the camera far away
+        limit(half_h, y);
+        if (depth > 1e-9) {                     // perspective: distance / depth times larger here
+            limit(half_w, x * distance / depth);
+            limit(half_h, y * distance / depth);
+        }
+    }
+    return zoom == std::numeric_limits<double>::max() ? 0. : zoom;
+}
+
+void frame_camera(Camera& camera, const Vec3d& position, const Vec3d& target, const BoundingBoxf3& fit,
+                  const BoundingBoxf3& scene)
+{
+    // look_at comes first: the zoom depends on the direction the box is seen from. A zoom sized
+    // before it is sized for the Camera's default orientation instead, which is how tall objects
+    // were cut off.
+    //
+    // Not a plain Vec3d::UnitZ() for up: look_at builds its basis from up.cross(view_direction), and
+    // for a camera directly above its target that cross product is zero -- an ordinary-looking plan
+    // view whose view matrix pick_facet could not invert. stable_camera_up falls back to +Y for
+    // exactly that case and returns +Z for every other view.
+    const Vec3d up = stable_camera_up(position, target);
+    camera.set_scene_box(scene);
+    camera.look_at(position, target, up);
+    const std::array<int, 4>& viewport = camera.get_viewport();
+    const double zoom = fit_zoom_to_box(position, target, up, fit, viewport[2], viewport[3], k_fit_margin);
+    if (zoom > 0.)
+        camera.set_zoom(zoom);
+    // Near and far planes around everything that may be drawn, the fitted box included when it
+    // reaches past the plate.
+    BoundingBoxf3 depth_box = scene;
+    depth_box.merge(fit);
+    camera.apply_projection(depth_box);
+}
+
+CameraFrame camera_frame_of(const Camera& camera)
+{
+    CameraFrame frame;
+    frame.view       = camera.get_view_matrix().matrix();
+    frame.projection = camera.get_projection_matrix().matrix();
+    frame.viewport   = camera.get_viewport();
+    return frame;
 }
 
 namespace {

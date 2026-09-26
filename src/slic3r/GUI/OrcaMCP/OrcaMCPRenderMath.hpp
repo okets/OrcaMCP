@@ -14,7 +14,9 @@
 #include "libslic3r/Point.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPPaintSelect.hpp"  // CameraFrame
 
-namespace Slic3r { namespace GUI { namespace OrcaMCP {
+namespace Slic3r { namespace GUI {
+class Camera;
+namespace OrcaMCP {
 
 // Where a 3D bounding box lands in the image. Pixels have a top-left origin, matching the images
 // the tool writes and the pixel_origin it reports. The box is intersected with the viewport.
@@ -48,6 +50,30 @@ std::string camera_preset_name(CameraPreset preset);
 // A camera that frames `fit` (bed mm) from the preset's direction. The distance is 2.2x the box
 // diagonal and never under 50 mm, so a small object still gets a sensible frame.
 void preset_camera(CameraPreset preset, const BoundingBoxf3& fit, Vec3d& position, Vec3d& target);
+
+// The room a framed render leaves around what it frames: the box spans at most 1/1.08 of the image.
+constexpr double k_fit_margin = 1.08;
+
+// The zoom -- Camera's, in pixels per mm on the plane through `target` square to the view -- at which
+// every corner of `box` lands inside a `width` x `height` image with `margin` to spare, seen by a
+// perspective camera at `position` looking at `target` with the basis Camera::look_at builds from
+// `up`. The smaller of two limits: the perspective one at this distance, where corners nearer the
+// camera than the target project larger, and the orthographic one the view tends to as the camera
+// backs away. Camera::apply_projection may back the camera away along its axis to keep the near
+// plane 100 mm out; the box's projection moves monotonically between those two limits as it does,
+// so it fits wherever the camera ends up. 0 when there is nothing to fit.
+double fit_zoom_to_box(const Vec3d& position, const Vec3d& target, const Vec3d& up, const BoundingBoxf3& box,
+                       int width, int height, double margin);
+
+// Points `camera` from `position` at `target` and zooms it so the whole of `fit` is in frame, with
+// a depth range covering both `scene` and `fit`. Call it after set_type and set_viewport. The single
+// camera set-up behind every render_plate_view picture and turntable view. It uses Camera's matrix
+// arithmetic only, none of its GL calls, so it is tested without a GL context.
+void frame_camera(Camera& camera, const Vec3d& position, const Vec3d& target, const BoundingBoxf3& fit,
+                  const BoundingBoxf3& scene);
+
+// The view, projection and viewport `camera` draws with, as pick_facet and the overlays read them.
+CameraFrame camera_frame_of(const Camera& camera);
 
 // Where render_plate_view and the turntable previews write their images: the platform's temp
 // directory, as boost::filesystem reports it. It used to be a literal "/tmp/", which is not a

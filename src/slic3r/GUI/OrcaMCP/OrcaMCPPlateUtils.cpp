@@ -511,56 +511,37 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
         }
     }
 
-    // Calculate volumes bounding box
+    // What the camera frames when the caller did not say (a custom camera, the turntable): the drawn
+    // volumes with 20% room on each side, which the turntable's corner labels need, or else the plate.
     BoundingBoxf3 volumes_box;
-    volumes_box.min.z() = volumes_box.max.z() = 0;
-    if (!visible_volumes.empty()) {
-        for (const GLVolume* vol : visible_volumes) {
-            volumes_box.merge(vol->transformed_bounding_box());
-        }
-        // Add padding (20% on each side for comfortable framing)
-        Vec3d size = volumes_box.size();
-        Vec3d padding = size * 0.20;
+    for (const GLVolume* vol : visible_volumes)
+        volumes_box.merge(vol->transformed_convex_hull_bounding_box());
+    if (volumes_box.defined) {
+        const Vec3d padding = volumes_box.size() * 0.20;
         volumes_box.min -= padding;
         volumes_box.max += padding;
-        volumes_box.min.z() = -Slic3r::BuildVolume::SceneEpsilon;
     }
+    const BoundingBoxf3 fit_box = options.zoom_box.has_value() ? *options.zoom_box
+                                : volumes_box.defined          ? volumes_box
+                                                               : plate_build_volume;
 
     // Draw into our own framebuffer, not the canvas's (see OffscreenRenderTarget). It lives until the
     // end of this function, so glReadPixels below reads from it and the canvas gets its state back.
     OffscreenRenderTarget offscreen(thumbnail_data.width, thumbnail_data.height);
 
-    // Setup camera
     Camera camera;
     camera.set_type(camera_type);
-    camera.set_scene_box(plate_build_volume);
     camera.set_viewport(0, 0, thumbnail_data.width, thumbnail_data.height);
     camera.apply_viewport();
-
-    // Zoom to objects if present, otherwise fall back to plate
-    BoundingBoxf3 zoom_box = options.zoom_box.has_value() ? *options.zoom_box
-                           : (!visible_volumes.empty() && volumes_box.defined) ? volumes_box : plate_build_volume;
-    zoom_box.min.z() = zoom_box.max.z() = 0.0;
-    camera.zoom_to_box(zoom_box, 1.0);
-    // Not a plain Vec3d::UnitZ(): look_at builds its basis from up.cross(view_direction), and for a
-    // camera directly above its target that cross product is zero. Eigen's normalized() hands a
-    // zero vector back unchanged rather than failing, so the plan view an agent asks for first used
-    // to render a perfectly ordinary image alongside a view matrix whose 3x3 basis was all zeros --
-    // which pick_facet then could not invert. stable_camera_up falls back to +Y for exactly that
-    // case and returns +Z for every other view, so no existing render changes.
-    camera.look_at(camera_position, target, OrcaMCP::stable_camera_up(camera_position, target));
-
-    const Transform3d& view_matrix = camera.get_view_matrix();
-    camera.apply_projection(plate_build_volume);
+    OrcaMCP::frame_camera(camera, camera_position, target, fit_box, plate_build_volume);
+    const Transform3d& view_matrix       = camera.get_view_matrix();
     const Transform3d& projection_matrix = camera.get_projection_matrix();
 
     // Copied out here, not returned by reference: `camera` is a local and both matrices above are
-    // references into it. This is also the only point at which the projection is final.
+    // references into it.
     if (out_camera != nullptr) {
-        out_camera->frame.view       = view_matrix.matrix();
-        out_camera->frame.projection = projection_matrix.matrix();
-        out_camera->frame.viewport   = camera.get_viewport();
-        out_camera->perspective      = camera_type == Camera::EType::Perspective;
+        out_camera->frame       = OrcaMCP::camera_frame_of(camera);
+        out_camera->perspective = camera_type == Camera::EType::Perspective;
     }
 
     // Clear background
@@ -594,7 +575,10 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
             drawn.object_index = vol->is_wipe_tower ? -1 : object_index;
             drawn.name         = vol->is_wipe_tower ? std::string("wipe tower")
                                : (object_index >= 0 && size_t(object_index) < model_objects.size() ? model_objects[object_index]->name : std::string());
-            drawn.world_bbox   = vol->transformed_bounding_box();
+            // The hull's box, which is the geometry's own. transformed_bounding_box() turns the
+            // mesh's box with the instance, so on a rotated object its corners stand off the part
+            // and a picture framed to the object read as `clipped`.
+            drawn.world_bbox   = vol->transformed_convex_hull_bounding_box();
             drawn.color        = curr_color;
             drawn.wipe_tower   = vol->is_wipe_tower;
             report->drawn.push_back(std::move(drawn));
