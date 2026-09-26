@@ -366,7 +366,7 @@ json warnings_and_best_practices()
                 {"get_edited_presets", "~15-20KB response. Use sparingly, cache results."},
                 {"get_presets", "Filter it: {type, vendor, name_contains}. summary:false without a filter "
                                 "is ~1.9MB and will not fit in a response."},
-                {"get_scene_info", "Use with_model_object_features=false unless you need volume/overhang data."}
+                {"get_scene_info", "Use with_model_object_features=false unless you need every object's mesh-health numbers."}
             }},
             {"prefer_light_tools", {
                 "get_slicing_status - tiny response, safe for polling",

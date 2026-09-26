@@ -2,6 +2,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "slic3r/GUI/GUI_ObjectList.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPCommon.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPMeshHealth.hpp"
 #include "libslic3r/Format/STL.hpp"
 #include "libslic3r/Model.hpp"
@@ -374,4 +375,25 @@ TEST_CASE("active_warnings lists every object that shows the warning icon, with 
                                        {"message", k_hole_tooltip}});
 
     CHECK(mesh_warning_entries(Model()).empty());
+}
+
+TEST_CASE("Every object description flags the warning icon, with the reason when it shows", "[MeshHealth][orcamcp]")
+{
+    OnePartObject clean{TriangleMesh(its_make_cube(10.0, 10.0, 10.0))};
+    OnePartObject hole{TriangleMesh(cube_missing_facet())};
+
+    nlohmann::json out;
+    add_mesh_warning(out, *clean.object);
+    CHECK(out == nlohmann::json{{"mesh_warning", false}});
+
+    out = nlohmann::json::object();
+    add_mesh_warning(out, *hole.object);
+    CHECK(out == nlohmann::json{{"mesh_warning", true}, {"mesh_warning_reason", "Error: 3 non-manifold edges."}});
+
+    // get_scene_info's objects and load_model's loaded_objects are this summary.
+    const nlohmann::json summary = model_object_summary_json(*hole.object, 0);
+    CHECK(summary["mesh_warning"] == true);
+    CHECK(summary["mesh_warning_reason"] == "Error: 3 non-manifold edges.");
+    CHECK(model_object_summary_json(*clean.object, 0)["mesh_warning"] == false);
+    CHECK_FALSE(model_object_summary_json(*clean.object, 0).contains("mesh_warning_reason"));
 }

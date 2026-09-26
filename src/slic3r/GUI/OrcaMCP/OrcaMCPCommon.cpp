@@ -350,6 +350,7 @@ nlohmann::json object_summary_json(const ModelObject& object, int object_index, 
                                          {"z", Geometry::rad2deg(rotation.z())}};
         summary["scale"]              = {{"x", scale.x()}, {"y", scale.y()}, {"z", scale.z()}};
     }
+    add_mesh_warning(summary, object);
     return summary;
 }
 

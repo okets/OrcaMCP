@@ -714,14 +714,19 @@ void OrcaMCPServer::register_builtin_tools()
         "(`instances_on_plate`): its bounding_box, position and footprint are theirs. `open_dialogs` "
         "names any dialog the app is showing, waiting for the user (tool calls still run under it); "
         "`system_dialog_open` is true while a system file chooser or alert is open, `untracked_modal_loop` "
-        "while a modal window no dialog accounts for runs.",
+        "while a modal window no dialog accounts for runs. Every object carries `mesh_warning`, true when "
+        "the object list shows its warning icon (open edges or recorded repairs), with "
+        "`mesh_warning_reason`, the list's one-line reason.",
         {
             {"type", "object"},
             {"properties", {
                 {"with_model_object_features", {
                     {"type", "boolean"},
-                    {"description", "Reserved: adds an empty `features` object to each model object. No "
-                                    "mesh analysis is computed yet."}
+                    {"description", "Adds `features` to each model object: the mesh-health numbers behind "
+                                    "mesh_warning -- facets, shells, open_edges, manifold, repaired, "
+                                    "errors_repaired, repaired_errors and volume_mm3 -- as get_mesh_health's "
+                                    "`summary` reports them. No overhang analysis: slice to see where "
+                                    "support is needed."}
                 }},
                 {"include_preview", {
                     {"type", "boolean"},

@@ -111,6 +111,14 @@ nlohmann::json mesh_features_json(const ModelObject& object)
     return features;
 }
 
+void add_mesh_warning(nlohmann::json& out, const ModelObject& object)
+{
+    const MeshHealth health = object_mesh_health(object);
+    out["mesh_warning"]     = health.warning;
+    if (health.warning)
+        out["mesh_warning_reason"] = health.reason;
+}
+
 nlohmann::json mesh_warning_entries(const Model& model)
 {
     nlohmann::json entries = nlohmann::json::array();

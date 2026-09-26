@@ -120,7 +120,7 @@ Get current project state including plates, objects, and positions.
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `with_model_object_features` | boolean | No | Reserved: adds an empty `features` object to each model object. No mesh analysis is computed yet. |
+| `with_model_object_features` | boolean | No | Adds `features` to each model object: the mesh-health numbers behind `mesh_warning` (facets, shells, open_edges, manifold, repaired, errors_repaired, repaired_errors, volume_mm3), as `get_mesh_health`'s `summary`. No overhang analysis: slice to see where support is needed. |
 | `include_preview` | boolean | No | Include turntable preview path |
 
 **Example:**
@@ -146,7 +146,8 @@ Get current project state including plates, objects, and positions.
       "brim": {"type": "auto_brim", "extent_mm": 0.0, "extent_upper_bound_mm": 18.0, "extent_is_exact": false},
       "printed_footprint": {"min_x": 145, "min_y": 145, "max_x": 165, "max_y": 165, "size_x": 20, "size_y": 20},
       "printed_footprint_includes_brim": false,
-      "instance_count": 1
+      "instance_count": 1,
+      "mesh_warning": false
     }],
     "prime_tower": {
       "printed": true,
@@ -183,6 +184,14 @@ read, and `filament_override_count` says how many parts and modifiers carry thei
 agree only when that count is 0. `filaments_used` is the per-object half of the rule the plate
 applies for `prime_tower`; an object whose modifiers are pinned to another slot keeps the plate
 multi-filament however `extruder_id` reads.
+
+#### Mesh warnings
+
+Every object, in `model_objects` and in `unplaced_objects`, carries `mesh_warning`: `true` when the
+object list shows its warning icon, because its mesh has open edges or a 3MF recorded repairs to it.
+Then `mesh_warning_reason` is the list's one-line reason (`"Error: 25 non-manifold edges."`), and
+`active_warnings` carries a `MeshErrors` entry with the icon's full tooltip. `get_mesh_health` has
+the numbers and each volume's share; `with_model_object_features` adds the object's numbers here.
 
 #### Occupancy: everything standing on the plate
 
@@ -421,7 +430,7 @@ G-code preview, model files are refused too; `new_project` returns to an editabl
 |-------|-------------|
 | `status` | `success`, or `error` when the file failed to load, **loaded but added no objects** (for example a ZIP, whose file picker cannot open under MCP), did not produce a G-code preview (unreadable G-code), or was refused (see above) |
 | `file` | The path loaded |
-| `loaded_objects` | One entry per object the load added, in the same shape as `get_scene_info`'s `model_objects`: `id`, `name`, `object_index` (the index other tools take as `object_id`), `instance_count`, `volume_count`, `position`, `rotation_degrees`, `scale` `{x,y,z}` of its first instance and `bounding_box` `{size_x, size_y, size_z, min, max}`. A merged multi-part file shows as one object with several volumes; a model scaled to fit the bed shows its scale. Empty for a G-code preview. |
+| `loaded_objects` | One entry per object the load added, in the same shape as `get_scene_info`'s `model_objects`: `id`, `name`, `object_index` (the index other tools take as `object_id`), `instance_count`, `volume_count`, `position`, `rotation_degrees`, `scale` `{x,y,z}` of its first instance, `bounding_box` `{size_x, size_y, size_z, min, max}` and `mesh_warning` (with `mesh_warning_reason` when the object list shows its warning icon). A merged multi-part file shows as one object with several volumes; a model scaled to fit the bed shows its scale. Empty for a G-code preview. |
 | `filaments_added` | Filament slots the import added, because the model uses more filaments than the scene had (0 when none) |
 | `project_renamed_to` | Present only if the project's name changed: never for a model file, and always for a G-code preview (named after the file, so a later `save_project {}` writes there) |
 | `info_messages` | What happened, then what the slicer would have shown. A 3MF import says whether the file carried presets that were not applied. A prompt that offered a choice ends with the answer given, e.g. `"Object too large: ... scale it down to fit the print bed automatically? (auto-answered Yes)"`; the multi-part question also names the other `multipart` value |
@@ -439,7 +448,8 @@ A 20 mm cube exported 1000 times too large, on a 256 mm bed:
      "rotation_degrees": {"x": 0.0, "y": 0.0, "z": 0.0},
      "scale": {"x": 0.0127, "y": 0.0127, "z": 0.0127},
      "bounding_box": {"size_x": 254.0, "size_y": 254.0, "size_z": 254.0,
-                      "min": {"x": 1.0, "y": 1.0, "z": 0.0}, "max": {"x": 255.0, "y": 255.0, "z": 254.0}}}
+                      "min": {"x": 1.0, "y": 1.0, "z": 0.0}, "max": {"x": 255.0, "y": 255.0, "z": 254.0}},
+     "mesh_warning": false}
   ],
   "filaments_added": 0,
   "info_messages": ["Object too large: Your object appears to be too large, do you want to scale it down to fit the print bed automatically? (auto-answered Yes)"],

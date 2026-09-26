@@ -50,6 +50,10 @@ nlohmann::json mesh_numbers_json(const MeshHealth& health);
 // while the mesh has open edges).
 nlohmann::json mesh_features_json(const ModelObject& object);
 
+// Sets `mesh_warning` on a per-object description -- true when the object list shows the object's
+// warning icon -- and, only then, `mesh_warning_reason`, the list's one-line reason.
+void add_mesh_warning(nlohmann::json& out, const ModelObject& object);
+
 // active_warnings' mesh entries: {level: "warning", type: "MeshErrors", object_id, object_name,
 // message: <the icon's tooltip>}, one for every object of `model` whose warning icon shows. The icon
 // is no pop-up notification, so the notification manager never reports it.

@@ -2,6 +2,7 @@
 #include "OrcaMCPImageFiles.hpp"
 #include "OrcaMCPPlateOccupancy.hpp"
 #include "OrcaMCPCommon.hpp"
+#include "OrcaMCPMeshHealth.hpp"
 #include "slic3r/GUI/GLCanvas3D.hpp"
 #include "slic3r/GUI/OpenGLManager.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPRenderOverlay.hpp"
@@ -940,9 +941,10 @@ nlohmann::json OrcaMCPPlateUtils::GetPlates(bool with_model_object_features) {
 }
 
 nlohmann::json OrcaMCPPlateUtils::GetModelObjectFeaturesJson(const ModelObject* obj) {
-    // Simplified: feature analysis not available in upstream OrcaSlicer
-    // Return empty object - features would require additional orientation analysis code
-    return nlohmann::json::object();
+    // The mesh-health numbers behind mesh_warning, as get_mesh_health's summary. No overhang
+    // analysis: a sum of downward-facing facet area would count the faces standing on the bed and
+    // ignore the support threshold, bridges and self-support, and only slicing answers that.
+    return OrcaMCP::mesh_features_json(*obj);
 }
 
 std::string sorted_volumes_hash_code(const Model& model) {
@@ -1034,14 +1036,16 @@ nlohmann::json OrcaMCPPlateUtils::GetCurrentProject(bool with_model_object_featu
 
         const ModelObject* object = model.objects[i];
         const BoundingBoxf3 bbox  = OrcaMCP::object_world_box(*object);
-        unplaced.push_back(nlohmann::json{
+        nlohmann::json entry{
             {"object_index", int(i)},
             {"id", std::to_string(object->id().id)},
             {"name", object->name},
             {"position", {{"x", bbox.center().x()}, {"y", bbox.center().y()}, {"z", bbox.center().z()}}},
             {"reason", "Not on any plate. Deleting a plate moves its objects here rather than "
                        "removing them; use delete_object, or move it onto a plate."}
-        });
+        };
+        OrcaMCP::add_mesh_warning(entry, *object);
+        unplaced.push_back(std::move(entry));
     }
     j["unplaced_objects"] = std::move(unplaced);
 

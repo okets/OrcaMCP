@@ -152,7 +152,8 @@ int model_object_index(const ModelObject* object);
 
 // One model object as every MCP response describes it: id, name, object_index (the index other
 // tools take), instance_count, volume_count, position (bounding-box centre), rotation_degrees and
-// scale of the first instance, and bounding_box {size_x, size_y, size_z, min, max}, in plate mm.
+// scale of the first instance, bounding_box {size_x, size_y, size_z, min, max}, in plate mm, and
+// mesh_warning (with mesh_warning_reason when true: add_mesh_warning, OrcaMCPMeshHealth.hpp).
 // get_scene_info adds brim, footprint, layer-height and filament fields; load_model's
 // loaded_objects is exactly this.
 nlohmann::json model_object_summary_json(const ModelObject& object, int object_index);
