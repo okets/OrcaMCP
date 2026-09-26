@@ -112,6 +112,19 @@ void rehome_and_report_placement(nlohmann::json& result, int object_id);
 // synchronize_unselected_instances does.
 void transform_instances_in_plate_frame(ModelObject& object, const Transform3d& world_transform);
 
+// Whether an instance whose lowest point was at `min_z_before` and is at `min_z_after` once a
+// transform is done goes back onto Z = 0. The GUI's own rule, from GLCanvas3D::do_scale, do_rotate
+// and do_mirror: an instance that was sinking stays sinking unless the transform lifted it clear of
+// the bed; any other lands on the bed.
+bool should_drop_to_bed(double min_z_before, double min_z_after);
+
+// transform_instances_in_plate_frame, followed by the drop to the bed the GUI does after a scale,
+// rotate or mirror: each instance's lowest point is recorded first, and should_drop_to_bed decides
+// per instance afterwards. Instances with auto_drop off are left where the transform put them, as
+// the GUI leaves them. A pivot at the bounding-box centre is what moves the lowest point at all: a
+// uniform 1.49x scale about the centre of a 99 mm figurine put its feet 24 mm under the bed.
+void transform_instances_on_bed(ModelObject& object, const Transform3d& world_transform);
+
 // One model object as every MCP response describes it: id, name, object_index (the index other
 // tools take), instance_count, volume_count, position (bounding-box centre), rotation_degrees and
 // scale of the first instance, and bounding_box {size_x, size_y, size_z, min, max}, in plate mm.

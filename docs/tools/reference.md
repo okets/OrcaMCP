@@ -517,6 +517,14 @@ in place. The `rotation_degrees` in the response are the instance's own — the 
 `get_object_info` reports — and now change to reflect what was asked; before v2.3.2 they never moved,
 because the rotation went into the mesh instead.
 
+**The object stays on the bed.** After the turn, the object is dropped back onto Z = 0, as the GUI
+does after a rotation, unless it was sinking below the bed before; a sunk object stays sunk.
+Instances with `auto_drop` off (set in some 3MF files) are left where the turn put them. Before
+v2.5.0.6 a rotation about the centre left the object partly under the bed or floating above it.
+`on_bed` measures the object's exact geometry; before v2.5.0.6 it measured the mesh's own box turned
+with the object, whose corners sit below a tilted part, so a part standing on the bed read
+`on_bed: false`.
+
 **Placement in the response.** Every transform re-homes the object onto the plate whose area now
 contains it, then answers about *that* plate:
 
@@ -563,8 +571,10 @@ turns and scales along the plate's X, Y and Z. Before v2.3.2 these tools transfo
 that way with no error.
 
 Scaling is about the object's bounding-box centre, so it grows in place, and the `scale` in the
-response is the instance's own factor — the number `get_object_info` reports. Factors must be
-positive: zero makes the instance transform singular, and a negative factor is a mirror, which
+response is the instance's own factor — the number `get_object_info` reports. The object is then
+dropped back onto the bed (Z = 0), as the GUI does, unless it was sinking below it before. Before
+v2.5.0.6 it was not: a uniform 1.49× scale of a 99 mm figurine left its feet 24 mm under the bed.
+Factors must be positive: zero makes the instance transform singular, and a negative factor is a mirror, which
 `mirror_object` does properly.
 
 A *non-uniform* scale along plate axes on an object whose rotation is not a multiple of 90° is a
@@ -606,7 +616,8 @@ turns and scales along the plate's X, Y and Z. Before v2.3.2 these tools transfo
 that way with no error.
 
 The reflection is across a plate plane through the object's bounding-box centre, so the object stays
-where it is. Before v2.3.2 it reflected the mesh about the volume origin, which moved an asymmetric
+where it is, and a resting object stays on the bed (it is dropped to Z = 0 afterwards, as in the GUI,
+unless it was sinking). Before v2.3.2 it reflected the mesh about the volume origin, which moved an asymmetric
 object by its own width — and about the object's local axis, so on a rotated object "mirror z" was
 not a vertical flip at all.
 
@@ -726,7 +737,9 @@ Each entry takes `object_id` plus any of `position` (absolute, unspecified axes 
 ```
 
 All three are in the plate's frame, exactly as `move_object`, `rotate_object` and `scale_object`
-apply them — see the coordinate-frame note on `move_object`. An entry whose scale factors are not
+apply them — see the coordinate-frame note on `move_object`. A rotation or scale drops a resting
+object back onto the bed, as `rotate_object` and `scale_object` do, unless the entry gives
+`position.z`: an explicit Z is kept as given, as `move_object` keeps it. An entry whose scale factors are not
 all positive is reported as an error against its own `object_id` and nothing in that entry is
 applied; the rest of the batch still runs.
 

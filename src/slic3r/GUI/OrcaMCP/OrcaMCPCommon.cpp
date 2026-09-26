@@ -9,6 +9,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <optional>
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
@@ -160,7 +161,10 @@ void report_placement(nlohmann::json& result, int object_id)
 
     result["plate_index"] = plate_index >= 0 ? nlohmann::json(plate_index) : nlohmann::json(nullptr);
 
-    const BoundingBoxf3 object_bbox = object->bounding_box_approx();
+    // The exact box, not bounding_box_approx(): that one transforms the mesh's own bounding box, and
+    // once an instance is rotated its corners sit below the lowest real point -- a T-shaped part
+    // tilted 30 degrees and dropped onto the bed read as 9 mm under it, on_bed false.
+    const BoundingBoxf3 object_bbox = object->bounding_box_exact();
     const bool on_bed = plate != nullptr && object_within_plate(object_bbox, plate->get_plate_box());
     result["on_bed"]  = on_bed;
     if (!on_bed)
@@ -218,7 +222,36 @@ void transform_instances_in_plate_frame(ModelObject& object, const Transform3d& 
     object.invalidate_bounding_box();
 }
 
-// Helper to get active warnings as JSON object (always includes count, even if 0)
+bool should_drop_to_bed(double min_z_before, double min_z_after)
+{
+    // GLCanvas3D::do_scale's condition, word for word: "leave sinking instances as sinking".
+    return (min_z_before >= SINKING_Z_THRESHOLD || min_z_after > SINKING_Z_THRESHOLD) && min_z_after != 0.0;
+}
+
+void transform_instances_on_bed(ModelObject& object, const Transform3d& world_transform)
+{
+    // The GUI reads the lowest point before from the instance's bounding box and after from its
+    // convex hull (get_instance_min_z); both are exact for the mesh, and this reads them the same way.
+    // An instance with no model part has no lowest point to keep, so it is not dropped.
+    std::vector<std::optional<double>> min_z_before(object.instances.size());
+    for (size_t i = 0; i < object.instances.size(); ++i) {
+        const BoundingBoxf3 bbox = object.instance_bounding_box(i);
+        if (bbox.defined)
+            min_z_before[i] = bbox.min.z();
+    }
+
+    transform_instances_in_plate_frame(object, world_transform);
+
+    for (size_t i = 0; i < object.instances.size(); ++i) {
+        const ModelInstance* instance = object.instances[i];
+        if (instance == nullptr || !instance->auto_drop || !min_z_before[i])
+            continue;
+        const double min_z_after = object.get_instance_min_z(i);
+        if (should_drop_to_bed(*min_z_before[i], min_z_after))
+            object.translate_instance(i, Vec3d(0.0, 0.0, -min_z_after));
+    }
+}
+
 nlohmann::json model_object_summary_json(const ModelObject& object, int object_index)
 {
     const BoundingBoxf3 bbox   = object.bounding_box_approx();
@@ -254,6 +287,7 @@ nlohmann::json model_object_summary_json(const ModelObject& object, int object_i
     return summary;
 }
 
+// Helper to get active warnings as JSON object (always includes count, even if 0)
 nlohmann::json get_active_warnings_json(Plater* plater) {
     nlohmann::json result;
     nlohmann::json warnings_array = nlohmann::json::array();

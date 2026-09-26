@@ -3588,7 +3588,8 @@ void OrcaMCPServer::register_builtin_tools()
         "Rotate an object about plate axes",
         "Rotate object around the plate's X, Y and Z axes (degrees), not the object's own axes: a "
         "z=90 turns the object about the vertical whatever its current rotation is. Applied in the "
-        "order X, then Y, then Z, about the object's bounding-box centre so it turns in place. The "
+        "order X, then Y, then Z, about the object's bounding-box centre so it turns in place, then, "
+        "as the GUI does, dropped back onto the bed (Z=0) unless it was sinking below it before. The "
         "resulting rotation_degrees are the instance's, the same numbers get_object_info reports. "
         "The response reports the plate the object is on afterwards (plate_index) and measures "
         "on_bed against that plate.",
@@ -3665,7 +3666,7 @@ void OrcaMCPServer::register_builtin_tools()
 
                 if (!world_rotation.isApprox(Transform3d::Identity())) {
                     plater->take_snapshot(_u8L("Rotate Object"));
-                    transform_instances_in_plate_frame(*obj, world_rotation);
+                    transform_instances_on_bed(*obj, world_rotation);
                 }
 
                 // Notify UI of changes
@@ -3711,10 +3712,12 @@ void OrcaMCPServer::register_builtin_tools()
         "Scale object along the plate's X, Y and Z axes, not the object's own: with uniform=false, "
         "z is the object's height above the bed whatever its rotation. uniform=true uses x for all "
         "axes and is frame-independent. Scaling is about the object's bounding-box centre, so it "
-        "grows in place. Factors must be positive; use mirror_object to flip an axis. A non-uniform "
-        "scale along plate axes on an object whose rotation is not a multiple of 90 degrees is a "
-        "shear -- it is applied, and the response says so in skew_warning. The response reports the "
-        "plate the object is on afterwards (plate_index) and measures on_bed against that plate.",
+        "grows in place, and then, as the GUI does, the object is dropped back onto the bed (Z=0) "
+        "unless it was sinking below it before. Factors must be positive; use mirror_object to flip "
+        "an axis. A non-uniform scale along plate axes on an object whose rotation is not a multiple "
+        "of 90 degrees is a shear -- it is applied, and the response says so in skew_warning. The "
+        "response reports the plate the object is on afterwards (plate_index) and measures on_bed "
+        "against that plate.",
         {
             {"type", "object"},
             {"properties", {
@@ -3793,7 +3796,7 @@ void OrcaMCPServer::register_builtin_tools()
 
                 if (!factors.isApprox(Vec3d::Ones())) {
                     plater->take_snapshot(_u8L("Scale Object"));
-                    transform_instances_in_plate_frame(*obj, Geometry::scale_transform(factors));
+                    transform_instances_on_bed(*obj, Geometry::scale_transform(factors));
                 }
 
                 // Plate-axis scaling of a tilted object cannot be anything but a shear. The GUI
@@ -3849,8 +3852,10 @@ void OrcaMCPServer::register_builtin_tools()
         "Move, rotate, scale many objects at once",
         "Batch transform multiple objects. Position, rotation and scale are all in the plate's own "
         "frame -- the same frame get_object_info reports -- not the object's local axes, and match "
-        "move_object, rotate_object and scale_object exactly. Each result reports the plate that "
-        "object is on afterwards (plate_index) and measures on_bed against that plate.",
+        "move_object, rotate_object and scale_object exactly: a rotation or scale drops a resting "
+        "object back onto the bed (Z=0), unless the entry gives position.z, which is kept as given. "
+        "Each result reports the plate that object is on afterwards (plate_index) and measures "
+        "on_bed against that plate.",
         {
             {"type", "object"},
             {"properties", {
@@ -3982,18 +3987,24 @@ void OrcaMCPServer::register_builtin_tools()
                         obj->translate_instances(target - current_center);
                     }
 
+                    // A rotation or scale lands a resting object back on the bed, as rotate_object
+                    // and scale_object do -- unless this entry states a Z, which is the caller's
+                    // intent exactly as it is for move_object.
+                    const bool explicit_z = t.contains("position") && t["position"].contains("z");
+                    const auto transform  = explicit_z ? transform_instances_in_plate_frame : transform_instances_on_bed;
+
                     // Apply rotation (incremental)
                     if (t.contains("rotation")) {
                         auto rot = t["rotation"];
                         const Vec3d degrees(rot.value("x", 0.0), rot.value("y", 0.0), rot.value("z", 0.0));
                         const Transform3d world_rotation = Geometry::rotation_transform(degrees * deg_to_rad);
                         if (!world_rotation.isApprox(Transform3d::Identity()))
-                            transform_instances_in_plate_frame(*obj, world_rotation);
+                            transform(*obj, world_rotation);
                     }
 
                     // Apply scale
                     if (t.contains("scale"))
-                        transform_instances_in_plate_frame(*obj, Geometry::scale_transform(factors));
+                        transform(*obj, Geometry::scale_transform(factors));
 
                     obj->invalidate_bounding_box();
                 }
@@ -4042,8 +4053,9 @@ void OrcaMCPServer::register_builtin_tools()
         "Mirror an object across a plate axis",
         "Mirror an object across a plate axis, not the object's own: axis=z flips it top to bottom "
         "on the bed whatever its rotation. Mirroring is about the object's bounding-box centre, so "
-        "it stays where it is. The response reports the plate the object is on afterwards "
-        "(plate_index) and measures on_bed against that plate.",
+        "it stays where it is, and a resting object stays on the bed (Z=0), as in the GUI. The "
+        "response reports the plate the object is on afterwards (plate_index) and measures on_bed "
+        "against that plate.",
         {
             {"type", "object"},
             {"properties", {
@@ -4104,7 +4116,7 @@ void OrcaMCPServer::register_builtin_tools()
                 mirror_factors[axis]  = -1.0;
 
                 plater->take_snapshot(_u8L("Mirror Object"));
-                transform_instances_in_plate_frame(*obj, Geometry::scale_transform(mirror_factors));
+                transform_instances_on_bed(*obj, Geometry::scale_transform(mirror_factors));
 
                 // Notify UI of changes
                 obj->invalidate_bounding_box();
