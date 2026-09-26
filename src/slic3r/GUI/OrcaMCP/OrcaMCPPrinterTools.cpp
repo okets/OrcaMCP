@@ -213,6 +213,7 @@ std::optional<nlohmann::json> last_status_age_json(const DynamicPrintConfig& con
     const auto cached = ff->last_known_status();
     return cached ? nlohmann::json(cached->age_s) : nlohmann::json(nullptr);
 }
+
 } // namespace
 
 void OrcaMCPServer::register_printer_tools()
