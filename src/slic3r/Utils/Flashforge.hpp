@@ -1,6 +1,7 @@
 #ifndef slic3r_FlashForge_hpp_
 #define slic3r_FlashForge_hpp_
 
+#include <functional>
 #include <optional>
 #include <vector>
 #include <string>
@@ -88,8 +89,13 @@ private:
     Slic3r::Utils::SerialMessage saveFileCommand         = {"~M29\r\n",Slic3r::Utils::Command};
     bool upload_local_api(PrintHostUpload upload_data, ProgressFn progress_fn, ErrorFn error_fn) const;
     bool test_local_api(wxString& msg) const;
-    bool request_local_api_json(const std::string& path, const std::string& body, std::string& response_body, wxString& error_msg) const;
-    // One POST to the local API; request_local_api_json retries it and reports the outcome.
+    // `failure_out`, when given, receives how the final attempt failed.
+    bool request_local_api_json(const std::string& path, const std::string& body, std::string& response_body, wxString& error_msg, FlashforgeLocalApi::RequestFailure* failure_out = nullptr) const;
+    // One attempt at a local-API request: true on success, otherwise sets the message and the failure.
+    using LocalApiAttempt = std::function<bool(wxString& error_msg, FlashforgeLocalApi::RequestFailure& failure)>;
+    // The frame every local-API request runs in: the retry, the timing, the log line and the message.
+    bool run_local_api_request(const std::string& url, const LocalApiAttempt& attempt, wxString& error_msg, FlashforgeLocalApi::RequestFailure* failure_out = nullptr) const;
+    // One POST of a JSON body to the local API.
     bool post_local_api_json_once(const std::string& url, const std::string& body, std::string& response_body, wxString& error_msg, FlashforgeLocalApi::RequestFailure& failure) const;
     void log_local_api_outcome(const std::string& url, bool ok, const FlashforgeLocalApi::RequestFailure& failure, int attempts) const;
     // The precondition every local-API method shares: true when the credentials are there, false

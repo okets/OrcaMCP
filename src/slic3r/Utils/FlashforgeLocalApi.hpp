@@ -42,6 +42,8 @@ struct RequestFailure
     long        elapsed_ms{0};
     // The API's own refusal ("Flashforge local API error 1: ..."), when it answered with one.
     std::string api_error;
+    // The user stopped the request (an upload's cancel button): not the printer's failure.
+    bool        cancelled{false};
 };
 
 constexpr int kCurlCouldntResolveHost = 6;

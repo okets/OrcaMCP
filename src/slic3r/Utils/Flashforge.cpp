@@ -624,7 +624,6 @@ bool Flashforge::print_gcode_file(const std::string& file_name, bool leveling, c
 
 bool Flashforge::upload_local_api(PrintHostUpload upload_data, ProgressFn progress_fn, ErrorFn error_fn) const
 {
-    bool        res            = true;
     std::string material_map_b64;
     std::string material_map_json = "[]";
     auto        leveling_before_print = upload_data.extended_info["levelingBeforePrint"] == "1";
@@ -647,57 +646,85 @@ bool Flashforge::upload_local_api(PrintHostUpload upload_data, ProgressFn progre
         file_size = "0";
     }
 
-    auto http = Http::post(url);
-    http.header("serialNumber", m_serial_number)
-        .header("checkCode", m_check_code)
-        .header("fileSize", file_size)
-        .header("printNow", upload_data.post_action == PrintHostPostUploadAction::StartPrint ? "true" : "false")
-        .header("levelingBeforePrint", leveling_before_print ? "true" : "false")
-        .header("flowCalibration", "false")
-        .header("firstLayerInspection", "false")
-        .header("timeLapseVideo", time_lapse_video ? "true" : "false")
-        .header("useMatlStation", use_material_station ? "true" : "false")
-        .header("gcodeToolCnt", upload_data.extended_info["gcodeToolCnt"])
-        .header("materialMappings", material_map_b64)
-        .form_add_file("gcodeFile", upload_data.source_path.string(), filename)
-        .on_complete([&](std::string body, unsigned status) {
-            wxString msg;
-            if (!validate_local_api_response(body, msg)) {
-                BOOST_LOG_TRIVIAL(error) << boost::format("[Flashforge HTTP] upload rejected by printer: HTTP %1% body: `%2%`") % status % body;
-                error_fn(msg);
-                res = false;
-            } else {
-                BOOST_LOG_TRIVIAL(info) << boost::format("[Flashforge HTTP] upload complete: HTTP %1% body: %2%") % status % body;
-            }
-        })
-        .on_error([&](std::string body, std::string error, unsigned status) {
-            BOOST_LOG_TRIVIAL(error) << boost::format("[Flashforge HTTP] upload failed: %1%, HTTP %2%, body: `%3%`") % error % status % body;
-            error_fn(format_error(body, error, status));
-            res = false;
-        })
-        .on_progress([&](Http::Progress progress, bool& cancel) {
-            progress_fn(std::move(progress), cancel);
-            if (cancel)
-                res = false;
-        })
-        .perform_sync();
+    // One attempt; run_local_api_request retries it only when the connection was never made, so no
+    // byte of the file -- and no printNow -- reached the printer, and it cannot start a print twice.
+    const auto upload_once = [&](wxString& error_msg, FlashforgeLocalApi::RequestFailure& failure) {
+        bool ok   = true;
+        auto http = Http::post(url);
+        http.header("serialNumber", m_serial_number)
+            .header("checkCode", m_check_code)
+            .header("fileSize", file_size)
+            .header("printNow", upload_data.post_action == PrintHostPostUploadAction::StartPrint ? "true" : "false")
+            .header("levelingBeforePrint", leveling_before_print ? "true" : "false")
+            .header("flowCalibration", "false")
+            .header("firstLayerInspection", "false")
+            .header("timeLapseVideo", time_lapse_video ? "true" : "false")
+            .header("useMatlStation", use_material_station ? "true" : "false")
+            .header("gcodeToolCnt", upload_data.extended_info["gcodeToolCnt"])
+            .header("materialMappings", material_map_b64)
+            .form_add_file("gcodeFile", upload_data.source_path.string(), filename)
+            .on_complete([&](std::string body, unsigned status) {
+                if (!validate_local_api_response(body, error_msg)) {
+                    failure.http_status = status;
+                    failure.api_error   = error_msg.ToUTF8().data();
+                    ok                  = false;
+                } else {
+                    BOOST_LOG_TRIVIAL(info) << boost::format("[Flashforge HTTP] upload complete: HTTP %1% body: %2%") % status % body;
+                }
+            })
+            .on_error([&](std::string body, std::string error, unsigned status) {
+                error_msg           = format_error(body, error, status);
+                failure.error       = std::move(error);
+                failure.http_status = status;
+                ok                  = false;
+            })
+            .on_progress([&](Http::Progress progress, bool& cancel) {
+                progress_fn(std::move(progress), cancel);
+                if (cancel) {
+                    failure.cancelled = true;
+                    ok                = false;
+                }
+            })
+            .perform_sync();
+        return ok;
+    };
 
-    return res;
+    wxString                           error_msg;
+    FlashforgeLocalApi::RequestFailure failure;
+    const bool ok = run_local_api_request(url, upload_once, error_msg, &failure);
+    if (!ok && !failure.cancelled)
+        error_fn(error_msg);
+    return ok;
 }
 
-// Every local-API call goes through here: a connection that was never made is tried once more (it
-// cannot have reached the printer, so this is safe for control and print commands too) -- except on
-// the GUI thread, where the send dialog reads the material station and must not sleep -- a failure is
-// logged without its body, and one that never got an HTTP answer is described with host, port and
-// the next step to take.
-bool Flashforge::request_local_api_json(const std::string& path, const std::string& body, std::string& response_body, wxString& error_msg) const
+bool Flashforge::request_local_api_json(const std::string& path, const std::string& body, std::string& response_body, wxString& error_msg, FlashforgeLocalApi::RequestFailure* failure_out) const
 {
-    const std::string                 url = make_http_url(path);
+    const std::string url = make_http_url(path);
+    return run_local_api_request(
+        url,
+        [&](wxString& attempt_msg, FlashforgeLocalApi::RequestFailure& failure) {
+            return post_local_api_json_once(url, body, response_body, attempt_msg, failure);
+        },
+        error_msg, failure_out);
+}
+
+// Every local-API call goes through here, the upload included: a connection that was never made is
+// tried once more (it cannot have reached the printer, so this is safe for control, print and upload
+// requests too) -- except on the GUI thread, where the send dialog reads the material station and
+// must not sleep -- a failure is logged without its body, and one that never got an HTTP answer is
+// described with host, port and the next step to take.
+bool Flashforge::run_local_api_request(const std::string& url, const LocalApiAttempt& attempt, wxString& error_msg, FlashforgeLocalApi::RequestFailure* failure_out) const
+{
     FlashforgeLocalApi::RequestFailure failure;
     int                               attempts = 0;
     const bool ok = FlashforgeLocalApi::run_with_retry(
         [&](FlashforgeLocalApi::RequestFailure& attempt_failure) {
-            return post_local_api_json_once(url, body, response_body, error_msg, attempt_failure);
+            error_msg.clear(); // a retry that succeeds must not leave the first attempt's message behind
+            const auto started = std::chrono::steady_clock::now();
+            const bool done    = attempt(error_msg, attempt_failure);
+            attempt_failure.elapsed_ms =
+                long(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count());
+            return done;
         },
         [](std::chrono::milliseconds delay) { std::this_thread::sleep_for(delay); },
         /*may_wait=*/!wxThread::IsMain(), failure, attempts);
@@ -705,15 +732,15 @@ bool Flashforge::request_local_api_json(const std::string& path, const std::stri
     log_local_api_outcome(url, ok, failure, attempts);
     if (!ok && FlashforgeLocalApi::curl_code_of(failure.error) != 0)
         error_msg = GUI::from_u8(FlashforgeLocalApi::describe_failure(m_local_api_host, failure, attempts));
+    if (failure_out != nullptr)
+        *failure_out = failure;
     return ok;
 }
 
 bool Flashforge::post_local_api_json_once(const std::string& url, const std::string& body, std::string& response_body, wxString& error_msg, FlashforgeLocalApi::RequestFailure& failure) const
 {
-    bool       ok      = true;
-    const auto started = std::chrono::steady_clock::now();
-    error_msg.clear(); // a retry that succeeds must not leave the first attempt's message behind
-    auto       http    = Http::post(url);
+    bool ok   = true;
+    auto http = Http::post(url);
     http.header("Content-Type", "application/json")
         .set_post_body(body)
         .timeout_max(15)
@@ -733,7 +760,6 @@ bool Flashforge::post_local_api_json_once(const std::string& url, const std::str
             ok                  = false;
         })
         .perform_sync();
-    failure.elapsed_ms = long(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count());
     return ok;
 }
 
@@ -741,6 +767,8 @@ bool Flashforge::post_local_api_json_once(const std::string& url, const std::str
 // 100th after it, and the request that ends it.
 void Flashforge::log_local_api_outcome(const std::string& url, bool ok, const FlashforgeLocalApi::RequestFailure& failure, int attempts) const
 {
+    if (failure.cancelled)
+        return; // the user stopped it: neither a failure of the printer nor a sign it answers
     const std::string& host = m_local_api_host;
     if (ok) {
         if (const int ended = FlashforgeLocalApi::failure_streaks().record_success(host); ended > 0)
