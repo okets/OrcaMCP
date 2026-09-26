@@ -165,9 +165,10 @@ int model_object_index(const ModelObject* object);
 // loaded_objects is exactly this.
 nlohmann::json model_object_summary_json(const ModelObject& object, int object_index);
 
-// The same with `box` for bounding_box and position: a per-plate entry passes the box of the
-// instances on that plate (instances_on_plate).
-nlohmann::json model_object_summary_json(const ModelObject& object, int object_index, const BoundingBoxf3& box);
+// The same object as one plate's entry describes it: bounding_box and position are those of the
+// instances `here` covers (instances_on_plate), rotation_degrees and scale are the first of them,
+// and instances_on_plate lists them.
+nlohmann::json model_object_summary_json(const ModelObject& object, int object_index, const InstancesOnPlate& here);
 
 // Always returns {"count": N, "warnings": [{level, message, type}...]}.
 nlohmann::json get_active_warnings_json(Plater* plater);

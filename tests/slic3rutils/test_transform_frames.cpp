@@ -420,13 +420,33 @@ TEST_CASE("an object's per-plate entry and footprint cover that plate's instance
     RotatedObject built = make_three_instances();
     const InstancesOnPlate here = instances_on_plate(*built.object, [](int instance) { return instance != 1; });
 
-    const nlohmann::json entry = Slic3r::GUI::OrcaMCP::model_object_summary_json(*built.object, 0, here.box);
+    const nlohmann::json entry = Slic3r::GUI::OrcaMCP::model_object_summary_json(*built.object, 0, here);
     CHECK_THAT(entry["bounding_box"]["max"]["x"].get<double>(), WithinAbs(160.0, 1e-9));  // not 410
     CHECK_THAT(entry["position"]["x"].get<double>(), WithinAbs(130.0, 1e-9));
     CHECK(entry["instance_count"] == 3);  // the object's, as get_object_info reports it
+    CHECK(entry["instances_on_plate"] == nlohmann::json({0, 2}));
 
     const Slic3r::GUI::ObjectFootprint footprint =
         Slic3r::GUI::OrcaMCPPlateUtils::GetObjectFootprint(*built.object, here.box, Slic3r::DynamicPrintConfig());
     CHECK_THAT(footprint.body.min.x(), WithinAbs(100.0, 1e-9));
     CHECK_THAT(footprint.body.max.x(), WithinAbs(160.0, 1e-9));
+}
+
+TEST_CASE("a plate's entry for an object takes its transform from a copy on that plate", "[transform_frames]")
+{
+    // Instance 0 stands on plate 0 unrotated; the copy on plate 1 is turned 90 degrees and scaled.
+    // Plate 1's entry used to report instance 0's rotation and scale, from the other plate.
+    RotatedObject built = make_three_instances();
+    built.object->instances[1]->set_rotation(Vec3d(0.0, 0.0, M_PI / 2.0));
+    built.object->instances[1]->set_scaling_factor(Vec3d(2.0, 2.0, 2.0));
+    const InstancesOnPlate there = instances_on_plate(*built.object, [](int instance) { return instance == 1; });
+
+    const nlohmann::json plate_1 = Slic3r::GUI::OrcaMCP::model_object_summary_json(*built.object, 0, there);
+    CHECK_THAT(plate_1["rotation_degrees"]["z"].get<double>(), WithinAbs(90.0, 1e-9));
+    CHECK_THAT(plate_1["scale"]["x"].get<double>(), WithinAbs(2.0, 1e-9));
+
+    // The object-wide description (get_object_info, load_model) stays instance 0's.
+    const nlohmann::json object_wide = Slic3r::GUI::OrcaMCP::model_object_summary_json(*built.object, 0);
+    CHECK_THAT(object_wide["rotation_degrees"]["z"].get<double>(), WithinAbs(0.0, 1e-9));
+    CHECK_THAT(object_wide["scale"]["x"].get<double>(), WithinAbs(1.0, 1e-9));
 }

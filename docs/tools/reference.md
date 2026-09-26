@@ -1180,7 +1180,8 @@ collisions with other objects or the prime tower, and a part floating above the 
 the object's `printed_footprint` and `occupancy` footprint and height are all the object's exact
 box: every vertex of every instance, transformed. In `get_scene_info` each plate's entry for an
 object covers only the instances that plate holds, listed in `instances_on_plate` (on the entry and
-on its `occupancy` item); `instance_count` stays the object's total. Before v2.5.0.6 an object with a
+on its `occupancy` item), and its `rotation_degrees` and `scale` are the first of those copies';
+`instance_count` stays the object's total, and `get_object_info` stays object-wide (instance 0). Before v2.5.0.6 an object with a
 copy on another plate was reported under each plate with the box spanning both, so its footprint on
 plate 0 could be 347 mm wide. `move_object`'s `position` and
 `transform_objects`' `position` are read and written in the same box. Before v2.5.0.6 they used the

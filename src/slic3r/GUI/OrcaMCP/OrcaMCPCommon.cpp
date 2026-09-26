@@ -306,16 +306,15 @@ int model_object_index(const ModelObject* object)
     return -1;
 }
 
-nlohmann::json model_object_summary_json(const ModelObject& object, int object_index)
-{
-    return model_object_summary_json(object, object_index, object_world_box(object));
-}
+namespace {
 
-nlohmann::json model_object_summary_json(const ModelObject& object, int object_index, const BoundingBoxf3& box)
+// One description of `object`: its identity, `box` for bounding_box and position (the box's centre,
+// which stays accurate after any transform), and instance `instance_idx`'s rotation and scale --
+// the instance's own, which the MCP transforms write to as the GUI's gizmos do.
+nlohmann::json object_summary_json(const ModelObject& object, int object_index, const BoundingBoxf3& box, size_t instance_idx)
 {
-    const BoundingBoxf3 bbox   = box;
-    const Vec3d         center = bbox.center();
-    const Vec3d         size   = bbox.size();
+    const Vec3d center = box.center();
+    const Vec3d size   = box.size();
 
     nlohmann::json summary = {
         {"id", std::to_string(object.id().id)},
@@ -323,19 +322,16 @@ nlohmann::json model_object_summary_json(const ModelObject& object, int object_i
         {"object_index", object_index},
         {"instance_count", static_cast<int>(object.instances.size())},
         {"volume_count", static_cast<int>(object.volumes.size())},
-        // Position is the bounding-box centre, which stays accurate after any transform.
         {"position", {{"x", center.x()}, {"y", center.y()}, {"z", center.z()}}},
         {"bounding_box",
          {{"size_x", size.x()},
           {"size_y", size.y()},
           {"size_z", size.z()},
-          {"min", {{"x", bbox.min.x()}, {"y", bbox.min.y()}, {"z", bbox.min.z()}}},
-          {"max", {{"x", bbox.max.x()}, {"y", bbox.max.y()}, {"z", bbox.max.z()}}}}}};
+          {"min", {{"x", box.min.x()}, {"y", box.min.y()}, {"z", box.min.z()}}},
+          {"max", {{"x", box.max.x()}, {"y", box.max.y()}, {"z", box.max.z()}}}}}};
 
-    // The first (primary) instance's transform. rotation_degrees reflects the UI/initial rotation
-    // only: MCP rotations are applied to the geometry.
-    if (!object.instances.empty()) {
-        const ModelInstance& instance = *object.instances.front();
+    if (instance_idx < object.instances.size()) {
+        const ModelInstance& instance = *object.instances[instance_idx];
         const Vec3d          rotation = instance.get_rotation();
         const Vec3d          scale    = instance.get_scaling_factor();
         summary["rotation_degrees"]   = {{"x", Geometry::rad2deg(rotation.x())},
@@ -343,6 +339,22 @@ nlohmann::json model_object_summary_json(const ModelObject& object, int object_i
                                          {"z", Geometry::rad2deg(rotation.z())}};
         summary["scale"]              = {{"x", scale.x()}, {"y", scale.y()}, {"z", scale.z()}};
     }
+    return summary;
+}
+
+} // namespace
+
+nlohmann::json model_object_summary_json(const ModelObject& object, int object_index)
+{
+    return object_summary_json(object, object_index, object_world_box(object), 0);
+}
+
+nlohmann::json model_object_summary_json(const ModelObject& object, int object_index, const InstancesOnPlate& here)
+{
+    // The first copy on this plate: instance 0 may stand on another plate, turned or scaled otherwise.
+    const size_t   first   = here.ids.empty() ? 0 : size_t(here.ids.front());
+    nlohmann::json summary = object_summary_json(object, object_index, plate_box_of(object, here), first);
+    summary["instances_on_plate"] = here.ids;
     return summary;
 }
 

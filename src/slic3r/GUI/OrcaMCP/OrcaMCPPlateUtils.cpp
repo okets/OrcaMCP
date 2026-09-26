@@ -840,9 +840,8 @@ nlohmann::json OrcaMCPPlateUtils::GetPlates(bool with_model_object_features) {
             const OrcaMCP::InstancesOnPlate here = OrcaMCP::instances_on_plate(*obj, object_index, *plate);
             const BoundingBoxf3 box = OrcaMCP::plate_box_of(*obj, here);
 
-            // Identity, transform and bounding box, as load_model's loaded_objects reports them.
-            nlohmann::json object_info = OrcaMCP::model_object_summary_json(*obj, object_index, box);
-            object_info["instances_on_plate"] = here.ids;
+            // Identity, box, transform and instances_on_plate, all from this plate's copies.
+            nlohmann::json object_info = OrcaMCP::model_object_summary_json(*obj, object_index, here);
             const Vec3d size = box.size();
 
             // The bounding box is the model; the brim is printed plastic beyond it. A neighbour
