@@ -2,6 +2,7 @@
 
 #include "slic3r/GUI/OrcaMCP/OrcaMCPServer.hpp"
 #include "libslic3r_version.h"
+#include "mcp_tool_references.hpp"
 
 #include <map>
 #include <set>
@@ -198,4 +199,43 @@ TEST_CASE("get_server_info rejects an unknown section and names the valid ones",
         CHECK(message.find("concepts") != std::string::npos);
         CHECK(message.find("all") != std::string::npos);
     }
+}
+
+// ==================== TOOL NAMES IN THE DOCUMENTATION ====================
+
+TEST_CASE("Every tool get_server_info mentions is a real tool", "[orcamcp][tools]")
+{
+    const mcp_tool_references::ToolNames names(OrcaMCPServer::registered_tools());
+    const auto unknown = mcp_tool_references::unknown_in_json(get_server_info({{"section", "all"}}), names);
+    INFO("get_server_info names tools that do not exist:\n" << mcp_tool_references::describe(unknown));
+    CHECK(unknown.empty());
+}
+
+TEST_CASE("The tool-name check tells tool references from config keys and parameters", "[orcamcp][tools]")
+{
+    const mcp_tool_references::ToolNames names(OrcaMCPServer::registered_tools());
+    const nlohmann::json content = {
+        {"a_flow", {
+            {"tool", "get_scene_infos"},                        // a step naming a tool that does not exist
+            {"tools", "move_object, rotate_objects"},           // one real, one not
+            {"note", "Call get_scene_info, then set support_type and enable_support, keep "
+                     "print_sequence, pass save_to_file=true and start_print=false, then load_modle."}
+        }},
+        {"tool_examples", {{"load_models", {{"tip", "undo when unsure"}}}}},
+        {"get_bed_bounds", "An object key is a topic name, not a tool reference: never read."}
+    };
+
+    std::set<std::string> found;
+    for (const auto& reference : mcp_tool_references::unknown_in_json(content, names))
+        found.insert(reference.token);
+    CHECK(found == std::set<std::string>{"get_scene_infos", "rotate_objects", "load_modle", "load_models"});
+}
+
+TEST_CASE("The tool-name check also reads plain text", "[orcamcp][tools]")
+{
+    const mcp_tool_references::ToolNames names(OrcaMCPServer::registered_tools());
+    const auto unknown = mcp_tool_references::unknown_in_text("Use render_plate_view, then export_gcodes.", "text", names);
+    REQUIRE(unknown.size() == 1);
+    CHECK(unknown.front().token == "export_gcodes");
+    CHECK(unknown.front().where == "text");
 }
