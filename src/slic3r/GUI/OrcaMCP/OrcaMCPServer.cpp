@@ -841,7 +841,7 @@ void OrcaMCPServer::register_builtin_tools()
                                 {"description", "Named camera framing `fit` (default the plate). low = bed level from the front, for first layers and support feet."}
                             }},
                             {"fit", {
-                                {"description", "\"plate\" (default) or {\"object_index\": n} to frame one object -- a closer camera beats more pixels."}
+                                {"description", "\"plate\" (default) or {\"object_index\": n} to frame one object -- its instances on this plate; an object this plate does not hold is an error naming its plate. A closer camera beats more pixels."}
                             }},
                             {"frame", {
                                 {"type", "string"},

@@ -1484,7 +1484,9 @@ starts at x ≈ 307. A camera aimed at another plate's area returns a flat image
 {"camera_position": [x, y, z], "target": [x, y, z], "frame": "bed_mm" | "plate_local"}
 ```
 `fit` defaults to the plate (its footprint at the height of what is on it). Fitting an object
-frames it and zooms to it: a closer camera, not more pixels. `low` looks at the first layers from
+frames it and zooms to it: a closer camera, not more pixels. It frames the object's instances on
+the requested plate; an object that plate does not hold is an error naming the plate(s) it is on.
+Before v2.5.0.6 it framed instance 0 whichever plate that was on. `low` looks at the first layers from
 the front, slightly downward — brims, support feet, bottom edges. `frame: "plate_local"` lets an
 explicit camera be given relative to the plate's front-left corner.
 

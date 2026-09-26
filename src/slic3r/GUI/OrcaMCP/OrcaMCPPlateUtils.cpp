@@ -181,6 +181,28 @@ static BoundingBoxf3 plate_contents_box(PartPlate& plate, const BoundingBoxf3& p
     return box;
 }
 
+// What `fit: {object_index}` frames on `plate_index`: the exact boxes of that object's instances the
+// plate holds. Instance 0 alone used to be framed, even when it stood on another plate, so the camera
+// pointed at a spot this plate's picture draws nothing at.
+static BoundingBoxf3 object_fit_box_on_plate(int object_index, int plate_index)
+{
+    const ModelObjectPtrs& objects = wxGetApp().model().objects;
+    if (object_index < 0 || size_t(object_index) >= objects.size())
+        throw std::runtime_error("fit.object_index out of range");
+    PartPlateList&             plates = wxGetApp().plater()->get_partplate_list();
+    const ModelObject&         object = *objects[object_index];
+    std::vector<BoundingBoxf3> boxes;
+    std::vector<int>           on_plate;
+    for (size_t i = 0; i < object.instances.size(); ++i) {
+        boxes.push_back(object.instance_bounding_box(i));
+        on_plate.push_back(plates.find_instance(object_index, int(i)));
+    }
+    const BoundingBoxf3 box = OrcaMCP::object_fit_box(boxes, on_plate, plate_index);
+    if (!box.defined)
+        throw std::runtime_error(OrcaMCP::object_not_on_plate_message(object_index, plate_index, on_plate));
+    return box;
+}
+
 // [x, y, z] or {x, y, z}, bed mm.
 static Vec3d read_vec3(const nlohmann::json& v, const char* what)
 {
@@ -275,12 +297,9 @@ nlohmann::json OrcaMCPPlateUtils::RenderPlateView(const nlohmann::json& params) 
         BoundingBoxf3  fit_box  = plate_contents_box(*plate, plate_box);
         nlohmann::json fit_json = "plate";
         if (view.contains("fit") && view["fit"].is_object() && view["fit"].contains("object_index")) {
-            const int              oi   = view["fit"]["object_index"].get<int>();
-            const ModelObjectPtrs& objs = wxGetApp().model().objects;
-            if (oi < 0 || size_t(oi) >= objs.size())
-                throw std::runtime_error("fit.object_index out of range");
-            fit_box  = objs[oi]->instance_bounding_box(0);
-            fit_json = view["fit"];
+            const int oi = view["fit"]["object_index"].get<int>();
+            fit_box      = object_fit_box_on_plate(oi, plate_index);
+            fit_json     = view["fit"];
         }
 
         Vec3d       camera_position, target;

@@ -1637,7 +1637,7 @@
                   "type": "array"
                 },
                 "fit": {
-                  "description": "\"plate\" (default) or {\"object_index\": n} to frame one object -- a closer camera beats more pixels."
+                  "description": "\"plate\" (default) or {\"object_index\": n} to frame one object -- its instances on this plate; an object this plate does not hold is an error naming its plate. A closer camera beats more pixels."
                 },
                 "frame": {
                   "description": "Frame of camera_position/target: bed_mm (default, the get_scene_info frame) or plate_local (from this plate's front-left corner).",

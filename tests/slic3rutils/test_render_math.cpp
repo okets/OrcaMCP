@@ -313,3 +313,33 @@ TEST_CASE("the depth range covers every drawn volume, not only the plate and the
     CHECK(within_depth_range(framed(position, target, fitted, drawn), overhang));
     CHECK(within_depth_range(framed(position, target, fitted, drawn), fitted));
 }
+
+TEST_CASE("an object fit frames the object's instances on the requested plate", "[RenderMath]")
+{
+    const std::vector<BoundingBoxf3> boxes = {BoundingBoxf3(Vec3d(10., 10., 0.), Vec3d(30., 30., 20.)),
+                                              BoundingBoxf3(Vec3d(320., 10., 0.), Vec3d(340., 30., 20.)),
+                                              BoundingBoxf3(Vec3d(60., 60., 0.), Vec3d(80., 80., 40.))};
+    const std::vector<int> plates = {0, 1, 0};
+
+    const BoundingBoxf3 on_0 = object_fit_box(boxes, plates, 0);  // instances 0 and 2, not 1
+    REQUIRE(on_0.defined);
+    CHECK(on_0.min.isApprox(Vec3d(10., 10., 0.)));
+    CHECK(on_0.max.isApprox(Vec3d(80., 80., 40.)));
+
+    const BoundingBoxf3 on_1 = object_fit_box(boxes, plates, 1);
+    REQUIRE(on_1.defined);
+    CHECK(on_1.min.isApprox(Vec3d(320., 10., 0.)));
+
+    CHECK_FALSE(object_fit_box(boxes, plates, 2).defined);
+}
+
+TEST_CASE("an object fit on a plate that does not hold it names where it is", "[RenderMath]")
+{
+    const std::string elsewhere = object_not_on_plate_message(4, 0, {1, 2, 1});
+    CHECK(elsewhere.find("object 4") != std::string::npos);
+    CHECK(elsewhere.find("plate 0") != std::string::npos);
+    CHECK(elsewhere.find("plate(s) 1, 2") != std::string::npos);
+
+    const std::string nowhere = object_not_on_plate_message(4, 0, {-1});
+    CHECK(nowhere.find("not on any plate") != std::string::npos);
+}

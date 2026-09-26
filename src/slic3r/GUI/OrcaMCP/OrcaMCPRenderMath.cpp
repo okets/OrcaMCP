@@ -200,6 +200,34 @@ CameraFrame camera_frame_of(const Camera& camera)
     return frame;
 }
 
+BoundingBoxf3 object_fit_box(const std::vector<BoundingBoxf3>& instance_boxes, const std::vector<int>& instance_plates,
+                             int plate_index)
+{
+    BoundingBoxf3 box;
+    for (size_t i = 0; i < instance_boxes.size() && i < instance_plates.size(); ++i)
+        if (instance_plates[i] == plate_index)
+            box.merge(instance_boxes[i]);
+    return box;
+}
+
+std::string object_not_on_plate_message(int object_index, int plate_index, const std::vector<int>& instance_plates)
+{
+    std::vector<int> plates;
+    for (int p : instance_plates)
+        if (p >= 0 && std::find(plates.begin(), plates.end(), p) == plates.end())
+            plates.push_back(p);
+    std::sort(plates.begin(), plates.end());
+
+    std::string message = "fit.object_index: object " + std::to_string(object_index) + " is not on plate " +
+                          std::to_string(plate_index);
+    if (plates.empty())
+        return message + "; it is not on any plate (get_scene_info lists it under unplaced_objects)";
+    message += "; its instances are on plate(s) ";
+    for (size_t i = 0; i < plates.size(); ++i)
+        message += (i > 0 ? ", " : "") + std::to_string(plates[i]);
+    return message + " -- render that plate, or move the object onto this one";
+}
+
 bool belongs_in_plate_view(bool printable, bool on_plate, const BoundingBoxf3& volume_box)
 {
     return printable && on_plate && volume_box.max.z() > 0.;
