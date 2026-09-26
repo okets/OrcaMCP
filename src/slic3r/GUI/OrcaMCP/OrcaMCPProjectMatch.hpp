@@ -143,6 +143,12 @@ bool cached_match_applies(bool dry_run, bool allow_cached);
 // was asked for without allow_cached), that nothing was applied and how to apply it.
 std::string cached_match_note(long age_s, bool withheld);
 
+// Labels a match_project_to_printer response planned from the cache: source "cached", age_s and the
+// live error that sent it there. A plan `withheld` (a real run asked for without allow_cached) gets
+// status "not_applied" and applied: false, so no agent can read it as done; a plan gets the note; an
+// error from the plan (no station, unknown slot) keeps its status and message, with no plan note.
+nlohmann::json label_cached_match(nlohmann::json response, long age_s, const std::string& live_error, bool withheld);
+
 // The per-slot JSON both front doors report: the contract's
 // {slot, material, color, preset_before, preset_after, color_before, color_after, changed, reason},
 // plus `type_before` (the project's own material, which the console names in its suggestion) and

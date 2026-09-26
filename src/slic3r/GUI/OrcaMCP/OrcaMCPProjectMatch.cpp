@@ -344,6 +344,22 @@ std::string cached_match_note(long age_s, bool withheld)
     return note;
 }
 
+nlohmann::json label_cached_match(nlohmann::json response, long age_s, const std::string& live_error, bool withheld)
+{
+    response["source"]     = "cached";
+    response["age_s"]      = age_s;
+    response["live_error"] = live_error;
+    if (response.value("status", std::string()) == "error")
+        return response;
+
+    response["note"] = cached_match_note(age_s, withheld);
+    if (withheld) {
+        response["status"]  = "not_applied";
+        response["applied"] = false;
+    }
+    return response;
+}
+
 std::string describe_plan_summary(const std::vector<SlotPlan>& plan)
 {
     std::vector<int> slots;

@@ -408,3 +408,47 @@ TEST_CASE("The cached-match note gives the status's age and, when it withheld th
     CHECK(planned.find("5 s ago") != std::string::npos);
     CHECK(planned.find("allow_cached") == std::string::npos);
 }
+
+namespace {
+
+nlohmann::json planned_match(const char* status)
+{
+    return {{"status", status}, {"dry_run", true}, {"changed_count", 1}, {"slots", nlohmann::json::array()}};
+}
+
+} // namespace
+
+TEST_CASE("A cached plan held back for want of allow_cached is not a success", "[ProjectMatch]")
+{
+    const nlohmann::json response = label_cached_match(planned_match("success"), /*age_s=*/90, "no connection", /*withheld=*/true);
+    CHECK(response["status"] == "not_applied");
+    CHECK(response["applied"] == false);
+    CHECK(response["source"] == "cached");
+    CHECK(response["age_s"] == 90);
+    CHECK(response["live_error"] == "no connection");
+    CHECK(response["note"].get<std::string>().find("allow_cached: true") != std::string::npos);
+
+    // Held back although part of it could not be planned: still not applied, whatever else it is.
+    CHECK(label_cached_match(planned_match("partial"), 90, "no connection", true)["status"] == "not_applied");
+}
+
+TEST_CASE("A cached plan that was asked for as a dry run, or applied, keeps its own status", "[ProjectMatch]")
+{
+    const nlohmann::json response = label_cached_match(planned_match("partial"), /*age_s=*/5, "no connection", /*withheld=*/false);
+    CHECK(response["status"] == "partial");
+    CHECK_FALSE(response.contains("applied"));
+    CHECK(response["source"] == "cached");
+    CHECK(response["note"].get<std::string>().find("5 s ago") != std::string::npos);
+}
+
+TEST_CASE("An error from a cached plan says it came from the cache but carries no plan note", "[ProjectMatch]")
+{
+    const nlohmann::json error = {{"status", "error"}, {"message", "slot 7 is not a material-station slot on this printer"}};
+    const nlohmann::json response = label_cached_match(error, /*age_s=*/5, "no connection", /*withheld=*/true);
+    CHECK(response["status"] == "error");
+    CHECK(response["message"] == error["message"]);
+    CHECK(response["source"] == "cached");
+    CHECK(response["live_error"] == "no connection");
+    CHECK_FALSE(response.contains("note"));
+    CHECK_FALSE(response.contains("applied"));
+}

@@ -226,9 +226,9 @@ material mismatch and makes the plate preview lie about what you are getting. Th
 console offers it as a dismissible suggestion when it notices the two disagree.
 
 If the printer does not answer (asleep, off the network), the plan comes from the
-status it last reported while the app was running, with its age. It is shown as a dry
-run and applied only when the call passes `allow_cached: true`, since a spool may have
-been swapped since.
+status it last reported while the app was running, with its age. It is returned as
+`not_applied` and applied only when the call passes `allow_cached: true`, since a spool
+may have been swapped since.
 
 ---
 

@@ -2187,13 +2187,15 @@ colour. Empty slots are left alone.
 | `dry_run` | boolean | No | Report the plan without changing anything (default false) |
 | `allow_cached` | boolean | No | Apply a plan made from the printer's last known status when it cannot be read live (default false) |
 
-**Returns:** `{"status": "success"|"partial", "dry_run": ..., "changed_count": N, "slots": [...],
-"filaments": [...], "source": "live"}`.
+**Returns:** `{"status": "success"|"partial"|"not_applied", "dry_run": ..., "changed_count": N,
+"slots": [...], "filaments": [...], "source": "live"|"cached"}`.
 
 When the printer cannot be reached but answered earlier in this session, the plan is made from
 that last status and the response says so: `"source": "cached"`, `age_s`, `live_error` and a `note`.
 It changes the project only with `allow_cached: true`. Without it, a call that asked to apply comes
-back as a dry run with `"applied": false`, and the note says how to opt in. With no earlier answer,
+back with `"status": "not_applied"`, `"applied": false` and the plan as a dry run, and the note says
+how to opt in. An error from the plan itself (no material station, an unknown slot) keeps its
+`status: error` and message, labelled `source: cached`, with no plan note. With no earlier answer,
 the call returns the live error. So does a printer that answered with a refusal (wrong check code,
 HTTP error, unreadable answer): only an unreachable printer falls back to its last status.
 

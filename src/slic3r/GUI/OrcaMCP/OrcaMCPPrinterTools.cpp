@@ -193,13 +193,7 @@ nlohmann::json match_from_cached_status(const FlashforgeLocalApi::CachedStatus& 
     nlohmann::json response = run_on_main_thread([station = cached.status.slots, slots, applies]() -> nlohmann::json {
         return match_project_to_printer(station, slots, /*dry_run=*/!applies);
     });
-    response["source"]     = "cached";
-    response["age_s"]      = cached.age_s;
-    response["live_error"] = live_error;
-    response["note"]       = cached_match_note(cached.age_s, withheld);
-    if (withheld)
-        response["applied"] = false;
-    return response;
+    return label_cached_match(std::move(response), cached.age_s, live_error, withheld);
 }
 
 // How long ago the preset's Flashforge last answered a status read: null when it has not since the
@@ -1005,7 +999,7 @@ void OrcaMCPServer::register_printer_tools()
         "a stale project causes: send_to_printer refusing on a material mismatch, and a plate preview in "
         "the wrong colour. When the printer cannot be reached, the plan comes from its last known status "
         "(source: cached, with age_s and live_error) and changes the project only with allow_cached: true; "
-        "otherwise it is returned as a dry run.",
+        "a real run without it returns status not_applied with the plan and changes nothing.",
         {
             {"type", "object"},
             {"properties", {
