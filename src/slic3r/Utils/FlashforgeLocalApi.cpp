@@ -1,7 +1,5 @@
 #include "FlashforgeLocalApi.hpp"
 
-#include "Http.hpp"
-
 #include <boost/algorithm/string/classification.hpp>
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/algorithm/string/split.hpp>
@@ -13,19 +11,58 @@
 
 namespace Slic3r { namespace FlashforgeLocalApi {
 
+namespace {
+
+// "http://user@host:80/x" -> "user@host:80/x": the authority and what follows it.
+std::string without_scheme(const std::string& address)
+{
+    const auto scheme = address.find("://");
+    return scheme == std::string::npos ? address : address.substr(scheme + 3);
+}
+
+// "user@host:80/x?y#z" -> "user@host:80": everything before the first '/', '?' or '#'.
+std::string authority_of(const std::string& rest)
+{
+    return rest.substr(0, rest.find_first_of("/?#"));
+}
+
+// "user:secret@host:80" -> "host:80".
+std::string without_userinfo(const std::string& authority)
+{
+    const auto at = authority.rfind('@');
+    return at == std::string::npos ? authority : authority.substr(at + 1);
+}
+
+// "host:80" -> "host", "[fe80::1]:80" -> "[fe80::1]", "fe80::1" -> "[fe80::1]".
+std::string without_port(const std::string& host_port)
+{
+    if (!host_port.empty() && host_port.front() == '[') {
+        const auto close = host_port.find(']');
+        return close == std::string::npos ? host_port : host_port.substr(0, close + 1);
+    }
+    const auto first_colon = host_port.find(':');
+    if (first_colon == std::string::npos)
+        return host_port;
+    // More than one colon and no brackets: an IPv6 literal, every colon its own. A URL needs brackets.
+    if (host_port.find(':', first_colon + 1) != std::string::npos)
+        return "[" + host_port + "]";
+    return host_port.substr(0, first_colon);
+}
+
+} // namespace
+
+// Parsed by hand rather than by curl's URL API: curl rejects some shapes a preset can hold (a path
+// with "//", a non-numeric port) and Http::get_host_from_url then returns the whole string, port
+// and path included, logging an error on every call.
 std::string host_of(const std::string& address)
 {
     const std::string trimmed = boost::algorithm::trim_copy(address);
-    if (trimmed.empty())
-        return {};
-    // Upstream's one URL parser: it adds the scheme a bare "ip:port" lacks before curl reads it,
-    // which is exactly the case the old scheme-less branch got wrong.
-    return Http::get_host_from_url(trimmed);
+    return without_port(without_userinfo(authority_of(without_scheme(trimmed))));
 }
 
-std::string url_of(const std::string& address, const std::string& path)
+std::string url_of(const std::string& host, const std::string& path)
 {
-    return (boost::format("http://%1%:%2%/%3%") % host_of(address) % kPort % path).str();
+    return (boost::format("http://%1%:%2%/%3%") % host % kPort % path).str();
 }
 
 namespace {

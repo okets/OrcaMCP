@@ -750,7 +750,7 @@ void Flashforge::log_local_api_outcome(const std::string& url, bool ok, const Fl
 
 std::string Flashforge::make_http_url(const std::string& path) const
 {
-    return FlashforgeLocalApi::url_of(m_host, path);
+    return FlashforgeLocalApi::url_of(extract_host_name(), path);
 }
 
 // A print_host written as "ip:port" without a scheme used to keep its port here, so the local API URL

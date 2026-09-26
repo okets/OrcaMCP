@@ -25,6 +25,34 @@ TEST_CASE("host_of drops the port from every address shape", "[flashforge]")
     CHECK(host_of("[fe80::1]:80") == "[fe80::1]");
 }
 
+TEST_CASE("host_of strips any path, query, credentials and port it is given", "[flashforge]")
+{
+    CHECK(host_of("10.0.0.5/foo//bar") == "10.0.0.5");
+    CHECK(host_of("10.0.0.5:8080//x/../y") == "10.0.0.5");
+    CHECK(host_of("http://10.0.0.5:8080/a?b=c#d") == "10.0.0.5");
+    CHECK(host_of("10.0.0.5?x=1") == "10.0.0.5");
+    CHECK(host_of("10.0.0.5#frag") == "10.0.0.5");
+    CHECK(host_of("user:secret@10.0.0.5:80") == "10.0.0.5");
+    CHECK(host_of("HTTP://Printer.local") == "Printer.local");
+    CHECK(host_of("10.0.0.5:") == "10.0.0.5");
+    CHECK(host_of("10.0.0.5:not-a-port") == "10.0.0.5");
+    CHECK(host_of("printer name with spaces:80/x") == "printer name with spaces");
+}
+
+TEST_CASE("host_of keeps an IPv6 literal in the brackets a URL needs", "[flashforge]")
+{
+    CHECK(host_of("[fe80::1]") == "[fe80::1]");
+    CHECK(host_of("http://[fe80::1]:8080/x") == "[fe80::1]");
+    CHECK(host_of("fe80::1") == "[fe80::1]"); // unbracketed: every colon is the address's own
+}
+
+TEST_CASE("host_of has nothing to return for an address with no host", "[flashforge]")
+{
+    CHECK(host_of("http://").empty());
+    CHECK(host_of(":8080").empty());
+    CHECK(host_of("/path").empty());
+}
+
 TEST_CASE("host_of ignores surrounding whitespace and keeps an empty address empty", "[flashforge]")
 {
     CHECK(host_of("  10.0.0.100 ") == "10.0.0.100");
@@ -35,8 +63,8 @@ TEST_CASE("host_of ignores surrounding whitespace and keeps an empty address emp
 TEST_CASE("url_of always targets the local API port", "[flashforge]")
 {
     CHECK(url_of("10.0.0.100", "detail") == "http://10.0.0.100:8898/detail");
-    CHECK(url_of("10.0.0.100:8080", "detail") == "http://10.0.0.100:8898/detail");
-    CHECK(url_of("http://printer.local:80/", "gcodeList") == "http://printer.local:8898/gcodeList");
+    CHECK(url_of(host_of("10.0.0.100:8080"), "detail") == "http://10.0.0.100:8898/detail");
+    CHECK(url_of("[fe80::1]", "gcodeList") == "http://[fe80::1]:8898/gcodeList");
 }
 
 // What Http hands on_error for a failure before any HTTP response: "curl:<summary>:\n<detail>\n[Error N]".
