@@ -39,7 +39,7 @@ Translate MCP stdio transport to HTTP requests.
 ### Configuration
 Environment variables:
 ```bash
-ORCAMCP_HOST=localhost    # OrcaSlicer host
+ORCAMCP_HOST=localhost    # OrcaSlicer host: localhost or 127.0.0.1 (the app listens on 127.0.0.1 only)
 ORCAMCP_PORT=13618        # OrcaSlicer HTTP port
 ORCAMCP_TIMEOUT=120       # Request timeout (seconds)
 ORCAMCP_DEBUG=1           # Enable debug logging to stderr
@@ -265,8 +265,9 @@ Error: Invalid JSON in request
 ## Security Considerations
 
 ### Localhost Only
-The HTTP server binds to localhost by default:
-- Only local processes can connect
+The HTTP server listens on 127.0.0.1 only, for the MCP server and the cloud login's callback alike
+(`HttpServer.hpp`; before v2.5.0.6-dev it listened on every interface):
+- Only local processes can connect; another machine cannot, whatever `ORCAMCP_HOST` says
 - No authentication required
 - Suitable for single-user development machine
 
@@ -276,7 +277,7 @@ The HTTP server binds to localhost by default:
 - Tools can interact with printers
 
 ### Recommendations
-- Don't expose port 13618 to network
+- Don't forward port 13618 to the network (an SSH tunnel or proxy would expose every tool)
 - Run OrcaSlicer as unprivileged user
 - Be cautious with `send_to_printer` tool
 

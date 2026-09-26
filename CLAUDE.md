@@ -347,7 +347,7 @@ gh release upload v2.3.2.10 ./path/to/new/artifact.exe -R okets/OrcaMCP
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPPresetConfigUtils.cpp` | Preset/config management |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPModelLoad.cpp` | `load_model`'s decisions: what a file does to the scene (`load_file_kind`, `load_refusal`), the 3MF load type (`choose_3mf_load`, called by `Plater`'s `determine_load_type`) and the `loaded_objects` report, whose objects are `model_object_summary_json` (`OrcaMCPCommon.cpp`), shared with `get_scene_info` (unit-tested in `tests/slic3rutils/test_mcp_model_load.cpp`) |
 | `src/slic3r/Utils/ObicoLink.cpp` | Flashforge preset's Obico link: page link object and token-free MCP status (spec `docs/superpowers/specs/2026-09-15-obico-camera-source-design.md`) |
-| `src/slic3r/GUI/HttpServer.hpp` | HTTP server with JSON responses |
+| `src/slic3r/GUI/HttpServer.hpp` | HTTP server with JSON responses; listens on 127.0.0.1 only |
 | `src/slic3r/GUI/HttpServer.cpp` | POST body reading, ResponseJson, the bounded stop |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPMainThreadGate.cpp` | How a call hands work to the main thread and waits, and how quitting releases it (see "Threading Model"; unit-tested in `tests/slic3rutils/test_mcp_shutdown.cpp`) |
 | `src/slic3r/GUI/GUI_App.cpp` | MCP route registration, HTTP server startup, and the shutdown order (`stop_http_server`) |
@@ -481,6 +481,8 @@ that call in flight waited forever: on 2026-09-26 `quit_app`, with a script poll
   (one that is not waiting on the main thread, e.g. a slow network call) is left to finish on its
   own thread, and its server is deliberately leaked; the app exits anyway.
 
+Both servers listen on **127.0.0.1 only**: MCP has no authentication and can start prints.
+
 ---
 
 ## Code Style Standards
@@ -504,6 +506,7 @@ that call in flight waited forever: on 2026-09-26 `quit_app`, with a script poll
    `new_project`:** resetting the plater mid-slice can crash the app, because upstream's
    `Plater::priv::reset` frees the plates' prints (`partplate_list.reinit()`) before it stops the
    slicing thread (seen 2026-09-26 on the release and dev builds; not fixed here)
+5. **Local only**: the MCP server listens on 127.0.0.1; it cannot be reached from another machine
 
 ---
 
@@ -674,7 +677,7 @@ The `count` field is always present (even when 0) to help confirm issues have be
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ORCAMCP_HOST` | `localhost` | OrcaSlicer HTTP server host |
+| `ORCAMCP_HOST` | `localhost` | OrcaSlicer HTTP server host. The app listens on 127.0.0.1 only, so this is `localhost` or `127.0.0.1`; another machine cannot reach it |
 | `ORCAMCP_PORT` | `13618` | OrcaSlicer HTTP server port |
 | `ORCAMCP_TIMEOUT` | `120` | Request timeout in seconds |
 | `ORCAMCP_DEBUG` | (unset) | Enable debug logging to stderr |
@@ -754,12 +757,14 @@ echo "J startup reads recent-project thumbnails on the GUI thread (rel2506/02): 
 echo "K Flashforge host ip:port keeps its port in the URL (rel2506/04):   $(U src/slic3r/Utils/Flashforge.cpp | grep -c 'const auto slash_pos = host.find')"
 echo "L Flashforge local API: no retry, failure log or next step (rel2506/04; 0 = bug): $(U src/slic3r/Utils/Flashforge.cpp | grep -c 'run_with_retry')"
 echo "M HttpServer::stop joins its thread with no bound (rel2506/04b):   $(U src/slic3r/GUI/HttpServer.cpp | awk '/^void HttpServer::stop/{f=1} f&&/_thread\.join\(\)/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
+echo "N HttpServer listens on every interface (rel2506/04b):             $(U src/slic3r/GUI/HttpServer.hpp | grep -c 'acceptor(io_service, {boost::asio::ip::tcp::v4()')"
 ```
 
-Item M: upstream's `HttpServer` only ever serves the cloud login, on a port the OS picks, and its
-handler never waits on the main thread, so its unbounded join cannot deadlock there; ours can,
-because MCP calls wait on the main thread (see "Threading Model"). On "no", take upstream's code and
-re-check that the join is bounded.
+Items M and N: upstream's `HttpServer` only ever serves the cloud login, on a port the OS picks, and
+its handler never waits on the main thread, so its unbounded join cannot deadlock there; ours can,
+because MCP calls wait on the main thread (see "Threading Model"). Upstream also binds all
+interfaces; we bind 127.0.0.1. On "no" / 0, take upstream's code and re-check that the join is
+bounded and the bind is loopback.
 
 Item J: upstream opens every recent 3MF synchronously while building the main window, before
 post_init starts the MCP server. Our patch skips it for an agent launch (`GUI::is_agent_launch()`,

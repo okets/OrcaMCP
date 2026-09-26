@@ -119,6 +119,21 @@ private:
 
 } // namespace
 
+TEST_CASE("the HTTP server listens on this machine only", "[HttpServer]")
+{
+    HttpServer server(0);
+    server.set_request_handler([](const std::string&) { return json_response({{"status", "ok"}}); });
+    server.start();
+
+    const tcp::endpoint where = server.local_endpoint();
+    CHECK(where.address().is_loopback());
+    CHECK(where.port() != 0);
+    CHECK(exchange(where.port(), "GET", "/mcp").get().find("\"status\":\"ok\"") != std::string::npos);
+
+    server.stop();
+    CHECK_FALSE(server.is_started());
+}
+
 TEST_CASE("stopping the HTTP server takes at most its bound while a request is still being handled", "[HttpServer]")
 {
     Latch      entered, release;

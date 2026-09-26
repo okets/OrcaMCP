@@ -173,7 +173,9 @@ private:
         boost::asio::ip::tcp::acceptor     acceptor;
         std::set<std::shared_ptr<session>> sessions;
 
-        IOServer(HttpServer& server) : server(server), acceptor(io_service, {boost::asio::ip::tcp::v4(), server.port}) {}
+        // Loopback only: the MCP server can load files, change presets and start prints, and has no
+        // authentication, so nothing off this machine may reach it; the login callback is local too.
+        IOServer(HttpServer& server) : server(server), acceptor(io_service, {boost::asio::ip::address_v4::loopback(), server.port}) {}
 
         void do_accept();
 

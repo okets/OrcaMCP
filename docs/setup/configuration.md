@@ -42,7 +42,7 @@ The bridge script accepts these environment variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ORCAMCP_HOST` | `localhost` | OrcaSlicer HTTP server host |
+| `ORCAMCP_HOST` | `localhost` | OrcaSlicer HTTP server host: `localhost` or `127.0.0.1`. The app listens on 127.0.0.1 only, so another machine cannot reach it |
 | `ORCAMCP_PORT` | `13618` | OrcaSlicer HTTP server port |
 | `ORCAMCP_TIMEOUT` | `120` | Request timeout in seconds |
 | `ORCAMCP_DEBUG` | (unset) | Enable debug logging to stderr |
@@ -198,9 +198,10 @@ Check OrcaSlicer's console output for MCP-related messages:
 
 ### Local Only
 
-The HTTP server binds to localhost only:
+The HTTP server listens on 127.0.0.1 only, for MCP and the cloud login's callback alike (before
+v2.5.0.6-dev it listened on every interface):
 - Only processes on the same machine can connect
-- No network exposure by default
+- No network exposure, and no setting to turn it on
 
 ### No Authentication
 

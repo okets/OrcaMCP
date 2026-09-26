@@ -83,6 +83,12 @@ Before v2.5.0.6-dev a call in flight at that moment could hang the app for good:
 port 13618 kept listening, and every request went unanswered until the process was killed. If an
 older build does that, `kill` it; the project's unsaved changes are lost either way.
 
+### Can't reach OrcaMCP from another machine
+
+By design. The app listens on 127.0.0.1 only (`lsof -nP -iTCP:13618 -sTCP:LISTEN` shows
+`127.0.0.1:13618`): the MCP server has no authentication and can load files and start prints. Run the
+bridge on the machine that runs OrcaMCP; `ORCAMCP_HOST` is `localhost` or `127.0.0.1`.
+
 ## Tool Errors
 
 ### "Invalid object_id"

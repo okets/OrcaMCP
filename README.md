@@ -283,7 +283,7 @@ See the [building guide](docs/setup/building.md) for Windows and for the depende
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ORCAMCP_HOST` | `localhost` | OrcaSlicer HTTP host |
+| `ORCAMCP_HOST` | `localhost` | OrcaSlicer HTTP host; the app listens on 127.0.0.1 only |
 | `ORCAMCP_PORT` | `13618` | OrcaSlicer HTTP port |
 | `ORCAMCP_TIMEOUT` | `120` | Request timeout in seconds |
 | `ORCAMCP_DEBUG` | unset | Debug logging to stderr |
