@@ -112,7 +112,7 @@ grep -hA1 -E '^\s*register_(bridge_)?tool\(\{' src/slic3r/GUI/OrcaMCP/*.cpp | gr
 | Category | Tools |
 |----------|-------|
 | **Scene** | `get_scene_info` (plates, objects with `filaments_used` — read that, not `extruder_id` — and each plate's full occupancy: object footprints with brim, the prime tower, excluded bed areas), `new_project`, `load_project`, `save_project`, `export_3mf` |
-| **Models** | `load_model`, `auto_orient`, `arrange_objects`, `get_object_info` (incl. every volume with its type and filament), `rename_object`, `set_object_printable` |
+| **Models** | `load_model` (a 3MF is always geometry only: never its presets, never a rename; returns `loaded_objects`, `filaments_added`; `multipart: merge\|separate`), `auto_orient`, `arrange_objects`, `get_object_info` (incl. every volume with its type and filament), `rename_object`, `set_object_printable` |
 | **Transforms** | `move_object`, `rotate_object`, `scale_object`, `mirror_object`, `flatten_object`, `clone_object`, `cut_object`, `delete_object`, `transform_objects` |
 | **Plates** | `add_plate`, `select_plate`, `delete_plate`, `set_prime_tower_position` |
 | **Config** | `get_presets`, `get_edited_presets`, `select_preset`, `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset`, `get_valid_config_keys` |
@@ -344,6 +344,7 @@ gh release upload v2.3.2.10 ./path/to/new/artifact.exe -R okets/OrcaMCP
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPRenderOverlay.cpp` | 2D overlays on finished renders: outline, grid, origin, labels, excluded areas |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPFirstLayerPlan.cpp` | Top-down first-layer plan from the sliced `Print` (brim, support, wipe tower) with footprint fallback |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPPresetConfigUtils.cpp` | Preset/config management |
+| `src/slic3r/GUI/OrcaMCP/OrcaMCPModelLoad.cpp` | `load_model`'s 3MF decision (`choose_3mf_load`, called by `Plater`'s `determine_load_type`) and its `loaded_objects` report (unit-tested in `tests/slic3rutils/test_mcp_model_load.cpp`) |
 | `src/slic3r/Utils/ObicoLink.cpp` | Flashforge preset's Obico link: page link object and token-free MCP status (spec `docs/superpowers/specs/2026-09-15-obico-camera-source-design.md`) |
 | `src/slic3r/GUI/HttpServer.hpp` | HTTP server with JSON responses |
 | `src/slic3r/GUI/HttpServer.cpp` | POST body reading, ResponseJson |
@@ -533,28 +534,37 @@ When `load_model`, `load_project`, or `new_project` is called:
 
 ### Auto-Handled Dialogs
 
+Every captured prompt that offered a choice (Yes, No or Cancel buttons) ends with the answer it was
+given: `"<prompt> (auto-answered <answer>)"`. OK-only notices are captured as they are.
+
 | Dialog Type | Default Action |
 |-------------|----------------|
 | Info dialogs (OK only) | Auto-OK, message captured |
-| Yes/No dialogs (scaling) | Auto-YES (safer to scale) |
+| Yes/No dialogs (`MsgDialog`) | Auto-YES, `(auto-answered Yes)` |
 | Warning dialogs | Auto-OK, message captured |
 | 3MF version warnings | Auto-OK, message captured |
-| Object too large/small | Auto-YES (scale to fit) |
-| "Project has unsaved changes, save before continuing?" (Yes/No/Cancel, `Plater::close_with_confirm`) | Auto-NO: continue without saving (discard), message captured. Answering Yes would open a modal file dialog and hang the MCP call. |
-| `UnsavedChangesDialog` (modified presets on new/load project, preset switch) | Discard the preset changes, message captured |
-| `ProjectDropDialog` (project load behaviour, "load geometry only") | Load geometry only (`load_model` never replaces the current project; use `load_project` to open a 3MF as a project) |
-| Native file dialogs (`wxFileDialog` via `Plater::priv::get_export_file`) | Never opened. `save_project` without a name returns an error asking for `output_path`; `export_gcode` / `export_3mf` without `output_path` return an error asking for a path. |
-| Archive contents picker (`FileArchiveDialog`, loading a .zip) | Not opened; the ZIP is not imported, message captured |
-| `StepMeshDialog` (STEP/STP import tessellation) | Not opened; imported with the configured linear/angle deflection, message captured |
+| Object too large/small | Auto-YES (scale to fit). `load_model`'s `loaded_objects` shows the resulting scale |
+| "Several objects at multiple heights: load as a single object with multiple parts?" (`Plater.cpp`, `MCP_PROMPT_MULTIPART`) | Answered by `load_model`'s `multipart`: `merge` (default) = Yes, `separate` = No |
+| "Project has unsaved changes, save before continuing?" (Yes/No/Cancel, `Plater::close_with_confirm`) | Auto-NO: continue without saving (discard), `(auto-answered No: continued without saving)`. Answering Yes would open a modal file dialog and hang the MCP call. |
+| `UnsavedChangesDialog` (modified presets on new/load project, preset switch) | Discard the preset changes; the message names up to eight changed keys, `(auto-answered Discard: the changes were lost)` |
+| `ProjectDropDialog` (project load behaviour) | Never shown under MCP, whatever `project_load_behaviour` says and whether the scene is empty: `load_model` always imports a 3MF as geometry only (no presets applied, no scene reset, no rename; decided by `OrcaMCP::choose_3mf_load`). `load_project` opens a 3MF as a project. |
+| Native file dialogs (`wxFileDialog` via `Plater::priv::get_export_file`) | Never opened (`auto-answered Cancel`). `save_project` without a name returns an error asking for `output_path`; `export_gcode` / `export_3mf` without `output_path` return an error asking for a path. |
+| Archive contents picker (`FileArchiveDialog`, loading a .zip) | Not opened; the ZIP is not imported (`auto-answered Cancel`), and `load_model` returns an error |
+| `StepMeshDialog` (STEP/STP import tessellation) | Not opened; imported with the configured linear/angle deflection, which the message states |
+| `TextureImportDialog` (textured or vertex-coloured OBJ, GLB, GLTF, FBX) | Not opened; imported as plain geometry, colours not mapped (`auto-answered Skip`) |
+| "Connected printer is X. Sync the printer information and switch the preset?" (`TipsDialog`, project load with a mismatched Bambu printer connected) | Auto-NO: the printer preset is not switched |
 | Send-to-printer (`send_to_printer`) | **Bambu:** the `SelectMachineDialog` is scheduled with `CallAfter` and the tool returns `dialog_opened`; the user drives it. **Print hosts (Flashforge, Moonraker, OctoPrint, …):** by default (`direct: true`) there is **no dialog** — the tool uploads the sliced plate and, because `start_print` also defaults to true, **starts the print**. It returns `queued`. Pass `start_print: false` to upload only, or `direct: false` to open the print-host dialog instead. Never call it to "look at the dialog": on 2026-09-18 that started a 7 h print. |
 
 ### Implementation
 
 Dialog suppression is implemented in:
-- `GUI.hpp/cpp`: `set_mcp_dialog_suppression()`, `is_mcp_dialog_suppression_enabled()`
-- `MsgDialog.cpp`: `ShowModal()` override checks suppression flag
+- `GUI.hpp/cpp`: `set_mcp_dialog_suppression()`, `is_mcp_dialog_suppression_enabled()`,
+  `add_mcp_suppressed_answer()` (the `(auto-answered …)` format every site uses), and the per-prompt
+  answers (`set_mcp_prompt_answer()`, `mcp_answer_for()`)
+- `MsgDialog.cpp`: `ShowModal()` override checks suppression flag; a dialog tagged with
+  `set_mcp_prompt_key()` takes the answer the tool set with `McpDialogSuppressionGuard::answer_prompt()`
 - `UnsavedChangesDialog.cpp`: `ShowModal()` discards preset changes under suppression
-- `Plater.cpp`: `close_with_confirm()`, `determine_load_type()`, `priv::get_export_file()`, `preview_zip_archive()`, `mcp_skip_step_mesh_dialog()` check the flag before opening a modal
+- `Plater.cpp`: `close_with_confirm()`, `determine_load_type()`, `priv::get_export_file()`, `preview_zip_archive()`, `mcp_skip_step_mesh_dialog()`, `priv::run_textured_mesh_import_dialog()` and the sync-printer `TipsDialog` in `priv::load_files()` check the flag before opening a modal
 - `OrcaMCPServer.cpp` / `OrcaMCPPrinterTools.cpp`: endpoints scope suppression with the RAII
   `McpDialogSuppressionGuard` (`OrcaMCPCommon.hpp`), which is nest-safe and restores the previous
   state even if the handler throws. Never call `set_mcp_dialog_suppression()` directly.
@@ -579,10 +589,13 @@ So the API's verbs map to the GUI's like this:
 | `save_project` with no `output_path` | Save (in place; error if the project has no name yet) |
 | `save_project` with `output_path` | Save As |
 | `load_project` | Open (the project takes the opened file's name) |
+| `load_model` | Import (never names the project, a 3MF included) |
 
 Each of those responses carries `"project_renamed_to": <path>` and an `info_messages` line whenever
 the call changed the project's name, so an agent never has to guess which file a later
-`save_project` will overwrite.
+`save_project` will overwrite. `load_model` checks too, and would say so if a load path ever
+renamed the project. Until 2026-09-26 a `load_model` of a 3MF onto an empty scene opened it as a
+project and renamed it silently, and a later `save_project {}` overwrote the user's file.
 
 ### Endpoints with Dialog Suppression
 

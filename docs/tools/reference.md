@@ -347,19 +347,52 @@ and a Cmd-S in the GUI overwrite that file.
 ## Model Tools
 
 ### load_model
-Import a 3D model file.
+Import a 3D model file, adding its objects to the scene.
+
+A 3MF is always imported as geometry only, whatever the app's "load behaviour" setting says and
+whether the scene is empty or not: its printer, filament and process presets are not applied, your
+unsaved preset edits are kept, and the project keeps its name. Use `load_project` to open a 3MF as
+a project.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `file_path` | string | Yes | Path to STL, OBJ, 3MF, or STEP file |
+| `file_path` | string | Yes | Path to STL, OBJ, 3MF, STEP, AMF, SVG or DRC file |
+| `include_preview` | boolean | No | Return turntable preview path |
+| `multipart` | string | No | `merge` (default) or `separate`. When the file holds several objects at different heights, the slicer asks whether they are one object's parts: `merge` joins them into one object named after the file (as the GUI suggests), `separate` keeps each as its own object. Nothing splits a merged object again, so choose here. |
 
 **Example:**
 ```json
-{"name": "load_model", "arguments": {"file_path": "/path/to/model.stl"}}
+{"name": "load_model", "arguments": {"file_path": "/path/to/model.3mf", "multipart": "separate"}}
 ```
 
-**Returns:** Object info including `object_index`, `name`, `bounding_box`
+**Returns:**
+
+| Field | Description |
+|-------|-------------|
+| `status` | `success`, or `error` when the file failed to load **or loaded but added no objects** (for example a ZIP, whose file picker cannot open under MCP) |
+| `file` | The path loaded |
+| `loaded_objects` | One entry per object the load added: `object_id` (its index, as other tools take it), `name`, `scale` `{x,y,z}` of its first instance, `size_mm` `{x,y,z}` (bounding box, as `get_scene_info` measures it) and `volume_count`. A merged multi-part file shows as one object with several volumes; a model scaled to fit the bed shows its scale. |
+| `filaments_added` | Filament slots the import added, because the model uses more filaments than the scene had (0 when none) |
+| `project_renamed_to` | Present only if the project's name changed. `load_model` never names the project, so this is absent. |
+| `info_messages` | What the slicer would have shown. A prompt that offered a choice ends with the answer given, e.g. `"Object too large: ... scale it down to fit the print bed automatically? (auto-answered Yes)"` |
+| `active_warnings` | As for every scene tool |
+
+A 20 mm cube exported 1000 times too large, on a 256 mm bed:
+
+```json
+{
+  "status": "success",
+  "file": "/tmp/cube_20m.stl",
+  "loaded_objects": [
+    {"object_id": 0, "name": "cube_20m.stl", "scale": {"x": 0.0127, "y": 0.0127, "z": 0.0127},
+     "size_mm": {"x": 254.0, "y": 254.0, "z": 254.0}, "volume_count": 1}
+  ],
+  "filaments_added": 0,
+  "info_messages": ["Object too large: Your object appears to be too large, do you want to scale it down to fit the print bed automatically? (auto-answered Yes)"],
+  "active_warnings": {"count": 0, "warnings": []}
+}
+```
 
 ---
 

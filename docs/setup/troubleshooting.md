@@ -243,6 +243,21 @@ So if you see it, nothing is listening on the port. Check `ORCAMCP_PORT`, and us
 2. **Tool not registered**
    - Ensure you're running OrcaMCP build (not vanilla OrcaSlicer)
 
+### A call shown as "rejected" changed the scene anyway
+
+**Symptoms:**
+- You interrupted the agent, or declined a tool call, and the client shows the call as rejected
+- The scene still changed: an object was loaded, a preset switched
+
+**Cause:** the agent sent several tool calls in parallel. The ones already sent before you
+interrupted reach OrcaSlicer and run to the end; the client only stops waiting for their answers.
+On 2026-09-26 a `load_model` sent alongside another load was shown as rejected, but the model was
+loaded.
+
+**What to do:** after an interrupt, check the scene (`get_scene_info`) before assuming a rejected
+call did nothing, and `undo` what you did not want. When a call must not run, stop the agent
+before it sends a batch, not while the batch is in flight.
+
 ## Build Issues
 
 ### CMake generator conflict
