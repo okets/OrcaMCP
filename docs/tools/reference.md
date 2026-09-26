@@ -354,6 +354,12 @@ whether the scene is empty or not: its printer, filament and process presets are
 unsaved preset edits are kept, and the project keeps its name. Use `load_project` to open a 3MF as
 a project.
 
+A G-code file (`.gcode`, `.g`) or a sliced 3MF bundle (`.gcode.3mf`) does not add objects: it
+replaces the scene with a preview of its G-code, and the project takes the file's name. So
+`load_model` loads one only onto an empty scene, and refuses it with an error (touching nothing)
+when the plate has objects: `save_project`, then `new_project`, then load it. While the scene is a
+G-code preview, model files are refused too; `new_project` returns to an editable scene.
+
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -370,12 +376,12 @@ a project.
 
 | Field | Description |
 |-------|-------------|
-| `status` | `success`, or `error` when the file failed to load **or loaded but added no objects** (for example a ZIP, whose file picker cannot open under MCP) |
+| `status` | `success`, or `error` when the file failed to load, **loaded but added no objects** (for example a ZIP, whose file picker cannot open under MCP), did not produce a G-code preview (unreadable G-code), or was refused (see above) |
 | `file` | The path loaded |
-| `loaded_objects` | One entry per object the load added: `object_id` (its index, as other tools take it), `name`, `scale` `{x,y,z}` of its first instance, `size_mm` `{x,y,z}` (bounding box, as `get_scene_info` measures it) and `volume_count`. A merged multi-part file shows as one object with several volumes; a model scaled to fit the bed shows its scale. |
+| `loaded_objects` | One entry per object the load added, in the same shape as `get_scene_info`'s `model_objects`: `id`, `name`, `object_index` (the index other tools take as `object_id`), `instance_count`, `volume_count`, `position`, `rotation_degrees`, `scale` `{x,y,z}` of its first instance and `bounding_box` `{size_x, size_y, size_z, min, max}`. A merged multi-part file shows as one object with several volumes; a model scaled to fit the bed shows its scale. Empty for a G-code preview. |
 | `filaments_added` | Filament slots the import added, because the model uses more filaments than the scene had (0 when none) |
-| `project_renamed_to` | Present only if the project's name changed. `load_model` never names the project, so this is absent. |
-| `info_messages` | What the slicer would have shown. A prompt that offered a choice ends with the answer given, e.g. `"Object too large: ... scale it down to fit the print bed automatically? (auto-answered Yes)"` |
+| `project_renamed_to` | Present only if the project's name changed: never for a model file, and always for a G-code preview (named after the file, so a later `save_project {}` writes there) |
+| `info_messages` | What happened, then what the slicer would have shown. A 3MF import says whether the file carried presets that were not applied. A prompt that offered a choice ends with the answer given, e.g. `"Object too large: ... scale it down to fit the print bed automatically? (auto-answered Yes)"`; the multi-part question also names the other `multipart` value |
 | `active_warnings` | As for every scene tool |
 
 A 20 mm cube exported 1000 times too large, on a 256 mm bed:
@@ -385,8 +391,12 @@ A 20 mm cube exported 1000 times too large, on a 256 mm bed:
   "status": "success",
   "file": "/tmp/cube_20m.stl",
   "loaded_objects": [
-    {"object_id": 0, "name": "cube_20m.stl", "scale": {"x": 0.0127, "y": 0.0127, "z": 0.0127},
-     "size_mm": {"x": 254.0, "y": 254.0, "z": 254.0}, "volume_count": 1}
+    {"id": "65", "name": "cube_20m.stl", "object_index": 0, "instance_count": 1, "volume_count": 1,
+     "position": {"x": 128.0, "y": 128.0, "z": 127.0},
+     "rotation_degrees": {"x": 0.0, "y": 0.0, "z": 0.0},
+     "scale": {"x": 0.0127, "y": 0.0127, "z": 0.0127},
+     "bounding_box": {"size_x": 254.0, "size_y": 254.0, "size_z": 254.0,
+                      "min": {"x": 1.0, "y": 1.0, "z": 0.0}, "max": {"x": 255.0, "y": 255.0, "z": 254.0}}}
   ],
   "filaments_added": 0,
   "info_messages": ["Object too large: Your object appears to be too large, do you want to scale it down to fit the print bed automatically? (auto-answered Yes)"],

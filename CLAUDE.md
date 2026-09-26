@@ -112,7 +112,7 @@ grep -hA1 -E '^\s*register_(bridge_)?tool\(\{' src/slic3r/GUI/OrcaMCP/*.cpp | gr
 | Category | Tools |
 |----------|-------|
 | **Scene** | `get_scene_info` (plates, objects with `filaments_used` — read that, not `extruder_id` — and each plate's full occupancy: object footprints with brim, the prime tower, excluded bed areas), `new_project`, `load_project`, `save_project`, `export_3mf` |
-| **Models** | `load_model` (a 3MF is always geometry only: never its presets, never a rename; returns `loaded_objects`, `filaments_added`; `multipart: merge\|separate`), `auto_orient`, `arrange_objects`, `get_object_info` (incl. every volume with its type and filament), `rename_object`, `set_object_printable` |
+| **Models** | `load_model` (a 3MF is always geometry only: never its presets, never a rename; `.gcode` / `.gcode.3mf` only onto an empty scene, as a preview; returns `loaded_objects` in `get_scene_info`'s object shape, `filaments_added`; `multipart: merge\|separate`), `auto_orient`, `arrange_objects`, `get_object_info` (incl. every volume with its type and filament), `rename_object`, `set_object_printable` |
 | **Transforms** | `move_object`, `rotate_object`, `scale_object`, `mirror_object`, `flatten_object`, `clone_object`, `cut_object`, `delete_object`, `transform_objects` |
 | **Plates** | `add_plate`, `select_plate`, `delete_plate`, `set_prime_tower_position` |
 | **Config** | `get_presets`, `get_edited_presets`, `select_preset`, `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset`, `get_valid_config_keys` |
@@ -344,7 +344,7 @@ gh release upload v2.3.2.10 ./path/to/new/artifact.exe -R okets/OrcaMCP
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPRenderOverlay.cpp` | 2D overlays on finished renders: outline, grid, origin, labels, excluded areas |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPFirstLayerPlan.cpp` | Top-down first-layer plan from the sliced `Print` (brim, support, wipe tower) with footprint fallback |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPPresetConfigUtils.cpp` | Preset/config management |
-| `src/slic3r/GUI/OrcaMCP/OrcaMCPModelLoad.cpp` | `load_model`'s 3MF decision (`choose_3mf_load`, called by `Plater`'s `determine_load_type`) and its `loaded_objects` report (unit-tested in `tests/slic3rutils/test_mcp_model_load.cpp`) |
+| `src/slic3r/GUI/OrcaMCP/OrcaMCPModelLoad.cpp` | `load_model`'s decisions: what a file does to the scene (`load_file_kind`, `load_refusal`), the 3MF load type (`choose_3mf_load`, called by `Plater`'s `determine_load_type`) and the `loaded_objects` report, whose objects are `model_object_summary_json` (`OrcaMCPCommon.cpp`), shared with `get_scene_info` (unit-tested in `tests/slic3rutils/test_mcp_model_load.cpp`) |
 | `src/slic3r/Utils/ObicoLink.cpp` | Flashforge preset's Obico link: page link object and token-free MCP status (spec `docs/superpowers/specs/2026-09-15-obico-camera-source-design.md`) |
 | `src/slic3r/GUI/HttpServer.hpp` | HTTP server with JSON responses |
 | `src/slic3r/GUI/HttpServer.cpp` | POST body reading, ResponseJson |
@@ -544,7 +544,7 @@ given: `"<prompt> (auto-answered <answer>)"`. OK-only notices are captured as th
 | Warning dialogs | Auto-OK, message captured |
 | 3MF version warnings | Auto-OK, message captured |
 | Object too large/small | Auto-YES (scale to fit). `load_model`'s `loaded_objects` shows the resulting scale |
-| "Several objects at multiple heights: load as a single object with multiple parts?" (`Plater.cpp`, `MCP_PROMPT_MULTIPART`) | Answered by `load_model`'s `multipart`: `merge` (default) = Yes, `separate` = No |
+| "Several objects at multiple heights: load as a single object with multiple parts?" (`Plater.cpp`, `MCP_PROMPT_MULTIPART`) | Answered by `load_model`'s `multipart`: `merge` (default) = Yes, `separate` = No. The message names the other value: `(auto-answered Yes; pass multipart: "separate" to keep them as separate objects)` |
 | "Project has unsaved changes, save before continuing?" (Yes/No/Cancel, `Plater::close_with_confirm`) | Auto-NO: continue without saving (discard), `(auto-answered No: continued without saving)`. Answering Yes would open a modal file dialog and hang the MCP call. |
 | `UnsavedChangesDialog` (modified presets on new/load project, preset switch) | Discard the preset changes; the message names up to eight changed keys, `(auto-answered Discard: the changes were lost)` |
 | `ProjectDropDialog` (project load behaviour) | Never shown under MCP, whatever `project_load_behaviour` says and whether the scene is empty: `load_model` always imports a 3MF as geometry only (no presets applied, no scene reset, no rename; decided by `OrcaMCP::choose_3mf_load`). `load_project` opens a 3MF as a project. |
@@ -553,6 +553,7 @@ given: `"<prompt> (auto-answered <answer>)"`. OK-only notices are captured as th
 | `StepMeshDialog` (STEP/STP import tessellation) | Not opened; imported with the configured linear/angle deflection, which the message states |
 | `TextureImportDialog` (textured or vertex-coloured OBJ, GLB, GLTF, FBX) | Not opened; imported as plain geometry, colours not mapped (`auto-answered Skip`) |
 | "Connected printer is X. Sync the printer information and switch the preset?" (`TipsDialog`, project load with a mismatched Bambu printer connected) | Auto-NO: the printer preset is not switched |
+| Any other `DPIDialog` modal (the fallback in `DPIAware::ShowModal`, `GUI_Utils.hpp`) | Not opened: answers Cancel, `"<dialog title> was suppressed (auto-answered Cancel)"`. The rows above answer their dialogs first, so this only catches a modal nobody handled |
 | Send-to-printer (`send_to_printer`) | **Bambu:** the `SelectMachineDialog` is scheduled with `CallAfter` and the tool returns `dialog_opened`; the user drives it. **Print hosts (Flashforge, Moonraker, OctoPrint, …):** by default (`direct: true`) there is **no dialog** — the tool uploads the sliced plate and, because `start_print` also defaults to true, **starts the print**. It returns `queued`. Pass `start_print: false` to upload only, or `direct: false` to open the print-host dialog instead. Never call it to "look at the dialog": on 2026-09-18 that started a 7 h print. |
 
 ### Implementation
@@ -569,10 +570,13 @@ Dialog suppression is implemented in:
   `McpDialogSuppressionGuard` (`OrcaMCPCommon.hpp`), which is nest-safe and restores the previous
   state even if the handler throws. Never call `set_mcp_dialog_suppression()` directly.
 
-Dialogs that are NOT `MsgDialog` subclasses (native `wxFileDialog`/`wxDirDialog`/`wxMessageBox`, and
-`DPIDialog` subclasses such as `UnsavedChangesDialog`) bypass `MsgDialog::ShowModal`, so each one must
-check `is_mcp_dialog_suppression_enabled()` at its call site. A modal opened inside `run_on_main_thread`
-blocks the GUI thread forever and the MCP call never returns.
+A modal opened inside `run_on_main_thread` blocks the GUI thread forever and the MCP call never
+returns. `DPIDialog` subclasses that no handler answers fall back to Cancel in `DPIAware::ShowModal`
+(`mcp_skip_unhandled_modal()`, `GUI.cpp`); give a dialog its own handler when Cancel is the wrong
+answer or the agent needs more than the title. Dialogs that derive from `wxDialog` directly (21 classes,
+e.g. `FilamentMapDialog`) and native ones (`wxFileDialog`/`wxDirDialog`/`wxMessageBox`) bypass both
+`MsgDialog::ShowModal` and the fallback, so each must check `is_mcp_dialog_suppression_enabled()` at
+its call site.
 
 ### Naming the Project ("export_3mf is this API's Save")
 
@@ -589,13 +593,13 @@ So the API's verbs map to the GUI's like this:
 | `save_project` with no `output_path` | Save (in place; error if the project has no name yet) |
 | `save_project` with `output_path` | Save As |
 | `load_project` | Open (the project takes the opened file's name) |
-| `load_model` | Import (never names the project, a 3MF included) |
+| `load_model` of a model file (a 3MF included) | Import (never names the project) |
+| `load_model` of a `.gcode` or `.gcode.3mf`, onto an empty scene | Open as a G-code preview (the project takes the file's name); refused onto a scene with objects |
 
 Each of those responses carries `"project_renamed_to": <path>` and an `info_messages` line whenever
 the call changed the project's name, so an agent never has to guess which file a later
-`save_project` will overwrite. `load_model` checks too, and would say so if a load path ever
-renamed the project. Until 2026-09-26 a `load_model` of a 3MF onto an empty scene opened it as a
-project and renamed it silently, and a later `save_project {}` overwrote the user's file.
+`save_project` will overwrite. Until 2026-09-26 a `load_model` of a 3MF onto an empty scene opened
+it as a project and renamed it silently, and a later `save_project {}` overwrote the user's file.
 
 ### Endpoints with Dialog Suppression
 
@@ -645,7 +649,7 @@ The `count` field is always present (even when 0) to help confirm issues have be
 | `ORCAMCP_PORT` | `13618` | OrcaSlicer HTTP server port |
 | `ORCAMCP_TIMEOUT` | `120` | Request timeout in seconds |
 | `ORCAMCP_DEBUG` | (unset) | Enable debug logging to stderr |
-| `ORCAMCP_SKIP_CLOUD_LOGIN` | (set by `start_orca`) | App-side: marks an agent launch (`GUI::is_agent_launch()`), so startup waits on nothing a person must answer. It skips the Orca cloud silent sign-in, which reads the keychain synchronously on the GUI thread (on macOS a permission prompt per freshly built binary), and the recent-project thumbnails, which open every recent 3MF on the GUI thread (for projects in `~/Documents`, a macOS privacy prompt per fresh binary; Home then shows no thumbnails). Either prompt, unanswered, blocks the app before the MCP server starts. Set it yourself when launching the app for an agent. |
+| `ORCAMCP_SKIP_CLOUD_LOGIN` | (set by `start_orca`) | App-side: marks an agent launch (`GUI::is_agent_launch()`), so startup waits on nothing a person must answer. It skips the Orca cloud silent sign-in, which reads the keychain synchronously on the GUI thread (on macOS a permission prompt per freshly built binary), and the recent-project thumbnails, which open every recent 3MF on the GUI thread (for projects in `~/Documents`, a macOS privacy prompt per fresh binary). Home then shows the projects listed before the launch without thumbnails; projects saved or opened during the session get theirs. Either prompt, unanswered, blocks the app before the MCP server starts. Set it yourself when launching the app for an agent. |
 
 ---
 
