@@ -44,7 +44,7 @@ registry on every call, so it names every tool the build has, bridge-only ones i
 **Returns:** Without `section` (about 5.6 KB): `server` (name, version from `version.inc`),
 `quick_start`, `tools` (every tool's one-line summary, grouped by category), `bridge_only` (tools
 the bridge answers itself), and `sections` (each section's name and size in bytes). With a
-section name, just that section; with `all`, everything (about 20 KB).
+section name, just that section; with `all`, everything (about 25 KB).
 
 **Examples:**
 ```json
