@@ -18,7 +18,7 @@ The HTTP server runs requests on worker threads for concurrency. This creates a 
 
 ## Decision
 
-We implement a **main thread dispatch pattern** using `run_on_main_thread<T>()`:
+We implement a **main thread dispatch pattern** using `run_on_main_thread()`:
 
 ```cpp
 template<typename T>
@@ -71,7 +71,7 @@ T run_on_main_thread(std::function<T()> func) {
 
 ```cpp
 json OrcaMCPServer::handle_load_model(const json& params) {
-    return run_on_main_thread<json>([&]() {
+    return run_on_main_thread([&]() -> json {
         // Safe to access GUI here
         auto* plater = wxGetApp().plater();
         // ... manipulate model ...

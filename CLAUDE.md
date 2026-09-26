@@ -422,7 +422,7 @@ with the same name, or one without a handler, throws when the registry is built.
 
 ```cpp
 json OrcaMCPServer::handle_my_new_tool(const json& params) {
-    return run_on_main_thread<json>([&]() {
+    return run_on_main_thread([&]() -> nlohmann::json {
         // Your implementation here
         // Use wxGetApp().plater() to access the Plater
         // Return JSON result

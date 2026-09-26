@@ -121,7 +121,7 @@ Always use `run_on_main_thread` for GUI operations:
 ```cpp
 // Good
 nlohmann::json handle_tool(const nlohmann::json& params) {
-    return run_on_main_thread<nlohmann::json>([&]() {
+    return run_on_main_thread([&]() -> nlohmann::json {
         // All GUI work here
         return result;
     });

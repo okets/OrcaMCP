@@ -97,7 +97,7 @@ All MCP tool handlers must use `run_on_main_thread()`:
 
 ```cpp
 nlohmann::json handle_my_tool(const nlohmann::json& params) {
-    return run_on_main_thread<nlohmann::json>([&]() {
+    return run_on_main_thread([&]() -> nlohmann::json {
         // GUI operations go here
         return result;
     });

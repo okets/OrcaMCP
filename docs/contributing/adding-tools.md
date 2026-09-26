@@ -58,7 +58,7 @@ Add your handler implementation:
 ```cpp
 nlohmann::json OrcaMCPServer::handle_my_new_tool(const nlohmann::json& params)
 {
-    return run_on_main_thread<nlohmann::json>([&]() {
+    return run_on_main_thread([&]() -> nlohmann::json {
         // 1. Get required parameters
         std::string param1 = params.value("param1", "");
         if (param1.empty()) {
@@ -120,7 +120,7 @@ All handlers that access GUI must use `run_on_main_thread`:
 
 ```cpp
 // CORRECT
-return run_on_main_thread<nlohmann::json>([&]() {
+return run_on_main_thread([&]() -> nlohmann::json {
     auto* plater = wxGetApp().plater();
     // Safe to use plater here
 });
@@ -178,7 +178,7 @@ If your tool modifies the scene, consider adding preview support:
 
 ```cpp
 nlohmann::json handle_my_tool(const nlohmann::json& params) {
-    return run_on_main_thread<nlohmann::json>([&]() {
+    return run_on_main_thread([&]() -> nlohmann::json {
         bool include_preview = params.value("include_preview", false);
 
         // ... do the operation ...
@@ -315,7 +315,7 @@ Solution: Wrap ALL GUI operations
 ### 2. Capturing by reference in lambdas
 ```cpp
 // CAREFUL with reference captures - params must outlive the lambda
-return run_on_main_thread<nlohmann::json>([&params]() {
+return run_on_main_thread([&params]() -> nlohmann::json {
     // OK if run_on_main_thread blocks
 });
 ```
@@ -358,7 +358,7 @@ register_tool({
         {"required", {"object_id"}}
     },
     [](const nlohmann::json& params) -> nlohmann::json {
-        return run_on_main_thread<nlohmann::json>([&]() {
+        return run_on_main_thread([&]() -> nlohmann::json {
             // Validate
             if (!params.contains("object_id")) {
                 throw std::runtime_error("object_id is required");

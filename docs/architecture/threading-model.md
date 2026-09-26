@@ -85,7 +85,7 @@ Every tool handler follows this pattern:
 
 ```cpp
 json OrcaMCPServer::handle_some_tool(const json& params) {
-    return run_on_main_thread<json>([&]() {
+    return run_on_main_thread([&]() -> json {
         // SAFE: This code runs on main thread
 
         auto* plater = wxGetApp().plater();
@@ -147,7 +147,7 @@ Some OrcaSlicer operations are inherently async:
 ```cpp
 // slice_all starts background slicing
 json handle_slice_all(const json& params) {
-    return run_on_main_thread<json>([&]() {
+    return run_on_main_thread([&]() -> json {
         auto* plater = wxGetApp().plater();
         plater->reslice();  // Returns immediately
         return json{{"status", "slicing_started"}};
@@ -159,7 +159,7 @@ Callers must poll for completion:
 ```cpp
 // get_slicing_status checks background state
 json handle_get_slicing_status(const json& params) {
-    return run_on_main_thread<json>([&]() {
+    return run_on_main_thread([&]() -> json {
         auto* plater = wxGetApp().plater();
         bool is_slicing = plater->is_slicing();
         return json{{"is_slicing", is_slicing}};
@@ -232,7 +232,7 @@ json handle_bad(const json& params) {
 
 // CORRECT: Wrap in run_on_main_thread
 json handle_good(const json& params) {
-    return run_on_main_thread<json>([&]() {
+    return run_on_main_thread([&]() -> json {
         auto* plater = wxGetApp().plater();
         plater->do_something();
         return json{{"status", "ok"}};
@@ -244,7 +244,7 @@ json handle_good(const json& params) {
 ```cpp
 // WRONG: params may be destroyed before main thread executes
 json handle_bad(const json& params) {
-    return run_on_main_thread<json>([params]() {  // Copy, don't reference
+    return run_on_main_thread([params]() -> json {  // Copy, don't reference
         // Use params here
     });
 }
@@ -254,7 +254,7 @@ json handle_bad(const json& params) {
 ```cpp
 // BAD: No indication this may take long
 json handle_slice(const json& params) {
-    return run_on_main_thread<json>([&]() {
+    return run_on_main_thread([&]() -> json {
         slice_everything();  // May take 10 minutes!
         return json{{"done", true}};
     });
@@ -262,7 +262,7 @@ json handle_slice(const json& params) {
 
 // BETTER: Start async, let caller poll
 json handle_slice(const json& params) {
-    return run_on_main_thread<json>([&]() {
+    return run_on_main_thread([&]() -> json {
         start_slicing_async();
         return json{{"status", "started"}};
     });
