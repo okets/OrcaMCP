@@ -22,6 +22,16 @@ TEST_CASE("a slice, or an edit that cancels it, is about the print that was bein
     CHECK(completion_print_index(CompletionKind::apply_cancelled, 7, 9) == 7);
 }
 
+TEST_CASE("what several plate-list changes did adds up", "[SliceCredit]")
+{
+    // delete_plate reports what every stop its deletion made did, not only the last (a no-op).
+    PlateListChangeDuringSlice change;
+    change |= on_plate_list_change(/*slice_running=*/true, /*slicing_all_plates=*/true);
+    change |= on_plate_list_change(false, false);
+    CHECK(change.stop_slice);
+    CHECK(change.cancel_slice_all);
+}
+
 TEST_CASE("a plate-list change stops a running slice and cancels a Slice All run", "[SliceCredit]")
 {
     const auto idle = on_plate_list_change(/*slice_running=*/false, /*slicing_all_plates=*/false);

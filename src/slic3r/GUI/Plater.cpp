@@ -6749,9 +6749,13 @@ struct Plater::priv
     PartPlateList partplate_list;
     //BBS: add a flag to ignore cancel event
     bool m_ignore_event{false};
-    // Orca: a plate deleted or moved while a slice runs stops it, and cancels a Slice All run
-    // (OrcaMCPSliceCredit.hpp); what it did, for the caller to report.
+    // Orca: before the plate list changes under a slice (a plate deleted or moved, undo or redo, a 3MF
+    // load): stop the slice, and cancel a Slice All run (OrcaMCPSliceCredit.hpp). What it did is also
+    // added to m_plate_list_change, for a caller that reports it.
     OrcaMCP::PlateListChangeDuringSlice stop_slice_for_plate_list_change();
+    OrcaMCP::PlateListChangeDuringSlice m_plate_list_change;
+    // Orca: runs `change` and, when asked, tells what the plate-list changes it made did to a slice.
+    void report_plate_list_change(OrcaMCP::PlateListChangeDuringSlice* slice_change, const std::function<void()>& change);
     // Orca: the print index a completion of this kind carries (OrcaMCPSliceCredit.hpp).
     int completion_print_index(OrcaMCP::CompletionKind kind);
     bool slicing_all_plates() const { return m_slice_all && m_is_slicing; } // Orca: a Slice All run is in progress
@@ -12652,7 +12656,16 @@ OrcaMCP::PlateListChangeDuringSlice Plater::priv::stop_slice_for_plate_list_chan
         m_slice_all = false; // the completion still to come ends the run
     if (change.stop_slice)
         background_process.stop();
+    m_plate_list_change |= change;
     return change;
+}
+
+void Plater::priv::report_plate_list_change(OrcaMCP::PlateListChangeDuringSlice* slice_change, const std::function<void()>& change)
+{
+    m_plate_list_change = {};
+    change();
+    if (slice_change != nullptr)
+        *slice_change = m_plate_list_change;
 }
 
 int Plater::priv::completion_print_index(OrcaMCP::CompletionKind kind)
@@ -14679,10 +14692,17 @@ void Plater::priv::undo_redo_to(std::vector<UndoRedo::Snapshot>::const_iterator 
 
     // Make a copy of the snapshot, undo/redo could invalidate the iterator
     const UndoRedo::Snapshot snapshot_copy = *it_snapshot;
+    // Orca: the jump rebuilds the plate list: every PartPlate is deleted and read back, and Prints no plate
+    // holds any more are freed (PartPlateList::rebuild_plates_after_deserialize). Stop the slice first, as
+    // for any plate-list change: the slicing thread uses its plate and its Print.
+    stop_slice_for_plate_list_change();
     // Do the jump in time.
     if (it_snapshot->timestamp < this->undo_redo_stack().active_snapshot_time() ?
         this->undo_redo_stack().undo(model, get_current_canvas3D()->get_canvas_type() == GLCanvas3D::CanvasAssembleView ? assemble_view->get_canvas3d()->get_selection() : this->view3D->get_canvas3d()->get_selection(), get_current_canvas3D()->get_canvas_type() == GLCanvas3D::CanvasAssembleView ? assemble_view->get_canvas3d()->get_gizmos_manager() : this->view3D->get_canvas3d()->get_gizmos_manager(), this->partplate_list, top_snapshot_data, it_snapshot->timestamp) :
         this->undo_redo_stack().redo(model, get_current_canvas3D()->get_canvas_type() == GLCanvas3D::CanvasAssembleView ? assemble_view->get_canvas3d()->get_gizmos_manager() : this->view3D->get_canvas3d()->get_gizmos_manager(), this->partplate_list, it_snapshot->timestamp)) {
+        // Orca: the process still points at a PartPlate the jump deleted: point it at the current plate.
+        this->partplate_list.update_slice_context_to_current_plate(this->background_process);
+        this->preview->update_gcode_result(this->partplate_list.get_current_slice_result());
         if (printer_technology_changed) {
             // Switch to the other printer technology. Switch to the last printer active for that particular technology.
             AppConfig *app_config = wxGetApp().app_config;
@@ -20082,8 +20102,9 @@ void Plater::single_snapshots_leave(SingleSnapshot *single)
 {
     p->single_snapshots_leave(single);
 }
-void Plater::undo() { p->undo(); }
-void Plater::redo() { p->redo(); }
+// Orca: undo and redo rebuild the plate list, and stop a slice first (Plater::priv::undo_redo_to).
+void Plater::undo(OrcaMCP::PlateListChangeDuringSlice* slice_change) { p->report_plate_list_change(slice_change, [this] { p->undo(); }); }
+void Plater::redo(OrcaMCP::PlateListChangeDuringSlice* slice_change) { p->report_plate_list_change(slice_change, [this] { p->redo(); }); }
 void Plater::undo_to(int selection)
 {
     if (selection == 0) {
@@ -22105,18 +22126,7 @@ int Plater::select_plate_by_hover_id(int hover_id, bool right_click, bool isModi
             ret = -1;
         }
     } else if ((action == 7) && (!right_click)) {
-        // move plate to the front
-        take_snapshot("move plate to the front");
-        // Orca: the plates move, and the process is pointed at the current plate's Print below: stop the
-        // slice, and a Slice All run, first, or the stop would cancel the wrong Print.
-        p->stop_slice_for_plate_list_change();
-        ret = p->partplate_list.move_plate_to_index(plate_index,0);
-        p->partplate_list.update_slice_context_to_current_plate(p->background_process);
-        p->preview->update_gcode_result(p->partplate_list.get_current_slice_result());
-        p->sidebar->obj_list()->reload_all_plates();
-        p->partplate_list.update_plates();
-        update();
-        p->partplate_list.select_plate(0);
+        ret = move_plate_to_front(plate_index);
     }
 
     else
@@ -22142,8 +22152,25 @@ int Plater::duplicate_plate(int plate_index)
     return ret;
 }
 
+// move plate to the front
+int Plater::move_plate_to_front(int plate_index, OrcaMCP::PlateListChangeDuringSlice* slice_change)
+{
+    int ret;
+    take_snapshot("move plate to the front");
+    // Orca: PartPlateList::move_plate_to_index stops a slice, and a Slice All run, once the move is sure
+    // to happen; what it did is reported to the caller.
+    p->report_plate_list_change(slice_change, [&] { ret = p->partplate_list.move_plate_to_index(plate_index, 0); });
+    p->partplate_list.update_slice_context_to_current_plate(p->background_process);
+    p->preview->update_gcode_result(p->partplate_list.get_current_slice_result());
+    p->sidebar->obj_list()->reload_all_plates();
+    p->partplate_list.update_plates();
+    update();
+    p->partplate_list.select_plate(0);
+    return ret;
+}
+
 //BBS: delete the plate, index= -1 means the current plate
-int Plater::delete_plate(int plate_index)
+int Plater::delete_plate(int plate_index, OrcaMCP::PlateListChangeDuringSlice* slice_change)
 {
     int index = plate_index, ret;
 
@@ -22151,10 +22178,10 @@ int Plater::delete_plate(int plate_index)
         index = p->partplate_list.get_curr_plate_index();
 
     take_snapshot("delete partplate");
-    // Orca: the plate's Print is deleted below, maybe the one being sliced (that crashed the app,
-    // 2026-09-26), and the plates after it move: stop the slice, and a Slice All run, first.
-    p->stop_slice_for_plate_list_change();
-    ret = p->partplate_list.delete_plate(index);
+    // Orca: PartPlateList::delete_plate stops a slice, and a Slice All run, once the deletion is sure to
+    // happen, before it frees the plate's Print (freeing it under the slicing thread crashed the app,
+    // 2026-09-26); what it did is reported to the caller.
+    p->report_plate_list_change(slice_change, [&] { ret = p->partplate_list.delete_plate(index); });
 
     //BBS: update the current print to the current plate
     p->partplate_list.update_slice_context_to_current_plate(p->background_process);
@@ -22182,7 +22209,7 @@ bool Plater::is_background_process_slicing() const
     return p->m_is_slicing;
 }
 
-bool Plater::is_slicing_all_plates() const { return p->slicing_all_plates(); }
+OrcaMCP::PlateListChangeDuringSlice Plater::stop_slice_for_plate_list_change() { return p->stop_slice_for_plate_list_change(); }
 
 //BBS: update slicing context
 void Plater::update_slicing_context_to_current_partplate()

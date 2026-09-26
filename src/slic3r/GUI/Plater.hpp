@@ -93,6 +93,7 @@ class FinishSyncAmsDialog;
 using t_optgroups = std::vector <std::shared_ptr<ConfigOptionsGroup>>;
 
 class Plater;
+namespace OrcaMCP { struct PlateListChangeDuringSlice; }
 enum class ActionButtonType : int;
 
 // Sentinel filament id meaning "use the slot the sidebar context menu was opened on"
@@ -625,8 +626,9 @@ public:
     void take_snapshot(const std::string &snapshot_name, UndoRedo::SnapshotType snapshot_type);
     //void take_snapshot(const wxString &snapshot_name, UndoRedo::SnapshotType snapshot_type);
 
-    void undo();
-    void redo();
+    // Orca: `slice_change`, when given, tells what the jump did to a slice (it stops one first).
+    void undo(OrcaMCP::PlateListChangeDuringSlice* slice_change = nullptr);
+    void redo(OrcaMCP::PlateListChangeDuringSlice* slice_change = nullptr);
     void undo_to(int selection);
     void redo_to(int selection);
     bool undo_redo_string_getter(const bool is_undo, int idx, const char** out_text);
@@ -827,7 +829,9 @@ public:
     //BBS: select the plate by hover_id
     int select_plate_by_hover_id(int hover_id, bool right_click = false, bool isModidyPlateName = false);
     //BBS: delete the plate, index= -1 means the current plate
-    int delete_plate(int plate_index = -1);
+    // Orca: `slice_change`, when given, is what the deletion did to a slice in progress.
+    int delete_plate(int plate_index = -1, OrcaMCP::PlateListChangeDuringSlice* slice_change = nullptr);
+    int move_plate_to_front(int plate_index, OrcaMCP::PlateListChangeDuringSlice* slice_change = nullptr);
     int duplicate_plate(int plate_index = -1);
     //BBS: select the sliced plate by index
     int select_sliced_plate(int plate_index, bool skip_zoom = false);
@@ -835,8 +839,9 @@ public:
     void set_bed_position(Vec2d& pos);
     //BBS: is the background process slicing currently
     bool is_background_process_slicing() const;
-    // Orca: a Slice All run is in progress (MCP reports that a plate-list change cancelled it).
-    bool is_slicing_all_plates() const;
+    // Orca: called by PartPlateList before it frees or reorders Prints or plates: stops a slice, and
+    // cancels a Slice All run (OrcaMCPSliceCredit.hpp).
+    OrcaMCP::PlateListChangeDuringSlice stop_slice_for_plate_list_change();
     //BBS: update slicing context
     void update_slicing_context_to_current_partplate();
     //BBS: show object info

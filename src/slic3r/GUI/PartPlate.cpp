@@ -39,6 +39,7 @@
 #include "2DBed.hpp"
 #include "3DBed.hpp"
 #include "PartPlate.hpp"
+#include "OrcaMCP/OrcaMCPSliceCredit.hpp"
 #include "Camera.hpp"
 #include "GUI_Colors.hpp"
 #include "GUI_ObjectList.hpp"
@@ -4788,6 +4789,13 @@ int PartPlateList::duplicate_plate(int index)
 }
 
 
+// Orca: a slice must not run while plates or Prints are freed or reordered.
+void PartPlateList::before_plate_list_change()
+{
+	if (m_plater)
+		m_plater->stop_slice_for_plate_list_change();
+}
+
 //destroy print's objects and results
 int PartPlateList::destroy_print(int print_index)
 {
@@ -4850,6 +4858,10 @@ int PartPlateList::delete_plate(int index)
 		BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(":plate %1%, has an invalid index %2%") % index % plate->get_index();
 		return -1;
 	}
+
+	// Orca: the deletion will happen. Stop a slice first: its plate or Print may be the one freed below,
+	// and the plates after it move (OrcaMCPSliceCredit.hpp).
+	before_plate_list_change();
 
 	if (m_plater) {
 		// In GUI mode
@@ -5179,6 +5191,15 @@ int PartPlateList::move_plate_to_index(int old_index, int new_index)
 		BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(":should not happen, the same index %1%") % old_index;
 		return -1;
 	}
+	// Orca: and an index out of range moved plates that are not there.
+	if (old_index < 0 || new_index < 0 || old_index >= int(m_plate_list.size()) || new_index >= int(m_plate_list.size()))
+	{
+		BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(":index out of range, %1% to %2%") % old_index % new_index;
+		return -1;
+	}
+
+	// Orca: the move will happen: stop a slice first, as the plates it walks by index move.
+	before_plate_list_change();
 
 	// Orca: Rebuild plate membership before moving the plates.
 	reload_all_objects();
@@ -6388,6 +6409,7 @@ int PartPlateList::rebuild_plates_after_arrangement(bool recycle_plates, bool ex
 
 	ret = reload_all_objects(except_locked, plate_index);
 
+	bool plates_deleted = false;
 	if (recycle_plates)
 	{
 		for (unsigned int i = (unsigned int)m_plate_list.size() - 1; i > 0; --i)
@@ -6398,6 +6420,7 @@ int PartPlateList::rebuild_plates_after_arrangement(bool recycle_plates, bool ex
 				//delete it
 				BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(":delete plate %1% for empty") % i;
 				delete_plate(i);
+				plates_deleted = true;
 			}
 			else if (m_plate_list[i]->is_locked()) {
 				continue;
@@ -6418,6 +6441,9 @@ int PartPlateList::rebuild_plates_after_arrangement(bool recycle_plates, bool ex
 
 	if (m_plater)
 		m_plater->mark_plate_toolbar_image_dirty();
+	// Orca: the slicing process may point at a plate just deleted: point it at the current one.
+	if (plates_deleted && m_plater)
+		m_plater->update_slicing_context_to_current_partplate();
 
 	BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(":after rebuild, plates count %1%") % m_plate_list.size();
 	return ret;
@@ -6545,6 +6571,8 @@ int PartPlateList::load_from_3mf_structure(PlateDataPtrs& plate_data_list, int f
 		BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(":no plates, should not happen!");
 		return -1;
 	}
+	// Orca: every plate and Print is freed below: stop a slice first.
+	before_plate_list_change();
 	clear(true, true);
 	set_filament_count(filament_count);
 	for (unsigned int i = 0; i < (unsigned int)plate_data_list.size(); ++i)

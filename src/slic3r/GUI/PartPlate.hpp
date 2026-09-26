@@ -746,6 +746,8 @@ public:
 
     //destroy print which has the index of print_index
     int destroy_print(int print_index);
+    // Orca: stops a slice (and a Slice All run) before plates or Prints are freed or reordered.
+    void before_plate_list_change();
 
     //delete a plate by index
     int delete_plate(int index);

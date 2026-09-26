@@ -27,20 +27,27 @@ inline int completion_print_index(CompletionKind kind, int started_print_index, 
     return kind == CompletionKind::already_sliced ? current_plate_print_index : started_print_index;
 }
 
-// A plate deleted or moved while a slice runs. The slice is stopped: its Print may be the one freed,
-// and the process may be pointed at another plate's. A Slice All run is cancelled, as any cancel ends
-// it: it walks the plates by index, and the change shifted them.
+// A plate deleted or moved while a slice runs, or the plate list rebuilt (undo, redo, a 3MF load). The
+// slice is stopped: its Print or its plate may be the one freed, and the process may be pointed at
+// another plate. A Slice All run is cancelled, as any cancel ends it: it walks the plates by index.
 struct PlateListChangeDuringSlice
 {
     bool stop_slice       = false;
     bool cancel_slice_all = false;
+
+    PlateListChangeDuringSlice& operator|=(const PlateListChangeDuringSlice& other)
+    {
+        stop_slice       = stop_slice || other.stop_slice;
+        cancel_slice_all = cancel_slice_all || other.cancel_slice_all;
+        return *this;
+    }
 };
 inline PlateListChangeDuringSlice on_plate_list_change(bool slice_running, bool slicing_all_plates)
 {
     return {slice_running || slicing_all_plates, slicing_all_plates};
 }
 
-// What delete_plate tells the agent about the slice it stopped; nullopt when none ran.
+// What delete_plate, undo and redo tell the agent about the slice they stopped; nullopt when none ran.
 inline std::optional<std::string> plate_list_change_note(const PlateListChangeDuringSlice& change)
 {
     if (change.cancel_slice_all)

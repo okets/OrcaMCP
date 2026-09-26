@@ -813,7 +813,8 @@ Switch to a different plate.
 ### delete_plate
 Remove a plate from the project. A slice in progress is cancelled first, and a Slice All run with it:
 the response then carries `slice_cancelled: true` and an `info_messages` line saying so; call
-`slice_all` again. Plates sliced before keep their results.
+`slice_all` again. Plates sliced before keep their results. A call that deletes nothing (an index out
+of range, the last plate) leaves the slice running.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
@@ -1430,7 +1431,8 @@ that is omitted.
 
 **Deleting a plate during the run** cancels it: the run walks the plates by position, which the
 deletion shifts. `delete_plate` says so (`slice_cancelled: true`, "the plate list changed during Slice
-All; the run was cancelled, call slice_all again"). Plates sliced before keep their results. The plate
+All; the run was cancelled, call slice_all again"), and so do `undo` and `redo`, which rebuild the
+plate list. Plates sliced before keep their results. The plate
 restored when the run ends is the one that was selected at the call, wherever it now stands, or none
 if it was the deleted one.
 
@@ -2298,14 +2300,17 @@ checked the same way.
 ## History Tools
 
 ### undo
-Undo the last operation.
+Undo the last operation. It rebuilds the plate list, so a slice in progress is cancelled first, and a
+Slice All run with it: the response then carries `slice_cancelled: true` and an `info_messages` line
+saying so; call `slice_all` again.
 
 **Parameters:** None
 
 ---
 
 ### redo
-Redo the last undone operation.
+Redo the last undone operation. A slice in progress is cancelled as for `undo`, and reported the same
+way.
 
 **Parameters:** None
 

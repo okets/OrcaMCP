@@ -282,6 +282,31 @@ nlohmann::json select_preset_now(const std::string& type, const std::string& nam
     return {{"status", "success"}};
 }
 
+// A plate-list change (delete_plate, undo, redo) that stopped a slice says so: `slice_cancelled` and an
+// info_messages line telling the caller to slice again.
+void add_slice_cancelled(nlohmann::json& response, const PlateListChangeDuringSlice& slice_change)
+{
+    if (const auto note = plate_list_change_note(slice_change)) {
+        response["slice_cancelled"] = true;
+        response["info_messages"].push_back(*note);
+    }
+}
+
+// undo and redo: one step through the history, which rebuilds the plate list.
+nlohmann::json step_through_history(bool undo, bool include_preview)
+{
+    Plater*                    plater = wxGetApp().plater();
+    PlateListChangeDuringSlice slice_change;
+    if (undo)
+        plater->undo(&slice_change);
+    else
+        plater->redo(&slice_change);
+    nlohmann::json result = {{"status", "success"}, {"active_warnings", get_active_warnings_json(plater)}};
+    add_slice_cancelled(result, slice_change);
+    add_turntable_preview_if_requested(result, include_preview);
+    return result;
+}
+
 } // namespace
 
 void OrcaMCPServer::shut_down()
@@ -1448,16 +1473,7 @@ void OrcaMCPServer::register_builtin_tools()
         },
         [](const nlohmann::json& params) -> nlohmann::json {
             bool include_preview = params.value("include_preview", false);
-            return run_on_main_thread([include_preview]() {
-                Plater* plater = wxGetApp().plater();
-                plater->undo();
-                nlohmann::json result = {
-                    {"status", "success"},
-                    {"active_warnings", get_active_warnings_json(plater)}
-                };
-                add_turntable_preview_if_requested(result, include_preview);
-                return result;
-            });
+            return run_on_main_thread([include_preview]() { return step_through_history(/*undo=*/true, include_preview); });
         }
     });
 
@@ -1478,16 +1494,7 @@ void OrcaMCPServer::register_builtin_tools()
         },
         [](const nlohmann::json& params) -> nlohmann::json {
             bool include_preview = params.value("include_preview", false);
-            return run_on_main_thread([include_preview]() {
-                Plater* plater = wxGetApp().plater();
-                plater->redo();
-                nlohmann::json result = {
-                    {"status", "success"},
-                    {"active_warnings", get_active_warnings_json(plater)}
-                };
-                add_turntable_preview_if_requested(result, include_preview);
-                return result;
-            });
+            return run_on_main_thread([include_preview]() { return step_through_history(/*undo=*/false, include_preview); });
         }
     });
 
@@ -3240,10 +3247,10 @@ void OrcaMCPServer::register_builtin_tools()
                 // The validated index, not the raw parameter: -1 means "current plate" and was
                 // resolved above. Plater::delete_plate resolves it too, so this is agreement
                 // rather than a fix, but the reported index and the deleted one now match.
-                // What the deletion does to a slice in progress: stops it, and cancels a Slice All run.
-                const PlateListChangeDuringSlice slice_change =
-                    on_plate_list_change(plater->is_background_process_slicing(), plater->is_slicing_all_plates());
-                int result = plater->delete_plate(actual_plate_to_delete);
+                // What the deletion did to a slice in progress, as Plater decided it: stopped it, and
+                // cancelled a Slice All run.
+                PlateListChangeDuringSlice slice_change;
+                int result = plater->delete_plate(actual_plate_to_delete, &slice_change);
                 if (result == 0) {
                     int current_plate_after = plate_list.get_curr_plate_index();
                     int plate_count_after = plate_list.get_plate_count();
@@ -3262,10 +3269,7 @@ void OrcaMCPServer::register_builtin_tools()
                         response["note"] = "Plates after index " + std::to_string(actual_plate_to_delete) +
                                           " have shifted down. Re-query get_scene_info for updated indices.";
                     }
-                    if (auto slice_note = plate_list_change_note(slice_change)) {
-                        response["slice_cancelled"] = true;
-                        response["info_messages"]   = nlohmann::json::array({*slice_note});
-                    }
+                    add_slice_cancelled(response, slice_change);
 
                     return response;
                 } else {
