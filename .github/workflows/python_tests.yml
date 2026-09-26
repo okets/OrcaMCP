@@ -1,0 +1,30 @@
+# Fork-only. The same unittest command also runs in check_profiles.yml, but that workflow triggers
+# only on pull requests into main and release/*, and this fork's work lands on mcp by push, so without
+# this file no CI job ever ran the bridge's tests. Its paths do not overlap Build all's, so it never
+# starts the hour-long build.
+name: Python tests
+
+on:
+  push:
+    branches:
+      - mcp
+    paths:
+      - 'scripts/**'
+      - '.github/workflows/python_tests.yml'
+  pull_request:
+    paths:
+      - 'scripts/**'
+      - '.github/workflows/python_tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python_tests:
+    name: Python tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run the scripts' unit tests
+        run: python3 -m unittest discover -s scripts/tests -t scripts
