@@ -1,12 +1,15 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "slic3r/GUI/OrcaMCP/OrcaMCPServer.hpp"
+#include "libslic3r_version.h"
 
+#include <map>
 #include <set>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 // The MCP tool registry is the one source of every tool's text. None of this needs the app:
 // registering a tool only builds its JSON schema and its handler, and no handler is called here
@@ -89,4 +92,110 @@ TEST_CASE("A tool without a handler is refused", "[orcamcp][tools]")
                               {{"type", "object"}, {"properties", nlohmann::json::object()}}, {}};
     CHECK_THROWS_AS(OrcaMCPServer::register_tool(no_handler), std::logic_error);
     CHECK(OrcaMCPServer::registered_tools().count("test_tool_without_handler") == 0);
+}
+
+// ==================== GET_SERVER_INFO ====================
+//
+// Its catalogue is built from the registry on every call, so it names every tool; the rest of its
+// documentation is fetched one section at a time, so the default stays small enough to call.
+
+namespace {
+
+nlohmann::json get_server_info(const nlohmann::json& params = nlohmann::json::object())
+{
+    return OrcaMCPServer::registered_tools().at("get_server_info").handler(params);
+}
+
+// name -> category, as the catalogue lists them.
+std::map<std::string, std::string> catalogue_entries(const nlohmann::json& catalogue)
+{
+    std::map<std::string, std::string> entries;
+    for (auto category = catalogue.begin(); category != catalogue.end(); ++category)
+        for (auto tool = category->begin(); tool != category->end(); ++tool)
+            entries[tool.key()] = category.key();
+    return entries;
+}
+
+} // namespace
+
+TEST_CASE("get_server_info's catalogue names every tool once, under its category, with its summary", "[orcamcp][tools]")
+{
+    const nlohmann::json info    = get_server_info();
+    const auto&          tools   = OrcaMCPServer::registered_tools();
+    const auto           entries = catalogue_entries(info.at("tools"));
+
+    size_t listed = 0;
+    for (auto category = info.at("tools").begin(); category != info.at("tools").end(); ++category)
+        listed += category->size();
+    CHECK(listed == tools.size());
+
+    for (const auto& [name, tool] : tools) {
+        INFO("tool " << name);
+        REQUIRE(entries.count(name) == 1);
+        CHECK(entries.at(name) == OrcaMCPServer::tool_category_name(tool.category));
+        CHECK(info.at("tools").at(entries.at(name)).at(name) == tool.summary);
+    }
+}
+
+TEST_CASE("get_server_info's default response stays under 6 KB", "[orcamcp][tools]")
+{
+    // An agent that has to spend 6k tokens to learn what exists stops asking. Each new tool adds
+    // about 55 bytes; when this fails, shorten summaries or move content into a section.
+    const std::string response = get_server_info().dump();
+    INFO("default response is " << response.size() << " bytes");
+    CHECK(response.size() <= 6 * 1024);
+}
+
+TEST_CASE("get_server_info reports the build's version", "[orcamcp][tools]")
+{
+    CHECK(OrcaMCPServer::version() == SoftFever_VERSION);
+    CHECK(get_server_info().at("server").at("version") == SoftFever_VERSION);
+}
+
+TEST_CASE("get_server_info's section index lists every section with the size it will fetch", "[orcamcp][tools]")
+{
+    const nlohmann::json index = get_server_info().at("sections");
+    REQUIRE(index.size() >= 5);
+
+    std::vector<std::string> expected_enum;
+    for (auto entry = index.begin(); entry != index.end(); ++entry) {
+        INFO("section " << entry.key());
+        const nlohmann::json section = get_server_info({{"section", entry.key()}});
+        REQUIRE(section.size() == 1);
+        REQUIRE(section.contains(entry.key()));
+        CHECK(section.at(entry.key()).dump().size() == entry.value().get<size_t>());
+        expected_enum.push_back(entry.key());
+    }
+
+    // The schema offers exactly those sections, plus "all".
+    const nlohmann::json schema_enum =
+        OrcaMCPServer::registered_tools().at("get_server_info").input_schema.at("properties").at("section").at("enum");
+    std::set<std::string> offered(schema_enum.begin(), schema_enum.end());
+    std::set<std::string> indexed(expected_enum.begin(), expected_enum.end());
+    indexed.insert("all");
+    CHECK(offered == indexed);
+}
+
+TEST_CASE("get_server_info section=all returns the default content and every section", "[orcamcp][tools]")
+{
+    const nlohmann::json everything = get_server_info({{"section", "all"}});
+    const nlohmann::json summary    = get_server_info();
+    CHECK(everything.at("tools") == summary.at("tools"));
+    CHECK(everything.at("quick_start") == summary.at("quick_start"));
+    for (auto entry = summary.at("sections").begin(); entry != summary.at("sections").end(); ++entry) {
+        INFO("section " << entry.key());
+        CHECK(everything.contains(entry.key()));
+    }
+}
+
+TEST_CASE("get_server_info rejects an unknown section and names the valid ones", "[orcamcp][tools]")
+{
+    for (const nlohmann::json& bad : {nlohmann::json("tools_by_category"), nlohmann::json(3)}) {
+        INFO("section " << bad.dump());
+        const nlohmann::json response = get_server_info({{"section", bad}});
+        CHECK(response.value("status", "") == "error");
+        const std::string message = response.value("message", "");
+        CHECK(message.find("concepts") != std::string::npos);
+        CHECK(message.find("all") != std::string::npos);
+    }
 }

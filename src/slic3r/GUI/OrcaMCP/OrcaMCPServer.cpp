@@ -5,6 +5,7 @@
 #include "OrcaMCPConfigKeys.hpp"
 #include "OrcaMCPFilamentUtils.hpp"
 #include "OrcaMCPSliceEstimate.hpp"
+#include "OrcaMCPServerInfo.hpp"
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Plater.hpp"
@@ -23,6 +24,7 @@
 #include "libslic3r/Slicing.hpp"
 #include "libslic3r/Print.hpp"
 #include "libslic3r/Utils.hpp"
+#include "libslic3r_version.h"
 
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/log/trivial.hpp>
@@ -104,6 +106,11 @@ const std::map<std::string, OrcaMCPServer::ToolDefinition>& OrcaMCPServer::regis
 {
     ensure_tools_registered();
     return s_tools;
+}
+
+std::string OrcaMCPServer::version()
+{
+    return SoftFever_VERSION;
 }
 
 void OrcaMCPServer::register_tool(const ToolDefinition& tool)
@@ -204,7 +211,7 @@ std::shared_ptr<HttpServer::Response> OrcaMCPServer::handle_request(
     if (method == "GET") {
         nlohmann::json info = {
             {"name", "orca-slicer"},
-            {"version", "1.0.0"},
+            {"version", version()},
             {"protocol", "mcp"},
             {"description", "OrcaSlicer 3D Slicer MCP Server for Claude Code integration"}
         };
@@ -297,7 +304,7 @@ nlohmann::json OrcaMCPServer::handle_initialize(const nlohmann::json& params)
         }},
         {"serverInfo", {
             {"name", "orca-slicer"},
-            {"version", "1.0.0"}
+            {"version", version()}
         }}
     };
 }
@@ -436,7 +443,6 @@ void OrcaMCPServer::register_builtin_tools()
 {
     // ==================== SERVER INFO ====================
 
-    // get_server_info - Get comprehensive server documentation
     // quit_app - close the app from MCP without any dialog. MainFrame::on_close asks "save changes?"
     // and runs other vetoable checks only when the close event can be vetoed; Close(true) cannot be,
     // so nothing modal ever opens. The close is scheduled so this reply reaches the caller first.
@@ -474,6 +480,8 @@ void OrcaMCPServer::register_builtin_tools()
         }
     });
 
+    // get_server_info - every tool's summary, generated from this registry on each call, and the
+    // documentation sections (OrcaMCPServerInfo.cpp)
     register_tool({
         "get_server_info",
         ToolCategory::Info,
@@ -481,485 +489,17 @@ void OrcaMCPServer::register_builtin_tools()
         "Get documentation about tools, concepts, and workflows",
         {
             {"type", "object"},
-            {"properties", nlohmann::json::object()}
+            {"properties", {
+                {"section", {
+                    {"type", "string"},
+                    {"enum", server_info_section_names()},
+                    {"description", "One documentation section, or all of them. Omit it for every tool's "
+                                    "summary, the quick start, and the list of sections with their sizes."}
+                }}
+            }}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
-            return nlohmann::json{
-                {"server", {
-                    {"name", "OrcaSlicer MCP Server"},
-                    {"version", "1.0.0"},
-                    {"description", "Model Context Protocol server for controlling OrcaSlicer from Claude Code CLI"},
-                    {"protocol", "JSON-RPC 2.0 over HTTP"},
-                    {"endpoint", "http://localhost:13618/mcp"}
-                }},
-
-                // ==================== QUICK START ====================
-                {"quick_start", {
-                    {"first_steps", {
-                        "1. Call get_scene_info to understand current project state",
-                        "2. Use render_plate_view with save_to_file=true to visualize",
-                        "3. Use get_server_info (this) for full documentation"
-                    }},
-                    {"common_tasks", {
-                        {"load_and_slice", "load_model -> arrange_objects -> slice_all -> poll get_slicing_status -> export_gcode"},
-                        {"change_settings", "apply_config with settings array"},
-                        {"modify_object", "get_scene_info (get object_id) -> transform tools"},
-                        {"visualize", "render_plate_view with save_to_file=true (omit views for a 3-view contact sheet), then Read the PNG; check uniform_image first"}
-                    }}
-                }},
-
-                // ==================== SUGGESTED TOOL FLOWS ====================
-                {"suggested_flows", {
-                    {"basic_print_workflow", {
-                        {"description", "Load a model and prepare it for printing"},
-                        {"steps", {
-                            {"step", "1. Load model"},
-                            {"tool", "load_model"},
-                            {"example", R"({"file_path": "/path/to/model.stl"})"},
-                            {"next", "2. Arrange on plate"},
-                            {"tool2", "arrange_objects"},
-                            {"example2", "{}"},
-                            {"next2", "3. Start slicing"},
-                            {"tool3", "slice_all"},
-                            {"example3", "{}"},
-                            {"next3", "4. Wait for completion (poll every 2-3 seconds)"},
-                            {"tool4", "get_slicing_status"},
-                            {"example4", "{} -> repeat until is_slicing=false"},
-                            {"next4", "5. Export G-code"},
-                            {"tool5", "export_gcode"},
-                            {"example5", R"({"output_path": "/path/to/output.gcode"})"}
-                        }}
-                    }},
-                    {"visual_inspection_workflow", {
-                        {"description", "View the model before making changes"},
-                        {"steps", {
-                            {"step", "1. Render views to temp files (saves tokens!)"},
-                            {"tool", "render_plate_view"},
-                            {"example", R"({"plate_index": 0, "save_to_file": true, "views": [{"camera_position": [300, -200, 150], "target": [155, 155, 30]}]})"},
-                            {"next", "2. Read the image file with Claude's Read tool"},
-                            {"note", "The file_path returned can be read directly by Claude"}
-                        }}
-                    }},
-                    {"settings_modification_workflow", {
-                        {"description", "Change print settings"},
-                        {"steps", {
-                            {"step", "1. Apply settings (can batch multiple)"},
-                            {"tool", "apply_config"},
-                            {"example", R"({"settings": [{"type": "print", "key": "layer_height", "value": "0.15"}, {"type": "print", "key": "sparse_infill_density", "value": "20%"}]})"}
-                        }},
-                        {"note", "Settings become 'dirty' until user saves preset in UI"}
-                    }},
-                    {"object_manipulation_workflow", {
-                        {"description", "Transform objects (move, rotate, scale, cut)"},
-                        {"steps", {
-                            {"step", "1. Get object IDs"},
-                            {"tool", "get_scene_info"},
-                            {"example", R"({"with_model_object_features": false})"},
-                            {"note", "Objects are 0-indexed. Look for model_objects array in response."},
-                            {"step2", "2. Transform as needed"},
-                            {"tools", "move_object, rotate_object, scale_object, mirror_object, cut_object"},
-                            {"examples", {
-                                {"move", R"({"object_id": 0, "x": 10, "y": 0, "z": 0})"},
-                                {"rotate", R"({"object_id": 0, "z": 45})"},
-                                {"scale", R"({"object_id": 0, "x": 1.5, "uniform": true})"},
-                                {"cut", R"({"object_id": 0, "z_height": 25, "keep": "below"})"}
-                            }}
-                        }}
-                    }},
-                    {"per_object_settings_workflow", {
-                        {"description", "Apply different settings to specific objects"},
-                        {"steps", {
-                            {"step", "1. Get object IDs from get_scene_info"},
-                            {"step2", "2. Set per-object overrides"},
-                            {"tool", "set_object_config"},
-                            {"example", R"({"object_id": 0, "settings": [{"key": "sparse_infill_density", "value": "30%"}, {"key": "enable_support", "value": "1"}]})"},
-                            {"step3", "3. Verify with get_object_config"},
-                            {"step4", "4. Reset if needed with reset_object_config"}
-                        }}
-                    }},
-                    {"layer_range_workflow", {
-                        {"description", "Different settings at different Z heights within one object"},
-                        {"steps", {
-                            {"step", "1. Define layer range"},
-                            {"tool", "set_object_layer_range"},
-                            {"example", R"({"object_id": 0, "z_min": 10, "z_max": 20, "settings": [{"key": "layer_height", "value": "0.1"}]})"},
-                            {"use_case", "Fine detail at specific heights, variable infill, etc."}
-                        }}
-                    }},
-                    {"undo_recovery_workflow", {
-                        {"description", "Recover from mistakes"},
-                        {"steps", {
-                            {"step", "1. Undo last operation"},
-                            {"tool", "undo"},
-                            {"note", "Can call multiple times to undo multiple operations"},
-                            {"step2", "2. Redo if needed"},
-                            {"tool2", "redo"}
-                        }},
-                        {"warning", "Undo history may be limited. For safety, save project (export_3mf) before major changes."}
-                    }},
-                    {"printer_workflow", {
-                        {"description", "Slice and send to printer (OctoPrint/Klipper or Bambu)"},
-                        {"steps", {
-                            {"step", "1. Check available printers"},
-                            {"tool", "get_printers"},
-                            {"example", "{}"},
-                            {"note", "Look for current_print_host (OctoPrint/Klipper) or local_printers (Bambu)"},
-                            {"step2", "2. Slice the project"},
-                            {"tool2", "slice_all"},
-                            {"step3", "3. Wait for slicing to complete"},
-                            {"tool3", "get_slicing_status"},
-                            {"note2", "Poll every 2-3 seconds until is_slicing=false"},
-                            {"step4", "4. Send to printer"},
-                            {"tool4", "send_to_printer"},
-                            {"example4", R"({})"},
-                            {"note3", "Auto-detects printer type and opens appropriate dialog"}
-                        }},
-                        {"octoprint_note", "For OctoPrint/Klipper: print_host must be configured in printer preset. Dialog shows Upload/Upload and Print options."},
-                        {"bambu_note", "For Bambu: use select_printer with dev_id first if needed. Dialog shows printer selection."}
-                    }}
-                }},
-
-                // ==================== TOOL EXAMPLES ====================
-                {"tool_examples", {
-                    {"get_scene_info", {
-                        {"minimal", R"({})"},
-                        {"with_features", R"({"with_model_object_features": true})"},
-                        {"when_to_use", "Start of session, after loading models, before transforms"},
-                        {"response_includes", {
-                            {"bed", "origin (corner), min_x, min_y, max_x, max_y, max_z - printable area bounds"},
-                            {"plates[].model_objects[]", "object_index, name, position, rotation_degrees, scale, bounding_box, instance_count"}
-                        }},
-                        {"tip", "Use bed info to calculate valid positions. Object positions are center points."}
-                    }},
-                    {"render_plate_view", {
-                        {"contact_sheet", R"({"plate_index": 1, "save_to_file": true})"},
-                        {"preset_views", R"({"plate_index": 1, "save_to_file": true, "views": [{"preset": "iso"}, {"preset": "low", "fit": {"object_index": 8}}]})"},
-                        {"explicit_camera", R"({"plate_index": 0, "save_to_file": true, "views": [{"camera_position": [300, -200, 150], "target": [128, 128, 30]}]})"},
-                        {"first_layer_plan", R"({"plate_index": 1, "save_to_file": true, "layer_view": "first_layer"})"},
-                        {"coordinate_frame", "camera_position/target are BED mm, the get_scene_info frame; plate N is at plates[N].bounding_box. Add frame: \"plate_local\" to give them from the plate's front-left corner. Presets never need coordinates."},
-                        {"read_the_numbers_first", "Check uniform_image (and its hint) and objects_in_frame before reading the image; a flat image means the camera saw nothing on that plate."},
-                        {"tip", "ALWAYS use save_to_file=true (PNG paths). Prefer fit: {object_index} over a higher resolution."},
-                        {"when_to_use", "Before/after transforms, to verify object state, to analyze geometry; layer_view first_layer for brim, support feet and adhesion questions"}
-                    }},
-                    {"apply_config", {
-                        {"single_setting", R"({"settings": [{"type": "print", "key": "layer_height", "value": "0.2"}]})"},
-                        {"multiple_settings", R"({"settings": [{"type": "print", "key": "layer_height", "value": "0.15"}, {"type": "print", "key": "wall_loops", "value": "3"}, {"type": "print", "key": "sparse_infill_density", "value": "20%"}]})"},
-                        {"filament_temp", R"({"settings": [{"type": "filament", "key": "nozzle_temperature", "value": ["210"]}]})"},
-                        {"when_to_use", "Adjusting print quality, speed, supports, etc."}
-                    }},
-                    {"cut_object", {
-                        {"keep_bottom", R"({"object_id": 0, "z_height": 30, "keep": "below"})"},
-                        {"keep_top", R"({"object_id": 0, "z_height": 30, "keep": "above"})"},
-                        {"keep_both", R"({"object_id": 0, "z_height": 30, "keep": "both"})"},
-                        {"when_to_use", "Splitting models, removing overhangs, creating multi-part prints"}
-                    }},
-                    {"move_object", {
-                        {"relative", R"({"object_id": 0, "x": 10, "y": -5})"},
-                        {"absolute", R"({"object_id": 0, "x": 155, "y": 155, "relative": false})"},
-                        {"when_to_use", "Positioning objects on bed, separating objects"},
-                        {"response_includes", "position, rotation_degrees, scale, on_bed, warnings"},
-                        {"tip", "Unspecified axes are preserved. Use on_bed to verify valid placement."}
-                    }},
-                    {"rotate_object", {
-                        {"example", R"({"object_id": 0, "z": 90})"},
-                        {"when_to_use", "Orienting objects for better print quality or bed adhesion"},
-                        {"response_includes", "position, rotation_degrees, scale, on_bed, warnings"}
-                    }},
-                    {"scale_object", {
-                        {"uniform", R"({"object_id": 0, "x": 1.5, "uniform": true})"},
-                        {"non_uniform", R"({"object_id": 0, "x": 1.0, "y": 1.0, "z": 2.0})"},
-                        {"when_to_use", "Resizing models, adjusting proportions"},
-                        {"response_includes", "position, rotation_degrees, scale, on_bed, warnings"}
-                    }},
-                    {"get_printers", {
-                        {"example", "{}"},
-                        {"response_fields", "local_printers, cloud_printers, physical_printers, selected_physical_printer, current_print_host, total_count"},
-                        {"when_to_use", "Check what printers are available before sending"},
-                        {"tip", "physical_printers lists the printer presets that carry a print host; selected_physical_printer is the active one"}
-                    }},
-                    {"select_printer", {
-                        {"bambu_device", R"({"dev_id": "00M00A2B0123456"})"},
-                        {"print_host", R"({"physical_printer": "C5P"})"},
-                        {"when_to_use", "Select a Bambu printer by device ID, or a printer preset with a print host by name"}
-                    }},
-                    {"discover_printers", {
-                        {"example", R"({"timeout_ms": 5000})"},
-                        {"when_to_use", "Find Flashforge printers on the LAN before add_physical_printer"},
-                        {"response_fields", "printers[] with name, serial_number, ip_address"}
-                    }},
-                    {"add_physical_printer", {
-                        {"example", R"({"name": "C5P", "host": "192.168.1.50", "host_type": "flashforge", "serial_number": "SN", "api_key": "check code"})"},
-                        {"when_to_use", "Configure a print host and save it as a user printer preset"},
-                        {"tip", "printer_preset selects the preset to base it on; defaults to the edited printer preset"}
-                    }},
-                    {"clone_object", {
-                        {"to_current_plate", R"({"object_id": 0, "count": 2, "duplicate": true})"},
-                        {"to_specific_plate", R"({"object_id": 0, "count": 2, "duplicate": true, "destination_plate": 1})"},
-                        {"destination_behavior", "If destination_plate is OMITTED, clones go to CURRENT plate. If specified, clones go to that plate."},
-                        {"example_scenario", "You're on plate 1, cloning object from plate 0: clone_object(object_id=0, count=2) -> clones appear on plate 1 (current). clone_object(object_id=0, count=2, destination_plate=0) -> clones appear on plate 0 (explicit)."},
-                        {"response_includes", "source_plate, destination_plate, current_plate_at_call, destination_mode (explicit/defaulted_to_current)"},
-                        {"tip", "Use duplicate=true for independent objects, duplicate=false (default) for linked instances."}
-                    }},
-                    {"send_to_printer", {
-                        {"current_plate", R"({})"},
-                        {"all_plates", R"({"all_plates": true})"},
-                        {"when_to_use", "After slicing complete - opens upload dialog"},
-                        {"auto_detect", "Opens OctoPrint dialog if print_host configured, otherwise Bambu dialog"}
-                    }}
-                }},
-
-                // ==================== CONCEPTS ====================
-                {"concepts", {
-                    {"presets", {
-                        {"description", "OrcaSlicer uses a preset system with three types: Printer, Filament, and Print presets. Each defines a set of configuration options."},
-                        {"printer_preset", "Defines machine capabilities: build volume, nozzle size, speeds, G-code flavor, start/end G-code"},
-                        {"filament_preset", "Defines material properties: temperatures, cooling, flow ratio, retraction (if not using printer defaults)"},
-                        {"print_preset", "Defines slicing parameters: layer height, speeds, infill, walls, supports, etc."}
-                    }},
-                    {"dirty_values", {
-                        {"description", "When you modify a setting, it becomes 'dirty' - meaning it differs from the saved preset. Dirty values are tracked in the 'dirty_options' array."},
-                        {"example", "If you change layer_height from 0.2 to 0.22, 'layer_height' appears in dirty_options"},
-                        {"persistence", "Dirty values are NOT automatically saved. They exist only in the current editing session."},
-                        {"saving", "To save dirty values permanently, the user must save the preset through the UI (Ctrl+S or right-click preset -> Save)"},
-                        {"use_case", "Dirty tracking lets you experiment with settings without modifying saved presets. You can always revert by reloading the preset."}
-                    }},
-                    {"plates", {
-                        {"description", "OrcaSlicer supports multiple build plates in a single project. Each plate can contain different objects and be sliced independently."},
-                        {"indexing", "Plates are 0-indexed in the API (plate_index: 0 is the first plate)"},
-                        {"delete_constraint", "Cannot delete the last remaining plate. Objects on deleted plate are moved to another plate."}
-                    }},
-                    {"coordinate_system", {
-                        {"origin", "CORNER origin (0,0) = front-left of bed. NOT center origin!"},
-                        {"valid_range", "X: 0 to max_x, Y: 0 to max_y. Negative coordinates are OFF the bed."},
-                        {"z_axis", "Z=0 is the bed surface. Object bottoms rest at Z=0. Object center Z = half the object height."},
-                        {"get_bed_bounds", "Call get_scene_info and read bed.min_x, bed.max_x, bed.min_y, bed.max_y"},
-                        {"find_free_space", "Call get_scene_info and subtract plates[].occupancy footprints from the "
-                                            "plate's bounding box. The occupancy list includes the prime tower and "
-                                            "excluded bed areas, which model_objects does not."},
-                        {"transform_response", "All transforms return position, rotation_degrees, scale, on_bed. Use on_bed to verify placement."},
-                        {"rotation_degrees_note", "rotation_degrees reflects UI/initial rotation only. MCP rotate_object applies rotation directly to mesh geometry, so the field may not update. Use bounding_box dimensions to verify rotation was applied."},
-                        {"recommendation", "Read bed bounds first. Use arrange_objects to auto-place, or relative=true with offsets."}
-                    }},
-                    {"slicing", {
-                        {"description", "Slicing converts 3D models into G-code layer by layer. It's an async operation."},
-                        {"workflow", "1) Load model 2) Configure settings 3) Call slice_all 4) Poll get_slicing_status until complete 5) Export G-code"}
-                    }},
-                    {"object_ids", {
-                        {"description", "Each object has two identifiers: 'id' (stable string) and 'object_index' (transient 0-based integer)."},
-                        {"id_stable", "The 'id' field is a unique stable identifier that persists across add/delete operations. Use for tracking objects across sessions."},
-                        {"object_index_transient", "The 'object_index' field is a 0-based array index used for MCP tool operations (move, rotate, etc.). It shifts when objects are added/deleted."},
-                        {"finding_ids", "Call get_scene_info and look at plates[].model_objects[] array for both 'id' and 'object_index'"},
-                        {"best_practice", "For multi-step workflows: store 'id' to track objects, re-query get_scene_info for current 'object_index' before each operation."}
-                    }},
-                    {"instances_vs_objects", {
-                        {"description", "A ModelObject can have multiple instances. Instances share geometry and per-object settings but have independent positions."},
-                        {"instances", "Created by clone_object with duplicate=false (default). All instances transform together - move one, all move. Ideal for printing multiple identical copies."},
-                        {"independent_objects", "Created by clone_object with duplicate=true. Each copy is a separate ModelObject with its own object_id and can be transformed independently."},
-                        {"instance_count", "The 'instance_count' field in get_scene_info shows how many instances an object has."},
-                        {"when_to_use_instances", "Use instances (duplicate=false) when you want multiple identical prints and don't need to move them separately."},
-                        {"when_to_use_duplicates", "Use duplicates (duplicate=true) when you need to position, rotate, or scale each copy independently."}
-                    }},
-                    {"per_object_settings", {
-                        {"description", "Individual objects can have their own settings that override global print settings."},
-                        {"use_cases", "Different layer heights for detail vs speed, enable support only for specific objects, vary infill density"},
-                        {"api", "Use get_object_config/set_object_config to manage per-object overrides. object_id is 0-indexed."},
-                        {"reset", "Use reset_object_config to remove overrides and fall back to global settings"}
-                    }},
-                    {"layer_ranges", {
-                        {"description", "Within a single object, you can define different settings for specific Z height ranges."},
-                        {"example", "Use 0.1mm layers from Z=10-20mm for fine detail, 0.3mm elsewhere for speed"},
-                        {"api", "Use get_object_layer_ranges/set_object_layer_range/delete_object_layer_range to manage"},
-                        {"key_format", "Ranges are defined by z_min and z_max in millimeters"}
-                    }}
-                }},
-
-                // ==================== TOOLS BY CATEGORY ====================
-                {"tools_by_category", {
-                    {"information", {
-                        {"get_server_info", "This documentation"},
-                        {"quit_app", "Quit the app with no dialog (discards unsaved changes unless discard_changes=false)"},
-                        {"get_scene_info", "Get current project state: plates, objects, positions, and each plate's "
-                                           "full occupancy list (objects with brim, prime tower, excluded bed areas)"},
-                        {"get_object_info", "Get single object info. Faster than get_scene_info for targeted queries."},
-                        {"get_presets", "List presets for the selected printer. Narrow with type/vendor/name_contains; "
-                                        "summary:false adds full configs (large)"},
-                        {"get_edited_presets", "Get currently active presets with their config values and dirty_options"},
-                        {"get_slicing_status", "Check slicing progress, per plate"}
-                    }},
-                    {"configuration", {
-                        {"select_preset", "Switch to a different preset by name. type=filament + slot (1-based) sets one filament slot."},
-                        {"apply_config", "Modify individual settings (creates dirty values)"},
-                        {"clone_preset", "Duplicate an existing preset with a new name"},
-                        {"save_preset", "Persist dirty changes to disk"},
-                        {"delete_preset", "Remove user-created presets. Cannot delete system presets or presets with dependents."},
-                        {"reset_preset", "Discard dirty changes without saving"},
-                        {"get_valid_config_keys", "Discover available setting keys by category"}
-                    }},
-                    {"model_operations", {
-                        {"load_model", "Import STL, OBJ, STEP, 3MF model files"},
-                        {"load_project", "Open a complete 3MF project with settings"},
-                        {"new_project", "Clear all objects and start fresh"},
-                        {"auto_orient", "Automatically orient objects for optimal printing"},
-                        {"arrange_objects", "Auto-arrange objects on the build plate"},
-                        {"undo", "Undo last operation"},
-                        {"redo", "Redo last undone operation"}
-                    }},
-                    {"object_transforms", {
-                        {"move_object", "Move/translate an object (relative offset or absolute position). Moving it into another plate's area re-homes it onto that plate."},
-                        {"rotate_object", "Rotate an object around X, Y, Z axes (degrees)"},
-                        {"scale_object", "Scale an object (uniform or per-axis factors)"},
-                        {"mirror_object", "Mirror an object across X, Y, or Z axis"},
-                        {"clone_object", "Copy an object to current or specified plate. duplicate=false (default) creates instances, duplicate=true creates independent objects. destination_plate specifies where clones go (defaults to current plate)."},
-                        {"delete_object", "Remove an object from the scene"},
-                        {"rename_object", "Rename an object for identification"},
-                        {"flatten_object", "Auto-orient object to lay flat on best face"},
-                        {"cut_object", "Cut object horizontally at Z height (keep above/below/both)"},
-                        {"transform_objects", "Batch transform multiple objects in one call"}
-                    }},
-                    {"slicing_export", {
-                        {"slice_all", "Slice every plate (async, poll get_slicing_status). all_plates=false slices only the selected plate."},
-                        {"get_print_estimate", "Get print time and filament usage after slicing"},
-                        {"export_gcode", "Export sliced G-code to file"},
-                        {"export_3mf", "Export project as 3MF file"},
-                        {"save_project", "Save current project"}
-                    }},
-                    {"visualization", {
-                        {"render_plate_view", "Picture a plate: named cameras (iso/top/front/back/left/right/low), fit to plate or object, default 3-view contact sheet, grid + labels overlays, objects_in_frame/uniform_image metadata, or a first-layer plan (layer_view). Bed mm. save_to_file=true for PNG paths."},
-                        {"get_preview_base64", "Convert preview to base64. Only for agents without filesystem access - Claude Code should use Read tool instead."}
-                    }},
-                    {"per_object_settings", {
-                        {"get_object_config", "Get per-object setting overrides for a specific object"},
-                        {"set_object_config", "Set per-object settings (override global settings)"},
-                        {"reset_object_config", "Remove per-object overrides (revert to global)"},
-                        {"get_object_layer_ranges", "Get layer-range-specific configs for an object"},
-                        {"set_object_layer_range", "Set settings for a specific Z height range"},
-                        {"delete_object_layer_range", "Remove layer range configs"}
-                    }},
-                    {"painting", {
-                        {"paint_object", "Paint per-triangle annotations: mode=color (multi-material), "
-                                         "support, seam or fuzzy_skin. selection=bands along a plate axis "
-                                         "(even split over `filaments`, or explicit `bands`), box, sphere, "
-                                         "or all. ALL COORDINATES ARE PLATE MM, same frame as "
-                                         "get_object_info's bounding_box. selection=connected fills a "
-                                         "feature from a seed (see pick_facet); selection=component paints "
-                                         "one shell."},
-                        {"get_object_paint", "Read back what is painted per volume and per mode, plus brim ears"},
-                        {"clear_object_paint", "Reset one paint annotation, or all four, back to unpainted"},
-                        {"set_brim_ears", "Place brim ears at plate x/y points. Not facet paint - these are "
-                                          "points on the object, and need brim_type='painted' to print."},
-                        {"get_object_components", "List a part's connected shells: id, facet count, area, plate bbox. "
-                                                  "Paint one with paint_object selection=component."},
-                        {"pick_facet", "Point, ray, or render pixel + camera -> the facet it lands on, with its plate "
-                                       "point and normal. Feed the point to paint_object selection=connected."}
-                    }},
-                    {"variable_layer_height", {
-                        {"apply_adaptive_layer_height", "Apply VLH to object based on geometry. Quality 0.0-1.0 controls layer variation."},
-                        {"clear_adaptive_layer_height", "Remove VLH from object, revert to fixed layer height."}
-                    }},
-                    {"plate_management", {
-                        {"add_plate", "Create a new plate"},
-                        {"select_plate", "Switch to a plate by index"},
-                        {"delete_plate", "Delete a plate. Cannot delete the last plate. Objects on it are NOT deleted and NOT moved to another plate: they are moved outside every plate, where get_scene_info lists them under unplaced_objects. Delete them first if you do not want them."},
-                        {"set_prime_tower_position", "Move a plate's prime tower. x/y are the tower body's front-left "
-                                                     "corner in plate millimetres; read the current one from "
-                                                     "get_scene_info plates[].prime_tower.position."}
-                    }},
-                    {"printer_management", {
-                        {"get_printers", "List printers: Bambu (local/cloud) and printer presets with a print host"},
-                        {"select_printer", "Select a Bambu printer by dev_id, or a print-host preset by physical_printer"},
-                        {"discover_printers", "Find Flashforge printers on the local network"},
-                        {"add_physical_printer", "Save a print host into a printer preset and select it"},
-                        {"send_to_printer", "Send G-code: auto-detects OctoPrint/Klipper vs Bambu dialog"},
-                        {"match_project_to_printer", "Point the project's filament slots at the material and colour the printer's station actually holds"}
-                    }}
-                }},
-
-                // ==================== COMMON SETTINGS ====================
-                {"setting_types", {
-                    {"print", "Print process settings like layer_height, infill, speeds, supports"},
-                    {"filament", "Filament settings like temperatures, cooling, flow_ratio"},
-                    {"printer", "Printer/machine settings like retraction, speeds, G-code flavor"}
-                }},
-                {"common_print_settings", {
-                    {"layer_height", "Layer height in mm (e.g., '0.2')"},
-                    {"initial_layer_print_height", "First layer height in mm"},
-                    {"wall_loops", "Number of perimeter walls (integer)"},
-                    {"sparse_infill_density", "Infill percentage as string (e.g., '15%')"},
-                    {"sparse_infill_pattern", "Infill pattern: grid, honeycomb, gyroid, etc."},
-                    {"enable_support", "Enable supports: '0' or '1'"},
-                    {"support_type", "Support type: normal(auto), tree(auto), etc."},
-                    {"top_shell_layers", "Number of top solid layers"},
-                    {"bottom_shell_layers", "Number of bottom solid layers"},
-                    {"outer_wall_speed", "Outer wall print speed in mm/s"},
-                    {"inner_wall_speed", "Inner wall print speed in mm/s"},
-                    {"sparse_infill_speed", "Infill print speed in mm/s"},
-                    {"travel_speed", "Travel move speed in mm/s"}
-                }},
-                {"common_filament_settings", {
-                    {"nozzle_temperature", "Nozzle temperature array (e.g., ['200'])"},
-                    {"nozzle_temperature_initial_layer", "First layer nozzle temp array"},
-                    {"hot_plate_temp", "Bed temperature array"},
-                    {"hot_plate_temp_initial_layer", "First layer bed temp array"},
-                    {"filament_flow_ratio", "Flow multiplier array (e.g., ['0.95'])"},
-                    {"fan_max_speed", "Maximum fan speed array (e.g., ['100'])"},
-                    {"fan_min_speed", "Minimum fan speed array"}
-                }},
-                {"common_printer_settings", {
-                    {"retraction_length", "Retraction distance array in mm (e.g., ['0.8'])"},
-                    {"retraction_speed", "Retraction speed array in mm/s (e.g., ['30'])"},
-                    {"z_hop", "Z hop distance array in mm (e.g., ['0.4'])"},
-                    {"machine_max_speed_x", "Max X speed array in mm/s"},
-                    {"machine_max_speed_y", "Max Y speed array in mm/s"},
-                    {"machine_max_acceleration_x", "Max X acceleration array"},
-                    {"machine_start_gcode", "Start G-code template"},
-                    {"machine_end_gcode", "End G-code template"}
-                }},
-
-                // ==================== WARNINGS AND BEST PRACTICES ====================
-                {"warnings_and_best_practices", {
-                    {"token_optimization", {
-                        {"critical", "ALWAYS use save_to_file=true with render_plate_view to avoid 5KB+ base64 images per view"},
-                        {"avoid_heavy_tools", {
-                            {"get_edited_presets", "~15-20KB response. Use sparingly, cache results."},
-                            {"get_presets", "Filter it: {type, vendor, name_contains}. summary:false without a filter "
-                                            "is ~1.9MB and will not fit in a response."},
-                            {"get_scene_info", "Use with_model_object_features=false unless you need volume/overhang data."}
-                        }},
-                        {"prefer_light_tools", {
-                            "get_slicing_status - tiny response, safe for polling",
-                            "apply_config - small response",
-                            "undo/redo - minimal response",
-                            "All transform tools (move, rotate, scale, etc.) - minimal responses"
-                        }}
-                    }},
-                    {"common_pitfalls", {
-                        {"object_index_shifts", "After delete/add, object_index values shift. Use stable 'id' to track objects, re-query for current object_index."},
-                        {"async_operations", "slice_all, auto_orient, arrange_objects are async. Poll or wait before next step."},
-                        {"cut_object_caution", "Cut removes original and creates new object(s). Use undo if result is wrong."},
-                        {"settings_not_saved", "apply_config creates dirty values. User must save preset in UI to persist."},
-                        {"undo_limits", "Undo history is limited. Save project before destructive operations."},
-                        {"positioning", "For absolute move_object: unspecified axes preserve current position. To spread objects, use relative=true with offsets, or arrange_objects."}
-                    }},
-                    {"efficiency_tips", {
-                        "Batch settings: put multiple items in one apply_config call",
-                        "Store stable 'id' values, re-query object_index only when needed for operations",
-                        "Use render_plate_view before and after transforms to verify",
-                        "Poll get_slicing_status every 2-3 seconds, not faster"
-                    }},
-                    {"visual_preview", {
-                        {"description", "Many tools support include_preview=true to return a turntable preview image path alongside results."},
-                        {"supported_tools", {
-                            "get_scene_info", "load_model", "load_project",
-                            "move_object", "rotate_object", "scale_object", "mirror_object",
-                            "flatten_object", "clone_object", "delete_object", "cut_object",
-                            "arrange_objects", "auto_orient", "undo", "redo",
-                            "apply_adaptive_layer_height", "clear_adaptive_layer_height"
-                        }},
-                        {"preview_hint", "When include_preview=true, the response includes a 'preview_hint' message encouraging you to check the preview image for a visual sense of the plate and objects."},
-                        {"recommendation", "Use include_preview to visually verify the result of operations, especially after loading, transforms, or destructive changes."}
-                    }}
-                }}
-            };
+            return server_info(params, s_tools);
         }
     });
 

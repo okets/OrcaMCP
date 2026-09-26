@@ -409,6 +409,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/OrcaMCP/OrcaMCPCommon.cpp
     GUI/OrcaMCP/OrcaMCPServer.hpp
     GUI/OrcaMCP/OrcaMCPServer.cpp
+    GUI/OrcaMCP/OrcaMCPServerInfo.hpp
+    GUI/OrcaMCP/OrcaMCPServerInfo.cpp
     GUI/OrcaMCP/OrcaMCPSliceEstimate.hpp
     GUI/OrcaMCP/OrcaMCPSliceEstimate.cpp
     GUI/OrcaMCP/OrcaMCPPaintGeometry.hpp

@@ -73,6 +73,9 @@ public:
     // nothing has yet; unlike init() it has no other side effect, so a unit test can call it.
     static const std::map<std::string, ToolDefinition>& registered_tools();
 
+    // The version every MCP surface reports: SoftFever_VERSION, from version.inc.
+    static std::string version();
+
 private:
     // MCP protocol handlers
     static nlohmann::json handle_initialize(const nlohmann::json& params);
