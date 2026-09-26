@@ -2846,8 +2846,10 @@ void OrcaMCPServer::register_builtin_tools()
         "slice result for that plate (get_slicing_status state \"done\"). Layers: printed_layers is "
         "the G-code's own total layer count (distinct print heights, object and support together); "
         "object_layers and support_layers count each kind alone, so with support on the same heights "
-        "printed_layers equals object_layers, not their sum. layer_count is a deprecated alias of "
-        "printed_layers. Tool/filament changes are reported as two separate counters: "
+        "printed_layers equals object_layers, not their sum; all three are null for a plate with no "
+        "sliced objects. layer_count is deprecated in favour of printed_layers: it is now the printed "
+        "count too (0 when there is none), a correction of the old object-plus-support sum. "
+        "Tool/filament changes are reported as two separate counters: "
         "extruder_changes (the printer switched physical extruder/tool head) and filament_changes (a "
         "nozzle was loaded with a different filament). A toolchanger reports the former, a "
         "single-nozzle AMS/MMU printer the latter.",
@@ -2949,14 +2951,11 @@ void OrcaMCPServer::register_builtin_tools()
                 // total_layer_count(), which adds its support layers to its object layers -- mostly
                 // the same heights twice -- and read 1567 for a model the G-code prints in 825.
                 // A plate with no sliced objects (a G-code-only project) has no counts to give.
-                const Print*      print   = plate->fff_print();
-                const bool        counted = print != nullptr && !print->objects().empty();
-                const LayerCounts layers  = counted ? count_print_layers(*print) : LayerCounts{};
-                auto layers_or_null = [counted](size_t count) {
-                    return counted ? nlohmann::json(count) : nlohmann::json(nullptr);
-                };
+                const Print* print = plate->fff_print();
+                const std::optional<LayerCounts> layers =
+                    print != nullptr && !print->objects().empty() ? std::optional(count_print_layers(*print)) : std::nullopt;
 
-                return nlohmann::json{
+                nlohmann::json estimate_json = {
                     {"status", "success"},
                     {"state", "done"},
                     {"plate_index", plate_index},
@@ -2964,10 +2963,6 @@ void OrcaMCPServer::register_builtin_tools()
                     {"estimated_time_seconds", normal_time},
                     {"estimated_time_silent", silent_time > 0.0 ? nlohmann::json(get_time_dhms(static_cast<float>(silent_time)))
                                                                 : nlohmann::json(nullptr)},
-                    {"printed_layers", layers_or_null(layers.printed)},
-                    {"object_layers", layers_or_null(layers.object)},
-                    {"support_layers", layers_or_null(layers.support)},
-                    {"layer_count", layers_or_null(layers.printed)},  // deprecated alias of printed_layers
                     {"filament", {
                         {"total_length_mm", number_or_null(estimate.length_mm)},
                         {"total_volume_mm3", estimate.volume_mm3},
@@ -2990,6 +2985,8 @@ void OrcaMCPServer::register_builtin_tools()
                     {"extruder_changes", ps.total_extruder_changes},
                     {"active_warnings", get_active_warnings_json(plater)}
                 };
+                estimate_json.update(layer_counts_json(layers));
+                return estimate_json;
             });
         }
     });

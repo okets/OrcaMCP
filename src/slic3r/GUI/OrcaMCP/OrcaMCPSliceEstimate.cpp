@@ -137,6 +137,17 @@ LayerCounts count_print_layers(const Print& print)
     return counts;
 }
 
+nlohmann::json layer_counts_json(const std::optional<LayerCounts>& counts)
+{
+    auto count_or_null = [&counts](size_t LayerCounts::*field) {
+        return counts ? nlohmann::json((*counts).*field) : nlohmann::json(nullptr);
+    };
+    return {{"printed_layers", count_or_null(&LayerCounts::printed)},
+            {"object_layers", count_or_null(&LayerCounts::object)},
+            {"support_layers", count_or_null(&LayerCounts::support)},
+            {"layer_count", counts ? counts->printed : size_t(0)}};
+}
+
 std::optional<size_t> count_profile_layers(const SlicingParameters& params, const std::vector<double>& profile, bool precise_z)
 {
     if (profile.size() < 4)

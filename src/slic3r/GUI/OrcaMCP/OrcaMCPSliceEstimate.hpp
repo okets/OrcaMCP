@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 namespace Slic3r {
 class Print;
 struct SlicingParameters;
@@ -55,6 +57,11 @@ struct LayerCounts
     size_t object  = 0;
     size_t support = 0;
 };
+
+// get_print_estimate's layer fields: printed_layers, object_layers and support_layers, null when the
+// plate has no sliced objects to count (`counts` unset), and layer_count, the deprecated name, which
+// has always been an integer and stays one: the printed count, or 0.
+nlohmann::json layer_counts_json(const std::optional<LayerCounts>& counts);
 
 // The number of distinct heights in `zs`, counting neighbours closer than EPSILON once: the merge
 // GCode::_do_export applies before it counts layers.

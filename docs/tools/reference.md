@@ -1425,10 +1425,13 @@ filament tool.
 layers together, heights closer than 0.0001 mm counted once. `object_layers` and `support_layers`
 count each kind the same way on its own, so with support synchronised to the object's layers
 `printed_layers` equals `object_layers`, not their sum. When printing by object, each object's
-heights count once per instance, as the G-code counts them. `layer_count` is a deprecated alias of
-`printed_layers`. All four are `null` for a plate with no sliced objects. Before v2.5.0.6
-`layer_count` was the tallest object's layer count *plus* its support layer count, so a 70 mm part
-at 0.2 mm with support read 649 layers instead of 350.
+heights count once per instance, as the G-code counts them. The three are `null` for a plate with
+no sliced objects.
+
+`layer_count` is deprecated in favour of `printed_layers`. It is still an integer, and it now counts
+printed layers too (`0` when there are none to count). This is a correction: before v2.5.0.6 it was
+the tallest object's layer count *plus* its support layer count, so a 70 mm part at 0.2 mm with
+support read 649 layers instead of 350.
 
 **Tool changes are two counters, not one.** They are the same pair the G-code preview's legend
 shows, and they mean different things:
@@ -1585,9 +1588,9 @@ Enable adaptive layer height for better surface quality.
 
 Each object's result carries `estimated_layer_count`: the object layers the slicer will cut the new
 profile into (support and raft not included). A profile with fewer than two points has none to
-count: it reports `0` and says why in `estimated_layer_count_note`. Before v2.5.0.6 it was the height divided by the mean
-of the thinnest and thickest layer, which is not the mean layer height of a profile that is mostly
-one or the other.
+count: it reports `0` and says why in `estimated_layer_count_note`. Before v2.5.0.6 it was the
+height divided by the mean of the thinnest and thickest layer, which is not the mean layer height
+of a profile that is mostly one or the other.
 
 ---
 

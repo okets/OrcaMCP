@@ -244,3 +244,20 @@ TEST_CASE("an adaptive profile with nothing to cut has no layer count", "[orcamc
     CHECK_FALSE(count_profile_layers(params, {}, true).has_value());
     CHECK_FALSE(count_profile_layers(params, {0.0, 0.2}, true).has_value());
 }
+
+TEST_CASE("the estimate's layer fields keep layer_count an integer", "[orcamcp][estimate]")
+{
+    // layer_count was always an integer; it stays one, now the printed count, 0 when there is none.
+    const nlohmann::json sliced = layer_counts_json(LayerCounts{350, 350, 299});
+    CHECK(sliced["printed_layers"] == 350);
+    CHECK(sliced["object_layers"] == 350);
+    CHECK(sliced["support_layers"] == 299);
+    CHECK(sliced["layer_count"] == 350);
+
+    const nlohmann::json unsliced = layer_counts_json(std::nullopt);
+    CHECK(unsliced["printed_layers"].is_null());
+    CHECK(unsliced["object_layers"].is_null());
+    CHECK(unsliced["support_layers"].is_null());
+    CHECK(unsliced["layer_count"].is_number_integer());
+    CHECK(unsliced["layer_count"] == 0);
+}
