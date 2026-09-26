@@ -48,6 +48,9 @@ public:
     bool                       can_test() const override { return true; }
     PrintHostPostUploadActions get_post_upload_actions() const override { return PrintHostPostUploadAction::StartPrint; }
     std::string                get_host() const override { return m_host; }
+    // The bare host the local API is reached at (FlashforgeLocalApi::host_of of print_host), parsed
+    // once when the host is built: every request and log line uses this one value.
+    const std::string&         local_api_host() const { return m_local_api_host; }
     bool                       fetch_material_slots(std::vector<FlashforgeMaterialSlot>& slots, bool* supports_material_station, wxString& msg) const;
     static bool                discover_printers(std::vector<FlashforgeDiscoveredPrinter>& printers, wxString& msg, int timeout_ms = 10000, int idle_timeout_ms = 1500, int max_retries = 3);
 
@@ -68,6 +71,7 @@ public:
 
 private:
     std::string m_host;
+    std::string m_local_api_host;
     std::string m_serial_number;
     std::string m_check_code;
     std::string m_console_port;
@@ -92,7 +96,6 @@ private:
     // with `msg` set to the one message all of them used to spell out for themselves.
     bool require_local_api_credentials(wxString& msg) const;
     std::string make_http_url(const std::string& path) const;
-    std::string extract_host_name() const;
     int  get_err_code_from_body(const std::string &body) const;
     bool connect(wxString& msg) const;
     bool start_print(wxString& msg, const std::string& filename) const;

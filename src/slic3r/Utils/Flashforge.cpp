@@ -189,9 +189,10 @@ Flashforge::Flashforge(DynamicPrintConfig* config)
     , m_gcFlavor(gcfMarlinLegacy)
     , m_bufferSize(4096) // 4K buffer size
 {
-    m_host          = safe_config_string(config, "print_host");
-    m_serial_number = safe_config_string(config, "flashforge_serial_number");
-    m_check_code    = safe_config_string(config, "printhost_apikey");
+    m_host           = safe_config_string(config, "print_host");
+    m_local_api_host = FlashforgeLocalApi::host_of(m_host); // once: m_host never changes
+    m_serial_number  = safe_config_string(config, "flashforge_serial_number");
+    m_check_code     = safe_config_string(config, "printhost_apikey");
 
     if (config != nullptr) {
         if (const auto* gcode_flavor = config->option<ConfigOptionEnum<GCodeFlavor>>("gcode_flavor"); gcode_flavor != nullptr)
@@ -311,7 +312,7 @@ bool Flashforge::test(wxString& msg) const
 
     BOOST_LOG_TRIVIAL(debug) << boost::format("[Flashforge Serial] testing connection");
     // Utils::TCPConsole console(m_host, m_console_port);
-    Utils::TCPConsole client(extract_host_name(), m_console_port);
+    Utils::TCPConsole client(m_local_api_host, m_console_port);
     client.enqueue_cmd(controlCommand);
     bool res = client.run_queue();
     if (!res) {
@@ -342,7 +343,7 @@ wxString Flashforge::get_test_failed_msg(wxString& msg) const
 bool Flashforge::connect(wxString& msg) const
 {
     
-    Utils::TCPConsole client(extract_host_name(), m_console_port);
+    Utils::TCPConsole client(m_local_api_host, m_console_port);
 
     client.enqueue_cmd(controlCommand);
     client.enqueue_cmd(deviceInfoCommand);
@@ -370,7 +371,7 @@ bool Flashforge::connect(wxString& msg) const
 
 bool Flashforge::start_print(wxString& msg, const std::string& filename) const
 {
-    Utils::TCPConsole            client(extract_host_name(), m_console_port);
+    Utils::TCPConsole            client(m_local_api_host, m_console_port);
     const std::string            safe_filename = sanitize_flashforge_filename(filename);
     Slic3r::Utils::SerialMessage startPrintCommand = {(boost::format("~M23 0:/user/%1%") % safe_filename).str(), Slic3r::Utils::Command};
     client.enqueue_cmd(startPrintCommand);
@@ -393,7 +394,7 @@ bool Flashforge::upload(PrintHostUpload upload_data, ProgressFn progress_fn, Err
     bool res = true;
     wxString errormsg;
 
-    Utils::TCPConsole client(extract_host_name(), m_console_port);
+    Utils::TCPConsole client(m_local_api_host, m_console_port);
 
     try {
 
@@ -557,13 +558,13 @@ bool Flashforge::fetch_status(FlashforgeApi::PrinterStatus& out, wxString& msg) 
         return false;
     }
 
-    FlashforgeLocalApi::status_cache().put(extract_host_name(), out);
+    FlashforgeLocalApi::status_cache().put(m_local_api_host, out);
     return true;
 }
 
 std::optional<FlashforgeLocalApi::CachedStatus> Flashforge::last_known_status() const
 {
-    return FlashforgeLocalApi::status_cache().get(extract_host_name());
+    return FlashforgeLocalApi::status_cache().get(m_local_api_host);
 }
 
 bool Flashforge::send_control(const std::string& cmd, const nlohmann::json& args, wxString& msg) const
@@ -700,7 +701,7 @@ bool Flashforge::request_local_api_json(const std::string& path, const std::stri
 
     log_local_api_outcome(url, ok, failure, attempts);
     if (!ok && FlashforgeLocalApi::curl_code_of(failure.error) != 0)
-        error_msg = GUI::from_u8(FlashforgeLocalApi::describe_failure(extract_host_name(), failure, attempts));
+        error_msg = GUI::from_u8(FlashforgeLocalApi::describe_failure(m_local_api_host, failure, attempts));
     return ok;
 }
 
@@ -737,7 +738,7 @@ bool Flashforge::post_local_api_json_once(const std::string& url, const std::str
 // 100th after it, and the request that ends it.
 void Flashforge::log_local_api_outcome(const std::string& url, bool ok, const FlashforgeLocalApi::RequestFailure& failure, int attempts) const
 {
-    const std::string host = extract_host_name();
+    const std::string& host = m_local_api_host;
     if (ok) {
         if (const int ended = FlashforgeLocalApi::failure_streaks().record_success(host); ended > 0)
             BOOST_LOG_TRIVIAL(warning) << "[Flashforge HTTP] " << host << " answers again after " << ended << " failed request(s)";
@@ -750,14 +751,7 @@ void Flashforge::log_local_api_outcome(const std::string& url, bool ok, const Fl
 
 std::string Flashforge::make_http_url(const std::string& path) const
 {
-    return FlashforgeLocalApi::url_of(extract_host_name(), path);
-}
-
-// A print_host written as "ip:port" without a scheme used to keep its port here, so the local API URL
-// came out as http://ip:port:8898/... FlashforgeLocalApi::host_of is the one parser the agent uses too.
-std::string Flashforge::extract_host_name() const
-{
-    return FlashforgeLocalApi::host_of(m_host);
+    return FlashforgeLocalApi::url_of(m_local_api_host, path);
 }
 
 int Flashforge::get_err_code_from_body(const std::string& body) const

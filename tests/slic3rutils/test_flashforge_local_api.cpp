@@ -1,5 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "libslic3r/PrintConfig.hpp"
+#include "slic3r/Utils/Flashforge.hpp"
 #include "slic3r/Utils/FlashforgeLocalApi.hpp"
 
 #include <chrono>
@@ -251,4 +253,16 @@ TEST_CASE("StatusCache returns a host's last status with its age", "[flashforge]
     CHECK(cached->status.slots.front().material_name == "PETG");
 
     CHECK_FALSE(cache.get("10.0.0.101", t0).has_value()); // another printer's status is not this one's
+}
+
+TEST_CASE("A Flashforge host reads its print_host once, when it is built", "[flashforge]")
+{
+    Slic3r::DynamicPrintConfig config;
+    config.set_key_value("print_host", new Slic3r::ConfigOptionString("http://10.0.0.5:8080/foo//bar"));
+    const Slic3r::Flashforge host(&config);
+    CHECK(host.local_api_host() == "10.0.0.5");
+
+    // The config is not consulted again: the host a request goes to is fixed at construction.
+    config.set_key_value("print_host", new Slic3r::ConfigOptionString("10.0.0.6"));
+    CHECK(host.local_api_host() == "10.0.0.5");
 }
