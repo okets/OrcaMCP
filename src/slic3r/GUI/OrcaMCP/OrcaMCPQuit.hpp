@@ -86,6 +86,21 @@ void set_closing_dialogs_to_quit(bool closing);
 void mark_session_ending();
 bool session_ending();
 
+// The startup "restore unsaved items?" prompt is open while one of these lives.
+class RestorePromptOpen
+{
+public:
+    RestorePromptOpen();
+    ~RestorePromptOpen();
+    RestorePromptOpen(const RestorePromptOpen&)            = delete;
+    RestorePromptOpen& operator=(const RestorePromptOpen&) = delete;
+};
+bool restore_prompt_open();
+
+// Why new_project / load_project refuse: while the restore prompt waits, they would point the app's
+// record of the backup it offers (last_backup_path) at the new project's, and orphan it.
+std::optional<std::string> pending_restore_refusal();
+
 // Why quit_app refuses, decided before anything closes; nullopt when it may go ahead.
 std::optional<std::string> quit_refusal(const ModalState& modal, bool discard_changes, bool project_dirty);
 

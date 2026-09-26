@@ -3034,13 +3034,16 @@ void OrcaMCPServer::register_builtin_tools()
         "new_project",
         ToolCategory::Scene,
         "Start a new, empty project",
-        "Create a new empty project.",
+        "Create a new empty project. A running slice is cancelled first. Refused while the app's startup "
+        "\"restore unsaved items?\" prompt waits (get_scene_info's open_dialogs), since it would orphan that backup.",
         {
             {"type", "object"},
             {"properties", nlohmann::json::object()}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
-            return run_on_main_thread([]() {
+            return run_on_main_thread([]() -> nlohmann::json {
+                if (auto refusal = pending_restore_refusal())
+                    return nlohmann::json{{"status", "error"}, {"message", *refusal}};
                 Plater* plater = wxGetApp().plater();
 
                 // Suppress dialogs (like "save unsaved changes?") and capture messages
@@ -3062,7 +3065,8 @@ void OrcaMCPServer::register_builtin_tools()
         "load_project",
         ToolCategory::Scene,
         "Open a 3MF as the project",
-        "Load a 3MF project file",
+        "Load a 3MF project file. A running slice is cancelled first. Refused while the app's startup "
+        "\"restore unsaved items?\" prompt waits (get_scene_info's open_dialogs), since it would orphan that backup.",
         {
             {"type", "object"},
             {"properties", {
@@ -3080,7 +3084,9 @@ void OrcaMCPServer::register_builtin_tools()
         [](const nlohmann::json& params) -> nlohmann::json {
             std::string file_path = params["file_path"];
             bool include_preview = params.value("include_preview", false);
-            return run_on_main_thread([file_path, include_preview]() {
+            return run_on_main_thread([file_path, include_preview]() -> nlohmann::json {
+                if (auto refusal = pending_restore_refusal())
+                    return nlohmann::json{{"status", "error"}, {"message", *refusal}};
                 Plater* plater = wxGetApp().plater();
 
                 // Suppress dialogs and capture info messages

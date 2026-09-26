@@ -7835,7 +7835,13 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
             std::string last_backup = last;
             std::string originfile;
             if (Slic3r::has_restore_data(last_backup, originfile)) {
-                auto result = MessageDialog(this->q, _L("Previously unsaved items have been detected. Do you want to restore them\?"), wxString(SLIC3R_APP_FULL_NAME) + " - " + _L("Restore"), wxYES_NO | wxYES_DEFAULT | wxCENTRE).ShowModal();
+                int result;
+                {
+                    // Orca: while it waits, MCP's new_project / load_project are refused: they would point
+                    // last_backup_path at the new project's backup, away from the one offered here.
+                    const OrcaMCP::RestorePromptOpen restore_prompt_open;
+                    result = MessageDialog(this->q, _L("Previously unsaved items have been detected. Do you want to restore them\?"), wxString(SLIC3R_APP_FULL_NAME) + " - " + _L("Restore"), wxYES_NO | wxYES_DEFAULT | wxCENTRE).ShowModal();
+                }
                 // Orca: closed unanswered by a quit (quit_app, or a system logout), not by the user: keep
                 // the backup, so the next launch asks again.
                 if (result != wxID_YES && OrcaMCP::closing_dialogs_to_quit())

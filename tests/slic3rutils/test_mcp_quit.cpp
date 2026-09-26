@@ -412,6 +412,20 @@ TEST_CASE("quit_app refuses while a modal loop runs that no dialog accounts for"
     CHECK(refusal->find("cannot identify") != std::string::npos);
 }
 
+TEST_CASE("new_project and load_project wait while the restore prompt is open", "[McpQuit][orcamcp]")
+{
+    CHECK_FALSE(pending_restore_refusal());
+    {
+        const RestorePromptOpen open;
+        CHECK(restore_prompt_open());
+        const auto refusal = pending_restore_refusal();
+        REQUIRE(refusal);
+        CHECK(refusal->find("quit_app") != std::string::npos);
+    }
+    CHECK_FALSE(restore_prompt_open());
+    CHECK_FALSE(pending_restore_refusal());
+}
+
 TEST_CASE("get_scene_info and active_warnings name what is open", "[McpQuit][orcamcp]")
 {
     nlohmann::json   none;

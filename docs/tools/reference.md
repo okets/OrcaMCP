@@ -238,7 +238,8 @@ reasons above account for that.
 tool opens one only where its entry says so (`send_to_printer`'s Bambu dialog, or `direct: false`),
 but the user can open one, and after a crash the app starts with its "restore unsaved items?" prompt
 (`"OrcaMCP - Restore"`). Every modal dialog counts, the plain ones too (the flushing-volumes dialog,
-the filament map). Such a dialog waits for the user; tool calls still run while it is open, and every tool's `active_warnings` carries an `OpenDialog` warning naming it.
+the filament map). Such a dialog waits for the user; tool calls still run while it is open (but see
+`new_project`), and every tool's `active_warnings` carries an `OpenDialog` warning naming it.
 `quit_app` closes the app's own dialogs unanswered.
 
 ---
@@ -287,7 +288,9 @@ run read `plates_sliced` / `plates`.
 
 ### new_project
 Create a new empty project. A running slice is cancelled first (see `quit_app` for how long that can
-take).
+take). Refused while the startup "restore unsaved items?" prompt waits (`get_scene_info`'s
+`open_dialogs`): the new project would take over the app's record of the backup that prompt offers,
+and a later launch would not offer it again. Answer the prompt, or `quit_app`, which keeps it.
 
 **Parameters:** None
 
@@ -300,6 +303,7 @@ take).
 
 ### load_project
 Load a project file (.3mf), replacing the current project. A running slice is cancelled first.
+Refused while the startup "restore unsaved items?" prompt waits, as `new_project` is.
 
 **Parameters:**
 | Parameter | Type | Required | Description |

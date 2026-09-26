@@ -40,6 +40,7 @@ std::string describe(const ModalState& modal)
 
 bool                       g_closing_dialogs_to_quit = false;
 bool                       g_session_ending          = false;
+int                        g_restore_prompts_open    = 0;
 std::optional<std::string> g_quit_failure;
 
 } // namespace
@@ -96,6 +97,19 @@ void set_closing_dialogs_to_quit(bool closing) { g_closing_dialogs_to_quit = clo
 
 void mark_session_ending() { g_session_ending = true; }
 bool session_ending() { return g_session_ending; }
+
+RestorePromptOpen::RestorePromptOpen() { ++g_restore_prompts_open; }
+RestorePromptOpen::~RestorePromptOpen() { --g_restore_prompts_open; }
+bool restore_prompt_open() { return g_restore_prompts_open > 0; }
+
+std::optional<std::string> pending_restore_refusal()
+{
+    if (!restore_prompt_open())
+        return std::nullopt;
+    return std::string("the app is asking whether to restore the unsaved items of a session that ended "
+                       "unexpectedly, and its backup would be lost; answer the prompt in the app first, or call "
+                       "quit_app, which keeps the backup for the next launch");
+}
 
 std::optional<std::string> quit_refusal(const ModalState& modal, bool discard_changes, bool project_dirty)
 {

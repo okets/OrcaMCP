@@ -111,7 +111,7 @@ grep -hA1 -E '^\s*register_(bridge_)?tool\(\{' src/slic3r/GUI/OrcaMCP/*.cpp | gr
 
 | Category | Tools |
 |----------|-------|
-| **Scene** | `get_scene_info` (plates, objects with `filaments_used` — read that, not `extruder_id` — and each plate's full occupancy: object footprints with brim, the prime tower, excluded bed areas; `open_dialogs` / `system_dialog_open`: a dialog waiting for the user), `new_project`, `load_project`, `save_project`, `export_3mf` |
+| **Scene** | `get_scene_info` (plates, objects with `filaments_used` — read that, not `extruder_id` — and each plate's full occupancy: object footprints with brim, the prime tower, excluded bed areas; `open_dialogs` / `system_dialog_open`: a dialog waiting for the user), `new_project`, `load_project` (both cancel a running slice; refused while the startup restore prompt waits), `save_project`, `export_3mf` |
 | **Models** | `load_model` (a 3MF is always geometry only: never its presets, never a rename; `.gcode` / `.gcode.3mf` only onto an empty scene, as a preview; returns `loaded_objects` in `get_scene_info`'s object shape, `filaments_added`; `multipart: merge\|separate`), `auto_orient`, `arrange_objects`, `get_object_info` (incl. every volume with its type and filament), `rename_object`, `set_object_printable` |
 | **Transforms** | `move_object`, `rotate_object`, `scale_object`, `mirror_object`, `flatten_object`, `clone_object`, `cut_object`, `delete_object`, `transform_objects` (rotate, scale, mirror and transform drop a resting object back onto the bed like the GUI; an explicit Z is kept) |
 | **Plates** | `add_plate`, `select_plate`, `delete_plate`, `set_prime_tower_position` |
@@ -671,7 +671,7 @@ given: `"<prompt> (auto-answered <answer>)"`. OK-only notices are captured as th
 | `TextureImportDialog` (textured or vertex-coloured OBJ, GLB, GLTF, FBX) | Not opened; imported as plain geometry, colours not mapped (`auto-answered Skip`) |
 | "Connected printer is X. Sync the printer information and switch the preset?" (`TipsDialog`, project load with a mismatched Bambu printer connected) | Auto-NO: the printer preset is not switched |
 | Any other `DPIDialog` modal (the fallback in `DPIAware::ShowModal`, `GUI_Utils.hpp`) | Not opened: answers Cancel, `"<dialog title> was suppressed (auto-answered Cancel)"`. The rows above answer their dialogs first, so this only catches a modal nobody handled |
-| Startup "Previously unsaved items have been detected. Restore them?" prompt (`EVT_RESTORE_PROJECT`, after a crash) | **Not suppressed**: no MCP call is in flight at startup, so it waits for the user, and every tool call runs underneath it (`get_scene_info`'s `open_dialogs` and an `OpenDialog` active warning show it). `quit_app` closes it unanswered (as No) and the backup is kept, so the next launch asks again; `quit_app` with `discard_changes: false` refuses and names it |
+| Startup "Previously unsaved items have been detected. Restore them?" prompt (`EVT_RESTORE_PROJECT`, after a crash) | **Not suppressed**: no MCP call is in flight at startup, so it waits for the user, and every tool call runs underneath it (`get_scene_info`'s `open_dialogs` and an `OpenDialog` active warning show it). `quit_app` closes it unanswered (as No) and the backup is kept, so the next launch asks again; `quit_app` with `discard_changes: false` refuses and names it. While it waits, `new_project` and `load_project` are refused: they would point `last_backup_path` at the new project's backup, and the one it offers would never be offered again |
 | Send-to-printer (`send_to_printer`) | **Bambu:** the `SelectMachineDialog` is scheduled with `CallAfter` and the tool returns `dialog_opened`; the user drives it. **Print hosts (Flashforge, Moonraker, OctoPrint, …):** by default (`direct: true`) there is **no dialog** — the tool uploads the sliced plate and, because `start_print` also defaults to true, **starts the print**. It returns `queued`. Pass `start_print: false` to upload only, or `direct: false` to open the print-host dialog instead. Never call it to "look at the dialog": on 2026-09-18 that started a 7 h print. |
 
 ### Implementation
@@ -889,7 +889,8 @@ another plate while one is sliced.
 Item Q: upstream's restore prompt treats every answer but Yes as No and deletes the crashed session's
 backup, including a prompt the app itself closed to quit (its system-logout handler, and our
 `quit_app`). Ours returns when `OrcaMCP::closing_dialogs_to_quit()` and keeps the backup, so the next
-launch asks again. On "no", take upstream's handler.
+launch asks again, and marks the prompt open (`RestorePromptOpen`) so MCP's `new_project` /
+`load_project` wait for it. On "no", take upstream's handler and re-check both.
 
 Item S: upstream's `wxEVT_QUERY_END_SESSION` handler ends every dialog in `dialogStack` with
 `EndModal(wxID_ABORT)`. Callers that test only for No or Cancel take ABORT for yes ("Sync printer

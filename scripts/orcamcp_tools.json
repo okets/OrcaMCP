@@ -1017,7 +1017,7 @@
     },
     {
       "category": "Scene",
-      "description": "Load a 3MF project file",
+      "description": "Load a 3MF project file. A running slice is cancelled first. Refused while the app's startup \"restore unsaved items?\" prompt waits (get_scene_info's open_dialogs), since it would orphan that backup.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -1156,7 +1156,7 @@
     },
     {
       "category": "Scene",
-      "description": "Create a new empty project.",
+      "description": "Create a new empty project. A running slice is cancelled first. Refused while the app's startup \"restore unsaved items?\" prompt waits (get_scene_info's open_dialogs), since it would orphan that backup.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {},
