@@ -4158,7 +4158,10 @@ void ObjectList::add_object_to_list(size_t obj_idx, bool call_selection_changed,
     //std::string item_name_str = (boost::format("[P%1%]%2%") % plate_idx  % model_object->name).str();
     //const wxString& item_name = from_u8(item_name_str);
     const wxString& item_name = from_u8(model_object->name);
-    std::string warning_bitmap = get_warning_icon_name(model_object->mesh().stats());
+    // OrcaMCP: the stats every later icon update and the tooltip read. mesh() merged only the model
+    // parts, and TriangleMeshStats::merge kept only the last part's repairs, so a modifier's hole
+    // or an earlier part's repairs left the first icon off while the tooltip listed them.
+    std::string warning_bitmap = get_warning_icon_name(model_object->get_object_stl_stats());
     const auto item = m_objects_model->AddObject(model_object, warning_bitmap, model_object->is_cut());
     Expand(m_objects_model->GetParent(item));
 
