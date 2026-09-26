@@ -82,27 +82,6 @@ namespace {
     }
 }
 
-static void z_debug_output_thumbnail(const ThumbnailData& thumbnail_data, std::string file_name)
-{
-    // debug export of generated image
-    wxImage image(thumbnail_data.width, thumbnail_data.height);
-    image.InitAlpha();
-
-    for (unsigned int r = 0; r < thumbnail_data.height; ++r)
-    {
-        unsigned int rr = (thumbnail_data.height - 1 - r) * thumbnail_data.width;
-        for (unsigned int c = 0; c < thumbnail_data.width; ++c)
-        {
-            unsigned char* px = (unsigned char*)thumbnail_data.pixels.data() + 4 * (rr + c);
-            image.SetRGB((int)c, (int)r, px[0], px[1], px[2]);
-            image.SetAlpha((int)c, (int)r, px[3]);
-        }
-    }
-
-    std::string file_name_path = "/Users/kenneth/Desktop/" + file_name + ".png";
-    image.SaveFile(file_name_path, wxBITMAP_TYPE_PNG);
-}
-
 static std::string encode_image_to_base64(const wxImage& image, bool use_png);
 static std::string encode_thumbnail_to_base64(const ThumbnailData& thumbnail_data, bool use_png = true)
 {
@@ -143,21 +122,20 @@ static std::string save_thumbnail_to_file(const ThumbnailData& thumbnail_data, i
 {
     return save_image_to_file(OrcaMCP::thumbnail_to_wximage(thumbnail_data), view_index, use_png);
 }
-static std::string save_image_to_file(const wxImage& image, int view_index, bool use_png) {
+// An image this server hands out by path. A failed write throws: returning the path of a file that
+// was never written sent agents to read a picture that did not exist.
+static std::string write_mcp_image(const wxImage& image, const char* prefix, const std::string& tag, bool use_png)
+{
+    const std::string path = OrcaMCP::new_mcp_image_path(prefix, tag, use_png ? ".png" : ".jpg");
+    // PNG keeps 1 px overlays crisp and alpha intact.
+    if (!image.SaveFile(wxString::FromUTF8(path), use_png ? wxBITMAP_TYPE_PNG : wxBITMAP_TYPE_JPEG))
+        throw std::runtime_error("could not write the image to " + path);
+    return path;
+}
 
-    // Generate unique filename in temp directory
-    // Time alone collided: three renders in one second overwrote each other. The sequence number
-    // makes every file this process writes distinct.
-    static std::atomic<unsigned> s_sequence{0};
-    std::string filename = "/tmp/orcamcp_render_" +
-                          std::to_string(std::time(nullptr)) + "_" +
-                          std::to_string(s_sequence.fetch_add(1)) + "_" +
-                          std::to_string(view_index) + (use_png ? ".png" : ".jpg");
-
-    // Save as JPEG
-    image.SaveFile(filename, use_png ? wxBITMAP_TYPE_PNG : wxBITMAP_TYPE_JPEG);  // PNG keeps 1 px overlays crisp and alpha intact
-
-    return filename;
+static std::string save_image_to_file(const wxImage& image, int view_index, bool use_png)
+{
+    return write_mcp_image(image, OrcaMCP::k_render_image_prefix, std::to_string(view_index), use_png);
 }
 
 // The numbers that make a picture checkable without looking at it. `frame` says which coordinates
@@ -653,13 +631,6 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
                             << " from " << (offscreen.ok ? "offscreen framebuffer" : "current framebuffer")
                             << ", " << visible_volumes.size() << " visible volume(s)";
 
-    // Debug output
-    // std::string file_name = "zzh_" +
-    //     std::to_string(int(camera_position.x()*100)) + "_" +
-    //     std::to_string(int(camera_position.y()*100)) + "_" +
-    //     std::to_string(int(camera_position.z()*100));
-    // z_debug_output_thumbnail(thumbnail_data, file_name);
-
     BOOST_LOG_TRIVIAL(info) << "RenderThumbnail: finished";
 }
 
@@ -1037,24 +1008,30 @@ nlohmann::json OrcaMCPPlateUtils::GetCurrentProject(bool with_model_object_featu
     return j;
 }
 
-void OrcaMCPPlateUtils::CleanupPreviews() {
+void OrcaMCPPlateUtils::CleanupTempImages() {
     namespace fs = boost::filesystem;
     try {
-        fs::path tmp_dir("/tmp");
-        if (!fs::exists(tmp_dir)) return;
-
-        for (fs::directory_iterator it(tmp_dir); it != fs::directory_iterator(); ++it) {
-            if (fs::is_regular_file(*it)) {
-                std::string filename = it->path().filename().string();
-                if (filename.find("orcamcp_preview_") == 0 &&
-                    filename.find(".jpg") != std::string::npos) {
-                    fs::remove(*it);
-                }
+        std::vector<fs::path> directories{fs::path(OrcaMCP::mcp_image_directory())};
+#ifndef _WIN32
+        // Older builds wrote to a literal /tmp, which on macOS is not the temp directory.
+        boost::system::error_code ec;
+        if (fs::is_directory("/tmp", ec) && fs::weakly_canonical("/tmp", ec) != directories.front())
+            directories.emplace_back("/tmp");
+#endif
+        size_t removed = 0;
+        for (const fs::path& directory : directories) {
+            if (!fs::is_directory(directory))
+                continue;
+            for (fs::directory_iterator it(directory); it != fs::directory_iterator(); ++it) {
+                boost::system::error_code remove_ec;
+                if (fs::is_regular_file(*it) && OrcaMCP::is_mcp_image_file_name(it->path().filename().string()) &&
+                    fs::remove(it->path(), remove_ec))
+                    ++removed;
             }
         }
-        BOOST_LOG_TRIVIAL(info) << "OrcaSlicer: Cleaned up old preview files";
+        BOOST_LOG_TRIVIAL(info) << "OrcaMCP: removed " << removed << " render and preview image(s) from earlier sessions";
     } catch (const std::exception& e) {
-        BOOST_LOG_TRIVIAL(warning) << "OrcaSlicer: Failed to cleanup preview files: " << e.what();
+        BOOST_LOG_TRIVIAL(warning) << "OrcaMCP: failed to clean up render and preview images: " << e.what();
     }
 }
 
@@ -1277,9 +1254,7 @@ nlohmann::json OrcaMCPPlateUtils::CaptureTurntablePreview(int plate_index, int v
 
     // Convert back to image and save
     wxImage final_image = bitmap.ConvertToImage();
-    std::string filename = "/tmp/orcamcp_preview_" +
-                          std::to_string(std::time(nullptr)) + ".jpg";
-    final_image.SaveFile(filename, wxBITMAP_TYPE_JPEG);
+    const std::string filename = write_mcp_image(final_image, OrcaMCP::k_preview_image_prefix, "turntable", false);
 
     return {
         {"preview_path", filename},

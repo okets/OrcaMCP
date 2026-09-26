@@ -1469,7 +1469,7 @@ starts at x ≈ 307. A camera aimed at another plate's area returns a flat image
 |-----------|------|----------|-------------|
 | `plate_index` | integer | Yes | Plate to render (0-based). Only its volumes are drawn. |
 | `views` | array | No | Views to render. **Omit for a contact sheet** of `iso`, `top` and `front` fitted to the plate, composed side by side into one image. |
-| `save_to_file` | boolean | No | Write a PNG to `/tmp` and return its path (recommended) instead of inline base64. |
+| `save_to_file` | boolean | No | Write a PNG to the system temp directory and return its path (recommended) instead of inline base64. |
 | `resolution` | integer | No | Pixels per view side (default 512, 32–2048). Prefer `fit` to an object over more pixels. |
 | `image_format` | `"png"` / `"jpeg"` | No | Default `png` for files, `jpeg` for inline base64. |
 | `overlays` | boolean / object | No | `true` (default) draws all; `false` none; or `{outline, grid, origin, labels, excluded}` booleans. |
@@ -1496,7 +1496,7 @@ explicit camera be given relative to the plate's front-left corner.
 **Returns** an array with one entry per view (or one contact-sheet entry):
 ```json
 [{
-  "file_path": "/tmp/orcamcp_render_1789763152_1_0.png",
+  "file_path": "/private/var/folders/xx/T/orcamcp_render_1789763152_1_0.png",
   "frame": "bed_mm",
   "plate_origin": [307.2, 0.0],
   "objects_in_frame": [
@@ -1515,6 +1515,9 @@ explicit camera be given relative to the plate's front-left corner.
 - `uniform_image: true` means the picture is a single flat colour, and `hint` says why: which
   plate the camera should be aimed at, or that the plate has nothing printable. Check it before
   reading the image.
+- Files go to the system temp directory (`$TMPDIR` on macOS, `%TEMP%` on Windows, usually `/tmp`
+  on Linux), not a literal `/tmp`, and the app removes the render and preview images of earlier
+  sessions when it starts.
 - `camera` is what `pick_facet` needs to turn a pixel back into a ray; pass it unchanged. On a
   contact sheet each entry under `views` carries its own `camera`, `column` and `x_offset` to add
   to a pixel's x first.
@@ -1542,7 +1545,7 @@ Convert a preview image file to base64 data URI for remote/containerized clients
 **Example:**
 ```json
 {"name": "get_preview_base64", "arguments": {
-  "path": "/tmp/orcamcp_preview_1234567890.jpg"
+  "path": "/private/var/folders/xx/T/orcamcp_preview_1790418216_2_turntable.jpg"
 }}
 ```
 
@@ -1551,11 +1554,14 @@ Convert a preview image file to base64 data URI for remote/containerized clients
 {
   "status": "success",
   "preview_base64": "data:image/jpeg;base64,/9j/4AAQSkZJRg...",
-  "source_path": "/tmp/orcamcp_preview_1234567890.jpg"
+  "source_path": "/private/var/folders/xx/T/orcamcp_preview_1790418216_2_turntable.jpg"
 }
 ```
 
-**Security:** Only `orcamcp_preview_*` and `orcamcp_render_*` files can be converted. Other paths are rejected.
+**Security:** Only the images this server wrote can be converted: an `orcamcp_preview_*` or
+`orcamcp_render_*` PNG or JPEG directly inside the system temp directory, checked after `..` and
+links are resolved. Every other path is rejected. Before v2.5.0.6 the check only looked for the
+prefix anywhere in the path, so `<anywhere>/orcamcp_render_/../<file>` passed.
 
 ---
 

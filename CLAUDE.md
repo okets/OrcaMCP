@@ -121,7 +121,7 @@ grep -hA1 -E '^\s*register_(bridge_)?tool\(\{' src/slic3r/GUI/OrcaMCP/*.cpp | gr
 | **Filaments & colour** | `get_filaments`, `set_object_filament` (whole-object form clears the volumes' own slots and reports `effective_filaments`; a volume's slot beats the object's), `set_mixed_filament`, `delete_mixed_filament`, `set_filament_color` (a slot's plate colour; `apply_config` edits the preset instead), `get_flush_volumes`, `set_flush_volumes`, `auto_calc_flush_volumes`, `get_toolchanger_config`, `suggest_color_mix`, `get_color_palette` |
 | **Painting** | `paint_object`, `get_object_paint`, `clear_object_paint`, `set_brim_ears`, `get_object_components`, `pick_facet` |
 | **Slicing** | `slice_all`, `get_slicing_status`, `export_gcode`, `get_print_estimate` (`printed_layers` = the G-code's layer count; `object_layers` / `support_layers` split; `layer_count` deprecated alias) |
-| **Visualization** | `render_plate_view` (named cameras `iso/top/front/back/left/right/low`, fit to plate or object, default 3-view contact sheet, plate outline + 10 mm grid + origin + object labels, `objects_in_frame` / `uniform_image` metadata, `layer_view: first_layer` plan with brim and supports; coordinates are bed mm), `get_preview_base64`, `set_gcode_view_type` |
+| **Visualization** | `render_plate_view` (named cameras `iso/top/front/back/left/right/low`, fit to plate or object, default 3-view contact sheet, plate outline + 10 mm grid + origin + object labels, `objects_in_frame` / `uniform_image` metadata, `layer_view: first_layer` plan with brim and supports; coordinates are bed mm; images in the system temp directory), `get_preview_base64`, `set_gcode_view_type` |
 | **Printers** | `get_printers`, `select_printer`, `add_physical_printer` (incl. optional Obico URL/token for Flashforge), `discover_printers`, `send_to_printer`, `get_printer_status`, `printer_control`, `list_printer_files`, `print_printer_file`, `match_project_to_printer` |
 | **Adaptive** | `apply_adaptive_layer_height`, `clear_adaptive_layer_height` |
 | **History** | `undo`, `redo` |
@@ -340,7 +340,7 @@ gh release upload v2.3.2.10 ./path/to/new/artifact.exe -R okets/OrcaMCP
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPServerInfo.cpp` | `get_server_info`: the catalogue generated from the registry, and the documentation sections |
 | `scripts/orcamcp_tools.json` | Golden tool list, generated from the registry; the bridge serves it offline (see "Tool list") |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPPlateUtils.cpp` | Plate rendering (`render_plate_view`), turntable previews. Draws into its own framebuffer. |
-| `src/slic3r/GUI/OrcaMCP/OrcaMCPRenderMath.cpp` | Pure render math: pixel projection, palette, camera presets, grid (unit-tested in `tests/slic3rutils/test_render_math.cpp`) |
+| `src/slic3r/GUI/OrcaMCP/OrcaMCPRenderMath.cpp` | Pure render math: pixel projection, palette, camera presets, grid, temp image paths (unit-tested in `tests/slic3rutils/test_render_math.cpp`) |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPRenderOverlay.cpp` | 2D overlays on finished renders: outline, grid, origin, labels, excluded areas |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPFirstLayerPlan.cpp` | Top-down first-layer plan from the sliced `Print` (brim, support, wipe tower) with footprint fallback |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPPresetConfigUtils.cpp` | Preset/config management |

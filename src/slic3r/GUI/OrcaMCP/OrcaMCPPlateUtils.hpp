@@ -117,8 +117,9 @@ public:
     static nlohmann::json CaptureTurntablePreview(int plate_index, int view_count = 4,
                                                    int resolution = 128);
 
-    // Cleanup old preview files (call on startup)
-    static void CleanupPreviews();
+    // Removes the render and preview images earlier sessions left in the temp directory (call on
+    // startup): every orcamcp_render_* and orcamcp_preview_* image, not only the previews.
+    static void CleanupTempImages();
 
 private:
     // `out_camera`, when given, receives the camera the thumbnail was actually drawn with --

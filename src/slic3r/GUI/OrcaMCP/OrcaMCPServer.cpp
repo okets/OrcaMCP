@@ -96,8 +96,8 @@ std::string OrcaMCPServer::init()
     return once.run([] {
         BOOST_LOG_TRIVIAL(info) << "OrcaMCPServer: Initializing MCP server";
 
-        // Clean up old preview files from previous sessions
-        OrcaMCPPlateUtils::CleanupPreviews();
+        // Clean up the render and preview images of previous sessions
+        OrcaMCPPlateUtils::CleanupTempImages();
 
         ensure_tools_registered();
     });
@@ -501,12 +501,14 @@ nlohmann::json OrcaMCPServer::handle_get_preview_base64(const nlohmann::json& pa
 {
     std::string path = params.at("path").get<std::string>();
 
-    // Security: Only allow orcamcp preview/render files
-    if (path.find("orcamcp_preview_") == std::string::npos &&
-        path.find("orcamcp_render_") == std::string::npos) {
+    // Only the images this server wrote: a render or preview file directly inside the temp
+    // directory. Checking that the path merely contained "orcamcp_render_" let
+    // "<anywhere>/orcamcp_render_/../<file>" through.
+    if (!is_mcp_image_path(path)) {
         return {
             {"status", "error"},
-            {"message", "Invalid path: only orcamcp preview files are allowed"}
+            {"message", "Invalid path: only render and preview images this server wrote to " +
+                        mcp_image_directory() + " are allowed"}
         };
     }
 
