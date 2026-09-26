@@ -10,42 +10,52 @@
 // Quitting while a modal dialog is open. On 2026-09-26 quit_app, sent while the startup "restore
 // unsaved items?" prompt was open, aborted the app: the main frame was deleted inside the prompt's
 // modal loop and deleted the prompt, which lived on its caller's stack. These drive the rule that
-// holds such a close back -- end the app's own dialogs innermost first, close only once nothing
-// modal is left -- with a fake app: its dialogs, its modal loop and its event-loop turns.
+// holds such a close back -- end the innermost dialog unanswered, one per turn, close only once
+// nothing modal is left -- with a fake app: its dialogs, its modal loop and its event-loop turns.
 
 using namespace Slic3r::GUI::OrcaMCP;
 using Hold = ModalUnwinder::Hold;
 
 namespace {
 
+ModalState::Dialog app_dialog(std::uint64_t id, std::string title) { return {id, std::move(title), false}; }
+ModalState::Dialog system_dialog(std::uint64_t id, std::string title) { return {id, std::move(title), true}; }
+
 // The app as the unwinder sees it. A dialog it is told to end leaves the stack when the next turn
 // runs, as a modal loop returns only once the event loop has had a turn.
 struct FakeApp
 {
-    std::vector<ModalState::Dialog>   dialogs; // innermost first
-    bool                              system_dialog = false;
-    std::vector<std::uintptr_t>       ended;
+    std::vector<ModalState::Dialog>    dialogs; // innermost first
+    bool                               untracked_loop = false;
+    bool                               session_ending = false;
+    std::vector<std::uint64_t>         ended;
     std::vector<std::function<void()>> turns;
-    std::vector<std::uintptr_t>       unwinding;
-    bool                              refuses_to_end = false; // a dialog that stays however it is ended
+    std::vector<std::uint64_t>         unwinding;
+    bool                               refuses_to_end = false; // a dialog that stays however it is ended
+    int                                cancelled_turns = 0;
 
     ModalState state() const
     {
         ModalState s;
         s.dialogs       = dialogs;
-        s.in_modal_loop = !dialogs.empty() || system_dialog;
+        s.in_modal_loop = !dialogs.empty() || untracked_loop;
         return s;
     }
 
     ModalUnwinder::Hooks hooks()
     {
         return {[this] { return state(); },
-                [this](std::uintptr_t id) {
+                [this](std::uint64_t id) {
                     ended.push_back(id);
                     if (!refuses_to_end)
                         unwinding.push_back(id);
                 },
-                [this](std::function<void()> task) { turns.push_back(std::move(task)); }};
+                [this](std::function<void()> task) { turns.push_back(std::move(task)); },
+                [this] {
+                    ++cancelled_turns;
+                    turns.clear();
+                },
+                [this] { return session_ending; }};
     }
 
     // One turn of the event loop: ended dialogs return from their modal loops, then the task runs.
@@ -53,7 +63,7 @@ struct FakeApp
     {
         if (turns.empty())
             return false;
-        for (std::uintptr_t id : unwinding)
+        for (std::uint64_t id : unwinding)
             dialogs.erase(std::remove_if(dialogs.begin(), dialogs.end(), [id](const auto& d) { return d.id == id; }),
                           dialogs.end());
         unwinding.clear();
@@ -68,20 +78,22 @@ struct FakeApp
 // went on.
 struct Close
 {
-    ModalUnwinder& unwinder;
-    int            went_on = 0;
-    Hold           last    = Hold::go_on;
+    ModalUnwinder&    unwinder;
+    int               went_on = 0;
+    Hold              last    = Hold::go_on;
+    std::vector<Hold> seen;
 
     void operator()()
     {
         last = unwinder.hold_back([this] { (*this)(); });
-        if (last == Hold::go_on)
+        seen.push_back(last);
+        if (ModalUnwinder::closes_now(last))
             ++went_on;
     }
 };
 
-const ModalState::Dialog restore_prompt{1, "OrcaMCP - Restore"};
-const ModalState::Dialog preferences{2, "Preferences"};
+const ModalState::Dialog restore_prompt = app_dialog(1, "OrcaMCP - Restore");
+const ModalState::Dialog preferences    = app_dialog(2, "Preferences");
 
 } // namespace
 
@@ -93,7 +105,7 @@ TEST_CASE("a close with nothing modal open goes on at once", "[McpQuit][orcamcp]
 
     close();
 
-    CHECK(close.went_on == 1);
+    CHECK(close.last == Hold::go_on);
     CHECK(app.ended.empty());
     CHECK(app.turns.empty());
 }
@@ -106,27 +118,46 @@ TEST_CASE("a close while a dialog is open ends it, and goes on only once it has 
     Close         close{unwinder};
 
     close();
-    CHECK(close.last == Hold::held);
+    CHECK(close.last == Hold::first_held);
     CHECK(close.went_on == 0); // not inside the dialog's loop: that is the crash
-    CHECK(app.ended == std::vector<std::uintptr_t>{restore_prompt.id});
+    CHECK(app.ended == std::vector<std::uint64_t>{restore_prompt.id});
 
     REQUIRE(app.run_turn());
+    CHECK(close.last == Hold::released);
     CHECK(close.went_on == 1);
     CHECK(app.turns.empty());
 }
 
+TEST_CASE("a hold says when it starts and when it ends, and is quiet between", "[McpQuit][orcamcp]")
+{
+    // The close handler logs the first and the last of these only, not one line per 50 ms turn.
+    FakeApp app;
+    app.dialogs        = {restore_prompt};
+    app.refuses_to_end = true;
+    ModalUnwinder unwinder(app.hooks());
+    Close         close{unwinder};
+
+    close();
+    REQUIRE(app.run_turn());
+    REQUIRE(app.run_turn());
+    app.dialogs.clear(); // the user answered it
+    REQUIRE(app.run_turn());
+
+    CHECK(close.seen == std::vector<Hold>{Hold::first_held, Hold::held, Hold::held, Hold::released});
+}
+
 TEST_CASE("stacked dialogs are ended innermost first, one per turn", "[McpQuit][orcamcp]")
 {
-    // Upstream's DPIAware::EndModal refuses a dialog that is not the innermost one.
+    // Ending any other leaves an invisible modal: wx hides it but its loop does not return.
     FakeApp app;
     app.dialogs = {preferences, restore_prompt};
     ModalUnwinder unwinder(app.hooks());
     Close         close{unwinder};
 
     close();
-    CHECK(app.ended == std::vector<std::uintptr_t>{preferences.id});
+    CHECK(app.ended == std::vector<std::uint64_t>{preferences.id});
     REQUIRE(app.run_turn());
-    CHECK(app.ended == std::vector<std::uintptr_t>{preferences.id, restore_prompt.id});
+    CHECK(app.ended == std::vector<std::uint64_t>{preferences.id, restore_prompt.id});
     CHECK(close.went_on == 0);
     REQUIRE(app.run_turn());
     CHECK(close.went_on == 1);
@@ -144,8 +175,44 @@ TEST_CASE("a dialog is ended once, however many turns it takes to unwind", "[Mcp
     for (int i = 0; i < 3; ++i)
         REQUIRE(app.run_turn());
 
-    CHECK(app.ended == std::vector<std::uintptr_t>{restore_prompt.id});
+    CHECK(app.ended == std::vector<std::uint64_t>{restore_prompt.id});
     CHECK(close.went_on == 0);
+}
+
+TEST_CASE("a dialog shown again after one was ended is ended too", "[McpQuit][orcamcp]")
+{
+    // A dialog on the stack, as dialogs are, opens at the address of the one before it. It is a new
+    // showing with an id of its own, and must not be skipped as "ended already".
+    FakeApp app;
+    app.dialogs = {restore_prompt};
+    ModalUnwinder unwinder(app.hooks());
+    Close         close{unwinder};
+
+    close();
+    app.unwinding.clear();                                   // the first one returns...
+    app.dialogs = {app_dialog(7, restore_prompt.title)};     // ...and its caller shows another at once
+    REQUIRE(app.run_turn());
+
+    CHECK(app.ended == std::vector<std::uint64_t>{restore_prompt.id, 7});
+}
+
+TEST_CASE("a system dialog on top is never ended, and nothing under it is either", "[McpQuit][orcamcp]")
+{
+    FakeApp app;
+    app.dialogs = {system_dialog(3, "Open"), preferences};
+    ModalUnwinder unwinder(app.hooks(), 4);
+    Close         close{unwinder};
+
+    close();
+    CHECK(close.last == Hold::first_held);
+    REQUIRE(app.run_turn());
+    CHECK(app.ended.empty()); // Preferences is not the innermost: ending it would leave an invisible modal
+
+    app.dialogs = {preferences}; // the user closed the file chooser
+    REQUIRE(app.run_turn());
+    CHECK(app.ended == std::vector<std::uint64_t>{preferences.id});
+    REQUIRE(app.run_turn());
+    CHECK(close.went_on == 1);
 }
 
 TEST_CASE("a modal loop that never unwinds is given up on, and the app is not closed under it", "[McpQuit][orcamcp]")
@@ -166,22 +233,6 @@ TEST_CASE("a modal loop that never unwinds is given up on, and the app is not cl
     CHECK(close.went_on == 0);
 }
 
-TEST_CASE("a system dialog is never ended by the app, only waited for", "[McpQuit][orcamcp]")
-{
-    FakeApp app;
-    app.system_dialog = true;
-    ModalUnwinder unwinder(app.hooks(), 4);
-    Close         close{unwinder};
-
-    close();
-    CHECK(close.last == Hold::held);
-    app.system_dialog = false; // the user closed it
-    REQUIRE(app.run_turn());
-
-    CHECK(app.ended.empty());
-    CHECK(close.went_on == 1);
-}
-
 TEST_CASE("an unwinder that gave up starts afresh on the next close", "[McpQuit][orcamcp]")
 {
     FakeApp app;
@@ -194,15 +245,106 @@ TEST_CASE("an unwinder that gave up starts afresh on the next close", "[McpQuit]
     while (app.run_turn()) {}
     REQUIRE(close.last == Hold::given_up);
 
+    close(); // a new quit_app while the same dialog is still open
+    CHECK(close.last == Hold::first_held);
+
     app.dialogs.clear();
     close();
     CHECK(close.went_on == 1);
+}
 
-    app.dialogs        = {preferences};
-    app.refuses_to_end = false;
+TEST_CASE("a close at the end of the system session is never held", "[McpQuit][orcamcp]")
+{
+    // The process ends as soon as the end-session event returns, so a close held for a turn never
+    // runs, and the teardown that saves the app config with it. The logout handler has already ended
+    // the innermost dialog.
+    FakeApp app;
+    app.dialogs = {restore_prompt};
+    ModalUnwinder unwinder(app.hooks());
+    Close         close{unwinder};
+
     close();
-    CHECK(close.last == Hold::held);
-    CHECK(app.ended.back() == preferences.id);
+    REQUIRE(close.last == Hold::first_held);
+    app.session_ending = true;
+    close();
+
+    CHECK(close.last == Hold::go_on);
+    CHECK(close.went_on == 1);
+    CHECK(app.turns.empty()); // the turn that was pending is dropped
+    CHECK(app.cancelled_turns >= 1);
+}
+
+TEST_CASE("a quit that gave up is reported until the next quit_app", "[McpQuit][orcamcp]")
+{
+    // quit_app has already answered "quitting"; the agent learns otherwise from active_warnings.
+    clear_quit_failure();
+    CHECK_FALSE(quit_failed_warning());
+
+    ModalState still_open;
+    still_open.dialogs       = {preferences};
+    still_open.in_modal_loop = true;
+    note_quit_failed(still_open);
+
+    const auto warning = quit_failed_warning();
+    REQUIRE(warning);
+    CHECK((*warning)["type"] == "QuitFailed");
+    CHECK((*warning)["message"].get<std::string>().find("'Preferences'") != std::string::npos);
+    CHECK((*warning)["message"].get<std::string>().find("still open") != std::string::npos);
+
+    clear_quit_failure();
+    CHECK_FALSE(quit_failed_warning());
+}
+
+TEST_CASE("the modal stack gives every showing of a dialog an id of its own", "[McpQuit][orcamcp]")
+{
+    ModalStack stack;
+    stack.entered(0x1000, "OrcaMCP - Restore", false);
+    const auto first = stack.innermost_first();
+    REQUIRE(first.size() == 1);
+    stack.exited(0x1000);
+    CHECK(stack.innermost_first().empty());
+
+    stack.entered(0x1000, "OrcaMCP - Restore", false); // the same address, a new dialog
+    const auto second = stack.innermost_first();
+    REQUIRE(second.size() == 1);
+    CHECK(second.front().id != first.front().id);
+    CHECK_FALSE(stack.innermost_key(first.front().id));
+    CHECK(stack.innermost_key(second.front().id) == std::uintptr_t{0x1000});
+}
+
+TEST_CASE("the modal stack lists plain, system and stacked dialogs innermost first", "[McpQuit][orcamcp]")
+{
+    // A plain wxDialog subclass (the flushing-volumes dialog, FilamentMapDialog) never enters
+    // dialogStack; the hook sees it all the same, and it is the app's to end.
+    ModalStack stack;
+    stack.entered(0x1, "Preferences", false);
+    stack.entered(0x2, "Flushing volumes for filament change", false);
+    stack.entered(0x3, "Choose a file", true);
+
+    const auto open = stack.innermost_first();
+    REQUIRE(open.size() == 3);
+    CHECK(open[0].title == "Choose a file");
+    CHECK(open[0].system);
+    CHECK(open[1].title == "Flushing volumes for filament change");
+    CHECK_FALSE(open[1].system);
+    CHECK(open[2].title == "Preferences");
+
+    CHECK_FALSE(stack.innermost_key(open[1].id)); // only the innermost may be ended
+    stack.exited(0x3);
+    CHECK(stack.innermost_key(open[1].id) == std::uintptr_t{0x2});
+}
+
+TEST_CASE("a dialog is closed unanswered with its own no", "[McpQuit][orcamcp]")
+{
+    // Yes / No / Cancel: Cancel abandons what asked.
+    CHECK(decline_answer(/*has_cancel_button=*/true, /*has_no_button=*/true, /*no_button_refuses=*/true) == Decline::cancel);
+    CHECK(decline_answer(true, false, false) == Decline::cancel);
+    // Yes / No: "Sync printer information?" goes on unless the answer is No.
+    CHECK(decline_answer(false, true, true) == Decline::no);
+    // A No relabelled as a choice ("Right: 0.6 mm") is not a refusal: Cancel, which its caller takes
+    // as "neither", as it does its close box.
+    CHECK(decline_answer(false, true, false) == Decline::cancel);
+    CHECK(decline_answer(false, false, false) == Decline::cancel); // what its close box returns
 }
 
 TEST_CASE("quit_app refuses to close a dialog unanswered when told to keep unsaved work", "[McpQuit][orcamcp]")
@@ -237,6 +379,7 @@ TEST_CASE("quit_app refuses while the project is dirty and unsaved work is to be
 TEST_CASE("quit_app refuses while a system dialog is open, whatever it is told", "[McpQuit][orcamcp]")
 {
     ModalState modal;
+    modal.dialogs       = {system_dialog(3, "Open"), preferences};
     modal.in_modal_loop = true;
 
     for (bool discard : {true, false}) {
@@ -244,6 +387,29 @@ TEST_CASE("quit_app refuses while a system dialog is open, whatever it is told",
         REQUIRE(refusal);
         CHECK(refusal->find("system dialog") != std::string::npos);
     }
+}
+
+TEST_CASE("an app dialog alone is not a system dialog", "[McpQuit][orcamcp]")
+{
+    // The flushing-volumes dialog is a plain wxDialog: quit_app closes it, it does not refuse.
+    ModalState modal;
+    modal.dialogs       = {app_dialog(4, "Flushing volumes for filament change")};
+    modal.in_modal_loop = true;
+
+    CHECK_FALSE(modal.system_dialog_open());
+    CHECK_FALSE(quit_refusal(modal, /*discard_changes=*/true, false));
+}
+
+TEST_CASE("quit_app refuses while a modal loop runs that no dialog accounts for", "[McpQuit][orcamcp]")
+{
+    ModalState modal;
+    modal.in_modal_loop = true;
+
+    CHECK(modal.untracked_modal_loop());
+    CHECK_FALSE(modal.system_dialog_open());
+    const auto refusal = quit_refusal(modal, true, false);
+    REQUIRE(refusal);
+    CHECK(refusal->find("cannot identify") != std::string::npos);
 }
 
 TEST_CASE("get_scene_info and active_warnings name what is open", "[McpQuit][orcamcp]")
@@ -270,6 +436,7 @@ TEST_CASE("get_scene_info and active_warnings name what is open", "[McpQuit][orc
     CHECK((*warning)["message"].get<std::string>().find("'Preferences'") != std::string::npos);
 
     ModalState system;
+    system.dialogs       = {system_dialog(3, "Open")};
     system.in_modal_loop = true;
     nlohmann::json sys;
     add_open_dialogs(sys, system);

@@ -219,9 +219,11 @@ and closes again once the work has returned, so the teardown never runs under it
 Nor does a forced close that arrives while a modal dialog runs its nested event loop (tool calls run
 inside it too, so `quit_app` can arrive there). Torn down inside that loop, the frame deleted the
 dialog, which lives on its caller's stack, and the app aborted. The close handler first asks
-`OrcaMCPServer::hold_close_while_modal` (`OrcaMCPQuit.cpp`), which ends the app's dialogs innermost
-first with `EndModal(wxID_ABORT)` and asks again on a timer until the main loop is running again
-(`test_mcp_quit.cpp`).
+`OrcaMCP::hold_close_while_modal` (`OrcaMCPQuit.cpp`): a `wxModalDialogHook` knows every modal dialog,
+plain and native ones included; the innermost, if it is the app's, is ended with its own "no", one
+per 50 ms timer turn, and the close goes on once the main loop runs again. It is never held at the
+end of the system session, and gives up after 10 s, leaving a `QuitFailed` active warning
+(`test_mcp_quit.cpp`). Both this and the tool-call deferral ask the same close again.
 
 The cloud login's callback port is a second listener on the same server and thread
 (`HttpServer::listen_also`, `LoginCallbackServer`), so there is one thread to join, login callbacks

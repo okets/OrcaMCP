@@ -151,6 +151,7 @@
 #include "OrcaMCP/OrcaMCPServer.hpp"
 #include "OrcaMCP/OrcaMCPMainThreadGate.hpp"
 #include "OrcaMCP/OrcaMCPRequestGuard.hpp"
+#include "OrcaMCP/OrcaMCPQuit.hpp"
 #include "../Utils/ThreadCancel.hpp"
 #include "OrcaMCP/MCPClientConfig.hpp"
 
@@ -2987,9 +2988,21 @@ bool GUI_App::on_init_inner()
                 return;
             }
         }
-        for (auto d : dialogStack)
-            d->EndModal(wxID_ABORT);
+        // Orca: end the innermost dialog with its own "no" (Cancel, else No), not wxID_ABORT: callers that
+        // test for No or Cancel only took ABORT for yes, e.g. "Sync printer information?" synced. And only
+        // the innermost: DPIDialog refuses the others, and a plain wxDialog ended under another is hidden
+        // with its loop still running (OrcaMCPQuit.hpp).
+        OrcaMCP::end_innermost_dialog_unanswered();
     });
+    // Orca: the process ends as soon as this event returns, so the main frame's close, which wx sends
+    // from it, must run its teardown (the app config is saved there) now, not wait for a dialog.
+    wxGetApp().Bind(wxEVT_END_SESSION, [](wxCloseEvent& e) {
+        OrcaMCP::mark_session_ending();
+        e.Skip();
+    });
+    // Orca: which modal dialogs are open, innermost first, the plain wxDialog and native ones included:
+    // a quit ends them before it tears the frame down (OrcaMCPQuit.hpp).
+    OrcaMCP::track_modal_dialogs();
 
     // Verify resources path
     const wxString resources_dir = from_u8(Slic3r::resources_dir());

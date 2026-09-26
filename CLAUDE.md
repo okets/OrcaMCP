@@ -350,7 +350,7 @@ gh release upload v2.3.2.10 ./path/to/new/artifact.exe -R okets/OrcaMCP
 | `src/slic3r/GUI/HttpServer.hpp` | HTTP server with JSON responses; listens on 127.0.0.1 only |
 | `src/slic3r/GUI/HttpServer.cpp` | POST body reading, ResponseJson, the stop that waits for handlers and lets replies out |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPMainThreadGate.cpp` | How a call hands work to the main thread and waits, and how quitting releases it (see "Threading Model"; unit-tested in `tests/slic3rutils/test_mcp_shutdown.cpp`) |
-| `src/slic3r/GUI/OrcaMCP/OrcaMCPQuit.cpp` | Quitting while a modal dialog is open: ends the app's dialogs before the frame is torn down, and `quit_app`'s refusals (unit-tested in `tests/slic3rutils/test_mcp_quit.cpp`) |
+| `src/slic3r/GUI/OrcaMCP/OrcaMCPQuit.cpp` | Quitting while a modal dialog is open: which dialogs are open, ending the innermost unanswered, holding the close until they are gone, and `quit_app`'s refusals (unit-tested in `tests/slic3rutils/test_mcp_quit.cpp`); the wx side (modal hook, turn timer) is `OrcaMCPQuitApp.cpp` |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPLoginServer.cpp` | Where the cloud login's callback is answered: a second port of the MCP server, on its thread (unit-tested in `tests/slic3rutils/test_http_server.cpp`) |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPRequestGuard.cpp` | Which requests the server answers: no web page's and no DNS-rebound one on `/mcp`, login callbacks only where a login listens (see "Security"; unit-tested in `tests/slic3rutils/test_mcp_request_guard.cpp`) |
 | `src/slic3r/Utils/ThreadCancel.cpp` | The per-request cancel check a quit applies to blocking network calls on the HTTP thread (unit-tested in `tests/slic3rutils/test_thread_cancel.cpp`) |
@@ -504,11 +504,29 @@ that call in flight waited forever: on 2026-09-26 `quit_app`, with a script poll
   work runs inside it. A frame closed there is deleted at that loop's idle time and deletes the dialog,
   which lives on its caller's stack: on 2026-09-26 `quit_app` under the restore prompt aborted the app
   ("pointer being freed was not allocated"). So, before anything else, the close handler asks
-  `OrcaMCPServer::hold_close_while_modal` (`OrcaMCPQuit.cpp`): a close that cannot be vetoed ends the
-  app's dialogs (`dialogStack`), innermost first, with `EndModal(wxID_ABORT)` -- what the app does at a
-  system logout -- and asks again on a 50 ms timer, not `CallAfter` (wx runs an event posted from a
-  pending event in the same pass, before the ended loop has returned), until the event loop is the
-  main one again. It gives up after 10 s rather than tear the frame down under a loop that will not end.
+  `OrcaMCP::hold_close_while_modal` (`OrcaMCPQuit.cpp`, wx side `OrcaMCPQuitApp.cpp`):
+  - **Which dialogs.** A `wxModalDialogHook` sees every `ShowModal`, innermost last: the DPIDialogs, the
+    ~23 plain `wxDialog` subclasses that never enter `dialogStack` (WipingDialog, FilamentMapDialog,
+    ...), and native alerts and file choosers, which only the user can close. Each showing has its own
+    id, so a dialog opened at a closed one's address is not mistaken for it.
+  - **One per turn, innermost only.** A close that cannot be vetoed ends the innermost dialog, if it is
+    the app's, and asks again on a 50 ms timer, not `CallAfter` (wx runs an event posted from a pending
+    event in the same pass, before the ended loop has returned). A dialog ended under another is only
+    hidden, its loop still running. The close goes on once no dialog is open and the event loop is the
+    main one. It gives up after 10 s rather than tear the frame down under a loop that will not end:
+    the app stays open, its unsaved changes kept (a forced close clears the dirty flag only once it is
+    sure to go on), and every response's `active_warnings` carries a `QuitFailed` error until the next
+    `quit_app`. The log has the first turn and the outcome, not each turn.
+  - **Unanswered, with the dialog's own no** (`end_innermost_dialog_unanswered`): its Cancel button if
+    it has one; else its No button, if that still says No or Cancel; else Cancel, what its close box
+    returns. Never `wxID_ABORT`: callers that test for No or Cancel only take it for yes. The restore
+    prompt tells a quit from a No by `closing_dialogs_to_quit()` and keeps its backup. The system-logout
+    handler (`GUI_App`, `wxEVT_QUERY_END_SESSION`) ends dialogs the same way.
+  - **Never at the end of the session.** The process ends as soon as `wxEVT_END_SESSION` returns, so a
+    close from it is never held (`mark_session_ending`): its teardown, which saves the app config, runs
+    at once.
+  - **Two waits, one close.** The hold (a timer turn) and the tool-call deferral above (once the work
+    has returned) wait for different things, so they stay two, but both ask the same `close_again`.
 - **The cloud login shares the MCP server's thread.** Its callback port is a second listener on the MCP
   server (`HttpServer::listen_also`, `LoginCallbackServer` in `OrcaMCPLoginServer.cpp`), so login
   callbacks and MCP calls are served one at a time, as when they shared one port. A login never
@@ -653,7 +671,7 @@ given: `"<prompt> (auto-answered <answer>)"`. OK-only notices are captured as th
 | `TextureImportDialog` (textured or vertex-coloured OBJ, GLB, GLTF, FBX) | Not opened; imported as plain geometry, colours not mapped (`auto-answered Skip`) |
 | "Connected printer is X. Sync the printer information and switch the preset?" (`TipsDialog`, project load with a mismatched Bambu printer connected) | Auto-NO: the printer preset is not switched |
 | Any other `DPIDialog` modal (the fallback in `DPIAware::ShowModal`, `GUI_Utils.hpp`) | Not opened: answers Cancel, `"<dialog title> was suppressed (auto-answered Cancel)"`. The rows above answer their dialogs first, so this only catches a modal nobody handled |
-| Startup "Previously unsaved items have been detected. Restore them?" prompt (`EVT_RESTORE_PROJECT`, after a crash) | **Not suppressed**: no MCP call is in flight at startup, so it waits for the user, and every tool call runs underneath it (`get_scene_info`'s `open_dialogs` and an `OpenDialog` active warning show it). `quit_app` closes it unanswered (`EndModal(wxID_ABORT)`) and the backup is kept, so the next launch asks again; `quit_app` with `discard_changes: false` refuses and names it |
+| Startup "Previously unsaved items have been detected. Restore them?" prompt (`EVT_RESTORE_PROJECT`, after a crash) | **Not suppressed**: no MCP call is in flight at startup, so it waits for the user, and every tool call runs underneath it (`get_scene_info`'s `open_dialogs` and an `OpenDialog` active warning show it). `quit_app` closes it unanswered (as No) and the backup is kept, so the next launch asks again; `quit_app` with `discard_changes: false` refuses and names it |
 | Send-to-printer (`send_to_printer`) | **Bambu:** the `SelectMachineDialog` is scheduled with `CallAfter` and the tool returns `dialog_opened`; the user drives it. **Print hosts (Flashforge, Moonraker, OctoPrint, …):** by default (`direct: true`) there is **no dialog** — the tool uploads the sliced plate and, because `start_print` also defaults to true, **starts the print**. It returns `queued`. Pass `start_print: false` to upload only, or `direct: false` to open the print-host dialog instead. Never call it to "look at the dialog": on 2026-09-18 that started a 7 h print. |
 
 ### Implementation
@@ -738,7 +756,8 @@ Most tool responses include an `active_warnings` section that exposes OrcaSlicer
 While the app shows a dialog that waits for the user (the startup restore prompt, one the user
 opened, a system file chooser or alert), every response's `active_warnings` also carries a `warning`
 of type `OpenDialog` naming it (`open_dialog_warning`, `OrcaMCPQuit.cpp`); `get_scene_info` lists the
-titles in `open_dialogs`.
+titles in `open_dialogs`. A `quit_app` that could not close a dialog within 10 s leaves an `error` of
+type `QuitFailed` there until the next `quit_app`: the app is still running, its changes kept.
 
 **Endpoints with active_warnings:** `get_scene_info`, `slice_all`, `get_slicing_status`, `get_print_estimate`, `load_model`, `arrange_objects`, `auto_orient`, all transform tools, `undo`, `redo`
 
@@ -834,7 +853,8 @@ echo "N HttpServer listens on every interface (rel2506/04b):             $(U src
 echo "R HttpServer serves a request without reading its Origin (rel2506/04b): $( { U src/slic3r/GUI/HttpServer.hpp; U src/slic3r/GUI/HttpServer.cpp; } | grep -qi '"origin"' && echo no || echo yes)"
 echo "O priv::reset frees the prints before it stops the slice (rel2506/04c): $(U src/slic3r/GUI/Plater.cpp | awk '/^void Plater::priv::reset\(bool/{f=1} f&&/background_process\.(stop|reset)\(\)/{print "no"; exit} f&&/partplate_list\.reinit\(\)/{print "yes"; exit}')"
 echo "P delete_plate frees a Print the slice may be using (rel2506/04c):  $(U src/slic3r/GUI/Plater.cpp | awk '/^int Plater::delete_plate\(int/{f=1} f&&/background_process\.stop\(\)/{print "no"; exit} f&&/partplate_list\.delete_plate\(/{print "yes"; exit}')"
-echo "Q restore prompt closed by a quit deletes the backup (rel2506/04c):  $(U src/slic3r/GUI/Plater.cpp | awk '/EVT_RESTORE_PROJECT, \[this/{f=1} f&&/wxID_ABORT/{print "no"; exit} f&&/remove_all\(last\)/{print "yes"; exit}')"
+echo "Q restore prompt closed by a quit deletes the backup (rel2506/04c):  $(U src/slic3r/GUI/Plater.cpp | awk '/EVT_RESTORE_PROJECT, \[this/{f=1} f&&/closing_dialogs_to_quit|wxID_ABORT/{print "no"; exit} f&&/remove_all\(last\)/{print "yes"; exit}')"
+echo "S the logout handler ends dialogs with wxID_ABORT (rel2506/04c):    $(U src/slic3r/GUI/GUI_App.cpp | grep -c 'EndModal(wxID_ABORT)')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -867,9 +887,14 @@ as not sliced. On "no", take upstream's and re-check `delete_plate` on the plate
 another plate while one is sliced.
 
 Item Q: upstream's restore prompt treats every answer but Yes as No and deletes the crashed session's
-backup, including a prompt the app itself ended with `wxID_ABORT` (its system-logout handler, and our
-`quit_app`). Ours returns on `wxID_ABORT` and keeps the backup, so the next launch asks again. On
-"no", take upstream's handler.
+backup, including a prompt the app itself closed to quit (its system-logout handler, and our
+`quit_app`). Ours returns when `OrcaMCP::closing_dialogs_to_quit()` and keeps the backup, so the next
+launch asks again. On "no", take upstream's handler.
+
+Item S: upstream's `wxEVT_QUERY_END_SESSION` handler ends every dialog in `dialogStack` with
+`EndModal(wxID_ABORT)`. Callers that test only for No or Cancel take ABORT for yes ("Sync printer
+information?" syncs), and a dialog that is not the innermost is refused or only hidden. Ours ends the
+innermost with its own no (`OrcaMCP::end_innermost_dialog_unanswered`). On 0, take upstream's.
 
 Item J: upstream opens every recent 3MF synchronously while building the main window, before
 post_init starts the MCP server. Our patch skips it for an agent launch (`GUI::is_agent_launch()`,

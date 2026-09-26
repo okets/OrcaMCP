@@ -59,6 +59,7 @@
 #include "NotificationManager.hpp"
 #include "MarkdownTip.hpp"
 #include "OrcaMCP/OrcaMCPServer.hpp"
+#include "OrcaMCP/OrcaMCPQuit.hpp"
 #include "NetworkTestDialog.hpp"
 #include "ConfigWizard.hpp"
 #include "Widgets/WebView.hpp"
@@ -572,21 +573,20 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
     // declare events
     Bind(wxEVT_CLOSE_WINDOW, [this](wxCloseEvent& event) {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< ": mainframe received close_widow event";
+        // Orca: the two waits below ask this same close again when they are over.
+        const bool forced      = !event.CanVeto();
+        const auto close_again = [forced] {
+            if (wxGetApp().mainframe != nullptr)
+                wxGetApp().mainframe->Close(forced);
+        };
         // Orca: a close that cannot be vetoed and arrives while a modal dialog runs (quit_app under the
         // startup restore prompt) would delete this frame inside the dialog's loop, and the dialog with
         // it. The dialogs are ended first, and the close is asked again once nothing modal is left.
-        if (!event.CanVeto() && OrcaMCPServer::hold_close_while_modal([] {
-                if (wxGetApp().mainframe != nullptr)
-                    wxGetApp().mainframe->Close(true);
-            }))
+        if (forced && OrcaMCP::hold_close_while_modal(close_again))
             return;
         // Orca: a close that arrives inside an MCP tool call's work (the work pumped the event loop
         // into it) is asked again once the work has returned, so the teardown below never runs under it.
-        const bool forced = !event.CanVeto();
-        if (OrcaMCPServer::defer_until_tool_call_returns([forced] {
-                if (wxGetApp().mainframe != nullptr)
-                    wxGetApp().mainframe->Close(forced);
-            })) {
+        if (OrcaMCPServer::defer_until_tool_call_returns(close_again)) {
             if (event.CanVeto())
                 event.Veto();
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": close deferred until the running MCP tool call returns";
@@ -645,6 +645,11 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
         // call waiting on this thread is released, new ones are refused, and network calls made for a
         // request give up (the server's thread is joined at the end, in GUI_App::stop_http_server).
         OrcaMCPServer::shut_down();
+        // Orca: a close that cannot be vetoed discards the project's unsaved changes (quit_app asked for
+        // that). Only here, where the close is sure to go on: cleared before a close that a dialog could
+        // still hold back and drop, the work would stay open, marked as saved.
+        if (forced)
+            m_plater->reset_project_dirty_after_save();
 
         m_plater->reset();
         this->shutdown();

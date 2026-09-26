@@ -92,10 +92,15 @@ not cover because the close did not come through MCP.
 | `discard_changes` | boolean | No | Default `true`: unsaved project changes are discarded, and a dialog the app is showing is closed unanswered. `false` refuses while the project is dirty (call `save_project` first) or a dialog is open, and names the dialog. |
 
 A dialog the app is showing (the startup "restore unsaved items?" prompt after a crash, a dialog the
-user opened) is closed first, unanswered, the way the app closes its dialogs when the system logs out,
-and each one is named in `info_messages`. The restore prompt keeps its backup, so the next launch asks
-again. A system file chooser or alert cannot be closed by the app: `quit_app` then refuses until the
-user closes it.
+user opened) is closed first, innermost first, each with its own "no": its Cancel button, else its No
+button, else what its close box does. Each one is named in `info_messages`. The restore prompt keeps
+its backup, so the next launch asks again. A system file chooser or alert cannot be closed by the app:
+`quit_app` then refuses until the user closes it.
+
+If a dialog is still open 10 s later, the quit gives up: the app keeps running with its unsaved
+changes, and every tool's `active_warnings` carries an `error` of type `QuitFailed` saying what is
+open, until the next `quit_app`. An agent that got `"quitting"` and still finds the app answering
+reads it there.
 
 **Returns:** `{"status": "quitting"}`, with `info_messages` naming any dialog it closes; the app exits within a few seconds, also while other calls are
 in flight (an agent's parallel calls, a poller). From the moment the app starts closing, every tool call
@@ -232,9 +237,9 @@ reasons above account for that.
 (`[]` when none), and `system_dialog_open` is `true` while a system file chooser or alert is open. A
 tool opens one only where its entry says so (`send_to_printer`'s Bambu dialog, or `direct: false`),
 but the user can open one, and after a crash the app starts with its "restore unsaved items?" prompt
-(`"OrcaMCP - Restore"`). Such a dialog waits for the user; tool calls still run while
-it is open, and every tool's `active_warnings` carries an `OpenDialog` warning naming it. `quit_app`
-closes the app's own dialogs unanswered.
+(`"OrcaMCP - Restore"`). Every modal dialog counts, the plain ones too (the flushing-volumes dialog,
+the filament map). Such a dialog waits for the user; tool calls still run while it is open, and every tool's `active_warnings` carries an `OpenDialog` warning naming it.
+`quit_app` closes the app's own dialogs unanswered.
 
 ---
 

@@ -184,6 +184,7 @@
 #include "CloneDialog.hpp"
 #include "PurgeModeDialog.hpp"
 #include "OrcaMCP/OrcaMCPModelLoad.hpp"
+#include "OrcaMCP/OrcaMCPQuit.hpp"
 
 #include "DeviceCore/DevFilaSystem.h"
 #include "DeviceCore/DevManager.h"
@@ -7835,9 +7836,9 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
             std::string originfile;
             if (Slic3r::has_restore_data(last_backup, originfile)) {
                 auto result = MessageDialog(this->q, _L("Previously unsaved items have been detected. Do you want to restore them\?"), wxString(SLIC3R_APP_FULL_NAME) + " - " + _L("Restore"), wxYES_NO | wxYES_DEFAULT | wxCENTRE).ShowModal();
-                // Orca: ended by the app quitting (EndModal(wxID_ABORT): a system logout, or quit_app),
-                // not answered. Keep the backup, so the next launch asks again.
-                if (result == wxID_ABORT)
+                // Orca: closed unanswered by a quit (quit_app, or a system logout), not by the user: keep
+                // the backup, so the next launch asks again.
+                if (result != wxID_YES && OrcaMCP::closing_dialogs_to_quit())
                     return;
                 if (result == wxID_YES) {
                     this->q->load_project(from_path(last_backup), from_path(originfile));

@@ -92,13 +92,6 @@ public:
     // main frame's close handler defers itself so, and never tears the GUI down under a tool call.
     static bool defer_until_tool_call_returns(std::function<void()> task);
 
-    // Called on the main thread by a close that cannot be vetoed, before anything is torn down: while
-    // a modal dialog runs, ends the app's own dialogs innermost first (EndModal(wxID_ABORT)), keeps
-    // `close` to ask again once the event loop has had a turn, and returns true; with nothing modal
-    // open, returns false. The frame deleted inside a dialog's loop deleted the dialog with it
-    // (OrcaMCPQuit.hpp).
-    static bool hold_close_while_modal(std::function<void()> close);
-
     // Handle incoming HTTP requests for MCP endpoint
     static std::shared_ptr<HttpServer::Response> handle_request(
         const std::string& method,

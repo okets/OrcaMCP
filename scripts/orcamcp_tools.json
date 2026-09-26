@@ -1514,7 +1514,7 @@
     },
     {
       "category": "Info",
-      "description": "Quit OrcaMCP cleanly with no dialog. By default unsaved project changes are discarded, and a dialog the app is showing (get_scene_info's open_dialogs) is closed unanswered, as at a system logout; the startup restore prompt keeps its backup for the next launch. Pass discard_changes=false to refuse while the project is dirty (call save_project first) or a dialog is open. A system file chooser or alert is never closed: quit_app refuses until the user closes it.",
+      "description": "Quit OrcaMCP cleanly with no dialog. By default unsaved project changes are discarded, and a dialog the app is showing (get_scene_info's open_dialogs) is closed unanswered, as at a system logout; the startup restore prompt keeps its backup for the next launch. Pass discard_changes=false to refuse while the project is dirty (call save_project first) or a dialog is open. A system file chooser or alert is never closed: quit_app refuses until the user closes it. If a dialog will not close within 10 s the app stays open with its changes kept, and active_warnings carries a QuitFailed entry saying why.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {

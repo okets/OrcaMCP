@@ -292,21 +292,6 @@ bool OrcaMCPServer::defer_until_tool_call_returns(std::function<void()> task)
     return main_thread_gate().defer_until_work_ends(std::move(task));
 }
 
-bool OrcaMCPServer::hold_close_while_modal(std::function<void()> close)
-{
-    switch (modal_unwinder().hold_back(std::move(close))) {
-    case ModalUnwinder::Hold::go_on: return false;
-    case ModalUnwinder::Hold::held:
-        BOOST_LOG_TRIVIAL(info) << "OrcaMCPServer: the close waits for the open modal dialogs to end";
-        return true;
-    case ModalUnwinder::Hold::given_up:
-        BOOST_LOG_TRIVIAL(error) << "OrcaMCPServer: a modal dialog is still open after the close ended it; "
-                                    "the app stays open rather than be torn down under it";
-        return true;
-    }
-    return true;
-}
-
 std::shared_ptr<HttpServer::Response> OrcaMCPServer::handle_request(
     const std::string& method,
     const std::string& url,
@@ -613,7 +598,8 @@ void OrcaMCPServer::register_builtin_tools()
         "logout; the startup restore prompt keeps its backup for the next launch. Pass "
         "discard_changes=false to refuse while the project is dirty (call save_project first) or a "
         "dialog is open. A system file chooser or alert is never closed: quit_app refuses until the "
-        "user closes it.",
+        "user closes it. If a dialog will not close within 10 s the app stays open with its changes "
+        "kept, and active_warnings carries a QuitFailed entry saying why.",
         {
             {"type", "object"},
             {"properties", {
@@ -632,10 +618,10 @@ void OrcaMCPServer::register_builtin_tools()
                 const ModalState modal  = current_modal_state();
                 if (auto refusal = quit_refusal(modal, discard, plater != nullptr && plater->is_project_dirty()))
                     return nlohmann::json{{"status", "error"}, {"message", *refusal}};
-                // The main frame's close handler ends the open dialogs first (hold_close_while_modal).
+                clear_quit_failure();
+                // The main frame's close handler ends the open dialogs first (hold_close_while_modal), and
+                // discards the project's changes only once the close is sure to go on.
                 wxGetApp().CallAfter([]() {
-                    if (Plater* p = wxGetApp().plater(); p != nullptr)
-                        p->reset_project_dirty_after_save();
                     if (wxGetApp().mainframe != nullptr)
                         wxGetApp().mainframe->Close(true);
                 });
