@@ -1,6 +1,9 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPSliceEstimate.cpp
 #include "OrcaMCPSliceEstimate.hpp"
+#include "libslic3r/Layer.hpp"
+#include "libslic3r/Print.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
@@ -75,6 +78,62 @@ SliceEstimate compute_slice_estimate(const std::map<size_t, double>& volumes,
         estimate.cost = cost_total;
 
     return estimate;
+}
+
+size_t count_distinct_heights(std::vector<double> zs)
+{
+    // GCode::_do_export's "merge numerically very close Z values", unchanged.
+    if (zs.empty())
+        return 0;
+    std::sort(zs.begin(), zs.end());
+    const auto end   = std::unique(zs.begin(), zs.end());
+    size_t     count = size_t(end - zs.begin());
+    for (auto it = zs.begin(); it + 1 != end; ++it)
+        if (std::abs(*it - *(it + 1)) < EPSILON)
+            --count;
+    return count;
+}
+
+namespace {
+
+std::vector<double> print_heights(const PrintObject& object, bool object_layers, bool support_layers)
+{
+    std::vector<double> zs;
+    if (object_layers)
+        for (const Layer* layer : object.layers())
+            zs.push_back(layer->print_z);
+    if (support_layers)
+        for (const SupportLayer* layer : object.support_layers())
+            zs.push_back(layer->print_z);
+    return zs;
+}
+
+size_t count_layers(const Print& print, bool object_layers, bool support_layers)
+{
+    if (print.config().print_sequence == PrintSequence::ByObject) {
+        size_t total = 0;
+        for (const PrintObject* object : print.objects())
+            total += object->instances().size() *
+                     count_distinct_heights(print_heights(*object, object_layers, support_layers));
+        return total;
+    }
+    std::vector<double> zs;
+    for (const PrintObject* object : print.objects()) {
+        const std::vector<double> heights = print_heights(*object, object_layers, support_layers);
+        zs.insert(zs.end(), heights.begin(), heights.end());
+    }
+    return count_distinct_heights(std::move(zs));
+}
+
+} // namespace
+
+LayerCounts count_print_layers(const Print& print)
+{
+    LayerCounts counts;
+    counts.printed = count_layers(print, true, true);
+    counts.object  = count_layers(print, true, false);
+    counts.support = count_layers(print, false, true);
+    return counts;
 }
 
 }}} // namespace Slic3r::GUI::OrcaMCP

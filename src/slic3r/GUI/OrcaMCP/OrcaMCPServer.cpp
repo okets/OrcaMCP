@@ -2227,12 +2227,15 @@ void OrcaMCPServer::register_builtin_tools()
                         }
                     }
 
-                    int layer_count = 0;
-                    if (profile.size() >= 4) {
-                        double total_z = profile[profile.size() - 2];
-                        double avg_height = (min_layer_height + max_layer_height) / 2.0;
-                        layer_count = static_cast<int>(total_z / avg_height);
-                    }
+                    // The layers the slicer will cut this profile into: the same generate_object_layers
+                    // call PrintObject::slice makes, which returns each layer as a bottom/top pair.
+                    // Dividing the height by the mean of the thinnest and thickest layer, as this did,
+                    // is not the mean layer height of a profile that is mostly one or the other.
+                    const DynamicPrintConfig& object_config = obj->config.get();
+                    const bool precise_z = object_config.has("precise_z_height")
+                                               ? object_config.opt_bool("precise_z_height")
+                                               : full_config.has("precise_z_height") && full_config.opt_bool("precise_z_height");
+                    const size_t layer_count = generate_object_layers(slicing_params, profile, precise_z).size() / 2;
 
                     obj_result["status"] = "success";
                     obj_result["object_name"] = obj->name;
@@ -2835,10 +2838,14 @@ void OrcaMCPServer::register_builtin_tools()
         "Print time and filament for a plate",
         "Get print time and filament estimates for one plate. Pass plate_index to ask about a "
         "specific plate; omitted, it reports the plate that is currently selected. Requires a valid "
-        "slice result for that plate (get_slicing_status state \"done\"). Tool/filament changes are "
-        "reported as two separate counters: extruder_changes (the printer switched physical "
-        "extruder/tool head) and filament_changes (a nozzle was loaded with a different filament). A "
-        "toolchanger reports the former, a single-nozzle AMS/MMU printer the latter.",
+        "slice result for that plate (get_slicing_status state \"done\"). Layers: printed_layers is "
+        "the G-code's own total layer count (distinct print heights, object and support together); "
+        "object_layers and support_layers count each kind alone, so with support on the same heights "
+        "printed_layers equals object_layers, not their sum. layer_count is a deprecated alias of "
+        "printed_layers. Tool/filament changes are reported as two separate counters: "
+        "extruder_changes (the printer switched physical extruder/tool head) and filament_changes (a "
+        "nozzle was loaded with a different filament). A toolchanger reports the former, a "
+        "single-nozzle AMS/MMU printer the latter.",
         {
             {"type", "object"},
             {"properties", {
@@ -2932,11 +2939,17 @@ void OrcaMCPServer::register_builtin_tools()
                     });
                 }
 
-                // Layer count comes from the plate's own Print, the one that was actually sliced.
-                size_t total_layers = 0;
-                if (const Print* print = plate->fff_print())
-                    for (const PrintObject* obj : print->objects())
-                        total_layers = std::max(total_layers, obj->total_layer_count());
+                // Layer counts come from the plate's own Print, the one that was actually sliced,
+                // counted the way the G-code counts them. This used to be the tallest object's
+                // total_layer_count(), which adds its support layers to its object layers -- mostly
+                // the same heights twice -- and read 1567 for a model the G-code prints in 825.
+                // A plate with no sliced objects (a G-code-only project) has no counts to give.
+                const Print*      print   = plate->fff_print();
+                const bool        counted = print != nullptr && !print->objects().empty();
+                const LayerCounts layers  = counted ? count_print_layers(*print) : LayerCounts{};
+                auto layers_or_null = [counted](size_t count) {
+                    return counted ? nlohmann::json(count) : nlohmann::json(nullptr);
+                };
 
                 return nlohmann::json{
                     {"status", "success"},
@@ -2946,7 +2959,10 @@ void OrcaMCPServer::register_builtin_tools()
                     {"estimated_time_seconds", normal_time},
                     {"estimated_time_silent", silent_time > 0.0 ? nlohmann::json(get_time_dhms(static_cast<float>(silent_time)))
                                                                 : nlohmann::json(nullptr)},
-                    {"layer_count", total_layers},
+                    {"printed_layers", layers_or_null(layers.printed)},
+                    {"object_layers", layers_or_null(layers.object)},
+                    {"support_layers", layers_or_null(layers.support)},
+                    {"layer_count", layers_or_null(layers.printed)},  // deprecated alias of printed_layers
                     {"filament", {
                         {"total_length_mm", number_or_null(estimate.length_mm)},
                         {"total_volume_mm3", estimate.volume_mm3},

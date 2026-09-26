@@ -1386,6 +1386,9 @@ against what was asked for.
   "estimated_time": "38m 26s",
   "estimated_time_seconds": 2306.4,
   "estimated_time_silent": null,
+  "printed_layers": 92,
+  "object_layers": 92,
+  "support_layers": 61,
   "layer_count": 92,
   "filament": {
     "total_length_mm": 4553.2,
@@ -1407,6 +1410,16 @@ The numbers are read from the plate's own slice result, so they match the G-code
 entries are `null`, never `0`, when the slicer did not record the property they need (a filament
 with no configured density has an unknown weight). `filament` is 1-based, as in every other
 filament tool.
+
+**Layers.** `printed_layers` is the G-code's own layer count (`; total layers count`, the
+`total_layer_count` placeholder): the distinct heights the plate prints at, object and support
+layers together, heights closer than 0.0001 mm counted once. `object_layers` and `support_layers`
+count each kind the same way on its own, so with support synchronised to the object's layers
+`printed_layers` equals `object_layers`, not their sum. When printing by object, each object's
+heights count once per instance, as the G-code counts them. `layer_count` is a deprecated alias of
+`printed_layers`. All four are `null` for a plate with no sliced objects. Before v2.5.0.6
+`layer_count` was the tallest object's layer count *plus* its support layer count, so a 70 mm part
+at 0.2 mm with support read 649 layers instead of 350.
 
 **Tool changes are two counters, not one.** They are the same pair the G-code preview's legend
 shows, and they mean different things:
@@ -1547,6 +1560,11 @@ Enable adaptive layer height for better surface quality.
 |-----------|------|----------|-------------|
 | `object_ids` | array | No | Objects to apply to (omit for all) |
 | `include_preview` | boolean | No | Include preview |
+
+Each object's result carries `estimated_layer_count`: the object layers the slicer will cut the new
+profile into (support and raft not included). Before v2.5.0.6 it was the height divided by the mean
+of the thinnest and thickest layer, which is not the mean layer height of a profile that is mostly
+one or the other.
 
 ---
 
