@@ -751,9 +751,6 @@ public:
     int destroy_print(int print_index);
     // Orca: stops a slice (and a Slice All run) before plates or Prints are freed or reordered.
     void before_plate_list_change();
-    // Orca: a load that failed part way (an undo's snapshot) may leave no plate, or a plate without its
-    // Print. The list is then rebuilt as a fresh one-plate list (reinit); true when it was.
-    bool rebuild_if_unusable();
     // Orca: told what is about to be freed, before it is: plates, Prints, and the path freeing them. The
     // Plater installs it as the safety net under the callers' own stops: it stops a slice running on one
     // of them (OrcaMCPSliceCredit.hpp, frees_what_the_slice_uses).

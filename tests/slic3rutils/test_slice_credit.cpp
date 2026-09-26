@@ -231,19 +231,18 @@ TEST_CASE("the plate list tells its hook about every plate and Print before it f
     }
 }
 
-TEST_CASE("a plate list a failed load left with no plate is rebuilt as a usable one", "[SliceCredit]")
+TEST_CASE("after an undo that failed partway only saving a copy and quitting are left", "[SliceCredit]")
 {
-    // An undo's snapshot load that throws after it reset the plates leaves none: the app would index
-    // plate 0 of an empty list, and the slicing process points at a freed plate.
-    Slic3r::Model              model;
-    Slic3r::GUI::PartPlateList list(nullptr, &model, Slic3r::ptFFF);
-    CHECK_FALSE(list.rebuild_if_unusable()); // a sound list is left as it is
-    CHECK(list.get_plate_count() == 1);
-
-    list.reset(false);
-    REQUIRE(list.get_plate_count() == 0);
-    CHECK(list.rebuild_if_unusable());
-    REQUIRE(list.get_plate_count() == 1);
-    CHECK(print_of(list, 0) != nullptr);
-    CHECK(list.get_curr_plate_index() == 0);
+    // The project may be inconsistent: a tool that reads or changes the scene could walk plates the
+    // failed load left half built. Saving a copy is what the message asks for.
+    CHECK_FALSE(refusal_after_failed_jump(/*jump_failed=*/false, "move_object"));
+    for (const char* tool : {"move_object", "get_scene_info", "slice_all", "undo", "new_project", "load_project"}) {
+        const auto refusal = refusal_after_failed_jump(true, tool);
+        REQUIRE(refusal);
+        CHECK(refusal->find("Undo/redo failed partway") != std::string::npos);
+        CHECK(refusal->find("save_project with a new output_path") != std::string::npos);
+        CHECK(refusal->find("restart OrcaMCP") != std::string::npos);
+    }
+    for (const char* tool : {"save_project", "export_3mf", "quit_app", "get_server_info"})
+        CHECK_FALSE(refusal_after_failed_jump(true, tool));
 }

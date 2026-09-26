@@ -4809,19 +4809,6 @@ void PartPlateList::before_plate_list_change()
 		m_plater->stop_slice_for_plate_list_change();
 }
 
-bool PartPlateList::rebuild_if_unusable()
-{
-	bool usable = !m_plate_list.empty();
-	if (printer_technology == ptFFF)
-		for (const PartPlate* plate : m_plate_list)
-			usable = usable && plate != nullptr && plate->m_print != nullptr; // set_print sets it and its result together
-	if (usable)
-		return false;
-	BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(": %1% plate(s), not all with a Print: rebuilt as one plate") % m_plate_list.size();
-	reinit();
-	return true;
-}
-
 // Orca: tells the hook what is about to be freed, when anything is.
 void PartPlateList::before_free(const std::vector<const PartPlate*>& plates, const std::vector<const PrintBase*>& prints,
                                 const char* caller)

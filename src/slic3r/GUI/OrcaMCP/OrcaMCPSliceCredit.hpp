@@ -1,6 +1,7 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPSliceCredit.hpp
 #pragma once
 #include <algorithm>
+#include <atomic>
 #include <optional>
 #include <string>
 #include <vector>
@@ -87,6 +88,24 @@ inline std::optional<std::string> single_plate_slice_refusal(int run_plate_index
         return std::nullopt;
     return "a Slice All run is in progress (plate " + std::to_string(run_plate_index + 1) + " of " + std::to_string(plate_count) +
            "); wait for it (get_slicing_status) or cancel it in the app";
+}
+
+// An undo or redo whose snapshot load threw part way (Plater::priv::recover_from_failed_jump). The
+// project may be inconsistent, and nothing tries to mend it: from then on MCP refuses every tool that
+// reads or changes the scene, so none walks plates the load left half built, until the app is
+// restarted. What the message asks for stays open -- saving a copy -- and so does quitting.
+inline constexpr const char* k_failed_jump_message = "Undo/redo failed partway; the project may be inconsistent. Save a copy "
+                                                     "(save_project with a new output_path) and restart OrcaMCP.";
+inline std::atomic<bool>& jump_failed_partway()
+{
+    static std::atomic<bool> failed{false};
+    return failed;
+}
+inline std::optional<std::string> refusal_after_failed_jump(bool jump_failed, const std::string& tool)
+{
+    if (!jump_failed || tool == "save_project" || tool == "export_3mf" || tool == "quit_app" || tool == "get_server_info")
+        return std::nullopt;
+    return std::string(k_failed_jump_message);
 }
 
 // A slice the safety net cancelled (frees_what_the_slice_uses), reported once by the next response.

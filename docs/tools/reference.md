@@ -2315,9 +2315,11 @@ checked the same way.
 Undo the last operation. It rebuilds the plate list, so a slice in progress is cancelled first, and a
 Slice All run with it: the response then carries `slice_cancelled: true` and an `info_messages` line
 saying so; call `slice_all` again. If the undo fails, the error response says so too when it had
-already stopped a slice, and its message says what state the app is left in (the plate list is kept
-usable: if the failed load left it without a plate, it is rebuilt as one plate). No preview is made
-then.
+already stopped a slice. A snapshot load that fails partway (out of memory, a missing history entry)
+may leave the project inconsistent: the error says "Undo/redo failed partway; the project may be
+inconsistent. Save a copy (save_project with a new output_path) and restart OrcaMCP.", no preview is
+made, and every later tool except `save_project`, `export_3mf`, `quit_app` and `get_server_info`
+returns that same error until the app is restarted.
 
 **Parameters:** None
 

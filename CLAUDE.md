@@ -905,8 +905,9 @@ reads the plates' filament maps the slicing thread writes), all through
 `Plater::priv::stop_slice_for_plate_list_change`, which reports a cancel only for a slice still in
 progress (`BackgroundSlicingProcess::stop`'s `cancelled_a_slice`), then repoints the process at the
 current plate. MCP's `delete_plate`, `undo` and `redo` report what it did (`slice_cancelled`). A jump
-whose snapshot load throws leaves the plate list usable (`PartPlateList::rebuild_if_unusable`) and the
-process on a plate that exists (`recover_from_failed_jump`). Under those stops is a safety net:
+whose snapshot load throws is not mended (`recover_from_failed_jump`): the process is pointed at the
+Plater's own empty Print and no plate, and MCP refuses every tool but saving a copy and quitting until
+a restart (`OrcaMCP::refusal_after_failed_jump`). Under those stops is a safety net:
 `PartPlateList::clear`, `destroy_print` and `delete_plate` tell a hook the Plater installs
 (`set_before_free`) what they are about to free, and a slice running on it is stopped there with a
 warning naming the path, whatever the caller (MCP tells it once: `SliceCancelled`). A completion is

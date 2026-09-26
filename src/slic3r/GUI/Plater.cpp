@@ -6768,8 +6768,8 @@ struct Plater::priv
     void stop_slice_running_on(const std::vector<const PartPlate*>& plates, const std::vector<const PrintBase*>& prints,
                                const char* caller);
     std::optional<std::string> m_slice_cancelled_by_free;
-    // Orca: an undo or redo whose snapshot load threw: leaves the plate list usable and the slicing
-    // process pointed at a plate that exists, then throws, saying what state the app is left in.
+    // Orca: an undo or redo whose snapshot load threw part way: points the slicing process at nothing
+    // the plate list owns, stops MCP's scene work, and throws on, telling the user to save and restart.
     [[noreturn]] void recover_from_failed_jump(const std::exception& failure);
     bool slicing_all_plates() const { return m_slice_all && m_is_slicing; } // Orca: a Slice All run is in progress
     bool m_slice_all{false};
@@ -14694,16 +14694,17 @@ void Plater::priv::redo()
 
 void Plater::priv::recover_from_failed_jump(const std::exception& failure)
 {
-    // The load may have thrown after it reset the plates: none left, or plates without their Print, and
-    // the slicing process pointing at a freed one (the slice was stopped before the jump).
-    std::string state = "the plate list is as the failed load left it";
-    if (partplate_list.rebuild_if_unusable()) {
-        partplate_list.reload_all_objects();
-        state = "the plate list was left unusable and was rebuilt as one plate; objects outside it are unplaced";
-    }
-    q->update_slicing_context_to_current_partplate();
-    BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": the undo/redo jump failed: " << failure.what() << "; " << state;
-    throw Slic3r::RuntimeError(std::string(failure.what()) + "; " + state);
+    // The load may have thrown anywhere, in the Model or in the plates, and what it left is not known:
+    // nothing here tries to mend it. The slice was stopped before the jump; the process is pointed at the
+    // Plater's own empty Print and at no plate, so it cannot touch a plate or Print the load freed, and MCP
+    // refuses scene work from now on (OrcaMCP::refusal_after_failed_jump).
+    background_process.set_fff_print(&fff_print);
+    background_process.set_gcode_result(&gcode_result);
+    background_process.select_technology(printer_technology);
+    background_process.set_current_plate(nullptr);
+    OrcaMCP::jump_failed_partway() = true;
+    BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": the undo/redo snapshot load failed: " << failure.what();
+    throw Slic3r::RuntimeError(std::string(OrcaMCP::k_failed_jump_message) + " (" + failure.what() + ")");
 }
 
 void Plater::priv::undo_redo_to(size_t time_to_load)

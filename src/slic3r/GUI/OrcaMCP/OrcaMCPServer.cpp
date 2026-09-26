@@ -303,10 +303,10 @@ nlohmann::json step_through_history(bool undo, bool include_preview)
         else
             plater->redo(&slice_change);
     } catch (const std::exception& e) {
-        // The snapshot load failed. The Plater left the plate list usable and the slicing process on a
-        // plate that exists, and its message says what state the app is in; nothing else here reads the
-        // scene, and no preview is made of it. The slice it stopped before the jump is told too.
-        nlohmann::json error = {{"status", "error"}, {"message", std::string(undo ? "undo" : "redo") + " failed: " + e.what()}};
+        // The snapshot load failed partway: the project may be inconsistent, and the message says to save
+        // a copy and restart. Nothing here reads the scene, and no preview is made of it. The slice it
+        // stopped before the jump is told too.
+        nlohmann::json error = {{"status", "error"}, {"message", e.what()}};
         add_slice_cancelled(error, slice_change);
         return error;
     }
@@ -526,6 +526,11 @@ nlohmann::json OrcaMCPServer::handle_tools_call(const nlohmann::json& params)
     if (it->second.bridge_only) {
         throw JsonRpcError(-32602, tool_name + " is answered by the OrcaMCP bridge (orcamcp-bridge.py), not by the "
                                    "app. Call it through the bridge.");
+    }
+    // After an undo or redo that failed partway only saving a copy and quitting are left.
+    if (auto refusal = refusal_after_failed_jump(jump_failed_partway(), tool_name)) {
+        BOOST_LOG_TRIVIAL(warning) << "OrcaMCPServer: '" << tool_name << "' refused: " << *refusal;
+        return {{"content", {{{"type", "text"}, {"text", nlohmann::json{{"status", "error"}, {"message", *refusal}}.dump()}}}}};
     }
 
     BOOST_LOG_TRIVIAL(info) << "OrcaMCPServer: Calling tool '" << tool_name << "'";
