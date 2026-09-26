@@ -463,6 +463,8 @@ nlohmann::json get_active_warnings_json(Plater* plater) {
             }
         }
     }
+    if (auto open_dialog = open_dialog_warning(current_modal_state()))
+        warnings_array.push_back(std::move(*open_dialog));
 
     result["count"] = warnings_array.size();
     result["warnings"] = warnings_array;

@@ -245,3 +245,37 @@ TEST_CASE("quit_app refuses while a system dialog is open, whatever it is told",
         CHECK(refusal->find("system dialog") != std::string::npos);
     }
 }
+
+TEST_CASE("get_scene_info and active_warnings name what is open", "[McpQuit][orcamcp]")
+{
+    nlohmann::json   none;
+    const ModalState nothing;
+    add_open_dialogs(none, nothing);
+    CHECK(none["open_dialogs"] == nlohmann::json::array());
+    CHECK(none["system_dialog_open"] == false);
+    CHECK_FALSE(open_dialog_warning(nothing));
+
+    ModalState modal;
+    modal.dialogs       = {preferences, restore_prompt};
+    modal.in_modal_loop = true;
+    nlohmann::json some;
+    add_open_dialogs(some, modal);
+    CHECK(some["open_dialogs"] == nlohmann::json::array({"Preferences", "OrcaMCP - Restore"}));
+    CHECK(some["system_dialog_open"] == false);
+
+    const auto warning = open_dialog_warning(modal);
+    REQUIRE(warning);
+    CHECK((*warning)["type"] == "OpenDialog");
+    CHECK((*warning)["level"] == "warning");
+    CHECK((*warning)["message"].get<std::string>().find("'Preferences'") != std::string::npos);
+
+    ModalState system;
+    system.in_modal_loop = true;
+    nlohmann::json sys;
+    add_open_dialogs(sys, system);
+    CHECK(sys["open_dialogs"] == nlohmann::json::array());
+    CHECK(sys["system_dialog_open"] == true);
+    const auto system_warning = open_dialog_warning(system);
+    REQUIRE(system_warning);
+    CHECK((*system_warning)["message"].get<std::string>().find("system dialog") != std::string::npos);
+}

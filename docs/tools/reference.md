@@ -228,6 +228,14 @@ When no tower is printed, `printed` is `false` and no geometry is reported — o
 A smooth timelapse or wrapping detection forces a tower even on a single-filament plate; the
 reasons above account for that.
 
+**Open dialogs.** `open_dialogs` lists the titles of the dialogs the app is showing, innermost first
+(`[]` when none), and `system_dialog_open` is `true` while a system file chooser or alert is open. A
+tool opens one only where its entry says so (`send_to_printer`'s Bambu dialog, or `direct: false`),
+but the user can open one, and after a crash the app starts with its "restore unsaved items?" prompt
+(`"OrcaMCP - Restore"`). Such a dialog waits for the user; tool calls still run while
+it is open, and every tool's `active_warnings` carries an `OpenDialog` warning naming it. `quit_app`
+closes the app's own dialogs unanswered.
+
 ---
 
 ### get_slicing_status

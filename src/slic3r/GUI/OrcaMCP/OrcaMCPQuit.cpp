@@ -52,6 +52,26 @@ std::vector<std::string> quit_notes(const ModalState& modal)
     return notes;
 }
 
+void add_open_dialogs(nlohmann::json& result, const ModalState& modal)
+{
+    result["open_dialogs"]       = modal.titles();
+    result["system_dialog_open"] = modal.system_dialog_open();
+}
+
+std::optional<nlohmann::json> open_dialog_warning(const ModalState& modal)
+{
+    if (!modal.anything_open())
+        return std::nullopt;
+    const std::string what = modal.dialogs.empty() ? std::string(k_system_dialog)
+                                                   : "the dialog " + quoted_list(modal.titles());
+    return nlohmann::json{
+        {"level", "warning"},
+        {"type", "OpenDialog"},
+        {"message", "The app is showing " + what + ", waiting for the user. Tool calls still run while it is "
+                    "open; quit_app closes the app's own dialogs unanswered."},
+    };
+}
+
 ModalUnwinder::ModalUnwinder(Hooks hooks, int max_turns) : m_hooks(std::move(hooks)), m_max_turns(max_turns) {}
 
 ModalUnwinder::Hold ModalUnwinder::hold_back(std::function<void()> close)

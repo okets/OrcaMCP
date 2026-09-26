@@ -7,7 +7,7 @@
 #include <vector>
 #include <nlohmann/json.hpp>
 
-// Quitting while a modal dialog is open.
+// Quitting while a modal dialog is open, and telling an agent that one is.
 //
 // A modal dialog runs a nested event loop, and every MCP tool call's work runs inside it until the
 // user answers. A main frame closed from there is deleted at that loop's idle time, and deletes the
@@ -46,6 +46,12 @@ std::optional<std::string> quit_refusal(const ModalState& modal, bool discard_ch
 
 // What quit_app tells its caller it is about to close unanswered.
 std::vector<std::string> quit_notes(const ModalState& modal);
+
+// get_scene_info's `open_dialogs` (the titles) and `system_dialog_open`.
+void add_open_dialogs(nlohmann::json& result, const ModalState& modal);
+
+// The active_warnings entry while something modal is open; nullopt otherwise.
+std::optional<nlohmann::json> open_dialog_warning(const ModalState& modal);
 
 // Holds a close that cannot be vetoed back until nothing modal is left.
 class ModalUnwinder

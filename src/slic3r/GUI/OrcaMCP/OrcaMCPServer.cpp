@@ -683,7 +683,9 @@ void OrcaMCPServer::register_builtin_tools()
         "footprint (brim included) when one is printed, and the printer's excluded bed areas. Use "
         "`occupancy`, not `model_objects`, to work out where there is free space. An object with "
         "instances on several plates is listed under each by the instances there "
-        "(`instances_on_plate`): its bounding_box, position and footprint are theirs.",
+        "(`instances_on_plate`): its bounding_box, position and footprint are theirs. `open_dialogs` "
+        "names any dialog the app is showing, waiting for the user (tool calls still run under it); "
+        "`system_dialog_open` is true while a system file chooser or alert is open.",
         {
             {"type", "object"},
             {"properties", {
@@ -718,6 +720,7 @@ void OrcaMCPServer::register_builtin_tools()
                 if (result.contains("preview_path"))
                     result["preview_hint"] = "Check the preview image to get a visual overview of objects on the current plate.";
 
+                add_open_dialogs(result, current_modal_state());
                 // Always include active warnings section
                 result["active_warnings"] = get_active_warnings_json(wxGetApp().plater());
 
