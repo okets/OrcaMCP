@@ -387,6 +387,10 @@ bool FlashforgePrinterAgent::run_on_gui_thread(const std::function<void()>& fn) 
         // What `fn` threw reaches this, the print job's thread: the job goes on without what `fn` read.
         BOOST_LOG_TRIVIAL(warning) << "FlashforgePrinterAgent: the GUI-thread call failed: " << e.what();
         return false;
+    } catch (...) {
+        // Nothing may escape the print job's thread: that ends the process.
+        BOOST_LOG_TRIVIAL(warning) << "FlashforgePrinterAgent: the GUI-thread call failed with a non-standard exception";
+        return false;
     }
 }
 
