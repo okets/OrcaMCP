@@ -75,6 +75,8 @@ struct TriangleMeshStats {
         out.number_of_parts         = this->number_of_parts     + rhs.number_of_parts;
         out.open_edges              = this->open_edges          + rhs.open_edges;
         out.volume                  = this->volume              + rhs.volume;
+        // OrcaMCP: start from this mesh's repairs; merging rhs's into a fresh `out` dropped them.
+        out.repaired_errors         = this->repaired_errors;
         out.repaired_errors.merge(rhs.repaired_errors);
         return out;
       }
