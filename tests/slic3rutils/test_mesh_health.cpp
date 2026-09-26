@@ -80,13 +80,15 @@ struct OnePartObject
 TEST_CASE("A hole shows the warning icon, with the list's remaining-errors tooltip", "[MeshHealth][orcamcp]")
 {
     OnePartObject f{TriangleMesh(cube_missing_facet())};
+    const TriangleMeshStats stats = f.object->get_object_stl_stats();
 
     wxString   sidebar;
     int        open_edges = -1;
-    const auto info       = GUI::mesh_errors_info(*f.object, -1, &sidebar, &open_edges);
-    const auto tooltip    = GUI::mesh_errors_info(*f.object);
+    const auto info       = GUI::mesh_errors_info(stats, &sidebar, &open_edges);
+    const auto tooltip    = GUI::mesh_errors_info(stats);
 
     CHECK(tooltip.warning_icon_name == "obj_warning");
+    CHECK(GUI::get_warning_icon_name(stats) == "obj_warning");
     CHECK(utf8(tooltip.tooltip) == k_hole_tooltip);
     // With sidebar_info asked for, the list's sidebar line comes back and the tooltip loses its
     // "click the icon" line, as ObjectList::get_mesh_errors_info always did.
@@ -95,7 +97,7 @@ TEST_CASE("A hole shows the warning icon, with the list's remaining-errors toolt
     CHECK(open_edges == 3);
 
     // The same text for the object's only volume, from the volume's own stats.
-    CHECK(utf8(GUI::mesh_errors_info(*f.object, 0).tooltip) == utf8(tooltip.tooltip));
+    CHECK(utf8(GUI::mesh_errors_info(f.object->volumes[0]->mesh().stats()).tooltip) == k_hole_tooltip);
 }
 
 TEST_CASE("Recorded repairs show the warning icon and say how many were repaired", "[MeshHealth][orcamcp]")
@@ -103,10 +105,11 @@ TEST_CASE("Recorded repairs show the warning icon and say how many were repaired
     // A 3MF's mesh_stat element reaches the mesh through this constructor (bbs_3mf.cpp); it is the
     // only way a repair count gets into a loaded mesh (from_stl records none).
     OnePartObject f{TriangleMesh(its_make_cube(10.0, 10.0, 10.0), reversed_facets(1))};
+    const TriangleMeshStats stats = f.object->get_object_stl_stats();
 
     wxString   sidebar;
-    const auto tooltip = GUI::mesh_errors_info(*f.object);
-    GUI::mesh_errors_info(*f.object, -1, &sidebar);
+    const auto tooltip = GUI::mesh_errors_info(stats);
+    GUI::mesh_errors_info(stats, &sidebar);
 
     CHECK(tooltip.warning_icon_name == "obj_warning");
     CHECK(utf8(tooltip.tooltip) == "1 error repaired\n\nClick the icon to repair model object");
@@ -118,10 +121,11 @@ TEST_CASE("Repairs and a hole together are both named in the tooltip", "[MeshHea
     RepairedMeshErrors errors;
     errors.edges_fixed = 2;
     OnePartObject f{TriangleMesh(cube_missing_facet(), errors)};
+    const TriangleMeshStats stats = f.object->get_object_stl_stats();
 
     wxString   sidebar;
-    const auto tooltip = GUI::mesh_errors_info(*f.object);
-    GUI::mesh_errors_info(*f.object, -1, &sidebar);
+    const auto tooltip = GUI::mesh_errors_info(stats);
+    GUI::mesh_errors_info(stats, &sidebar);
 
     CHECK(utf8(tooltip.tooltip) ==
           "2 errors repaired\nRemaining errors:\n\t3 non-manifold edges\n\nClick the icon to repair model object");
@@ -131,10 +135,12 @@ TEST_CASE("Repairs and a hole together are both named in the tooltip", "[MeshHea
 TEST_CASE("A clean mesh has no warning icon and no tooltip", "[MeshHealth][orcamcp]")
 {
     OnePartObject f{TriangleMesh(its_make_cube(10.0, 10.0, 10.0))};
+    const TriangleMeshStats stats = f.object->get_object_stl_stats();
 
-    const auto info = GUI::mesh_errors_info(*f.object);
+    const auto info = GUI::mesh_errors_info(stats);
     CHECK(info.warning_icon_name.empty());
     CHECK(info.tooltip.empty());
+    CHECK(GUI::get_warning_icon_name(stats).empty());
 }
 
 TEST_CASE("The object row counts a modifier's open edges, as the list does", "[MeshHealth][orcamcp]")
@@ -142,9 +148,24 @@ TEST_CASE("The object row counts a modifier's open edges, as the list does", "[M
     OnePartObject f{TriangleMesh(its_make_cube(10.0, 10.0, 10.0))};
     f.object->add_volume(TriangleMesh(cube_missing_facet()), ModelVolumeType::PARAMETER_MODIFIER);
 
-    CHECK(GUI::mesh_errors_info(*f.object).warning_icon_name == "obj_warning");
-    CHECK(GUI::mesh_errors_info(*f.object, 0).warning_icon_name.empty());
-    CHECK(GUI::mesh_errors_info(*f.object, 1).warning_icon_name == "obj_warning");
+    CHECK(GUI::get_warning_icon_name(f.object->get_object_stl_stats()) == "obj_warning");
+    CHECK(GUI::get_warning_icon_name(f.object->volumes[0]->mesh().stats()).empty());
+    CHECK(GUI::get_warning_icon_name(f.object->volumes[1]->mesh().stats()) == "obj_warning");
+}
+
+TEST_CASE("The repair count the tooltip states is the sum of the recorded repairs, as the model counts them", "[MeshHealth][orcamcp]")
+{
+    RepairedMeshErrors errors;
+    errors.edges_fixed       = 1;
+    errors.degenerate_facets = 2;
+    errors.facets_removed    = 3;
+    errors.facets_reversed   = 4;
+    errors.backwards_edges   = 5;
+    OnePartObject f{TriangleMesh(its_make_cube(10.0, 10.0, 10.0), errors)};
+
+    CHECK(GUI::repaired_errors_count(errors) == 15);
+    CHECK(GUI::repaired_errors_count(f.object->get_object_stl_stats().repaired_errors) == f.object->get_repaired_errors_count());
+    CHECK(GUI::repaired_errors_count(RepairedMeshErrors()) == 0);
 }
 
 TEST_CASE("Mesh health reports a hole's numbers with the list's icon and tooltip", "[MeshHealth][orcamcp]")
@@ -160,7 +181,7 @@ TEST_CASE("Mesh health reports a hole's numbers with the list's icon and tooltip
     CHECK(h.errors_repaired == 0);
     CHECK(h.warning);
     // The list's own text, word for word, from the same function the list calls.
-    CHECK(h.tooltip == utf8(GUI::mesh_errors_info(*f.object).tooltip));
+    CHECK(h.tooltip == utf8(GUI::mesh_errors_info(f.object->get_object_stl_stats()).tooltip));
     CHECK(h.tooltip == k_hole_tooltip);
     CHECK(h.reason == "Error: 3 non-manifold edges.");
 }

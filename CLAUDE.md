@@ -877,7 +877,7 @@ echo "O priv::reset frees the prints before it stops the slice (rel2506/04c): $(
 echo "P a Print the slice uses is freed unchecked / init() reuses print indices / a completion credits the current plate as posted (rel2506/04c): $(U src/slic3r/GUI/PartPlate.cpp | awk '/^int PartPlateList::destroy_print\(int/{f=1} f&&/before_free|stop/{print "no"; exit} f&&/delete it->second/{print "yes"; exit}') / $(U src/slic3r/GUI/PartPlate.cpp | awk '/^void PartPlateList::init\(\)/{f=1} f&&/m_print_index = 0;/{print "yes"; exit} f&&/^}/{print "no"; exit}') / $(U src/slic3r/GUI/Plater.cpp | grep -c 'get_current_plate()->update_slice_result_valid_state(evt.success())')"
 echo "Q restore prompt closed by a quit deletes the backup (rel2506/04c):  $(U src/slic3r/GUI/Plater.cpp | awk '/EVT_RESTORE_PROJECT, \[this/{f=1} f&&/closing_dialogs_to_quit|wxID_ABORT/{print "no"; exit} f&&/remove_all\(last\)/{print "yes"; exit}')"
 echo "S the logout handler ends dialogs with wxID_ABORT (rel2506/04c):    $(U src/slic3r/GUI/GUI_App.cpp | grep -c 'EndModal(wxID_ABORT)')"
-echo "V the object list's mesh-error text lives inside ObjectList / its first icon reads mesh().stats() (rel2506/05): $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^MeshErrorsInfo ObjectList::get_mesh_errors_info\(const int obj_idx/{f=1} f&&/_L_PLURAL/{print "yes"; exit} f&&/^}/{print "no"; exit}') / $(U src/slic3r/GUI/GUI_ObjectList.cpp | grep -c 'get_warning_icon_name(model_object->mesh().stats())')"
+echo "V the object list's mesh-error text lives inside ObjectList / its first icon reads mesh().stats() / ObjectList::get_repaired_errors_count exists (rel2506/05): $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^MeshErrorsInfo ObjectList::get_mesh_errors_info\(const int obj_idx/{f=1} f&&/_L_PLURAL/{print "yes"; exit} f&&/^}/{print "no"; exit}') / $(U src/slic3r/GUI/GUI_ObjectList.cpp | grep -c 'get_warning_icon_name(model_object->mesh().stats())') / $(U src/slic3r/GUI/GUI_ObjectList.cpp | grep -c '^int ObjectList::get_repaired_errors_count')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -952,11 +952,14 @@ post_init starts the MCP server. Our patch skips it for an agent launch (`GUI::i
 is still needed.
 
 Item V is a move, not a fix: upstream builds the object list's warning-icon tooltip inside
-`ObjectList::get_mesh_errors_info`, which needs the list. Ours moves the body, unchanged, into the free
-function `mesh_errors_info(const ModelObject&, ...)` in the same file (so `localization/i18n/list.txt`
-still reaches its strings) and the member calls it; MCP's `get_mesh_health`, `active_warnings` and
-`get_scene_info` call it too. On "no", upstream changed that function: redo the move on its version and
-re-run `[MeshHealth]`. The second half is a fix: upstream's `add_object_to_list` sets an object's first
+`ObjectList::get_mesh_errors_info`, which needs the list. Ours moves the body into the free function
+`mesh_errors_info(const TriangleMeshStats&, ...)` in the same file (so `localization/i18n/list.txt`
+still reaches its strings), taking the stats the member used to look up, and counting the repairs
+with `repaired_errors_count`, the sum `ObjectList::get_repaired_errors_count` returned. That member
+had no other caller, so ours removes it (the third count), and `get_warning_icon_name` is no longer
+`static`. The member calls the free function; MCP's `get_mesh_health` and `get_scene_info` call it too.
+On "no", upstream changed that function: redo the move on its version and re-run `[MeshHealth]`. If
+upstream gains a caller of `get_repaired_errors_count`, restore the member. The second half is a fix: upstream's `add_object_to_list` sets an object's first
 icon from `mesh().stats()`, which merges the model parts only and keeps only the last part's
 repairs, while every later icon update and the tooltip read `get_object_stl_stats()`; a modifier's hole
 or an earlier part's repairs left the icon off under a tooltip listing them. Ours reads

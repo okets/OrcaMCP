@@ -27,6 +27,8 @@ class ModelConfig;
 class ModelObject;
 class ModelVolume;
 class TriangleMesh;
+struct TriangleMeshStats;
+struct RepairedMeshErrors;
 enum class ModelVolumeType : int;
 
 // FIXME: broken build on mac os because of this is missing:
@@ -82,10 +84,14 @@ struct MeshErrorsInfo
     std::string warning_icon_name;
 };
 
-// OrcaMCP: the warning icon and tooltip the object list shows for `object` (vol_idx -1) or one of
-// its volumes, read from the model alone. ObjectList::get_mesh_errors_info is this for the list's
-// own object; the MCP server calls it directly, so it reports exactly what the list shows.
-MeshErrorsInfo mesh_errors_info(const ModelObject& object, const int vol_idx = -1, wxString* sidebar_info = nullptr, int* non_manifold_edges = nullptr);
+// OrcaMCP: the object list's warning icon and tooltip for a row whose stats are `stats` -- an
+// object's get_object_stl_stats(), or a volume's mesh().stats() -- without the list.
+// ObjectList::get_mesh_errors_info is this for the list's own rows; the MCP server calls it, and
+// get_warning_icon_name when it needs only the icon, so it reports exactly what the list shows.
+MeshErrorsInfo mesh_errors_info(const TriangleMeshStats& stats, wxString* sidebar_info = nullptr, int* non_manifold_edges = nullptr);
+std::string    get_warning_icon_name(const TriangleMeshStats& stats);
+// The number of recorded repairs the tooltip states: every RepairedMeshErrors field, summed.
+int            repaired_errors_count(const RepairedMeshErrors& errors);
 
 class ObjectList : public wxDataViewCtrl
 {
@@ -265,7 +271,6 @@ public:
     void                get_selected_item_indexes(int& obj_idx, int& vol_idx, const wxDataViewItem& item = wxDataViewItem(0));
     void                get_selection_indexes(std::vector<int>& obj_idxs, std::vector<int>& vol_idxs);
     // Get count of errors in the mesh
-    int                 get_repaired_errors_count(const int obj_idx, const int vol_idx = -1) const;
     // Get list of errors in the mesh and name of the warning icon
     // Return value is a pair <Tooltip, warning_icon_name>, used for the tooltip and related warning icon
     // Function without parameters is for a call from Manipulation panel,

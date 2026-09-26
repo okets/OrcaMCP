@@ -41,13 +41,13 @@ MeshHealth mesh_health(const ModelObject& object, int vol_idx, const TriangleMes
     health.repaired_errors = stats.repaired_errors;
     health.errors_repaired = object.get_repaired_errors_count(vol_idx);
 
-    const MeshErrorsInfo row = mesh_errors_info(object, vol_idx);
+    const MeshErrorsInfo row = mesh_errors_info(stats);
     health.warning           = !row.warning_icon_name.empty();
     if (health.warning) {
         // Asked for the sidebar line, the list leaves the tooltip's "click the icon" line off, so the
         // tooltip comes from the call above.
         wxString sidebar;
-        mesh_errors_info(object, vol_idx, &sidebar);
+        mesh_errors_info(stats, &sidebar);
         health.tooltip = into_u8(row.tooltip);
         health.reason  = one_line(sidebar);
     }

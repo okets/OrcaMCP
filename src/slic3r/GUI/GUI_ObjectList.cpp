@@ -576,12 +576,9 @@ void ObjectList::get_selection_indexes(std::vector<int>& obj_idxs, std::vector<i
     obj_idxs.erase(std::unique(obj_idxs.begin(), obj_idxs.end()), obj_idxs.end());
 }
 
-int ObjectList::get_repaired_errors_count(const int obj_idx, const int vol_idx /*= -1*/) const
-{
-    return obj_idx >= 0 ? (*m_objects)[obj_idx]->get_repaired_errors_count(vol_idx) : 0;
-}
-
-static std::string get_warning_icon_name(const TriangleMeshStats& stats)
+// OrcaMCP: no longer static, so a caller without the list can read the icon without building the
+// tooltip's text.
+std::string get_warning_icon_name(const TriangleMeshStats& stats)
 {
     return stats.manifold() ? (stats.repaired() ? "obj_warning" : "") : "obj_warning";
 }
@@ -591,18 +588,24 @@ MeshErrorsInfo ObjectList::get_mesh_errors_info(const int obj_idx, const int vol
     if (obj_idx < 0)
         return { {}, {} }; // hide tooltip
 
-    return mesh_errors_info(*(*m_objects)[obj_idx], vol_idx, sidebar_info, non_manifold_edges);
+    const ModelObject& object = *(*m_objects)[obj_idx];
+    return mesh_errors_info(vol_idx == -1 ? object.get_object_stl_stats() : object.volumes[vol_idx]->mesh().stats(),
+                            sidebar_info, non_manifold_edges);
 }
 
-// OrcaMCP: the body of ObjectList::get_mesh_errors_info, moved out of the class unchanged so a
-// caller without the list can build the same text. The strings stay in this file, which
-// localization/i18n/list.txt names, so the translations keep reaching them.
-MeshErrorsInfo mesh_errors_info(const ModelObject& object, const int vol_idx /*= -1*/, wxString* sidebar_info /*= nullptr*/, int* non_manifold_edges /*= nullptr*/)
+// OrcaMCP: ModelObject::get_repaired_errors_count's sum, over stats the caller already has.
+int repaired_errors_count(const RepairedMeshErrors& errors)
 {
-    const TriangleMeshStats& stats = vol_idx == -1 ?
-        object.get_object_stl_stats() :
-        object.volumes[vol_idx]->mesh().stats();
+    return errors.degenerate_facets + errors.edges_fixed + errors.facets_removed +
+           errors.facets_reversed + errors.backwards_edges;
+}
 
+// OrcaMCP: the body of ObjectList::get_mesh_errors_info, moved out of the class so a caller without
+// the list can build the same text from the stats it already read; the repair count is the same
+// sum ObjectList::get_repaired_errors_count returned. The strings stay in this file, which
+// localization/i18n/list.txt names, so the translations keep reaching them.
+MeshErrorsInfo mesh_errors_info(const TriangleMeshStats& stats, wxString* sidebar_info /*= nullptr*/, int* non_manifold_edges /*= nullptr*/)
+{
     if (!stats.repaired() && stats.manifold()) {
         //if (sidebar_info)
         //    *sidebar_info = _L("No errors");
@@ -613,7 +616,7 @@ MeshErrorsInfo mesh_errors_info(const ModelObject& object, const int vol_idx /*=
 
     // Create tooltip string, if there are errors
     if (stats.repaired()) {
-        const int errors = object.get_repaired_errors_count(vol_idx);
+        const int errors = repaired_errors_count(stats.repaired_errors);
         auto_repaired_info = format_wxstr(_L_PLURAL("%1$d error repaired", "%1$d errors repaired", errors), errors);
         tooltip += auto_repaired_info + "\n";
     }
