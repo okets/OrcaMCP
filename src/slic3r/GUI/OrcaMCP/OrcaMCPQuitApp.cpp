@@ -155,7 +155,7 @@ ModalUnwinder& modal_unwinder()
     static ModalUnwinder* const unwinder = new ModalUnwinder(
         {current_modal_state, end_dialog_unanswered,
          [](std::function<void()> task) { turn_timer().run_after_a_turn(std::move(task)); },
-         [] { turn_timer().cancel(); }, session_ending});
+         [] { turn_timer().cancel(); }});
     return *unwinder;
 }
 
@@ -163,25 +163,18 @@ bool hold_close_while_modal(std::function<void()> close)
 {
     ModalUnwinder&            unwinder = modal_unwinder();
     const ModalUnwinder::Hold hold     = unwinder.hold_back(std::move(close));
-    const int                 turns    = unwinder.turns();
-    switch (hold) {
-    case ModalUnwinder::Hold::held:
-        if (turns == 1)
-            BOOST_LOG_TRIVIAL(info) << "OrcaMCP: the close waits for the open dialogs to end";
-        return true;
-    case ModalUnwinder::Hold::go_on:
-        if (turns > 0)
-            BOOST_LOG_TRIVIAL(info) << (session_ending() ? "OrcaMCP: the system session is ending; the close goes on "
-                                                           "without waiting for the open dialogs"
-                                                         : "OrcaMCP: the open dialogs have closed; the close goes on");
-        return false;
-    case ModalUnwinder::Hold::given_up:
-        note_quit_failed(current_modal_state());
-        set_closing_dialogs_to_quit(false);
-        BOOST_LOG_TRIVIAL(error) << "OrcaMCP: " << quit_failed_warning()->at("message").get<std::string>();
-        return true;
+    const ModalState          modal    = current_modal_state();
+    if (const std::string line = hold_log_line(hold, unwinder.turns(), modal); !line.empty()) {
+        if (hold == ModalUnwinder::Hold::given_up)
+            BOOST_LOG_TRIVIAL(error) << "OrcaMCP: " << line;
+        else
+            BOOST_LOG_TRIVIAL(info) << "OrcaMCP: " << line;
     }
-    return true;
+    if (hold == ModalUnwinder::Hold::given_up) {
+        note_quit_failed(modal);
+        set_closing_dialogs_to_quit(false);
+    }
+    return hold != ModalUnwinder::Hold::go_on;
 }
 
 }}} // namespace Slic3r::GUI::OrcaMCP

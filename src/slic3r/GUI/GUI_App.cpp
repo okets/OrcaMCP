@@ -3004,10 +3004,18 @@ bool GUI_App::on_init_inner()
             }
         }
     });
-    // Orca: the process ends as soon as this event returns, so the main frame's close, which wx sends
-    // from it, must run its teardown (the app config is saved there) now, not wait for a dialog.
-    wxGetApp().Bind(wxEVT_END_SESSION, [](wxCloseEvent& e) {
-        OrcaMCP::mark_session_ending();
+    // Orca: the system ends the process as soon as this returns. wx's own handler closes the main frame;
+    // with a dialog open, that teardown would run inside the dialog's loop and abort, so it is skipped:
+    // the config is saved, and nothing else is done (OrcaMCPQuit.hpp, respond_to_end_session).
+    wxGetApp().Bind(wxEVT_END_SESSION, [this](wxCloseEvent& e) {
+        const OrcaMCP::EndSessionResponse response = OrcaMCP::respond_to_end_session(OrcaMCP::current_modal_state());
+        if (!response.close_frame) {
+            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": the session ends with a dialog open; the config is saved "
+                                                          "and the main frame is not torn down under it";
+            if (response.save_config_now)
+                save_config_and_flush_logs();
+            return; // not Skip(): wx's handler would close the frame
+        }
         e.Skip();
     });
     // Orca: which modal dialogs are open, innermost first, the plain wxDialog and native ones included:

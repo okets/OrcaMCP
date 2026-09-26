@@ -81,11 +81,6 @@ Decline decline_answer(bool has_cancel_button, bool has_no_button, bool no_butto
 bool closing_dialogs_to_quit();
 void set_closing_dialogs_to_quit(bool closing);
 
-// The system session is ending: the process ends as soon as the event that says so returns, so a close
-// must never wait for a dialog then.
-void mark_session_ending();
-bool session_ending();
-
 // The startup "restore unsaved items?" prompt is open while one of these lives.
 class RestorePromptOpen
 {
@@ -132,7 +127,6 @@ public:
         // event posted from a pending event in the same pass, before an ended modal loop has returned.
         std::function<void(std::function<void()>)> run_after_a_turn;
         std::function<void()>                      cancel_turn; // drops the task run_after_a_turn holds
-        std::function<bool()>                      session_ending;
     };
 
     enum class Hold
@@ -164,6 +158,11 @@ private:
     std::vector<std::uint64_t> m_ended;
 };
 
+// The close handler's log line for a hold's outcome, with its reason: what it waits for, that the
+// dialogs closed, that nothing was open, or why it gave up. Empty for the turns between the first and
+// the last, so a 10 s hold is two lines, not 200.
+std::string hold_log_line(ModalUnwinder::Hold hold, int turns, const ModalState& modal);
+
 // What a quit request from the system does (the Dock's Quit, a quit Apple Event, a logout: wx's
 // wxEVT_QUERY_END_SESSION). With nothing modal open, the main frame closes as for any quit. With a
 // dialog open the request arrives inside its event loop, where closing the frame is the abort this
@@ -178,6 +177,18 @@ struct SessionEndResponse
     bool close_frame     = false; // close the main frame, its full teardown
 };
 SessionEndResponse respond_to_session_end(const ModalState& modal, bool can_veto);
+
+// What the end of the system session does (wx's wxEVT_END_SESSION, after a quit request it did not
+// refuse, or one it could not: the system ends the process as soon as this returns). With nothing
+// modal open, wx's own handler closes the main frame, its full teardown. With a dialog open that
+// teardown would run inside the dialog's loop and abort, so the frame is left alone: the config is
+// saved (again: the request may never have reached the app), and the system ends the process.
+struct EndSessionResponse
+{
+    bool save_config_now = false;
+    bool close_frame     = false; // let wx close the main frame
+};
+EndSessionResponse respond_to_end_session(const ModalState& modal);
 
 // The app's side, defined in OrcaMCPQuitApp.cpp; main thread only.
 void           track_modal_dialogs();   // registers the hook that feeds the app's ModalStack; once, at startup

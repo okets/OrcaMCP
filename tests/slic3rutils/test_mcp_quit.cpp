@@ -27,7 +27,6 @@ struct FakeApp
 {
     std::vector<ModalState::Dialog>    dialogs; // innermost first
     bool                               untracked_loop = false;
-    bool                               session_ending = false;
     std::vector<std::uint64_t>         ended;
     std::vector<std::function<void()>> turns;
     std::vector<std::uint64_t>         unwinding;
@@ -54,8 +53,7 @@ struct FakeApp
                 [this] {
                     ++cancelled_turns;
                     turns.clear();
-                },
-                [this] { return session_ending; }};
+                }};
     }
 
     // One turn of the event loop: ended dialogs return from their modal loops, then the task runs.
@@ -258,25 +256,39 @@ TEST_CASE("an unwinder that gave up starts afresh on the next close", "[McpQuit]
     CHECK(close.went_on == 1);
 }
 
-TEST_CASE("a close at the end of the system session is never held", "[McpQuit][orcamcp]")
+TEST_CASE("a hold that ends drops the turn still pending", "[McpQuit][orcamcp]")
 {
-    // The process ends as soon as the end-session event returns, so a close held for a turn never
-    // runs, and the teardown that saves the app config with it. The logout handler has already ended
-    // the innermost dialog.
     FakeApp app;
-    app.dialogs = {restore_prompt};
+    app.dialogs        = {restore_prompt};
+    app.refuses_to_end = true;
     ModalUnwinder unwinder(app.hooks());
     Close         close{unwinder};
 
     close();
     REQUIRE(close.last == Hold::held);
-    app.session_ending = true;
+    app.dialogs.clear(); // the user answered it, and another close came before the turn
     close();
 
     CHECK(close.last == Hold::go_on);
-    CHECK(close.went_on == 1);
-    CHECK(app.turns.empty()); // the turn that was pending is dropped
+    CHECK(app.turns.empty());
     CHECK(app.cancelled_turns >= 1);
+}
+
+TEST_CASE("the end of the session leaves the frame alone while a dialog is open", "[McpQuit][orcamcp]")
+{
+    // wx's own handler would close the frame, whose teardown then ran inside the dialog's loop and
+    // aborted. The system ends the process as soon as the event returns, so the config is saved and
+    // nothing else is done.
+    ModalState modal;
+    modal.dialogs       = {restore_prompt};
+    modal.in_modal_loop = true;
+    const auto open = respond_to_end_session(modal);
+    CHECK(open.save_config_now);
+    CHECK_FALSE(open.close_frame);
+
+    const auto nothing = respond_to_end_session(ModalState{});
+    CHECK(nothing.close_frame);
+    CHECK_FALSE(nothing.save_config_now); // the teardown saves it
 }
 
 TEST_CASE("a quit that gave up is reported until the next quit_app", "[McpQuit][orcamcp]")
@@ -522,4 +534,17 @@ TEST_CASE("a session end that cannot be refused, with a dialog open, only saves 
     CHECK(response.save_config_now);
     CHECK_FALSE(response.refuse);
     CHECK_FALSE(response.close_frame);
+}
+
+TEST_CASE("the close handler logs why each hold outcome came about", "[McpQuit][orcamcp]")
+{
+    ModalState modal;
+    modal.dialogs       = {restore_prompt};
+    modal.in_modal_loop = true;
+
+    CHECK(hold_log_line(Hold::held, 1, modal).find("'OrcaMCP - Restore'") != std::string::npos);
+    CHECK(hold_log_line(Hold::held, 2, modal).empty()); // quiet between the first turn and the last
+    CHECK(hold_log_line(Hold::go_on, 0, ModalState{}).find("nothing modal is open") != std::string::npos);
+    CHECK(hold_log_line(Hold::go_on, 3, ModalState{}).find("closed after 3 turn") != std::string::npos);
+    CHECK(hold_log_line(Hold::given_up, 200, modal).find("still open") != std::string::npos);
 }

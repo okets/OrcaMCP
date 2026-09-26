@@ -519,7 +519,8 @@ that call in flight waited forever: on 2026-09-26 `quit_app`, with a script poll
     main one. It gives up after 10 s rather than tear the frame down under a loop that will not end:
     the app stays open, its unsaved changes kept (a forced close clears the dirty flag only once it is
     sure to go on), and every response's `active_warnings` carries a `QuitFailed` error until the next
-    `quit_app`. The log has the first turn and the outcome, not each turn.
+    `quit_app`. The log has the first turn and every outcome with its reason (`hold_log_line`), not
+    each turn.
   - **Unanswered, with the dialog's own no** (`end_dialog_unanswered`, `OrcaMCPQuitApp.cpp`): its Cancel
     button if it has one; else its No button, if that still says No or Cancel; else Cancel, what its
     close box returns. Never `wxID_ABORT`: callers that test for No or Cancel only take it for yes. The
@@ -531,9 +532,11 @@ that call in flight waited forever: on 2026-09-26 `quit_app`, with a script poll
     saved and the logs flushed at once (the system may end the process anyway: a Windows critical
     shutdown ignores a refusal), and the request is refused when it can be, as wx's own macOS handler
     does; the user answers and quits again. With nothing open the frame closes as for any quit.
-  - **Never at the end of the session.** The process ends as soon as `wxEVT_END_SESSION` returns, so a
-    close from it is never held (`mark_session_ending`): its teardown, which saves the app config, runs
-    at once.
+  - **Nor at the end of the session** (`respond_to_end_session`, GUI_App's `wxEVT_END_SESSION`
+    handler), which follows a request the app did not refuse or could not (the process ends as soon as
+    it returns). With nothing open wx closes the frame as usual. With a dialog open wx's own handler
+    would `Close(true)` the frame inside the dialog's loop, the abort above, so the frame is left alone:
+    the config is saved, a warning logged, and the system ends the process.
   - **Two waits, one close.** The hold (a timer turn) and the tool-call deferral above (once the work
     has returned) wait for different things, so they stay two, but both ask the same `close_again`.
 - **The cloud login shares the MCP server's thread.** Its callback port is a second listener on the MCP

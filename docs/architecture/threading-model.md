@@ -223,9 +223,12 @@ inside it too, so `quit_app` can arrive there). Torn down inside that loop, the 
 dialog, which lives on its caller's stack, and the app aborted. The close handler first asks
 `OrcaMCP::hold_close_while_modal` (`OrcaMCPQuit.cpp`): a `wxModalDialogHook` knows every modal dialog,
 plain and native ones included; the innermost, if it is the app's, is ended with its own "no", one
-per 50 ms timer turn, and the close goes on once the main loop runs again. It is never held at the
-end of the system session, and gives up after 10 s, leaving a `QuitFailed` active warning
-(`test_mcp_quit.cpp`). Both this and the tool-call deferral ask the same close again.
+per 50 ms timer turn, and the close goes on once the main loop runs again. It gives up after 10 s,
+leaving a `QuitFailed` active warning (`test_mcp_quit.cpp`). A quit from the system (the Dock, a
+logout) is never turned into a close inside a dialog's loop at all: the request is refused when it
+can be, and at the end of the session the frame is left alone and the config saved
+(`respond_to_session_end`, `respond_to_end_session`). Both this and the tool-call deferral ask the
+same close again.
 
 The cloud login's callback port is a second listener on the same server and thread
 (`HttpServer::listen_also`, `LoginCallbackServer`), so there is one thread to join, login callbacks

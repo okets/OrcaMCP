@@ -39,7 +39,6 @@ std::string describe(const ModalState& modal)
 }
 
 bool                       g_closing_dialogs_to_quit = false;
-bool                       g_session_ending          = false;
 int                        g_restore_prompts_open    = 0;
 std::optional<std::string> g_quit_failure;
 
@@ -95,8 +94,6 @@ Decline decline_answer(bool has_cancel_button, bool has_no_button, bool no_butto
 bool closing_dialogs_to_quit() { return g_closing_dialogs_to_quit; }
 void set_closing_dialogs_to_quit(bool closing) { g_closing_dialogs_to_quit = closing; }
 
-void mark_session_ending() { g_session_ending = true; }
-bool session_ending() { return g_session_ending; }
 
 RestorePromptOpen::RestorePromptOpen() { ++g_restore_prompts_open; }
 RestorePromptOpen::~RestorePromptOpen() { --g_restore_prompts_open; }
@@ -153,12 +150,14 @@ std::optional<nlohmann::json> open_dialog_warning(const ModalState& modal)
     };
 }
 
-void note_quit_failed(const ModalState& still_open)
+static std::string quit_failure_text(const ModalState& still_open)
 {
-    g_quit_failure = "quit_app could not close the app: " + describe(still_open) +
-                     " is still open 10 s after it was closed unanswered. The app is still running and its unsaved "
-                     "changes are kept; close the dialog in the app, then call quit_app again.";
+    return "quit_app could not close the app: " + describe(still_open) +
+           " is still open 10 s after it was closed unanswered. The app is still running and its unsaved "
+           "changes are kept; close the dialog in the app, then call quit_app again.";
 }
+
+void note_quit_failed(const ModalState& still_open) { g_quit_failure = quit_failure_text(still_open); }
 
 void clear_quit_failure() { g_quit_failure.reset(); }
 
@@ -178,8 +177,6 @@ ModalUnwinder::Hold ModalUnwinder::hold_back(std::function<void()> close)
         m_finished = false;
         m_ended.clear();
     }
-    if (m_hooks.session_ending())
-        return finish(Hold::go_on);
     const ModalState modal = m_hooks.modal_state();
     if (!modal.anything_open())
         return finish(Hold::go_on);
@@ -219,6 +216,26 @@ SessionEndResponse respond_to_session_end(const ModalState& modal, bool can_veto
     if (!modal.anything_open())
         return {/*save_config_now=*/false, /*refuse=*/false, /*close_frame=*/true};
     return {/*save_config_now=*/true, /*refuse=*/can_veto, /*close_frame=*/false};
+}
+
+EndSessionResponse respond_to_end_session(const ModalState& modal)
+{
+    if (!modal.anything_open())
+        return {/*save_config_now=*/false, /*close_frame=*/true};
+    return {/*save_config_now=*/true, /*close_frame=*/false};
+}
+
+std::string hold_log_line(ModalUnwinder::Hold hold, int turns, const ModalState& modal)
+{
+    switch (hold) {
+    case ModalUnwinder::Hold::held:
+        return turns == 1 ? "the close waits: the app is showing " + describe(modal) : std::string();
+    case ModalUnwinder::Hold::go_on:
+        return turns == 0 ? std::string("nothing modal is open; the close goes on")
+                          : "the open dialogs closed after " + std::to_string(turns) + " turn(s); the close goes on";
+    case ModalUnwinder::Hold::given_up: return quit_failure_text(modal);
+    }
+    return std::string();
 }
 
 }}} // namespace Slic3r::GUI::OrcaMCP
