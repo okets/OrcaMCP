@@ -557,7 +557,13 @@ bool Flashforge::fetch_status(FlashforgeApi::PrinterStatus& out, wxString& msg) 
         return false;
     }
 
+    FlashforgeLocalApi::status_cache().put(extract_host_name(), out);
     return true;
+}
+
+std::optional<FlashforgeLocalApi::CachedStatus> Flashforge::last_known_status() const
+{
+    return FlashforgeLocalApi::status_cache().get(extract_host_name());
 }
 
 bool Flashforge::send_control(const std::string& cmd, const nlohmann::json& args, wxString& msg) const

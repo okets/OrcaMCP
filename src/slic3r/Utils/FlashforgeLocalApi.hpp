@@ -5,7 +5,10 @@
 #include <functional>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <string>
+
+#include "FlashforgeApi.hpp"
 
 namespace Slic3r { namespace FlashforgeLocalApi {
 
@@ -96,6 +99,39 @@ private:
 
 // The process-wide streaks every Flashforge host records into.
 FailureStreaks& failure_streaks();
+
+// ── The last status each printer answered with ─────────────────────────────────────────────────
+
+// A printer's last good status, and how old it is.
+struct CachedStatus
+{
+    FlashforgeApi::PrinterStatus status;
+    long                         age_s{0};
+};
+
+// The last status each host answered with. Every successful Flashforge::fetch_status records into
+// it (the agent's poll, the Device page's poll, MCP calls), so when a live read fails the caller can
+// still say what the printer last reported and how long ago. Thread-safe.
+class StatusCache
+{
+public:
+    using Clock = std::chrono::steady_clock;
+
+    void                        put(const std::string& host, const FlashforgeApi::PrinterStatus& status, Clock::time_point now = Clock::now());
+    std::optional<CachedStatus> get(const std::string& host, Clock::time_point now = Clock::now()) const;
+
+private:
+    struct Entry
+    {
+        FlashforgeApi::PrinterStatus status;
+        Clock::time_point            at;
+    };
+    mutable std::mutex           m_mutex;
+    std::map<std::string, Entry> m_entries;
+};
+
+// The process-wide cache every Flashforge host records into.
+StatusCache& status_cache();
 
 }} // namespace Slic3r::FlashforgeLocalApi
 

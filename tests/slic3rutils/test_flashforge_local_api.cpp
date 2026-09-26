@@ -192,3 +192,35 @@ TEST_CASE("FailureStreaks counts failures per host and reports the streak a succ
     CHECK(streaks.record_success("10.0.0.100") == 0);
     CHECK(streaks.record_failure("10.0.0.100") == 1);
 }
+
+namespace {
+
+Slic3r::FlashforgeApi::PrinterStatus status_with_slot(const std::string& material)
+{
+    Slic3r::FlashforgeApi::PrinterStatus status;
+    status.has_material_station = true;
+    status.slots.push_back({1, true, material, "#FF0000"});
+    return status;
+}
+
+} // namespace
+
+TEST_CASE("StatusCache returns a host's last status with its age", "[flashforge]")
+{
+    using Clock = StatusCache::Clock;
+    StatusCache     cache;
+    const Clock::time_point t0 = Clock::now();
+
+    CHECK_FALSE(cache.get("10.0.0.100", t0).has_value());
+
+    cache.put("10.0.0.100", status_with_slot("PLA"), t0);
+    cache.put("10.0.0.100", status_with_slot("PETG"), t0 + std::chrono::seconds(5)); // the newer one wins
+
+    const auto cached = cache.get("10.0.0.100", t0 + std::chrono::seconds(47));
+    REQUIRE(cached.has_value());
+    CHECK(cached->age_s == 42);
+    REQUIRE(cached->status.slots.size() == 1);
+    CHECK(cached->status.slots.front().material_name == "PETG");
+
+    CHECK_FALSE(cache.get("10.0.0.101", t0).has_value()); // another printer's status is not this one's
+}

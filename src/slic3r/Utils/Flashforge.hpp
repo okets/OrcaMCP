@@ -54,6 +54,9 @@ public:
     // Local API status and control. All are safe to call off the main thread; all return false and fill `msg` on failure.
     bool has_local_api_credentials() const { return !m_serial_number.empty() && !m_check_code.empty(); }
     bool fetch_status(FlashforgeApi::PrinterStatus& out, wxString& msg) const;
+    // The status this printer last answered fetch_status with, from any caller in this process, and
+    // its age; nullopt when it has not answered since the app started. Never touches the network.
+    std::optional<FlashforgeLocalApi::CachedStatus> last_known_status() const;
     bool send_control(const std::string& cmd, const nlohmann::json& args, wxString& msg) const;
     bool pause_job(wxString& msg) const;
     bool resume_job(wxString& msg) const;

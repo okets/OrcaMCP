@@ -388,3 +388,23 @@ TEST_CASE("The summary names what disagrees, and says nothing when nothing does"
                   .empty());
     }
 }
+
+TEST_CASE("A match planned from the printer's cached status changes the project only when opted in", "[ProjectMatch]")
+{
+    CHECK(cached_match_applies(/*dry_run=*/false, /*allow_cached=*/true));
+    CHECK_FALSE(cached_match_applies(/*dry_run=*/false, /*allow_cached=*/false));
+    CHECK_FALSE(cached_match_applies(/*dry_run=*/true, /*allow_cached=*/true));
+    CHECK_FALSE(cached_match_applies(/*dry_run=*/true, /*allow_cached=*/false));
+}
+
+TEST_CASE("The cached-match note gives the status's age and, when it withheld the change, how to opt in", "[ProjectMatch]")
+{
+    const std::string withheld = cached_match_note(/*age_s=*/90, /*withheld=*/true);
+    CHECK(withheld.find("90 s ago") != std::string::npos);
+    CHECK(withheld.find("not applied") != std::string::npos);
+    CHECK(withheld.find("allow_cached: true") != std::string::npos);
+
+    const std::string planned = cached_match_note(/*age_s=*/5, /*withheld=*/false);
+    CHECK(planned.find("5 s ago") != std::string::npos);
+    CHECK(planned.find("allow_cached") == std::string::npos);
+}

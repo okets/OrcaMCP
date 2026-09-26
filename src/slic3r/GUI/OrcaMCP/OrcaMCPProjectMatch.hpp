@@ -133,6 +133,16 @@ std::vector<SlotPlan> plan_project_match(const std::vector<StationSlot>&    stat
 // One line naming what disagrees, for the console's suggestion. "" when nothing does.
 std::string describe_plan_summary(const std::vector<SlotPlan>& plan);
 
+// When the printer cannot be read live, the match is planned from its last known status
+// (FlashforgeLocalApi::status_cache). That may be stale -- a spool swapped since -- so it changes the
+// project only when the caller asked for a real run AND opted in with allow_cached; otherwise it is
+// reported as a dry run.
+bool cached_match_applies(bool dry_run, bool allow_cached);
+
+// The `note` a match from the cache carries: how old the status was and, when `withheld` (a real run
+// was asked for without allow_cached), that nothing was applied and how to apply it.
+std::string cached_match_note(long age_s, bool withheld);
+
 // The per-slot JSON both front doors report: the contract's
 // {slot, material, color, preset_before, preset_after, color_before, color_after, changed, reason},
 // plus `type_before` (the project's own material, which the console names in its suggestion) and

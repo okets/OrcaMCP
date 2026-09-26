@@ -329,6 +329,21 @@ std::vector<SlotPlan> plan_project_match(const std::vector<StationSlot>&    stat
     return plans;
 }
 
+bool cached_match_applies(bool dry_run, bool allow_cached)
+{
+    return !dry_run && allow_cached;
+}
+
+std::string cached_match_note(long age_s, bool withheld)
+{
+    std::string note = "The printer could not be read live, so this plan comes from the status it last reported, " +
+                       std::to_string(age_s) + " s ago.";
+    if (withheld)
+        note += " It was not applied: a spool may have changed since. Pass allow_cached: true to apply it anyway, or "
+                "try again once the printer answers.";
+    return note;
+}
+
 std::string describe_plan_summary(const std::vector<SlotPlan>& plan)
 {
     std::vector<int> slots;

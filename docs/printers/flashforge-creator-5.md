@@ -225,6 +225,11 @@ magenta PLA while the machine holds bronze PETG, which both blocks the send on a
 material mismatch and makes the plate preview lie about what you are getting. The
 console offers it as a dismissible suggestion when it notices the two disagree.
 
+If the printer does not answer (asleep, off the network), the plan comes from the
+status it last reported while the app was running, with its age. It is shown as a dry
+run and applied only when the call passes `allow_cached: true`, since a spool may have
+been swapped since.
+
 ---
 
 ## Model differences

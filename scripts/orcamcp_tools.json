@@ -851,7 +851,7 @@
     },
     {
       "category": "Printers",
-      "description": "Get live status from the configured print host: state, progress, temperatures, light, material station. Full detail is only available for Flashforge hosts; other host types report online/offline.",
+      "description": "Get live status from the configured print host: state, progress, temperatures, light, material station. Full detail is only available for Flashforge hosts; other host types report online/offline. When a Flashforge cannot be read, the error says why and what to do next, and `cached` carries the material station from its last answer, with age_s.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {},
@@ -863,7 +863,7 @@
     },
     {
       "category": "Printers",
-      "description": "Get available printers and their status.",
+      "description": "Get available printers and their status. local_printers[].is_online is the device list's flag, set when a device is added, not a live check. For a Flashforge print host, current_print_host.last_status_age_s is how many seconds ago the printer last answered (null: not since the app started); get_printer_status reads it live.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {},
@@ -1040,10 +1040,14 @@
     },
     {
       "category": "Printers",
-      "description": "Match the project's filament slots to the printer's material station: for every loaded slot, pick a filament preset of the material the printer reports and set that slot's colour to the colour it reports. Slots the printer reports as empty are left untouched. Fixes the two things a stale project causes: send_to_printer refusing on a material mismatch, and a plate preview in the wrong colour.",
+      "description": "Match the project's filament slots to the printer's material station: for every loaded slot, pick a filament preset of the material the printer reports and set that slot's colour to the colour it reports. Slots the printer reports as empty are left untouched. Fixes the two things a stale project causes: send_to_printer refusing on a material mismatch, and a plate preview in the wrong colour. When the printer cannot be read live, the plan comes from its last known status (source: cached, with age_s and live_error) and changes the project only with allow_cached: true; otherwise it is returned as a dry run.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
+          "allow_cached": {
+            "description": "Apply a plan made from the printer's last known status when it cannot be read live (default false). That status may be stale; age_s says how old it is.",
+            "type": "boolean"
+          },
           "dry_run": {
             "description": "Report the plan without changing anything (default false). Each slot's 'changed' then means 'would change'.",
             "type": "boolean"

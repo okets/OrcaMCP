@@ -10,6 +10,7 @@
 #include "slic3r/GUI/DeviceCore/DevManager.h"
 #include "slic3r/Utils/Flashforge.hpp"
 #include "slic3r/Utils/FlashforgeApi.hpp"
+#include "slic3r/Utils/FlashforgeLocalApi.hpp"
 #include "slic3r/Utils/ObicoLink.hpp"
 #include "slic3r/Utils/PrintHost.hpp"
 #include "libslic3r/Preset.hpp"
@@ -169,8 +170,49 @@ nlohmann::json open_send_dialog(bool all_plates)
     });
 }
 
-// The tool_id/slot_id pairs actually sent, for the tool's response (mirrors the request schema rather
-// than the printer's camelCase wire format).
+// The material station from the printer's last answer, for a response whose live read failed.
+nlohmann::json cached_station_json(const FlashforgeLocalApi::CachedStatus& cached)
+{
+    return {{"source", "cached"},
+            {"age_s", cached.age_s},
+            {"material_station",
+             {{"present", cached.status.has_material_station}, {"slots", material_slots_json(cached.status.slots)}}}};
+}
+
+// match_project_to_printer when the live read failed: plan from the printer's last answer, and change
+// the project only when the caller opted in, since a spool may have been swapped since.
+nlohmann::json match_from_cached_status(const FlashforgeLocalApi::CachedStatus& cached,
+                                        const std::vector<int>&                 slots,
+                                        bool                                    dry_run,
+                                        bool                                    allow_cached,
+                                        const std::string&                      live_error)
+{
+    const bool applies  = cached_match_applies(dry_run, allow_cached);
+    const bool withheld = !dry_run && !applies;
+
+    nlohmann::json response = run_on_main_thread([station = cached.status.slots, slots, applies]() -> nlohmann::json {
+        return match_project_to_printer(station, slots, /*dry_run=*/!applies);
+    });
+    response["source"]     = "cached";
+    response["age_s"]      = cached.age_s;
+    response["live_error"] = live_error;
+    response["note"]       = cached_match_note(cached.age_s, withheld);
+    if (withheld)
+        response["applied"] = false;
+    return response;
+}
+
+// How long ago the preset's Flashforge last answered a status read: null when it has not since the
+// app started, and absent for any other host type. Never touches the network.
+std::optional<nlohmann::json> last_status_age_json(const DynamicPrintConfig& config)
+{
+    const std::unique_ptr<Slic3r::PrintHost> host = make_print_host(config);
+    const auto*                              ff   = dynamic_cast<const Slic3r::Flashforge*>(host.get());
+    if (ff == nullptr)
+        return std::nullopt;
+    const auto cached = ff->last_known_status();
+    return cached ? nlohmann::json(cached->age_s) : nlohmann::json(nullptr);
+}
 } // namespace
 
 void OrcaMCPServer::register_printer_tools()
@@ -180,7 +222,10 @@ void OrcaMCPServer::register_printer_tools()
         "get_printers",
         ToolCategory::Printers,
         "Printers and print-host presets",
-        "Get available printers and their status.",
+        "Get available printers and their status. local_printers[].is_online is the device list's flag, set "
+        "when a device is added, not a live check. For a Flashforge print host, "
+        "current_print_host.last_status_age_s is how many seconds ago the printer last answered (null: not "
+        "since the app started); get_printer_status reads it live.",
         {
             {"type", "object"},
             {"properties", nlohmann::json::object()}
@@ -290,6 +335,8 @@ void OrcaMCPServer::register_printer_tools()
                                 {"host_type", print_host_type_name(printer_config)},
                                 {"is_current", true}
                             };
+                            if (const auto age = last_status_age_json(printer_config))
+                                result["current_print_host"]["last_status_age_s"] = *age;
                         }
                     }
                 }
@@ -658,7 +705,9 @@ void OrcaMCPServer::register_printer_tools()
         ToolCategory::Printers,
         "Live printer state and temperatures",
         "Get live status from the configured print host: state, progress, temperatures, light, material "
-        "station. Full detail is only available for Flashforge hosts; other host types report online/offline.",
+        "station. Full detail is only available for Flashforge hosts; other host types report online/offline. "
+        "When a Flashforge cannot be read, the error says why and what to do next, and `cached` carries the "
+        "material station from its last answer, with age_s.",
         {
             {"type", "object"},
             {"properties", nlohmann::json::object()}
@@ -691,8 +740,12 @@ void OrcaMCPServer::register_printer_tools()
 
             Slic3r::FlashforgeApi::PrinterStatus status;
             wxString                     msg;
-            if (!ff->fetch_status(status, msg))
-                return error_response(msg.empty() ? "Failed to fetch printer status" : to_std(msg));
+            if (!ff->fetch_status(status, msg)) {
+                nlohmann::json error = error_response(msg.empty() ? "Failed to fetch printer status" : to_std(msg));
+                if (const auto cached = ff->last_known_status())
+                    error["cached"] = cached_station_json(*cached);
+                return error;
+            }
 
             return {{"status", "success"},
                     {"host_type", host_type},
@@ -943,7 +996,9 @@ void OrcaMCPServer::register_printer_tools()
         "pick a filament preset of the material the printer reports and set that slot's colour to the "
         "colour it reports. Slots the printer reports as empty are left untouched. Fixes the two things "
         "a stale project causes: send_to_printer refusing on a material mismatch, and a plate preview in "
-        "the wrong colour.",
+        "the wrong colour. When the printer cannot be read live, the plan comes from its last known status "
+        "(source: cached, with age_s and live_error) and changes the project only with allow_cached: true; "
+        "otherwise it is returned as a dry run.",
         {
             {"type", "object"},
             {"properties", {
@@ -956,6 +1011,11 @@ void OrcaMCPServer::register_printer_tools()
                     {"type", "boolean"},
                     {"description", "Report the plan without changing anything (default false). Each slot's "
                                     "'changed' then means 'would change'."}
+                }},
+                {"allow_cached", {
+                    {"type", "boolean"},
+                    {"description", "Apply a plan made from the printer's last known status when it cannot be read "
+                                    "live (default false). That status may be stale; age_s says how old it is."}
                 }}
             }}
         },
@@ -972,10 +1032,11 @@ void OrcaMCPServer::register_printer_tools()
                 }
             }
 
-            bool dry_run = false;
-            if (params.contains("dry_run") && !params["dry_run"].is_null() &&
-                !parse_boolean_param(params["dry_run"], dry_run))
-                return error_response("dry_run must be a boolean, got: " + params["dry_run"].dump());
+            bool dry_run      = false;
+            bool allow_cached = false;
+            for (auto [key, target] : {std::pair<const char*, bool*>{"dry_run", &dry_run}, {"allow_cached", &allow_cached}})
+                if (params.contains(key) && !params[key].is_null() && !parse_boolean_param(params[key], *target))
+                    return error_response(std::string(key) + " must be a boolean, got: " + params[key].dump());
 
             std::unique_ptr<Slic3r::PrintHost> host;
             Slic3r::Flashforge*                ff = nullptr;
@@ -985,14 +1046,21 @@ void OrcaMCPServer::register_printer_tools()
 
             Slic3r::FlashforgeApi::PrinterStatus status;
             wxString                             msg;
-            if (!ff->fetch_status(status, msg))
-                return error_response(msg.empty() ? "Failed to read material station status" : to_std(msg));
+            if (!ff->fetch_status(status, msg)) {
+                const std::string live_error = msg.empty() ? "Failed to read material station status" : to_std(msg);
+                const auto        cached     = ff->last_known_status();
+                if (!cached)
+                    return error_response(live_error);
+                return match_from_cached_status(*cached, slots, dry_run, allow_cached, live_error);
+            }
 
             // Params and the station snapshot cross to the GUI thread by value; everything the match
             // touches (presets, project config, sidebar) is main-thread-only.
-            return run_on_main_thread([station = status.slots, slots, dry_run]() -> nlohmann::json {
+            nlohmann::json response = run_on_main_thread([station = status.slots, slots, dry_run]() -> nlohmann::json {
                 return match_project_to_printer(station, slots, dry_run);
             });
+            response["source"] = "live";
+            return response;
         }
     });
 }

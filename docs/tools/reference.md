@@ -2065,13 +2065,19 @@ List available printers.
 **Returns:**
 ```json
 {
-  "current_print_host": "http://10.10.10.20",
+  "current_print_host": {"name": "C5P", "type": "printer_preset_host", "print_host": "10.0.0.100",
+                         "host_type": "flashforge", "is_current": true, "last_status_age_s": 4},
   "local_printers": [...],
   "cloud_printers": [...],
   "physical_printers": [...],
   "total_count": 3
 }
 ```
+`local_printers[].is_online` is the device list's own flag, set to true when a device is added; it is
+**not** a live check. For a Flashforge print host, `current_print_host.last_status_age_s` is how many
+seconds ago the printer last answered a status read from anywhere in the app (the Device tab's poll
+included), `null` when it has not answered since the app started. Use `get_printer_status` to read it
+live.
 
 ---
 
@@ -2119,6 +2125,45 @@ Live status from the configured print host. Full detail for Flashforge hosts.
 }
 ```
 `obico.configured` says whether the preset names an Obico server; the token is never included.
+
+**When the printer cannot be read:** a connection that was never made is tried once more after
+500 ms. If that fails too, the error names the host and port and the next step, and `cached` carries
+the material station from the printer's last answer, if it answered since the app started:
+```json
+{
+  "status": "error",
+  "message": "Could not connect to the printer at 10.0.0.100:8898: the connection failed after 2 ms, before reaching the printer; tried 2 times. That usually means the printer is not on the network right now: ...",
+  "cached": {"source": "cached", "age_s": 312, "material_station": {"present": true, "slots": [...]}}
+}
+```
+A failure that happens at once, before reaching the printer, usually means the printer is off the
+network. On macOS, a newly built or installed app can also be blocked by System Settings > Privacy &
+Security > Local Network. Every failure is logged at warning level with the URL, curl code, HTTP
+status and elapsed time (the first of a streak, every 100th, and the recovery), never the request
+body.
+
+---
+
+### match_project_to_printer
+Make the project's filament slots say what the Flashforge material station holds: for each loaded
+slot, pick a filament preset of the reported material and set the slot's colour to the reported
+colour. Empty slots are left alone.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `slots` | integer[] | No | 1-based material-station slots to match; omit for every loaded slot |
+| `dry_run` | boolean | No | Report the plan without changing anything (default false) |
+| `allow_cached` | boolean | No | Apply a plan made from the printer's last known status when it cannot be read live (default false) |
+
+**Returns:** `{"status": "success"|"partial", "dry_run": ..., "changed_count": N, "slots": [...],
+"filaments": [...], "source": "live"}`.
+
+When the printer cannot be read live but answered earlier in this session, the plan is made from
+that last status and the response says so: `"source": "cached"`, `age_s`, `live_error` and a `note`.
+It changes the project only with `allow_cached: true`. Without it, a call that asked to apply comes
+back as a dry run with `"applied": false`, and the note says how to opt in. With no earlier answer,
+the call returns the live error.
 
 ---
 
