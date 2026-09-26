@@ -162,8 +162,7 @@ static void append_render_report(nlohmann::json& entry, const RenderReport& repo
     entry["objects_in_frame"] = in_frame;
     entry["uniform_image"]    = report.uniform_image;
     if (report.uniform_image)
-        entry["hint"] = OrcaMCP::uniform_image_hint({report.scene_volumes, report.drawn.size(), report.scene_current},
-                                                    plate_index, plate);
+        entry["hint"] = OrcaMCP::uniform_image_hint(report.scene, report.drawn.size(), plate_index, plate);
 }
 
 // The plate's footprint, as tall as its tallest object (at least 10 mm, so an empty plate still
@@ -640,8 +639,7 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
     if (report != nullptr) {
         report->uniform_image = is_uniform_rgba(thumbnail_data.pixels, thumbnail_data.width, thumbnail_data.height);
         report->plate_box     = plate->get_plate_box();
-        report->scene_volumes = scene_volumes;
-        report->scene_current = scene_current;
+        report->scene         = {scene_volumes, scene_current};
     }
     BOOST_LOG_TRIVIAL(info) << "RenderThumbnail: read " << thumbnail_data.width << "x" << thumbnail_data.height
                             << " from " << (offscreen.ok ? "offscreen framebuffer" : "current framebuffer")

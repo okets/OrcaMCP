@@ -46,8 +46,7 @@ struct RenderReport
     std::vector<RenderedVolume> drawn;
     bool                        uniform_image = false;  // every pixel identical, before overlays
     BoundingBoxf3               plate_box;              // the requested plate's build volume, bed mm
-    size_t                      scene_volumes = 0;      // model volumes in the 3D view, any plate
-    bool                        scene_current = true;   // false: the hidden 3D view could not be refreshed
+    OrcaMCP::RenderScene        scene;                  // the 3D view's scene it drew from
 };
 
 struct RenderCameraInfo

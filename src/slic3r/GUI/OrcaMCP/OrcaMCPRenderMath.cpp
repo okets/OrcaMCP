@@ -205,21 +205,21 @@ bool belongs_in_plate_view(bool printable, bool on_plate, const BoundingBoxf3& v
     return printable && on_plate && volume_box.max.z() > 0.;
 }
 
-std::string uniform_image_hint(const RenderCounts& counts, int plate_index, const BoundingBoxf3& plate_box)
+std::string uniform_image_hint(const RenderScene& scene, size_t drawn, int plate_index, const BoundingBoxf3& plate_box)
 {
     char buf[320];
-    if (counts.scene_volumes == 0)
+    if (scene.model_volumes == 0)
         std::snprintf(buf, sizeof(buf), "the 3D view holds no model volumes, so there is nothing to draw on plate %d", plate_index);
-    else if (counts.drawn == 0)
+    else if (drawn == 0)
         std::snprintf(buf, sizeof(buf),
                       "%zu model volume(s) in the 3D view, none of them printable on plate %d; get_scene_info lists the plate each object is on",
-                      counts.scene_volumes, plate_index);
+                      scene.model_volumes, plate_index);
     else
         std::snprintf(buf, sizeof(buf),
                       "%zu volume(s) on plate %d but none inside this view; plate %d spans x [%.0f, %.0f] y [%.0f, %.0f] bed mm -- aim the camera there or use a preset",
-                      counts.drawn, plate_index, plate_index, plate_box.min.x(), plate_box.max.x(), plate_box.min.y(), plate_box.max.y());
+                      drawn, plate_index, plate_index, plate_box.min.x(), plate_box.max.x(), plate_box.min.y(), plate_box.max.y());
     std::string hint = buf;
-    if (!counts.scene_current)
+    if (!scene.current)
         hint += " (the hidden 3D view could not be refreshed, so its scene may be out of date; showing the Prepare tab once refreshes it)";
     return hint;
 }

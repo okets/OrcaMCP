@@ -234,18 +234,18 @@ TEST_CASE("the blank-picture hint names what was missing", "[RenderMath]")
 {
     const BoundingBoxf3 plate(Vec3d(0., 0., 0.), Vec3d(270., 270., 300.));
 
-    const std::string empty_scene = uniform_image_hint({0, 0, true}, 0, plate);
+    const std::string empty_scene = uniform_image_hint({0, true}, 0, 0, plate);
     CHECK(empty_scene.find("no model volumes") != std::string::npos);
 
-    const std::string other_plate = uniform_image_hint({3, 0, true}, 2, plate);
+    const std::string other_plate = uniform_image_hint({3, true}, 0, 2, plate);
     CHECK(other_plate.find("3 model volume(s)") != std::string::npos);
     CHECK(other_plate.find("plate 2") != std::string::npos);
     CHECK(other_plate.find("get_scene_info") != std::string::npos);
 
-    const std::string looked_away = uniform_image_hint({3, 2, true}, 0, plate);
+    const std::string looked_away = uniform_image_hint({3, true}, 2, 0, plate);
     CHECK(looked_away.find("none inside this view") != std::string::npos);
 
-    const std::string stale = uniform_image_hint({0, 0, false}, 0, plate);
+    const std::string stale = uniform_image_hint({0, false}, 0, 0, plate);
     CHECK(stale.find("could not be refreshed") != std::string::npos);
     CHECK(looked_away.find("could not be refreshed") == std::string::npos);
 }

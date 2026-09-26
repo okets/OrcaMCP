@@ -82,17 +82,17 @@ CameraFrame camera_frame_of(const Camera& camera);
 // listed on plate N is drawn in plate N's picture.
 bool belongs_in_plate_view(bool printable, bool on_plate, const BoundingBoxf3& volume_box);
 
-// What a render found to draw, for the hint beside uniform_image.
-struct RenderCounts
+// The 3D view's scene a render drew from.
+struct RenderScene
 {
-    size_t scene_volumes = 0;     // model volumes in the 3D view's scene, any plate
-    size_t drawn         = 0;     // of those, the ones drawn in this plate's picture
-    bool   scene_current = true;  // false: the hidden 3D view could not be brought up to date
+    size_t model_volumes = 0;     // model volumes in it, on any plate
+    bool   current       = true;  // false: the hidden 3D view could not be brought up to date
 };
 
 // Why a picture came out as one flat colour: the 3D view had no model volumes at all, none of them
-// were on this plate, or they were drawn and the camera looked elsewhere. `plate_box` is bed mm.
-std::string uniform_image_hint(const RenderCounts& counts, int plate_index, const BoundingBoxf3& plate_box);
+// were on this plate (`drawn` is 0), or they were drawn and the camera looked elsewhere.
+// `plate_box` is bed mm.
+std::string uniform_image_hint(const RenderScene& scene, size_t drawn, int plate_index, const BoundingBoxf3& plate_box);
 
 // Grid lines at z = plate.min.z inside the plate's footprint, every `step_mm`. A line is `major`
 // when its coordinate is a multiple of step_mm * major_every (the origin line counts).
