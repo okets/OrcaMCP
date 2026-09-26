@@ -82,6 +82,11 @@ struct MeshErrorsInfo
     std::string warning_icon_name;
 };
 
+// OrcaMCP: the warning icon and tooltip the object list shows for `object` (vol_idx -1) or one of
+// its volumes, read from the model alone. ObjectList::get_mesh_errors_info is this for the list's
+// own object; the MCP server calls it directly, so it reports exactly what the list shows.
+MeshErrorsInfo mesh_errors_info(const ModelObject& object, const int vol_idx = -1, wxString* sidebar_info = nullptr, int* non_manifold_edges = nullptr);
+
 class ObjectList : public wxDataViewCtrl
 {
 public:
