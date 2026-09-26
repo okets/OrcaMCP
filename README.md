@@ -164,8 +164,8 @@ that used to mean an afternoon in menus.
 - **Read-back for everything it writes.** Paint coverage per part and per mode, per-object
   overrides, layer ranges, plate occupancy including brim and prime tower, live printer state.
 - **Undo and redo** are tools too.
-- **Any MCP client.** The transport is stdio to a one-file Python bridge, HTTP from the bridge to
-  the app. Claude Code picks it up from the repository's `.mcp.json`; anything else that speaks MCP
+- **Any MCP client.** The transport is stdio to a small Python bridge (standard library only), HTTP
+  from the bridge to the app. Claude Code picks it up from the repository's `.mcp.json`; anything else that speaks MCP
   works the same way.
 - **Local.** The app, the bridge and the printer connection all live on your network.
 

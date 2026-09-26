@@ -88,6 +88,8 @@ Rationale:
 
 - [ ] Build OrcaSlicer locally
 - [ ] Verify MCP server starts (port 13618)
+- [ ] Verify the bundle's `Contents/Resources/scripts/` holds `orcamcp-bridge.py` and `orcamcp_tools.json`
+  (`scripts/check-fork-customizations.sh` also checks both are still packaged)
 - [ ] Test basic MCP tools (get_scene_info, load_model)
 - [ ] Verify libvgcode integration didn't break preview tools
 
@@ -200,7 +202,7 @@ git diff a3f229f406 07d05f590b -- <file>   # merge-base -> pre-merge mcp
 | `build_release_vs.bat` | `--theirs`, then re-applied the fork's `vswhere` PATH hunk after `set _START_TIME=%TIME%` |
 | `resources/web/data/text.js` | `--theirs`, then re-inserted the fork's `t127`/`t128` ("Connect AI" / "Setup MCP agents") strings into all 15 language blocks |
 | `version.inc` | Upstream's file with `SLIC3R_APP_NAME`/`SLIC3R_APP_KEY` = `OrcaMCP` (auto-merged) and `SoftFever_VERSION` set to `2.5.0.1-dev`; upstream's `SLIC3R_VERSION "02.08.01.55"` kept |
-| `CMakeLists.txt` | Two CPack hunks. Kept upstream's new Windows arch-suffix block (`if (WIN32) ... string(APPEND CPACK_PACKAGE_FILE_NAME "_arm64"/"_x64")`) but with the OrcaMCP installer base name, summary and homepage URL; kept the fork's `CPACK_NSIS_INSTALLED_ICON_NAME` + `CPACK_NSIS_EXTRA_INSTALL_COMMANDS` desktop-shortcut block (upstream dropped the shortcut). The `file(COPY ... orcamcp-bridge.py ... tools_schema.py)` block auto-merged. |
+| `CMakeLists.txt` | Two CPack hunks. Kept upstream's new Windows arch-suffix block (`if (WIN32) ... string(APPEND CPACK_PACKAGE_FILE_NAME "_arm64"/"_x64")`) but with the OrcaMCP installer base name, summary and homepage URL; kept the fork's `CPACK_NSIS_INSTALLED_ICON_NAME` + `CPACK_NSIS_EXTRA_INSTALL_COMMANDS` desktop-shortcut block (upstream dropped the shortcut). The `file(COPY ... orcamcp-bridge.py ... tools_schema.py)` block auto-merged. (Since 2.5.0.6-dev that block is a `configure_file` loop over `orcamcp-bridge.py` and `orcamcp_tools.json`; `tools_schema.py` is gone.) |
 | `src/CMakeLists.txt` | Two hunks. `OrcaSlicer_app_gui`: took upstream's new multi-property `set_target_properties` (adds `WIN32_EXECUTABLE`) with `OUTPUT_NAME "orca-mcp"`. Windows install: kept **both** upstream's `install(DIRECTORY "${CMAKE_PREFIX_PATH}/libpython/" ...)` and the fork's `install(DIRECTORY .../scripts/ ...)`. All other fork hunks (`orca-mcp` names, `ln -sf`, `MACOSX_BUNDLE_BUNDLE_NAME "OrcaMCP"`, the non-Windows scripts install) auto-merged. |
 | `src/slic3r/GUI/GUI_App.cpp` | All four MCP hunks (OrcaMCP includes, `start_http_server()` + `ensure_bridge_script_copied()` in `post_init()`, `homepage_connectai` web command, `/mcp` routing in `start_http_server`) auto-merged. The single conflict was cosmetic: the splash text. Kept the fork's wording with upstream's new second argument — `scrn->SetText(_L("Loading configuration (this may take a couple of minutes)") + dots, 5);` |
 | `src/slic3r/GUI/Preferences.hpp` | Kept the fork's `create_mcp_clients_page()` / `refresh_mcp_client_buttons()` declarations and dropped `create_shortcuts_page()`, which upstream removed (no definition remains anywhere in `src/`). All other fork members (`Widgets/Button.hpp`, the new constructor, `m_initial_tab`, `m_highlight_option`, `MCPClientUIElements`, `m_mcp_client_ui`) auto-merged. |
@@ -275,7 +277,9 @@ changed, including new `python3`, `wxInspector`, `FFMPEG`, `Assimp` and `Eigen` 
 
 Result: `build/arm64/OrcaSlicer/OrcaSlicer.app`, `CFBundleName = OrcaMCP`,
 `CFBundleShortVersionString = 2.5.0.1-dev`, with `Contents/Resources/scripts/`
-containing `orcamcp-bridge.py` and `tools_schema.py`.
+containing `orcamcp-bridge.py` and the tool list it served, then `tools_schema.py`. Today that
+directory must hold `orcamcp-bridge.py` and `orcamcp_tools.json`: without the second the bridge
+offers only a fallback `start_orca`.
 
 ### Verification
 
