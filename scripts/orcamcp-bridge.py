@@ -461,6 +461,23 @@ def adopt_live_tools(response: dict) -> dict:
     return response
 
 
+def settle_tools_list(response: dict) -> dict:
+    """The answer to a forwarded tools/list. A live list gets the bridge's own tools added. A failed
+    one -- as in the seconds after the app quits, while the liveness cache still says it is up --
+    becomes the list the bridge serves while the app is down, never an error: a client can drop a
+    server whose tools/list fails."""
+    global _served_static_tools
+    if "result" in response:
+        return adopt_live_tools(response)
+    log_debug(f"Forwarded tools/list failed ({response.get('error')}); serving the offline list")
+    if CACHED_TOOLS is not None:
+        tools = CACHED_TOOLS
+    else:
+        tools = get_full_tools_list()
+        _served_static_tools = True
+    return make_success_response(response.get("id"), {"tools": tools})
+
+
 def call_start_orca(request_id, arguments: dict) -> dict:
     """start_orca: launch the app and wait for it. Answered here, since the app cannot launch itself."""
     result = launch_orcamcp()
@@ -706,10 +723,10 @@ def main():
             # Forward request to OrcaSlicer HTTP server
             response = send_request(request)
 
-            # Add the bridge's own tools to a live tools/list, and cache it
+            # A tools/list gets the bridge's own tools added, or the offline list if the app failed it
             method = request.get("method", "")
-            if method == "tools/list" and "result" in response:
-                response = adopt_live_tools(response)
+            if method == "tools/list":
+                response = settle_tools_list(response)
 
             # Send response to stdout
             print(json.dumps(response), flush=True)

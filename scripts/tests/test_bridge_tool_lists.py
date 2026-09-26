@@ -90,6 +90,35 @@ class BridgeToolTextTests(unittest.TestCase):
         self.assertFalse(response["result"]["isError"])
 
 
+class FailedLiveToolsListTests(unittest.TestCase):
+    """For up to three seconds after the app quits, the bridge's liveness cache still says it is up,
+    so tools/list is forwarded and fails. The answer must be a tool list, not an error: a client can
+    drop a server whose tools/list errors."""
+
+    REFUSED = {"jsonrpc": "2.0", "id": 4, "error": {"code": -32000, "message": "Nothing is listening"}}
+
+    def setUp(self):
+        self.bridge = load_bridge()
+
+    def test_the_last_live_list_is_served(self):
+        manifest = load_manifest()
+        live = self.bridge.adopt_live_tools(simulated_live_response(self.bridge, manifest))["result"]["tools"]
+        response = self.bridge.settle_tools_list(dict(self.REFUSED))
+        self.assertEqual(response["id"], 4)
+        self.assertEqual(response["result"]["tools"], live)
+
+    def test_with_no_live_list_yet_the_offline_list_is_served(self):
+        response = self.bridge.settle_tools_list(dict(self.REFUSED))
+        self.assertEqual(response["result"]["tools"], self.bridge.get_full_tools_list())
+        # ...and the client is told the list changed once the app answers again.
+        self.assertTrue(self.bridge._served_static_tools)
+
+    def test_a_live_answer_still_gets_the_bridge_tools(self):
+        manifest = load_manifest()
+        response = self.bridge.settle_tools_list(simulated_live_response(self.bridge, manifest))
+        self.assertEqual(response["result"]["tools"][0]["name"], "start_orca")
+
+
 # Every way the golden file can be unusable. None of them may stop the bridge from starting, or from
 # offering start_orca: without it an agent cannot even launch the app to get a working list.
 BROKEN_MANIFESTS = {
