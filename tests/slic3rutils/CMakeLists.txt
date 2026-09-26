@@ -50,6 +50,12 @@ if (MSVC)
 endif ()
 
 target_link_libraries(${_TEST_NAME}_tests test_common libslic3r_gui libslic3r pybind11::embed Catch2::Catch2WithMain)
+
+# The golden tools file test_mcp_tool_list.cpp checks the MCP tool registry against, and rewrites
+# when ORCAMCP_UPDATE_TOOLS_GOLDEN=1. CI's test jobs check out scripts/ at this same path.
+set(ORCAMCP_TOOLS_GOLDEN_FILE "${CMAKE_SOURCE_DIR}/scripts/orcamcp_tools.json")
+file(TO_NATIVE_PATH "${ORCAMCP_TOOLS_GOLDEN_FILE}" ORCAMCP_TOOLS_GOLDEN_FILE)
+target_compile_definitions(${_TEST_NAME}_tests PRIVATE ORCAMCP_TOOLS_GOLDEN_FILE=R"\(${ORCAMCP_TOOLS_GOLDEN_FILE}\)")
 set_property(TARGET ${_TEST_NAME}_tests PROPERTY FOLDER "tests")
 
 orcaslicer_copy_test_dlls()

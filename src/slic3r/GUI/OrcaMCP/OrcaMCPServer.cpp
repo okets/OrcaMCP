@@ -309,36 +309,55 @@ nlohmann::json OrcaMCPServer::handle_initialize(const nlohmann::json& params)
     };
 }
 
+nlohmann::json OrcaMCPServer::tool_list_entry(const ToolDefinition& tool)
+{
+    // Ensure schema is valid JSON Schema draft 2020-12
+    nlohmann::json schema = tool.input_schema;
+
+    // Ensure additionalProperties is set (required for valid schema)
+    if (!schema.contains("additionalProperties")) {
+        schema["additionalProperties"] = false;
+    }
+
+    // Ensure required array exists
+    if (!schema.contains("required")) {
+        schema["required"] = nlohmann::json::array();
+    }
+
+    return {
+        {"name", tool.name},
+        {"description", tool.description},
+        {"inputSchema", schema}
+    };
+}
+
 nlohmann::json OrcaMCPServer::handle_tools_list()
 {
     nlohmann::json tools_array = nlohmann::json::array();
-
     for (const auto& [name, tool] : registered_tools()) {
         if (tool.bridge_only)
             continue;  // the bridge adds these itself
-
-        // Ensure schema is valid JSON Schema draft 2020-12
-        nlohmann::json schema = tool.input_schema;
-
-        // Ensure additionalProperties is set (required for valid schema)
-        if (!schema.contains("additionalProperties")) {
-            schema["additionalProperties"] = false;
-        }
-
-        // Ensure required array exists
-        if (!schema.contains("required")) {
-            schema["required"] = nlohmann::json::array();
-        }
-
-        nlohmann::json tool_def = {
-            {"name", tool.name},
-            {"description", tool.description},
-            {"inputSchema", schema}
-        };
-        tools_array.push_back(tool_def);
+        tools_array.push_back(tool_list_entry(tool));
     }
-
     return {{"tools", tools_array}};
+}
+
+nlohmann::json OrcaMCPServer::tools_manifest()
+{
+    nlohmann::json server_tools = nlohmann::json::array();
+    nlohmann::json bridge_tools = nlohmann::json::array();
+    for (const auto& [name, tool] : registered_tools()) {  // a std::map, so sorted by name
+        nlohmann::json entry = tool_list_entry(tool);
+        entry["category"]    = tool_category_name(tool.category);
+        entry["summary"]     = tool.summary;
+        (tool.bridge_only ? bridge_tools : server_tools).push_back(entry);
+    }
+    return {
+        {"generated_from", "The MCP tool registry in src/slic3r/GUI/OrcaMCP. Do not edit by hand: see CLAUDE.md, "
+                           "\"Tool list\", for how to regenerate it."},
+        {"server_tools", server_tools},
+        {"bridge_tools", bridge_tools}
+    };
 }
 
 nlohmann::json OrcaMCPServer::handle_tools_call(const nlohmann::json& params)

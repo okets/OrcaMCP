@@ -4,6 +4,8 @@
 #include "libslic3r_version.h"
 #include "mcp_tool_references.hpp"
 
+#include <cstdlib>
+#include <fstream>
 #include <map>
 #include <set>
 #include <stdexcept>
@@ -283,4 +285,109 @@ TEST_CASE("get_server_info names the bridge-only tools", "[orcamcp][tools]")
 {
     CHECK(get_server_info().at("bridge_only") == nlohmann::json::array({"start_orca"}));
     CHECK(get_server_info({{"section", "all"}}).at("bridge_only") == nlohmann::json::array({"start_orca"}));
+}
+
+// ==================== THE GOLDEN TOOLS FILE ====================
+//
+// scripts/orcamcp_tools.json is what the bridge serves while the app is not running, and where it
+// reads its own tools' text from. It must say exactly what the registry says, or an agent sees one
+// tool list before the app starts and another after.
+
+namespace {
+
+const char* const regenerate_variable = "ORCAMCP_UPDATE_TOOLS_GOLDEN";
+
+bool regeneration_requested()
+{
+    const char* value = std::getenv(regenerate_variable);
+    return value != nullptr && std::string(value) != "" && std::string(value) != "0";
+}
+
+std::string regenerate_hint()
+{
+    return std::string("Regenerate it after building slic3rutils_tests:\n  ") + regenerate_variable +
+           "=1 slic3rutils_tests \"[orcamcp][tools]\"\nthen commit scripts/orcamcp_tools.json.";
+}
+
+std::map<std::string, nlohmann::json> by_name(const nlohmann::json& tools)
+{
+    std::map<std::string, nlohmann::json> out;
+    if (tools.is_array())
+        for (const auto& tool : tools)
+            out[tool.value("name", "")] = tool;
+    return out;
+}
+
+// One line per disagreement, naming the tool and the field.
+std::vector<std::string> manifest_differences(const nlohmann::json& file, const nlohmann::json& registry)
+{
+    std::vector<std::string> differences;
+    for (const char* list : {"server_tools", "bridge_tools"}) {
+        const auto in_file     = by_name(file.value(list, nlohmann::json::array()));
+        const auto in_registry = by_name(registry.at(list));
+        for (const auto& [name, tool] : in_registry) {
+            const auto found = in_file.find(name);
+            if (found == in_file.end()) {
+                differences.push_back(std::string(list) + ": " + name + " is registered but not in the file");
+                continue;
+            }
+            for (const char* field : {"category", "summary", "description", "inputSchema"})
+                if (found->second.value(field, nlohmann::json()) != tool.at(field))
+                    differences.push_back(std::string(list) + ": " + name + "'s " + field + " differs");
+        }
+        for (const auto& [name, tool] : in_file)
+            if (in_registry.count(name) == 0)
+                differences.push_back(std::string(list) + ": " + name + " is in the file but not registered");
+    }
+    return differences;
+}
+
+std::string joined(const std::vector<std::string>& lines)
+{
+    std::string out;
+    for (const std::string& line : lines)
+        out += "  " + line + "\n";
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("scripts/orcamcp_tools.json matches the tool registry", "[orcamcp][tools]")
+{
+    const nlohmann::json registry = OrcaMCPServer::tools_manifest();
+    const std::string    path     = ORCAMCP_TOOLS_GOLDEN_FILE;
+
+    if (regeneration_requested()) {
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+        out << registry.dump(2) << "\n";
+        REQUIRE(out.good());
+        WARN("Rewrote " << path << " from the registry");
+    }
+
+    std::ifstream in(path, std::ios::binary);
+    INFO("Reading " << path);
+    REQUIRE(in.good());
+    const nlohmann::json file = nlohmann::json::parse(in, nullptr, /*allow_exceptions=*/false);
+    REQUIRE_FALSE(file.is_discarded());
+
+    const std::vector<std::string> differences = manifest_differences(file, registry);
+    INFO(path << " is out of date:\n" << joined(differences) << regenerate_hint());
+    CHECK(differences.empty());
+    CHECK(file.value("generated_from", "") == registry.at("generated_from").get<std::string>());
+}
+
+TEST_CASE("The golden file lists app tools and bridge-only tools apart", "[orcamcp][tools]")
+{
+    const nlohmann::json manifest = OrcaMCPServer::tools_manifest();
+    std::set<std::string> server_names, bridge_names;
+    for (const auto& tool : manifest.at("server_tools"))
+        server_names.insert(tool.at("name").get<std::string>());
+    for (const auto& tool : manifest.at("bridge_tools"))
+        bridge_names.insert(tool.at("name").get<std::string>());
+
+    CHECK(server_names.count("get_scene_info") == 1);
+    CHECK(bridge_names == std::set<std::string>{"start_orca"});
+    for (const std::string& name : bridge_names)
+        CHECK(server_names.count(name) == 0);
+    CHECK(server_names.size() + bridge_names.size() == OrcaMCPServer::registered_tools().size());
 }

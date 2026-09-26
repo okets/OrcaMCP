@@ -84,6 +84,13 @@ public:
     // tools/list: every registered tool except the bridge-only ones.
     static nlohmann::json handle_tools_list();
 
+    // A tool as tools/list serves it: name, description and a normalised inputSchema.
+    static nlohmann::json tool_list_entry(const ToolDefinition& tool);
+
+    // The content of scripts/orcamcp_tools.json: every tool's list entry plus its category and
+    // summary, app tools and bridge-only tools in separate arrays, each sorted by name.
+    static nlohmann::json tools_manifest();
+
 private:
     // MCP protocol handlers
     static nlohmann::json handle_initialize(const nlohmann::json& params);

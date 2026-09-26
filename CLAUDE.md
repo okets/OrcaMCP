@@ -387,6 +387,19 @@ json OrcaMCPServer::handle_my_new_tool(const json& params) {
 
 If implementing as a separate method, declare in `OrcaMCPServer.hpp`.
 
+### 4. Regenerate the golden tools file
+
+`scripts/orcamcp_tools.json` is the tool list the bridge serves while the app is down, and it
+must match the registry or `[orcamcp][tools]` fails. After adding a tool or changing any tool's
+text or schema:
+
+```bash
+cmake --build build/arm64 --config RelWithDebInfo --target slic3rutils_tests
+ORCAMCP_UPDATE_TOOLS_GOLDEN=1 build/arm64/tests/slic3rutils/RelWithDebInfo/slic3rutils_tests.app/Contents/MacOS/slic3rutils_tests "[orcamcp][tools]"
+```
+
+Commit the regenerated file with the change.
+
 ---
 
 ## Threading Model

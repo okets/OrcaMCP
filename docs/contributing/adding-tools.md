@@ -99,6 +99,19 @@ private:
 };
 ```
 
+## Step 4: Regenerate the Golden Tools File
+
+`scripts/orcamcp_tools.json` is the tool list the bridge serves while the app is not running. A
+unit test fails until it matches the registry again, so after adding a tool or changing any tool's
+text or schema, rebuild the tests and let that test rewrite the file:
+
+```bash
+cmake --build build/arm64 --config RelWithDebInfo --target slic3rutils_tests
+ORCAMCP_UPDATE_TOOLS_GOLDEN=1 build/arm64/tests/slic3rutils/RelWithDebInfo/slic3rutils_tests.app/Contents/MacOS/slic3rutils_tests "[orcamcp][tools]"
+```
+
+Commit the regenerated file with the change.
+
 ## Important Patterns
 
 ### Always Use run_on_main_thread
