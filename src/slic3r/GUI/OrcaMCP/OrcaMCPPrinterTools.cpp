@@ -82,7 +82,7 @@ bool resolve_print_host(std::unique_ptr<Slic3r::PrintHost>& host, DynamicPrintCo
 }
 
 // The four Flashforge control/status tools all need the same thing: a resolved Flashforge host, off the
-// main thread. `cfg` is kept alive by the caller for as long as `host` is used.
+// main thread. The host copies what it needs from the local `cfg`, so it outlives it safely.
 bool resolve_flashforge(std::unique_ptr<Slic3r::PrintHost>& host, Slic3r::Flashforge*& ff, nlohmann::json& error_out)
 {
     DynamicPrintConfig cfg;
