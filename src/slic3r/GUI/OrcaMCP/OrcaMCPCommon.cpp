@@ -9,7 +9,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
-#include <optional>
+#include <limits>
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
@@ -193,31 +193,56 @@ void rehome_and_report_placement(nlohmann::json& result, int object_id)
     report_placement(result, object_id);
 }
 
+namespace {
+
+// Turns one instance by `world_transform` about the centre of `box`, its world box before the turn.
+//
+// The pivot keeps the operation in place: composing the transform about the world origin instead
+// would fling an object standing at x=430 across the bed. An object with no model-part volumes has no
+// bounding box at all (min = +inf), and center() on that is not a number -- fall back to the
+// instance's own origin rather than writing a NaN matrix.
+void transform_instance_about_box(ModelInstance& instance, const Transform3d& world_transform, const BoundingBoxf3& box)
+{
+    const Vec3d       pivot       = box.defined ? box.center() : instance.get_offset();
+    const Transform3d about_pivot = Geometry::translation_transform(pivot) * world_transform *
+                                    Geometry::translation_transform(-pivot);
+
+    // Left-multiplied, so `world_transform` is read in plate axes; right-multiplying would read
+    // it in the instance's own axes, which is the bug transform_instances_in_plate_frame exists to avoid.
+    Geometry::Transformation transformation;
+    transformation.set_matrix(about_pivot * instance.get_transformation().get_matrix());
+    instance.set_transformation(transformation);
+}
+
+// The lowest point of one instance, read from the model parts' convex hulls as the GUI's drop reads
+// it (ModelObject::get_instance_min_z). That function visits every hull vertex once per facet it
+// belongs to, about six times over; this visits each once. A hull qhull could not build is empty,
+// and the mesh stands in for it, as it does there.
+double instance_min_z(const ModelObject& object, size_t instance_idx)
+{
+    const Transform3d instance_matrix = object.instances[instance_idx]->get_matrix();
+    double            min_z           = std::numeric_limits<double>::max();
+    for (const ModelVolume* volume : object.volumes) {
+        if (!volume->is_model_part())
+            continue;
+        const TriangleMesh& hull     = volume->get_convex_hull();
+        const TriangleMesh& vertices = hull.its.indices.empty() ? volume->mesh() : hull;
+        const Transform3d   matrix   = instance_matrix * volume->get_matrix();
+        for (const stl_vertex& v : vertices.its.vertices)
+            min_z = std::min(min_z, (matrix * v.cast<double>()).z());
+    }
+    return min_z;
+}
+
+} // namespace
+
 void transform_instances_in_plate_frame(ModelObject& object, const Transform3d& world_transform)
 {
-    for (size_t i = 0; i < object.instances.size(); ++i) {
-        ModelInstance* instance = object.instances[i];
-        if (instance == nullptr)
-            continue;
-
-        // The pivot keeps the operation in place: composing the transform about the world origin
-        // instead would fling an object standing at x=430 across the bed. instance_bounding_box is
-        // read before this instance is touched, and only this instance is touched, so the pivot is
-        // always the pre-transform centre. An object with no model-part volumes has no bounding box
-        // at all (min = +inf), and center() on that is not a number -- fall back to the instance's
-        // own origin rather than writing a NaN matrix.
-        const BoundingBoxf3 bbox  = object.instance_bounding_box(i);
-        const Vec3d         pivot = bbox.defined ? bbox.center() : instance->get_offset();
-
-        const Transform3d about_pivot = Geometry::translation_transform(pivot) * world_transform *
-                                        Geometry::translation_transform(-pivot);
-
-        // Left-multiplied, so `world_transform` is read in plate axes; right-multiplying would read
-        // it in the instance's own axes, which is the bug this function exists to avoid.
-        Geometry::Transformation transformation;
-        transformation.set_matrix(about_pivot * instance->get_transformation().get_matrix());
-        instance->set_transformation(transformation);
-    }
+    // Each instance turns about its own pre-transform centre: instance_bounding_box is read before
+    // this instance is touched, and only this instance is touched.
+    for (size_t i = 0; i < object.instances.size(); ++i)
+        if (ModelInstance* instance = object.instances[i])
+            transform_instance_about_box(*instance, world_transform, object.instance_bounding_box(i));
     object.invalidate_bounding_box();
 }
 
@@ -229,26 +254,22 @@ bool should_drop_to_bed(double min_z_before, double min_z_after)
 
 void transform_instances_on_bed(ModelObject& object, const Transform3d& world_transform)
 {
-    // The GUI reads the lowest point before from the instance's bounding box and after from its
-    // convex hull (get_instance_min_z); both are exact for the mesh, and this reads them the same way.
-    // An instance with no model part has no lowest point to keep, so it is not dropped.
-    std::vector<std::optional<double>> min_z_before(object.instances.size());
+    // One walk over the mesh per instance, for the box that gives both the pivot and the lowest point
+    // before; one over the convex hull for the lowest point after. The GUI reads the same two. An
+    // instance with no model part has no lowest point to keep, so it is not dropped.
     for (size_t i = 0; i < object.instances.size(); ++i) {
-        const BoundingBoxf3 bbox = object.instance_bounding_box(i);
-        if (bbox.defined)
-            min_z_before[i] = bbox.min.z();
-    }
-
-    transform_instances_in_plate_frame(object, world_transform);
-
-    for (size_t i = 0; i < object.instances.size(); ++i) {
-        const ModelInstance* instance = object.instances[i];
-        if (instance == nullptr || !instance->auto_drop || !min_z_before[i])
+        ModelInstance* instance = object.instances[i];
+        if (instance == nullptr)
             continue;
-        const double min_z_after = object.get_instance_min_z(i);
-        if (should_drop_to_bed(*min_z_before[i], min_z_after))
-            object.translate_instance(i, Vec3d(0.0, 0.0, -min_z_after));
+        const BoundingBoxf3 before = object.instance_bounding_box(i);
+        transform_instance_about_box(*instance, world_transform, before);
+        if (!instance->auto_drop || !before.defined)
+            continue;
+        const double min_z_after = instance_min_z(object, i);
+        if (should_drop_to_bed(before.min.z(), min_z_after))
+            instance->set_offset(instance->get_offset() - Vec3d(0.0, 0.0, min_z_after));
     }
+    object.invalidate_bounding_box();
 }
 
 const BoundingBoxf3& object_world_box(const ModelObject& object) { return object.bounding_box_exact(); }
