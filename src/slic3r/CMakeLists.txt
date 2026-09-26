@@ -783,6 +783,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/HexFile.hpp
     Utils/Http.cpp
     Utils/Http.hpp
+    Utils/QueuedCall.cpp
+    Utils/QueuedCall.hpp
     Utils/ThreadCancel.cpp
     Utils/ThreadCancel.hpp
     Utils/InstanceID.cpp

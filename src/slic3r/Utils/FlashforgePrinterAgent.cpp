@@ -13,6 +13,7 @@
 #include "slic3r/GUI/OrcaMCP/OrcaMCPPrinterUtils.hpp"
 #include "PrintHost.hpp"
 #include "Http.hpp"
+#include "QueuedCall.hpp"
 
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/filesystem.hpp>
@@ -20,7 +21,6 @@
 #include <boost/log/trivial.hpp>
 
 #include <chrono>
-#include <future>
 #include <utility>
 
 namespace Slic3r {
@@ -380,14 +380,9 @@ bool FlashforgePrinterAgent::run_on_gui_thread(const std::function<void()>& fn) 
         return true;
     }
 
-    auto done = std::make_shared<std::promise<void>>();
-    auto ready = done->get_future();
-    queue_fn([fn, done]() {
-        fn();
-        done->set_value();
-    });
-    // Bounded so a busy or shutting-down GUI thread cannot wedge the print job for ever.
-    return ready.wait_for(std::chrono::seconds(10)) == std::future_status::ready;
+    // Bounded so a busy or shutting-down GUI thread cannot wedge the print job for ever. A task given up
+    // on never runs `fn`, whose captures are this caller's locals (they used to be written to late).
+    return run_queued_and_wait(queue_fn, fn, std::chrono::seconds(10));
 }
 
 std::map<std::string, std::string> FlashforgePrinterAgent::build_upload_extended_info(const Flashforge&  host,
