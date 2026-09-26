@@ -409,3 +409,39 @@ TEST_CASE("The golden file lists app tools and bridge-only tools apart", "[orcam
         CHECK(server_names.count(name) == 0);
     CHECK(server_names.size() + bridge_names.size() == OrcaMCPServer::registered_tools().size());
 }
+
+// ==================== START-UP ====================
+//
+// A tool table that fails to build is a programming error a rebuild fixes, not a retry. So the
+// server's start-up runs once: its failure is remembered and every later request gets the same
+// reason at once, instead of redoing the preview cleanup and the whole registration each time.
+
+TEST_CASE("Start-up work that succeeds runs once", "[orcamcp][tools]")
+{
+    Slic3r::GUI::RunOnce once;
+    int                  calls = 0;
+    CHECK(once.run([&] { ++calls; }).empty());
+    CHECK(once.run([&] { ++calls; }).empty());
+    CHECK(calls == 1);
+}
+
+TEST_CASE("Start-up work that fails is not retried, and its reason is kept", "[orcamcp][tools]")
+{
+    Slic3r::GUI::RunOnce once;
+    int                  calls = 0;
+    const std::string    first = once.run([&] {
+        ++calls;
+        throw std::logic_error("OrcaMCPServer: tool 'undo' is registered twice");
+    });
+    CHECK(first == "OrcaMCPServer: tool 'undo' is registered twice");
+    CHECK(once.run([&] { ++calls; }) == first);
+    CHECK(calls == 1);
+}
+
+TEST_CASE("Start-up work that throws something other than a std::exception is caught too", "[orcamcp][tools]")
+{
+    Slic3r::GUI::RunOnce once;
+    const std::string    failure = once.run([] { throw 42; });
+    CHECK_FALSE(failure.empty());
+    CHECK(once.run([] {}) == failure);
+}

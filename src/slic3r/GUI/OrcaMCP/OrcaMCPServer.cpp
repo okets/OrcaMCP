@@ -40,7 +40,21 @@ using namespace Slic3r::GUI::OrcaMCP;
 // Static member initialization
 std::map<std::string, OrcaMCPServer::ToolDefinition> OrcaMCPServer::s_tools;
 bool OrcaMCPServer::s_tools_registered = false;
-bool OrcaMCPServer::s_initialized = false;
+
+std::string RunOnce::run(const std::function<void()>& work)
+{
+    if (m_ran)
+        return m_failure;
+    m_ran = true;
+    try {
+        work();
+    } catch (const std::exception& e) {
+        m_failure = *e.what() != '\0' ? e.what() : "an exception with no message";
+    } catch (...) {
+        m_failure = "an exception that is not a std::exception";
+    }
+    return m_failure;
+}
 
 const std::vector<OrcaMCPServer::ToolCategory>& OrcaMCPServer::all_tool_categories()
 {
@@ -75,17 +89,17 @@ const char* OrcaMCPServer::tool_category_name(ToolCategory category)
     return "Unknown";
 }
 
-void OrcaMCPServer::init()
+std::string OrcaMCPServer::init()
 {
-    if (s_initialized) return;
+    static RunOnce once;
+    return once.run([] {
+        BOOST_LOG_TRIVIAL(info) << "OrcaMCPServer: Initializing MCP server";
 
-    BOOST_LOG_TRIVIAL(info) << "OrcaMCPServer: Initializing MCP server";
+        // Clean up old preview files from previous sessions
+        OrcaMCPPlateUtils::CleanupPreviews();
 
-    // Clean up old preview files from previous sessions
-    OrcaMCPPlateUtils::CleanupPreviews();
-
-    ensure_tools_registered();
-    s_initialized = true;
+        ensure_tools_registered();
+    });
 }
 
 void OrcaMCPServer::ensure_tools_registered()
@@ -193,16 +207,13 @@ std::shared_ptr<HttpServer::Response> OrcaMCPServer::handle_request(
         return nullptr;  // Not for us
     }
 
-    // Ensure initialized. Registration throws on a malformed tool table; that must fail this
-    // request, not escape onto the HTTP worker thread and take the process down.
-    if (!s_initialized) {
-        try {
-            init();
-        } catch (const std::exception& e) {
-            BOOST_LOG_TRIVIAL(error) << "OrcaMCPServer: " << e.what();
-            auto error = make_error_response(nlohmann::json(nullptr), -32603, std::string("Internal error: ") + e.what());
-            return std::make_shared<HttpServer::ResponseJson>(error.dump(), 200);
-        }
+    // Ensure initialized. A malformed tool table fails every request with the same reason, rather
+    // than escaping onto the HTTP worker thread or being rebuilt on each one.
+    if (const std::string failure = init(); !failure.empty()) {
+        BOOST_LOG_TRIVIAL(error) << "OrcaMCPServer: cannot start: " << failure;
+        auto error = make_error_response(nlohmann::json(nullptr), -32603,
+                                         "Internal error: the MCP server could not start: " + failure);
+        return std::make_shared<HttpServer::ResponseJson>(error.dump(), 200);
     }
 
     BOOST_LOG_TRIVIAL(debug) << "OrcaMCPServer: Handling " << method << " " << url;

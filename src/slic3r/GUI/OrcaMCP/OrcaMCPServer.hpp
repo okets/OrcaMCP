@@ -12,6 +12,20 @@
 
 namespace Slic3r { namespace GUI {
 
+// Runs a piece of start-up work at most once. A failure of any kind -- not only a std::exception --
+// is caught and remembered, so a later call returns the same reason at once instead of redoing, and
+// re-failing, the work.
+class RunOnce
+{
+public:
+    // Empty once the work has succeeded, now or before; otherwise why it failed.
+    std::string run(const std::function<void()>& work);
+
+private:
+    bool        m_ran = false;
+    std::string m_failure;
+};
+
 /**
  * MCP (Model Context Protocol) Server for OrcaSlicer
  *
@@ -69,8 +83,9 @@ public:
         int code;
     };
 
-    // Initialize the MCP server and register all tools
-    static void init();
+    // Initialize the MCP server and register all tools, once. Empty on success; otherwise why it
+    // failed, and the same reason on every later call without trying again (see RunOnce).
+    static std::string init();
 
     // Handle incoming HTTP requests for MCP endpoint
     static std::shared_ptr<HttpServer::Response> handle_request(
@@ -116,7 +131,6 @@ private:
     // Registered tools
     static std::map<std::string, ToolDefinition> s_tools;
     static bool s_tools_registered;
-    static bool s_initialized;
 
     // Register every tool once, with no other side effect
     static void ensure_tools_registered();
