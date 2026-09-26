@@ -68,6 +68,13 @@ bool mcp_prompt_offers_choice(long style);
 std::string mcp_answer_label(int answer_id);
 // "a, b, c and 4 more": at most max_items of `items`, for naming what a suppressed prompt affected.
 std::string mcp_list_summary(const std::vector<std::string>& items, size_t max_items);
+// Per-prompt answers. A tool that knows how one prompt should be answered sets it by key for the
+// rest of its McpDialogSuppressionGuard; a MsgDialog tagged with that key (set_mcp_prompt_key) then
+// takes it instead of mcp_default_answer. mcp_answer_for is the answer a suppressed MsgDialog gives.
+inline constexpr const char* MCP_PROMPT_MULTIPART = "multipart"; // load a file's objects as one object's parts?
+void set_mcp_prompt_answer(const std::string& key, int answer_id);
+void clear_mcp_prompt_answers();
+int mcp_answer_for(long style, const std::string& prompt_key);
 void show_substitutions_info(const PresetsConfigSubstitutions& presets_config_substitutions);
 void show_substitutions_info(const ConfigSubstitutions& config_substitutions, const std::string& filename);
 

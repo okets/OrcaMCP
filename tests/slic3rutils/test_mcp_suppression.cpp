@@ -62,3 +62,21 @@ TEST_CASE("a list of affected items is cut to a readable length", "[McpSuppressi
     CHECK(mcp_list_summary({"a", "b", "c"}, 8) == "a, b, c");
     CHECK(mcp_list_summary({"a", "b", "c", "d"}, 2) == "a, b and 2 more");
 }
+
+// load_model's multipart parameter. A file whose objects sit at different heights raises "load as
+// a single object with multiple parts?", which suppression answers Yes. Once merged, no tool splits
+// the object again, so an agent that wanted the objects separate had no way to get them: the call
+// that knows the answer now sets it for that one prompt, by key, for the rest of its guard.
+TEST_CASE("a keyed prompt takes the answer its caller set, and only that prompt", "[McpSuppression][orcamcp][suppression]")
+{
+    clear_mcp_prompt_answers();
+    CHECK(mcp_answer_for(wxYES | wxNO, MCP_PROMPT_MULTIPART) == wxID_YES);
+
+    set_mcp_prompt_answer(MCP_PROMPT_MULTIPART, wxID_NO);
+    CHECK(mcp_answer_for(wxYES | wxNO, MCP_PROMPT_MULTIPART) == wxID_NO);
+    CHECK(mcp_answer_for(wxYES | wxNO, "") == wxID_YES);                 // an untagged prompt
+    CHECK(mcp_answer_for(wxYES | wxNO, "some_other_prompt") == wxID_YES);
+
+    clear_mcp_prompt_answers();
+    CHECK(mcp_answer_for(wxYES | wxNO, MCP_PROMPT_MULTIPART) == wxID_YES);
+}

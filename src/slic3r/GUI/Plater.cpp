@@ -9391,6 +9391,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
              if (!is_project_file && model.looks_like_multipart_object()) {
                MessageDialog msg_dlg(q, _L("This file contains several objects positioned at multiple heights.\nInstead of considering them as multiple objects, should \nthe file be loaded as a single object with multiple parts\?") + "\n",
                     _L("Multi-part object detected"), wxICON_WARNING | wxYES | wxNO);
+                msg_dlg.set_mcp_prompt_key(MCP_PROMPT_MULTIPART); // Orca MCP: load_model's multipart parameter answers it
                 if (msg_dlg.ShowModal() == wxID_YES) {
                     model.convert_multipart_object(filaments_cnt);
                 }

@@ -74,6 +74,8 @@ struct MsgDialog : DPIDialog
 	// already-constructed dialog (used by the H2C rack hotend "Jump to the upgrade page" prompt).
 	// Purely additive; existing dialogs are unaffected.
 	void AddButton(wxWindowID btn_id, const wxString& label, bool set_focus = false) { add_button(btn_id, set_focus, label); }
+	// Orca MCP: names this prompt so a tool can choose its answer under suppression (set_mcp_prompt_answer).
+	void set_mcp_prompt_key(const std::string& key) { m_mcp_prompt_key = key; }
 
 protected:
 	enum {
@@ -104,6 +106,7 @@ protected:
     wxString  m_forward_str;
 	long      m_style{wxOK};           // Store dialog style for MCP suppression
 	wxString  m_mcp_message;           // Store message for MCP suppression
+	std::string m_mcp_prompt_key;      // Which prompt this is, for a tool-chosen answer under MCP suppression
 };
 
 

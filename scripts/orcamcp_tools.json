@@ -997,6 +997,14 @@
           "include_preview": {
             "description": "Return turntable preview path",
             "type": "boolean"
+          },
+          "multipart": {
+            "description": "When the file holds several objects at different heights, the slicer asks whether they are one object's parts. merge (default, as the GUI suggests) joins them into one object named after the file; separate keeps each as its own object. No other file is affected.",
+            "enum": [
+              "merge",
+              "separate"
+            ],
+            "type": "string"
           }
         },
         "required": [

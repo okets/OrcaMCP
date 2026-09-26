@@ -2627,6 +2627,14 @@ void OrcaMCPServer::register_builtin_tools()
                 {"include_preview", {
                     {"type", "boolean"},
                     {"description", "Return turntable preview path"}
+                }},
+                {"multipart", {
+                    {"type", "string"},
+                    {"enum", {"merge", "separate"}},
+                    {"description", "When the file holds several objects at different heights, the slicer asks "
+                                    "whether they are one object's parts. merge (default, as the GUI suggests) "
+                                    "joins them into one object named after the file; separate keeps each as its "
+                                    "own object. No other file is affected."}
                 }}
             }},
             {"required", {"file_path"}}
@@ -2634,7 +2642,11 @@ void OrcaMCPServer::register_builtin_tools()
         [](const nlohmann::json& params) -> nlohmann::json {
             std::string file_path = params["file_path"];
             bool include_preview = params.value("include_preview", false);
-            return run_on_main_thread([file_path, include_preview]() {
+            const nlohmann::json multipart = params.value("multipart", nlohmann::json("merge"));
+            if (multipart != "merge" && multipart != "separate")
+                return nlohmann::json{{"status", "error"}, {"message", "multipart must be one of: merge, separate"}};
+            const int multipart_answer = multipart == "merge" ? wxID_YES : wxID_NO;
+            return run_on_main_thread([file_path, include_preview, multipart_answer]() {
                 Plater* plater = wxGetApp().plater();
                 wxArrayString files;
                 files.Add(wxString::FromUTF8(file_path));
@@ -2646,6 +2658,7 @@ void OrcaMCPServer::register_builtin_tools()
 
                 // Suppress dialogs and capture info messages
                 McpDialogSuppressionGuard suppression_guard;
+                suppression_guard.answer_prompt(MCP_PROMPT_MULTIPART, multipart_answer);
                 const bool loaded = plater->load_files(files);
                 auto info_messages = suppression_guard.messages();
 

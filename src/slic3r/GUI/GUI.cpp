@@ -8,6 +8,7 @@
 #ifdef __APPLE__
 #include "slic3r/Utils/MacDarkMode.hpp"
 #endif
+#include <map>
 #include <string>
 
 #include <boost/algorithm/string.hpp>
@@ -42,6 +43,7 @@ namespace GUI {
 // MCP dialog suppression state
 static bool s_mcp_dialog_suppression = false;
 static std::vector<std::string> s_mcp_suppressed_messages;
+static std::map<std::string, int> s_mcp_prompt_answers;
 
 // Note: this only flips the flag. Clearing the collected messages is McpDialogSuppressionGuard's
 // job, so that a nested guard does not discard the messages its caller is still collecting.
@@ -91,6 +93,21 @@ std::string mcp_answer_label(int answer_id) {
     case wxID_CANCEL: return "Cancel";
     default: return "button " + std::to_string(answer_id);
     }
+}
+
+void set_mcp_prompt_answer(const std::string& key, int answer_id) {
+    s_mcp_prompt_answers[key] = answer_id;
+}
+
+void clear_mcp_prompt_answers() {
+    s_mcp_prompt_answers.clear();
+}
+
+int mcp_answer_for(long style, const std::string& prompt_key) {
+    if (!prompt_key.empty())
+        if (auto it = s_mcp_prompt_answers.find(prompt_key); it != s_mcp_prompt_answers.end())
+            return it->second;
+    return mcp_default_answer(style);
 }
 
 std::string mcp_list_summary(const std::vector<std::string>& items, size_t max_items) {

@@ -119,16 +119,26 @@ void add_turntable_preview_if_requested(nlohmann::json& result, bool include_pre
 
 // RAII: suppress modal dialogs for the lifetime of the guard and collect their messages.
 // Nest-safe: an inner guard keeps the outer guard's messages and restores its state.
+// answer_prompt chooses the answer for one keyed prompt (MsgDialog::set_mcp_prompt_key) until the
+// outermost guard ends, so no later call inherits it.
 struct McpDialogSuppressionGuard
 {
     McpDialogSuppressionGuard() : m_was_enabled(is_mcp_dialog_suppression_enabled())
     {
-        if (!m_was_enabled)
+        if (!m_was_enabled) {
             clear_mcp_suppressed_messages();
+            clear_mcp_prompt_answers();
+        }
         set_mcp_dialog_suppression(true);
     }
-    ~McpDialogSuppressionGuard() { set_mcp_dialog_suppression(m_was_enabled); }
+    ~McpDialogSuppressionGuard()
+    {
+        if (!m_was_enabled)
+            clear_mcp_prompt_answers();
+        set_mcp_dialog_suppression(m_was_enabled);
+    }
     std::vector<std::string> messages() const { return get_mcp_suppressed_messages(); }
+    void answer_prompt(const std::string& key, int answer_id) { set_mcp_prompt_answer(key, answer_id); }
 
 private:
     bool m_was_enabled;
