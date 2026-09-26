@@ -1,6 +1,7 @@
 #ifndef __part_plate_hpp_
 #define __part_plate_hpp_
 
+#include <functional>
 #include <vector>
 #include <set>
 #include <array>
@@ -716,7 +717,9 @@ public:
     //this may be happened after machine changed
     void reset_size(int width, int depth, double height, bool reload_objects = true, bool update_shapes = false);
     //clear all the instances in the plate, but keep the plates
-    void clear(bool delete_plates = false, bool release_print_list = false, bool except_locked = false, int plate_index = -1);
+    // Orca: `caller` names the path that frees plates or Prints, for the before-free hook's log.
+    void clear(bool delete_plates = false, bool release_print_list = false, bool except_locked = false, int plate_index = -1,
+               const char* caller = "PartPlateList::clear");
     //clear all the instances in the plate, and delete the plates, only keep the first default plate
     void reset(bool do_init);
     //compute the origin for printable plate with index i using new width
@@ -748,6 +751,12 @@ public:
     int destroy_print(int print_index);
     // Orca: stops a slice (and a Slice All run) before plates or Prints are freed or reordered.
     void before_plate_list_change();
+    // Orca: told what is about to be freed, before it is: plates, Prints, and the path freeing them. The
+    // Plater installs it as the safety net under the callers' own stops: it stops a slice running on one
+    // of them (OrcaMCPSliceCredit.hpp, frees_what_the_slice_uses).
+    using BeforeFree = std::function<void(const std::vector<const PartPlate*>& plates,
+                                          const std::vector<const PrintBase*>& prints, const char* caller)>;
+    void set_before_free(BeforeFree before_free) { m_before_free = std::move(before_free); }
 
     //delete a plate by index
     int delete_plate(int index);
@@ -960,6 +969,11 @@ public:
     BedTextureInfo bed_texture_info[btCount];
     BedTextureInfo cali_texture_info;
     BedTextureInfo extruder_only_area_info[(unsigned char) Slic3r::ExtruderOnlyAreaType::btAreaCount];
+
+private:
+    BeforeFree m_before_free; // Orca
+    void       before_free(const std::vector<const PartPlate*>& plates, const std::vector<const PrintBase*>& prints,
+                           const char* caller);
 };
 
 } // namespace GUI

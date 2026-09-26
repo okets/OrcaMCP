@@ -2303,7 +2303,8 @@ checked the same way.
 ### undo
 Undo the last operation. It rebuilds the plate list, so a slice in progress is cancelled first, and a
 Slice All run with it: the response then carries `slice_cancelled: true` and an `info_messages` line
-saying so; call `slice_all` again.
+saying so; call `slice_all` again. If the undo fails, the error response says so too when it had
+already stopped a slice.
 
 **Parameters:** None
 

@@ -1,7 +1,9 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPSliceCredit.hpp
 #pragma once
+#include <algorithm>
 #include <optional>
 #include <string>
+#include <vector>
 
 // Which plate a slice's completion is credited to, and what a change to the plate list does to a
 // running slice. No wx: the tests drive it with plain values (tests/slic3rutils/test_slice_credit.cpp).
@@ -35,29 +37,50 @@ inline PlateNotStarted plate_not_started(bool plate_result_valid, bool worker_bu
 // another plate. A Slice All run is cancelled, as any cancel ends it: it walks the plates by index.
 struct PlateListChangeDuringSlice
 {
-    bool stop_slice       = false;
-    bool cancel_slice_all = false;
+    bool slice_cancelled     = false; // a slice still in progress was cancelled
+    bool slice_all_cancelled = false;
 
     PlateListChangeDuringSlice& operator|=(const PlateListChangeDuringSlice& other)
     {
-        stop_slice       = stop_slice || other.stop_slice;
-        cancel_slice_all = cancel_slice_all || other.cancel_slice_all;
+        slice_cancelled     = slice_cancelled || other.slice_cancelled;
+        slice_all_cancelled = slice_all_cancelled || other.slice_all_cancelled;
         return *this;
     }
 };
-inline PlateListChangeDuringSlice on_plate_list_change(bool slice_running, bool slicing_all_plates)
+// `stop_cancelled_a_slice`: the stop found a slice still in progress and cancelled it. A slice that had
+// already finished, its completion still queued, was not cancelled: that completion credits its plate by
+// print index when it arrives, if the plate is still there. A Slice All run is cancelled either way.
+inline PlateListChangeDuringSlice on_plate_list_change(bool stop_cancelled_a_slice, bool slicing_all_plates)
 {
-    return {slice_running || slicing_all_plates, slicing_all_plates};
+    return {stop_cancelled_a_slice, slicing_all_plates};
 }
 
 // What delete_plate, undo and redo tell the agent about the slice they stopped; nullopt when none ran.
 inline std::optional<std::string> plate_list_change_note(const PlateListChangeDuringSlice& change)
 {
-    if (change.cancel_slice_all)
+    if (change.slice_all_cancelled)
         return std::string("the plate list changed during Slice All; the run was cancelled, call slice_all again");
-    if (change.stop_slice)
+    if (change.slice_cancelled)
         return std::string("the plate list changed during a slice; it was cancelled, call slice_all again");
     return std::nullopt;
+}
+
+// The safety net where PartPlateList frees plates or Prints (PartPlateList::set_before_free): true when
+// the slicing process is running on one of them, and must be stopped before they go. The callers stop
+// it themselves first; this catches one that does not, which crashed the app (SIGSEGV, 2026-09-26).
+template<class Plate, class Print>
+bool frees_what_the_slice_uses(bool                             slice_running,
+                               const Plate*                     slice_plate,
+                               const Print*                     slice_print,
+                               const std::vector<const Plate*>& plates,
+                               const std::vector<const Print*>& prints)
+{
+    if (!slice_running)
+        return false;
+    const auto holds = [](const auto& freed, const auto* used) {
+        return used != nullptr && std::find(freed.begin(), freed.end(), used) != freed.end();
+    };
+    return holds(plates, slice_plate) || holds(prints, slice_print);
 }
 
 }}} // namespace Slic3r::GUI::OrcaMCP

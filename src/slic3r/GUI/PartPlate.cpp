@@ -4139,6 +4139,8 @@ PartPlateList::PartPlateList(Plater* platerObj, Model* modelObj, PrinterTechnolo
 
 PartPlateList::~PartPlateList()
 {
+	// Orca: the hook's owner (the Plater) is going away, its slicing process before this list.
+	m_before_free = nullptr;
 	clear(true, true);
 	release_icon_textures();
 }
@@ -4580,8 +4582,19 @@ void PartPlateList::reset_size(int width, int depth, double height, bool reload_
 }
 
 //clear all the instances in the plate, but keep the plates
-void PartPlateList::clear(bool delete_plates, bool release_print_list, bool except_locked, int plate_index)
+void PartPlateList::clear(bool delete_plates, bool release_print_list, bool except_locked, int plate_index, const char* caller)
 {
+	// Orca: the safety net: a slice running on a plate or Print freed below is stopped first.
+	{
+		std::vector<const PartPlate*> plates;
+		std::vector<const PrintBase*> prints;
+		if (delete_plates)
+			plates.assign(m_plate_list.begin(), m_plate_list.end());
+		if (release_print_list)
+			for (const auto& it : m_print_list)
+				prints.push_back(it.second);
+		before_free(plates, prints, caller);
+	}
 	for (unsigned int i = 0; i < (unsigned int)m_plate_list.size(); ++i)
 	{
 		PartPlate* plate = m_plate_list[i];
@@ -4630,7 +4643,7 @@ void PartPlateList::clear(bool delete_plates, bool release_print_list, bool exce
 //clear all the instances in the plate, and delete the plates, only keep the first default plate
 void PartPlateList::reset(bool do_init)
 {
-	clear(true, false);
+	clear(true, false, false, -1, "PartPlateList::reset");
 
 	//m_plate_list.clear();
 
@@ -4645,7 +4658,7 @@ void PartPlateList::reset(bool do_init)
 //reset partplate to init states
 void PartPlateList::reinit()
 {
-	clear(true, true);
+	clear(true, true, false, -1, "PartPlateList::reinit");
 
 	init();
 
@@ -4796,6 +4809,14 @@ void PartPlateList::before_plate_list_change()
 		m_plater->stop_slice_for_plate_list_change();
 }
 
+// Orca: tells the hook what is about to be freed, when anything is.
+void PartPlateList::before_free(const std::vector<const PartPlate*>& plates, const std::vector<const PrintBase*>& prints,
+                                const char* caller)
+{
+	if (m_before_free && (!plates.empty() || !prints.empty()))
+		m_before_free(plates, prints, caller);
+}
+
 //destroy print's objects and results
 int PartPlateList::destroy_print(int print_index)
 {
@@ -4807,6 +4828,7 @@ int PartPlateList::destroy_print(int print_index)
 		if (it != m_print_list.end())
 		{
 			BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(":delete Print %1% for print_index %2%") % it->second % print_index;
+			before_free({}, {it->second}, "PartPlateList::destroy_print"); // Orca: the safety net
 			delete it->second;
 			m_print_list.erase(it);
 		}
@@ -4942,6 +4964,7 @@ int PartPlateList::delete_plate(int index)
 	plate->get_print(nullptr, nullptr, &print_index);
 	destroy_print(print_index);
 
+	before_free({plate}, {}, "PartPlateList::delete_plate"); // Orca: the safety net
 	delete plate;
 
     // FIX: context of BackgroundSliceProcess and gcode preview need to be updated before ObjectList::reload_all_plates().
@@ -6576,7 +6599,7 @@ int PartPlateList::load_from_3mf_structure(PlateDataPtrs& plate_data_list, int f
 	}
 	// Orca: every plate and Print is freed below: stop a slice first.
 	before_plate_list_change();
-	clear(true, true);
+	clear(true, true, false, -1, "PartPlateList::load_from_3mf_structure");
 	set_filament_count(filament_count);
 	for (unsigned int i = 0; i < (unsigned int)plate_data_list.size(); ++i)
 	{

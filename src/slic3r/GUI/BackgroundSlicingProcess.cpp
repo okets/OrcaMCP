@@ -567,11 +567,14 @@ bool BackgroundSlicingProcess::start()
 }
 
 // To be called on the UI thread.
-bool BackgroundSlicingProcess::stop()
+bool BackgroundSlicingProcess::stop(bool* cancelled_a_slice)
 {
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ", enter" << std::endl;
     // m_print->state_mutex() shall NOT be held. Unfortunately there is no interface to test for it.
     std::unique_lock<std::mutex> lck(m_mutex);
+    // Orca: read under the lock: a slice seen in progress here is the one cancelled below.
+    if (cancelled_a_slice != nullptr)
+        *cancelled_a_slice = m_state == STATE_STARTED || m_state == STATE_RUNNING;
     if (m_state == STATE_INITIAL) {
         //		m_export_path.clear();
         return false;

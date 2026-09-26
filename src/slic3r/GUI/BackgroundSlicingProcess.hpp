@@ -138,7 +138,9 @@ public:
 	bool start();
 	// Cancel the background processing. Returns false if the background processing was not running.
 	// A stopped background processing may be restarted with start().
-	bool stop();
+	// Orca: `cancelled_a_slice`, when given, is set to whether this stop cancelled a slice still in
+	// progress, rather than finding it finished (or cancelled) with its completion on the way.
+	bool stop(bool* cancelled_a_slice = nullptr);
 	// Cancel the background processing and reset the print. Returns false if the background processing was not running.
 	// Useful when the Model or configuration is being changed drastically.
 	bool reset();

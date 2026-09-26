@@ -297,11 +297,18 @@ nlohmann::json step_through_history(bool undo, bool include_preview)
 {
     Plater*                    plater = wxGetApp().plater();
     PlateListChangeDuringSlice slice_change;
-    if (undo)
-        plater->undo(&slice_change);
-    else
-        plater->redo(&slice_change);
-    nlohmann::json result = {{"status", "success"}, {"active_warnings", get_active_warnings_json(plater)}};
+    nlohmann::json             result;
+    try {
+        if (undo)
+            plater->undo(&slice_change);
+        else
+            plater->redo(&slice_change);
+        result = {{"status", "success"}};
+    } catch (const std::exception& e) {
+        // The snapshot load may throw after it stopped a slice: say both.
+        result = {{"status", "error"}, {"message", std::string(undo ? "undo" : "redo") + " failed: " + e.what()}};
+    }
+    result["active_warnings"] = get_active_warnings_json(plater);
     add_slice_cancelled(result, slice_change);
     add_turntable_preview_if_requested(result, include_preview);
     return result;
