@@ -41,6 +41,17 @@ std::vector<ComponentInfo> summarize_components(const indexed_triangle_set& its,
                                                 int                         component_count,
                                                 const Transform3d&          to_plate);
 
+// Every shell of `its`, largest facet count first -- the shell a caller is looking for is rarely the
+// smallest sliver -- with equal counts in ascending id, in the frame `to_plate` maps into. The one
+// list both get_object_components and get_mesh_health report from, so their ids agree.
+std::vector<ComponentInfo> shells_largest_first(const indexed_triangle_set& its, const Transform3d& to_plate);
+
+// {"min": {x, y, z}, "max": {x, y, z}}
+nlohmann::json bbox_json(const BoundingBoxf3& bbox);
+
+// One shell as the tools report it: {component, facet_count, area_mm2, bounding_box}.
+nlohmann::json component_json(const ComponentInfo& component);
+
 // `state` for every facet whose id is `component`, -1 (leave alone) for every other facet. An id
 // no facet carries selects nothing -- reported through `unassigned`, never widened to "everything".
 FacetAssignment assign_component(const std::vector<int>& ids, int component, int state);

@@ -73,6 +73,30 @@ std::vector<ComponentInfo> summarize_components(const indexed_triangle_set& its,
     return out;
 }
 
+std::vector<ComponentInfo> shells_largest_first(const indexed_triangle_set& its, const Transform3d& to_plate)
+{
+    int                        count  = 0;
+    const std::vector<int>     ids    = facet_component_ids(its, count);
+    std::vector<ComponentInfo> shells = summarize_components(its, ids, count, to_plate);
+    std::stable_sort(shells.begin(), shells.end(),
+                     [](const ComponentInfo& a, const ComponentInfo& b) { return a.facet_count > b.facet_count; });
+    return shells;
+}
+
+nlohmann::json bbox_json(const BoundingBoxf3& bbox)
+{
+    return {{"min", {{"x", bbox.min.x()}, {"y", bbox.min.y()}, {"z", bbox.min.z()}}},
+            {"max", {{"x", bbox.max.x()}, {"y", bbox.max.y()}, {"z", bbox.max.z()}}}};
+}
+
+nlohmann::json component_json(const ComponentInfo& component)
+{
+    return {{"component", component.component},
+            {"facet_count", component.facet_count},
+            {"area_mm2", component.area},
+            {"bounding_box", bbox_json(component.bbox)}};
+}
+
 FacetAssignment assign_component(const std::vector<int>& ids, int component, int state)
 {
     FacetAssignment out;

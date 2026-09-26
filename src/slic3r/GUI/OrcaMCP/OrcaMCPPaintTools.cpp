@@ -212,12 +212,6 @@ Slic3r::BoundingBoxf3 object_plate_bbox(const Slic3r::ModelObject& object, std::
     return bbox;
 }
 
-nlohmann::json bbox_json(const Slic3r::BoundingBoxf3& bbox)
-{
-    return {{"min", {{"x", bbox.min.x()}, {"y", bbox.min.y()}, {"z", bbox.min.z()}}},
-            {"max", {{"x", bbox.max.x()}, {"y", bbox.max.y()}, {"z", bbox.max.z()}}}};
-}
-
 // One mode's paint on one volume, as the response reports it. Takes the report rather than the
 // volume so that paint_object -- which computes it on a worker thread from the data it is about to
 // write -- and the tools that read it back off the Model share one formatter.
@@ -1618,7 +1612,7 @@ void OrcaMCPServer::register_paint_tools()
         "List the connected shells of each MODEL PART's mesh -- component id, facet count, area and a "
         "plate-frame bounding box. Parts only: modifiers, negative volumes and support blockers are "
         "not listed here, so this is not a census of the object's volumes; get_object_info's `volumes` "
-        "is, with each volume's type and filament.A generated or assembled model often has a feature (a bag, a "
+        "is, with each volume's type and filament. A generated or assembled model often has a feature (a bag, a "
         "wheel) as its own shell; paint_object {selection: \"component\", component: <id>} paints "
         "exactly that shell. Ids are stable for a given mesh: discovery order by lowest facet "
         "index. Coordinates are PLATE millimetres. On a mesh of millions of facets this takes "
@@ -1650,23 +1644,15 @@ void OrcaMCPServer::register_paint_tools()
             // Worker thread: the flood fill over the neighbour index, per volume.
             nlohmann::json volumes = nlohmann::json::array();
             for (const PaintPlanVolume& pv : plan.volumes) {
-                int                    count = 0;
-                const std::vector<int> ids   = facet_component_ids(pv.mesh->its, count);
-                std::vector<ComponentInfo> summary = summarize_components(pv.mesh->its, ids, count, pv.to_plate);
-                // Largest first: the shell a caller is looking for is rarely the smallest sliver.
-                std::stable_sort(summary.begin(), summary.end(),
-                                 [](const ComponentInfo& a, const ComponentInfo& b) { return a.facet_count > b.facet_count; });
-                nlohmann::json components = nlohmann::json::array();
-                for (const ComponentInfo& c : summary)
-                    components.push_back({{"component", c.component},
-                                          {"facet_count", c.facet_count},
-                                          {"area_mm2", c.area},
-                                          {"bounding_box", bbox_json(c.bbox)}});
+                const std::vector<ComponentInfo> shells     = shells_largest_first(pv.mesh->its, pv.to_plate);
+                nlohmann::json                   components = nlohmann::json::array();
+                for (const ComponentInfo& c : shells)
+                    components.push_back(component_json(c));
                 volumes.push_back({{"volume_id", pv.volume_id},
                                    {"name", pv.name},
                                    {"original_facets", int(pv.mesh->its.indices.size())},
                                    {"bounding_box", bbox_json(pv.mesh->transformed_bounding_box(pv.to_plate))},
-                                   {"component_count", count},
+                                   {"component_count", int(shells.size())},
                                    {"components", components}});
             }
 

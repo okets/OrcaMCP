@@ -94,6 +94,42 @@ TEST_CASE("summarize_components reports facet counts, plate bounding boxes and a
     CHECK_THAT(summary[1].bbox.max.x(), WithinAbs(16.0, 1e-9));
 }
 
+TEST_CASE("shells_largest_first lists the biggest shell first and keeps discovery order on ties",
+          "[orcamcp][select]")
+{
+    // A 12-facet cube first in facet order, then a sphere of many more facets 20 mm away.
+    indexed_triangle_set its    = Slic3r::its_make_cube(2.0, 2.0, 2.0);
+    indexed_triangle_set sphere = translated(Slic3r::its_make_sphere(1.0, PI / 8.0), Vec3f(20.f, 0.f, 0.f));
+    const int sphere_facets     = int(sphere.indices.size());
+    Slic3r::its_merge(its, sphere);
+
+    const std::vector<ComponentInfo> shells = shells_largest_first(its, Transform3d::Identity());
+    REQUIRE(shells.size() == 2);
+    CHECK(shells[0].component == 1);  // the sphere, found second, listed first
+    CHECK(shells[0].facet_count == sphere_facets);
+    CHECK(shells[1].component == 0);
+    CHECK(shells[1].facet_count == 12);
+
+    // Two shells of 12 facets each: ascending id, as they were found.
+    const std::vector<ComponentInfo> tie = shells_largest_first(two_cubes(), Transform3d::Identity());
+    REQUIRE(tie.size() == 2);
+    CHECK(tie[0].component == 0);
+    CHECK(tie[1].component == 1);
+}
+
+TEST_CASE("component_json reports a shell's id, facet count, area and plate box", "[orcamcp][select]")
+{
+    const std::vector<ComponentInfo> shells = shells_largest_first(two_cubes(), Transform3d::Identity());
+    REQUIRE(shells.size() == 2);
+
+    const nlohmann::json j = component_json(shells[1]);
+    CHECK(j["component"] == 1);
+    CHECK(j["facet_count"] == 12);
+    CHECK_THAT(j["area_mm2"].get<double>(), WithinAbs(6.0, 1e-9));
+    CHECK_THAT(j["bounding_box"]["min"]["x"].get<double>(), WithinAbs(5.0, 1e-9));
+    CHECK_THAT(j["bounding_box"]["max"]["x"].get<double>(), WithinAbs(6.0, 1e-9));
+}
+
 TEST_CASE("assign_component selects exactly one shell and leaves the rest alone", "[orcamcp][select]")
 {
     int count = 0;
