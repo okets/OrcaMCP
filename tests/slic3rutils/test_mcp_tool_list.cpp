@@ -56,7 +56,8 @@ TEST_CASE("Every tool has a category, a one-line summary and a description", "[o
         CHECK(tool.summary.find('\n') == std::string::npos);
         CHECK_FALSE(tool.description.empty());
         CHECK(tool.input_schema.value("type", "") == "object");
-        CHECK(tool.handler);
+        // An app tool has a handler; a bridge-only one has none, since the app never runs it.
+        CHECK(static_cast<bool>(tool.handler) != tool.bridge_only);
     }
 }
 
@@ -274,11 +275,28 @@ TEST_CASE("tools/list leaves bridge-only tools to the bridge", "[orcamcp][tools]
     }
 }
 
-TEST_CASE("A bridge-only tool called on the app says the bridge answers it", "[orcamcp][tools]")
+TEST_CASE("A bridge-only tool called on the app is a JSON-RPC error that points at the bridge", "[orcamcp][tools]")
 {
-    const nlohmann::json response = OrcaMCPServer::registered_tools().at("start_orca").handler(nlohmann::json::object());
-    CHECK(response.value("status", "") == "error");
-    CHECK(response.value("message", "").find("bridge") != std::string::npos);
+    try {
+        OrcaMCPServer::handle_tools_call({{"name", "start_orca"}, {"arguments", nlohmann::json::object()}});
+        FAIL("start_orca was answered by the app");
+    } catch (const OrcaMCPServer::JsonRpcError& e) {
+        CHECK(e.code == -32602);
+        CHECK(std::string(e.what()).find("bridge") != std::string::npos);
+    }
+}
+
+TEST_CASE("A call to an unknown tool is a JSON-RPC invalid-params error, not an internal one", "[orcamcp][tools]")
+{
+    for (const nlohmann::json& params : {nlohmann::json{{"name", "no_such_tool"}}, nlohmann::json::object()}) {
+        INFO("params " << params.dump());
+        try {
+            OrcaMCPServer::handle_tools_call(params);
+            FAIL("the call was answered");
+        } catch (const OrcaMCPServer::JsonRpcError& e) {
+            CHECK(e.code == -32602);
+        }
+    }
 }
 
 TEST_CASE("get_server_info names the bridge-only tools", "[orcamcp][tools]")

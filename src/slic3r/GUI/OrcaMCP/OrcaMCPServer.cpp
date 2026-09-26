@@ -119,7 +119,7 @@ void OrcaMCPServer::register_tool(const ToolDefinition& tool)
     // first silently, so two tools could share a name and only one of them was reachable.
     if (s_tools.count(tool.name) != 0)
         throw std::logic_error("OrcaMCPServer: tool '" + tool.name + "' is registered twice");
-    if (!tool.handler)
+    if (!tool.handler && !tool.bridge_only)
         throw std::logic_error("OrcaMCPServer: tool '" + tool.name + "' has no handler");
     s_tools.emplace(tool.name, tool);
     BOOST_LOG_TRIVIAL(debug) << "OrcaMCPServer: Registered tool '" << tool.name << "'";
@@ -278,6 +278,9 @@ std::shared_ptr<HttpServer::Response> OrcaMCPServer::handle_request(
         auto response = make_success_response(id, result);
         return std::make_shared<HttpServer::ResponseJson>(response.dump());
 
+    } catch (const JsonRpcError& e) {
+        auto error = make_error_response(id, e.code, e.what());
+        return std::make_shared<HttpServer::ResponseJson>(error.dump(), 200);
     } catch (const std::exception& e) {
         BOOST_LOG_TRIVIAL(error) << "OrcaMCPServer: Error handling " << rpc_method << ": " << e.what();
         auto error = make_error_response(id, -32603, std::string("Internal error: ") + e.what());
@@ -362,16 +365,22 @@ nlohmann::json OrcaMCPServer::tools_manifest()
 
 nlohmann::json OrcaMCPServer::handle_tools_call(const nlohmann::json& params)
 {
-    if (!params.contains("name")) {
-        throw std::runtime_error("Missing tool name");
+    // Both are the caller's mistake, which MCP reports as invalid params, not an internal error.
+    if (!params.contains("name") || !params.at("name").is_string()) {
+        throw JsonRpcError(-32602, "Missing tool name");
     }
 
     std::string tool_name = params["name"];
     nlohmann::json arguments = params.value("arguments", nlohmann::json::object());
 
-    auto it = s_tools.find(tool_name);
-    if (it == s_tools.end()) {
-        throw std::runtime_error("Unknown tool: " + tool_name);
+    const auto& tools = registered_tools();
+    auto it = tools.find(tool_name);
+    if (it == tools.end()) {
+        throw JsonRpcError(-32602, "Unknown tool: " + tool_name);
+    }
+    if (it->second.bridge_only) {
+        throw JsonRpcError(-32602, tool_name + " is answered by the OrcaMCP bridge (orcamcp-bridge.py), not by the "
+                                   "app. Call it through the bridge.");
     }
 
     BOOST_LOG_TRIVIAL(info) << "OrcaMCPServer: Calling tool '" << tool_name << "'";
@@ -4732,11 +4741,6 @@ void OrcaMCPServer::register_builtin_tools()
 void OrcaMCPServer::register_bridge_tool(ToolDefinition tool)
 {
     tool.bridge_only = true;
-    tool.handler     = [name = tool.name](const nlohmann::json&) -> nlohmann::json {
-        return {{"status", "error"},
-                {"message", name + " is answered by the OrcaMCP bridge (orcamcp-bridge.py), not by the app. Call it "
-                                   "through the bridge."}};
-    };
     register_tool(tool);
 }
 

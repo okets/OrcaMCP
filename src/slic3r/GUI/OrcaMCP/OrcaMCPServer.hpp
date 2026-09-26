@@ -5,6 +5,7 @@
 #include <map>
 #include <functional>
 #include <memory>
+#include <stdexcept>
 #include <vector>
 #include "nlohmann/json.hpp"
 #include "slic3r/GUI/HttpServer.hpp"
@@ -56,10 +57,17 @@ public:
         std::string summary;          // get_server_info's catalogue line: one line, at most 40 characters
         std::string description;
         nlohmann::json input_schema;  // JSON Schema for parameters
-        ToolHandler handler;          // left empty by register_bridge_tool, which supplies its own
-        bool bridge_only = false;     // served by orcamcp-bridge.py, never by tools/list
+        ToolHandler handler;          // empty for a bridge-only tool: the app never runs it
+        bool bridge_only = false;     // served by orcamcp-bridge.py, never by tools/list or tools/call
     };
     static constexpr size_t max_summary_length = 40;
+
+    // A request failure with its own JSON-RPC error code, where -32603 Internal error would be wrong.
+    struct JsonRpcError : std::runtime_error
+    {
+        JsonRpcError(int code, const std::string& message) : std::runtime_error(message), code(code) {}
+        int code;
+    };
 
     // Initialize the MCP server and register all tools
     static void init();
@@ -71,7 +79,7 @@ public:
         const std::string& body);
 
     // Register a tool with the MCP server. Throws std::logic_error for a name that is already
-    // registered, or a tool with no handler.
+    // registered, or an app tool with no handler.
     static void register_tool(const ToolDefinition& tool);
 
     // Every registered tool, bridge-only ones included, keyed by name. Registers them first if
@@ -84,6 +92,9 @@ public:
     // tools/list: every registered tool except the bridge-only ones.
     static nlohmann::json handle_tools_list();
 
+    // tools/call. A missing or unknown tool name, or a bridge-only tool, throws JsonRpcError -32602.
+    static nlohmann::json handle_tools_call(const nlohmann::json& params);
+
     // A tool as tools/list serves it: name, description and a normalised inputSchema.
     static nlohmann::json tool_list_entry(const ToolDefinition& tool);
 
@@ -94,7 +105,6 @@ public:
 private:
     // MCP protocol handlers
     static nlohmann::json handle_initialize(const nlohmann::json& params);
-    static nlohmann::json handle_tools_call(const nlohmann::json& params);
 
     // Tool-specific handlers
     static nlohmann::json handle_get_preview_base64(const nlohmann::json& params);
@@ -113,7 +123,7 @@ private:
 
     // Register a tool the bridge answers itself (start_orca launches this app, so the app cannot
     // serve it). Its text lives here with every other tool's; the bridge reads it from
-    // scripts/orcamcp_tools.json. Called on the app, its handler says the bridge answers it.
+    // scripts/orcamcp_tools.json. It has no handler: tools/call on the app refuses it.
     static void register_bridge_tool(ToolDefinition tool);
 
     // Register all built-in tools
