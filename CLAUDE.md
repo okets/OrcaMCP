@@ -516,11 +516,15 @@ with `HttpServer::set_request_guard` in `GUI_App::start_http_server`) before any
 - **An `/mcp` request whose `Host` is not `127.0.0.1:<port>`, `localhost:<port>` or `[::1]:<port>` is
   refused** the same way, against DNS rebinding (an attacker's name pointed at 127.0.0.1 makes its
   page same-origin, with no `Origin`, but with that name in `Host`).
-- **A cloud-login callback is answered only on a port a login is listening on**
-  (`LoginCallbackServer::listens_on`), 404 elsewhere. The callbacks are browser navigations from the
-  cloud's page, so they get neither rule above; but the MCP port used to answer them always, and a
-  page could have made the browser deliver a forged callback there, signing the user in to someone
-  else's account.
+- **A cloud-login callback is answered only while a login is in progress, on the port it listens on**
+  (`LoginCallbackServer::listens_on`), 404 everywhere else. The login is in progress while its dialog
+  is open: `GUI_App::ShowUserLogin` calls `stop_listening()` once `ShowModal()` returns, however it
+  ended, which closes the listener. The callbacks are browser navigations from the cloud's page, so
+  they get neither rule above; but a page can make the browser deliver a forged one, which would sign
+  the user in to someone else's account. The Orca cloud's code callback is also checked against the
+  state and PKCE verifier its dialog issued (`OrcaCloudServiceAgent::exchange_auth_code`); Bambu's
+  `access_token` and `ticket` callbacks carry no state to check, so closing the route is their only
+  guard.
 - **No reply carries `Access-Control-Allow-*`**, so no page can read one either.
 
 The bridge sends no `Origin` and names `localhost` or `127.0.0.1` (`scripts/tests/test_bridge_request_headers.py`).

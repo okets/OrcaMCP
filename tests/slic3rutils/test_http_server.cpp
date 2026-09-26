@@ -281,6 +281,84 @@ TEST_CASE("a cloud login moves between ports without stopping, moving or re-rout
     mcp.stop();
 }
 
+TEST_CASE("a cloud login that asks again for the port it listens on keeps its listener", "[HttpServer][Login]")
+{
+    // The login dialog asks on every message that needs its callback URL; binding the port a second
+    // time, while its listener holds it, failed with EADDRINUSE inside the page's script handler.
+    HeldMainThread quit_queue;
+    MainThreadGate quit_gate(quit_queue.post());
+    FakeSignIn     sign_in;
+
+    HttpServer          mcp(free_loopback_port());
+    LoginCallbackServer login(mcp, sign_in.handler(), "orca", quit_gate);
+    mcp.set_request_handler(app_routes(login, [] { return json_response({{"mcp", true}}); }));
+    mcp.start();
+
+    const unsigned short port = free_loopback_port();
+    bool first = false, second = false;
+    CHECK_NOTHROW(first = login.listen(port, "bbl"));
+    CHECK_NOTHROW(second = login.listen(port, "orca"));
+    CHECK(first);
+    CHECK(second);
+    CHECK(contains(exchange(port, "GET", "/callback?code=5").get(), "\"login\":\"orca\""));
+    mcp.stop();
+}
+
+#ifndef _WIN32 // Windows' SO_REUSEADDR lets a second socket take a bound port (prompt 09 settles that)
+TEST_CASE("a cloud login that cannot bind its port says so instead of throwing", "[HttpServer][Login]")
+{
+    HeldMainThread quit_queue;
+    MainThreadGate quit_gate(quit_queue.post());
+    FakeSignIn     sign_in;
+
+    boost::asio::io_context io;
+    tcp::acceptor           squatter(io, {boost::asio::ip::address_v4::loopback(), 0}); // another app holds it
+    HttpServer              mcp(free_loopback_port());
+    LoginCallbackServer     login(mcp, sign_in.handler(), "orca", quit_gate);
+    mcp.start();
+
+    bool listening = true;
+    CHECK_NOTHROW(listening = login.listen(squatter.local_endpoint().port(), "bbl"));
+    CHECK_FALSE(listening);
+    CHECK_FALSE(login.listens_on(squatter.local_endpoint().port()));
+    mcp.stop();
+}
+#endif
+
+TEST_CASE("a cloud login's callback route closes when the login ends", "[HttpServer][Login][McpRequestGuard]")
+{
+    // A page can make the browser deliver a forged callback; a Bambu callback (access_token, ticket)
+    // carries no state to check it against, so the route must be closed whenever no login waits.
+    HeldMainThread quit_queue;
+    MainThreadGate quit_gate(quit_queue.post());
+    FakeSignIn     sign_in;
+
+    const unsigned short mcp_port = free_loopback_port();
+    HttpServer           mcp(mcp_port);
+    LoginCallbackServer  login(mcp, sign_in.handler(), "orca", quit_gate);
+    mcp.set_request_guard(app_request_guard(mcp_port, [&login](boost::asio::ip::port_type port) { return login.listens_on(port); }));
+    mcp.set_request_handler(app_routes(login, [] { return json_response({{"mcp", true}}); }));
+    mcp.start();
+    auto refused = [](const std::string& reply) { return reply.rfind("HTTP/1.1 404", 0) == 0 || reply.rfind("connect failed", 0) == 0; };
+
+    const unsigned short login_port = free_loopback_port();
+    REQUIRE(login.listen(login_port, "bbl"));
+    CHECK(contains(exchange(login_port, "GET", "/callback?code=6").get(), "\"login\":\"bbl\""));
+    login.stop_listening();
+    CHECK_FALSE(login.listens_on(login_port));
+    CHECK(refused(exchange(login_port, "GET", "/callback?access_token=x").get()));
+
+    // The fallback onto the MCP port closes the same way.
+    REQUIRE(login.listen(mcp_port, "bbl"));
+    CHECK(contains(exchange(mcp_port, "GET", "/callback?code=7").get(), "\"login\":\"bbl\""));
+    login.stop_listening();
+    CHECK(refused(exchange(mcp_port, "GET", "/callback?access_token=x").get()));
+    CHECK(contains(exchange(mcp_port, "GET", "/mcp").get(), "\"mcp\":true"));
+    const int sign_ins = sign_in.calls;
+    CHECK(sign_ins == 2);
+    mcp.stop();
+}
+
 TEST_CASE("a cloud login that asks for the MCP server's port never binds it", "[HttpServer][Login]")
 {
     // A login can be told LOCALHOST_PORT: the MCP server answers it there, and a login before the MCP

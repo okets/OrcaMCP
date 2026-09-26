@@ -37,13 +37,19 @@ public:
     LoginCallbackServer(HttpServer& mcp_server, AuthHandler auth, std::string provider, const MainThreadGate& quit_gate);
 
     // Answers `provider`'s callbacks on `port`: on the MCP server's own port that server alone, anywhere
-    // else also a listener added to it for the login. Returns false, binding nothing, when the MCP
-    // server is not started.
+    // else also a listener added to it for the login. Asking again for the port it listens on changes
+    // only the provider: the login dialog asks on every message that needs its callback URL. Returns
+    // false, binding nothing, when the MCP server is not started or the port cannot be bound (logged,
+    // not thrown: it would escape the login page's script handler).
     bool listen(int port, const std::string& provider);
 
-    // True when a login is listening on `port`: the port the last successful listen() asked for,
-    // which may be the MCP server's own. Before any login, false everywhere, so the MCP server does
-    // not answer login callbacks nobody is waiting for (OrcaMCPRequestGuard.hpp).
+    // The login has ended, however it ended (GUI_App::ShowUserLogin, once its dialog closes): closes
+    // its listener, and its callbacks are refused everywhere again.
+    void stop_listening();
+
+    // True while a login listens on `port`: the port its listen() asked for, which may be the MCP
+    // server's own, until stop_listening(). Otherwise false, so the MCP server answers no callback
+    // nobody is waiting for (OrcaMCPRequestGuard.hpp).
     bool listens_on(boost::asio::ip::port_type port) const { return port != 0 && port == m_port.load(); }
 
     // The login callback at `url`, answered for the provider of the login in progress. Called on the

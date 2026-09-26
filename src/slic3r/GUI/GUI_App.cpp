@@ -4742,6 +4742,9 @@ void GUI_App::ShowUserLogin(bool show, const std::string& provider)
         } catch (std::exception &) {
             ;
         }
+        // Orca: the login has ended, however it ended, and its callback route closes with it: a page
+        // must not be able to deliver a forged callback while no login is waiting for one.
+        m_login_server.stop_listening();
     } else {
         if (login_dlg)
             login_dlg->EndModal(wxID_OK);

@@ -1,6 +1,8 @@
 #include "OrcaMCPLoginServer.hpp"
 #include "OrcaMCPMainThreadGate.hpp"
 
+#include <boost/log/trivial.hpp>
+
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
 LoginCallbackServer::LoginCallbackServer(HttpServer& mcp_server, AuthHandler auth, std::string provider, const MainThreadGate& quit_gate)
@@ -12,11 +14,25 @@ bool LoginCallbackServer::listen(int port, const std::string& provider)
     set_provider(provider);
     if (!m_mcp_server.is_started())
         return false;
+    if (port == m_port)
+        return true; // binding the port again, while its listener still holds it, would fail
     const bool own_port = port == m_mcp_server.get_port();
-    if (!m_mcp_server.listen_also(own_port ? 0 : static_cast<boost::asio::ip::port_type>(port)))
+    try {
+        if (!m_mcp_server.listen_also(own_port ? 0 : static_cast<boost::asio::ip::port_type>(port)))
+            return false;
+    } catch (const boost::system::system_error& e) {
+        BOOST_LOG_TRIVIAL(warning) << "LoginCallbackServer: cannot listen for the cloud login on port " << port << ": "
+                                   << e.what();
         return false;
+    }
     m_port = port;
     return true;
+}
+
+void LoginCallbackServer::stop_listening()
+{
+    m_port = 0;
+    m_mcp_server.listen_also(0);
 }
 
 std::shared_ptr<HttpServer::Response> LoginCallbackServer::answer(const std::string& url) const

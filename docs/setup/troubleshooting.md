@@ -94,7 +94,8 @@ curl send neither, so they are not affected. If you see it:
 - from a script: do not set an `Origin` header, and address `localhost` or `127.0.0.1`, not a host
   name or LAN address that happens to reach this machine.
 
-A request to any other path on port 13618 gets 404 unless a cloud login is in progress there.
+A request to any other path on port 13618 gets 404 unless a cloud login is in progress there (its
+sign-in dialog is open); the login's own callback port closes when its dialog does.
 
 ### Can't reach OrcaMCP from another machine
 
