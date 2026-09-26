@@ -1,7 +1,8 @@
 # Fork-only. The same unittest command also runs in check_profiles.yml, but that workflow triggers
 # only on pull requests into main and release/*, and this fork's work lands on mcp by push, so without
-# this file no CI job ever ran the bridge's tests. Its paths do not overlap Build all's, so it never
-# starts the hour-long build.
+# this file no CI job ever ran the bridge's tests. It is cheap, and a change under scripts/ starts only
+# this job -- except scripts/orcamcp_tools.json, which also starts Build all: only the C++ unit tests
+# it runs can check the golden tool list against the registry.
 name: Python tests
 
 on:

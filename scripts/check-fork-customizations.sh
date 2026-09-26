@@ -214,6 +214,11 @@ check "CI still runs this guard" \
     'check-fork-customizations\.sh' \
     "Without the job, an upstream merge can revert every invariant above and CI stays green."
 
+check "a changed tool list still triggers CI" \
+    .github/workflows/build_all.yml \
+    'scripts/orcamcp_tools\.json' \
+    "Only the C++ unit tests this build runs can check a hand-edited golden tool list against the registry."
+
 check "the fork's branch still triggers CI" \
     .github/workflows/build_all.yml \
     '^[[:space:]]+- mcp$' \

@@ -22,6 +22,8 @@ on:
      - 'scripts/flatpak/**'
      - 'scripts/msix/**'
      - 'tests/**'
+     # The golden tool list: only the C++ test run by this build can check it against the registry.
+     - 'scripts/orcamcp_tools.json'
 
   pull_request:
     branches:
@@ -44,6 +46,8 @@ on:
      - 'scripts/flatpak/**'
      - 'scripts/msix/**'
      - 'tests/**'
+     # The golden tool list: only the C++ test run by this build can check it against the registry.
+     - 'scripts/orcamcp_tools.json'
 
 
   schedule:
