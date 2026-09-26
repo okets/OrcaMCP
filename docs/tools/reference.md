@@ -811,8 +811,9 @@ Switch to a different plate.
 ---
 
 ### delete_plate
-Remove a plate from the project. A slice of that plate is cancelled first; a slice of another plate
-goes on, and the other plates keep their slice results.
+Remove a plate from the project. A slice in progress is cancelled first, and a Slice All run with it:
+the response then carries `slice_cancelled: true` and an `info_messages` line saying so; call
+`slice_all` again. Plates sliced before keep their results.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
@@ -1427,9 +1428,11 @@ was called again and reports it as `restored_selected_plate`. This matters becau
 `get_print_estimate` takes an optional `plate_index` and answers about the selected plate only when
 that is omitted.
 
-**Deleting a plate during the run.** The run goes on with every remaining plate: a plate deleted
-while it is being sliced is dropped, and the run moves to the next. The plate restored at the end is
-the one that was selected at the call, wherever it now stands, or none if it was the deleted one.
+**Deleting a plate during the run** cancels it: the run walks the plates by position, which the
+deletion shifts. `delete_plate` says so (`slice_cancelled: true`, "the plate list changed during Slice
+All; the run was cancelled, call slice_all again"). Plates sliced before keep their results. The plate
+restored when the run ends is the one that was selected at the call, wherever it now stands, or none
+if it was the deleted one.
 
 Until v2.3.2, `slice_all` sliced only the current plate despite its name: a four-plate project was
 left with three unsliced plates and no error.

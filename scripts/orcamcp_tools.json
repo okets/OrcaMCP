@@ -450,7 +450,7 @@
     },
     {
       "category": "Plates",
-      "description": "Delete a plate. Cannot delete the last plate. Objects on it are NOT deleted and NOT moved to another plate: they are moved outside every plate, where get_scene_info lists them under unplaced_objects. Delete them first if you do not want them.",
+      "description": "Delete a plate. Cannot delete the last plate. Objects on it are NOT deleted and NOT moved to another plate: they are moved outside every plate, where get_scene_info lists them under unplaced_objects. Delete them first if you do not want them. A slice in progress is cancelled, a Slice All run with it (the response says so; call slice_all again).",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {

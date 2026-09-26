@@ -374,6 +374,7 @@ void BackgroundSlicingProcess::thread_proc()
                                              exception                   ? SlicingProcessCompletedEvent::Error :
                                                                            SlicingProcessCompletedEvent::Finished,
                                              exception);
+            evt.set_print_index(m_started_print_index); // Orca: the Print it is about, whatever the process points at by then
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__
                                     << boost::format(": send SlicingProcessCompletedEvent to main, status %1%") % evt.status();
             wxQueueEvent(GUI::wxGetApp().mainframe->m_plater, evt.Clone());
@@ -555,7 +556,10 @@ bool BackgroundSlicingProcess::start()
     if (!this->idle())
         throw Slic3r::RuntimeError("Cannot start a background task, the worker thread is not idle.");
     m_state = STATE_STARTED;
-    m_started_print = m_print; // Orca: the Print this slice's completion belongs to
+    // Orca: the Print's print index, which its completion carries.
+    m_started_print_index = -1;
+    if (m_current_plate != nullptr)
+        m_current_plate->get_print(nullptr, nullptr, &m_started_print_index);
     m_print->set_cancel_callback([this]() { this->stop_internal(); });
     lck.unlock();
     m_condition.notify_one();

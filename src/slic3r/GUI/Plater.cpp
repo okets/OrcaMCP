@@ -185,7 +185,7 @@
 #include "PurgeModeDialog.hpp"
 #include "OrcaMCP/OrcaMCPModelLoad.hpp"
 #include "OrcaMCP/OrcaMCPQuit.hpp"
-#include "OrcaMCP/OrcaMCPPlateIndex.hpp"
+#include "OrcaMCP/OrcaMCPSliceCredit.hpp"
 
 #include "DeviceCore/DevFilaSystem.h"
 #include "DeviceCore/DevManager.h"
@@ -6749,6 +6749,12 @@ struct Plater::priv
     PartPlateList partplate_list;
     //BBS: add a flag to ignore cancel event
     bool m_ignore_event{false};
+    // Orca: a plate deleted or moved while a slice runs stops it, and cancels a Slice All run
+    // (OrcaMCPSliceCredit.hpp); what it did, for the caller to report.
+    OrcaMCP::PlateListChangeDuringSlice stop_slice_for_plate_list_change();
+    // Orca: the print index a completion of this kind carries (OrcaMCPSliceCredit.hpp).
+    int completion_print_index(OrcaMCP::CompletionKind kind);
+    bool slicing_all_plates() const { return m_slice_all && m_is_slicing; } // Orca: a Slice All run is in progress
     bool m_slice_all{false};
     bool m_is_slicing {false};
     // Missing-plugin set signatures (sorted full refs joined by '\n'), one per notification. They
@@ -10841,6 +10847,7 @@ unsigned int Plater::priv::update_background_process(bool force_validation, bool
             // Post the "canceled" callback message, so that it will be processed after any possible pending status bar update messages.
             SlicingProcessCompletedEvent evt(EVT_PROCESS_COMPLETED, 0,
                 SlicingProcessCompletedEvent::Cancelled, nullptr);
+            evt.set_print_index(completion_print_index(OrcaMCP::CompletionKind::apply_cancelled)); // Orca
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(" %1%, post an EVT_PROCESS_COMPLETED to main, status %2%")%__LINE__ %evt.status();
             wxQueueEvent(q, evt.Clone());
         }
@@ -12638,21 +12645,25 @@ bool Plater::priv::warnings_dialog()
 
 }
 
-//BBS: add project slice logic
-// Orca: the live plate whose Print this is; nullptr once that plate has been deleted. Compares
-// pointers only: `print` may be gone.
-static PartPlate* plate_of_print(PartPlateList& plates, const PrintBase* print)
+OrcaMCP::PlateListChangeDuringSlice Plater::priv::stop_slice_for_plate_list_change()
 {
-    for (int i = 0; i < plates.get_plate_count(); ++i) {
-        PartPlate* plate       = plates.get_plate(i);
-        PrintBase* plate_print = nullptr;
-        plate->get_print(&plate_print, nullptr, nullptr);
-        if (print != nullptr && plate_print == print)
-            return plate;
-    }
-    return nullptr;
+    const auto change = OrcaMCP::on_plate_list_change(background_process.running(), slicing_all_plates());
+    if (change.cancel_slice_all)
+        m_slice_all = false; // the completion still to come ends the run
+    if (change.stop_slice)
+        background_process.stop();
+    return change;
 }
 
+int Plater::priv::completion_print_index(OrcaMCP::CompletionKind kind)
+{
+    int current_plate_print_index = -1;
+    if (PartPlate* plate = partplate_list.get_curr_plate(); plate != nullptr)
+        plate->get_print(nullptr, nullptr, &current_plate_print_index);
+    return OrcaMCP::completion_print_index(kind, background_process.started_print_index(), current_plate_print_index);
+}
+
+//BBS: add project slice logic
 void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
 {
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": enter, m_ignore_event %1%, status %2%")%m_ignore_event %evt.status();
@@ -12723,21 +12734,19 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
         has_error = true;
         is_finished = true;
     }
-    // Orca: the plate this completion is for is the one whose slice was started, not the one the process
-    // points at now (a plate switch or delete_plate repoints it); none when it has been deleted since.
-    PartPlate* const sliced_plate = plate_of_print(partplate_list, this->background_process.started_print());
-    // Orca: Slice All goes on to the next plate when the one it was slicing was deleted: that cancel was
-    // the deletion's (delete_plate stopped it, and set m_cur_slice_plate so the next step is the next plate).
-    const bool slice_all_goes_on = m_slice_all && sliced_plate == nullptr && evt.cancelled();
-    if (evt.cancelled() && !slice_all_goes_on) {
+    if (evt.cancelled()) {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", cancel event, status: %1%") % evt.status();
         this->notification_manager->set_slicing_progress_canceled(_u8L("Slicing Canceled"));
         is_finished = true;
     }
 
     //BBS: set the current plater's slice result to valid
-    if (!this->background_process.empty() && sliced_plate != nullptr)
-        sliced_plate->update_slice_result_valid_state(evt.success());
+    // Orca: set it on the plate that still holds the Print this completion is about (its print index,
+    // never reused), not on the plate the process points at now: a plate switch, deletion or move may
+    // have repointed it. None once that plate is gone (OrcaMCPSliceCredit.hpp).
+    if (const int sliced_plate = partplate_list.find_plate_by_print_index(evt.print_index());
+        !this->background_process.empty() && sliced_plate >= 0)
+        partplate_list.get_plate(sliced_plate)->update_slice_result_valid_state(evt.success());
 
     //BBS: update the action button according to the current plate's status
     bool ready_to_slice = !this->partplate_list.get_curr_plate()->is_slice_result_valid();
@@ -19459,6 +19468,7 @@ void Plater::reslice()
         BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": in slicing all, current plate %1% already sliced, skip to next") % p->m_cur_slice_plate ;
         SlicingProcessCompletedEvent evt(EVT_PROCESS_COMPLETED, 0,
             SlicingProcessCompletedEvent::Finished, nullptr);
+        evt.set_print_index(p->completion_print_index(OrcaMCP::CompletionKind::already_sliced)); // Orca
         // Post the "complete" callback message, so that it will slice the next plate soon
         wxQueueEvent(this, evt.Clone());
         p->m_is_slicing = true;
@@ -19605,6 +19615,7 @@ int Plater::start_next_slice()
         //slice next
         SlicingProcessCompletedEvent evt(EVT_PROCESS_COMPLETED, 0,
                 SlicingProcessCompletedEvent::Finished, nullptr);
+        evt.set_print_index(p->completion_print_index(OrcaMCP::CompletionKind::already_sliced)); // Orca
         // Post the "complete" callback message, so that it will slice the next plate soon
         wxQueueEvent(this, evt.Clone());
     }
@@ -22096,6 +22107,9 @@ int Plater::select_plate_by_hover_id(int hover_id, bool right_click, bool isModi
     } else if ((action == 7) && (!right_click)) {
         // move plate to the front
         take_snapshot("move plate to the front");
+        // Orca: the plates move, and the process is pointed at the current plate's Print below: stop the
+        // slice, and a Slice All run, first, or the stop would cancel the wrong Print.
+        p->stop_slice_for_plate_list_change();
         ret = p->partplate_list.move_plate_to_index(plate_index,0);
         p->partplate_list.update_slice_context_to_current_plate(p->background_process);
         p->preview->update_gcode_result(p->partplate_list.get_current_slice_result());
@@ -22137,26 +22151,14 @@ int Plater::delete_plate(int plate_index)
         index = p->partplate_list.get_curr_plate_index();
 
     take_snapshot("delete partplate");
-    // Orca: the plate's Print is deleted below. When it is the one being sliced, stop the slice first
-    // (deleting it under the slicing thread crashed the app, 2026-09-26); a slice of another plate goes
-    // on. A result still to come for this plate belongs to no plate any more (on_process_completed finds
-    // none). Slice All walks the plates by index, which the deletion shifts: keep its place
-    // (OrcaMCPPlateIndex.hpp).
-    if (PartPlate* const deleted = p->partplate_list.get_plate(index); deleted != nullptr && p->partplate_list.get_plate_count() > 1) {
-        if (p->background_process.running() && p->background_process.get_current_plate() == deleted)
-            p->background_process.stop();
-        if (p->m_slice_all && p->m_is_slicing)
-            p->m_cur_slice_plate = OrcaMCP::slice_all_position_after_delete(p->m_cur_slice_plate, index);
-    }
+    // Orca: the plate's Print is deleted below, maybe the one being sliced (that crashed the app,
+    // 2026-09-26), and the plates after it move: stop the slice, and a Slice All run, first.
+    p->stop_slice_for_plate_list_change();
     ret = p->partplate_list.delete_plate(index);
 
     //BBS: update the current print to the current plate
-    // Orca: not while another plate is being sliced, as in select_plate: the slice would then be
-    // cancelled, or its result given, through another plate's Print.
-    if (p->background_process.can_switch_print()) {
-        p->partplate_list.update_slice_context_to_current_plate(p->background_process);
-        p->preview->update_gcode_result(p->partplate_list.get_current_slice_result());
-    }
+    p->partplate_list.update_slice_context_to_current_plate(p->background_process);
+    p->preview->update_gcode_result(p->partplate_list.get_current_slice_result());
     p->sidebar->obj_list()->reload_all_plates();
 
     // BBS update default view
@@ -22179,6 +22181,8 @@ bool Plater::is_background_process_slicing() const
 {
     return p->m_is_slicing;
 }
+
+bool Plater::is_slicing_all_plates() const { return p->slicing_all_plates(); }
 
 //BBS: update slicing context
 void Plater::update_slicing_context_to_current_partplate()

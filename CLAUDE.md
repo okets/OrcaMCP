@@ -859,7 +859,7 @@ echo "M HttpServer::stop cuts a reply still being written (rel2506/04b): $(U src
 echo "N HttpServer listens on every interface (rel2506/04b):             $(U src/slic3r/GUI/HttpServer.hpp | grep -c 'acceptor(io_service, {boost::asio::ip::tcp::v4()')"
 echo "R HttpServer serves a request without reading its Origin (rel2506/04b): $( { U src/slic3r/GUI/HttpServer.hpp; U src/slic3r/GUI/HttpServer.cpp; } | grep -qi '"origin"' && echo no || echo yes)"
 echo "O priv::reset frees the prints before it stops the slice (rel2506/04c): $(U src/slic3r/GUI/Plater.cpp | awk '/^void Plater::priv::reset\(bool/{f=1} f&&/background_process\.(stop|reset)\(\)/{print "no"; exit} f&&/partplate_list\.reinit\(\)/{print "yes"; exit}')"
-echo "P delete_plate frees a Print the slice may be using (rel2506/04c):  $(U src/slic3r/GUI/Plater.cpp | awk '/^int Plater::delete_plate\(int/{f=1} f&&/background_process\.stop\(\)/{print "no"; exit} f&&/partplate_list\.delete_plate\(/{print "yes"; exit}')"
+echo "P delete_plate frees a Print the slice may be using / init() reuses print indices (rel2506/04c): $(U src/slic3r/GUI/Plater.cpp | awk '/^int Plater::delete_plate\(int/{f=1} f&&/stop_slice_for_plate_list_change|background_process\.stop\(\)/{print "no"; exit} f&&/partplate_list\.delete_plate\(/{print "yes"; exit}') / $(U src/slic3r/GUI/PartPlate.cpp | awk '/^void PartPlateList::init\(\)/{f=1} f&&/m_print_index = 0;/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
 echo "Q restore prompt closed by a quit deletes the backup (rel2506/04c):  $(U src/slic3r/GUI/Plater.cpp | awk '/EVT_RESTORE_PROJECT, \[this/{f=1} f&&/closing_dialogs_to_quit|wxID_ABORT/{print "no"; exit} f&&/remove_all\(last\)/{print "yes"; exit}')"
 echo "S the logout handler ends dialogs with wxID_ABORT (rel2506/04c):    $(U src/slic3r/GUI/GUI_App.cpp | grep -c 'EndModal(wxID_ABORT)')"
 ```
@@ -885,16 +885,17 @@ release and dev builds).
 Ours stops the slice just before `reinit()`. On "no", take upstream's order and re-check a quit during
 a tree-support slice.
 
-Item P: the same in `Plater::delete_plate`: deleting the plate being sliced deleted its `Print` under
-the slicing thread (SIGSEGV, 2026-09-26), and a change of current plate repointed the background
-process. Ours stops the slice only when it is the deleted plate's, repoints the process only when no
-slice runs (as `select_plate` does), and has `on_process_completed` skip the result of a plate that
-was deleted: a completion belongs to the plate whose `Print` was started
-(`BackgroundSlicingProcess::started_print`, matched against the live plates), not to the plate the
-process points at by then, which it used to mark. Slice All walks by index, so deleting a plate at or
-before the one it is slicing moves its place back (`OrcaMCP::slice_all_position_after_delete`), and a
-deleted plate's cancel lets the walk go on. On "no", take upstream's and re-check `delete_plate` on the
-plate being sliced, on another plate while one is sliced, and on plate 0 during Slice All.
+Item P: the same in `Plater::delete_plate`, and in the "move plate to the front" action: deleting the
+plate being sliced deleted its `Print` under the slicing thread (SIGSEGV, 2026-09-26), and both
+repoint the background process while it may be running. Ours stops the slice first, and cancels a
+Slice All run (`Plater::priv::stop_slice_for_plate_list_change`; the run walks the plates by index,
+which the change shifts). A completion is credited by the print index it carries
+(`SlicingProcessCompletedEvent::print_index`, the started Print's for a slice, the current plate's for
+a "nothing to slice" skip) to the plate that still holds it (`find_plate_by_print_index`), not to the
+plate the process points at when it is handled, which upstream marks. And `PartPlateList::init()` no
+longer restarts print indices at 0, so a new project's plate never takes an old one's. On "no" / "no",
+take upstream's and re-check `delete_plate` during a slice and during Slice All, and a completion
+queued across `new_project`.
 
 Item Q: upstream's restore prompt treats every answer but Yes as No and deletes the crashed session's
 backup, including a prompt the app itself closed to quit (its system-logout handler, and our

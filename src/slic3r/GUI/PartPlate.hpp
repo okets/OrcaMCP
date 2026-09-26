@@ -595,7 +595,9 @@ class PartPlateList : public ObjectBase
     int m_plate_count;
     int m_plate_cols;
     int m_current_plate;
-    int m_print_index;
+    // Orca: never reset (init() used to), so a print index names one Print for the list's whole life: a
+    // slice's completion is credited by it, and a new project's plate 0 must not take an old one's.
+    int m_print_index = 0;
 
     int m_plate_width;
     int m_plate_depth;

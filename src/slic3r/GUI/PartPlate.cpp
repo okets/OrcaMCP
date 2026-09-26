@@ -4150,7 +4150,7 @@ void PartPlateList::init()
 	assert(first_plate != NULL);
 	m_plate_list.push_back(first_plate);
 
-	m_print_index = 0;
+	// Orca: m_print_index goes on counting from the plates before (see its declaration).
 	if (printer_technology == ptFFF)
 	{
 		Print* print = new Print();

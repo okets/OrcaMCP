@@ -48,6 +48,10 @@ public:
 	virtual wxEvent* Clone() const { return new SlicingProcessCompletedEvent(*this); }
 
 	StatusType 	status()    const { return m_status; }
+	// Orca: the print index (PartPlateList's key, never reused) of the Print this completion is about;
+	// -1 for none. It is credited to the plate that still holds that print index (on_process_completed).
+	int  		print_index() const { return m_print_index; }
+	void 		set_print_index(int print_index) { m_print_index = print_index; }
 	bool 		finished()  const { return m_status == Finished; }
 	bool 		success()   const { return m_status == Finished; }
 	bool 		cancelled() const { return m_status == Cancelled; }
@@ -65,6 +69,7 @@ public:
 private:
 	StatusType 			m_status;
 	std::exception_ptr 	m_exception;
+	int 				m_print_index = -1; // Orca: see print_index()
 };
 
 //BBS: move it to plater.hpp
@@ -94,11 +99,9 @@ public:
 	bool can_switch_print();
 	void set_current_plate(GUI::PartPlate* plate) { m_current_plate = plate; }
 	GUI::PartPlate* get_current_plate() { return m_current_plate; }
-	// Orca: the Print whose slice was started last (start()). A completion is that Print's plate's even
-	// once the process points at another plate: a plate switch or delete_plate can repoint it while the
-	// result is still to be handled. Only compared with the live plates' Prints, never dereferenced: the
-	// plate may have been deleted.
-	const PrintBase* started_print() const { return m_started_print; }
+	// Orca: the print index of the Print whose slice was started last (start()), which its completion
+	// carries: the process may be pointed at another plate before that is handled.
+	int started_print_index() const { return m_started_print_index; }
 	GCodeProcessorResult* get_current_gcode_result() { return m_gcode_result;}
 
 	// The following wxCommandEvent will be sent to the UI thread / Plater window, when the slicing is finished
@@ -280,7 +283,7 @@ private:
 
 	//BBS: partplate related
 	GUI::PartPlate* m_current_plate;
-	const PrintBase* m_started_print = nullptr; // Orca: see started_print()
+	int m_started_print_index = -1; // Orca: see started_print_index(); set under m_mutex
 	PrinterTechnology m_printer_tech = ptUnknown;
 	bool m_internal_cancelled = false;
 
