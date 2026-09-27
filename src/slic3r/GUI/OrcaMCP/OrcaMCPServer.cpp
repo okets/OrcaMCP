@@ -5,6 +5,7 @@
 #include "OrcaMCPPlateUtils.hpp"
 #include "OrcaMCPImageFiles.hpp"
 #include "OrcaMCPConfigKeys.hpp"
+#include "OrcaMCPConfigValues.hpp"
 #include "OrcaMCPFilamentUtils.hpp"
 #include "OrcaMCPSliceEstimate.hpp"
 #include "OrcaMCPServerInfo.hpp"
@@ -944,6 +945,73 @@ void OrcaMCPServer::register_builtin_tools()
         [](const nlohmann::json& params) -> nlohmann::json {
             return run_on_main_thread([]() {
                 return OrcaMCPPresetConfigUtils::GetAllEditedPresetJson();
+            });
+        }
+    });
+
+    // get_config_values - the selected presets, and just the settings a caller names
+    register_tool({
+        "get_config_values",
+        ToolCategory::Config,
+        "Selected presets and chosen settings",
+        "Which presets are selected: with no arguments, the selected printer, print (process) and each "
+        "filament slot's preset, with a dirty flag for unsaved changes, in about 300 bytes. Pass keys to "
+        "read just those settings -- a dozen cost well under 1 KB, against 25-48 KB for "
+        "get_edited_presets -- grouped under where each lives: print, filament (one value per slot), "
+        "printer or project, the type apply_config takes for it. dirty names the ones whose value "
+        "differs from the saved preset, with the saved value (for a filament setting, the slots whose "
+        "preset the Filament tab is editing); dirty_only keeps only those, and with no keys lists every "
+        "unsaved change. Values are the slicer's text, as get_edited_presets shows them and apply_config "
+        "accepts them. An unknown key is an error naming it (get_valid_config_keys lists valid ones); a "
+        "known key no selected preset carries is listed under not_in_presets.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"keys", {
+                    {"type", "array"},
+                    {"items", {{"type", "string"}}},
+                    {"description", "Setting keys to read, e.g. [\"support_type\", \"support_threshold_angle\"]. "
+                                    "Omit for the selected presets alone."}
+                }},
+                {"dirty_only", {
+                    {"type", "boolean"},
+                    {"description", "Only settings whose value differs from the saved preset. With no keys: "
+                                    "every unsaved change, beside the selected presets. Default false."}
+                }}
+            }}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            std::vector<std::string> keys;
+            if (params.contains("keys") && !params["keys"].is_null()) {
+                if (!params["keys"].is_array())
+                    return error_response("keys must be an array of setting names");
+                for (const nlohmann::json& key : params["keys"]) {
+                    if (!key.is_string())
+                        return error_response("keys must be an array of setting names; got " + key.dump());
+                    keys.push_back(key.get<std::string>());
+                }
+            }
+            bool dirty_only = false;
+            if (params.contains("dirty_only") && !parse_boolean_param(params["dirty_only"], dirty_only))
+                return error_response("dirty_only must be a boolean");
+            const std::vector<std::string> unknown = unknown_config_keys(keys);
+            if (!unknown.empty()) {
+                std::string names;
+                for (const std::string& key : unknown)
+                    names += (names.empty() ? "" : ", ") + key;
+                nlohmann::json refusal = error_response("Unknown setting key(s): " + names +
+                                                        ". get_valid_config_keys lists the valid ones.");
+                refusal["unknown_keys"] = unknown;
+                return refusal;
+            }
+            return run_on_main_thread([keys, dirty_only]() -> nlohmann::json {
+                const ConfigSources sources = config_sources_from(*wxGetApp().preset_bundle);
+                if (!keys.empty())
+                    return config_values_json(sources, keys, dirty_only);
+                nlohmann::json result = {{"status", "success"}, {"presets", selected_presets_json(sources)}};
+                if (dirty_only)
+                    result["dirty"] = unsaved_changes_json(sources);
+                return result;
             });
         }
     });

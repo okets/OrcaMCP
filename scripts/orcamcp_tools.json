@@ -629,6 +629,30 @@
     },
     {
       "category": "Config",
+      "description": "Which presets are selected: with no arguments, the selected printer, print (process) and each filament slot's preset, with a dirty flag for unsaved changes, in about 300 bytes. Pass keys to read just those settings -- a dozen cost well under 1 KB, against 25-48 KB for get_edited_presets -- grouped under where each lives: print, filament (one value per slot), printer or project, the type apply_config takes for it. dirty names the ones whose value differs from the saved preset, with the saved value (for a filament setting, the slots whose preset the Filament tab is editing); dirty_only keeps only those, and with no keys lists every unsaved change. Values are the slicer's text, as get_edited_presets shows them and apply_config accepts them. An unknown key is an error naming it (get_valid_config_keys lists valid ones); a known key no selected preset carries is listed under not_in_presets.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "dirty_only": {
+            "description": "Only settings whose value differs from the saved preset. With no keys: every unsaved change, beside the selected presets. Default false.",
+            "type": "boolean"
+          },
+          "keys": {
+            "description": "Setting keys to read, e.g. [\"support_type\", \"support_threshold_angle\"]. Omit for the selected presets alone.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "get_config_values",
+      "summary": "Selected presets and chosen settings"
+    },
+    {
+      "category": "Config",
       "description": "Get currently edited presets with dirty (modified) options",
       "inputSchema": {
         "additionalProperties": false,

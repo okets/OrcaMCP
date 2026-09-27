@@ -99,9 +99,9 @@ cd build && ctest --output-on-failure
 
 **Status**: Complete & Tested ✓
 
-### MCP Tools (80 in the app, 82 reachable)
+### MCP Tools (81 in the app, 83 reachable)
 
-The registry holds 82: the app serves 80 through `tools/list`, and two are registered as
+The registry holds 83: the app serves 81 through `tools/list`, and two are registered as
 bridge-only and served by the bridge: `start_orca`, which launches OrcaSlicer and so cannot be
 answered by it, and `wait_for_slice`, a wait the app's one request thread could not do without
 stalling every other call.
@@ -117,7 +117,7 @@ grep -hA1 -E '^\s*register_(bridge_)?tool\(\{' src/slic3r/GUI/OrcaMCP/*.cpp | gr
 | **Models** | `load_model` (a 3MF is always geometry only: never its presets, never a rename; `.gcode` / `.gcode.3mf` only onto an empty scene, as a preview; returns `loaded_objects` in `get_scene_info`'s object shape, `filaments_added`; `multipart: merge\|separate`), `auto_orient`, `arrange_objects`, `get_object_info` (incl. every volume with its type and filament), `get_mesh_health` (mesh errors behind the object list's warning icon: the icon state, its exact tooltip, open edges, recorded repairs, shells, per object and per volume), `rename_object`, `set_object_printable` |
 | **Transforms** | `move_object`, `rotate_object`, `scale_object`, `mirror_object`, `flatten_object`, `clone_object`, `cut_object`, `delete_object`, `transform_objects` (rotate, scale, mirror and transform drop a resting object back onto the bed like the GUI; an explicit Z is kept) |
 | **Plates** | `add_plate`, `select_plate`, `delete_plate`, `set_prime_tower_position` |
-| **Config** | `get_presets`, `get_edited_presets`, `select_preset` (`type: printer` returns the resulting `filaments`, each with its observed `color_source`: `unchanged`/`remembered`/`default`/`other`), `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset`, `get_valid_config_keys` |
+| **Config** | `get_presets`, `get_edited_presets` (25-48 KB), `get_config_values` (no arguments: the selected printer, print and per-slot filament presets with dirty flags, ~300 B; `keys`: just those settings, grouped by `apply_config` type, with `dirty` saved values; `dirty_only`), `select_preset` (`type: printer` returns the resulting `filaments`, each with its observed `color_source`: `unchanged`/`remembered`/`default`/`other`), `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset`, `get_valid_config_keys` |
 | **Per-Object** | `get_object_config`, `set_object_config`, `reset_object_config` |
 | **Layer Ranges** | `get_object_layer_ranges`, `set_object_layer_range`, `delete_object_layer_range` |
 | **Filaments & colour** | `get_filaments`, `set_object_filament` (whole-object form clears the volumes' own slots and reports `effective_filaments`; a volume's slot beats the object's), `set_mixed_filament`, `delete_mixed_filament`, `set_filament_color` (a slot's plate colour, saved for the selected printer so a switch away and back keeps it; `apply_config` edits the preset instead), `get_flush_volumes`, `set_flush_volumes`, `auto_calc_flush_volumes`, `get_toolchanger_config`, `suggest_color_mix`, `get_color_palette` |

@@ -363,7 +363,8 @@ json warnings_and_best_practices()
         {"token_optimization", {
             {"critical", "ALWAYS use save_to_file=true with render_plate_view to avoid 5KB+ base64 images per view"},
             {"avoid_heavy_tools", {
-                {"get_edited_presets", "~15-20KB response. Use sparingly, cache results."},
+                {"get_edited_presets", "25-48 KB: every key of three presets, start G-code included. For a few settings, "
+                                       "or which presets are selected, use get_config_values."},
                 {"get_presets", "Filter it: {type, vendor, name_contains}. summary:false without a filter "
                                 "is ~1.9MB and will not fit in a response."},
                 {"get_scene_info", "Use with_model_object_features=false unless you need every object's mesh-health numbers."}

@@ -16,7 +16,7 @@ dedicated section below yet.
 | **Models** | `load_model`, `auto_orient`, `arrange_objects`, `get_object_info`, `get_mesh_health`, `rename_object`, `set_object_printable` |
 | **Transforms** | `move_object`, `rotate_object`, `scale_object`, `mirror_object`, `flatten_object`, `clone_object`, `cut_object`, `delete_object`, `transform_objects` |
 | **Plates** | `add_plate`, `select_plate`, `delete_plate`, `set_prime_tower_position` |
-| **Config** | `get_presets`, `get_edited_presets`, `select_preset`, `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset`, `get_valid_config_keys` |
+| **Config** | `get_presets`, `get_edited_presets`, `get_config_values`, `select_preset`, `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset`, `get_valid_config_keys` |
 | **Per-Object** | `get_object_config`, `set_object_config`, `reset_object_config` |
 | **Layer Ranges** | `get_object_layer_ranges`, `set_object_layer_range`, `delete_object_layer_range` |
 | **Filaments & colour** | `get_filaments`, `set_object_filament`, `set_mixed_filament`, `delete_mixed_filament`, `set_filament_color`, `get_flush_volumes`, `set_flush_volumes`, `auto_calc_flush_volumes`, `get_toolchanger_config`, `suggest_color_mix`, `get_color_palette` |
@@ -1049,7 +1049,58 @@ Get currently active presets with dirty options.
 
 **Parameters:** None
 
-**Returns:** Current presets with `dirty_options` arrays showing modified settings.
+**Returns:** Current presets with `dirty_options` arrays showing modified settings. Every key of
+three presets: 25-48 KB. For a few settings, or which presets are selected, use `get_config_values`.
+
+---
+
+### get_config_values
+Which presets are selected, and the values of just the settings you name. A cheap read an agent
+can repeat as it works.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `keys` | array of strings | No | Setting keys to read. Omit for the selected presets alone |
+| `dirty_only` | boolean | No | Only settings whose value differs from the saved preset. With no `keys`: every unsaved change. Default `false` |
+
+**Returns (no arguments):** the selected presets, about 300 bytes:
+```json
+{
+  "status": "success",
+  "presets": {
+    "printer": {"name": "Flashforge Creator 5 Pro 0.4 nozzle", "dirty": false},
+    "print": {"name": "0.20mm Standard @FF C5P", "dirty": true},
+    "filaments": [
+      {"slot": 1, "name": "Flashforge PLA @FF C5P", "dirty": false},
+      {"slot": 2, "name": "Flashforge PETG Pro @FF C5P", "dirty": false}
+    ]
+  }
+}
+```
+
+**Returns (`keys`):** each value grouped under where it lives, which is the `type` `apply_config`
+takes for it. A filament setting has one value per slot.
+```json
+{
+  "status": "success",
+  "values": {
+    "print": {"support_type": "tree(auto)", "support_threshold_angle": "30"},
+    "filament": {"filament_type": ["PLA", "PETG"]},
+    "project": {"filament_colour": "#FFFFFF;#1A1A1A"}
+  },
+  "dirty": {"print": {"support_type": {"saved": "normal(auto)"}}}
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `values` | `print`, `filament`, `printer` and `project` groups, present only when a key lives there. Values are the slicer's text, as `get_edited_presets` shows them and `apply_config` accepts them. A print-host credential is `"<redacted>"` (or `""`), never its value |
+| `dirty` | The keys whose value differs from the saved preset, with the saved value. For a filament key: `slots`, the slots whose preset the Filament tab is editing, and their `saved` value. Omitted when nothing differs. With `dirty_only` and no `keys`, every unsaved change as `{key: {value, saved}}` (filament: `{slots, value, saved}`) |
+| `not_in_presets` | Known keys that no selected preset nor the project carries (an object-only key such as `extruder`) |
+
+A dozen keys cost well under 1 KB. An unknown key is an error naming it, in `unknown_keys`;
+`get_valid_config_keys` lists the valid ones.
 
 ---
 

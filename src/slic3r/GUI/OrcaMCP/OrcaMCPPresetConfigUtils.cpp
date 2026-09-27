@@ -1,5 +1,6 @@
 #include "OrcaMCPPresetConfigUtils.hpp"
 #include "OrcaMCPCommon.hpp"
+#include "OrcaMCPConfigValues.hpp"
 #include "OrcaMCPFilamentUtils.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Tab.hpp"
@@ -260,15 +261,8 @@ nlohmann::json OrcaMCPPresetConfigUtils::PresetToJson(const Preset* preset, bool
         // Serialize config keys and values
         nlohmann::json config_json = nlohmann::json::object();
         const DynamicPrintConfig& config = preset->config;
-        for (const std::string& key : config.keys()) {
-            // A credential is reported as present or empty, never by value: tool output ends up in
-            // transcripts and logs.
-            if (Preset::is_print_host_secret_key(key)) {
-                config_json[key] = config.opt_serialize(key).empty() ? "" : "<redacted>";
-                continue;
-            }
-            config_json[key] = config.opt_serialize(key);
-        }
+        for (const std::string& key : config.keys())
+            config_json[key] = OrcaMCP::reported_config_value(config, key); // a credential is never shown
         j["config"] = config_json;
     }
     return j;
