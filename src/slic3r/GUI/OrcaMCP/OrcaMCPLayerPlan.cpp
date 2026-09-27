@@ -607,12 +607,23 @@ std::optional<BoundingBoxf> object_frame(const Print& print, const Model& model,
         if (!points.empty())
             merge_on_bed(frame, *po, BoundingBox(points));
     }
-    if (std::abs(z - first_print_height(print)) < k_gcode_height_tolerance)  // brim and raft: the first-layer plan's
-        for (const PlanObject& o : plan_from_print(print, model).objects)
+    if (std::abs(z - first_print_height(print)) < k_gcode_height_tolerance) {  // brim and raft: the first-layer plan's
+        const FirstLayerPlan plan = plan_from_print(print, model);
+        for (const PlanObject& o : plan.objects)
             if (o.object_index == object_index) {
                 merge_mm(frame, get_extents(o.on_bed()));
                 merge_mm(frame, get_extents(o.brim));
             }
+        // A combined brim belongs to no one object: take in the ones that reach this object.
+        BoundingBoxf own = frame;
+        own.offset(1.0);
+        for (const ExPolygon& brim : union_ex(plan.loose_brim)) {
+            BoundingBoxf box;
+            merge_mm(box, get_extents(brim));
+            if (box.defined && box.overlap(own))
+                frame.merge(box);
+        }
+    }
     return frame;
 }
 

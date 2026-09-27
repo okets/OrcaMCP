@@ -649,6 +649,36 @@ TEST_CASE("an object's frame on a layer takes in its brim and its support lines"
     CHECK_FALSE(object_frame(print, model, 7, 5.0).has_value());  // no such object
 }
 
+TEST_CASE("an object's first-layer frame takes in a combined brim around it", "[orcamcp][LayerPlan]")
+{
+    // Two 10 mm cubes 3 mm apart with 5 mm combined brims: one brim group spans both, and the plan
+    // draws it loose. Each cube's frame still reaches the brim's edge on its own side.
+    TriangleMesh left = make_cube(10, 10, 10), right = make_cube(10, 10, 10);
+    right.translate(13, 0, 0);
+    std::vector<TriangleMesh> meshes;
+    meshes.push_back(std::move(left));
+    meshes.push_back(std::move(right));
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_deserialize_strict({
+        {"brim_type", "outer_only"},
+        {"brim_width", 5},
+        {"combine_brims", 1},
+        {"layer_height", 0.2},
+        {"initial_layer_print_height", 0.2},
+    });
+    Print print;
+    Model model;
+    Test::init_print(std::move(meshes), print, model, config, nullptr, /*arrange=*/false);
+    print.process();
+    REQUIRE_FALSE(plan_from_print(print, model).loose_brim.empty());
+
+    const BoundingBoxf3               cube  = model.objects[0]->instance_bounding_box(0);
+    const std::optional<BoundingBoxf> frame = object_frame(print, model, 0, first_print_height(print));
+    REQUIRE(frame.has_value());
+    CHECK(frame->min.x() <= cube.min.x() - 4.5);
+    CHECK(frame->min.y() <= cube.min.y() - 4.5);
+}
+
 TEST_CASE("an object's footprint comes from the sliced object, where the model puts it", "[orcamcp][LayerPlan]")
 {
     SlicedCap cap;
