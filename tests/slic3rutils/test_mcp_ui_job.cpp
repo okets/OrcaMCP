@@ -129,8 +129,8 @@ TEST_CASE("An arrange's run is undone however it ends: the plates it locked, its
     plates.get_plate(0)->lock(true);
     std::atomic<bool> arrange_running{true};
     bool              notification_closed = false;
-    // Plate 7 is one the arrange locked that is gone since: skipped.
-    Slic3r::GUI::end_arrange_run(plates, {0, 7}, arrange_running, [&notification_closed] { notification_closed = true; });
+    Slic3r::GUI::end_arrange_run(plates, {plates.get_plate(0)->id()}, arrange_running,
+                                 [&notification_closed] { notification_closed = true; });
     CHECK_FALSE(plates.get_plate(0)->is_locked());
     CHECK_FALSE(arrange_running.load());
     CHECK(notification_closed);
@@ -355,4 +355,19 @@ TEST_CASE("The wait's cap is what the bridge sends, 105 s without it", "[McpUiJo
 
     const ScopedToolWaitCap scoped({{"_meta", {{"orcamcp/wait_cap_s", 12}}}});
     CHECK(tool_wait_cap() == milliseconds(12000));
+}
+
+TEST_CASE("An arrange unlocks only the plates it locked, never a plate of a list that replaced them", "[McpUiJob][orcamcp]")
+{
+    // A project opened while the arrange ran: the reset cancels it, and its late finalize meets a new
+    // plate list, whose first plate the user saved locked. Its index is the arranged plate's; its
+    // identity is not.
+    Slic3r::Model              model;
+    Slic3r::GUI::PartPlateList arranged(nullptr, &model, Slic3r::ptFFF);
+    Slic3r::GUI::PartPlateList opened(nullptr, &model, Slic3r::ptFFF);
+    opened.get_plate(0)->lock(true);
+    std::atomic<bool> arrange_running{true};
+    Slic3r::GUI::end_arrange_run(opened, {arranged.get_plate(0)->id()}, arrange_running, [] {});
+    CHECK(opened.get_plate(0)->is_locked());
+    CHECK_FALSE(arrange_running.load());
 }

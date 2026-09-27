@@ -9,6 +9,7 @@
 
 #include "Job.hpp"
 #include "libslic3r/Arrange.hpp"
+#include "libslic3r/ObjectID.hpp"
 
 namespace Slic3r {
 
@@ -18,14 +19,15 @@ namespace GUI {
 
 class Plater;
 class PartPlateList;
+class NotificationManager;
 
 // Orca: what an arrange sets up for its run, undone when it ends -- however it ends: the plates
-// prepare_all locked because their print sequence differs from the global one (`plates_to_unlock`;
-// an index no longer in `plates` is skipped), the plater's "an arrange is running" flag, and the
-// "Arranging..." notification. Upstream undid them only after an arrange it applied, so a cancelled
-// or failed one left those plates locked, the plate toolbar's arrange button refusing, and the
-// notification up until it timed out.
-void end_arrange_run(PartPlateList& plates, const std::vector<int>& plates_to_unlock, std::atomic<bool>& arrange_running,
+// prepare_all locked because their print sequence differs from the global one (`plates_to_unlock`,
+// by identity: a plate of a list that replaced them since, a new or opened project's, is never
+// touched), the plater's "an arrange is running" flag, and the "Arranging..." notification. Upstream
+// undid them only after an arrange it applied, so a cancelled or failed one left those plates locked,
+// the plate toolbar's arrange button refusing, and the notification up until it timed out.
+void end_arrange_run(PartPlateList& plates, const std::vector<ObjectID>& plates_to_unlock, std::atomic<bool>& arrange_running,
                      const std::function<void()>& close_notification);
 
 class ArrangeJob : public Job
@@ -37,12 +39,18 @@ class ArrangeJob : public Job
     ArrangePolygons m_selected, m_unselected, m_unprintable, m_locked;
     std::vector<ModelInstance*> m_unarranged;
     std::map<int, ArrangePolygons> m_selected_groups;   // groups of selected items for sequential printing
-    std::vector<int> m_uncompatible_plates;  // plate indices with different printing sequence than global
+    std::vector<ObjectID> m_uncompatible_plates;  // Orca: the plates with a printing sequence other than the global one, by identity
 
     arrangement::ArrangeParams params;
     int current_plate_index = 0;
     Polygon bed_poly;
     Plater *m_plater;
+    // Orca: what end_arrange_run undoes, taken when the job is made, while the plater is whole. A late
+    // finalize -- one ~Plater's drain did not see through -- runs in ~priv, where Plater::p is null;
+    // these live in parts of the plater that outlive its worker.
+    PartPlateList*       m_plate_list      = nullptr;
+    NotificationManager* m_notifications   = nullptr;
+    std::atomic<bool>*   m_arrange_running = nullptr;
 
     // BBS: add flag for whether on current part plate
     bool only_on_partplate{false};

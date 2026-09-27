@@ -7325,7 +7325,15 @@ private:
     bool show_warning_dialog { false };
 };
 
-Plater::~Plater() = default;
+// Orca: every job's last messages -- its finalize, a main-thread call its process waits on -- are
+// delivered here, while the plater is whole. Left to the worker's own destructor, they ran inside
+// ~priv, where p is already null, and a finalize or a prepare that reached through it crashed (an
+// arrange cancelled by a quit). cancel_all first, so each is delivered as cancelled (see
+// BoostThreadWorker::cancel_all) and applies nothing; the wait is the worker destructor's own.
+Plater::~Plater()
+{
+    stop_queue(p->m_worker, 10000);
+}
 
 const std::regex Plater::priv::pattern_bundle(".*[.](amf|amf[.]xml|zip[.]amf|3mf)", std::regex::icase);
 const std::regex Plater::priv::pattern_3mf(".*3mf", std::regex::icase);
