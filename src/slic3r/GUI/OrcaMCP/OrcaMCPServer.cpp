@@ -1924,6 +1924,7 @@ void OrcaMCPServer::register_builtin_tools()
 
                 nlohmann::json results = nlohmann::json::array();
                 bool any_changes = false;
+                bool snapshot_taken = false;
 
                 for (const auto& [object_id, settings] : config_list) {
                     nlohmann::json obj_result;
@@ -1934,6 +1935,12 @@ void OrcaMCPServer::register_builtin_tools()
                         obj_result["message"] = "Invalid object_id";
                         results.push_back(obj_result);
                         continue;
+                    }
+                    // One undo step for the whole call, taken before the first change, as the GUI takes
+                    // one before an edit.
+                    if (!snapshot_taken) {
+                        plater->take_snapshot("Change object settings");
+                        snapshot_taken = true;
                     }
 
                     ModelObject* obj = model.objects[object_id];
@@ -2069,6 +2076,9 @@ void OrcaMCPServer::register_builtin_tools()
 
                 ModelObject* obj = model.objects[object_id];
                 int reset_count = 0;
+                // The snapshot the object list's reset takes (TabPrintModel::reset_model_config), so undo
+                // puts the settings back.
+                plater->take_snapshot(std::string("Reset Options"));
 
                 if (keys.empty()) {
                     // Reset all overrides the GUI's object tab resets: the object keeps its filament.
@@ -2424,6 +2434,7 @@ void OrcaMCPServer::register_builtin_tools()
                     // Every range has a layer height and an extruder, the object's unless given, as the
                     // object list gives a new range them (its get_default_layer_config): the slicer
                     // reads a range's layer height unconditionally.
+                    plater->take_snapshot("Change height range settings"); // undo puts the ranges back
                     ModelConfig& layer_cfg = obj->layer_config_ranges[range];
                     layer_cfg.apply(written);
                     Slic3r::complete_layer_range(layer_cfg, wxGetApp().obj_list()->get_default_layer_config(object_id));
@@ -2498,6 +2509,7 @@ void OrcaMCPServer::register_builtin_tools()
 
                 ModelObject* obj = model.objects[object_id];
                 int deleted_count = 0;
+                plater->take_snapshot(_u8L("Remove height range")); // the object list's, so undo puts them back
 
                 if (has_range) {
                     // Delete specific range
@@ -2611,7 +2623,9 @@ void OrcaMCPServer::register_builtin_tools()
                     // Generate adaptive layer height profile
                     std::vector<double> profile = layer_height_profile_adaptive(slicing_params, *obj, clamped_quality);
 
-                    // Set the profile on the model object
+                    // Set the profile on the model object, after the snapshot the GUI's own "Adaptive"
+                    // button takes (GLCanvas3D), so undo puts the old profile back.
+                    plater->take_snapshot("Variable layer height - Adaptive");
                     obj->layer_height_profile.set(profile);
 
                     // Notify UI of changes
@@ -2746,6 +2760,8 @@ void OrcaMCPServer::register_builtin_tools()
                     ModelObject* obj = model.objects[object_id];
 
                     bool had_vlh = !obj->layer_height_profile.get().empty();
+                    if (had_vlh)
+                        plater->take_snapshot("Variable layer height - Reset"); // the GUI's own "Reset" snapshot
                     obj->layer_height_profile.clear();
                     wxGetApp().obj_list()->update_info_items(object_id);
                     mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
@@ -4962,6 +4978,7 @@ void OrcaMCPServer::register_builtin_tools()
                 }
 
                 std::string old_name = model.objects[object_id]->name;
+                plater->take_snapshot(_u8L("Rename Object")); // the object list's, so undo puts the name back
                 model.objects[object_id]->name = new_name;
 
                 // Update the object list UI to reflect the new name. The name is in the G-code (its

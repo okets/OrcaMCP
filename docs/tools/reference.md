@@ -2678,7 +2678,10 @@ checked the same way.
 ## History Tools
 
 ### undo
-Undo the last operation. It rebuilds the plate list, so a slice in progress is cancelled first, and a
+Undo the last operation: each scene-changing tool takes an undo snapshot before it changes anything,
+the per-object settings tools included (`set_object_config`, `reset_object_config`,
+`set_object_layer_range`, `delete_object_layer_range`, `apply_adaptive_layer_height`,
+`clear_adaptive_layer_height`, `rename_object`), under the names the GUI's own edits use. It rebuilds the plate list, so a slice in progress is cancelled first, and a
 Slice All run with it: the response then carries `slice_cancelled: true` and an `info_messages` line
 saying so; call `slice_all` again. If the undo fails, the error response says so too when it had
 already stopped a slice. A snapshot load that fails partway (out of memory, a missing history entry)
