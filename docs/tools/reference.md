@@ -276,6 +276,8 @@ Check slicing progress, for the selected plate and for every plate.
   "plates_sliced": 2,
   "plates_total": 2,
   "stage": null,
+  "busy": false,
+  "busy_reason": null,
   "slice_run": {"ended_early": false, "scope": "all_plates", "plates": [0, 1], "outcome": "done"},
   "active_warnings": {"count": 0, "warnings": []}
 }
@@ -288,6 +290,7 @@ Check slicing progress, for the selected plate and for every plate.
 | `status` | Legacy field, `slicing` or `idle` only - use `state` |
 | `slice_result_valid` | The current plate's own slice-result flag, the same one the GUI's Print/Export buttons use |
 | `plates` | Every plate's slice-result flag and `percent`, so a multi-plate run can be followed plate by plate (and a plate that failed can be identified). `percent` is 0-100 while a plate slices and 100 once it has a result; `null` for a plate with no result that nothing is slicing. The GUI drops progress updates while another job (an arrange, an orient) runs, so a percent can stand still then |
+| `busy` / `busy_reason` | Whether the slicing pipeline is busy, and with what: `slicing` (a slice or Slice All run), `exporting` (the background process writes G-code), `uploading` (it sends G-code to a printer) or `stopping` (the last slice finished or was cancelled, and its completion is not taken in yet). `slice_all` starts nothing while it is busy, and `wait_for_slice` waits until it is not. `is_slicing` is only the first of these |
 | `stage` | While slicing: the app's progress text for the running slice ("Generating walls", "Generating support", ...), in the app's language. `null` when nothing is slicing |
 | `plates_sliced` / `plates_total` | How many of the plates have a valid result |
 | `restored_selected_plate` | Present only on the poll that ends a `slice_all` run over every plate: the plate that was selected when `slice_all` was called has been selected again |
@@ -1573,11 +1576,11 @@ Slice every plate in the project, one after another, exactly as the GUI's **Slic
 
 | `reason` | Meaning |
 |----------|---------|
-| `busy_slicing` | A slice or Slice All run is in progress, or the previous slice is still stopping (`message` says which, e.g. "Slice All is slicing plate_index 2 of 5 plate(s)"). Nothing was started: call `wait_for_slice`, then `slice_all` again. Started then, a slice would be stopped by the previous one's completion |
+| `busy_slicing` | The pipeline is busy (`get_slicing_status`'s `busy`): a slice or Slice All run, a G-code export, an upload, or the last slice still stopping. `message` says which, e.g. "Slice All is slicing plate_index 2 of 5 plate(s)" or "a G-code export is running". Nothing was started: call `wait_for_slice`, which waits the same state out, then `slice_all` again. Started then, a slice would be stopped by the previous one's completion |
 | `already_sliced` | Every plate asked for already has a valid result: nothing to do, and `wait_for_slice` reports `done` |
 | `busy_job` | An arrange or orient holds the app; call `slice_all` again when it is done |
 | `nothing_to_slice` | No printable object on the plates asked for |
-| `invalid` | The attempt raised a new error-level warning (validation failed): `active_warnings` says why. An error that was already showing is not taken for the reason |
+| `invalid` | The app's own validation refused a plate it was asked for (the plate's validation result, not a guess from `active_warnings`); `message` gives the app's words, e.g. "Prime Tower is partially outside the printable area" |
 | `unknown` | No signal explains it; `active_warnings` may |
 
 **Note:** Async operation. Call `wait_for_slice`, or poll `get_slicing_status` until `state` is

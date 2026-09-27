@@ -170,36 +170,68 @@ SliceStartSignals signals_with(std::vector<PlateToSlice> plates)
 }
 PlateToSlice unsliced_printable() { return {/*sliced=*/false, /*printable=*/true}; }
 
-SlicingActivity activity(bool is_slicing, bool process_running, int slice_all_plate = -1)
+PipelineState pipeline(bool is_slicing, bool working, bool done, bool exporting = false, bool uploading = false, int slice_all_plate = -1)
 {
-    return {is_slicing, process_running, slice_all_plate, /*plate_count=*/5};
+    return {is_slicing, working, done, exporting, uploading, slice_all_plate, /*plate_count=*/5};
 }
 } // namespace
 
-TEST_CASE("slice_all starts nothing while a slice runs, or while one is still stopping", "[orcamcp][SliceProgress]")
+TEST_CASE("slice_all refuses exactly when the pipeline is busy, in every state", "[orcamcp][SliceProgress]")
 {
-    const auto busy = GENERATE(activity(true, true), activity(true, false), activity(false, true), activity(true, true, 2));
-    const std::optional<SliceStartReport> refusal = refuse_while_slicing(busy);
-    REQUIRE(refusal.has_value());
-    CHECK(refusal->status == SliceStart::not_started);
-    CHECK(refusal->reason == "busy_slicing");
-    CHECK(refusal->message.find("call wait_for_slice, then slice_all again") != std::string::npos);
+    // The same predicate is get_slicing_status's busy and what wait_for_slice waits on, so a refusal
+    // that says "call wait_for_slice" always finds something to wait for.
+    for (int bits = 0; bits < 32; ++bits)
+        for (int slice_all_plate : {-1, 2}) {
+            const PipelineState state = pipeline(bits & 1, bits & 2, bits & 4, bits & 8, bits & 16, slice_all_plate);
+            DYNAMIC_SECTION("state " << bits << " on plate " << slice_all_plate)
+            {
+                const bool busy = pipeline_busy(state) != PipelineBusy::idle;
+                CHECK(refuse_while_busy(state).has_value() == busy);
+                if (busy) {
+                    CHECK(refuse_while_busy(state)->reason == "busy_slicing");
+                    CHECK(refuse_while_busy(state)->message.find(pipeline_busy_text(state)) == 0);
+                }
+            }
+        }
 }
 
-TEST_CASE("slice_all starts a slice when nothing is slicing or stopping", "[orcamcp][SliceProgress]")
+TEST_CASE("the pipeline is idle only when nothing slices and the process has nothing left to hand over", "[orcamcp][SliceProgress]")
 {
-    CHECK_FALSE(refuse_while_slicing(activity(false, false)).has_value());
+    CHECK(pipeline_busy(pipeline(false, false, false)) == PipelineBusy::idle);
+    CHECK(pipeline_busy(pipeline(false, false, false, /*exporting=*/true)) == PipelineBusy::idle);
 }
 
-TEST_CASE("the refusal says which Slice All plate is slicing", "[orcamcp][SliceProgress]")
+TEST_CASE("a slice or a Slice All run in progress is slicing", "[orcamcp][SliceProgress]")
 {
-    CHECK(refuse_while_slicing(activity(true, true, 2))->message.find("plate_index 2 of 5") != std::string::npos);
+    CHECK(pipeline_busy(pipeline(true, true, false)) == PipelineBusy::slicing);
+    CHECK(pipeline_busy(pipeline(true, false, false, false, false, /*slice_all_plate=*/2)) == PipelineBusy::slicing);
+    CHECK(pipeline_busy_text(pipeline(true, true, false, false, false, 2)).find("plate_index 2 of 5") != std::string::npos);
 }
 
-TEST_CASE("the refusal says when the previous slice is only still stopping", "[orcamcp][SliceProgress]")
+TEST_CASE("an export or an upload is named as what it is", "[orcamcp][SliceProgress]")
 {
-    CHECK(refuse_while_slicing(activity(true, false))->message.find("still stopping") != std::string::npos);
-    CHECK(refuse_while_slicing(activity(false, true))->message.find("still stopping") != std::string::npos);
+    const PipelineState exporting = pipeline(false, true, false, /*exporting=*/true);
+    CHECK(pipeline_busy(exporting) == PipelineBusy::exporting);
+    CHECK(refuse_while_busy(exporting)->message.find("a G-code export is running") == 0);
+    const PipelineState uploading = pipeline(false, true, false, true, /*uploading=*/true);
+    CHECK(pipeline_busy(uploading) == PipelineBusy::uploading);
+    CHECK(refuse_while_busy(uploading)->message.find("an upload to the printer is running") == 0);
+}
+
+TEST_CASE("a slice whose completion is not taken in yet is stopping", "[orcamcp][SliceProgress]")
+{
+    CHECK(pipeline_busy(pipeline(false, false, /*done=*/true)) == PipelineBusy::stopping);
+    CHECK(pipeline_busy(pipeline(/*is_slicing=*/true, false, false)) == PipelineBusy::stopping);
+    CHECK(pipeline_busy_text(pipeline(false, false, true)) == "the previous slice is finishing or stopping");
+}
+
+TEST_CASE("every busy state has the name get_slicing_status reports", "[orcamcp][SliceProgress]")
+{
+    CHECK(std::string(pipeline_busy_name(PipelineBusy::idle)) == "idle");
+    CHECK(std::string(pipeline_busy_name(PipelineBusy::slicing)) == "slicing");
+    CHECK(std::string(pipeline_busy_name(PipelineBusy::exporting)) == "exporting");
+    CHECK(std::string(pipeline_busy_name(PipelineBusy::uploading)) == "uploading");
+    CHECK(std::string(pipeline_busy_name(PipelineBusy::stopping)) == "stopping");
 }
 
 TEST_CASE("a slice that is running after the dispatch has started", "[orcamcp][SliceProgress]")
@@ -234,14 +266,14 @@ TEST_CASE("plates with nothing printable on them give nothing to slice", "[orcam
     CHECK(report.reason == "nothing_to_slice");
 }
 
-TEST_CASE("a slice stopped by a new validation error points at active_warnings", "[orcamcp][SliceProgress]")
+TEST_CASE("a slice the app's validation stopped is invalid, with the app's message", "[orcamcp][SliceProgress]")
 {
     SliceStartSignals signals = signals_with({unsliced_printable()});
-    signals.new_error         = true;
+    signals.validation_error  = "Prime Tower is partially outside the printable area";
     const SliceStartReport report = judge_slice_start(signals);
     CHECK(report.status == SliceStart::not_started);
     CHECK(report.reason == "invalid");
-    CHECK(report.message.find("active_warnings") != std::string::npos);
+    CHECK(report.message.find("Prime Tower is partially outside the printable area") != std::string::npos);
 }
 
 TEST_CASE("a slice that did not start for a reason no signal shows says it did not start", "[orcamcp][SliceProgress]")
@@ -250,13 +282,4 @@ TEST_CASE("a slice that did not start for a reason no signal shows says it did n
     CHECK(report.status == SliceStart::not_started);
     CHECK(report.reason == "unknown");
     CHECK(std::string(slice_start_status_name(report.status)) == "not_started");
-}
-
-TEST_CASE("only an error the attempt raised counts, not one already showing", "[orcamcp][SliceProgress]")
-{
-    const std::vector<std::string> old_error = {"SlicingError\nPrime Tower is partially outside the printable area"};
-    CHECK_FALSE(has_new_error(old_error, old_error));
-    CHECK(has_new_error(old_error, {old_error.front(), "SlicingError\nNo object can be printed"}));
-    CHECK(has_new_error({}, old_error));
-    CHECK_FALSE(has_new_error(old_error, {}));
 }

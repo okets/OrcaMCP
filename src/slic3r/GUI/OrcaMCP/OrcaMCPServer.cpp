@@ -259,35 +259,49 @@ std::vector<OrcaMCP::SliceRunPlate> slice_run_plates(PartPlateList& plate_list)
     return plates;
 }
 
-// The error-level warnings of an active_warnings answer, each as its type and message.
-std::vector<std::string> error_warnings(const nlohmann::json& active_warnings)
+// What the app shows about its slicing pipeline, for OrcaMCP::pipeline_busy.
+OrcaMCP::PipelineState pipeline_state(Plater& plater, int plate_count)
 {
-    std::vector<std::string> errors;
-    for (const nlohmann::json& warning : active_warnings.value("warnings", nlohmann::json::array()))
-        if (warning.value("level", "") == "error")
-            errors.push_back(warning.value("type", "") + "\n" + warning.value("message", ""));
-    return errors;
-}
-
-// What the app is doing when slice_all is called, for OrcaMCP::refuse_while_slicing.
-OrcaMCP::SlicingActivity slicing_activity(Plater& plater, int plate_count)
-{
-    return {plater.is_background_process_slicing(), plater.background_process().running(), plater.slice_all_plate_in_progress(),
+    const BackgroundSlicingProcess& process = plater.background_process();
+    const auto                      state   = process.state();
+    return {plater.is_background_process_slicing(),
+            state == BackgroundSlicingProcess::STATE_STARTED || state == BackgroundSlicingProcess::STATE_RUNNING,
+            state == BackgroundSlicingProcess::STATE_FINISHED || state == BackgroundSlicingProcess::STATE_CANCELED,
+            process.is_export_scheduled(),
+            process.is_upload_scheduled(),
+            plater.slice_all_plate_in_progress(),
             plate_count};
 }
 
+// Why the app's own validation refused a plate the run asked for, or nullopt when none failed it.
+// The verdict is the plate's (PartPlate::is_apply_result_invalid, which update_background_process sets
+// as it validates); the words are the app's validation of the current plate, whose Print the process
+// holds, formatted as the GUI's notification formats them.
+std::optional<std::string> validation_failure(Plater& plater, PartPlateList& plate_list)
+{
+    for (int print_index : s_slice_run_print_indexes) {
+        const int  index = plate_list.find_plate_by_print_index(print_index);
+        PartPlate* plate = index >= 0 ? plate_list.get_plate(index) : nullptr;
+        if (plate == nullptr || !plate->is_apply_result_invalid())
+            continue;
+        if (index == plate_list.get_curr_plate_index()) {
+            StringObjectException error = plater.background_process().validate();
+            plater.post_process_string_object_exception(error);
+            if (!error.string.empty())
+                return error.string;
+        }
+        return "plate_index " + std::to_string(index) + " failed validation";
+    }
+    return std::nullopt;
+}
+
 // What the app shows right after slice_all dispatched its slice, for OrcaMCP::judge_slice_start.
-// `errors_before` are the error warnings that showed before it, so an old one is not taken for the
-// reason this slice did not start; `warnings_after` is active_warnings now.
-OrcaMCP::SliceStartSignals slice_start_signals(Plater&                         plater,
-                                               PartPlateList&                  plate_list,
-                                               const std::vector<std::string>& errors_before,
-                                               const nlohmann::json&           warnings_after)
+OrcaMCP::SliceStartSignals slice_start_signals(Plater& plater, PartPlateList& plate_list)
 {
     OrcaMCP::SliceStartSignals signals;
-    signals.slicing        = plater.is_background_process_slicing();
-    signals.ui_job_running = !plater.get_ui_job_worker().is_idle();
-    signals.new_error      = OrcaMCP::has_new_error(errors_before, error_warnings(warnings_after));
+    signals.slicing          = plater.is_background_process_slicing();
+    signals.ui_job_running   = !plater.get_ui_job_worker().is_idle();
+    signals.validation_error = validation_failure(plater, plate_list);
     for (int print_index : s_slice_run_print_indexes) {
         const int  index = plate_list.find_plate_by_print_index(print_index);
         PartPlate* plate = index >= 0 ? plate_list.get_plate(index) : nullptr;
@@ -2657,9 +2671,11 @@ void OrcaMCPServer::register_builtin_tools()
         "Slice every plate in the project, the way the GUI's Slice All button does: one plate at a "
         "time until all are sliced. Pass all_plates=false to slice only the plate that is currently "
         "selected. status says what happened: slicing_started, or not_started with a reason and a "
-        "message: busy_slicing (a slice or Slice All run is in progress, or still stopping: nothing is "
-        "started -- call wait_for_slice, then slice_all again), already_sliced (nothing to do), "
-        "busy_job, nothing_to_slice, invalid (a new error in active_warnings) or unknown. Then call "
+        "message: busy_slicing (the pipeline is busy -- get_slicing_status's busy: a slice or Slice All "
+        "run, an export, an upload, or the last slice still stopping; nothing is started -- call "
+        "wait_for_slice, then slice_all again), already_sliced (nothing to do), busy_job, "
+        "nothing_to_slice, invalid (the app's validation refused it; message gives its words) or "
+        "unknown. Then call "
         "wait_for_slice, or poll get_slicing_status until state is \"done\"; its plates array says which "
         "plates have a result. The plate selection walks from the first plate to the last while the "
         "run is in progress, and get_slicing_status puts back the plate that was selected here once "
@@ -2704,10 +2720,11 @@ void OrcaMCPServer::register_builtin_tools()
                     result["active_warnings"] = std::move(active_warnings);
                 };
 
-                // While anything slices, or is still stopping, nothing is started: a slice started now
-                // would be stopped by the previous one's completion. This also covers all_plates=false
-                // during a Slice All run, which would end that run half done.
-                if (const auto refusal = OrcaMCP::refuse_while_slicing(slicing_activity(*plater, plate_count))) {
+                // While the pipeline is busy -- slicing, exporting, uploading, or still taking in the last
+                // slice -- nothing is started: a slice started now would be stopped by the previous one's
+                // completion. This also covers all_plates=false during a Slice All run, which would end
+                // that run half done.
+                if (const auto refusal = OrcaMCP::refuse_while_busy(pipeline_state(*plater, plate_count))) {
                     answer(*refusal, get_active_warnings_json(plater));
                     return result;
                 }
@@ -2721,12 +2738,9 @@ void OrcaMCPServer::register_builtin_tools()
                 else
                     s_slice_all_restore_print_index = -1;
                 record_slice_run(plate_list, slice_every_plate, plate_at_call);
-                const std::vector<std::string> errors_before = error_warnings(get_active_warnings_json(plater));
                 dispatch_slice(*plater, slice_every_plate);
-                nlohmann::json                 warnings_after = get_active_warnings_json(plater);
-                const OrcaMCP::SliceStartReport report =
-                    OrcaMCP::judge_slice_start(slice_start_signals(*plater, plate_list, errors_before, warnings_after));
-                answer(report, std::move(warnings_after));
+                const OrcaMCP::SliceStartReport report = OrcaMCP::judge_slice_start(slice_start_signals(*plater, plate_list));
+                answer(report, get_active_warnings_json(plater));
                 if (slice_every_plate && report.status == OrcaMCP::SliceStart::started) {
                     result["note"] = "Slicing all " + std::to_string(plate_count) +
                                      " plates. The plate selection walks to the last plate while it "
@@ -3046,7 +3060,10 @@ void OrcaMCPServer::register_builtin_tools()
         "The plates array reports every plate's slice result and percent (0-100; null for a plate "
         "with no result that is not slicing), so a slice_all run can be followed plate by plate; "
         "stage is the app's progress text for the running slice (\"Generating support\", in the app's "
-        "language; null when idle). slice_run says how the last slice_all run stands: scope, the "
+        "language; null when idle). busy says whether the slicing pipeline is busy, and busy_reason "
+        "with what: slicing, exporting, uploading, or stopping (the last slice's completion is not "
+        "taken in yet); slice_all starts nothing while it is, and wait_for_slice waits it out. "
+        "slice_run says how the last slice_all run stands: scope, the "
         "plates it asked for, and outcome running, done, ended_early or incomplete, with a message "
         "saying which plates and why when it is not done. When a slice_all run over every plate ends, "
         "this restores the plate that was selected when slice_all was called and reports it as "
@@ -3101,6 +3118,11 @@ void OrcaMCPServer::register_builtin_tools()
                                       {"percent", percent ? nlohmann::json(*percent) : nlohmann::json(nullptr)}});
                 }
 
+                // The one answer slice_all's refusal and wait_for_slice go by (OrcaMCP::pipeline_busy).
+                const OrcaMCP::PipelineBusy busy = OrcaMCP::pipeline_busy(pipeline_state(*plater, plate_count));
+                result["busy"]               = busy != OrcaMCP::PipelineBusy::idle;
+                result["busy_reason"]        = busy == OrcaMCP::PipelineBusy::idle ? nlohmann::json(nullptr)
+                                                                                   : nlohmann::json(OrcaMCP::pipeline_busy_name(busy));
                 result["is_slicing"]         = is_running;
                 result["state"]              = is_running ? "slicing" : (has_result ? "done" : "idle");
                 result["status"]             = is_running ? "slicing" : "idle";  // kept for older callers

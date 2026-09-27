@@ -165,33 +165,84 @@ struct SliceStartReport
     std::string message; // what happened, and what to do about it
 };
 
-// What the app is doing when slice_all is called.
-struct SlicingActivity
+// Whether the slicing pipeline is busy, and with what. The one answer slice_all's refusal,
+// get_slicing_status's busy / busy_reason and wait_for_slice's wait all go by, so an agent told to
+// wait for the pipeline is never told by the next call that there is nothing to wait for.
+enum class PipelineBusy
 {
-    bool is_slicing      = false; // Plater::is_background_process_slicing(): a slice, or a Slice All run, is on
-    bool process_running = false; // the background process is not idle: slicing, or finished or cancelled and
-                                  // its completion not yet handled
-    int  slice_all_plate = -1;    // the plate a Slice All run is on (0-based), -1 when none runs
-    int  plate_count     = 0;
+    idle,
+    slicing,   // a slice, or a Slice All run, is in progress
+    exporting, // the background process writes G-code (an export, with nothing left to slice)
+    uploading, // the background process sends G-code to a printer
+    stopping,  // a slice finished or was cancelled, and the app has not taken in its completion yet
 };
 
-// slice_all while anything is slicing, or still stopping, starts nothing: a slice started then is
-// stopped by the previous one's completion (Plater::priv::on_process_completed stops the process), so
-// the new one would never slice. The answer says what is going on and what to do. nullopt: idle.
-inline std::optional<SliceStartReport> refuse_while_slicing(const SlicingActivity& activity)
+inline const char* pipeline_busy_name(PipelineBusy busy)
 {
-    if (!activity.is_slicing && !activity.process_running)
+    switch (busy) {
+    case PipelineBusy::idle: return "idle";
+    case PipelineBusy::slicing: return "slicing";
+    case PipelineBusy::exporting: return "exporting";
+    case PipelineBusy::uploading: return "uploading";
+    case PipelineBusy::stopping: return "stopping";
+    }
+    return "idle";
+}
+
+// What the app shows about its slicing pipeline.
+struct PipelineState
+{
+    bool is_slicing       = false; // Plater::is_background_process_slicing(): a slice, or a Slice All run, is on
+    bool process_working  = false; // the background process is started or running a task
+    bool process_done     = false; // it finished or was cancelled, and its completion is not handled yet
+    bool export_scheduled = false; // BackgroundSlicingProcess::is_export_scheduled()
+    bool upload_scheduled = false; // BackgroundSlicingProcess::is_upload_scheduled()
+    int  slice_all_plate  = -1;    // the plate a Slice All run is on (0-based), -1 when none runs
+    int  plate_count      = 0;
+};
+
+inline PipelineBusy pipeline_busy(const PipelineState& state)
+{
+    if (state.process_working) {
+        if (state.upload_scheduled)
+            return PipelineBusy::uploading;
+        if (state.export_scheduled && !state.is_slicing)
+            return PipelineBusy::exporting;
+        return PipelineBusy::slicing;
+    }
+    // A Slice All run between plates: the next one is about to start.
+    if (state.is_slicing && state.slice_all_plate >= 0)
+        return PipelineBusy::slicing;
+    if (state.process_done || state.is_slicing)
+        return PipelineBusy::stopping;
+    return PipelineBusy::idle;
+}
+
+// The pipeline's state in words, for a busy one.
+inline std::string pipeline_busy_text(const PipelineState& state)
+{
+    switch (pipeline_busy(state)) {
+    case PipelineBusy::slicing:
+        return state.slice_all_plate >= 0 ? "Slice All is slicing plate_index " + std::to_string(state.slice_all_plate) + " of " +
+                                                std::to_string(state.plate_count) + " plate(s)"
+                                          : std::string("a slice is in progress");
+    case PipelineBusy::exporting: return "a G-code export is running";
+    case PipelineBusy::uploading: return "an upload to the printer is running";
+    case PipelineBusy::stopping: return "the previous slice is finishing or stopping";
+    case PipelineBusy::idle: break;
+    }
+    return "nothing is slicing";
+}
+
+// slice_all while the pipeline is busy starts nothing: a slice started then is stopped by the
+// previous one's completion (Plater::priv::on_process_completed stops the process), so it would never
+// slice. The answer says what is going on and what to do. nullopt: the pipeline is idle.
+inline std::optional<SliceStartReport> refuse_while_busy(const PipelineState& state)
+{
+    if (pipeline_busy(state) == PipelineBusy::idle)
         return std::nullopt;
-    std::string state;
-    if (activity.slice_all_plate >= 0)
-        state = "Slice All is slicing plate_index " + std::to_string(activity.slice_all_plate) + " of " +
-                std::to_string(activity.plate_count) + " plate(s)";
-    else if (activity.is_slicing && activity.process_running)
-        state = "a slice is in progress";
-    else
-        state = "the previous slice is still stopping";
     return SliceStartReport{SliceStart::not_started, "busy_slicing",
-                            state + ", so nothing was started: call wait_for_slice, then slice_all again"};
+                            pipeline_busy_text(state) + ", so nothing was started: call wait_for_slice, then slice_all again"};
 }
 
 // One plate slice_all asked for, right after it asked.
@@ -204,19 +255,11 @@ struct PlateToSlice
 // What the app shows right after slice_all dispatched its slice.
 struct SliceStartSignals
 {
-    bool                      slicing          = false; // Plater::is_background_process_slicing()
-    bool                      ui_job_running   = false; // an arrange or an orient holds the UI worker
-    bool                      new_error        = false; // an error-level warning that was not there before
-    std::vector<PlateToSlice> plates;
+    bool                       slicing        = false; // Plater::is_background_process_slicing()
+    bool                       ui_job_running = false; // an arrange or an orient holds the UI worker
+    std::optional<std::string> validation_error;       // the app's own validation of a plate asked for failed, saying this
+    std::vector<PlateToSlice>  plates;
 };
-
-// Whether `after` holds an error-level warning `before` did not: one that the attempt raised, rather
-// than an old one still showing. Each entry names one error warning (its type and message).
-inline bool has_new_error(const std::vector<std::string>& before, const std::vector<std::string>& after)
-{
-    return std::any_of(after.begin(), after.end(),
-                       [&before](const std::string& error) { return std::find(before.begin(), before.end(), error) == before.end(); });
-}
 
 // slice_all's answer once it dispatched a slice. A plate already sliced is not sliced again, which is
 // not a failure: nothing needed doing (wait_for_slice then reports done). Otherwise the first cause
@@ -237,8 +280,8 @@ inline SliceStartReport judge_slice_start(const SliceStartSignals& signals)
                 "once it has finished."};
     if (std::none_of(signals.plates.begin(), signals.plates.end(), [](const PlateToSlice& p) { return p.printable; }))
         return {SliceStart::not_started, "nothing_to_slice", "No plate it was asked for has a printable object on it."};
-    if (signals.new_error)
-        return {SliceStart::not_started, "invalid", "The slice failed validation: active_warnings says why."};
+    if (signals.validation_error)
+        return {SliceStart::not_started, "invalid", "The slice failed validation: " + *signals.validation_error};
     return {SliceStart::not_started, "unknown", "The app did not start a slice; active_warnings may say why."};
 }
 
