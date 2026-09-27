@@ -4202,7 +4202,9 @@ void OrcaMCPServer::register_builtin_tools()
                 }},
                 {"relative", {
                     {"type", "boolean"},
-                    {"description", "true=add, false=absolute"}
+                    {"description", "true (the default): x, y and z are the change in degrees. false is refused: "
+                                    "absolute rotation is not supported, so work out the change from "
+                                    "rotation_degrees in get_object_info."}
                 }},
                 {"include_preview", {
                     {"type", "boolean"},
@@ -4226,8 +4228,13 @@ void OrcaMCPServer::register_builtin_tools()
                 return nlohmann::json{{"status", "error"}, {"message", *error}};
             const Vec3d  degrees = axes.value_or(Vec3d::Zero());
             const double x_deg = degrees.x(), y_deg = degrees.y(), z_deg = degrees.z();
-            bool relative = params.value("relative", true);
-            (void)relative;  // Reserved for future absolute rotation support
+            // Every rotation is a change: relative false used to be accepted and applied as one anyway.
+            bool relative = true;
+            if (params.contains("relative") && !parse_boolean_param(params["relative"], relative))
+                return error_response("relative must be true or false");
+            if (!relative)
+                return error_response("absolute rotation is not supported: pass the change in degrees, relative to "
+                                      "rotation_degrees from get_object_info");
             bool include_preview = params.value("include_preview", false);
             int preview_views = params.value("preview_views", 4);
             int preview_resolution = params.value("preview_resolution", 256);

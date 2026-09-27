@@ -660,13 +660,19 @@ Rotate an object.
 | `x` | number | No | Rotation about the plate's X axis (degrees) |
 | `y` | number | No | Rotation about the plate's Y axis (degrees) |
 | `z` | number | No | Rotation about the plate's Z axis, the vertical (degrees) |
-| `relative` | boolean | No | Relative rotation (default: true) |
+| `relative` | boolean | No | `true` (the default): `x`, `y` and `z` are the change in degrees. `false` is refused: absolute rotation is not supported |
 | `include_preview` | boolean | No | Include preview |
 
 **Example:**
 ```json
 {"name": "rotate_object", "arguments": {"object_id": 0, "z": 45}}
 ```
+
+Every rotation is a change from where the object is. To reach an orientation, subtract its
+`rotation_degrees` (from `get_object_info`) from the one wanted and pass the difference.
+`relative: false` used to be accepted and applied as a change anyway; it is now refused with
+"absolute rotation is not supported: pass the change in degrees, relative to rotation_degrees from
+get_object_info".
 
 **Coordinate frame.** `x`, `y` and `z` are plate millimetres along the *plate's* axes — the same
 frame `get_object_info` reports `position` and `bounding_box` in, and the frame this tool's own

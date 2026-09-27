@@ -1933,7 +1933,7 @@
             "type": "integer"
           },
           "relative": {
-            "description": "true=add, false=absolute",
+            "description": "true (the default): x, y and z are the change in degrees. false is refused: absolute rotation is not supported, so work out the change from rotation_degrees in get_object_info.",
             "type": "boolean"
           },
           "x": {
