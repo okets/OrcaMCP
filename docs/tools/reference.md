@@ -1536,7 +1536,7 @@ differences — a layer range reports no `duplicate_keys`, and a call where noth
 a JSON array or the joined string, `unknown_keys` holds keys that do not exist, `rejected_values`
 holds `{"key", "reason", "expected"}` for values this key would not take, and `invalid_keys` is the
 union. `applied_count` counts only what was written, so `status` is `partial` when some keys applied
-and `error` when none did. A call where nothing applied leaves the object's ranges as they were.
+and `error` when none did, or when `settings` is empty (`message` says so). A call where nothing applied leaves the object's ranges as they were.
 
 **Every range has a `layer_height` and an `extruder`**, as the GUI's object list gives a new range
 them: the object's own layer height (its override, else the process preset's) and extruder `0` (the

@@ -46,4 +46,14 @@ std::optional<std::string> layer_range_height_error(double layer_height, const L
     return reason.str();
 }
 
+LayerRangeWriteStatus layer_range_write_status(size_t given, size_t applied)
+{
+    if (given == 0)
+        return {"error", "no settings were given, so nothing was set and the object's ranges are unchanged: pass at least "
+                         "one {key, value} (a layer_height alone adds a range at that height)"};
+    if (applied == given)
+        return {"success", {}};
+    return {applied == 0 ? "error" : "partial", {}};
+}
+
 }}} // namespace Slic3r::GUI::OrcaMCP

@@ -2268,8 +2268,8 @@ void OrcaMCPServer::register_builtin_tools()
         "GUI's object list gives it: the object's own (its layer_height, else the process preset's; "
         "extruder 0, the object's) unless settings give one. A layer_height outside the printer's "
         "min_layer_height..max_layer_height, for the nozzle of the filament that prints the range (its "
-        "own, else the object's), is rejected (rejected_values), and a call that applies nothing leaves "
-        "the ranges as they were.",
+        "own, else the object's), is rejected (rejected_values). A call that applies nothing, or gives no "
+        "settings, is an error and leaves the ranges as they were.",
         {
             {"type", "object"},
             {"properties", {
@@ -2399,12 +2399,11 @@ void OrcaMCPServer::register_builtin_tools()
                     plater->update();
                 }
 
-                // "error" only when nothing at all was written -- a range with no settings on it is
-                // not the success the old unconditional applied_count claimed it was.
-                const char* status = invalid_keys.empty() ? "success"
-                                                          : (applied_keys.empty() ? "error" : "partial");
-                return nlohmann::json{
-                    {"status", status},
+                // "error" when nothing at all was written -- a range with no settings on it is not the
+                // success the old unconditional applied_count claimed it was, nor is a call with none.
+                const LayerRangeWriteStatus written_status = layer_range_write_status(settings.size(), applied_keys.size());
+                nlohmann::json response = {
+                    {"status", written_status.status},
                     {"object_id", object_id},
                     {"range", {z_min, z_max}},
                     {"applied_count", applied_keys.size()},
@@ -2415,6 +2414,9 @@ void OrcaMCPServer::register_builtin_tools()
                     {"unknown_keys", unknown_keys},
                     {"rejected_values", rejected_values}
                 };
+                if (!written_status.message.empty())
+                    response["message"] = written_status.message;
+                return response;
             });
         }
     });

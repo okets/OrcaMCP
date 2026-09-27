@@ -76,3 +76,17 @@ TEST_CASE("each tool of a toolchanger bounds a range by its own nozzle", "[orcam
     CHECK(layer_range_height_error(0.5, fine).has_value());
     CHECK_FALSE(layer_range_height_error(0.5, coarse).has_value());
 }
+
+// set_object_layer_range with no settings wrote nothing and said success.
+TEST_CASE("a layer range write says success, partial or error by how much of it was written", "[orcamcp][LayerRanges]")
+{
+    CHECK(std::string(layer_range_write_status(/*given=*/2, /*applied=*/2).status) == "success");
+    CHECK(layer_range_write_status(2, 2).message.empty());
+    CHECK(std::string(layer_range_write_status(2, 1).status) == "partial");
+    CHECK(std::string(layer_range_write_status(2, 0).status) == "error");
+
+    const LayerRangeWriteStatus nothing = layer_range_write_status(/*given=*/0, /*applied=*/0);
+    CHECK(std::string(nothing.status) == "error");
+    CHECK(nothing.message.find("no settings") != std::string::npos);
+    CHECK(nothing.message.find("unchanged") != std::string::npos);
+}

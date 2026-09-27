@@ -1,5 +1,6 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPLayerRanges.hpp
 #pragma once
+#include <cstddef>
 #include <optional>
 #include <string>
 
@@ -27,6 +28,16 @@ LayerHeightLimits layer_height_limits(const DynamicPrintConfig& printer, int fil
 // Why a range cannot print at `layer_height`, or nullopt when it can: it must be above 0 and within
 // the limits.
 std::optional<std::string> layer_range_height_error(double layer_height, const LayerHeightLimits& limits);
+
+// set_object_layer_range's status for a call that gave `given` settings and wrote `applied` of them:
+// success when it wrote them all, partial when some, error when none -- a call that gave none too,
+// with a message saying so: it used to write nothing and say success.
+struct LayerRangeWriteStatus
+{
+    const char* status = "error";
+    std::string message; // for a call that gave no settings
+};
+LayerRangeWriteStatus layer_range_write_status(size_t given, size_t applied);
 
 }} // namespace GUI::OrcaMCP
 } // namespace Slic3r
