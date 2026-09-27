@@ -11,8 +11,7 @@ namespace Slic3r {
 // Set / get thread name.
 // Returns false if the API is not supported.
 //
-// It is a good idea to name the main thread before spawning children threads, because dynamic linking is used on Windows 10
-// to initialize Get/SetThreadDescription functions, which is not thread safe.
+// Orca: on Windows 10, Get/SetThreadDescription are looked up at the first call, once and thread-safely.
 //
 // pthread_setname_np supports maximum 15 character thread names! (16th character is the null terminator)
 // 
@@ -34,13 +33,13 @@ boost::thread::id get_main_thread_id();
 bool is_main_thread_active();
 
 // Returns nullopt if not supported.
-// Not supported by OSX.
 // Naming threads is only supported on newer Windows 10.
 std::optional<std::string> get_current_thread_name();
 
-// To be called somewhere before the TBB threads are spinned for the first time, to
-// give them names recognizible in the debugger.
-// Also it sets locale of the worker threads to "C" for the G-code generator to produce "." as a decimal separator.
+// Orca: from now on, names each TBB worker that enters the calling thread's arena slic3r_tbb_<n>, to be
+// recognizable in the debugger, and sets its locale to "C" for the G-code generator to produce "." as a
+// decimal separator, before the worker runs a task there. Returns at once, waiting for no worker.
+// Once per thread; call it before the thread's first TBB work.
 void name_tbb_thread_pool_threads_set_locale();
 
 template<class Fn>

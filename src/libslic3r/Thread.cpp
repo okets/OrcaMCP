@@ -7,11 +7,9 @@
 #endif
 
 #include <atomic>
-#include <condition_variable>
-#include <mutex>
+#include <clocale>
 #include <thread>
-#include <tbb/parallel_for.h>
-#include <tbb/task_arena.h>
+#include <tbb/task_scheduler_observer.h>
 
 #include "Thread.hpp"
 #include "Utils.hpp"
@@ -25,7 +23,6 @@ namespace Slic3r {
 typedef HRESULT(__stdcall* SetThreadDescriptionType)(HANDLE, PCWSTR);
 typedef HRESULT(__stdcall* GetThreadDescriptionType)(HANDLE, PWSTR*);
 
-static bool 					s_SetGetThreadDescriptionInitialized = false;
 static HMODULE					s_hKernel32 = nullptr;
 static SetThreadDescriptionType s_fnSetThreadDescription = nullptr;
 static GetThreadDescriptionType	s_fnGetThreadDescription = nullptr;
@@ -37,17 +34,17 @@ template<typename Fn> static Fn load_proc(HMODULE module, const char* name) {
 
 static bool WindowsGetSetThreadNameAPIInitialize()
 {
-	if (! s_SetGetThreadDescriptionInitialized) {
-		// Not thread safe! It is therefore a good idea to name the main thread before spawning worker threads
-		// to initialize 
+	// Orca: a function-local static looks the API up once, thread-safely: TBB workers name themselves
+	// concurrently as they first enter an arena, and a test binary names no main thread first.
+	static const bool looked_up = [] {
 		s_hKernel32 = LoadLibraryW(L"Kernel32.dll");
 		if (s_hKernel32) {
 			s_fnSetThreadDescription = load_proc<SetThreadDescriptionType>(s_hKernel32, "SetThreadDescription");
 			s_fnGetThreadDescription = load_proc<GetThreadDescriptionType>(s_hKernel32, "GetThreadDescription");
 		}
-		s_SetGetThreadDescriptionInitialized = true;
-	}
-	return s_fnSetThreadDescription && s_fnGetThreadDescription;
+		return true;
+	}();
+	return looked_up && s_fnSetThreadDescription && s_fnGetThreadDescription;
 }
 
 #ifndef NDEBUG
@@ -153,14 +150,6 @@ bool set_current_thread_name(const char *thread_name)
 	return true;
 }
 
-std::optional<std::string> get_current_thread_name()
-{
-// not supported	
-//	char buf[16];
-//	return std::string(thread_getname_np(buf, 16) == 0 ? buf : "");
-	return std::nullopt;
-}
-
 #else
 
 // posix
@@ -182,13 +171,14 @@ bool set_current_thread_name(const char *thread_name)
 	return true;
 }
 
+#endif
+
+// Orca: macOS reads a thread's name back with the same call as the other posix systems.
 std::optional<std::string> get_current_thread_name()
 {
 	char buf[16];
 	return std::string(pthread_getname_np(pthread_self(), buf, 16) == 0 ? buf : "");
 }
-
-#endif
 
 #endif // _WIN32
 
@@ -212,70 +202,72 @@ bool is_main_thread_active()
 	return get_main_thread_id() == boost::this_thread::get_id();
 }
 
-// Spawn (n - 1) worker threads on Intel TBB thread pool and name them by an index and a system thread ID.
-// Also it sets locale of the worker threads to "C" for the G-code generator to produce "." as a decimal separator.
+namespace {
+
+// Sets the current thread's locale to "C", for the G-code generator to produce "." as a decimal separator.
+void set_current_thread_locale_c()
+{
+#ifdef _WIN32
+	_configthreadlocale(_ENABLE_PER_THREAD_LOCALE);
+	std::setlocale(LC_ALL, "C");
+#else
+	// We are leaking some memory here, because the newlocale() produced memory will never be released.
+	// This is not a problem though, as there will be a maximum one worker thread created per physical thread.
+	uselocale(newlocale(
+#ifdef __APPLE__
+		LC_ALL_MASK
+#else // some Unix / Linux / BSD
+		LC_ALL
+#endif
+		, "C", nullptr));
+#endif
+}
+
+// Names the current TBB worker slic3r_tbb_<n> and sets its locale to "C", once per thread.
+void prepare_current_tbb_worker()
+{
+	thread_local bool prepared = false;
+	if (prepared)
+		return;
+	prepared = true;
+	static std::atomic<unsigned> last_number{ 0 };
+	set_current_thread_name("slic3r_tbb_" + std::to_string(++last_number));
+	set_current_thread_locale_c();
+}
+
+// Prepares every TBB worker that enters the arena it observes, before the worker runs a task there.
+// TBB calls it on the entering worker, and it waits for nothing.
+class TbbWorkerPreparer : public tbb::task_scheduler_observer
+{
+public:
+	TbbWorkerPreparer() { observe(true); }
+	void on_scheduler_entry(bool is_worker) override
+	{
+		if (is_worker)
+			prepare_current_tbb_worker();
+	}
+};
+
+} // namespace
+
+// Orca: upstream ran a parallel_for whose tasks each waited until max_concurrency() of them ran at once.
+// TBB never promises that many threads at once: when one worker did not come, the first slice hung for
+// good. Instead, observe the arena of the calling thread (TBB gives every thread an arena of its own),
+// once per thread, from before its first task.
 void name_tbb_thread_pool_threads_set_locale()
 {
-	static bool initialized = false;
-	if (initialized)
+	thread_local bool observing = false;
+	if (observing)
 		return;
-	initialized = true;
-
-	// see GH issue #5661 PrusaSlicer hangs on Linux when run with non standard task affinity
-	// TBB will respect the task affinity mask on Linux and spawn less threads than std::thread::hardware_concurrency().
-//	const size_t nthreads_hw = std::thread::hardware_concurrency();
-	const size_t nthreads_hw = tbb::this_task_arena::max_concurrency();
-	size_t       nthreads    = nthreads_hw;
+	observing = true;
 
 #ifdef SLIC3R_PROFILE
 	// Shiny profiler is not thread safe, thus disable parallelization.
 	disable_multi_threading();
-	nthreads = 1;
 #endif
 
-	size_t                  nthreads_running(0);
-	std::condition_variable cv;
-	std::mutex				cv_m;
-	auto					master_thread_id = std::this_thread::get_id();
-    tbb::parallel_for(
-        tbb::blocked_range<size_t>(0, nthreads, 1),
-        [&nthreads_running, nthreads, &master_thread_id, &cv, &cv_m](const tbb::blocked_range<size_t> &range) {
-        	assert(range.begin() + 1 == range.end());
-			if (std::unique_lock<std::mutex> lk(cv_m);  ++nthreads_running == nthreads) {
-				lk.unlock();
-        		// All threads are spinning.
-        		// Wake them up.
-    			cv.notify_all();
-        	} else {
-        		// Wait for the last thread to wake the others.
-			    cv.wait(lk, [&nthreads_running, nthreads]{return nthreads_running == nthreads;});
-        	}
-        	auto thread_id = std::this_thread::get_id();
-			if (thread_id == master_thread_id) {
-				// The calling thread runs the 0'th task.
-				assert(range.begin() == 0);
-			} else {
-				assert(range.begin() > 0);
-				std::ostringstream name;
-		        name << "slic3r_tbb_" << range.begin();
-		        set_current_thread_name(name.str().c_str());
-		        // Set locales of the worker thread to "C".
-#ifdef _WIN32
-			    _configthreadlocale(_ENABLE_PER_THREAD_LOCALE);
-			    std::setlocale(LC_ALL, "C");
-#else
-				// We are leaking some memory here, because the newlocale() produced memory will never be released.
-				// This is not a problem though, as there will be a maximum one worker thread created per physical thread.
-				uselocale(newlocale(
-#ifdef __APPLE__
-					LC_ALL_MASK
-#else // some Unix / Linux / BSD
-					LC_ALL
-#endif
-					, "C", nullptr));
-#endif
-    		}
-        });
+	// Never deleted: TBB still writes to the observer when it frees the arena, which may outlive this thread.
+	new TbbWorkerPreparer();
 }
 
 }
