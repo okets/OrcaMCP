@@ -1923,7 +1923,8 @@ void OrcaMCPServer::register_builtin_tools()
 
                 nlohmann::json results = nlohmann::json::array();
                 bool any_changes = false;
-                bool snapshot_taken = false;
+                // One undo step for the whole call, before its first change, as the GUI takes one per edit.
+                SnapshotOnce snapshot([plater] { plater->take_snapshot("Change object settings"); });
 
                 for (const auto& [object_id, settings] : config_list) {
                     nlohmann::json obj_result;
@@ -1935,14 +1936,9 @@ void OrcaMCPServer::register_builtin_tools()
                         results.push_back(obj_result);
                         continue;
                     }
-                    // One undo step for the whole call, taken before the first change, as the GUI takes
-                    // one before an edit.
-                    if (!snapshot_taken) {
-                        plater->take_snapshot("Change object settings");
-                        snapshot_taken = true;
-                    }
-
                     ModelObject* obj = model.objects[object_id];
+                    // Read apart first, so the snapshot is taken only when a value really changes.
+                    DynamicPrintConfig parsed;
                     std::vector<std::string> applied_keys;
                     std::vector<std::string> invalid_keys;
                     // Same shape as apply_config: a key listed twice for one object is applied
@@ -1977,15 +1973,7 @@ void OrcaMCPServer::register_builtin_tools()
                         }
 
                         try {
-                            obj->config.set_deserialize(key, shaped.text, context);
-                            if (obj->config.has(key)) {
-                                applied_keys.push_back(key);
-                            } else {
-                                invalid_keys.push_back(key);
-                                rejected_values.push_back({{"key", key},
-                                                           {"reason", "the override was not stored"},
-                                                           {"expected", config_value_expected_shape(def->type)}});
-                            }
+                            parsed.set_deserialize(key, shaped.text, context);
                         } catch (const std::exception& e) {
                             invalid_keys.push_back(key);
                             rejected_values.push_back({{"key", key},
@@ -1994,7 +1982,25 @@ void OrcaMCPServer::register_builtin_tools()
                         }
                     }
 
-                    if (!applied_keys.empty()) {
+                    bool changed = false;
+                    for (const std::string& key : parsed.keys()) {
+                        const ConfigOption* now = obj->config.option(key);
+                        if (now == nullptr || !(*now == *parsed.option(key))) {
+                            snapshot.before_change();
+                            obj->config.set_key_value(key, parsed.option(key)->clone());
+                            changed = true;
+                        }
+                        if (obj->config.has(key)) {
+                            applied_keys.push_back(key);
+                        } else {
+                            invalid_keys.push_back(key);
+                            rejected_values.push_back({{"key", key},
+                                                       {"reason", "the override was not stored"},
+                                                       {"expected", config_value_expected_shape(print_config_def.get(key)->type)}});
+                        }
+                    }
+
+                    if (changed) {
                         wxGetApp().obj_list()->changed_object(object_id);
                         mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
                         any_changes = true;
@@ -2429,15 +2435,24 @@ void OrcaMCPServer::register_builtin_tools()
                     // Every range has a layer height and an extruder, the object's unless given, as the
                     // object list gives a new range them (its get_default_layer_config): the slicer
                     // reads a range's layer height unconditionally.
-                    plater->take_snapshot("Change height range settings"); // undo puts the ranges back
-                    ModelConfig& layer_cfg = obj->layer_config_ranges[range];
-                    layer_cfg.apply(written);
-                    Slic3r::complete_layer_range(layer_cfg, wxGetApp().obj_list()->get_default_layer_config(object_id));
+                    const auto   existing = obj->layer_config_ranges.find(range);
+                    ModelConfig  updated;
+                    if (existing != obj->layer_config_ranges.end())
+                        updated.assign_config(existing->second.get());
+                    updated.apply(written);
+                    Slic3r::complete_layer_range(updated, wxGetApp().obj_list()->get_default_layer_config(object_id));
 
-                    // Notify UI of changes
-                    wxGetApp().obj_list()->changed_object(object_id);
-                    mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
-                    plater->update();
+                    // Only a range that really changes is written, after the snapshot undo takes it back
+                    // with: a snapshot for a no-op would discard the redo stack.
+                    if (existing == obj->layer_config_ranges.end() || existing->second.get() != updated.get()) {
+                        plater->take_snapshot("Change height range settings");
+                        obj->layer_config_ranges[range].assign_config(updated.get());
+
+                        // Notify UI of changes
+                        wxGetApp().obj_list()->changed_object(object_id);
+                        mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
+                        plater->update();
+                    }
                 }
 
                 // "error" when nothing at all was written -- a range with no settings on it is not the
@@ -2503,25 +2518,22 @@ void OrcaMCPServer::register_builtin_tools()
                 }
 
                 ModelObject* obj = model.objects[object_id];
-                int deleted_count = 0;
-                plater->take_snapshot(_u8L("Remove height range")); // the object list's, so undo puts them back
+                const t_layer_height_range range = {z_min, z_max};
+                const int deleted_count = has_range ? int(obj->layer_config_ranges.count(range)) : int(obj->layer_config_ranges.size());
 
-                if (has_range) {
-                    // Delete specific range
-                    t_layer_height_range range = {z_min, z_max};
-                    if (obj->layer_config_ranges.erase(range) > 0) {
-                        deleted_count = 1;
-                    }
-                } else {
-                    // Delete all ranges
-                    deleted_count = obj->layer_config_ranges.size();
-                    obj->layer_config_ranges.clear();
+                if (deleted_count > 0) {
+                    // The object list's snapshot, so undo puts them back; none when nothing is deleted.
+                    plater->take_snapshot(_u8L("Remove height range"));
+                    if (has_range)
+                        obj->layer_config_ranges.erase(range);
+                    else
+                        obj->layer_config_ranges.clear();
+
+                    // Notify UI of changes
+                    wxGetApp().obj_list()->changed_object(object_id);
+                    mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
+                    plater->update();
                 }
-
-                // Notify UI of changes
-                wxGetApp().obj_list()->changed_object(object_id);
-                mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
-                plater->update();
 
                 return nlohmann::json{
                     {"status", "success"},
@@ -2595,6 +2607,9 @@ void OrcaMCPServer::register_builtin_tools()
                 full_config.apply(wxGetApp().preset_bundle->printers.get_edited_preset().config);
 
                 nlohmann::json results = nlohmann::json::array();
+                // One undo step for the call, under the snapshot the GUI's own "Adaptive" button takes
+                // (GLCanvas3D), and none when no profile changes.
+                SnapshotOnce snapshot([plater] { plater->take_snapshot("Variable layer height - Adaptive"); });
 
                 for (int object_id : object_ids) {
                     nlohmann::json obj_result;
@@ -2618,14 +2633,15 @@ void OrcaMCPServer::register_builtin_tools()
                     // Generate adaptive layer height profile
                     std::vector<double> profile = layer_height_profile_adaptive(slicing_params, *obj, clamped_quality);
 
-                    // Set the profile on the model object, after the snapshot the GUI's own "Adaptive"
-                    // button takes (GLCanvas3D), so undo puts the old profile back.
-                    plater->take_snapshot("Variable layer height - Adaptive");
-                    obj->layer_height_profile.set(profile);
+                    // Set the profile on the model object, after the call's snapshot, when it changes.
+                    if (obj->layer_height_profile.get() != profile) {
+                        snapshot.before_change();
+                        obj->layer_height_profile.set(profile);
 
-                    // Notify UI of changes
-                    wxGetApp().obj_list()->update_info_items(object_id);
-                    mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
+                        // Notify UI of changes
+                        wxGetApp().obj_list()->update_info_items(object_id);
+                        mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
+                    }
 
                     // Calculate profile statistics
                     double min_layer_height = slicing_params.max_layer_height;
@@ -2740,6 +2756,9 @@ void OrcaMCPServer::register_builtin_tools()
                 Model& model = plater->model();
 
                 nlohmann::json results = nlohmann::json::array();
+                // One undo step for the call, under the GUI's own "Reset" snapshot, and none when no
+                // object had a profile to clear.
+                SnapshotOnce snapshot([plater] { plater->take_snapshot("Variable layer height - Reset"); });
 
                 for (int object_id : object_ids) {
                     nlohmann::json obj_result;
@@ -2755,11 +2774,12 @@ void OrcaMCPServer::register_builtin_tools()
                     ModelObject* obj = model.objects[object_id];
 
                     bool had_vlh = !obj->layer_height_profile.get().empty();
-                    if (had_vlh)
-                        plater->take_snapshot("Variable layer height - Reset"); // the GUI's own "Reset" snapshot
-                    obj->layer_height_profile.clear();
-                    wxGetApp().obj_list()->update_info_items(object_id);
-                    mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
+                    if (had_vlh) {
+                        snapshot.before_change();
+                        obj->layer_height_profile.clear();
+                        wxGetApp().obj_list()->update_info_items(object_id);
+                        mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
+                    }
 
                     obj_result["status"] = "success";
                     obj_result["object_name"] = obj->name;
@@ -4973,6 +4993,9 @@ void OrcaMCPServer::register_builtin_tools()
                 }
 
                 std::string old_name = model.objects[object_id]->name;
+                if (new_name == old_name)
+                    return nlohmann::json{{"status", "success"}, {"object_id", object_id}, {"old_name", old_name}, {"new_name", new_name},
+                                          {"changed", false}};
                 plater->take_snapshot(_u8L("Rename Object")); // the object list's, so undo puts the name back
                 model.objects[object_id]->name = new_name;
 

@@ -302,6 +302,28 @@ private:
     bool m_was_enabled;
 };
 
+// One undo snapshot for a tool call: taken right before its first change, and never for a call that
+// changes nothing. A snapshot discards the redo stack, so a no-op call must not take one; and a call
+// that changes several objects is one undo step, as the GUI's own edits are.
+class SnapshotOnce
+{
+public:
+    explicit SnapshotOnce(std::function<void()> take) : m_take(std::move(take)) {}
+    // Call right before each change; the first call takes the snapshot.
+    void before_change()
+    {
+        if (!m_taken) {
+            m_take();
+            m_taken = true;
+        }
+    }
+    bool taken() const { return m_taken; }
+
+private:
+    std::function<void()> m_take;
+    bool                  m_taken = false;
+};
+
 // Applies a settings change the slicer has not taken in yet (`apply`: Plater::apply_pending_background_update)
 // when should_apply_pending_update says so, and says whether it did. The update can raise an error
 // dialog (show_error), and one raised with no suppression open is a modal that blocks every later

@@ -27,3 +27,23 @@ TEST_CASE("resetting an object's settings clears every override but its filament
     CHECK(object_overrides_to_reset({}).empty());
 }
 
+// A tool call's undo snapshot: one per call, right before its first change, and none for a call that
+// changes nothing. apply_adaptive_layer_height took one per object (N undo steps for one call), and
+// every per-object tool took one before knowing whether anything would change, so a no-op call threw
+// away the redo stack.
+TEST_CASE("a tool call takes one snapshot before its first change, and none when it changes nothing", "[orcamcp][ObjectSettings]")
+{
+    int taken = 0;
+    {
+        Slic3r::GUI::OrcaMCP::SnapshotOnce snapshot([&taken] { ++taken; });
+        CHECK_FALSE(snapshot.taken());
+    }
+    CHECK(taken == 0);
+
+    Slic3r::GUI::OrcaMCP::SnapshotOnce snapshot([&taken] { ++taken; });
+    snapshot.before_change();
+    snapshot.before_change();
+    snapshot.before_change();
+    CHECK(taken == 1);
+    CHECK(snapshot.taken());
+}
