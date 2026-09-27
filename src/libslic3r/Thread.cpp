@@ -23,7 +23,6 @@ namespace Slic3r {
 typedef HRESULT(__stdcall* SetThreadDescriptionType)(HANDLE, PCWSTR);
 typedef HRESULT(__stdcall* GetThreadDescriptionType)(HANDLE, PWSTR*);
 
-static bool 					s_SetGetThreadDescriptionInitialized = false;
 static HMODULE					s_hKernel32 = nullptr;
 static SetThreadDescriptionType s_fnSetThreadDescription = nullptr;
 static GetThreadDescriptionType	s_fnGetThreadDescription = nullptr;
@@ -35,17 +34,17 @@ template<typename Fn> static Fn load_proc(HMODULE module, const char* name) {
 
 static bool WindowsGetSetThreadNameAPIInitialize()
 {
-	if (! s_SetGetThreadDescriptionInitialized) {
-		// Not thread safe! It is therefore a good idea to name the main thread before spawning worker threads
-		// to initialize 
+	// Orca: a function-local static looks the API up once, thread-safely: TBB workers name themselves
+	// concurrently as they first enter an arena, and a test binary names no main thread first.
+	static const bool looked_up = [] {
 		s_hKernel32 = LoadLibraryW(L"Kernel32.dll");
 		if (s_hKernel32) {
 			s_fnSetThreadDescription = load_proc<SetThreadDescriptionType>(s_hKernel32, "SetThreadDescription");
 			s_fnGetThreadDescription = load_proc<GetThreadDescriptionType>(s_hKernel32, "GetThreadDescription");
 		}
-		s_SetGetThreadDescriptionInitialized = true;
-	}
-	return s_fnSetThreadDescription && s_fnGetThreadDescription;
+		return true;
+	}();
+	return looked_up && s_fnSetThreadDescription && s_fnGetThreadDescription;
 }
 
 #ifndef NDEBUG

@@ -218,7 +218,9 @@ TEST_CASE("Preparing the TBB workers returns while they are busy with other work
 
 TEST_CASE("A TBB worker prints and parses a decimal point while the process locale uses a comma", "[Thread]")
 {
-    // CLI::run prepares the main thread's arena, and the slicing thread its own.
+    // CLI::run prepares the main thread's arena, and the slicing thread its own. A worker stays prepared
+    // for good, so a case checks its arena only while no earlier test in the process prepared the
+    // workers: ctest runs every test case in a process of its own, and the main thread's case first.
     const bool on_main_thread = GENERATE(true, false);
     CAPTURE(on_main_thread);
     if (tbb::info::default_concurrency() < 2)

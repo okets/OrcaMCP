@@ -1240,10 +1240,13 @@ calling thread's arena (oneTBB gives every thread an arena of its own), once per
 each worker as it enters, before it runs a task there, and waits for nothing. The observers are never
 deleted: TBB still writes to one when it frees its arena. `CLI::run` (`OrcaSlicer.cpp`) also calls it
 right after naming the main thread, so the main thread's arena is covered from startup, as the barrier
-covered every worker once it had run; keep that fork-only call through a merge. macOS reads a thread's
-name back like the other posix systems (`get_current_thread_name`). On "no", upstream dropped the
-barrier: compare its replacement with ours, keep whichever prepares a worker that joins later, and
-re-run `libslic3r_tests "[Thread]"` (on the barrier, the busy-pool test fails at its 30 s deadline).
+covered every worker once it had run; keep that fork-only call through a merge. Workers now name
+themselves concurrently, so the Windows naming API is looked up once in a function-local static
+(`WindowsGetSetThreadNameAPIInitialize`), not behind a plain flag a worker could see set before the
+pointers. macOS reads a thread's name back like the other posix systems (`get_current_thread_name`).
+On "no", upstream dropped the barrier: compare its replacement with ours, keep whichever prepares a
+worker that joins later, and re-run `libslic3r_tests "[Thread]"` (on the barrier, the busy-pool test
+fails at its 30 s deadline).
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices
