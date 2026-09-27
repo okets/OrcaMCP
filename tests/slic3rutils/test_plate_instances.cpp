@@ -21,6 +21,9 @@
 // project told it about each object's first instance only, so a project saved with an object on two
 // plates came back with the second plate empty: nothing to slice there, and MCP's scene listed that
 // instance nowhere.
+//
+// These tests call PartPlateList::notify_object_added, which ObjectList::add_object_to_list calls when
+// an object joins the scene; that line itself needs the app, so reverting it leaves them green.
 
 using Catch::Matchers::WithinAbs;
 using Slic3r::Vec3d;
@@ -50,7 +53,8 @@ Vec3d centre_of(PartPlateList& plates, int plate)
     return {centre.x(), centre.y(), k_cube_size / 2.0};
 }
 
-// A 20 mm cube with an instance at each of `positions`, as the plate list learns of a loaded object.
+// A 20 mm cube with an instance at each of `positions`, added to the scene as the app adds a loaded
+// object (ObjectList::add_object_to_list: PartPlateList::notify_object_added).
 Slic3r::ModelObject& add_cube(Slic3r::Model& model, PartPlateList& plates, const std::vector<Vec3d>& positions)
 {
     Slic3r::ModelObject* object = model.add_object();
@@ -59,7 +63,7 @@ Slic3r::ModelObject& add_cube(Slic3r::Model& model, PartPlateList& plates, const
     object->center_around_origin(false);
     for (const Vec3d& position : positions)
         object->add_instance()->set_offset(position);
-    plates.notify_object_instances_update(int(model.objects.size()) - 1, /*is_new=*/true);
+    plates.notify_object_added(int(model.objects.size()) - 1);
     return *object;
 }
 
@@ -124,7 +128,7 @@ TEST_CASE("A project saved with an object on two plates reloads with each instan
     Slic3r::release_PlateData_list(plate_data);
     REQUIRE(reloaded->get_plate_count() == 2);
     scene.add_object(*loaded.objects[0]);
-    reloaded->notify_object_instances_update(0, true);
+    reloaded->notify_object_added(0);
 
     CHECK(reloaded->find_instance(0, 0) == 0);
     CHECK(reloaded->find_instance(0, 1) == 1);
@@ -167,4 +171,22 @@ TEST_CASE("An instance on no plate is listed as unplaced, even when the object's
     CHECK_THAT(unplaced[0]["position"]["x"].get<double>(), WithinAbs(off_every_plate.x(), 1e-6)); // that copy's
     CHECK(unplaced[1]["object_index"] == 2);
     CHECK(unplaced[1]["unplaced_instances"] == nlohmann::json::array({0}));
+}
+
+TEST_CASE("A later instance on a spiral-vase plate is placed without giving the object vase settings", "[PlateInstances][orcamcp]")
+{
+    // The first instance is notified as upstream always did (is_new: a vase plate's settings are
+    // applied to the whole object); a later one is placed only, since its user may have declined them
+    // when it was put there. That first-instance side effect needs the app's presets, so it is not
+    // reached here; a later instance that reached the vase code would need them (or its dialog) too,
+    // and this test would crash rather than fail.
+    Slic3r::Model                        model;
+    const std::unique_ptr<PartPlateList> plates = plate_list_for(model, 2);
+    plates->get_plate(1)->config()->set_key_value("spiral_mode", new Slic3r::ConfigOptionBool(true));
+
+    const Slic3r::ModelObject& cube = add_cube(model, *plates, {centre_of(*plates, 0), centre_of(*plates, 1)});
+
+    CHECK(plates->find_instance(0, 1) == 1);
+    CHECK_FALSE(cube.config.has("wall_loops"));
+    CHECK_FALSE(cube.config.has("sparse_infill_density"));
 }

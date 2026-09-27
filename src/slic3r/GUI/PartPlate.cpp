@@ -5362,7 +5362,7 @@ int PartPlateList::find_instance_belongs(int obj_id, int instance_id)
 
 //notify instance's update, need to refresh the instance in plates
 //newly added or modified
-int PartPlateList::notify_instance_update(int obj_id, int instance_id, bool is_new)
+int PartPlateList::notify_instance_update(int obj_id, int instance_id, bool is_new, bool place_only)
 {
 	int ret = 0, index;
 	PartPlate* plate = NULL;
@@ -5463,7 +5463,7 @@ int PartPlateList::notify_instance_update(int obj_id, int instance_id, bool is_n
 			plate->add_instance(obj_id, instance_id, false, &boundingbox);
 
 			// spiral mode, update object setting
-			if (plate->config()->has("spiral_mode") && plate->config()->opt_bool("spiral_mode") && !is_object_config_compatible_with_spiral_vase(object)) {
+			if (!place_only && plate->config()->has("spiral_mode") && plate->config()->opt_bool("spiral_mode") && !is_object_config_compatible_with_spiral_vase(object)) {
 				if (!is_new) {
 					auto answer = static_cast<TabPrintPlate*>(wxGetApp().plate_tab)->show_spiral_mode_settings_dialog(true);
 					if (answer == wxID_YES) {
@@ -5502,6 +5502,14 @@ void PartPlateList::notify_object_instances_update(int obj_id, bool is_new)
 		return;
 	for (int instance_id = 0; instance_id < int(m_model->objects[obj_id]->instances.size()); ++instance_id)
 		notify_instance_update(obj_id, instance_id, is_new);
+}
+
+void PartPlateList::notify_object_added(int obj_id)
+{
+	if (obj_id < 0 || obj_id >= int(m_model->objects.size()))
+		return;
+	for (int instance_id = 0; instance_id < int(m_model->objects[obj_id]->instances.size()); ++instance_id)
+		notify_instance_update(obj_id, instance_id, /*is_new=*/instance_id == 0, /*place_only=*/instance_id > 0);
 }
 
 //notify instance is removed

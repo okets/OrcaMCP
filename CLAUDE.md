@@ -1220,8 +1220,13 @@ instances stand on two plates (a clone onto another plate, an arrange over sever
 second plate empty: the 3D view drew the copy there, but the plate did not hold it, sliced nothing,
 and MCP's `get_scene_info` listed that copy nowhere. The file was right: its plate list and the
 instance's transform both survive the round trip. Ours tells it about every instance
-(`PartPlateList::notify_object_instances_update`, which MCP's transforms use too). On "no", take
-upstream's and re-run `slic3rutils_tests "[PlateInstances]"`.
+(`PartPlateList::notify_object_added`): the first as upstream did (`is_new`, which gives the object a
+spiral-vase plate's settings), every other one placed only (`notify_instance_update`'s `place_only`),
+since those settings are object-wide and a copy's user may have declined them when it was put there.
+`slic3rutils_tests "[PlateInstances]"` covers that helper only: it acts out the open sequence without
+the app, so it stays green with the line in `add_object_to_list` reverted. On "no", take upstream's
+and confirm it by opening a project with an object on two plates: MCP's `export_3mf` then
+`load_project`, each instance on its plate in `get_scene_info`, or the same in the GUI.
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices
