@@ -427,10 +427,7 @@ void rehome_and_report_placement(nlohmann::json& result, int object_id, bool mov
 
     // Re-home first: a transform can have carried the object onto a different plate, and the plate
     // lists only learn that from notify_instance_update. report_placement then reads the result.
-    PartPlateList& plate_list = plater->get_partplate_list();
-    ModelObject*   object     = model.objects[object_id];
-    for (size_t i = 0; i < object->instances.size(); ++i)
-        plate_list.notify_instance_update(object_id, int(i), /*is_new=*/true);
+    plater->get_partplate_list().notify_object_instances_update(object_id, /*is_new=*/true);
 
     report_placement(result, object_id);
 }

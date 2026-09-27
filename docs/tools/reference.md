@@ -364,6 +364,10 @@ A project that fails to load (no objects) is `status: "error"`, with the app's e
 as `message` and `error_messages` (captured; no dialog is left open). A project that opened is
 `success`, with `project_renamed_to`, and any error dialog it raised on the way in `error_messages`.
 
+Every instance of every object is on the plate it stands on once the project has opened. Before
+v2.5.0.6 only each object's first instance was: an object with copies on two plates opened with the
+second plate empty, in the GUI too, so that plate sliced nothing.
+
 **Returns:**
 ```json
 {"status": "success",

@@ -1,0 +1,128 @@
+#include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
+
+#include "slic3r/GUI/PartPlate.hpp"
+#include "libslic3r/Format/bbs_3mf.hpp"
+#include "libslic3r/Model.hpp"
+#include "libslic3r/PrintConfig.hpp"
+#include "libslic3r/TriangleMesh.hpp"
+
+#include "test_utils.hpp"
+
+#include <memory>
+#include <string>
+#include <vector>
+
+// Which plate each instance of an object is on. An object's instances can stand on different plates
+// (a clone onto another plate, an arrange over several), and the plate list only knows an instance
+// once something tells it (PartPlateList::notify_instance_update). Loading a project told it about
+// each object's first instance only, so a project saved with an object on two plates came back with
+// the second plate empty: nothing to slice there, and MCP's scene listed that instance nowhere.
+
+using Catch::Matchers::WithinAbs;
+using Slic3r::Vec3d;
+using Slic3r::GUI::PartPlateList;
+
+namespace {
+
+constexpr double k_plate_size = 256.0;
+constexpr double k_cube_size  = 20.0;
+
+// The plate list of a 256 mm square bed, with `count` plates.
+std::unique_ptr<PartPlateList> plate_list_for(Slic3r::Model& model, int count)
+{
+    auto plates = std::make_unique<PartPlateList>(int(k_plate_size), int(k_plate_size), k_plate_size, nullptr, &model,
+                                                  Slic3r::ptFFF);
+    const Slic3r::Pointfs bed{{0.0, 0.0}, {k_plate_size, 0.0}, {k_plate_size, k_plate_size}, {0.0, k_plate_size}};
+    plates->set_shapes(bed, {}, {}, {}, {}, "", 0.f, 0.f);
+    while (plates->get_plate_count() < count)
+        plates->create_plate(false);
+    return plates;
+}
+
+// Where a cube resting on `plate` sits when it is centred on it.
+Vec3d centre_of(PartPlateList& plates, int plate)
+{
+    const Vec3d centre = plates.get_plate(plate)->get_plate_box().center();
+    return {centre.x(), centre.y(), k_cube_size / 2.0};
+}
+
+// A 20 mm cube with an instance at each of `positions`, as the plate list learns of a loaded object.
+Slic3r::ModelObject& add_cube(Slic3r::Model& model, PartPlateList& plates, const std::vector<Vec3d>& positions)
+{
+    Slic3r::ModelObject* object = model.add_object();
+    object->name                = "cube";
+    object->add_volume(Slic3r::TriangleMesh(Slic3r::its_make_cube(k_cube_size, k_cube_size, k_cube_size)));
+    object->center_around_origin(false);
+    for (const Vec3d& position : positions)
+        object->add_instance()->set_offset(position);
+    plates.notify_object_instances_update(int(model.objects.size()) - 1, /*is_new=*/true);
+    return *object;
+}
+
+} // namespace
+
+TEST_CASE("An object added to the plate list has every instance on the plate it stands on", "[PlateInstances][orcamcp]")
+{
+    Slic3r::Model                        model;
+    const std::unique_ptr<PartPlateList> plates = plate_list_for(model, 2);
+    add_cube(model, *plates, {centre_of(*plates, 0), centre_of(*plates, 1)});
+
+    CHECK(plates->find_instance(0, 0) == 0);
+    CHECK(plates->find_instance(0, 1) == 1);
+}
+
+TEST_CASE("A project saved with an object on two plates reloads with each instance on its plate", "[PlateInstances][orcamcp]")
+{
+    Slic3r::Model      model;
+    ScopedTemporaryDir backup_dir("orca_two_plates_src");
+    model.set_backup_path(backup_dir.string());
+    const std::unique_ptr<PartPlateList> plates = plate_list_for(model, 2);
+    const Vec3d                          second = centre_of(*plates, 1);
+    add_cube(model, *plates, {centre_of(*plates, 0), second});
+
+    ScopedTemporaryFile        file(".3mf");
+    Slic3r::DynamicPrintConfig config = Slic3r::DynamicPrintConfig::full_print_config();
+    Slic3r::StoreParams        store;
+    store.path     = file.string();
+    store.model    = &model;
+    store.config   = &config;
+    store.strategy = Slic3r::SaveStrategy::Zip64 | Slic3r::SaveStrategy::Silence;
+    REQUIRE(plates->store_to_3mf_structure(store.plate_data_list, false) == 0);
+    REQUIRE(store_bbs_3mf(store));
+    Slic3r::release_PlateData_list(store.plate_data_list);
+
+    Slic3r::Model      loaded;
+    ScopedTemporaryDir loaded_backup_dir("orca_two_plates_dst");
+    loaded.set_backup_path(loaded_backup_dir.string());
+    Slic3r::DynamicPrintConfig        loaded_config;
+    Slic3r::ConfigSubstitutionContext substitutions{Slic3r::ForwardCompatibilitySubstitutionRule::Enable};
+    Slic3r::PlateDataPtrs             plate_data;
+    std::vector<Slic3r::Preset*>      project_presets;
+    bool                              is_bbl_3mf = false, is_orca_3mf = false;
+    Slic3r::Semver                    version;
+    REQUIRE(load_bbs_3mf(file.string().c_str(), &loaded_config, &substitutions, &loaded, &plate_data, &project_presets,
+                         &is_bbl_3mf, &is_orca_3mf, &version, nullptr,
+                         Slic3r::LoadStrategy::LoadModel | Slic3r::LoadStrategy::LoadConfig));
+    REQUIRE(loaded.objects.size() == 1);
+    REQUIRE(loaded.objects[0]->instances.size() == 2);
+    // The file has it right: the second plate lists the object, and the second instance kept its place.
+    REQUIRE(plate_data.size() == 2);
+    CHECK(plate_data[1]->obj_inst_map.size() == 1);
+    CHECK_THAT(loaded.objects[0]->instances[1]->get_offset().x(), WithinAbs(second.x(), 1e-6));
+
+    // As the app opens it: the plates from the file first, over the scene the project replaces (empty
+    // by then), then each loaded object added to the scene (Plater::priv::load_model_objects, then
+    // ObjectList::add_object_to_list). A plate made while the object is already in the scene would
+    // take its instance itself (PartPlateList::construct_objects_list_for_new_plate).
+    Slic3r::Model                        scene;
+    const std::unique_ptr<PartPlateList> reloaded = plate_list_for(scene, 1);
+    REQUIRE(reloaded->load_from_3mf_structure(plate_data) == 0);
+    Slic3r::release_PlateData_list(plate_data);
+    REQUIRE(reloaded->get_plate_count() == 2);
+    scene.add_object(*loaded.objects[0]);
+    reloaded->notify_object_instances_update(0, true);
+
+    CHECK(reloaded->find_instance(0, 0) == 0);
+    CHECK(reloaded->find_instance(0, 1) == 1);
+}

@@ -5496,6 +5496,14 @@ int PartPlateList::notify_instance_update(int obj_id, int instance_id, bool is_n
 	return 0;
 }
 
+void PartPlateList::notify_object_instances_update(int obj_id, bool is_new)
+{
+	if (obj_id < 0 || obj_id >= int(m_model->objects.size()))
+		return;
+	for (int instance_id = 0; instance_id < int(m_model->objects[obj_id]->instances.size()); ++instance_id)
+		notify_instance_update(obj_id, instance_id, is_new);
+}
+
 //notify instance is removed
 int PartPlateList::notify_instance_removed(int obj_id, int instance_id)
 {

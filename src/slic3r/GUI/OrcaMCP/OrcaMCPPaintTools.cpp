@@ -248,8 +248,7 @@ void refresh_after_paint(const PaintTarget& target)
 {
     Plater* plater = wxGetApp().plater();
     wxGetApp().obj_list()->update_info_items(std::size_t(target.object_id));
-    for (std::size_t i = 0; i < target.object->instances.size(); ++i)
-        plater->get_partplate_list().notify_instance_update(target.object_id, int(i));
+    plater->get_partplate_list().notify_object_instances_update(target.object_id);
     // Rescheduling the background process is what eventually makes the paint visible in the
     // preview. Guarded the way Plater.cpp guards its own canvas notifications: get_view3D_canvas3D
     // returns null only when the Plater pimpl is gone, and a canvas that exists but has not run its

@@ -839,6 +839,9 @@ public:
 
     //notify instance's update, need to refresh the instance in plates
     int notify_instance_update(int obj_id, int instance_id, bool is_new = false);
+    // Orca: the same for every instance of an object. Its instances can stand on different plates,
+    // and one never notified is on no plate.
+    void notify_object_instances_update(int obj_id, bool is_new = false);
 
     //notify instance is removed
     int notify_instance_removed(int obj_id, int instance_id);

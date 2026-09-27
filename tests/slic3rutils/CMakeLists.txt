@@ -40,6 +40,7 @@ add_executable(${_TEST_NAME}_tests
     test_paint_remap.cpp
     test_extrusion_features.cpp
     test_object_placement.cpp
+    test_plate_instances.cpp
     test_plate_occupancy.cpp
     test_transform_frames.cpp
     test_render_math.cpp

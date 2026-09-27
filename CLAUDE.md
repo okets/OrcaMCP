@@ -994,6 +994,7 @@ echo "AC ObjectList::get_default_layer_config reads the preset's float \"extrude
 echo "AD reload_scene recycles a GLVolume without its instance's printable flag (rel2506/06b): $(U src/slic3r/GUI/GLCanvas3D.cpp | awk '/^void GLCanvas3D::reload_scene/{f=1} f&&/[.>]printable *= /{print "no"; exit} f&&/^}/{print "yes"; exit}')"
 echo "AE cancel_all leaves a job whose process has returned to finalize as not cancelled (0 = bug) / a late finalize runs in ~priv with Plater::p null (rel2506/07e): $(U src/slic3r/GUI/Jobs/BoostThreadWorker.hpp | grep -c 'cancel_all_count') / $(U src/slic3r/GUI/Plater.cpp | grep -c '^Plater::~Plater() = default;')"
 echo "AF a cancelled or failed arrange keeps prepare_all's plates locked, its running flag and its notification (rel2506/07e): $(U src/slic3r/GUI/Jobs/ArrangeJob.cpp | awk '/^void ArrangeJob::finalize/{f=1} f&&/lock\(false\)|end_arrange_run/{print "no"; exit} f&&/if \(canceled \|\| eptr\)/{print "yes"; exit}')"
+echo "AG an object added to the scene has only its first instance on a plate (rel2506/07f): $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^void ObjectList::add_object_to_list\(/{f=1} f&&/notify_instance_update\(obj_idx, 0, true\)/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -1210,6 +1211,17 @@ delivers nothing, so a late one never runs. It unlocks the plates it locked by i
 (`ObjectID`), never by index: an arrange a new or opened project cancelled meets a new plate list,
 where the same index is another plate, maybe one the user saved locked. On "no", take upstream's and
 re-run `slic3rutils_tests "[McpUiJob]"`.
+
+Item AG: upstream's `ObjectList::add_object_to_list` tells the plate list about an object's first
+instance only (`notify_instance_update(obj_idx, 0, true)`). Every other instance is on no plate until
+something moves it. Opening a project runs through it -- the plates come from the file first, over
+an empty scene, and each loaded object is then added -- so a project saved with an object whose
+instances stand on two plates (a clone onto another plate, an arrange over several) opened with the
+second plate empty: the 3D view drew the copy there, but the plate did not hold it, sliced nothing,
+and MCP's `get_scene_info` listed that copy nowhere. The file was right: its plate list and the
+instance's transform both survive the round trip. Ours tells it about every instance
+(`PartPlateList::notify_object_instances_update`, which MCP's transforms use too). On "no", take
+upstream's and re-run `slic3rutils_tests "[PlateInstances]"`.
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices
