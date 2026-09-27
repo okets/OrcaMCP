@@ -413,6 +413,7 @@ set(SLIC3R_GUI_SOURCES
     GUI/OrcaMCP/OrcaMCPQuit.cpp
     GUI/OrcaMCP/OrcaMCPQuitApp.cpp
     GUI/OrcaMCP/OrcaMCPSliceCredit.hpp
+    GUI/OrcaMCP/OrcaMCPSliceProgress.hpp
     GUI/OrcaMCP/OrcaMCPLoginServer.hpp
     GUI/OrcaMCP/OrcaMCPLoginServer.cpp
     GUI/OrcaMCP/OrcaMCPRequestGuard.hpp

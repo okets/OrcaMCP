@@ -270,12 +270,13 @@ Check slicing progress, for the selected plate and for every plate.
   "plate_index": 0,
   "slice_result_valid": true,
   "plates": [
-    {"index": 0, "slice_result_valid": true},
-    {"index": 1, "slice_result_valid": true}
+    {"index": 0, "slice_result_valid": true, "percent": 100},
+    {"index": 1, "slice_result_valid": true, "percent": 100}
   ],
   "plates_sliced": 2,
   "plates_total": 2,
-  "slice_run": {"ended_early": false},
+  "stage": null,
+  "slice_run": {"ended_early": false, "scope": "all_plates", "plates": [0, 1], "outcome": "done"},
   "active_warnings": {"count": 0, "warnings": []}
 }
 ```
@@ -286,13 +287,14 @@ Check slicing progress, for the selected plate and for every plate.
 | `is_slicing` | Background process running right now. During a `slice_all` run over every plate it stays true from the first plate to the last |
 | `status` | Legacy field, `slicing` or `idle` only - use `state` |
 | `slice_result_valid` | The current plate's own slice-result flag, the same one the GUI's Print/Export buttons use |
-| `plates` | Every plate's slice-result flag, so a multi-plate run can be followed plate by plate (and a plate that failed can be identified) |
+| `plates` | Every plate's slice-result flag and `percent`, so a multi-plate run can be followed plate by plate (and a plate that failed can be identified). `percent` is 0-100 while a plate slices and 100 once it has a result; `null` for a plate with no result that nothing is slicing. The GUI drops progress updates while another job (an arrange, an orient) runs, so a percent can stand still then |
+| `stage` | While slicing: the app's progress text for the running slice ("Generating walls", "Generating support", ...), in the app's language. `null` when nothing is slicing |
 | `plates_sliced` / `plates_total` | How many of the plates have a valid result |
 | `restored_selected_plate` | Present only on the poll that ends a `slice_all` run over every plate: the plate that was selected when `slice_all` was called has been selected again |
-| `slice_run` | `ended_early: true`, with `stopped_at_plate` and `reason`, when the last Slice All run stopped before its last plate because another job (an arrange, an orient) was running; that plate and the ones after it are not sliced. `active_warnings` carries a `SliceAllEndedEarly` warning then too. Cleared when the next Slice All starts; call `slice_all` again |
+| `slice_run` | How the last `slice_all` run stands. `scope` (`all_plates`, `current_plate`, or `null` before the first `slice_all`) and `plates`: the current indexes of the plates it asked for that still exist. `outcome`: `running`, `done` (every one of them has a result), `ended_early`, `incomplete` (the run is over and some have no result, or were deleted or rebuilt: a plate-list change cancels Slice All), or `null` with no run; `message` says which plates and why when it is `ended_early` or `incomplete`. `ended_early: true`, with `stopped_at_plate` and `reason`, when the last Slice All run stopped before its last plate because another job (an arrange, an orient) was running; that plate and the ones after it are not sliced. `active_warnings` carries a `SliceAllEndedEarly` warning then too. Cleared when the next Slice All starts; call `slice_all` again. `wait_for_slice` ends its wait on this |
 
-**Usage:** Poll every 2-3 seconds after `slice_all` until `state` is `done`, then call
-`get_print_estimate`. `is_slicing: false` on its own does **not** mean the slice finished - it is
+**Usage:** After `slice_all`, call `wait_for_slice` (it polls this for you), or poll every 2-3
+seconds until `slice_run.outcome` is no longer `running`, then call `get_print_estimate`. `is_slicing: false` on its own does **not** mean the slice finished - it is
 also false before slicing ever started. `state` is about the *selected* plate; for a multi-plate
 run read `plates_sliced` / `plates`.
 

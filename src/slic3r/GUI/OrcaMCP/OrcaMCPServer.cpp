@@ -12,6 +12,7 @@
 #include "OrcaMCPRequestGuard.hpp"
 #include "OrcaMCPQuit.hpp"
 #include "OrcaMCPSliceCredit.hpp"
+#include "OrcaMCPSliceProgress.hpp"
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Plater.hpp"
@@ -207,6 +208,67 @@ bool mcp_gui_ready(std::string& reason)
 // a plate moves every later plate down, and the index then named another plate. Only ever read or
 // written on the GUI thread, from inside run_on_main_thread.
 int s_slice_all_restore_print_index = -1;
+
+// What the last slice_all asked for, so get_slicing_status can judge the run once it is over and
+// wait_for_slice knows when to stop: "all_plates" or "current_plate" ("" before the first call), and
+// the print index of every plate it was to slice, for the same reason as above. GUI thread only.
+std::string      s_slice_run_scope;
+std::vector<int> s_slice_run_print_indexes;
+
+// Records the slice_all run about to start: every plate, or only the one selected at the call.
+void record_slice_run(PartPlateList& plate_list, bool every_plate, int plate_at_call)
+{
+    s_slice_run_scope = every_plate ? "all_plates" : "current_plate";
+    s_slice_run_print_indexes.clear();
+    const int first = every_plate ? 0 : plate_at_call;
+    const int last  = every_plate ? plate_list.get_plate_count() - 1 : plate_at_call;
+    for (int i = first; i <= last; ++i) {
+        int print_index = -1;
+        plate_list.get_plate(i)->get_print(nullptr, nullptr, &print_index);
+        s_slice_run_print_indexes.push_back(print_index);
+    }
+    OrcaMCP::forget_slicing_stage();
+}
+
+// The last slice_all run's plates as they stand now.
+std::vector<OrcaMCP::SliceRunPlate> slice_run_plates(PartPlateList& plate_list)
+{
+    std::vector<OrcaMCP::SliceRunPlate> plates;
+    for (int print_index : s_slice_run_print_indexes) {
+        const int  index = plate_list.find_plate_by_print_index(print_index);
+        PartPlate* plate = index >= 0 ? plate_list.get_plate(index) : nullptr;
+        plates.push_back({plate != nullptr, plate != nullptr && plate->is_slice_result_valid(), index});
+    }
+    return plates;
+}
+
+// get_slicing_status's slice_run: how the last slice_all run stands (outcome, and why when it is
+// not done), which plates it asked for, and -- kept from before -- whether Slice All ended early.
+nlohmann::json slice_run_json(Plater& plater, PartPlateList& plate_list, bool slicing)
+{
+    const OrcaMCP::SliceAllEndedEarly* ended = plater.slice_all_ended_early();
+    const std::vector<OrcaMCP::SliceRunPlate> plates = slice_run_plates(plate_list);
+    const OrcaMCP::SliceRunJudgement judged =
+        OrcaMCP::judge_slice_run(!s_slice_run_scope.empty(), slicing, plates,
+                                 ended ? std::optional<std::string>(OrcaMCP::slice_all_ended_early_text(*ended)) : std::nullopt);
+
+    nlohmann::json run = {{"ended_early", ended != nullptr}};
+    if (ended != nullptr) {
+        run["stopped_at_plate"] = ended->plate_index;
+        run["reason"]           = ended->reason;
+    }
+    run["scope"]   = s_slice_run_scope.empty() ? nlohmann::json(nullptr) : nlohmann::json(s_slice_run_scope);
+    nlohmann::json indexes = nlohmann::json::array();
+    for (const OrcaMCP::SliceRunPlate& plate : plates)
+        if (plate.exists)
+            indexes.push_back(plate.index);
+    run["plates"]  = indexes;
+    run["outcome"] = judged.outcome == OrcaMCP::SliceRunOutcome::none ? nlohmann::json(nullptr)
+                                                                      : nlohmann::json(OrcaMCP::slice_run_outcome_name(judged.outcome));
+    if (!judged.message.empty())
+        run["message"] = judged.message;
+    return run;
+}
 
 // What load_model tells the agent about the multi-part question it answered for it: the other
 // value of its multipart parameter, which is the only way to the other outcome.
@@ -2518,6 +2580,7 @@ void OrcaMCPServer::register_builtin_tools()
                     plate_list.get_plate(plate_at_call)->get_print(nullptr, nullptr, &s_slice_all_restore_print_index);
                 else
                     s_slice_all_restore_print_index = -1;
+                record_slice_run(plate_list, slice_every_plate, plate_at_call);
                 SimpleEvent slice_event(slice_every_plate ? EVT_GLTOOLBAR_SLICE_ALL : EVT_GLTOOLBAR_SLICE_PLATE);
                 plater->GetEventHandler()->ProcessEvent(slice_event);
                 // Both handlers also switch the app to the G-code preview. An MCP slice leaves the
@@ -2850,9 +2913,14 @@ void OrcaMCPServer::register_builtin_tools()
         "Slicing state per plate; poll this",
         "Get the current slicing state: idle (not sliced), slicing (in progress) or done (the "
         "current plate has a valid slice result). Poll until state is done, then get_print_estimate. "
-        "The plates array reports every plate's slice result, so a slice_all run can be followed "
-        "plate by plate. When a slice_all run over every plate ends, this restores the plate that "
-        "was selected when slice_all was called and reports it as restored_selected_plate.",
+        "The plates array reports every plate's slice result and percent (0-100; null for a plate "
+        "with no result that is not slicing), so a slice_all run can be followed plate by plate; "
+        "stage is the app's progress text for the running slice (\"Generating support\", in the app's "
+        "language; null when idle). slice_run says how the last slice_all run stands: scope, the "
+        "plates it asked for, and outcome running, done, ended_early or incomplete, with a message "
+        "saying which plates and why when it is not done. When a slice_all run over every plate ends, "
+        "this restores the plate that was selected when slice_all was called and reports it as "
+        "restored_selected_plate.",
         {
             {"type", "object"},
             {"properties", nlohmann::json::object()}
@@ -2896,7 +2964,11 @@ void OrcaMCPServer::register_builtin_tools()
                     const bool valid = p != nullptr && p->is_slice_result_valid();
                     if (valid)
                         ++plates_sliced;
-                    plates.push_back({{"index", i}, {"slice_result_valid", valid}});
+                    const std::optional<int> percent = p != nullptr ? OrcaMCP::reported_slice_percent(p->get_slicing_percent())
+                                                                    : std::nullopt;
+                    plates.push_back({{"index", i},
+                                      {"slice_result_valid", valid},
+                                      {"percent", percent ? nlohmann::json(*percent) : nlohmann::json(nullptr)}});
                 }
 
                 result["is_slicing"]         = is_running;
@@ -2907,10 +2979,11 @@ void OrcaMCPServer::register_builtin_tools()
                 result["plates"]             = plates;
                 result["plates_sliced"]      = plates_sliced;
                 result["plates_total"]       = plate_count;
-                // A Slice All run that ended before its last plate says where and why, until the next run.
-                result["slice_run"] = {{"ended_early", false}};
-                if (const SliceAllEndedEarly* ended = plater->slice_all_ended_early())
-                    result["slice_run"] = {{"ended_early", true}, {"stopped_at_plate", ended->plate_index}, {"reason", ended->reason}};
+                const std::string& stage = OrcaMCP::slicing_stage_text();
+                result["stage"] = is_running && !stage.empty() ? nlohmann::json(stage) : nlohmann::json(nullptr);
+                // How the last slice_all run stands; a Slice All run that ended before its last plate
+                // says where and why, until the next run.
+                result["slice_run"] = slice_run_json(*plater, plate_list, is_running);
                 result["active_warnings"]    = get_active_warnings_json(plater);
 
                 return result;
