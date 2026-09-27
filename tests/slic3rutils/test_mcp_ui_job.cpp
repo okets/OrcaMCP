@@ -365,7 +365,8 @@ TEST_CASE("The wait's cap is what the bridge sends, 105 s without it", "[McpUiJo
     CHECK(tool_wait_cap_from({{"_meta", {{"orcamcp/wait_cap_s", 30}}}}) == milliseconds(30000));
     CHECK(tool_wait_cap_from({{"_meta", {{"orcamcp/wait_cap_s", 1.5}}}}) == milliseconds(1500));
     CHECK(tool_wait_cap_from({{"_meta", {{"orcamcp/wait_cap_s", 0}}}}) == milliseconds(0));
-    CHECK(tool_wait_cap_from({{"_meta", {{"orcamcp/wait_cap_s", -3}}}}) == milliseconds(105000));
+    CHECK(tool_wait_cap_from({{"_meta", {{"orcamcp/wait_cap_s", -3}}}}) == milliseconds(0));
+    CHECK(tool_wait_cap_from({{"_meta", {{"orcamcp/wait_cap_s", 1e300}}}}) == milliseconds(3600000)); // an hour at most
     CHECK(tool_wait_cap_from({{"_meta", {{"orcamcp/wait_cap_s", "30"}}}}) == milliseconds(105000));
     CHECK(tool_wait_cap_from({{"_meta", {{"progressToken", 7}}}}) == milliseconds(105000));
 

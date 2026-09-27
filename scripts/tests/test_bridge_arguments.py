@@ -172,6 +172,14 @@ class ToolWaitCapTests(unittest.TestCase):
         self.assertEqual(sent["params"]["_meta"]["progressToken"], 7)
         self.assertIn("orcamcp/wait_cap_s", sent["params"]["_meta"])
 
+    def test_a_meta_that_is_not_an_object_is_replaced_by_one_with_the_cap(self):
+        """Otherwise the app, finding no cap, would wait its own 105 s past a shorter ORCAMCP_TIMEOUT."""
+        for meta in ("x", [1], 5, None):
+            with self.subTest(meta=meta):
+                sent = self.forwarded({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                       "params": {"name": "auto_orient", "_meta": meta}})
+                self.assertEqual(sent["params"]["_meta"], {"orcamcp/wait_cap_s": self.bridge.wait_for_slice_cap()})
+
     def test_a_timeout_too_short_to_wait_in_sends_no_wait(self):
         self.bridge.TIMEOUT = 1
         sent = self.forwarded({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "auto_orient"}})

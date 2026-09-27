@@ -106,7 +106,8 @@ void                          note_started_ui_job(const std::shared_ptr<UiJobOut
 std::shared_ptr<UiJobOutcome> last_started_ui_job();
 
 // How long a tool waits for its job: params._meta["orcamcp/wait_cap_s"], which the bridge sends from
-// its ORCAMCP_TIMEOUT (wait_for_slice's cap), or 105 s, the cap at the bridge's default timeout.
+// its ORCAMCP_TIMEOUT (wait_for_slice's cap), within 0 and an hour; 105 s, the cap at the bridge's
+// default timeout, when it sends none (or not a number).
 std::chrono::milliseconds tool_wait_cap_from(const nlohmann::json& params);
 
 // The cap of the tools/call being served on this thread, from its params, for the scope of the call.

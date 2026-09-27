@@ -13,6 +13,7 @@ namespace Slic3r { namespace GUI { namespace OrcaMCP {
 namespace {
 
 constexpr std::chrono::milliseconds k_default_tool_wait_cap{105000};
+constexpr double                    k_max_tool_wait_cap_s = 3600.0;
 thread_local std::chrono::milliseconds t_tool_wait_cap{k_default_tool_wait_cap};
 
 // "arrange" / "orient", as the tools' statuses spell it.
@@ -160,9 +161,10 @@ std::chrono::milliseconds tool_wait_cap_from(const nlohmann::json& params)
     if (meta == params.end() || !meta->is_object())
         return k_default_tool_wait_cap;
     const auto cap = meta->find("orcamcp/wait_cap_s");
-    if (cap == meta->end() || !cap->is_number() || cap->get<double>() < 0.0)
+    if (cap == meta->end() || !cap->is_number())
         return k_default_tool_wait_cap;
-    return std::chrono::milliseconds(static_cast<long long>(cap->get<double>() * 1000.0));
+    const double seconds = std::clamp(cap->get<double>(), 0.0, k_max_tool_wait_cap_s);
+    return std::chrono::milliseconds(static_cast<long long>(seconds * 1000.0));
 }
 
 ScopedToolWaitCap::ScopedToolWaitCap(const nlohmann::json& params) : m_previous(t_tool_wait_cap)

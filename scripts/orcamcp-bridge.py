@@ -962,14 +962,17 @@ def stamp_wait_cap(request: dict) -> dict:
     """Tell the app, in a tools/call's params._meta, how long a tool may wait for a job it starts
     (arrange_objects, auto_orient, flatten_object and clone_object wait for their arrange or orient):
     wait_for_slice's cap, so the app answers before ORCAMCP_TIMEOUT, or 0 -- no wait -- under a timeout
-    too short to wait in. The client's own _meta is kept."""
+    too short to wait in. The client's own _meta is kept; one that is not an object is replaced."""
     params = request.get("params")
     if request.get("method") != "tools/call" or not isinstance(params, dict):
         return request
-    meta = params.setdefault("_meta", {})
-    if isinstance(meta, dict):
-        cap = wait_for_slice_cap()
-        meta[WAIT_CAP_META_KEY] = cap if cap >= WAIT_FOR_SLICE_MIN_S else 0
+    meta = params.get("_meta")
+    if not isinstance(meta, dict):
+        # One that is not an object carries nothing a client could have meant for the app; without the
+        # cap the app would wait its own 105 s, past a shorter ORCAMCP_TIMEOUT.
+        meta = params["_meta"] = {}
+    cap = wait_for_slice_cap()
+    meta[WAIT_CAP_META_KEY] = cap if cap >= WAIT_FOR_SLICE_MIN_S else 0
     return request
 
 
