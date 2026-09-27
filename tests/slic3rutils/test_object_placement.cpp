@@ -1,10 +1,16 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "slic3r/GUI/OrcaMCP/OrcaMCPCommon.hpp"
 
-// The "is this object on the plate" test the transform tools report as on_bed. Only the arithmetic
-// is here: resolving *which* plate an object landed on needs a PartPlateList and a live Plater, so
-// the re-homing half of rehome_and_report_placement cannot be reached from a headless test.
+#include <nlohmann/json.hpp>
+
+#include <string>
+#include <vector>
+
+// The "is this object on the plate" test the transform tools report as on_bed, and the placement
+// fields they write from it. Only the arithmetic is here; measuring a real object's instances on a
+// plate list is in test_plate_instances.cpp.
 
 using Slic3r::BoundingBoxf3;
 using Slic3r::Vec3d;
@@ -56,4 +62,62 @@ TEST_CASE("an object taller than the plate box is still on the bed", "[object_pl
     // Z is only checked downwards: exceeding the build height is the slicer's own error to report,
     // and calling it "outside the printable area" would send a caller looking for an x/y problem.
     CHECK(object_within_plate(BoundingBoxf3(Vec3d(10, 10, 0), Vec3d(30, 30, 400)), first_plate()));
+}
+
+// ==================== AN OBJECT WHOSE INSTANCES STAND ON SEVERAL PLATES ====================
+// Each instance is measured by its own box on the plate it is on. Measuring the box around every
+// instance against instance 0's plate called an object with a copy on each of two plates "outside
+// the printable area of plate 0".
+
+using Slic3r::GUI::OrcaMCP::InstancePlacement;
+
+namespace {
+nlohmann::json placement_of(const std::vector<InstancePlacement>& placements)
+{
+    nlohmann::json result{{"placement_warning", "left from an earlier answer"}};
+    Slic3r::GUI::OrcaMCP::write_placement(result, placements);
+    return result;
+}
+} // namespace
+
+TEST_CASE("An object with an instance inside each of two plates is on the bed", "[object_placement][orcamcp]")
+{
+    const nlohmann::json result = placement_of({{0, 0, true, Vec3d(128, 128, 10)}, {1, 1, true, Vec3d(435.2, 128, 10)}});
+    CHECK(result["on_bed"] == true);
+    CHECK_FALSE(result.contains("placement_warning"));
+    CHECK(result["plate_index"] == 0); // instance 0's
+    CHECK(result["plate_indices"] == nlohmann::json::array({0, 1}));
+    REQUIRE(result["instance_placement"].size() == 2);
+    CHECK(result["instance_placement"][1]["instance_id"] == 1);
+    CHECK(result["instance_placement"][1]["plate_index"] == 1);
+    CHECK(result["instance_placement"][1]["on_bed"] == true);
+    CHECK_THAT(result["instance_placement"][1]["position"]["x"].get<double>(), Catch::Matchers::WithinAbs(435.2, 1e-9));
+}
+
+TEST_CASE("An instance outside its plate or on none takes the object off the bed, and the warning names it",
+          "[object_placement][orcamcp]")
+{
+    const nlohmann::json result = placement_of({{0, 0, true, Vec3d(128, 128, 10)},
+                                                {1, 1, false, Vec3d(560, 128, 10)},
+                                                {2, -1, false, Vec3d(2000, 128, 10)}});
+    CHECK(result["on_bed"] == false);
+    CHECK(result["plate_indices"] == nlohmann::json::array({0, 1}));
+    CHECK(result["instance_placement"][2]["plate_index"].is_null());
+    const std::string warning = result["placement_warning"];
+    CHECK(warning.find("Instance 1 positioned outside the printable area of plate 1") != std::string::npos);
+    CHECK(warning.find("instance 2 is not on any plate") != std::string::npos);
+    CHECK(warning.find("Instance 0") == std::string::npos);
+}
+
+TEST_CASE("A single-instance object's placement reads as it always has", "[object_placement][orcamcp]")
+{
+    CHECK(placement_of({{0, 0, false, Vec3d(250, 128, 10)}})["placement_warning"] ==
+          "Object positioned outside the printable area of plate 0");
+    CHECK(placement_of({{0, -1, false, Vec3d(2000, 128, 10)}})["placement_warning"] == "Object is not on any plate");
+
+    const nlohmann::json none = placement_of({}); // an object with no instance
+    CHECK(none["plate_index"].is_null());
+    CHECK(none["plate_indices"].empty());
+    CHECK(none["on_bed"] == false);
+    CHECK(none["placement_warning"] == "Object is not on any plate");
 }

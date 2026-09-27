@@ -2,6 +2,8 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "slic3r/GUI/PartPlate.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPCommon.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPPlateUtils.hpp"
 #include "libslic3r/Format/bbs_3mf.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/PrintConfig.hpp"
@@ -13,11 +15,12 @@
 #include <string>
 #include <vector>
 
-// Which plate each instance of an object is on. An object's instances can stand on different plates
-// (a clone onto another plate, an arrange over several), and the plate list only knows an instance
-// once something tells it (PartPlateList::notify_instance_update). Loading a project told it about
-// each object's first instance only, so a project saved with an object on two plates came back with
-// the second plate empty: nothing to slice there, and MCP's scene listed that instance nowhere.
+// Which plate each instance of an object is on, and how MCP reports it. An object's instances can
+// stand on different plates (a clone onto another plate, an arrange over several), and the plate list
+// only knows an instance once something tells it (PartPlateList::notify_instance_update). Loading a
+// project told it about each object's first instance only, so a project saved with an object on two
+// plates came back with the second plate empty: nothing to slice there, and MCP's scene listed that
+// instance nowhere.
 
 using Catch::Matchers::WithinAbs;
 using Slic3r::Vec3d;
@@ -125,4 +128,43 @@ TEST_CASE("A project saved with an object on two plates reloads with each instan
 
     CHECK(reloaded->find_instance(0, 0) == 0);
     CHECK(reloaded->find_instance(0, 1) == 1);
+}
+
+TEST_CASE("Each instance is measured by its own box on the plate it is on", "[PlateInstances][orcamcp]")
+{
+    Slic3r::Model                        model;
+    const std::unique_ptr<PartPlateList> plates = plate_list_for(model, 2);
+    const Vec3d                          second = centre_of(*plates, 1);
+    const Slic3r::ModelObject&           cube   = add_cube(model, *plates, {centre_of(*plates, 0), second});
+
+    const std::vector<Slic3r::GUI::OrcaMCP::InstancePlacement> placements =
+        Slic3r::GUI::OrcaMCP::instance_placements(cube, 0, *plates);
+    REQUIRE(placements.size() == 2);
+    CHECK(placements[0].plate_index == 0);
+    CHECK(placements[0].on_bed);
+    CHECK(placements[1].plate_index == 1);
+    CHECK(placements[1].on_bed); // the box around both instances fits neither plate
+    CHECK_THAT(placements[1].position.x(), WithinAbs(second.x(), 1e-6));
+}
+
+TEST_CASE("An instance on no plate is listed as unplaced, even when the object's other instances are on plates",
+          "[PlateInstances][orcamcp]")
+{
+    Slic3r::Model                        model;
+    const std::unique_ptr<PartPlateList> plates = plate_list_for(model, 2);
+    const Vec3d                          off_every_plate(2000.0, 128.0, k_cube_size / 2.0);
+    add_cube(model, *plates, {centre_of(*plates, 0), off_every_plate}); // object 0: one copy placed, one not
+    add_cube(model, *plates, {centre_of(*plates, 1)});                   // object 1: on its plate
+    add_cube(model, *plates, {off_every_plate});                         // object 2: on no plate at all
+    REQUIRE(plates->find_instance(0, 1) == -1);
+
+    const nlohmann::json unplaced = Slic3r::GUI::OrcaMCPPlateUtils::UnplacedObjectsJson(model, *plates, {}, false);
+
+    REQUIRE(unplaced.size() == 2);
+    CHECK(unplaced[0]["object_index"] == 0);
+    CHECK(unplaced[0]["instance_count"] == 2);
+    CHECK(unplaced[0]["unplaced_instances"] == nlohmann::json::array({1}));
+    CHECK_THAT(unplaced[0]["position"]["x"].get<double>(), WithinAbs(off_every_plate.x(), 1e-6)); // that copy's
+    CHECK(unplaced[1]["object_index"] == 2);
+    CHECK(unplaced[1]["unplaced_instances"] == nlohmann::json::array({0}));
 }

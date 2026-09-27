@@ -238,30 +238,74 @@ void report_placement(nlohmann::json& result, int object_id)
     Model& model = plater->model();
     if (object_id < 0 || object_id >= int(model.objects.size()))
         return;
+    write_placement(result, instance_placements(*model.objects[object_id], object_id, plater->get_partplate_list()));
+}
 
-    PartPlateList& plate_list = plater->get_partplate_list();
-    ModelObject*   object     = model.objects[object_id];
+std::vector<InstancePlacement> instance_placements(const ModelObject& object, int object_index, PartPlateList& plates)
+{
+    std::vector<InstancePlacement> placements;
+    for (size_t i = 0; i < object.instances.size(); ++i) {
+        // The plate's own instance list, which get_scene_info reports from, so the two agree by
+        // construction. Testing against the *selected* plate instead would answer about a plate the
+        // instance is not on. The exact box (instance_box): the approximate one's corners sit below a
+        // tilted part's lowest real point, so a part dropped onto the bed read as under it.
+        const int           plate_index = plates.find_instance(object_index, int(i));
+        PartPlate*          plate       = plate_index >= 0 ? plates.get_plate(plate_index) : nullptr;
+        const BoundingBoxf3 box         = instance_box(object, i);
+        placements.push_back({int(i), plate_index, plate != nullptr && object_within_plate(box, plate->get_plate_box()),
+                              box.center()});
+    }
+    return placements;
+}
 
-    // Which plate holds instance 0. find_instance answers from the plate's own instance list, which
-    // is what get_scene_info reports from, so the two agree by construction. Testing against the
-    // *selected* plate instead would answer about a plate the object is not on: with plate 1
-    // selected, an object sitting correctly on plate 4 reads as outside the printable area.
-    const int  plate_index = plate_list.find_instance(object_id, 0);
-    PartPlate* plate       = plate_index >= 0 ? plate_list.get_plate(plate_index) : nullptr;
+namespace {
 
-    result["plate_index"] = plate_index >= 0 ? nlohmann::json(plate_index) : nlohmann::json(nullptr);
+// Why one instance is not on the bed, as a clause: "positioned outside the printable area of plate
+// 1" or "is not on any plate".
+std::string off_bed_clause(const InstancePlacement& placement)
+{
+    return placement.plate_index < 0 ? "is not on any plate" :
+                                       "positioned outside the printable area of plate " + std::to_string(placement.plate_index);
+}
 
-    // The exact box (object_world_box): the approximate one's corners sit below a tilted part's
-    // lowest real point, so a part dropped onto the bed read as under it, on_bed false.
-    const BoundingBoxf3 object_bbox = object_world_box(*object);
-    const bool on_bed = plate != nullptr && object_within_plate(object_bbox, plate->get_plate_box());
-    result["on_bed"]  = on_bed;
-    if (!on_bed)
-        result["placement_warning"] = plate == nullptr
-            ? "Object is not on any plate"
-            : "Object positioned outside the printable area of plate " + std::to_string(plate_index);
-    else
+std::string placement_warning(const std::vector<InstancePlacement>& placements)
+{
+    if (placements.size() <= 1)
+        return "Object " + (placements.empty() ? std::string("is not on any plate") : off_bed_clause(placements.front()));
+    std::string warning;
+    for (const InstancePlacement& placement : placements)
+        if (!placement.on_bed)
+            warning += (warning.empty() ? "Instance " : "; instance ") + std::to_string(placement.instance_id) + " " +
+                       off_bed_clause(placement);
+    return warning;
+}
+
+nlohmann::json plate_or_null(int plate_index) { return plate_index >= 0 ? nlohmann::json(plate_index) : nlohmann::json(nullptr); }
+
+} // namespace
+
+void write_placement(nlohmann::json& result, const std::vector<InstancePlacement>& placements)
+{
+    nlohmann::json   each = nlohmann::json::array();
+    std::set<int>    plates;
+    bool             on_bed = !placements.empty();
+    for (const InstancePlacement& placement : placements) {
+        each.push_back({{"instance_id", placement.instance_id},
+                        {"plate_index", plate_or_null(placement.plate_index)},
+                        {"on_bed", placement.on_bed},
+                        {"position", {{"x", placement.position.x()}, {"y", placement.position.y()}, {"z", placement.position.z()}}}});
+        if (placement.plate_index >= 0)
+            plates.insert(placement.plate_index);
+        on_bed = on_bed && placement.on_bed;
+    }
+    result["plate_index"]        = plate_or_null(placements.empty() ? -1 : placements.front().plate_index);
+    result["plate_indices"]      = std::vector<int>(plates.begin(), plates.end());
+    result["on_bed"]             = on_bed;
+    result["instance_placement"] = std::move(each);
+    if (on_bed)
         result.erase("placement_warning");
+    else
+        result["placement_warning"] = placement_warning(placements);
 }
 
 std::optional<std::string> flatten_refusal(int object_id, bool printable, size_t instances,

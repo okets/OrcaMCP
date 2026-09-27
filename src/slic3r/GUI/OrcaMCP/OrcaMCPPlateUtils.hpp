@@ -8,6 +8,7 @@
 #include "slic3r/GUI/Camera.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Plater.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPCommon.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPMeshHealth.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPPaintSelect.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPRenderMath.hpp"
@@ -103,9 +104,14 @@ public:
     // mesh_warning, and its features when asked for, come from it.
     static nlohmann::json GetCurrentProject(const bool with_model_object_features,
                                             const std::vector<OrcaMCP::MeshHealth>& mesh_health);
-    // One unplaced_objects entry: an object on no plate, with the mesh fields a plate's object entry
-    // carries -- mesh_warning (and its reason), and features when `with_features`.
-    static nlohmann::json UnplacedObjectJson(const ModelObject& object, int object_index,
+    // get_scene_info's unplaced_objects: every object with an instance no plate holds, and which.
+    // Checking instance 0 alone hid the copy of an object on two plates whose second plate had lost it.
+    static nlohmann::json UnplacedObjectsJson(const Model& model, PartPlateList& plates,
+                                              const std::vector<OrcaMCP::MeshHealth>& mesh_health, bool with_features);
+    // One unplaced_objects entry: the instances of an object no plate holds (`unplaced`), where they
+    // are, and the mesh fields a plate's object entry carries -- mesh_warning (and its reason), and
+    // features when `with_features`.
+    static nlohmann::json UnplacedObjectJson(const ModelObject& object, int object_index, const OrcaMCP::InstancesOnPlate& unplaced,
                                              const OrcaMCP::MeshHealth& health, bool with_features);
 
     // Reads the prime tower's state on `plate_index`. `full_config` is passed in because building

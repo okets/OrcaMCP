@@ -909,7 +909,8 @@ void OrcaMCPServer::register_builtin_tools()
         "footprint (brim included) when one is printed, and the printer's excluded bed areas. Use "
         "`occupancy`, not `model_objects`, to work out where there is free space. An object with "
         "instances on several plates is listed under each by the instances there "
-        "(`instances_on_plate`): its bounding_box, position and footprint are theirs. `open_dialogs` "
+        "(`instances_on_plate`): its bounding_box, position and footprint are theirs. `unplaced_objects` "
+        "lists every object with an instance on no plate, and which (`unplaced_instances`). `open_dialogs` "
         "names any dialog the app is showing, waiting for the user (tool calls still run under it); "
         "`system_dialog_open` is true while a system file chooser or alert is open, `untracked_modal_loop` "
         "while a modal window no dialog accounts for runs. Every object carries `mesh_warning`, true when "
@@ -1713,7 +1714,7 @@ void OrcaMCPServer::register_builtin_tools()
         "Orient the current plate's objects",
         "Orient every object on the current plate for printing, as the plate's Auto Rotate does, and "
         "answer once the orient has been applied: status success with objects, each one's placement "
-        "(position, rotation_degrees, scale, changed, plate_index, on_bed). The orient runs in the "
+        "(position, rotation_degrees, scale, changed, and rotate_object's placement fields). The orient runs in the "
         "background while this waits, up to the bridge's cap (15 s below ORCAMCP_TIMEOUT); still running "
         "then, status orient_started with finished false, and get_slicing_status's ui_job says when it has "
         "finished. status cancelled when the app cancelled it (nothing moved); refused while another job runs.",
@@ -1739,7 +1740,7 @@ void OrcaMCPServer::register_builtin_tools()
         "Arrange the current plate's objects",
         "Arrange every object on the current plate, as the plate's Arrange does, and answer once the "
         "arrange has been applied: status success with objects, each one's placement (position, "
-        "rotation_degrees, scale, changed, plate_index, on_bed). The arrange runs in the background while "
+        "rotation_degrees, scale, changed, and rotate_object's placement fields). The arrange runs in the background while "
         "this waits, up to the bridge's cap (15 s below ORCAMCP_TIMEOUT); still running then, status "
         "arrange_started with finished false, and get_slicing_status's ui_job says when it has finished. "
         "status cancelled when the app cancelled it (nothing moved); refused while another job runs.",
@@ -4054,9 +4055,9 @@ void OrcaMCPServer::register_builtin_tools()
         "Move object by offset (relative) or to position (relative=false). X/Y/Z are plate "
         "millimetres along the plate's own axes -- the same frame get_object_info and this tool's "
         "own \"position\" report, and independent of how the object is rotated. Moving an object "
-        "into another plate's area re-homes it onto that plate; the response reports the resulting "
-        "plate_index and measures on_bed against that plate. Every instance of the object moves by "
-        "the same amount, so a multi-instance object keeps its arrangement.",
+        "into another plate's area re-homes it onto that plate, and the response carries rotate_object's "
+        "placement fields. Every instance of the object moves by the same amount, so a multi-instance "
+        "object keeps its arrangement.",
         {
             {"type", "object"},
             {"properties", {
@@ -4201,8 +4202,7 @@ void OrcaMCPServer::register_builtin_tools()
         "order X, then Y, then Z, about the object's bounding-box centre so it turns in place, then, "
         "as the GUI does, dropped back onto the bed (Z=0) unless it was sinking below it before. The "
         "resulting rotation_degrees are the instance's, the same numbers get_object_info reports. "
-        "The response reports the plate the object is on afterwards (plate_index) and measures "
-        "on_bed against that plate.",
+        "The response reports, for afterwards, the placement fields: instance_placement (each instance's plate and whether it is inside it), plate_index (instance 0's plate), plate_indices and on_bed (every instance inside its own plate).",
         {
             {"type", "object"},
             {"properties", {
@@ -4336,8 +4336,7 @@ void OrcaMCPServer::register_builtin_tools()
         "unless it was sinking below it before. Factors must be positive; use mirror_object to flip "
         "an axis. A non-uniform scale along plate axes on an object whose rotation is not a multiple "
         "of 90 degrees is a shear -- it is applied, and the response says so in skew_warning. The "
-        "response reports the plate the object is on afterwards (plate_index) and measures on_bed "
-        "against that plate.",
+        "response carries rotate_object's placement fields.",
         {
             {"type", "object"},
             {"properties", {
@@ -4479,8 +4478,8 @@ void OrcaMCPServer::register_builtin_tools()
         "frame -- the same frame get_object_info reports -- not the object's local axes, and match "
         "move_object, rotate_object and scale_object exactly: a rotation or scale drops a resting "
         "object back onto the bed (Z=0), unless the entry gives position.z, which is kept as given. "
-        "Each result reports the plate that object is on afterwards (plate_index) and measures "
-        "on_bed against that plate. Every entry is checked before any is applied: if one is rejected "
+        "Each result carries rotate_object's placement fields for that object afterwards. "
+        "Every entry is checked before any is applied: if one is rejected "
         "(an invalid object_id, a value that is not a number, or not an object where one is expected, a "
         "scale factor that is not positive), nothing is applied and results lists the rejected entries by "
         "their position (entry). One undo step undoes the whole batch.",
@@ -4656,8 +4655,7 @@ void OrcaMCPServer::register_builtin_tools()
         "Mirror an object across a plate axis, not the object's own: axis=z flips it top to bottom "
         "on the bed whatever its rotation. Mirroring is about the object's bounding-box centre, so "
         "it stays where it is, and a resting object stays on the bed (Z=0), as in the GUI. The "
-        "response reports the plate the object is on afterwards (plate_index) and measures on_bed "
-        "against that plate.",
+        "response carries rotate_object's placement fields.",
         {
             {"type", "object"},
             {"properties", {
@@ -4968,7 +4966,8 @@ void OrcaMCPServer::register_builtin_tools()
         "get_object_info",
         ToolCategory::Models,
         "One object's transform, volumes, slots",
-        "Get info about a single object.",
+        "Get info about a single object: its box and first instance's transform, every volume with its "
+        "filament, and, as rotate_object reports them, the placement fields: instance_placement (each instance's plate and whether it is inside it), plate_index (instance 0's plate), plate_indices and on_bed (every instance inside its own plate).",
         {
             {"type", "object"},
             {"properties", {
