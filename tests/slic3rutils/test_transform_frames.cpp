@@ -450,3 +450,45 @@ TEST_CASE("a plate's entry for an object takes its transform from a copy on that
     CHECK_THAT(object_wide["rotation_degrees"]["z"].get<double>(), WithinAbs(0.0, 1e-9));
     CHECK_THAT(object_wide["scale"]["x"].get<double>(), WithinAbs(1.0, 1e-9));
 }
+
+// transform_objects applied each entry as it read it, so [{0, position}, {0, scale 0}] moved object 0,
+// then rejected the scale, and its results loop left out every entry for object 0: the caller heard only
+// of the error, and the moved object was never re-homed onto the plate it now stood on. Every entry is
+// read and checked first now, and the batch is applied only when none is rejected.
+TEST_CASE("transform_objects checks every entry before it applies any", "[orcamcp][transform_frames]")
+{
+    using Slic3r::GUI::OrcaMCP::read_transform_entries;
+    using Slic3r::GUI::OrcaMCP::TransformEntry;
+
+    const nlohmann::json moved_then_bad_scale = nlohmann::json::parse(
+        R"([{"object_id": 0, "position": {"x": 200}}, {"object_id": 0, "scale": {"x": 0}}])");
+    const std::vector<TransformEntry> entries = read_transform_entries(moved_then_bad_scale, /*object_count=*/1);
+    REQUIRE(entries.size() == 2);
+    CHECK(entries[0].error.empty());
+    CHECK(entries[1].error.find("Scale factors must be positive") != std::string::npos);
+
+    const nlohmann::json bad_id = nlohmann::json::parse(R"([{"object_id": 3, "rotation": {"z": 90}}, {"object_id": -1}])");
+    for (const TransformEntry& entry : read_transform_entries(bad_id, 1))
+        CHECK(entry.error == "Invalid object_id");
+
+    const nlohmann::json valid = nlohmann::json::parse(
+        R"([{"object_id": 0, "scale": {"uniform": 2}}, {"object_id": 1, "scale": {"y": 0.5}}, {"object_id": 1}])");
+    const std::vector<TransformEntry> read = read_transform_entries(valid, 2);
+    REQUIRE(read.size() == 3);
+    for (const TransformEntry& entry : read)
+        CHECK(entry.error.empty());
+    CHECK(read[0].scale.isApprox(Vec3d(2, 2, 2)));
+    CHECK(read[1].scale.isApprox(Vec3d(1, 0.5, 1)));
+    CHECK(read[2].scale.isApprox(Vec3d::Ones()));
+    CHECK(read[1].object_id == 1);
+}
+
+TEST_CASE("a scale is valid only with positive, finite factors", "[orcamcp][transform_frames]")
+{
+    using Slic3r::GUI::OrcaMCP::valid_scale_factors;
+    CHECK(valid_scale_factors(Vec3d(1, 2, 0.5)));
+    CHECK_FALSE(valid_scale_factors(Vec3d(1, 0, 1)));
+    CHECK_FALSE(valid_scale_factors(Vec3d(-1, 1, 1)));
+    CHECK_FALSE(valid_scale_factors(Vec3d(1, 1, std::nan(""))));
+    CHECK_FALSE(valid_scale_factors(Vec3d(INFINITY, 1, 1)));
+}

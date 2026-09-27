@@ -4337,8 +4337,7 @@ void OrcaMCPServer::register_builtin_tools()
                 // decomposition of it (rotation, scaling factor, the slicer's own) reads as
                 // nonsense; a negative one is a mirror wearing a scale's name. Both are refused
                 // here rather than written into the model. ModelObject::scale() accepted them.
-                if (!std::isfinite(factors.x()) || !std::isfinite(factors.y()) || !std::isfinite(factors.z()) ||
-                    factors.x() <= 0.0 || factors.y() <= 0.0 || factors.z() <= 0.0) {
+                if (!valid_scale_factors(factors)) {
                     throw std::runtime_error("Scale factors must be positive; use mirror_object to flip an axis");
                 }
 
@@ -4412,7 +4411,9 @@ void OrcaMCPServer::register_builtin_tools()
         "move_object, rotate_object and scale_object exactly: a rotation or scale drops a resting "
         "object back onto the bed (Z=0), unless the entry gives position.z, which is kept as given. "
         "Each result reports the plate that object is on afterwards (plate_index) and measures "
-        "on_bed against that plate.",
+        "on_bed against that plate. Every entry is checked before any is applied: if one is rejected "
+        "(an invalid object_id, a scale factor that is not positive), nothing is applied and results "
+        "lists the rejected entries by their position (entry). One undo step undoes the whole batch.",
         {
             {"type", "object"},
             {"properties", {
@@ -4471,15 +4472,31 @@ void OrcaMCPServer::register_builtin_tools()
             return run_on_main_thread([transforms]() {
                 Plater* plater = wxGetApp().plater();
                 Model& model = plater->model();
-                nlohmann::json results = nlohmann::json::array();
-                std::set<int> rejected;  // object_ids already reported as an error below
-                std::set<int> moved;     // object_ids an entry changed: only those re-home and lose their slice
 
+                // Every entry is read and checked before any is applied: the batch runs only when none
+                // is rejected. Applying the good ones and rejecting the rest left a batch half done --
+                // [{0, position}, {0, scale 0}] moved object 0, then reported only the error, and the
+                // moved object was never re-homed onto the plate it stood on.
+                const std::vector<TransformEntry> entries = read_transform_entries(transforms, model.objects.size());
+                nlohmann::json rejected = nlohmann::json::array();
+                for (size_t i = 0; i < entries.size(); ++i)
+                    if (!entries[i].error.empty())
+                        rejected.push_back({{"entry", i}, {"object_id", entries[i].object_id}, {"status", "error"},
+                                            {"message", entries[i].error}});
+                if (!rejected.empty())
+                    return nlohmann::json{
+                        {"status", "error"},
+                        {"message", std::to_string(rejected.size()) + " of " + std::to_string(entries.size()) +
+                                        " entries were rejected, so nothing was applied: fix them and send the batch again"},
+                        {"results", rejected},
+                        {"active_warnings", get_active_warnings_json(plater)}};
+
+                std::set<int> moved; // object_ids an entry changed: only those re-home and lose their slice
                 const double deg_to_rad = M_PI / 180.0;
 
-                // One snapshot for the batch, taken when the first entry has passed validation, so
-                // undo steps back over the whole call and a batch that applied nothing leaves no
-                // empty step behind.
+                // One snapshot for the batch, taken before the first entry that changes something, so
+                // undo steps back over the whole call and a batch that changes nothing leaves no empty
+                // step behind.
                 bool snapshot_taken = false;
                 auto ensure_snapshot = [&plater, &snapshot_taken]() {
                     if (!snapshot_taken) {
@@ -4492,43 +4509,11 @@ void OrcaMCPServer::register_builtin_tools()
                 // applies, for the reasons spelled out there: ModelObject's translate/rotate/scale
                 // all act on the volumes, beneath the instance transform, so on a rotated instance
                 // each of them ran along an axis the caller never named.
-                // Apply all transforms
-                for (const auto& t : transforms) {
-                    int object_id = t["object_id"];
-
-                    if (object_id < 0 || object_id >= static_cast<int>(model.objects.size())) {
-                        results.push_back({
-                            {"object_id", object_id},
-                            {"status", "error"},
-                            {"message", "Invalid object_id"}
-                        });
-                        continue;
-                    }
-
-                    ModelObject* obj = model.objects[object_id];
-
-                    // Validated before anything is applied, so a rejected entry leaves the object
-                    // exactly as it was rather than moved and rotated but not scaled.
-                    Vec3d factors = Vec3d::Ones();
-                    if (t.contains("scale")) {
-                        auto sc = t["scale"];
-                        factors = sc.contains("uniform") ? Vec3d::Constant(sc["uniform"].get<double>())
-                                                         : Vec3d(sc.value("x", 1.0), sc.value("y", 1.0),
-                                                                 sc.value("z", 1.0));
-                        // Same refusal as scale_object: a zero factor makes the instance matrix
-                        // singular and a negative one is an unannounced mirror.
-                        if (!std::isfinite(factors.x()) || !std::isfinite(factors.y()) ||
-                            !std::isfinite(factors.z()) ||
-                            factors.x() <= 0.0 || factors.y() <= 0.0 || factors.z() <= 0.0) {
-                            results.push_back({
-                                {"object_id", object_id},
-                                {"status", "error"},
-                                {"message", "Scale factors must be positive; use mirror_object to flip an axis"}
-                            });
-                            rejected.insert(object_id);
-                            continue;
-                        }
-                    }
+                for (size_t i = 0; i < entries.size(); ++i) {
+                    const nlohmann::json& t         = transforms[i];
+                    const int             object_id = entries[i].object_id;
+                    const Vec3d&          factors   = entries[i].scale;
+                    ModelObject*          obj       = model.objects[object_id];
 
                     // Position (absolute, unspecified axes preserved), then an incremental rotation,
                     // then the scale. An entry that asks for where the object already is changes
@@ -4577,22 +4562,16 @@ void OrcaMCPServer::register_builtin_tools()
                 // Single UI update for all transforms
                 plater->update();
 
-                // Build results for each object. Each transform applied above is one the single-
-                // object tools also apply, so each owes the same plate re-homing, and each object is
-                // measured against the plate it landed on rather than the one that happens to be
-                // selected.
-                for (const auto& t : transforms) {
-                    int object_id = t["object_id"];
-                    if (object_id < 0 || object_id >= static_cast<int>(model.objects.size()) ||
-                        rejected.count(object_id) > 0) {
-                        continue;  // Already reported error
-                    }
-
-                    ModelObject* obj = model.objects[object_id];
-                    BoundingBoxf3 bbox = object_world_box(*obj);
-                    Vec3d center = bbox.center();
-
+                // One result per entry, in order. Each transform applied above is one the single-object
+                // tools also apply, so each owes the same plate re-homing, and each object is measured
+                // against the plate it landed on rather than the one that happens to be selected. An
+                // object named twice reports where it ended up in both.
+                nlohmann::json results = nlohmann::json::array();
+                for (size_t i = 0; i < entries.size(); ++i) {
+                    const int     object_id = entries[i].object_id;
+                    const Vec3d   center    = object_world_box(*model.objects[object_id]).center();
                     nlohmann::json entry = {
+                        {"entry", i},
                         {"object_id", object_id},
                         {"status", "success"},
                         {"position", {{"x", center.x()}, {"y", center.y()}, {"z", center.z()}}}

@@ -892,12 +892,19 @@ Each entry takes `object_id` plus any of `position` (absolute, unspecified axes 
 All three are in the plate's frame, exactly as `move_object`, `rotate_object` and `scale_object`
 apply them — see the coordinate-frame note on `move_object`. A rotation or scale drops a resting
 object back onto the bed, as `rotate_object` and `scale_object` do, unless the entry gives
-`position.z`: an explicit Z is kept as given, as `move_object` keeps it. An entry whose scale factors are not
-all positive is reported as an error against its own `object_id` and nothing in that entry is
-applied; the rest of the batch still runs.
+`position.z`: an explicit Z is kept as given, as `move_object` keeps it.
 
-Each entry of `results` carries the same `plate_index` / `on_bed` / `placement_warning` fields the
-single-object transforms return, measured against the plate that object landed on.
+**All or nothing.** Every entry is checked before any is applied. If one is rejected -- an
+`object_id` that is not an object, or scale factors that are not all positive -- nothing is applied,
+`status` is `error`, and `results` lists each rejected entry with its position in the batch
+(`entry`), its `object_id` and the reason. A batch that applied the good entries and rejected the
+rest used to leave an object moved but unreported, still counted on its old plate. One undo step
+undoes the whole batch; a batch that changes nothing takes none.
+
+On success `results` has one entry per transform, in order, with `entry`, `object_id`, `position`,
+`changed` and the same `plate_index` / `on_bed` / `placement_warning` fields the single-object
+transforms return, measured against the plate that object landed on. An object named in several
+entries reports where it ended up in each.
 
 ---
 

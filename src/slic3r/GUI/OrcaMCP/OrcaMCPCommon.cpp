@@ -263,6 +263,31 @@ void report_placement(nlohmann::json& result, int object_id)
         result.erase("placement_warning");
 }
 
+bool valid_scale_factors(const Vec3d& factors)
+{
+    return std::all_of(factors.data(), factors.data() + 3, [](double f) { return std::isfinite(f) && f > 0.0; });
+}
+
+std::vector<TransformEntry> read_transform_entries(const nlohmann::json& transforms, size_t object_count)
+{
+    std::vector<TransformEntry> entries;
+    for (const nlohmann::json& t : transforms) {
+        TransformEntry entry;
+        entry.object_id = t.value("object_id", -1);
+        if (entry.object_id < 0 || size_t(entry.object_id) >= object_count) {
+            entry.error = "Invalid object_id";
+        } else if (t.contains("scale")) {
+            const nlohmann::json& sc = t["scale"];
+            entry.scale = sc.contains("uniform") ? Vec3d::Constant(sc["uniform"].get<double>())
+                                                 : Vec3d(sc.value("x", 1.0), sc.value("y", 1.0), sc.value("z", 1.0));
+            if (!valid_scale_factors(entry.scale))
+                entry.error = "Scale factors must be positive; use mirror_object to flip an axis";
+        }
+        entries.push_back(std::move(entry));
+    }
+    return entries;
+}
+
 void rehome_and_report_placement(nlohmann::json& result, int object_id, bool moved)
 {
     Plater* plater = wxGetApp().plater();

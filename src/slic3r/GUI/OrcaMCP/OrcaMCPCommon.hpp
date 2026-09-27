@@ -150,6 +150,21 @@ bool should_drop_to_bed(double min_z_before, double min_z_after);
 // uniform 1.49x scale about the centre of a 99 mm figurine put its feet 24 mm under the bed.
 void transform_instances_on_bed(ModelObject& object, const Transform3d& world_transform);
 
+// A scale the transform tools accept: every factor positive and finite. A zero factor makes the
+// instance matrix singular, and a negative one is a mirror under a scale's name (mirror_object says so).
+bool valid_scale_factors(const Vec3d& factors);
+
+// One transform_objects entry, read and checked before any entry is applied. `error` is empty when the
+// entry can be applied; the batch is applied only when no entry has one, so a rejected entry never
+// leaves the others half done.
+struct TransformEntry
+{
+    int         object_id = -1;
+    Vec3d       scale     = Vec3d::Ones(); // the entry's scale factors, ones when it gives none
+    std::string error;
+};
+std::vector<TransformEntry> read_transform_entries(const nlohmann::json& transforms, size_t object_count);
+
 // The box every MCP tool reports an object by, and reads and writes its position ("the
 // bounding-box centre") in: the exact world box of all its instances, ModelObject::bounding_box_exact,
 // which transforms every vertex and is cached until the object changes. Not bounding_box_approx():
