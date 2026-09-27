@@ -34,7 +34,6 @@ boost::thread::id get_main_thread_id();
 bool is_main_thread_active();
 
 // Returns nullopt if not supported.
-// Not supported by OSX.
 // Naming threads is only supported on newer Windows 10.
 std::optional<std::string> get_current_thread_name();
 

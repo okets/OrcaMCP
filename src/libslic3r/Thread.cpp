@@ -153,14 +153,6 @@ bool set_current_thread_name(const char *thread_name)
 	return true;
 }
 
-std::optional<std::string> get_current_thread_name()
-{
-// not supported	
-//	char buf[16];
-//	return std::string(thread_getname_np(buf, 16) == 0 ? buf : "");
-	return std::nullopt;
-}
-
 #else
 
 // posix
@@ -182,13 +174,14 @@ bool set_current_thread_name(const char *thread_name)
 	return true;
 }
 
+#endif
+
+// Orca: macOS reads a thread's name back with the same call as the other posix systems.
 std::optional<std::string> get_current_thread_name()
 {
 	char buf[16];
 	return std::string(pthread_getname_np(pthread_self(), buf, 16) == 0 ? buf : "");
 }
-
-#endif
 
 #endif // _WIN32
 
