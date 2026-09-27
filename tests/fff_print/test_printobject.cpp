@@ -3,6 +3,7 @@
 #include "libslic3r/libslic3r.h"
 #include "libslic3r/Print.hpp"
 #include "libslic3r/Layer.hpp"
+#include "libslic3r/Slicing.hpp"
 #include "libslic3r/GCodeReader.hpp"
 #include "libslic3r/ClipperUtils.hpp"
 #include "libslic3r/AABBTreeLines.hpp"
@@ -136,6 +137,54 @@ TEST_CASE("Initial layer height is honored", "[PrintObject]")
     REQUIRE(layer_zs.size() > 1);
     REQUIRE_THAT(*layer_zs.begin(),            Catch::Matchers::WithinAbs(0.3, 1e-4));
     REQUIRE_THAT(*std::next(layer_zs.begin()), Catch::Matchers::WithinAbs(0.5, 1e-4));
+}
+
+// A layer range with no layer height of its own -- a 3MF can carry one, and MCP's
+// set_object_layer_range wrote one -- is printed at the object's layer height. Reading the range's
+// missing layer_height dereferenced a null option and crashed the slice (and the app with it).
+TEST_CASE("A layer range without a layer height of its own prints at the object's", "[PrintObject][LayerRanges][Regression]")
+{
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_deserialize_strict({{"initial_layer_print_height", 2}, {"layer_height", 2}, {"nozzle_diameter", 3}});
+    Slic3r::Print print;
+    Slic3r::Model model;
+    Slic3r::Test::init_print({cube(20)}, print, model, config);
+    DynamicPrintConfig range;
+    range.set_deserialize_strict("sparse_infill_density", "30%");
+    model.objects.front()->layer_config_ranges[{6.0, 10.0}].assign_config(std::move(range));
+
+    print.apply(model, config);
+    print.validate();
+    print.process();
+
+    // A 20 mm cube at 2 mm layers is 10 layers, 2 mm apart through the range too.
+    ConstLayerPtrsAdaptor layers = print.objects().front()->layers();
+    REQUIRE(layers.size() == 10);
+    coordf_t last = 0.0;
+    for (size_t i = 0; i < layers.size(); ++i) {
+        CHECK_THAT(layers[i]->print_z - last, Catch::Matchers::WithinAbs(2.0, 1e-4));
+        last = layers[i]->print_z;
+    }
+}
+
+TEST_CASE("An adaptive layer profile passes over a layer range without a layer height of its own", "[PrintObject][LayerRanges][Regression]")
+{
+    Slic3r::Model model;
+    ModelObject*  object = model.add_object();
+    object->add_volume(make_sphere(10, 2 * PI / 36));
+    object->add_instance();
+    object->ensure_on_bed();
+    DynamicPrintConfig range;
+    range.set_deserialize_strict("sparse_infill_density", "30%");
+    object->layer_config_ranges[{4.0, 8.0}].assign_config(std::move(range));
+
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_deserialize_strict({{"initial_layer_print_height", 0.2}, {"layer_height", 0.2}});
+    const SlicingParameters params = PrintObject::slicing_parameters(config, *object, float(object->max_z()), Vec3d(1., 1., 1.));
+    const std::vector<double> profile = layer_height_profile_adaptive(params, *object, 0.5f);
+    // Pairs of (z, height), up to the top of the 20 mm sphere.
+    REQUIRE(profile.size() >= 4);
+    CHECK_THAT(profile[profile.size() - 2], Catch::Matchers::WithinAbs(20.0, 0.5));
 }
 
 static TriangleMesh internal_bridge_step()

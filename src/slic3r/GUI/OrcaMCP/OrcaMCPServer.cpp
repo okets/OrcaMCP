@@ -7,6 +7,7 @@
 #include "OrcaMCPConfigKeys.hpp"
 #include "OrcaMCPConfigValues.hpp"
 #include "OrcaMCPFilamentUtils.hpp"
+#include "OrcaMCPLayerRanges.hpp"
 #include "OrcaMCPSliceEstimate.hpp"
 #include "OrcaMCPServerInfo.hpp"
 #include "OrcaMCPModelLoad.hpp"
@@ -2263,7 +2264,11 @@ void OrcaMCPServer::register_builtin_tools()
         "Settings for a Z range of an object",
         "Set settings for a Z height range. z_min/z_max are measured from the object's own base, "
         "not from the bed, so they equal plate Z only while the object sits on the bed -- moving the "
-        "object up does not move its ranges.",
+        "object up does not move its ranges. A range always has a layer_height and an extruder, as the "
+        "GUI's object list gives it: the object's own (its layer_height, else the process preset's; "
+        "extruder 0, the object's) unless settings give one. A layer_height outside the printer's "
+        "min_layer_height..max_layer_height is rejected (rejected_values), and a call that applies "
+        "nothing leaves the ranges as they were.",
         {
             {"type", "object"},
             {"properties", {
@@ -2316,7 +2321,9 @@ void OrcaMCPServer::register_builtin_tools()
 
                 ModelObject* obj = model.objects[object_id];
                 t_layer_height_range range = {z_min, z_max};
-                ModelConfig& layer_cfg = obj->layer_config_ranges[range];
+                // Read apart first, so a call that applies nothing leaves the object's ranges as they
+                // were: it used to leave an empty range behind, which the next slice crashed on.
+                DynamicPrintConfig written;
 
                 ConfigSubstitutionContext context(ForwardCompatibilitySubstitutionRule::Enable);
                 std::vector<std::string> applied_keys;
@@ -2347,7 +2354,7 @@ void OrcaMCPServer::register_builtin_tools()
                         continue;
                     }
                     try {
-                        layer_cfg.set_deserialize(key, shaped.text, context);
+                        written.set_deserialize(key, shaped.text, context);
                         applied_keys.push_back(key);
                     } catch (const std::exception& e) {
                         invalid_keys.push_back(key);
@@ -2357,9 +2364,37 @@ void OrcaMCPServer::register_builtin_tools()
                     }
                 }
 
-                // Notify UI of changes
-                wxGetApp().obj_list()->changed_object(object_id);
-                plater->update();
+                // A layer height the printer cannot print is refused, as the object list's range editor
+                // refuses it (ObjectList::edit_layer_range), against the range's extruder.
+                if (written.has("layer_height")) {
+                    const auto existing = obj->layer_config_ranges.find(range);
+                    const int  extruder = written.has("extruder") ? written.opt_int("extruder")
+                                        : existing != obj->layer_config_ranges.end() && existing->second.has("extruder")
+                                            ? existing->second.opt_int("extruder") : 0;
+                    const DynamicPrintConfig& printer = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+                    if (const auto error = layer_range_height_error(written.opt_float("layer_height"), layer_height_limits(printer, extruder))) {
+                        written.erase("layer_height");
+                        applied_keys.erase(std::remove(applied_keys.begin(), applied_keys.end(), std::string("layer_height")), applied_keys.end());
+                        invalid_keys.push_back("layer_height");
+                        rejected_values.push_back({{"key", "layer_height"},
+                                                   {"reason", *error},
+                                                   {"expected", "a number of mm within the printer's min_layer_height and max_layer_height"}});
+                    }
+                }
+
+                if (!applied_keys.empty()) {
+                    // Every range has a layer height and an extruder, the object's unless given, as the
+                    // object list gives a new range them (OrcaMCP::complete_layer_range): the slicer reads
+                    // a range's layer height unconditionally.
+                    ModelConfig& layer_cfg = obj->layer_config_ranges[range];
+                    layer_cfg.apply(written);
+                    complete_layer_range(layer_cfg, default_layer_config(*obj, wxGetApp().preset_bundle->prints.get_edited_preset().config));
+
+                    // Notify UI of changes
+                    wxGetApp().obj_list()->changed_object(object_id);
+                    mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
+                    plater->update();
+                }
 
                 // "error" only when nothing at all was written -- a range with no settings on it is
                 // not the success the old unconditional applied_count claimed it was.

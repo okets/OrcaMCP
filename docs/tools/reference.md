@@ -1534,7 +1534,14 @@ differences — a layer range reports no `duplicate_keys`, and a call where noth
 a JSON array or the joined string, `unknown_keys` holds keys that do not exist, `rejected_values`
 holds `{"key", "reason", "expected"}` for values this key would not take, and `invalid_keys` is the
 union. `applied_count` counts only what was written, so `status` is `partial` when some keys applied
-and `error` when none did.
+and `error` when none did. A call where nothing applied leaves the object's ranges as they were.
+
+**Every range has a `layer_height` and an `extruder`**, as the GUI's object list gives a new range
+them: the object's own layer height (its override, else the process preset's) and extruder `0` (the
+object's), unless `settings` gives them. A range without a layer height crashed the next slice. A
+`layer_height` the printer cannot print -- 0 or less, or outside its `min_layer_height` ..
+`max_layer_height` for the range's extruder (three quarters of the nozzle when the maximum is 0) -- is
+rejected in `rejected_values`, as the object list's range editor refuses it.
 
 ---
 

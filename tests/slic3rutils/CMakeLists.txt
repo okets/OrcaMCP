@@ -46,6 +46,7 @@ add_executable(${_TEST_NAME}_tests
     test_mcp_image_files.cpp
     test_first_layer_plan.cpp
     test_instance_box.cpp
+    test_layer_ranges.cpp
     test_layer_plan.cpp
     test_filament_model.cpp
     test_mcp_tool_list.cpp

@@ -894,6 +894,7 @@ echo "S the logout handler ends dialogs with wxID_ABORT (rel2506/04c):    $(U sr
 echo "V the object list's mesh-error text lives inside ObjectList / its first icon reads mesh().stats() / ObjectList::get_repaired_errors_count exists (rel2506/05): $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^MeshErrorsInfo ObjectList::get_mesh_errors_info\(const int obj_idx/{f=1} f&&/_L_PLURAL/{print "yes"; exit} f&&/^}/{print "no"; exit}') / $(U src/slic3r/GUI/GUI_ObjectList.cpp | grep -c 'get_warning_icon_name(model_object->mesh().stats())') / $(U src/slic3r/GUI/GUI_ObjectList.cpp | grep -c '^int ObjectList::get_repaired_errors_count')"
 echo "X upstream's slic3rutils tests get no Windows-first force-include (rel2506/ci-fixes; 0 = bug): $(U tests/slic3rutils/CMakeLists.txt | grep -c 'win_platform.hpp')"
 echo "Z reslice refuses on a validation failure a settings fix removed until the 0.5 s timer runs / show_error defers its dialog (rel2506/06b): $(U src/slic3r/GUI/Plater.cpp | grep -c 'process_completed_with_error, return directly') / $(U src/slic3r/GUI/GUI.cpp | awk '/^void show_error\(wxWindow\* parent, const wxString/{f=1} f&&/CallAfter/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
+echo "AA a layer range without a layer_height crashes the slice / the adaptive profile (rel2506/06b): $(U src/libslic3r/Slicing.cpp | grep -c 'it_range->second.option("layer_height")->getFloat()') / $(U src/libslic3r/Slicing.cpp | awk '/print_z >= range.first && print_z <= range.second/{getline; print (index($0, "height = options.opt_float") ? "yes" : "no"); exit}')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -1000,6 +1001,14 @@ it opened after the tool call had returned and suppression was over. Ours captur
 suppression on the GUI thread (`mcp_captures_error`). On "no", upstream shows it synchronously:
 `MsgDialog::ShowModal` then catches it, and the capture can go -- keep the error channel
 (`add_mcp_suppressed_error`) by tagging `ErrorDialog` instead.
+
+Item AA: upstream's `layer_height_profile_from_ranges` and `layer_height_profile_adaptive` read a
+layer range's `layer_height` without checking it is there. The GUI's object list always gives a range
+one, but a 3MF can carry a range without it (the importers copy whatever options the file lists, and
+MCP's `set_object_layer_range` wrote such ranges until rel2506/06b), and the next slice or adaptive
+profile dereferenced null and crashed the app. Ours prints such a range at the object's layer height
+(and leaves the adaptive height alone). On 0 / no, take upstream's lines and re-run
+`fff_print_tests "[LayerRanges]"`.
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices
