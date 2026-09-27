@@ -238,23 +238,32 @@ static void add_plan_camera(nlohmann::json& entry, const BoundingBoxf3& plate_bo
     entry["camera"]["mm_per_pixel"] = 1.0 / mapping.scale;
 }
 
+// What a layer plan is drawn of and how it is handed back, read once per call.
+struct PlanTarget
+{
+    PartPlate&                    plate;
+    int                           plate_index = 0;
+    BoundingBoxf3                 plate_box;
+    std::vector<BoundingBoxf3>    excluded_areas;
+    int                           resolution = 512;
+    OrcaMCP::OverlayOptions       overlays;
+    ImageOutput                   output;
+};
+
 // layer_view "first_layer": the first layer of the sliced Print, or the model footprints when the
 // plate is not sliced, with brim, support and the wipe tower.
-static nlohmann::json render_first_layer_view(PartPlate& plate, int resolution, const OrcaMCP::OverlayOptions& overlay_options,
-                                              const ImageOutput& output)
+static nlohmann::json render_first_layer_view(const PlanTarget& target)
 {
-    const BoundingBoxf3              plate_box      = plate.get_plate_box();
-    const std::vector<BoundingBoxf3> excluded_areas = plate.get_exclude_areas();
-    const DynamicPrintConfig         full_config    = wxGetApp().preset_bundle->full_config();
-    const OrcaMCP::FirstLayerPlan    plan           = OrcaMCP::collect_first_layer(plate, full_config);
-    const OrcaMCP::PlanMapping       mapping        = OrcaMCP::plan_mapping(plate_box, resolution);
-    const OrcaMCP::CameraFrame       camera         = OrcaMCP::plan_camera(mapping);
-    wxImage image = OrcaMCP::draw_first_layer_plan(plan, mapping, plate_box, excluded_areas, overlay_options);
+    const DynamicPrintConfig      full_config = wxGetApp().preset_bundle->full_config();
+    const OrcaMCP::FirstLayerPlan plan        = OrcaMCP::collect_first_layer(target.plate, full_config);
+    const OrcaMCP::PlanMapping    mapping     = OrcaMCP::plan_mapping(target.plate_box, target.resolution);
+    const OrcaMCP::CameraFrame    camera      = OrcaMCP::plan_camera(mapping);
+    wxImage image = OrcaMCP::draw_first_layer_plan(plan, mapping, target.plate_box, target.excluded_areas, target.overlays);
 
     nlohmann::json entry;
     entry["layer_view"] = "first_layer";
     entry["source"]     = plan.source;
-    add_plan_camera(entry, plate_box, mapping);
+    add_plan_camera(entry, target.plate_box, mapping);
     nlohmann::json objects      = nlohmann::json::array();
     bool           raft_present = false;
     for (const OrcaMCP::PlanObject& o : plan.objects) {
@@ -271,8 +280,8 @@ static nlohmann::json render_first_layer_view(PartPlate& plate, int resolution, 
     entry["objects_in_frame"]   = objects;
     entry["support_present"]    = !plan.support.empty() || raft_present;  // a raft is support too
     entry["wipe_tower_present"] = plan.wipe_tower.has_value();
-    entry["overlays"]           = OrcaMCP::overlay_options_to_json(overlay_options);
-    add_image(entry, image, output);
+    entry["overlays"]           = OrcaMCP::overlay_options_to_json(target.overlays);
+    add_image(entry, image, target.output);
     return nlohmann::json::array({entry});
 }
 
@@ -335,53 +344,51 @@ static std::string nothing_drawn_hint(int number, const OrcaMCP::LayerExtrusion&
 }
 
 // layer_view {layer} / {z}: one layer of the sliced G-code, as the Preview draws it, top-down.
-static nlohmann::json render_sliced_layer_view(PartPlate& plate, int plate_index, const nlohmann::json& view, int resolution,
-                                               const OrcaMCP::OverlayOptions& overlay_options, const ImageOutput& output)
+static nlohmann::json render_sliced_layer_view(const PlanTarget& target, const OrcaMCP::LayerPlanRequest& request)
 {
     const auto            started = std::chrono::steady_clock::now();
+    PartPlate&            plate   = target.plate;
     GCodeProcessorResult* result  = plate.get_slice_result();
     const std::vector<OrcaMCP::GcodeLayer> layers =
         plate.is_slice_result_valid() && result != nullptr ? OrcaMCP::gcode_layers(result->moves) : std::vector<OrcaMCP::GcodeLayer>();
     if (layers.empty())
-        throw std::runtime_error("Plate " + std::to_string(plate_index) + " has no valid slice, so it has no sliced layers to "
-                                 "draw: layer_view {layer} and {z} draw the sliced G-code. Call slice_all and wait_for_slice "
+        throw std::runtime_error("Plate " + std::to_string(target.plate_index) + " has no valid slice, so it has no sliced layers "
+                                 "to draw: layer_view {layer} and {z} draw the sliced G-code. Call slice_all and wait_for_slice "
                                  "first. (layer_view \"first_layer\" works unsliced, from the model footprints.)");
 
-    const std::vector<ColorRGBA>   slot_colors = preview_filament_colors(result);
-    const OrcaMCP::LayerPlanRequest request    = OrcaMCP::parse_layer_plan_request(view, slot_colors.size());
-    OrcaMCP::LayerAtHeight          chosen;
+    const std::vector<ColorRGBA> slot_colors = preview_filament_colors(result);
+    OrcaMCP::check_filaments(request, slot_colors.size());
+    OrcaMCP::LayerAtHeight chosen;
     if (request.layer)
         chosen.index = OrcaMCP::layer_by_number(layers, *request.layer);
     else
         chosen = OrcaMCP::layer_nearest_z(layers, *request.z);
-    const OrcaMCP::GcodeLayer&  layer     = layers[chosen.index];
-    const int                   number    = int(chosen.index) + 1;
+    const OrcaMCP::GcodeLayer&    layer     = layers[chosen.index];
+    const int                     number    = int(chosen.index) + 1;
     const OrcaMCP::LayerExtrusion extrusion = OrcaMCP::layer_extrusion(result->moves, layer);
-    const auto                  runs      = OrcaMCP::layer_toolpaths(result->moves, layer, request);
+    const auto                    runs      = OrcaMCP::layer_toolpaths(result->moves, layer, request);
 
     // What the Print says prints at this height -- which object and support layers, and the overhang
     // -- and where its objects stand.
+    const Print* print = plate.fff_print();
+    if (print != nullptr && print->objects().empty())
+        print = nullptr;
     std::vector<OrcaMCP::ObjectAtHeight> objects;
     std::vector<OrcaMCP::PrintFootprint> footprints;
-    if (const Print* print = plate.fff_print(); print != nullptr && !print->objects().empty()) {
+    if (print != nullptr) {
         objects    = OrcaMCP::objects_at_height(*print, wxGetApp().model(), layer.z, extrusion.extent);
         footprints = OrcaMCP::print_footprints(*print, wxGetApp().model());
     }
 
-    const BoundingBoxf3 plate_box = plate.get_plate_box();
-    const BoundingBoxf3 frame     = request.fit_object ? layer_plan_fit_box(footprints, *request.fit_object, plate_index) : plate_box;
-    const OrcaMCP::PlanMapping mapping = OrcaMCP::plan_mapping(frame, resolution);
+    const BoundingBoxf3 frame = request.fit_object ? layer_plan_fit_box(footprints, *request.fit_object, target.plate_index)
+                                                   : target.plate_box;
+    const OrcaMCP::PlanMapping mapping = OrcaMCP::plan_mapping(frame, target.resolution);
     const OrcaMCP::CameraFrame camera  = OrcaMCP::plan_camera(mapping);
 
     nlohmann::json entry;
     entry["layer_view"] = "layer";
     entry["source"]     = "gcode";
-    nlohmann::json layer_json = {{"number", number}, {"of", layers.size()}, {"z", std::round(layer.z * 1e4) / 1e4}};
-    if (request.z) {
-        layer_json["requested_z"] = *request.z;
-        layer_json["also_at"]     = chosen.also_at;
-    }
-    entry["layer"] = layer_json;
+    entry["layer"]      = OrcaMCP::layer_json(layers, chosen, request);
     entry.update(OrcaMCP::layer_extrusion_json(extrusion));
     entry["objects_at_height"] = OrcaMCP::objects_at_height_json(objects);
     entry["drawn"]             = OrcaMCP::drawn_json(request);
@@ -390,16 +397,16 @@ static nlohmann::json render_sliced_layer_view(PartPlate& plate, int plate_index
     entry["nothing_drawn"]     = runs.empty();
     if (runs.empty())
         entry["hint"] = nothing_drawn_hint(number, extrusion);
-    add_plan_camera(entry, plate_box, mapping);
+    add_plan_camera(entry, target.plate_box, mapping);
     std::vector<OrcaMCP::OverlayLabel> labels;
     add_plan_objects(entry, labels, footprints, camera);
-    entry["overlays"] = OrcaMCP::overlay_options_to_json(overlay_options);
+    entry["overlays"] = OrcaMCP::overlay_options_to_json(target.overlays);
 
     const auto    measured = std::chrono::steady_clock::now();
-    const wxImage image    = OrcaMCP::draw_layer_plan(runs, request.color_by, slot_colors, legend, mapping, plate_box,
-                                                      plate.get_exclude_areas(), labels, overlay_options);
+    const wxImage image    = OrcaMCP::draw_layer_plan(runs, request.color_by, slot_colors, legend, mapping, target.plate_box,
+                                                      target.excluded_areas, labels, target.overlays);
     const auto    drawn    = std::chrono::steady_clock::now();
-    add_image(entry, image, output);
+    add_image(entry, image, target.output);
     using ms = std::chrono::duration<double, std::milli>;
     BOOST_LOG_TRIVIAL(info) << "render_plate_view layer plan: layer " << number << " of " << layers.size() << ", "
                             << (layer.end - layer.begin) << " of " << result->moves.size() << " moves, " << runs.size()
@@ -436,13 +443,10 @@ nlohmann::json OrcaMCPPlateUtils::RenderPlateView(const nlohmann::json& params) 
     // the sliced Print (or footprints when unsliced); {layer} / {z} from the sliced G-code.
     const nlohmann::json layer_view = payload.value("layer_view", nlohmann::json());
     if (!layer_view.is_null() && layer_view != "") {  // "" was always read as no layer view
-        const ImageOutput     output{save_to_file, use_png};
-        if (layer_view == "first_layer")
-            return render_first_layer_view(*plate, resolution, overlay_options, output);
-        nlohmann::json sliced_layer;
-        if (OrcaMCP::parse_object_param(layer_view, sliced_layer))
-            return render_sliced_layer_view(*plate, plate_index, sliced_layer, resolution, overlay_options, output);
-        throw std::runtime_error("layer_view must be \"first_layer\", {\"layer\": n} or {\"z\": mm}");
+        // Read before anything is looked up, so a malformed request is reported as that, not as "unsliced".
+        const OrcaMCP::LayerView asked = OrcaMCP::parse_layer_view(layer_view);
+        const PlanTarget target{*plate, plate_index, plate_box, excluded_areas, resolution, overlay_options, {save_to_file, use_png}};
+        return asked.first_layer ? render_first_layer_view(target) : render_sliced_layer_view(target, asked.sliced);
     }
 
     // No views: a contact sheet of the three presets an agent reaches for first, fitted to the plate.

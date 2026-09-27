@@ -76,6 +76,14 @@ double feature_mm2(const LayerExtrusion& e, ExtrusionFeature f) { return e.mm2[s
 
 double area_mm2(const ExPolygons& shape) { return area(shape) * SCALING_FACTOR * SCALING_FACTOR; }
 
+// layer_view's object form, read the way render_plate_view reads it.
+LayerPlanRequest sliced_request(const nlohmann::json& view)
+{
+    const LayerView parsed = parse_layer_view(view);
+    REQUIRE_FALSE(parsed.first_layer);
+    return parsed.sliced;
+}
+
 } // namespace
 
 // --- which layer ---------------------------------------------------------------------------------
@@ -166,23 +174,32 @@ TEST_CASE("support at heights of its own is matched to its own layer", "[orcamcp
 
 TEST_CASE("a layer view names a layer or a height, and nothing else", "[orcamcp][LayerPlan]")
 {
-    const LayerPlanRequest by_number = parse_layer_plan_request({{"layer", 3}}, 4);
+    const LayerPlanRequest by_number = sliced_request({{"layer", 3}});
     CHECK(by_number.layer == 3);
     CHECK_FALSE(by_number.z.has_value());
-    CHECK(parse_layer_plan_request({{"layer", "3"}}, 4).layer == 3);  // a stale client's string
-    const LayerPlanRequest by_height = parse_layer_plan_request({{"z", 1.5}}, 4);
+    CHECK(sliced_request({{"layer", "3"}}).layer == 3);  // a stale client's string
+    const LayerPlanRequest by_height = sliced_request({{"z", 1.5}});
     REQUIRE(by_height.z.has_value());
     CHECK_THAT(*by_height.z, WithinAbs(1.5, 1e-12));
 
-    CHECK_THROWS_WITH(parse_layer_plan_request(nlohmann::json::object(), 4), ContainsSubstring("layer"));
-    CHECK_THROWS_WITH(parse_layer_plan_request({{"layer", 1}, {"z", 1.0}}, 4), ContainsSubstring("not both"));
-    CHECK_THROWS(parse_layer_plan_request({{"layer", 2.5}}, 4));
-    CHECK_THROWS_WITH(parse_layer_plan_request({{"layers", 3}}, 4), ContainsSubstring("layers"));
+    CHECK_THROWS_WITH(sliced_request(nlohmann::json::object()), ContainsSubstring("layer"));
+    CHECK_THROWS_WITH(sliced_request({{"layer", 1}, {"z", 1.0}}), ContainsSubstring("not both"));
+    CHECK_THROWS(sliced_request({{"layer", 2.5}}));
+    CHECK_THROWS_WITH(sliced_request({{"layers", 3}}), ContainsSubstring("layers"));
+}
+
+TEST_CASE("one validator reads every form of layer_view", "[orcamcp][LayerPlan]")
+{
+    CHECK(parse_layer_view("first_layer").first_layer);
+    CHECK(parse_layer_view(R"({"layer": 7})").sliced.layer == 7);  // a stale client's JSON text
+    for (const nlohmann::json& wrong : {nlohmann::json("last_layer"), nlohmann::json(3), nlohmann::json::array({1}),
+                                        nlohmann::json("[1]")})
+        CHECK_THROWS_WITH(parse_layer_view(wrong), ContainsSubstring(R"("first_layer", {"layer": n} or {"z": mm})"));
 }
 
 TEST_CASE("a layer view draws every feature and filament, coloured by feature, unless asked otherwise", "[orcamcp][LayerPlan]")
 {
-    const LayerPlanRequest r = parse_layer_plan_request({{"layer", 1}}, 4);
+    const LayerPlanRequest r = sliced_request({{"layer", 1}});
     for (size_t f = 0; f < k_plan_feature_count; ++f)
         CHECK(r.draws(ExtrusionFeature(f)));
     CHECK(r.draws(1));
@@ -193,12 +210,11 @@ TEST_CASE("a layer view draws every feature and filament, coloured by feature, u
 
 TEST_CASE("features, filaments, colour and fit are read and checked", "[orcamcp][LayerPlan]")
 {
-    const LayerPlanRequest r = parse_layer_plan_request({{"layer", 1},
+    const LayerPlanRequest r = sliced_request({{"layer", 1},
                                                          {"features", {"support", "support_interface"}},
                                                          {"filaments", {2, 4}},
                                                          {"color_by", "filament"},
-                                                         {"fit", {{"object_index", 2}}}},
-                                                        4);
+                                                         {"fit", {{"object_index", 2}}}});
     CHECK(r.draws(ExtrusionFeature::support));
     CHECK(r.draws(ExtrusionFeature::support_interface));
     CHECK_FALSE(r.draws(ExtrusionFeature::perimeters));
@@ -207,19 +223,20 @@ TEST_CASE("features, filaments, colour and fit are read and checked", "[orcamcp]
     CHECK_FALSE(r.draws(1));
     CHECK(r.color_by == LayerColorBy::filament);
     CHECK(r.fit_object == 2);
-    CHECK_FALSE(parse_layer_plan_request({{"layer", 1}, {"fit", "plate"}}, 4).fit_object.has_value());
+    CHECK_FALSE(sliced_request({{"layer", 1}, {"fit", "plate"}}).fit_object.has_value());
 
     const nlohmann::json drawn = drawn_json(r);
     CHECK(drawn["features"] == nlohmann::json({"support", "support_interface"}));
     CHECK(drawn["filaments"] == nlohmann::json({2, 4}));
     CHECK(drawn["color_by"] == "filament");
 
-    CHECK_THROWS_WITH(parse_layer_plan_request({{"layer", 1}, {"features", {"walls"}}}, 4), ContainsSubstring("prime_tower"));
-    CHECK_THROWS_WITH(parse_layer_plan_request({{"layer", 1}, {"features", {"other"}}}, 4), ContainsSubstring("perimeters"));
-    CHECK_THROWS_WITH(parse_layer_plan_request({{"layer", 1}, {"filaments", {0}}}, 4), ContainsSubstring("1..4"));
-    CHECK_THROWS_WITH(parse_layer_plan_request({{"layer", 1}, {"filaments", {5}}}, 4), ContainsSubstring("1..4"));
-    CHECK_THROWS_WITH(parse_layer_plan_request({{"layer", 1}, {"color_by", "tool"}}, 4), ContainsSubstring("filament"));
-    CHECK_THROWS(parse_layer_plan_request({{"layer", 1}, {"fit", {{"object_index", "two"}}}}, 4));
+    CHECK_THROWS_WITH(sliced_request({{"layer", 1}, {"features", {"walls"}}}), ContainsSubstring("prime_tower"));
+    CHECK_THROWS_WITH(sliced_request({{"layer", 1}, {"features", {"other"}}}), ContainsSubstring("perimeters"));
+    CHECK_THROWS_WITH(sliced_request({{"layer", 1}, {"filaments", {0}}}), ContainsSubstring("from 1"));
+    CHECK_THROWS_WITH(check_filaments(sliced_request({{"layer", 1}, {"filaments", {5}}}), 4), ContainsSubstring("1..4"));
+    CHECK_NOTHROW(check_filaments(sliced_request({{"layer", 1}, {"filaments", {4}}}), 4));
+    CHECK_THROWS_WITH(sliced_request({{"layer", 1}, {"color_by", "tool"}}), ContainsSubstring("filament"));
+    CHECK_THROWS(sliced_request({{"layer", 1}, {"fit", {{"object_index", "two"}}}}));
 }
 
 // --- toolpaths -----------------------------------------------------------------------------------
@@ -250,16 +267,16 @@ TEST_CASE("the feature filter draws only the chosen features", "[orcamcp][LayerP
 {
     const std::vector<GcodeMove> moves = mixed_layer();
     const GcodeLayer             layer = gcode_layers(moves).front();
-    const auto runs = layer_toolpaths(moves, layer, parse_layer_plan_request({{"layer", 1}, {"features", {"support_interface"}}}, 2));
+    const auto runs = layer_toolpaths(moves, layer, sliced_request({{"layer", 1}, {"features", {"support_interface"}}}));
     CHECK(features_of(runs) == std::set<ExtrusionFeature>{ExtrusionFeature::support_interface});
-    CHECK(features_of(layer_toolpaths(moves, layer, parse_layer_plan_request({{"layer", 1}}, 2))).size() == 4);
+    CHECK(features_of(layer_toolpaths(moves, layer, sliced_request({{"layer", 1}}))).size() == 4);
 }
 
 TEST_CASE("the filament filter draws only the chosen filaments", "[orcamcp][LayerPlan]")
 {
     const std::vector<GcodeMove> moves = mixed_layer();
     const GcodeLayer             layer = gcode_layers(moves).front();
-    const auto runs = layer_toolpaths(moves, layer, parse_layer_plan_request({{"layer", 1}, {"filaments", {2}}}, 2));
+    const auto runs = layer_toolpaths(moves, layer, sliced_request({{"layer", 1}, {"filaments", {2}}}));
     REQUIRE(runs.size() == 2);
     for (const ToolpathRun& r : runs)
         CHECK(r.filament == 2);
@@ -278,7 +295,7 @@ TEST_CASE("a run breaks where the feature, filament or width changes, or the noz
         extrude_to(0, 10., 0., 0.2, erPerimeter, 2, 0.6f),
         extrude_to(0, 11., 0., 0.2, erInternalInfill, 2, 0.6f),       // another feature
     };
-    const auto runs = layer_toolpaths(moves, gcode_layers(moves).front(), parse_layer_plan_request({{"layer", 1}}, 2));
+    const auto runs = layer_toolpaths(moves, gcode_layers(moves).front(), sliced_request({{"layer", 1}}));
     REQUIRE(runs.size() == 5);
     CHECK(runs[0].points.size() == 4);  // from (0,0) through x = 1, 2, 3
     CHECK_THAT(runs[0].points.front().x(), WithinAbs(0., 1e-6));
@@ -331,7 +348,7 @@ TEST_CASE("a layer's first line starts where the layer below ended", "[orcamcp][
     const std::vector<GcodeLayer> layers = gcode_layers(moves);
     REQUIRE(layers.size() == 2);
     CHECK_THAT(feature_mm2(layer_extrusion(moves, layers[1]), ExtrusionFeature::perimeters), WithinRel(5.0, 1e-5));
-    const auto runs = layer_toolpaths(moves, layers[1], parse_layer_plan_request({{"layer", 2}}, 1));
+    const auto runs = layer_toolpaths(moves, layers[1], sliced_request({{"layer", 2}}));
     REQUIRE(runs.size() == 1);
     CHECK_THAT(runs[0].points.front().y(), WithinAbs(0., 1e-6));
 }
@@ -374,7 +391,7 @@ TEST_CASE("the legend has one entry per colour drawn, with the area it drew", "[
     const std::vector<ColorRGBA> slots = {ColorRGBA(1.f, 0.f, 0.f, 1.f), ColorRGBA(0.f, 0.f, 1.f, 1.f)};
 
     // By feature, filament 2 only: support and its interface, 4 mm2 each.
-    const auto by_feature = layer_legend(parse_layer_plan_request({{"layer", 1}, {"filaments", {2}}}, 2), e, slots);
+    const auto by_feature = layer_legend(sliced_request({{"layer", 1}, {"filaments", {2}}}), e, slots);
     REQUIRE(by_feature.size() == 2);
     CHECK(by_feature[0].key == "support");
     CHECK(by_feature[1].key == "support_interface");
@@ -382,7 +399,7 @@ TEST_CASE("the legend has one entry per colour drawn, with the area it drew", "[
     CHECK(by_feature[1].color == extrusion_feature_color(ExtrusionFeature::support_interface));
 
     // By filament, every feature: filament 1 drew the wall and the tower, filament 2 the support.
-    const auto by_filament = layer_legend(parse_layer_plan_request({{"layer", 1}, {"color_by", "filament"}}, 2), e, slots);
+    const auto by_filament = layer_legend(sliced_request({{"layer", 1}, {"color_by", "filament"}}), e, slots);
     REQUIRE(by_filament.size() == 2);
     CHECK(by_filament[0].key == "1");
     CHECK_THAT(by_filament[0].mm2, WithinRel(8.0, 1e-5));
@@ -732,7 +749,7 @@ TEST_CASE("the layer plan's arithmetic over a 1230-layer G-code", "[.][Benchmark
     const std::vector<GcodeLayer> layers  = gcode_layers(moves);
     const LayerAtHeight           hit     = layer_nearest_z(layers, 49.2);
     const LayerExtrusion          e       = layer_extrusion(moves, layers[hit.index]);
-    const auto runs = layer_toolpaths(moves, layers[hit.index], parse_layer_plan_request({{"z", 49.2}}, 2));
+    const auto runs = layer_toolpaths(moves, layers[hit.index], sliced_request({{"z", 49.2}}));
     const auto elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
     WARN("index + pick + areas + runs over " << moves.size() << " moves: " << elapsed << " ms");
     CHECK(layers.size() == n_layers);

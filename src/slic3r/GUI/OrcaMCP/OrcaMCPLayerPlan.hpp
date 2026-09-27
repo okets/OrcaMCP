@@ -90,10 +90,22 @@ struct LayerPlanRequest
     bool draws(int filament) const;
 };
 
-// Reads {layer | z, features?, filaments?, color_by?, fit?}. Throws, naming the valid values, on
-// anything else: both or neither of layer and z, an unknown feature, a filament outside
-// 1..filament_count, an unknown color_by.
-LayerPlanRequest parse_layer_plan_request(const nlohmann::json& view, size_t filament_count);
+// What render_plate_view's layer_view asks for: the first-layer plan, or one sliced layer.
+struct LayerView
+{
+    bool             first_layer = false;
+    LayerPlanRequest sliced;  // when not first_layer
+};
+
+// The one reader of layer_view: "first_layer", or {layer | z, features?, filaments?, color_by?, fit?}
+// -- an object, or the JSON text of one from a client whose cached schema types layer_view as a
+// string. Throws, naming the valid forms and values, on anything else: another form, both or neither
+// of layer and z, an unknown feature, a filament number below 1, an unknown color_by.
+LayerView parse_layer_view(const nlohmann::json& value);
+
+// Throws, naming the printer's filaments, when `request` names one past filament_count. Apart from
+// parse_layer_view because the count is the plate's: parse first, then check against it.
+void check_filaments(const LayerPlanRequest& request, size_t filament_count);
 
 // What was drawn: {features, filaments, color_by}, as the response echoes it.
 nlohmann::json drawn_json(const LayerPlanRequest& request);
@@ -215,6 +227,9 @@ struct PrintFootprint
     BoundingBoxf box;
 };
 std::vector<PrintFootprint> print_footprints(const Print& print, const Model& model);
+
+// The response's layer: {number, of, z}, and with a height asked for, requested_z and also_at.
+nlohmann::json layer_json(const std::vector<GcodeLayer>& layers, const LayerAtHeight& chosen, const LayerPlanRequest& request);
 
 // --- colour and legend -----------------------------------------------------------------------
 

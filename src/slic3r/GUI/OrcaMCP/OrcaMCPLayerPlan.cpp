@@ -100,16 +100,15 @@ std::array<bool, k_plan_feature_count> parse_features(const nlohmann::json& valu
     return on;
 }
 
-std::vector<int> parse_filaments(const nlohmann::json& value, size_t filament_count)
+std::vector<int> parse_filaments(const nlohmann::json& value)
 {
-    const std::string range = "1.." + std::to_string(filament_count);
     if (!value.is_array() || value.empty())
-        throw std::runtime_error("filaments must be a list of filament slot numbers, " + range);
+        throw std::runtime_error("filaments must be a list of filament slot numbers, counted from 1");
     std::vector<int> filaments;
     for (const nlohmann::json& item : value) {
         int n = 0;
-        if (!parse_integer_param(item, n) || n < 1 || size_t(n) > filament_count)
-            throw std::runtime_error("filament " + item.dump() + " does not exist: this printer's filaments are " + range);
+        if (!parse_integer_param(item, n) || n < 1)
+            throw std::runtime_error("filament " + item.dump() + " is not a filament slot number: they count from 1");
         filaments.push_back(n);
     }
     std::sort(filaments.begin(), filaments.end());
@@ -333,11 +332,14 @@ bool LayerPlanRequest::draws(int filament) const
     return filaments.empty() || std::binary_search(filaments.begin(), filaments.end(), filament);
 }
 
-LayerPlanRequest parse_layer_plan_request(const nlohmann::json& view, size_t filament_count)
+namespace {
+
+const char* const k_layer_view_forms = R"(layer_view must be "first_layer", {"layer": n} or {"z": mm})";
+
+// layer_view's object form, {layer | z, features?, filaments?, color_by?, fit?}.
+LayerPlanRequest parse_sliced_layer_view(const nlohmann::json& view)
 {
     static const char* const k_keys[] = {"layer", "z", "features", "filaments", "color_by", "fit"};
-    if (!view.is_object())
-        throw std::runtime_error("layer_view must be \"first_layer\", {\"layer\": n} or {\"z\": mm}");
     for (const auto& [key, value] : view.items())
         if (std::find(std::begin(k_keys), std::end(k_keys), key) == std::end(k_keys))
             throw std::runtime_error("layer_view has no key \"" + key + "\"; it takes layer or z, and optionally features, "
@@ -363,7 +365,7 @@ LayerPlanRequest parse_layer_plan_request(const nlohmann::json& view, size_t fil
     if (view.contains("features"))
         request.features = parse_features(view["features"]);
     if (view.contains("filaments"))
-        request.filaments = parse_filaments(view["filaments"], filament_count);
+        request.filaments = parse_filaments(view["filaments"]);
     if (view.contains("color_by")) {
         const nlohmann::json& c = view["color_by"];
         if (c == "feature")
@@ -376,6 +378,30 @@ LayerPlanRequest parse_layer_plan_request(const nlohmann::json& view, size_t fil
     if (view.contains("fit"))
         request.fit_object = parse_fit(view["fit"]);
     return request;
+}
+
+} // namespace
+
+LayerView parse_layer_view(const nlohmann::json& value)
+{
+    LayerView view;
+    if (value == "first_layer") {
+        view.first_layer = true;
+        return view;
+    }
+    nlohmann::json object;
+    if (!parse_object_param(value, object))
+        throw std::runtime_error(k_layer_view_forms);
+    view.sliced = parse_sliced_layer_view(object);
+    return view;
+}
+
+void check_filaments(const LayerPlanRequest& request, size_t filament_count)
+{
+    for (int filament : request.filaments)
+        if (size_t(filament) > filament_count)
+            throw std::runtime_error("filament " + std::to_string(filament) + " does not exist: this printer's filaments are 1.." +
+                                     std::to_string(filament_count));
 }
 
 nlohmann::json drawn_json(const LayerPlanRequest& request)
@@ -585,13 +611,20 @@ std::vector<PrintFootprint> print_footprints(const Print& print, const Model& mo
     std::vector<PrintFootprint> out;
     for (const PrintObject* po : print.objects()) {
         PrintFootprint f;
-        f.object_index        = model_object_index(model, po->model_object());
-        f.name                = po->model_object() != nullptr ? po->model_object()->name : std::string();
-        const BoundingBox own = po->bounding_box();  // object coordinates, centred on the instance's shift
-        for (const PrintInstance& inst : po->instances())
-            for (const Point& corner : {Point(own.min + inst.shift), Point(own.max + inst.shift)})
-                f.box.merge(Vec2d(unscale<double>(corner.x()), unscale<double>(corner.y())));
+        f.object_index = model_object_index(model, po->model_object());
+        f.name         = po->model_object() != nullptr ? po->model_object()->name : std::string();
+        merge_on_bed(f.box, *po, po->bounding_box());  // the sliced object's size, centred on each instance
         out.push_back(std::move(f));
+    }
+    return out;
+}
+
+nlohmann::json layer_json(const std::vector<GcodeLayer>& layers, const LayerAtHeight& chosen, const LayerPlanRequest& request)
+{
+    nlohmann::json out = {{"number", int(chosen.index) + 1}, {"of", layers.size()}, {"z", round_to(layers[chosen.index].z, 4)}};
+    if (request.z) {
+        out["requested_z"] = *request.z;
+        out["also_at"]     = chosen.also_at;
     }
     return out;
 }
