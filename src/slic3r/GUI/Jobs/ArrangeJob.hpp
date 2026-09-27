@@ -2,7 +2,10 @@
 #define ARRANGEJOB_HPP
 
 
+#include <atomic>
+#include <functional>
 #include <optional>
+#include <vector>
 
 #include "Job.hpp"
 #include "libslic3r/Arrange.hpp"
@@ -14,6 +17,16 @@ class ModelInstance;
 namespace GUI {
 
 class Plater;
+class PartPlateList;
+
+// Orca: what an arrange sets up for its run, undone when it ends -- however it ends: the plates
+// prepare_all locked because their print sequence differs from the global one (`plates_to_unlock`;
+// an index no longer in `plates` is skipped), the plater's "an arrange is running" flag, and the
+// "Arranging..." notification. Upstream undid them only after an arrange it applied, so a cancelled
+// or failed one left those plates locked, the plate toolbar's arrange button refusing, and the
+// notification up until it timed out.
+void end_arrange_run(PartPlateList& plates, const std::vector<int>& plates_to_unlock, std::atomic<bool>& arrange_running,
+                     const std::function<void()>& close_notification);
 
 class ArrangeJob : public Job
 {

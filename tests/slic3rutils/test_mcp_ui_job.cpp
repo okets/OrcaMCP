@@ -1,6 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "slic3r/GUI/Jobs/ArrangeJob.hpp"
 #include "slic3r/GUI/Jobs/BoostThreadWorker.hpp"
+#include "slic3r/GUI/PartPlate.hpp"
+#include "libslic3r/Model.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -106,4 +109,22 @@ TEST_CASE("cancel_all during a job's process finalizes it as cancelled", "[McpUi
     REQUIRE(pump_until_idle(worker, 5s));
     CHECK(job->finalized);
     CHECK(job->finalized_canceled);
+}
+
+TEST_CASE("An arrange's run is undone however it ends: the plates it locked, its flag, its notification",
+          "[McpUiJob][orcamcp]")
+{
+    // A cancelled or failed arrange returned from its finalize before undoing them: prepare_all's plates
+    // stayed locked (every later arrange, orient and flatten_object took them for the user's), the
+    // plate toolbar's arrange button did nothing again, and "Arranging..." stayed up until it timed out.
+    Slic3r::Model              model;
+    Slic3r::GUI::PartPlateList plates(nullptr, &model, Slic3r::ptFFF);
+    plates.get_plate(0)->lock(true);
+    std::atomic<bool> arrange_running{true};
+    bool              notification_closed = false;
+    // Plate 7 is one the arrange locked that is gone since: skipped.
+    Slic3r::GUI::end_arrange_run(plates, {0, 7}, arrange_running, [&notification_closed] { notification_closed = true; });
+    CHECK_FALSE(plates.get_plate(0)->is_locked());
+    CHECK_FALSE(arrange_running.load());
+    CHECK(notification_closed);
 }

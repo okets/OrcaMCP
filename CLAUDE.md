@@ -961,6 +961,7 @@ echo "AB Print::apply copies a new object name without invalidating the G-code (
 echo "AC ObjectList::get_default_layer_config reads the preset's float \"extruder\" (rel2506/06b): $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^DynamicPrintConfig ObjectList::get_default_layer_config/{f=1} f&&/opt_float\("extruder"\)/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
 echo "AD reload_scene recycles a GLVolume without its instance's printable flag (rel2506/06b): $(U src/slic3r/GUI/GLCanvas3D.cpp | awk '/^void GLCanvas3D::reload_scene/{f=1} f&&/[.>]printable *= /{print "no"; exit} f&&/^}/{print "yes"; exit}')"
 echo "AE cancel_all leaves a job whose process has returned to finalize as not cancelled (rel2506/07e; 0 = bug): $(U src/slic3r/GUI/Jobs/BoostThreadWorker.hpp | grep -c 'cancel_all_count')"
+echo "AF a cancelled or failed arrange keeps prepare_all's plates locked, its running flag and its notification (rel2506/07e): $(U src/slic3r/GUI/Jobs/ArrangeJob.cpp | awk '/^void ArrangeJob::finalize/{f=1} f&&/lock\(false\)|end_arrange_run/{print "no"; exit} f&&/if \(canceled \|\| eptr\)/{print "yes"; exit}')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -1139,6 +1140,15 @@ wait) that lands after the job computed its result and before it was applied can
 objects stay where they were. That is what `cancel_all` means -- "delete the queued jobs and cancel
 the current one" -- and every finalize already handles `canceled` by applying nothing. On a
 non-zero, take upstream's and re-run `slic3rutils_tests "[McpUiJob]"`.
+
+Item AF: upstream's `ArrangeJob::finalize` returns early for a cancelled or failed arrange, before
+it undoes what the run set up: the plates `prepare_all` locked because their print sequence differs
+from the global one stayed locked (a lock icon the user never set; every later arrange, orient and
+`flatten_object` took them for locked), `Plater::m_arrange_running` stayed set (the plate toolbar's
+arrange button, `last_arrange_job_is_finished`, did nothing again until an arrange was applied), and
+"Arranging..." stayed up until it timed out. Item AE makes a cancel in the post-process window a
+cancelled finalize too. Ours undoes all three however the finalize returns (`end_arrange_run`, from a
+`ScopeGuard` at its top). On "no", take upstream's and re-run `slic3rutils_tests "[McpUiJob]"`.
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices
