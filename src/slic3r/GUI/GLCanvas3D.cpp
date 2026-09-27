@@ -10515,6 +10515,13 @@ void GLCanvas3D::_set_warning_notification(EWarning warning, bool state)
         SLICING_HEIGHT_OUTSIDE
     };
     const static std::vector<std::string> extruder_name_list= {_u8L("left nozzle"), _u8L("right nozzle")};  // in ui, we treat extruder as nozzle
+    // Orca: an extruder's name in these messages, 1-based: Bambu's left or right nozzle, "Tool N" on
+    // every other printer, whose tools are not two. Indexing the two names with a third tool read past them.
+    const auto extruder_display_name = [](int extruder_id) -> std::string {
+        if (wxGetApp().preset_bundle->is_bbl_vendor() && extruder_id >= 1 && extruder_id <= int(extruder_name_list.size()))
+            return extruder_name_list[extruder_id - 1];
+        return (boost::format(_u8L("Tool %d")) % extruder_id).str();
+    };
     std::string text;
     ErrorType error = ErrorType::PLATER_WARNING;
     const ModelObject* conflictObj=nullptr;
@@ -10595,13 +10602,7 @@ void GLCanvas3D::_set_warning_notification(EWarning warning, bool state)
                     }
                 }
             }
-            std::string extruder_name;
-            if(wxGetApp().preset_bundle->is_bbl_vendor()){
-                extruder_name = extruder_name_list[extruder_id-1];
-            }
-            else{
-                extruder_name += (boost::format(_u8L("Tool %d"))%extruder_id).str();
-            }
+            const std::string extruder_name = extruder_display_name(extruder_id);
 
             if (error_iter->second.size() == 1) {
                 text += (boost::format(_u8L("Filament %s is placed in the %s, but the generated G-code path exceeds the printable range of the %s.")) %filaments %extruder_name %extruder_name).str();
@@ -10655,7 +10656,7 @@ void GLCanvas3D::_set_warning_notification(EWarning warning, bool state)
                     }
                 }
             }
-            std::string extruder_name = extruder_name_list[extruder_id-1];
+            const std::string extruder_name = extruder_display_name(extruder_id);
             if (error_iter->second.size() == 1) {
                 text += (boost::format(_u8L("Filament %s is placed in the %s, but the generated G-code path exceeds the printable height of the %s.")) % filaments % extruder_name % extruder_name).str();
             } else {
