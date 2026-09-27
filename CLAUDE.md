@@ -897,6 +897,7 @@ echo "Z reslice refuses on a validation failure a settings fix removed until the
 echo "AA upstream's slicer reads a layer range's layer_height unchecked, and a file can carry a range without one (rel2506/06b): $(U src/libslic3r/Slicing.cpp | grep -c 'it_range->second.option("layer_height")->getFloat()')"
 echo "AB Print::apply copies a new object name without invalidating the G-code (rel2506/06b): $(U src/libslic3r/PrintApply.cpp | awk '/model_object.name       = model_object_new.name;/{print (prev ~ /invalidate_step\(psGCodeExport\)/ ? "no" : "yes"); exit} {prev=$0}')"
 echo "AC ObjectList::get_default_layer_config reads the preset's float \"extruder\" (rel2506/06b): $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^DynamicPrintConfig ObjectList::get_default_layer_config/{f=1} f&&/opt_float\("extruder"\)/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
+echo "AD reload_scene recycles a GLVolume without its instance's printable flag (rel2506/06b): $(U src/slic3r/GUI/GLCanvas3D.cpp | awk '/^void GLCanvas3D::reload_scene/{f=1} f&&/[.>]printable *= /{print "no"; exit} f&&/^}/{print "yes"; exit}')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -1031,6 +1032,16 @@ Item AB: an object's name is in its G-code (the `; printing object` labels, `EXC
 anything, so a finished plate kept its G-code and the next slice took it back with the old name in
 it. Ours invalidates `psGCodeExport` when the name changed. On "no", take upstream's and re-run
 `fff_print_tests "Renaming an object after a slice*"`.
+
+Item AD: a GLVolume's `printable` flag is set only by the printable toggles
+(`GLCanvas3D::update_instance_printable_state_for_object`); upstream's `reload_scene` recycles a volume
+without it. After an undo or redo of a toggle (the object list's or MCP's `set_object_printable`) the
+volume kept the other state; the canvas's outside check skips unprintable volumes, so the plate had
+nothing on it, was marked not ready to slice, and the next background update set
+`process_completed_with_error`: `reslice()` refused the plate, silently, until the object was moved.
+Ours sets every volume's flag from its instance in `reload_scene`, as it sets the instance's
+transformation. On "no", take upstream's and re-check `set_object_printable` false, `undo`,
+`slice_all`.
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices

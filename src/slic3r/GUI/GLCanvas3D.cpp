@@ -2748,6 +2748,12 @@ void GLCanvas3D::reload_scene(bool refresh_immediately, bool force_full_scene_re
 						update_object_list = true;
 					}
                 }
+                // Orca: the volume is printable when its instance is, as it has the instance's transformation.
+                // Only the printable toggles set the flag (update_instance_printable_state_for_object), so an
+                // undo or redo of one left a recycled volume with the other state: the outside check below skips
+                // an unprintable volume, took the plate for having nothing on it, made it not ready to slice,
+                // and reslice() refused it until the object was moved.
+                m_volumes.volumes[it->volume_idx]->printable = model_instance.printable;
             }
         }
     }
