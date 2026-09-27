@@ -293,11 +293,12 @@ void apply_pending_settings(Plater& plater, const McpDialogSuppressionGuard& gua
                                   [&plater] { plater.apply_pending_background_update(); });
 }
 
-// Why the app's own validation refused the selected plate, the one reslice() works on, or nullopt when
-// it did not. The verdict is the plate's (PartPlate::is_apply_result_invalid, which
-// update_background_process sets as it validates); the words are the app's validation of it, whose Print
-// the process holds, formatted as the GUI's notification formats them. The run's other plates are judged
-// by their verdict alone (SliceRunPlate::valid).
+// The app's words for why its own validation refused the selected plate, the one reslice() works on, or
+// nullopt when it did not or has none now. The verdict is the plate's (PartPlate::is_apply_result_invalid,
+// which update_background_process sets as it validates); the words are the app's validation of it, whose
+// Print the process holds, formatted as the GUI's notification formats them. A verdict the Print no longer
+// explains -- its object was left out of it since, as one the build volume finds too tall is -- has no
+// words, and is judged as the run's other plates are, by the verdict alone (SliceRunPlate::valid).
 std::optional<std::string> selected_plate_validation_failure(Plater& plater, PartPlateList& plate_list)
 {
     const PartPlate* plate = plate_list.get_curr_plate();
@@ -307,7 +308,7 @@ std::optional<std::string> selected_plate_validation_failure(Plater& plater, Par
     plater.post_process_string_object_exception(error);
     if (!error.string.empty())
         return error.string;
-    return "plate_index " + std::to_string(plate_list.get_curr_plate_index()) + " failed validation";
+    return std::nullopt;
 }
 
 // What the app shows right after slice_all dispatched its slice, for OrcaMCP::judge_slice_start.
@@ -2844,9 +2845,11 @@ void OrcaMCPServer::register_builtin_tools()
         "message: busy_slicing (the pipeline is busy -- get_slicing_status's busy: a slice or Slice All "
         "run, an export, an upload, or the last slice still stopping; nothing is started -- call "
         "wait_for_slice, then slice_all again), already_sliced (nothing to do), busy_job, "
-        "nothing_to_slice, invalid (the app refuses the plate as it stands -- its validation, an object "
+        "invalid (the app refuses the plate as it stands -- its validation, an object "
         "partly off the plate, a filament check, missing plugins, a broken mixed filament, or a last "
-        "slice that failed; message says which) or unknown. Then call "
+        "slice that failed; message says which, in the app's words for a validation failure), "
+        "nothing_to_slice (no printable object fully on the plates -- one partly off its plate or too tall "
+        "for the printer does not count -- and no refusal the app gives words for) or unknown. Then call "
         "wait_for_slice, or poll get_slicing_status until state is \"done\"; its plates array says which "
         "plates have a result. The plate selection walks from the first plate to the last while the "
         "run is in progress, and get_slicing_status puts back the plate that was selected here once "
