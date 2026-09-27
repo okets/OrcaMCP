@@ -128,6 +128,11 @@ PaintPlan capture_paint_plan(const PaintTarget& target);
 // carries the message the tool layer returns to the caller; on true it is left alone.
 bool plan_still_valid(const PaintTarget& target, const PaintPlan& plan, std::string& error);
 
+// The first of plan_still_valid's two checks alone -- the same object, volumes and meshes -- for a
+// write that names states rather than places (remap_paint, paint_object's selection "state"): a move
+// or a rotation leaves the facets it computed where the write lands. Same contract otherwise.
+bool plan_meshes_unchanged(const PaintTarget& target, const PaintPlan& plan, std::string& error);
+
 // Where a stored BrimPoint reads back in the plate frame the rest of this API speaks.
 // ModelObject::brim_points is stored object-local (Model.hpp ~390); Brim.cpp:373-374 transforms
 // each by the instance matrix to get a world position and discards any whose world z ends up

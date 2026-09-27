@@ -1342,6 +1342,35 @@ TEST_CASE("plan_still_valid refuses an object that moved under the selection", "
     CHECK_FALSE(plan_still_valid(whole_object_target(*built.object), plan, error));
 }
 
+TEST_CASE("a coordinate-free write accepts an object that moved, since the same facets are still there", "[orcamcp][paint]")
+{
+    // remap_paint names states, not places: a move or a rotation between capture and write leaves
+    // every facet it computed a state for where the write lands, so refusing it would be wrong.
+    HeadlessObject built = make_headless_object(Slic3r::its_make_cube(10.0, 10.0, 10.0),
+                                                Vec3d(150.0, 150.0, 0.0));
+    const PaintPlan plan = capture_paint_plan(whole_object_target(*built.object));
+
+    built.object->instances[0]->set_offset(Vec3d(180.0, 150.0, 0.0));
+    built.object->instances[0]->set_rotation(Vec3d(0.0, 0.0, M_PI / 2.0));
+
+    std::string error;
+    CHECK(plan_meshes_unchanged(whole_object_target(*built.object), plan, error));
+    CHECK(error.empty());
+}
+
+TEST_CASE("a coordinate-free write still refuses a volume whose mesh was replaced", "[orcamcp][paint]")
+{
+    HeadlessObject built = make_headless_object(Slic3r::its_make_cube(10.0, 10.0, 10.0),
+                                                Vec3d(150.0, 150.0, 0.0));
+    const PaintPlan plan = capture_paint_plan(whole_object_target(*built.object));
+
+    built.volume->set_mesh(Slic3r::its_make_cube(10.0, 10.0, 10.0));
+
+    std::string error;
+    CHECK_FALSE(plan_meshes_unchanged(whole_object_target(*built.object), plan, error));
+    CHECK(error.find("mesh was replaced") != std::string::npos);
+}
+
 TEST_CASE("plan_still_valid refuses an object that lost a volume", "[orcamcp][paint]")
 {
     // The count check guards the indexing that follows it: PaintPlanVolume::index is a position

@@ -694,7 +694,9 @@ nlohmann::json run_paint_remap(const nlohmann::json& params, const PaintRemapReq
     return run_on_main_thread([&params, &request, &needs, &plan, &base, &writes]() -> nlohmann::json {
         PaintTarget target;
         std::string error;
-        if (!resolve_paint_target(params, target, error, needs) || !plan_still_valid(target, plan, error))
+        // Coordinate-free: a move since the first hop changes nothing it computed, so only the volumes,
+        // their meshes and their paint must be the same.
+        if (!resolve_paint_target(params, target, error, needs) || !plan_meshes_unchanged(target, plan, error))
             return error_response(error);
         // Built on the paint each volume carried in the first hop: a gizmo stroke landing since would
         // be discarded by writing it, so every volume is checked before anything is written.

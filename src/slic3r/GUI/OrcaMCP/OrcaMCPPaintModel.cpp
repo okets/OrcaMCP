@@ -136,7 +136,7 @@ PaintPlan capture_paint_plan(const PaintTarget& target)
     return plan;
 }
 
-bool plan_still_valid(const PaintTarget& target, const PaintPlan& plan, std::string& error)
+bool plan_meshes_unchanged(const PaintTarget& target, const PaintPlan& plan, std::string& error)
 {
     if (target.object == nullptr || target.object->id() != plan.object_identity ||
         target.volumes.size() != plan.volumes.size()) {
@@ -145,12 +145,22 @@ bool plan_still_valid(const PaintTarget& target, const PaintPlan& plan, std::str
         return false;
     }
     for (const PaintPlanVolume& pv : plan.volumes) {
-        ModelVolume* mv = target.volumes[std::size_t(pv.index)];
+        const ModelVolume* mv = target.volumes[std::size_t(pv.index)];
         if (mv->id() != pv.volume_identity || mv->mesh_ptr().get() != pv.mesh.get()) {
             error = "the scene changed while the selection was being computed (volume " +
                     std::to_string(pv.volume_id) + "'s mesh was replaced); retry";
             return false;
         }
+    }
+    return true;
+}
+
+bool plan_still_valid(const PaintTarget& target, const PaintPlan& plan, std::string& error)
+{
+    if (!plan_meshes_unchanged(target, plan, error))
+        return false;
+    for (const PaintPlanVolume& pv : plan.volumes) {
+        ModelVolume* mv = target.volumes[std::size_t(pv.index)];
         if (!volume_to_plate(*target.object, *mv, target.instance_idx).isApprox(pv.to_plate)) {
             error = "the scene changed while the selection was being computed (object " +
                     std::to_string(plan.object_id) +
