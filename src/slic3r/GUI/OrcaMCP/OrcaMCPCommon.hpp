@@ -1,7 +1,9 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPCommon.hpp
 #pragma once
 #include <algorithm>
+#include <array>
 #include <functional>
+#include <optional>
 #include <vector>
 #include <string>
 #include <nlohmann/json.hpp>
@@ -154,16 +156,34 @@ void transform_instances_on_bed(ModelObject& object, const Transform3d& world_tr
 // instance matrix singular, and a negative one is a mirror under a scale's name (mirror_object says so).
 bool valid_scale_factors(const Vec3d& factors);
 
-// One transform_objects entry, read and checked before any entry is applied. `error` is empty when the
-// entry can be applied; the batch is applied only when no entry has one, so a rejected entry never
-// leaves the others half done.
+// The x, y and z a transform was given, each optional: move_object's position, rotate_object's degrees,
+// scale_object's factors, and the same inside a transform_objects entry.
+struct PlateAxes
+{
+    std::array<std::optional<double>, 3> axis;
+    Vec3d value_or(const Vec3d& fallback) const;
+};
+// Reads the x, y and z of `object` into `out` (only those keys), or says what is wrong: an axis given as
+// anything but a number, named `prefix` + the axis ("position.x"). A JSON value of the wrong type
+// read with nlohmann's get or value throws, which in transform_objects stopped a batch half applied.
+std::optional<std::string> read_plate_axes(const nlohmann::json& object, const std::string& prefix, PlateAxes& out);
+
+// One transform_objects entry, read whole and checked before any entry is applied, so applying it
+// reads no JSON. `error` is empty when the entry can be applied; the batch is applied only when no
+// entry has one, so a rejected entry never leaves the others half done.
 struct TransformEntry
 {
     int         object_id = -1;
-    Vec3d       scale     = Vec3d::Ones(); // the entry's scale factors, ones when it gives none
+    PlateAxes   position;                  // the bounding-box centre in plate mm; an axis not given stays
+    Vec3d       rotation = Vec3d::Zero();  // degrees about the plate's axes, applied X then Y then Z
+    Vec3d       scale    = Vec3d::Ones();  // the entry's scale factors, ones when it gives none
     std::string error;
 };
 std::vector<TransformEntry> read_transform_entries(const nlohmann::json& transforms, size_t object_count);
+
+// What is wrong with transform_objects' `transforms` argument -- missing, or not an array -- or nullopt.
+// Reading a missing key from a const json with operator[] is undefined behaviour, not an exception.
+std::optional<std::string> transforms_argument_error(const nlohmann::json& params);
 
 // The box every MCP tool reports an object by, and reads and writes its position ("the
 // bounding-box centre") in: the exact world box of all its instances, ModelObject::bounding_box_exact,

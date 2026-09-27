@@ -4045,12 +4045,14 @@ void OrcaMCPServer::register_builtin_tools()
         },
         [](const nlohmann::json& params) -> nlohmann::json {
             int object_id = params["object_id"];
-            bool has_x = params.contains("x");
-            bool has_y = params.contains("y");
-            bool has_z = params.contains("z");
-            double x = params.value("x", 0.0);
-            double y = params.value("y", 0.0);
-            double z = params.value("z", 0.0);
+            PlateAxes axes;
+            if (const auto error = read_plate_axes(params, "", axes))
+                return nlohmann::json{{"status", "error"}, {"message", *error}};
+            const bool   has_x  = axes.axis[0].has_value();
+            const bool   has_y  = axes.axis[1].has_value();
+            const bool   has_z  = axes.axis[2].has_value();
+            const Vec3d  offset = axes.value_or(Vec3d::Zero());
+            const double x = offset.x(), y = offset.y(), z = offset.z();
             bool relative = params.value("relative", true);
             bool include_preview = params.value("include_preview", false);
             int preview_views = params.value("preview_views", 4);
@@ -4188,9 +4190,11 @@ void OrcaMCPServer::register_builtin_tools()
         },
         [](const nlohmann::json& params) -> nlohmann::json {
             int object_id = params["object_id"];
-            double x_deg = params.value("x", 0.0);
-            double y_deg = params.value("y", 0.0);
-            double z_deg = params.value("z", 0.0);
+            PlateAxes axes;
+            if (const auto error = read_plate_axes(params, "", axes))
+                return nlohmann::json{{"status", "error"}, {"message", *error}};
+            const Vec3d  degrees = axes.value_or(Vec3d::Zero());
+            const double x_deg = degrees.x(), y_deg = degrees.y(), z_deg = degrees.z();
             bool relative = params.value("relative", true);
             (void)relative;  // Reserved for future absolute rotation support
             bool include_preview = params.value("include_preview", false);
@@ -4314,9 +4318,11 @@ void OrcaMCPServer::register_builtin_tools()
         },
         [](const nlohmann::json& params) -> nlohmann::json {
             int object_id = params["object_id"];
-            double x = params.value("x", 1.0);
-            double y = params.value("y", 1.0);
-            double z = params.value("z", 1.0);
+            PlateAxes axes;
+            if (const auto error = read_plate_axes(params, "", axes))
+                return nlohmann::json{{"status", "error"}, {"message", *error}};
+            const Vec3d  given = axes.value_or(Vec3d::Ones());
+            const double x = given.x(), y = given.y(), z = given.z();
             bool uniform = params.value("uniform", false);
             bool include_preview = params.value("include_preview", false);
             int preview_views = params.value("preview_views", 4);
@@ -4412,8 +4418,9 @@ void OrcaMCPServer::register_builtin_tools()
         "object back onto the bed (Z=0), unless the entry gives position.z, which is kept as given. "
         "Each result reports the plate that object is on afterwards (plate_index) and measures "
         "on_bed against that plate. Every entry is checked before any is applied: if one is rejected "
-        "(an invalid object_id, a scale factor that is not positive), nothing is applied and results "
-        "lists the rejected entries by their position (entry). One undo step undoes the whole batch.",
+        "(an invalid object_id, a value that is not a number, or not an object where one is expected, a "
+        "scale factor that is not positive), nothing is applied and results lists the rejected entries by "
+        "their position (entry). One undo step undoes the whole batch.",
         {
             {"type", "object"},
             {"properties", {
@@ -4468,7 +4475,9 @@ void OrcaMCPServer::register_builtin_tools()
             {"required", {"transforms"}}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
-            auto transforms = params["transforms"];
+            if (const auto error = transforms_argument_error(params))
+                return nlohmann::json{{"status", "error"}, {"message", *error}};
+            const nlohmann::json transforms = params.at("transforms");
             return run_on_main_thread([transforms]() {
                 Plater* plater = wxGetApp().plater();
                 Model& model = plater->model();
@@ -4509,32 +4518,18 @@ void OrcaMCPServer::register_builtin_tools()
                 // applies, for the reasons spelled out there: ModelObject's translate/rotate/scale
                 // all act on the volumes, beneath the instance transform, so on a rotated instance
                 // each of them ran along an axis the caller never named.
-                for (size_t i = 0; i < entries.size(); ++i) {
-                    const nlohmann::json& t         = transforms[i];
-                    const int             object_id = entries[i].object_id;
-                    const Vec3d&          factors   = entries[i].scale;
-                    ModelObject*          obj       = model.objects[object_id];
+                for (const TransformEntry& entry : entries) {
+                    const int    object_id = entry.object_id;
+                    const Vec3d& factors   = entry.scale;
+                    ModelObject* obj       = model.objects[object_id];
 
                     // Position (absolute, unspecified axes preserved), then an incremental rotation,
                     // then the scale. An entry that asks for where the object already is changes
-                    // nothing, and takes no undo step and no plate's slice with it.
-                    Vec3d delta = Vec3d::Zero();
-                    if (t.contains("position")) {
-                        const auto& pos = t["position"];
-                        const Vec3d current_center = object_world_box(*obj).center();
-                        const Vec3d target(
-                            pos.contains("x") ? pos["x"].get<double>() : current_center.x(),
-                            pos.contains("y") ? pos["y"].get<double>() : current_center.y(),
-                            pos.contains("z") ? pos["z"].get<double>() : current_center.z()
-                        );
-                        delta = target - current_center;
-                    }
-                    Transform3d world_rotation = Transform3d::Identity();
-                    if (t.contains("rotation")) {
-                        const auto& rot = t["rotation"];
-                        const Vec3d degrees(rot.value("x", 0.0), rot.value("y", 0.0), rot.value("z", 0.0));
-                        world_rotation = Geometry::rotation_transform(degrees * deg_to_rad);
-                    }
+                    // nothing, and takes no undo step and no plate's slice with it. Everything comes
+                    // from the entry as read_transform_entries read it: no JSON is read from here on.
+                    const Vec3d       current_center = object_world_box(*obj).center();
+                    const Vec3d       delta          = entry.position.value_or(current_center) - current_center;
+                    const Transform3d world_rotation = Geometry::rotation_transform(entry.rotation * deg_to_rad);
                     const bool translates = !delta.isZero();
                     const bool turns      = !world_rotation.isApprox(Transform3d::Identity());
                     const bool scales     = !factors.isApprox(Vec3d::Ones());
@@ -4549,7 +4544,7 @@ void OrcaMCPServer::register_builtin_tools()
                     // A rotation or scale lands a resting object back on the bed, as rotate_object
                     // and scale_object do -- unless this entry states a Z, which is the caller's
                     // intent exactly as it is for move_object.
-                    const bool explicit_z = t.contains("position") && t["position"].contains("z");
+                    const bool explicit_z = entry.position.axis[2].has_value();
                     const auto transform  = explicit_z ? transform_instances_in_plate_frame : transform_instances_on_bed;
                     if (turns)
                         transform(*obj, world_rotation);

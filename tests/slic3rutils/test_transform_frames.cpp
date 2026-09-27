@@ -61,6 +61,13 @@ RotatedObject make_rotated_box(const Vec3d& instance_offset = Vec3d(100, 100, 0)
 
 BoundingBoxf3 world_box(const ModelObject& object) { return object.instance_bounding_box(0); }
 
+void check_vec(const Vec3d& actual, const Vec3d& expected, double tol = 1e-9)
+{
+    CHECK_THAT(actual.x(), WithinAbs(expected.x(), tol));
+    CHECK_THAT(actual.y(), WithinAbs(expected.y(), tol));
+    CHECK_THAT(actual.z(), WithinAbs(expected.z(), tol));
+}
+
 void check_box(const BoundingBoxf3& box, const Vec3d& min, const Vec3d& max, double tol = 1e-9)
 {
     CHECK_THAT(box.min.x(), WithinAbs(min.x(), tol));
@@ -477,10 +484,87 @@ TEST_CASE("transform_objects checks every entry before it applies any", "[orcamc
     REQUIRE(read.size() == 3);
     for (const TransformEntry& entry : read)
         CHECK(entry.error.empty());
-    CHECK(read[0].scale.isApprox(Vec3d(2, 2, 2)));
-    CHECK(read[1].scale.isApprox(Vec3d(1, 0.5, 1)));
-    CHECK(read[2].scale.isApprox(Vec3d::Ones()));
+    check_vec(read[0].scale, Vec3d(2, 2, 2));
+    check_vec(read[1].scale, Vec3d(1, 0.5, 1));
+    check_vec(read[2].scale, Vec3d::Ones());
     CHECK(read[1].object_id == 1);
+}
+
+// The apply loop read position and rotation from the JSON itself, after the entries before it were
+// applied: {"rotation": {"z": "90"}} threw "type must be number" halfway through the batch, and the
+// object an earlier entry moved stayed moved, never re-homed. Every value is read, and a value of the
+// wrong kind rejected, before anything is applied.
+TEST_CASE("an entry with a value of the wrong kind is rejected before anything is applied", "[orcamcp][transform_frames]")
+{
+    using Slic3r::GUI::OrcaMCP::read_transform_entries;
+    using Slic3r::GUI::OrcaMCP::TransformEntry;
+    const auto error_of = [](const char* entry_json) {
+        const nlohmann::json batch = nlohmann::json::array({nlohmann::json::parse(entry_json)});
+        return read_transform_entries(batch, /*object_count=*/2).front().error;
+    };
+
+    const nlohmann::json reviewer = nlohmann::json::parse(
+        R"([{"object_id": 0, "position": {"x": 100}}, {"object_id": 1, "rotation": {"z": "90"}}])");
+    const std::vector<TransformEntry> entries = read_transform_entries(reviewer, 2);
+    REQUIRE(entries.size() == 2);
+    CHECK(entries[0].error.empty());
+    CHECK(entries[1].error.find("rotation.z must be a number") != std::string::npos);
+
+    CHECK(error_of(R"({"object_id": 0, "position": {"x": null}})").find("position.x must be a number") != std::string::npos);
+    CHECK(error_of(R"({"object_id": 0, "position": {"y": [1]}})").find("position.y must be a number") != std::string::npos);
+    CHECK(error_of(R"({"object_id": 0, "position": [1, 2]})").find("position must be an object") != std::string::npos);
+    CHECK(error_of(R"({"object_id": 0, "rotation": 90})").find("rotation must be an object") != std::string::npos);
+    CHECK(error_of(R"({"object_id": 0, "scale": 2})").find("scale must be an object") != std::string::npos);
+    CHECK(error_of(R"({"object_id": 0, "scale": {"uniform": "2"}})").find("scale.uniform must be a number") != std::string::npos);
+    CHECK(error_of(R"({"object_id": 0, "scale": {"z": true}})").find("scale.z must be a number") != std::string::npos);
+    CHECK(error_of(R"({"object_id": "0"})").find("object_id must be an integer") != std::string::npos);
+    CHECK(error_of(R"({"position": {"x": 1}})").find("object_id is missing") != std::string::npos);
+    CHECK(error_of("5").find("must be an object") != std::string::npos);
+}
+
+TEST_CASE("an entry's position, rotation and scale are read whole", "[orcamcp][transform_frames]")
+{
+    using Slic3r::GUI::OrcaMCP::read_transform_entries;
+    const nlohmann::json batch = nlohmann::json::parse(
+        R"([{"object_id": 0, "position": {"x": 10, "z": 2}, "rotation": {"z": 90}, "scale": {"x": 2}}])");
+    const auto entry = read_transform_entries(batch, 1).front();
+    CHECK(entry.error.empty());
+    REQUIRE(entry.position.axis[0].has_value());
+    CHECK_THAT(*entry.position.axis[0], WithinAbs(10.0, 1e-12));
+    CHECK_FALSE(entry.position.axis[1].has_value());
+    REQUIRE(entry.position.axis[2].has_value());
+    CHECK_THAT(*entry.position.axis[2], WithinAbs(2.0, 1e-12));
+    // An axis the entry does not give stays where the object is.
+    check_vec(entry.position.value_or(Vec3d(1, 5, 9)), Vec3d(10, 5, 2));
+    check_vec(entry.rotation, Vec3d(0, 0, 90));
+    check_vec(entry.scale, Vec3d(2, 1, 1));
+}
+
+// transform_objects {} read params["transforms"] from a const json that has none: undefined behaviour in
+// a release build (nlohmann only asserts, then dereferences end()).
+TEST_CASE("transform_objects without a transforms array is an error naming it", "[orcamcp][transform_frames]")
+{
+    using Slic3r::GUI::OrcaMCP::transforms_argument_error;
+    const auto missing = transforms_argument_error(nlohmann::json::object());
+    REQUIRE(missing.has_value());
+    CHECK(missing->find("transforms is required") != std::string::npos);
+    const auto not_array = transforms_argument_error(nlohmann::json::parse(R"({"transforms": {"object_id": 0}})"));
+    REQUIRE(not_array.has_value());
+    CHECK(not_array->find("transforms must be an array") != std::string::npos);
+    CHECK_FALSE(transforms_argument_error(nlohmann::json::parse(R"({"transforms": []})")).has_value());
+}
+
+// move_object, rotate_object and scale_object read the same x, y, z, with the same reader.
+TEST_CASE("the transform tools' axes are numbers, each optional", "[orcamcp][transform_frames]")
+{
+    using Slic3r::GUI::OrcaMCP::PlateAxes;
+    using Slic3r::GUI::OrcaMCP::read_plate_axes;
+    PlateAxes axes;
+    CHECK_FALSE(read_plate_axes(nlohmann::json::parse(R"({"x": 1, "relative": false})"), "", axes).has_value());
+    check_vec(axes.value_or(Vec3d::Zero()), Vec3d(1, 0, 0));
+    const auto error = read_plate_axes(nlohmann::json::parse(R"({"y": "a"})"), "", axes);
+    REQUIRE(error.has_value());
+    CHECK(error->find("y must be a number") != std::string::npos);
 }
 
 TEST_CASE("a scale is valid only with positive, finite factors", "[orcamcp][transform_frames]")

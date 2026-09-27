@@ -895,7 +895,8 @@ object back onto the bed, as `rotate_object` and `scale_object` do, unless the e
 `position.z`: an explicit Z is kept as given, as `move_object` keeps it.
 
 **All or nothing.** Every entry is checked before any is applied. If one is rejected -- an
-`object_id` that is not an object, or scale factors that are not all positive -- nothing is applied,
+`object_id` that is not an object, a value that is not a number (`{"z": "90"}`), a `position`,
+`rotation` or `scale` that is not an object, or scale factors that are not all positive -- nothing is applied,
 `status` is `error`, and `results` lists each rejected entry with its position in the batch
 (`entry`), its `object_id` and the reason. A batch that applied the good entries and rejected the
 rest used to leave an object moved but unreported, still counted on its old plate. One undo step
