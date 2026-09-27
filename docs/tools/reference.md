@@ -278,14 +278,14 @@ Check slicing progress, for the selected plate and for every plate.
   "stage": null,
   "busy": false,
   "busy_reason": null,
-  "slice_run": {"ended_early": false, "scope": "all_plates", "plates": [0, 1], "outcome": "done"},
+  "slice_run": {"ended_early": false, "scope": "all_plates", "plates": [0, 1], "skipped": [], "outcome": "done"},
   "active_warnings": {"count": 0, "warnings": []}
 }
 ```
 
 | Field | Meaning |
 |-------|---------|
-| `state` | `idle` (never sliced, or the result was invalidated by an edit), `slicing` (in progress), `done` (the current plate has a valid slice result) |
+| `state` | `slicing` (in progress); `done` when the last `slice_all` run is done (`slice_run.outcome`) and the selected plate is sliced or empty -- before any `slice_all`, when the selected plate is sliced; `idle` otherwise (never sliced, an edit invalidated a result, or the run is not done) |
 | `is_slicing` | Background process running right now. During a `slice_all` run over every plate it stays true from the first plate to the last |
 | `status` | Legacy field, `slicing` or `idle` only - use `state` |
 | `slice_result_valid` | The current plate's own slice-result flag, the same one the GUI's Print/Export buttons use |
@@ -294,12 +294,12 @@ Check slicing progress, for the selected plate and for every plate.
 | `stage` | While slicing: the app's progress text for the running slice ("Generating walls", "Generating support", ...), in the app's language. `null` when nothing is slicing |
 | `plates_sliced` / `plates_total` | How many of the plates have a valid result |
 | `restored_selected_plate` | Present only on the poll that ends a `slice_all` run over every plate: the plate that was selected when `slice_all` was called has been selected again |
-| `slice_run` | How the last `slice_all` run stands. `scope` (`all_plates`, `current_plate`, or `null` before the first `slice_all`) and `plates`: the current indexes of the plates it asked for that still exist. `outcome`: `running`, `done` (every one of them has a result), `ended_early`, `incomplete` (the run is over and some have no result, or were deleted or rebuilt: a plate-list change cancels Slice All), or `null` with no run; `message` says which plates and why when it is `ended_early` or `incomplete`. `ended_early: true`, with `stopped_at_plate` and `reason`, when the last Slice All run stopped before its last plate because another job (an arrange, an orient) was running; that plate and the ones after it are not sliced. `active_warnings` carries a `SliceAllEndedEarly` warning then too. Cleared when the next Slice All starts; call `slice_all` again. `wait_for_slice` ends its wait on this |
+| `slice_run` | How the last `slice_all` run stands. `scope` (`all_plates`, `current_plate`, or `null` before the first `slice_all`) and `plates`: the current indexes of the plates it asked for that still exist. `skipped`: those of them with no printable object, which have nothing to slice (Slice All skips them). `outcome`: `running`, `done` (every one of them with something on it has a result), `ended_early`, `incomplete` (the run is over and some have no result, or were deleted or rebuilt: a plate-list change cancels Slice All; or none of its plates had anything to slice, `message` "nothing to slice ..."), or `null` with no run; `message` says which plates and why when it is `ended_early` or `incomplete`. `ended_early: true`, with `stopped_at_plate` and `reason`, when the last Slice All run stopped before its last plate because another job (an arrange, an orient) was running; that plate and the ones after it are not sliced. `active_warnings` carries a `SliceAllEndedEarly` warning then too. Cleared when the next Slice All starts; call `slice_all` again. `wait_for_slice` ends its wait on this |
 
 **Usage:** After `slice_all`, call `wait_for_slice` (it polls this for you), or poll every 2-3
 seconds until `slice_run.outcome` is no longer `running`, then call `get_print_estimate`. `is_slicing: false` on its own does **not** mean the slice finished - it is
-also false before slicing ever started. `state` is about the *selected* plate; for a multi-plate
-run read `plates_sliced` / `plates`.
+also false before slicing ever started. `state` follows the last run, so an empty plate selected at
+the end of it reads `done`; `plates_sliced` / `plates` say which plates have a result.
 
 ---
 
@@ -2842,9 +2842,9 @@ wait still ends by it.
 
 | `outcome` | Meaning |
 |-----------|---------|
-| `done` | Every plate the last `slice_all` asked for has a slice result (without a `slice_all` this session: the selected plate has one) |
+| `done` | Every plate the last `slice_all` asked for has a slice result, empty plates aside: those have nothing to slice and are skipped (`slice_run.skipped`). Without a `slice_all` this session: the selected plate has one |
 | `ended_early` | Slice All stopped before its last plate; `message` is the app's reason |
-| `incomplete` | The run is over and some of its plates have no result, or no longer exist (a plate-list change cancels Slice All); `message` names them |
+| `incomplete` | The run is over and some of its plates have no result, or no longer exist (a plate-list change cancels Slice All), or none of them had anything to slice; `message` names them |
 | `not_slicing` | Nothing was slicing and the selected plate has no result: `slice_all` was never called, or could not start |
 | `timed_out` | Still slicing at the timeout (`timed_out: true`); call it again |
 | `app_gone` | The app quit or crashed during the wait: it answered that it is quitting, or refused every connection for a second or more after it had been there. The slice did not finish; `start_orca`, then `slice_all` again |

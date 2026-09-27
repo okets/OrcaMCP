@@ -68,9 +68,11 @@ inline std::optional<int> reported_slice_percent(float percent)
 // load, no longer exists under it.
 struct SliceRunPlate
 {
-    bool exists = false;
-    bool sliced = false; // it has a valid slice result
-    int  index  = -1;    // its 0-based plate index now, when it exists
+    bool exists    = false;
+    bool printable = false; // it has a printable object on it (PartPlate::has_printable_instances); an
+                            // empty plate has nothing to slice, and Slice All skips it
+    bool sliced    = false; // it has a valid slice result
+    int  index     = -1;    // its 0-based plate index now, when it exists
 };
 
 enum class SliceRunOutcome
@@ -96,8 +98,9 @@ inline const char* slice_run_outcome_name(SliceRunOutcome outcome)
 
 struct SliceRunJudgement
 {
-    SliceRunOutcome outcome = SliceRunOutcome::none;
-    std::string     message; // why, for ended_early and incomplete; empty otherwise
+    SliceRunOutcome  outcome = SliceRunOutcome::none;
+    std::string      message; // why, for ended_early and incomplete; empty otherwise
+    std::vector<int> skipped; // the run's plates that are there with nothing to slice, by plate index
 };
 
 // "1, 3" for plate indexes {1, 3}.
@@ -112,27 +115,43 @@ inline std::string plate_index_list(const std::vector<int>& indexes)
 // How the last slice_all run stands. `run_known` is false before the first slice_all; `plates` are
 // the plates it asked for; `ended_early_text` is Plater's report of a Slice All run that stopped early
 // (slice_all_ended_early_text). A run in progress is running whatever else holds, and a run that
-// ended early says so rather than listing the plates that stop left unsliced.
+// ended early says so rather than listing the plates that stop left unsliced. An empty plate has
+// nothing to slice: it is skipped, not unsliced, so a run is done once every plate with something on
+// it is sliced -- and a run with nothing to slice on any plate is not done at all.
 inline SliceRunJudgement judge_slice_run(bool                              run_known,
                                          bool                              slicing,
                                          const std::vector<SliceRunPlate>& plates,
                                          const std::optional<std::string>& ended_early_text)
 {
     if (slicing)
-        return {SliceRunOutcome::running, {}};
+        return {SliceRunOutcome::running, {}, {}};
     if (ended_early_text)
-        return {SliceRunOutcome::ended_early, *ended_early_text};
+        return {SliceRunOutcome::ended_early, *ended_early_text, {}};
     if (!run_known)
-        return {SliceRunOutcome::none, {}};
+        return {SliceRunOutcome::none, {}, {}};
 
     const auto       gone = std::count_if(plates.begin(), plates.end(), [](const SliceRunPlate& p) { return !p.exists; });
-    std::vector<int> unsliced;
-    for (const SliceRunPlate& plate : plates)
-        if (plate.exists && !plate.sliced)
+    std::vector<int> unsliced, skipped;
+    bool             any_sliced = false;
+    for (const SliceRunPlate& plate : plates) {
+        if (!plate.exists)
+            continue;
+        if (!plate.printable)
+            skipped.push_back(plate.index);
+        else if (plate.sliced)
+            any_sliced = true;
+        else
             unsliced.push_back(plate.index);
+    }
 
-    if (gone == 0 && unsliced.empty())
-        return {SliceRunOutcome::done, {}};
+    if (gone == 0 && unsliced.empty()) {
+        if (any_sliced)
+            return {SliceRunOutcome::done, {}, skipped};
+        return {SliceRunOutcome::incomplete,
+                "nothing to slice: no plate the run asked for has a printable object on it (plate_index " +
+                    plate_index_list(skipped) + " empty); put one on a plate, then call slice_all again",
+                skipped};
+    }
 
     std::string message;
     if (gone > 0)
@@ -142,7 +161,41 @@ inline SliceRunJudgement judge_slice_run(bool                              run_k
     if (!unsliced.empty())
         message += (message.empty() ? "" : "; ") + std::string("plate_index ") + plate_index_list(unsliced) + " has no slice result" +
                    (gone > 0 ? "" : ": its slice failed (active_warnings says why), was cancelled, or an edit since invalidated it");
-    return {SliceRunOutcome::incomplete, message + "; call slice_all again"};
+    return {SliceRunOutcome::incomplete, message + "; call slice_all again", skipped};
+}
+
+// get_slicing_status's state.
+enum class SliceState
+{
+    idle,    // nothing is slicing, and there is no finished run to read
+    slicing, // a slice, or a Slice All run, is in progress
+    done,    // the run is done, and the selected plate is sliced or has nothing to slice
+};
+
+inline const char* slice_state_name(SliceState state)
+{
+    switch (state) {
+    case SliceState::idle: return "idle";
+    case SliceState::slicing: return "slicing";
+    case SliceState::done: return "done";
+    }
+    return "idle";
+}
+
+// The state from how the last slice_all run stands (`run`, judge_slice_run's outcome) and the selected
+// plate, rather than from the selected plate alone: with an empty plate selected that stayed idle
+// after a run that sliced every other plate. A selected plate with objects and no result is idle
+// whatever the run did (a run over another plate says nothing about it); before any slice_all, done
+// means the selected plate is sliced, as it always did.
+inline SliceState slice_state(bool slicing, SliceRunOutcome run, const SliceRunPlate& selected)
+{
+    if (slicing)
+        return SliceState::slicing;
+    if (selected.printable && !selected.sliced)
+        return SliceState::idle;
+    if (run == SliceRunOutcome::none)
+        return selected.sliced ? SliceState::done : SliceState::idle;
+    return run == SliceRunOutcome::done ? SliceState::done : SliceState::idle;
 }
 
 // ---- What slice_all reports ---------------------------------------------------------------------
@@ -256,31 +309,26 @@ inline std::optional<SliceStartReport> refuse_while_busy(const PipelineState& st
                             pipeline_busy_text(state) + ", so nothing was started: call wait_for_slice, then slice_all again"};
 }
 
-// One plate slice_all asked for, right after it asked.
-struct PlateToSlice
-{
-    bool sliced    = false; // it has a valid slice result
-    bool printable = false; // it has a printable object on it
-};
-
 // What the app shows right after slice_all dispatched its slice.
 struct SliceStartSignals
 {
     bool                       slicing        = false; // Plater::is_background_process_slicing()
     bool                       ui_job_running = false; // an arrange or an orient holds the UI worker
     std::optional<std::string> validation_error;       // the app's own validation of a plate asked for failed, saying this
-    std::vector<PlateToSlice>  plates;
+    std::vector<SliceRunPlate> plates;                 // the plates slice_all asked for, right after it asked
 };
 
 // slice_all's answer once it dispatched a slice. A plate already sliced is not sliced again, which is
-// not a failure: nothing needed doing (wait_for_slice then reports done). Otherwise the first cause
-// the signals show.
+// not a failure: nothing needed doing (wait_for_slice then reports done). An empty plate needs no
+// slice either. Otherwise the first cause the signals show.
 inline SliceStartReport judge_slice_start(const SliceStartSignals& signals)
 {
     if (signals.slicing)
         return {SliceStart::started, {}, {}};
-    const bool all_sliced = !signals.plates.empty() &&
-                            std::all_of(signals.plates.begin(), signals.plates.end(), [](const PlateToSlice& p) { return p.sliced; });
+    const auto printable  = [](const SliceRunPlate& p) { return p.exists && p.printable; };
+    const bool all_sliced = std::any_of(signals.plates.begin(), signals.plates.end(), printable) &&
+                            std::all_of(signals.plates.begin(), signals.plates.end(),
+                                        [&printable](const SliceRunPlate& p) { return !printable(p) || p.sliced; });
     if (all_sliced)
         return {SliceStart::not_started, "already_sliced",
                 "Every plate it was asked for already has a valid slice result, so there was nothing to slice: "
@@ -289,7 +337,7 @@ inline SliceStartReport judge_slice_start(const SliceStartSignals& signals)
         return {SliceStart::not_started, "busy_job",
                 "Another job (an arrange or an orient) is running, so the slice could not start: call slice_all again "
                 "once it has finished."};
-    if (std::none_of(signals.plates.begin(), signals.plates.end(), [](const PlateToSlice& p) { return p.printable; }))
+    if (std::none_of(signals.plates.begin(), signals.plates.end(), printable))
         return {SliceStart::not_started, "nothing_to_slice", "No plate it was asked for has a printable object on it."};
     if (signals.validation_error)
         return {SliceStart::not_started, "invalid", "The slice failed validation: " + *signals.validation_error};
