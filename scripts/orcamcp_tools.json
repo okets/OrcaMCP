@@ -2623,7 +2623,7 @@
     },
     {
       "category": "Transforms",
-      "description": "Batch transform multiple objects. Position, rotation and scale are all in the plate's own frame -- the same frame get_object_info reports -- not the object's local axes, and match move_object, rotate_object and scale_object exactly: a rotation or scale drops a resting object back onto the bed (Z=0), unless the entry gives position.z, which is kept as given. Each result reports the plate that object is on afterwards (plate_index) and measures on_bed against that plate.",
+      "description": "Batch transform multiple objects. Position, rotation and scale are all in the plate's own frame -- the same frame get_object_info reports -- not the object's local axes, and match move_object, rotate_object and scale_object exactly: a rotation or scale drops a resting object back onto the bed (Z=0), unless the entry gives position.z, which is kept as given. Each result reports the plate that object is on afterwards (plate_index) and measures on_bed against that plate. Every entry is checked before any is applied: if one is rejected (an invalid object_id, a value that is not a number, or not an object where one is expected, a scale factor that is not positive), nothing is applied and results lists the rejected entries by their position (entry). One undo step undoes the whole batch.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {

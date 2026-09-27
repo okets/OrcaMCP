@@ -263,6 +263,116 @@ void report_placement(nlohmann::json& result, int object_id)
         result.erase("placement_warning");
 }
 
+bool valid_scale_factors(const Vec3d& factors)
+{
+    return std::all_of(factors.data(), factors.data() + 3, [](double f) { return std::isfinite(f) && f > 0.0; });
+}
+
+Vec3d PlateAxes::value_or(const Vec3d& fallback) const
+{
+    return Vec3d(axis[0].value_or(fallback.x()), axis[1].value_or(fallback.y()), axis[2].value_or(fallback.z()));
+}
+
+namespace {
+std::string not_a_number(const std::string& name, const nlohmann::json& value)
+{
+    return name + " must be a number, not " + value.type_name();
+}
+
+// `entry`'s `key`, when given: an object of x, y and z, read into `out`.
+std::optional<std::string> read_entry_axes(const nlohmann::json& entry, const char* key, PlateAxes& out)
+{
+    const auto it = entry.find(key);
+    if (it == entry.end())
+        return std::nullopt;
+    if (!it->is_object())
+        return std::string(key) + " must be an object {x, y, z}, not " + it->type_name();
+    return read_plate_axes(*it, std::string(key) + ".", out);
+}
+
+// One entry of transform_objects, every value it gives read and checked.
+TransformEntry read_transform_entry(const nlohmann::json& t, size_t object_count)
+{
+    TransformEntry entry;
+    const auto rejected = [&entry](std::string error) {
+        entry.error = std::move(error);
+        return entry;
+    };
+    if (!t.is_object())
+        return rejected(std::string("each transform must be an object {object_id, position, rotation, scale}, not ") +
+                        t.type_name());
+    const auto id = t.find("object_id");
+    if (id == t.end())
+        return rejected("object_id is missing");
+    if (!id->is_number_integer())
+        return rejected(std::string("object_id must be an integer, not ") + id->type_name());
+    entry.object_id = id->get<int>();
+    if (entry.object_id < 0 || size_t(entry.object_id) >= object_count)
+        return rejected("Invalid object_id");
+
+    if (auto error = read_entry_axes(t, "position", entry.position))
+        return rejected(std::move(*error));
+    PlateAxes rotation;
+    if (auto error = read_entry_axes(t, "rotation", rotation))
+        return rejected(std::move(*error));
+    entry.rotation = rotation.value_or(Vec3d::Zero());
+
+    const auto scale = t.find("scale");
+    if (scale != t.end()) {
+        if (!scale->is_object())
+            return rejected(std::string("scale must be an object {x, y, z} or {uniform}, not ") + scale->type_name());
+        const auto uniform = scale->find("uniform");
+        if (uniform != scale->end()) {
+            if (!uniform->is_number())
+                return rejected(not_a_number("scale.uniform", *uniform));
+            entry.scale = Vec3d::Constant(uniform->get<double>());
+        } else {
+            PlateAxes factors;
+            if (auto error = read_plate_axes(*scale, "scale.", factors))
+                return rejected(std::move(*error));
+            entry.scale = factors.value_or(Vec3d::Ones());
+        }
+        if (!valid_scale_factors(entry.scale))
+            return rejected("Scale factors must be positive; use mirror_object to flip an axis");
+    }
+    return entry;
+}
+} // namespace
+
+std::optional<std::string> read_plate_axes(const nlohmann::json& object, const std::string& prefix, PlateAxes& out)
+{
+    static const char* const names[] = {"x", "y", "z"};
+    PlateAxes read;
+    for (size_t i = 0; i < 3; ++i) {
+        const auto it = object.find(names[i]);
+        if (it == object.end())
+            continue;
+        if (!it->is_number())
+            return not_a_number(prefix + names[i], *it);
+        read.axis[i] = it->get<double>();
+    }
+    out = read;
+    return std::nullopt;
+}
+
+std::optional<std::string> transforms_argument_error(const nlohmann::json& params)
+{
+    const auto it = params.find("transforms");
+    if (it == params.end())
+        return std::string("transforms is required: an array of {object_id, position, rotation, scale}");
+    if (!it->is_array())
+        return std::string("transforms must be an array of {object_id, position, rotation, scale}, not ") + it->type_name();
+    return std::nullopt;
+}
+
+std::vector<TransformEntry> read_transform_entries(const nlohmann::json& transforms, size_t object_count)
+{
+    std::vector<TransformEntry> entries;
+    for (const nlohmann::json& t : transforms)
+        entries.push_back(read_transform_entry(t, object_count));
+    return entries;
+}
+
 void rehome_and_report_placement(nlohmann::json& result, int object_id, bool moved)
 {
     Plater* plater = wxGetApp().plater();

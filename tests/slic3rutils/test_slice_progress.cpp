@@ -257,6 +257,11 @@ SliceStartSignals signals_with(std::vector<SliceRunPlate> plates)
     return signals;
 }
 SliceRunPlate unsliced_printable() { return unsliced_plate(0); }
+SliceRunPlate selected(SliceRunPlate plate)
+{
+    plate.selected = true;
+    return plate;
+}
 
 PipelineState pipeline(bool is_slicing, bool working, bool done, bool exporting = false, bool uploading = false, int slice_all_plate = -1)
 {
@@ -420,27 +425,69 @@ TEST_CASE("missing plugins and a broken mixed filament each name themselves", "[
     CHECK(by_mixed.message.find("mixed filament") != std::string::npos);
 }
 
-// Several checks can refuse at once (the last error is kept while the plate is not ready, and a failed
-// validation leaves the plate not ready): the report names the one that decides, the most specific
-// first -- the validation's own words, then plugins, the mixed filament, readiness, the last slice.
-TEST_CASE("the refusal reported is the first that applies, in a fixed order", "[orcamcp][SliceProgress]")
+// Several checks can refuse at once. The report names the one reslice() stopped on, in its order: it
+// works on the selected plate, and first refuses on the error that plate's last update or slice left
+// (process_completed_with_error), naming what left it; then a broken mixed filament, missing plugins,
+// and the validation and readiness its update checks, the selected plate's before the run's others.
+TEST_CASE("the refusal reported is the one reslice stopped on, in its order", "[orcamcp][SliceProgress]")
 {
-    SliceRunPlate unready = unsliced_printable();
-    unready.ready         = false;
-    SliceStartSignals all = signals_with({unready});
+    SliceRunPlate first = selected(unsliced_plate(0));
+    first.ready         = false;
+    SliceRunPlate other = unsliced_plate(1);
+    other.ready         = false;
+    other.valid         = false;
+    SliceStartSignals all     = signals_with({first, other});
     all.validation_error      = "Prime Tower is partially outside the printable area";
     all.plugins_missing       = true;
     all.broken_mixed_filament = true;
     all.last_slice_failed     = true;
+
+    // The last error, told by what left it: the validation, plugins, the plate not ready, else the slice.
     CHECK(judge_slice_start(all).message.find("Prime Tower") != std::string::npos);
     all.validation_error.reset();
     CHECK(judge_slice_start(all).message.find("plugins") != std::string::npos);
     all.plugins_missing = false;
+    CHECK(judge_slice_start(all).message.find("plate_index 0 is not ready to slice") != std::string::npos);
+    all.plates[0].ready = true;
+    CHECK(judge_slice_start(all).message.find("last slice") != std::string::npos);
+
+    // No last error: the mixed filament, plugins, then the selected plate's validation and readiness,
+    // then the other plates'.
+    all.last_slice_failed = false;
+    all.plugins_missing   = true;
     CHECK(judge_slice_start(all).message.find("mixed filament") != std::string::npos);
     all.broken_mixed_filament = false;
-    CHECK(judge_slice_start(all).message.find("not ready to slice") != std::string::npos);
-    all.plates = {unsliced_printable()};
-    CHECK(judge_slice_start(all).message.find("last slice") != std::string::npos);
+    CHECK(judge_slice_start(all).message.find("plugins") != std::string::npos);
+    all.plugins_missing  = false;
+    all.validation_error = "Prime Tower is partially outside the printable area";
+    all.plates[0].ready  = false;
+    CHECK(judge_slice_start(all).message.find("Prime Tower") != std::string::npos);
+    all.validation_error.reset();
+    CHECK(judge_slice_start(all).message.find("plate_index 0 is not ready to slice") != std::string::npos);
+    all.plates[0].ready = true;
+    CHECK(judge_slice_start(all).message.find("plate_index 1 failed validation") != std::string::npos);
+    all.plates[1].valid = true;
+    CHECK(judge_slice_start(all).message.find("plate_index 1 is not ready to slice") != std::string::npos);
+}
+
+// Slice All selects plate 0 and reslice() stops at once on the error plate 0's last slice left. Naming
+// plate 1, which had an object partly off it, sent the caller to fix plate 1 and meet plate 0's error on
+// the next call.
+TEST_CASE("the selected plate's last error is named before another plate's problem", "[orcamcp][SliceProgress]")
+{
+    SliceRunPlate off_plate = unsliced_plate(1);
+    off_plate.ready         = false;
+    SliceStartSignals signals = signals_with({selected(unsliced_plate(0)), off_plate});
+    signals.last_slice_failed = true;
+    const SliceStartReport report = judge_slice_start(signals);
+    CHECK(report.reason == "invalid");
+    CHECK(report.message.find("last slice") != std::string::npos);
+    CHECK(report.message.find("plate_index 1") == std::string::npos);
+
+    SliceRunPlate failed_validation = unsliced_plate(1);
+    failed_validation.valid         = false;
+    signals.plates                  = {selected(unsliced_plate(0)), failed_validation};
+    CHECK(judge_slice_start(signals).message.find("plate_index 1") == std::string::npos);
 }
 
 TEST_CASE("a slice that did not start for a reason no signal shows says it did not start", "[orcamcp][SliceProgress]")
