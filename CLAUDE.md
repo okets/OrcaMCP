@@ -200,7 +200,8 @@ What the tests enforce, with no app running:
   bridge tool has a Python handler and every handler a tool; a missing or malformed file never
   stops the bridge, which then offers a fallback `start_orca` whose description names the file;
   `start_orca` and `wait_for_slice` refuse an argument their schema in the file does not declare,
-  in the app's words, and no bridge tool takes a nested object (`test_bridge_arguments.py`).
+  in the app's words, and no bridge tool takes a nested object; the Windows path rewrite forwards
+  arguments that are not an object untouched, for the app to refuse (`test_bridge_arguments.py`).
 - CI: Build all also runs on a change to `scripts/orcamcp_tools.json` alone, since only its C++
   tests can compare the file with the registry.
 

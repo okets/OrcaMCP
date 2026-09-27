@@ -110,5 +110,41 @@ class BridgeToolArgumentTests(unittest.TestCase):
                     self.assertNotIn("items", schema)
 
 
+
+class WindowsPathNormalizationTests(unittest.TestCase):
+    """On Windows the bridge rewrites the path arguments of every tool call it forwards. What is not
+    named arguments it forwards untouched, so the app answers it with -32602 rather than the bridge
+    failing the call with -32603."""
+
+    def setUp(self):
+        self.bridge = load_bridge()
+        windows = mock.patch("platform.system", return_value="Windows")
+        windows.start()
+        self.addCleanup(windows.stop)
+
+    @staticmethod
+    def request(arguments):
+        return {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "load_model", "arguments": arguments}}
+
+    def test_a_path_argument_gets_backslashes(self):
+        request = self.bridge.normalize_paths_for_windows(self.request({"file_path": "C:/Models/cube.stl"}))
+        self.assertEqual(request["params"]["arguments"]["file_path"], "C:\\Models\\cube.stl")
+
+    def test_arguments_that_are_not_an_object_are_forwarded_untouched(self):
+        for arguments in ("file_path", ["path"], 5, None):
+            with self.subTest(arguments=arguments):
+                request = self.bridge.normalize_paths_for_windows(self.request(arguments))
+                self.assertEqual(request["params"]["arguments"], arguments)
+        request = {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": ["load_model", "path"]}
+        self.assertEqual(self.bridge.normalize_paths_for_windows(request)["params"], ["load_model", "path"])
+
+    def test_the_app_answers_them_with_its_invalid_params_error(self):
+        refusal = {"jsonrpc": "2.0", "id": 3, "error": {"code": INVALID_PARAMS, "message": "from the app"}}
+        with mock.patch.object(self.bridge, "post_to_app", return_value=refusal) as post:
+            response = self.bridge.send_request(self.request("output_path"))
+        self.assertEqual(post.call_args.args[0]["params"]["arguments"], "output_path")
+        self.assertEqual(response["error"]["code"], INVALID_PARAMS)
+
+
 if __name__ == "__main__":
     unittest.main()

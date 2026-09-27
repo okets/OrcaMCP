@@ -930,9 +930,11 @@ def normalize_paths_for_windows(request: dict) -> dict:
     if request.get("method") != "tools/call":
         return request
 
-    params = request.get("params", {})
-    arguments = params.get("arguments", {})
-    if not arguments:
+    # Only named arguments carry paths. Anything else (a string or a list where the object belongs) is
+    # forwarded untouched, so the app refuses it as invalid params (-32602) rather than this raising.
+    params = request.get("params")
+    arguments = params.get("arguments") if isinstance(params, dict) else None
+    if not isinstance(arguments, dict) or not arguments:
         return request
 
     # Path parameter names used by OrcaMCP tools
