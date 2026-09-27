@@ -21,6 +21,7 @@
 #include <cstddef>
 #include <functional>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -582,7 +583,9 @@ std::vector<std::string> paint_prerequisite_messages(const Slic3r::ModelObject& 
 struct PaintRemapRequest
 {
     PaintMode mode = PaintMode::Color;
-    // Reads the mapping, given the project's filament slot count, or says why it cannot ("" when it
+    // The mapping, when the call gives it outright (remap_paint's `mapping`)...
+    std::optional<PaintStateMap> mapping;
+    // ...or how to read it given the project's filament slot count, saying why it cannot ("" when it
     // can). Called in the first hop, on the GUI thread: the slot count is the preset bundle's, which
     // only the GUI thread may read.
     std::function<std::string(int slot_count, PaintStateMap& mapping)> read_mapping;
@@ -654,7 +657,9 @@ nlohmann::json run_paint_remap(const nlohmann::json& params, const PaintRemapReq
         if (!resolve_paint_target(params, target, error, needs))
             return error_response(error);
         const int slot_count = filament_slot_count();
-        if (const std::string refusal = request.read_mapping(slot_count, mapping); !refusal.empty())
+        if (request.mapping)
+            mapping = *request.mapping;
+        else if (const std::string refusal = request.read_mapping(slot_count, mapping); !refusal.empty())
             return error_response(refusal);
         if (const std::string refusal = state_mapping_error(request.mode, mapping, slot_count); !refusal.empty())
             return error_response(refusal);
@@ -752,7 +757,8 @@ nlohmann::json paint_by_state(const nlohmann::json& params)
         mapping = {{from, to}};
         return {};
     };
-    return run_paint_remap(params, {mode, read_states, _u8L("Paint Object") + " (" + paint_mode_name(mode) + ")", {{"selection", "state"}}});
+    return run_paint_remap(params, {mode, std::nullopt, read_states, _u8L("Paint Object") + " (" + paint_mode_name(mode) + ")",
+                                    {{"selection", "state"}}});
 }
 
 } // namespace
@@ -1380,11 +1386,7 @@ void OrcaMCPServer::register_paint_tools()
                 return error_response(params.contains("mapping") ? error
                                                                  : "mapping is required: old filament -> new filament, "
                                                                    "e.g. {\"1\": 2, \"2\": 3}");
-            const auto parsed = [mapping](int /*slot_count: state_mapping_error checks it*/, PaintStateMap& out) {
-                out = mapping;
-                return std::string();
-            };
-            return run_paint_remap(params, {PaintMode::Color, parsed, _u8L("Remap Paint") + " (color)", nlohmann::json::object()});
+            return run_paint_remap(params, {PaintMode::Color, mapping, nullptr, _u8L("Remap Paint") + " (color)", nlohmann::json::object()});
         }
     });
 
