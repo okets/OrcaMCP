@@ -160,26 +160,26 @@ struct PrintedLayerRef
     double height  = 0.;
 };
 
-// How much of an object layer hangs over nothing: the parts of it more than `tolerance_mm` beyond the
-// layer below (half the nozzle printing its walls: a wall can lean that far on its own), and how much
-// of that has support lines, and interface lines, under it.
-//
-// Only the support that holds the layer up counts: its contact layer, one top gap below the layer's
-// bottom, at contact_z (support_contact_z) or up to one of its own layers lower -- where variable layer
-// heights and merged contacts end it. support_z is the highest support layer in that reach with lines
-// under the overhang. Support that ends lower -- a raft, or support stopping short -- holds nothing up:
-// the overhang then has no support_z and no cover, and nearest_support_z says where the support under
-// it does end. Ribbon areas, like every other area here: sparse support covers only the part its
-// lines run under.
+// The support layer directly beneath an overhang, as plain facts: its height, how far below the
+// overhang's bottom it is, and how much of the overhang its support lines -- and its interface lines
+// alone -- lie under (the bands support_covered builds, line width included). A gap near the configured
+// top Z distance means it is the contact layer; a large one means nothing touches the overhang there.
+struct SupportBelow
+{
+    double z             = 0.;
+    double gap_mm        = 0.;
+    double support_mm2   = 0.;
+    double interface_mm2 = 0.;
+};
+
+// How much of an object layer hangs over nothing -- the parts of it more than `tolerance_mm` beyond the
+// layer below (half the nozzle printing its walls: a wall can lean that far on its own) -- and the
+// support layer beneath it, none when there is no support layer below at all.
 struct Overhang
 {
-    double                area_mm2            = 0.;
-    double                under_support_mm2   = 0.;
-    double                under_interface_mm2 = 0.;
-    std::optional<double> support_z;
-    std::optional<double> nearest_support_z;  // when there is no support_z
-    double                contact_z           = 0.;
-    double                tolerance_mm        = 0.;
+    double                      area_mm2     = 0.;
+    double                      tolerance_mm = 0.;
+    std::optional<SupportBelow> support_below;
 };
 
 struct ObjectAtHeight
@@ -205,11 +205,6 @@ std::vector<ObjectAtHeight> objects_at_height(const Print& print, const Model& m
 
 // The overhang of `object`'s layer `layer_index`, or none on its first layer.
 std::optional<Overhang> overhang_of(const PrintObject& object, size_t layer_index);
-
-// The height, in mm, the support holding `layer` up ends at: its bottom less the top gap (none for a
-// zero-gap interface), or the first layer or raft top when that is lower still, as the support
-// generator places it. `layer` is one of `object`'s.
-double support_contact_z(const PrintObject& object, const Layer& layer);
 
 // Half the smallest nozzle printing `layer`'s outer walls: how far a wall can lean past the layer
 // below on its own. The nozzle is the one the slicer sizes those walls for (PrintRegion::flow).

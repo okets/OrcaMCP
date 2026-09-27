@@ -133,19 +133,23 @@ nlohmann::json layer_ref_json(const std::optional<PrintedLayerRef>& ref)
     return {{"number", ref->number}, {"print_z", round_to(ref->print_z, 4)}, {"height", round_to(ref->height, 4)}};
 }
 
-nlohmann::json optional_z_json(const std::optional<double>& z) { return z ? nlohmann::json(round_to(*z, 4)) : nlohmann::json(nullptr); }
+nlohmann::json support_below_json(const std::optional<SupportBelow>& below)
+{
+    if (!below)
+        return nullptr;
+    return {{"z", round_to(below->z, 4)},
+            {"gap_mm", round_to(below->gap_mm, 4)},
+            {"support_mm2", round_to(below->support_mm2, 2)},
+            {"interface_mm2", round_to(below->interface_mm2, 2)}};
+}
 
 nlohmann::json overhang_json(const std::optional<Overhang>& o)
 {
     if (!o)
         return nullptr;
     return {{"area_mm2", round_to(o->area_mm2, 2)},
-            {"under_support_mm2", round_to(o->under_support_mm2, 2)},
-            {"under_interface_mm2", round_to(o->under_interface_mm2, 2)},
-            {"support_z", optional_z_json(o->support_z)},
-            {"nearest_support_z", optional_z_json(o->nearest_support_z)},
-            {"contact_z", round_to(o->contact_z, 4)},
-            {"tolerance_mm", round_to(o->tolerance_mm, 4)}};
+            {"tolerance_mm", round_to(o->tolerance_mm, 4)},
+            {"support_below", support_below_json(o->support_below)}};
 }
 
 nlohmann::json feature_areas_json(const FeatureAreas& areas)
@@ -183,19 +187,6 @@ bool lies_under(const PrintObject& object, const BoundingBox& shape, const Bound
             return true;
     }
     return false;
-}
-
-// Whether any of `layer`'s support lines run over `hang` (object coordinates): the cheap test, on the
-// lines themselves, before any band is built.
-bool support_lines_over(const SupportLayer& layer, const ExPolygons& hang, const BoundingBox& hang_box)
-{
-    Points points;
-    layer.support_fills.collect_points(points);
-    if (points.empty() || !BoundingBox(points).overlap(hang_box))
-        return false;
-    Polylines lines;
-    layer.support_fills.collect_polylines(lines);
-    return !intersection_pl(lines, hang).empty();
 }
 
 // Adds `shape` (object coordinates) to `frame` (bed mm) at each of `object`'s instances.
@@ -502,18 +493,6 @@ std::optional<size_t> layer_index_at_height(const std::vector<double>& print_zs,
     return best;
 }
 
-double support_contact_z(const PrintObject& object, const Layer& layer)
-{
-    const SlicingParameters& sp = object.slicing_parameters();
-    // No gap for a zero-gap interface (a soluble one, say); the configured gap otherwise, which every
-    // generator keeps clear: the normal one trims what its layer sync leaves inside it
-    // (trim_support_layers_by_object), and the trees end their tips there.
-    const double z = layer.bottom_z() - (sp.zero_gap_interface_top ? 0. : sp.gap_support_object);
-    // A contact too close to the bed or the raft is printed on it (SupportMaterial.cpp, new_contact_layer).
-    const double lowest = sp.raft_layers() > 1 ? sp.raft_contact_top_z : sp.first_print_layer_height;
-    return z < lowest + sp.min_layer_height ? lowest : z;
-}
-
 double overhang_tolerance(const Layer& layer)
 {
     // PrintRegion::flow's own lookup: the nozzle of the filament slot the outer wall is printed with.
@@ -539,28 +518,22 @@ std::optional<Overhang> overhang_of(const PrintObject& object, size_t layer_inde
     o.tolerance_mm        = overhang_tolerance(layer);
     const ExPolygons hang = diff_ex(layer.lslices, offset_ex(below.lslices, float(scale_(o.tolerance_mm))));
     o.area_mm2            = area_mm2(hang);
-    o.contact_z           = support_contact_z(object, layer);
-    if (hang.empty())
-        return o;
 
-    // Down from the highest support layer at or below the contact height, to the first with lines under
-    // the overhang: the contact when it is within one of its own layers of that height (variable layers
-    // and merged contacts end it up to a layer lower), else only the nearest support under it.
-    const BoundingBox hang_box = get_extents(hang);
-    const auto&       supports = object.support_layers();
-    for (size_t i = supports.size(); i > 0; --i) {
-        const SupportLayer& s = *supports[i - 1];
-        if (s.print_z > o.contact_z + k_gcode_height_tolerance || !support_lines_over(s, hang, hang_box))
-            continue;
-        if (s.print_z < o.contact_z - s.height - k_gcode_height_tolerance) {
-            o.nearest_support_z = s.print_z;
-            break;
-        }
-        o.support_z           = s.print_z;
-        o.under_support_mm2   = area_mm2(intersection_ex(hang, support_covered(s)));
-        o.under_interface_mm2 = area_mm2(intersection_ex(hang, support_covered(s, Point(0, 0), erSupportMaterialInterface)));
-        break;
+    // The support layer directly beneath: the highest at or below this layer's bottom.
+    const auto& supports = object.support_layers();
+    const auto  above    = std::upper_bound(supports.begin(), supports.end(), layer.bottom_z() + EPSILON,
+                                            [](double z, const SupportLayer* s) { return z < s->print_z; });
+    if (above == supports.begin())
+        return o;
+    const SupportLayer& s = **std::prev(above);
+    SupportBelow        support;
+    support.z      = s.print_z;
+    support.gap_mm = layer.bottom_z() - s.print_z;
+    if (!hang.empty()) {
+        support.support_mm2   = area_mm2(intersection_ex(hang, support_covered(s)));
+        support.interface_mm2 = area_mm2(intersection_ex(hang, support_covered(s, Point(0, 0), erSupportMaterialInterface)));
     }
+    o.support_below = support;
     return o;
 }
 

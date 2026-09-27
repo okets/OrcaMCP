@@ -36,16 +36,4 @@ inline Slic3r::TriangleMesh shelf_over_base()
     return model;
 }
 
-// The cap on its stem with a 10 mm ledge on its +X side whose underside is one 0.2 mm layer higher
-// (z 10.2): at 0.2 mm layers with a 0.2 mm top gap the ledge's support ends at z 10.0 -- the cap's
-// bottom -- while the cap's own support ends a gap lower, at 9.8.
-inline Slic3r::TriangleMesh cap_with_higher_ledge()
-{
-    Slic3r::TriangleMesh model = supported_cap();
-    Slic3r::TriangleMesh ledge = Slic3r::make_cube(10, 30, 1.8);
-    ledge.translate(30, 0, 10.2);
-    model.merge(ledge);
-    return model;
-}
-
 } // namespace mcp_test

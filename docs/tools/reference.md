@@ -1858,8 +1858,8 @@ flushing into infill and mixed filaments show as they print. The entry adds:
     "object_index": 0, "name": "cap_on_stem.stl",
     "object_layer": {"number": 51, "print_z": 10.25, "height": 0.2},
     "support_layer": null,
-    "overhang": {"area_mm2": 829.44, "under_support_mm2": 742.31, "under_interface_mm2": 742.31,
-                 "support_z": 9.85, "nearest_support_z": null, "contact_z": 9.85, "tolerance_mm": 0.2}
+    "overhang": {"area_mm2": 829.44, "tolerance_mm": 0.2,
+                 "support_below": {"z": 9.85, "gap_mm": 0.2, "support_mm2": 742.31, "interface_mm2": 742.31}}
   }],
   "drawn": {"features": ["support", "support_interface"], "filaments": "all", "color_by": "feature"},
   "legend": [],
@@ -1874,7 +1874,7 @@ flushing into infill and mixed filaments show as they print. The entry adds:
 That is `{"z": 10.2, "features": ["support", "support_interface"], "fit": {"object_index": 0}}` on a
 30 mm cap over an 8 mm stem, sliced on a four-head toolchanger with tree supports in filament 2: the
 cap's first layer has no support in it (the 0.2 mm gap is layer 50, the interface layer 49, at
-`support_z`), and 742 of the 829 mm² that hang past the stem have interface lines under them.
+`support_below.z`), and 742 of the 829 mm² that hang past the stem have interface lines under them.
 
 - `layer.z` is the height the layer prints at. With `z`, the entry also has `requested_z`, and
   `also_at` lists other layer numbers at the same height (a by-object print reaches each height
@@ -1888,18 +1888,21 @@ cap's first layer has no support in it (the 0.2 mm gap is layer 50, the interfac
   `object_layer` is `null`: nothing of the object prints there, and its layer spanning this height
   is one number up or down. Layer numbers here count from 1 within the object.
 - `overhang` (on an object layer with one below it) is polygon arithmetic on the sliced layers, not
-  pixels. `area_mm2` is the part of this layer more than `tolerance_mm` beyond the layer below:
-  half the nozzle printing this object's outer walls on this layer, so it differs per object and per
-  nozzle. `under_support_mm2` and `under_interface_mm2` say how much of it has support lines, and
-  interface lines, under it on the support layer that holds it up (`support_z`). That layer ends one
-  top gap below the layer's bottom, at `contact_z`, or up to one of its own layers lower, which is
-  where variable layer heights end it. The gap is `support_top_z_distance`, rounded to the layer
-  height unless support has heights of its own, and 0 for a zero-gap interface.
-  - Support that ends lower holds nothing up: a raft under a part with no support, or organic
-    support that stops short on variable layers. Then `support_z` is `null`, both cover areas are
-    0, and `nearest_support_z` says where the support under the overhang does end.
-  - They are ribbon areas: sparse support covers only the part its lines run under, while a dense
-    interface should come close to `area_mm2`.
+  pixels, and it reports facts, not a verdict.
+  - `area_mm2` is the part of this layer more than `tolerance_mm` beyond the layer below.
+    `tolerance_mm` is half the nozzle printing this object's outer walls on this layer, so it
+    differs per object and per nozzle.
+  - `support_below` is the support layer directly beneath: the highest one at or below this layer's
+    bottom. It gives that layer's height `z`, `gap_mm` from it up to the overhang, and how much of the
+    overhang its support lines (`support_mm2`) and its interface lines alone (`interface_mm2`) lie
+    under, measured with the lines' width.
+  - `gap_mm` is what to read first. A gap near the configured top Z distance
+    (`support_top_z_distance`; 0 for a zero-gap interface) means this is the contact layer holding
+    the overhang up. A large gap, such as a raft 10 mm down, means nothing touches the overhang
+    there, whatever the areas say.
+  - `support_below` is `null` when there is no support layer below at all.
+  - The areas are ribbon areas: sparse support covers only the part its lines run under, while a
+    dense interface should come close to `area_mm2`.
 - `legend` has one entry per colour in the picture, with the area it drew; the image shows the same
   legend in its top-right corner unless `overlays.labels` is off. `nothing_drawn: true` means the
   filter matched no line on this layer, and `hint` says what the layer does print.
