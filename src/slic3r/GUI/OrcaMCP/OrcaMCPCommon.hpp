@@ -157,9 +157,12 @@ void transform_instances_on_bed(ModelObject& object, const Transform3d& world_tr
 // Why flatten_object cannot orient object `object_id` now, or nothing. It orients through the orient
 // job's selection path (the toolbar's Orient), which leaves out an object marked not printable
 // (ModelObject::printable) and every instance on a locked plate -- and, left with an empty selection,
-// orients every object instead -- and which Plater::orient does not start while another job runs.
-std::optional<std::string> flatten_refusal(int object_id, bool printable, size_t instances, size_t instances_on_locked_plates,
-                                           bool job_running);
+// orients every object instead -- and which Plater::orient does not start while another job runs. An
+// object with only some instances on a locked plate is refused too: the job drops the whole object by
+// its first instance's new bottom, moving the locked instances it did not turn, maybe into the bed.
+// `instances_on_locked_plates`: the ids of those instances.
+std::optional<std::string> flatten_refusal(int object_id, bool printable, size_t instances,
+                                           const std::vector<int>& instances_on_locked_plates, bool job_running);
 
 // Why flatten_object must not start the orient job on the selection it made: `selected` (object index ->
 // its selected instances, Selection::get_content) is not exactly the `instances` instances of object

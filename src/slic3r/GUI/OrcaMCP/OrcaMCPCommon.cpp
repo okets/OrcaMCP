@@ -263,8 +263,8 @@ void report_placement(nlohmann::json& result, int object_id)
         result.erase("placement_warning");
 }
 
-std::optional<std::string> flatten_refusal(int object_id, bool printable, size_t instances, size_t instances_on_locked_plates,
-                                           bool job_running)
+std::optional<std::string> flatten_refusal(int object_id, bool printable, size_t instances,
+                                           const std::vector<int>& instances_on_locked_plates, bool job_running)
 {
     const std::string object = "object " + std::to_string(object_id);
     if (job_running)
@@ -273,8 +273,18 @@ std::optional<std::string> flatten_refusal(int object_id, bool printable, size_t
         return object + " is marked not printable, and only printable objects are oriented: turn it with rotate_object instead";
     if (instances == 0)
         return object + " has no instance to orient";
-    if (instances_on_locked_plates == instances)
+    if (instances_on_locked_plates.size() == instances)
         return object + " is on a locked plate, which is never oriented: unlock the plate, or turn it with rotate_object";
+    if (!instances_on_locked_plates.empty()) {
+        const bool  one = instances_on_locked_plates.size() == 1;
+        std::string ids;
+        for (int id : instances_on_locked_plates)
+            ids += (ids.empty() ? "" : ", ") + std::to_string(id);
+        return object + " has " + (one ? "instance " : "instances ") + ids +
+               " on a locked plate, which the orient would move up or down with the others without turning " +
+               (one ? "it: unlock its plate, or move it" : "them: unlock their plate, or move them") +
+               " to another plate, then call flatten_object again";
+    }
     return std::nullopt;
 }
 
