@@ -5,6 +5,9 @@
 #include <vector>
 
 #include "slic3r/GUI/OrcaMCP/OrcaMCPCommon.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPPresetConfigUtils.hpp"
+#include "libslic3r/BrimEarsPoint.hpp"
+#include "libslic3r/Model.hpp"
 #include "libslic3r/PrintConfig.hpp"
 
 // What reset_object_config clears with no keys given. It erased every key of the object's config,
@@ -46,4 +49,61 @@ TEST_CASE("a tool call takes one snapshot before its first change, and none when
     snapshot.before_change();
     CHECK(taken == 1);
     CHECK(snapshot.taken());
+}
+
+// set_object_printable with the value every instance already has took an undo snapshot and marked the
+// object's plates unsliced, and set_brim_ears with the ears the object already has did the same.
+TEST_CASE("setting an object printable as it already is changes nothing", "[orcamcp][ObjectSettings]")
+{
+    Slic3r::Model        model;
+    Slic3r::ModelObject* object = model.add_object();
+    object->add_instance();
+    object->add_instance();
+    CHECK_FALSE(Slic3r::GUI::OrcaMCP::printable_changes(*object, true));
+    CHECK(Slic3r::GUI::OrcaMCP::printable_changes(*object, false));
+    object->instances[1]->printable = false;
+    CHECK(Slic3r::GUI::OrcaMCP::printable_changes(*object, true));
+    CHECK(Slic3r::GUI::OrcaMCP::printable_changes(*object, false));
+}
+
+TEST_CASE("brim ears change only when they are replaced by others or added to", "[orcamcp][ObjectSettings]")
+{
+    using Slic3r::BrimPoint;
+    const std::vector<BrimPoint> current = {BrimPoint(1.f, 2.f, 0.f, 3.f), BrimPoint(4.f, 5.f, 0.f, 3.f)};
+    using Slic3r::GUI::OrcaMCP::brim_ears_change;
+    CHECK_FALSE(brim_ears_change(current, current, /*append=*/false));
+    CHECK(brim_ears_change(current, {BrimPoint(1.f, 2.f, 0.f, 4.f)}, false));
+    CHECK(brim_ears_change(current, {BrimPoint(9.f, 9.f, 0.f, 3.f)}, /*append=*/true));
+    CHECK_FALSE(brim_ears_change(current, {}, /*append=*/true));
+}
+
+// A project write that leaves its values as they were (set_filament_color with the slot's own colour,
+// set_flush_volumes with the matrix it has) marked every plate unsliced. The test is the values the call
+// writes, copied before it writes them.
+TEST_CASE("a config write changes something only when a value it writes differs", "[orcamcp][ObjectSettings]")
+{
+    using Slic3r::GUI::OrcaMCP::WrittenValues;
+    Slic3r::DynamicPrintConfig config;
+    config.set_deserialize_strict({{"filament_colour", "#FF0000;#00FF00"}, {"flush_multiplier", "1"}});
+
+    const WrittenValues written(config, {"filament_colour", "flush_multiplier", "wipe_tower_x"});
+    CHECK_FALSE(written.changed_in(config));
+
+    Slic3r::DynamicPrintConfig same_colour = config;
+    same_colour.set_deserialize_strict({{"filament_colour", "#FF0000;#00FF00"}});
+    CHECK_FALSE(written.changed_in(same_colour));
+
+    Slic3r::DynamicPrintConfig recoloured = config;
+    recoloured.set_deserialize_strict({{"filament_colour", "#FF0000;#0000FF"}});
+    CHECK(written.changed_in(recoloured));
+
+    // A key the config gains counts as a change; one it never had and still lacks does not.
+    Slic3r::DynamicPrintConfig gained = config;
+    gained.set_deserialize_strict({{"wipe_tower_x", "10"}});
+    CHECK(written.changed_in(gained));
+
+    // Keys the call does not write are not compared.
+    Slic3r::DynamicPrintConfig elsewhere = config;
+    elsewhere.set_deserialize_strict({{"layer_height", "0.1"}});
+    CHECK_FALSE(written.changed_in(elsewhere));
 }

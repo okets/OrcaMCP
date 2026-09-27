@@ -160,19 +160,26 @@ bool set_object_filament(int object_id, int volume_id, int slot, bool include_mo
         }
     }
 
-    // Everything is validated -- only now do we touch the undo stack.
-    plater->take_snapshot(_u8L("Change Filaments"));
-    if (vol) {
-        vol->config.set("extruder", slot);
-    } else {
-        obj->config.set("extruder", slot);
-        // The object's slot is only a default the volumes override, so without this the change
-        // is invisible: the parts keep printing their old slot and the plate keeps its prime
-        // tower. The GUI's object-row picker erases the same overrides (update_filament_in_config).
-        out.cleared = clear_volume_filament_overrides(*obj, include_modifiers);
+    // A call that sets the slot it already has, and has no part slot to clear, changes nothing: no undo
+    // snapshot (it would drop the redo stack) and no plate loses its slice result.
+    out.changed = filament_assignment_changes(*obj, volume_id, slot, include_modifiers);
+    if (out.changed) {
+        // Everything is validated -- only now do we touch the undo stack.
+        plater->take_snapshot(_u8L("Change Filaments"));
+        if (vol) {
+            vol->config.set("extruder", slot);
+        } else {
+            obj->config.set("extruder", slot);
+            // The object's slot is only a default the volumes override, so without this the change
+            // is invisible: the parts keep printing their old slot and the plate keeps its prime
+            // tower. The GUI's object-row picker erases the same overrides (update_filament_in_config).
+            out.cleared = clear_volume_filament_overrides(*obj, include_modifiers);
+        }
     }
     out.effective_filaments = effective_object_filaments(*obj);
     out.other_slots         = other_volume_filaments(*obj, obj->config.has("extruder") ? obj->config.extruder() : 1);
+    if (!out.changed)
+        return true;
 
     // The rows keep their old number until told otherwise; changed_object does not tell them.
     wxGetApp().obj_list()->sync_filament_rows_from_model(object_id);
@@ -230,11 +237,12 @@ bool set_flush_volumes(const nlohmann::json& matrix, int extruder, std::optional
         if (size_t(extruder) >= mult->values.size()) { error = "extruder out of range for flush_multiplier"; return false; }
     }
 
+    const WrittenValues written(pb->project_config, {"flush_volumes_matrix", "flush_multiplier"});
     set_flush_volumes_matrix(mat->values, block, size_t(extruder), extruders);
     if (mult) mult->values[size_t(extruder)] = *flush_multiplier;
 
     // Single refresh at the end, after both writes -- not after the matrix alone.
-    OrcaMCPPresetConfigUtils::RefreshAfterProjectConfigChange();
+    OrcaMCPPresetConfigUtils::RefreshAfterProjectConfigChange(written);
     return true;
 }
 
@@ -243,8 +251,9 @@ void auto_calc_flush_volumes()
     // filament_idx < 0 and extruder_id < 0 (the defaults) already mean "every filament, every
     // extruder" inside Sidebar::auto_calc_flushing_volumes -- no need to loop here ourselves.
     // Mixed/virtual filament slots are skipped internally (auto_calc_flushing_volumes_internal).
+    const WrittenValues written(wxGetApp().preset_bundle->project_config, {"flush_volumes_matrix"});
     wxGetApp().sidebar().auto_calc_flushing_volumes();
-    OrcaMCPPresetConfigUtils::RefreshAfterProjectConfigChange();
+    OrcaMCPPresetConfigUtils::RefreshAfterProjectConfigChange(written);
 }
 
 nlohmann::json describe_toolchanger_config()

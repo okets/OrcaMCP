@@ -1157,10 +1157,19 @@ void OrcaMCPServer::register_paint_tools()
                     }
 
                 // Everything is validated -- only now touch the undo stack, the way
-                // set_object_filament does (OrcaMCPFilamentUtils.cpp, set_object_filament).
+                // set_object_filament does (OrcaMCPFilamentUtils.cpp, set_object_filament), and only
+                // when a volume does not already carry exactly its write: a repaint of what is there
+                // takes no undo step (it would drop the redo stack) and no plate's slice. The test is
+                // the compare apply_paint_data always made, moved ahead of the snapshot; a volume it
+                // finds unchanged is not compared again below.
                 // Named per mode: painting colour and then supports would otherwise leave two
                 // identical entries in the undo menu with nothing to tell them apart.
-                plater->take_snapshot(_u8L("Paint Object") + " (" + paint_mode_name(mode) + ")");
+                std::vector<bool> write_changes(plan.volumes.size(), false);
+                for (std::size_t i = 0; i < plan.volumes.size(); ++i)
+                    write_changes[i] = !paint_base_unchanged(*target.volumes[std::size_t(plan.volumes[i].index)], mode,
+                                                             writes[i].data);
+                if (std::find(write_changes.begin(), write_changes.end(), true) != write_changes.end())
+                    plater->take_snapshot(_u8L("Paint Object") + " (" + paint_mode_name(mode) + ")");
 
                 // Facets the selection COVERED, which is not the same as facets given a paint:
                 // `filament: 0` covers a facet and unpaints it. Named for what it counts.
@@ -1183,10 +1192,12 @@ void OrcaMCPServer::register_paint_tools()
                     // A compare and a move: the serialize this used to run here happened on the
                     // worker. False means only "the annotation already held exactly this" -- every
                     // reason a write can be rejected was ruled out by build_paint_write in hop 2.
-                    changed |= apply_paint_data(*mv, mode, std::move(writes[i].data));
+                    if (write_changes[i])
+                        changed |= apply_paint_data(*mv, mode, std::move(writes[i].data));
                 }
 
-                refresh_after_paint(target);
+                if (changed)
+                    refresh_after_paint(target);
 
                 // The same per-volume shape get_object_paint and clear_object_paint report
                 // `volumes` in: volume_id, name, original_facets, bounding_box, modes. Only this
@@ -1647,21 +1658,26 @@ void OrcaMCPServer::register_paint_tools()
                 if (params.contains("append") && !parse_boolean_param(params["append"], append))
                     return nlohmann::json{{"status", "error"}, {"message", "append must be true or false"}};
 
-                plater->take_snapshot(_u8L("Set Brim Ears"));
-                if (!append)
-                    target.object->brim_points.clear();
-                target.object->brim_points.insert(target.object->brim_points.end(), points.begin(), points.end());
+                // The ears it already has (or nothing to append) change nothing: no undo step, which
+                // would drop the redo stack, and no plate loses its slice.
+                const bool changed = brim_ears_change(target.object->brim_points, points, append);
+                if (changed) {
+                    plater->take_snapshot(_u8L("Set Brim Ears"));
+                    if (!append)
+                        target.object->brim_points.clear();
+                    target.object->brim_points.insert(target.object->brim_points.end(), points.begin(), points.end());
 
-                // Direct field mutation, not a paint annotation write: nothing else marks the
-                // project dirty for this change, so it is done explicitly here, the same way
-                // GLGizmoBrimEars::update_model_object does right after the same assignment.
-                plater->set_plater_dirty(true);
-                // brim_points carries no vertex and is not part of any mesh or convex hull, so
-                // this write leaves geometry untouched -- refresh_after_paint's one precondition
-                // (see its docblock above) -- and reusing it here covers the object-list refresh,
-                // every instance's plate notification and the reslice reschedule the gizmo's own
-                // update_model_object performs, without a second copy of that bookkeeping.
-                refresh_after_paint(target);
+                    // Direct field mutation, not a paint annotation write: nothing else marks the
+                    // project dirty for this change, so it is done explicitly here, the same way
+                    // GLGizmoBrimEars::update_model_object does right after the same assignment.
+                    plater->set_plater_dirty(true);
+                    // brim_points carries no vertex and is not part of any mesh or convex hull, so
+                    // this write leaves geometry untouched -- refresh_after_paint's one precondition
+                    // (see its docblock above) -- and reusing it here covers the object-list refresh,
+                    // every instance's plate notification and the reslice reschedule the gizmo's own
+                    // update_model_object performs, without a second copy of that bookkeeping.
+                    refresh_after_paint(target);
+                }
 
                 nlohmann::json result = {
                     {"status", "success"},
@@ -1677,6 +1693,7 @@ void OrcaMCPServer::register_paint_tools()
                     {"bounding_box", bbox_json(object_plate_bbox(*target.object, target.instance_idx))},
                     {"brim_ear_count", int(target.object->brim_points.size())},
                     {"brim_ears", brim_ears_json(*target.object, target.instance_idx)},
+                    {"changed", changed},
                     {"active_warnings", get_active_warnings_json(plater)}
                 };
 

@@ -57,6 +57,12 @@ std::vector<ClearedOverride> clear_volume_filament_overrides(ModelObject& object
 // caller who kept modifiers has left on other slots. Sorted, unique.
 std::vector<int> other_volume_filaments(const ModelObject& object, int object_filament);
 
+// Whether set_object_filament would change anything: the part (volume_id >= 0) or the object
+// (volume_id -1) gets another slot or one of its own, or the whole-object form clears a part's (and,
+// with include_modifiers, a modifier's) own slot. A call that changes nothing takes no undo snapshot
+// and leaves the plates' slice results alone.
+bool filament_assignment_changes(const ModelObject& object, int volume_id, int slot, bool include_modifiers);
+
 }}} // namespace Slic3r::GUI::OrcaMCP
 
 #endif // slic3r_OrcaMCPFilamentModel_hpp_

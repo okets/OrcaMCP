@@ -263,7 +263,7 @@ void report_placement(nlohmann::json& result, int object_id)
         result.erase("placement_warning");
 }
 
-void rehome_and_report_placement(nlohmann::json& result, int object_id)
+void rehome_and_report_placement(nlohmann::json& result, int object_id, bool moved)
 {
     Plater* plater = wxGetApp().plater();
     if (plater == nullptr)
@@ -271,6 +271,11 @@ void rehome_and_report_placement(nlohmann::json& result, int object_id)
     Model& model = plater->model();
     if (object_id < 0 || object_id >= int(model.objects.size()))
         return;
+    result["changed"] = moved;
+    if (!moved) {
+        report_placement(result, object_id);
+        return;
+    }
 
     // Re-home first: a transform can have carried the object onto a different plate, and the plate
     // lists only learn that from notify_instance_update. report_placement then reads the result.
@@ -383,6 +388,17 @@ InstancesOnPlate instances_on_plate(const ModelObject& object, int object_index,
 BoundingBoxf3 plate_box_of(const ModelObject& object, const InstancesOnPlate& here)
 {
     return here.box.defined ? here.box : object_world_box(object);
+}
+
+bool printable_changes(const ModelObject& object, bool printable)
+{
+    return std::any_of(object.instances.begin(), object.instances.end(),
+                       [printable](const ModelInstance* instance) { return instance->printable != printable; });
+}
+
+bool brim_ears_change(const std::vector<BrimPoint>& current, const std::vector<BrimPoint>& given, bool append)
+{
+    return append ? !given.empty() : given != current;
 }
 
 std::vector<std::string> object_overrides_to_reset(const std::vector<std::string>& object_keys)

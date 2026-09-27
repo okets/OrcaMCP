@@ -3911,25 +3911,36 @@ void OrcaMCPServer::register_builtin_tools()
                     return nlohmann::json{{"status", "error"},
                                           {"message", "wipe_tower_x / wipe_tower_y are missing from the project config"}};
 
-                // Validated; only now is anything mutated, and the snapshot is taken first so `undo`
-                // puts the tower back. Plater::take_snapshot copies wipe_tower_x/y into
-                // model.wipe_tower.positions on its way, which is the state undo actually restores.
-                plater->take_snapshot(_u8L("Move Prime Tower"));
+                // The position the plate already reads (get_at falls back to the first entry for a
+                // plate the vectors do not reach yet) is no move: no undo step, which would drop the
+                // redo stack, and the plate keeps its slice.
+                const auto at = [index](const ConfigOptionFloats& opt) {
+                    return opt.values.empty() ? 0.0 : opt.get_at(size_t(index));
+                };
+                const bool changed = std::abs(at(*x_opt) - local_x) > kEdgeTolerance ||
+                                     std::abs(at(*y_opt) - local_y) > kEdgeTolerance;
+                if (changed) {
+                    // Validated; only now is anything mutated, and the snapshot is taken first so `undo`
+                    // puts the tower back. Plater::take_snapshot copies wipe_tower_x/y into
+                    // model.wipe_tower.positions on its way, which is the state undo actually restores.
+                    const WrittenValues written(wxGetApp().preset_bundle->project_config, {"wipe_tower_x", "wipe_tower_y"});
+                    plater->take_snapshot(_u8L("Move Prime Tower"));
 
-                // These vectors are per plate and are grown lazily elsewhere, so a project that has
-                // never had a tower on a later plate can still be shorter than the plate list.
-                if (x_opt->values.size() <= size_t(index))
-                    x_opt->values.resize(size_t(index) + 1, x_opt->values.empty() ? 0.0 : x_opt->values.front());
-                if (y_opt->values.size() <= size_t(index))
-                    y_opt->values.resize(size_t(index) + 1, y_opt->values.empty() ? 0.0 : y_opt->values.front());
+                    // These vectors are per plate and are grown lazily elsewhere, so a project that has
+                    // never had a tower on a later plate can still be shorter than the plate list.
+                    if (x_opt->values.size() <= size_t(index))
+                        x_opt->values.resize(size_t(index) + 1, x_opt->values.empty() ? 0.0 : x_opt->values.front());
+                    if (y_opt->values.size() <= size_t(index))
+                        y_opt->values.resize(size_t(index) + 1, y_opt->values.empty() ? 0.0 : y_opt->values.front());
 
-                ConfigOptionFloat new_x(local_x);
-                ConfigOptionFloat new_y(local_y);
-                x_opt->set_at(&new_x, index, 0);
-                y_opt->set_at(&new_y, index, 0);
+                    ConfigOptionFloat new_x(local_x);
+                    ConfigOptionFloat new_y(local_y);
+                    x_opt->set_at(&new_x, index, 0);
+                    y_opt->set_at(&new_y, index, 0);
 
-                OrcaMCPPresetConfigUtils::RefreshAfterProjectConfigChange(/*only_plate=*/index);
-                plater->update();
+                    OrcaMCPPresetConfigUtils::RefreshAfterProjectConfigChange(written, /*only_plate=*/index);
+                    plater->update();
+                }
 
                 const PrimeTowerState after = OrcaMCPPlateUtils::GetPrimeTowerState(index);
 
@@ -3938,6 +3949,7 @@ void OrcaMCPServer::register_builtin_tools()
                     {"plate_index", index},
                     {"previous_position", {{"x", before.corner.x()}, {"y", before.corner.y()}}},
                     {"position", {{"x", after.corner.x()}, {"y", after.corner.y()}}},
+                    {"changed", changed},
                     {"allowed_range", range_json()},
                     {"prime_tower", OrcaMCPPlateUtils::PrimeTowerJson(after)}
                 };
@@ -4066,7 +4078,8 @@ void OrcaMCPServer::register_builtin_tools()
                 // coordinates, which is the frame every response here reports. Every instance moves
                 // by the same amount, so a multi-instance object keeps its arrangement and the
                 // object-level position this tool reports is the one that was asked for.
-                if (!requested_delta.isZero()) {
+                const bool moved = !requested_delta.isZero();
+                if (moved) {
                     plater->take_snapshot(_u8L("Move Object"));
                     obj->translate_instances(requested_delta);
                 }
@@ -4101,7 +4114,7 @@ void OrcaMCPServer::register_builtin_tools()
                 // Move the object onto the plate its new position sits in, and report which one that
                 // is. A move across a plate boundary that leaves the instance registered on its old
                 // plate slices onto the old plate, in that plate's filaments, with no error.
-                rehome_and_report_placement(result, object_id);
+                rehome_and_report_placement(result, object_id, moved);
 
                 // Add movement delta for clarity
                 Vec3d delta = new_center - current_center;
@@ -4200,7 +4213,8 @@ void OrcaMCPServer::register_builtin_tools()
                 const Transform3d world_rotation =
                     Geometry::rotation_transform(Vec3d(x_deg, y_deg, z_deg) * deg_to_rad);
 
-                if (!world_rotation.isApprox(Transform3d::Identity())) {
+                const bool turned = !world_rotation.isApprox(Transform3d::Identity());
+                if (turned) {
                     plater->take_snapshot(_u8L("Rotate Object"));
                     transform_instances_on_bed(*obj, world_rotation);
                 }
@@ -4230,7 +4244,7 @@ void OrcaMCPServer::register_builtin_tools()
 
                 // A rotation changes the convex hull, so it can push an instance over a plate
                 // boundary or off the bed; re-home it and measure against the plate it is on now.
-                rehome_and_report_placement(result, object_id);
+                rehome_and_report_placement(result, object_id, turned);
 
                 // Add turntable preview if requested
                 add_turntable_preview_if_requested(result, include_preview, preview_views, preview_resolution);
@@ -4330,7 +4344,8 @@ void OrcaMCPServer::register_builtin_tools()
                 const bool had_skew = !obj->instances.empty() &&
                                       obj->instances[0]->get_transformation().has_skew();
 
-                if (!factors.isApprox(Vec3d::Ones())) {
+                const bool scaled = !factors.isApprox(Vec3d::Ones());
+                if (scaled) {
                     plater->take_snapshot(_u8L("Scale Object"));
                     transform_instances_on_bed(*obj, Geometry::scale_transform(factors));
                 }
@@ -4371,7 +4386,7 @@ void OrcaMCPServer::register_builtin_tools()
 
                 // Scaling grows the convex hull about the object centre, so it can spill over a plate
                 // boundary or off the bed; re-home it and measure against the plate it is on now.
-                rehome_and_report_placement(result, object_id);
+                rehome_and_report_placement(result, object_id, scaled);
 
                 // Add turntable preview if requested
                 add_turntable_preview_if_requested(result, include_preview, preview_views, preview_resolution);
@@ -4452,6 +4467,7 @@ void OrcaMCPServer::register_builtin_tools()
                 Model& model = plater->model();
                 nlohmann::json results = nlohmann::json::array();
                 std::set<int> rejected;  // object_ids already reported as an error below
+                std::set<int> moved;     // object_ids an entry changed: only those re-home and lose their slice
 
                 const double deg_to_rad = M_PI / 180.0;
 
@@ -4508,38 +4524,45 @@ void OrcaMCPServer::register_builtin_tools()
                         }
                     }
 
-                    ensure_snapshot();
-
-                    // Apply position (absolute, unspecified axes preserved)
+                    // Position (absolute, unspecified axes preserved), then an incremental rotation,
+                    // then the scale. An entry that asks for where the object already is changes
+                    // nothing, and takes no undo step and no plate's slice with it.
+                    Vec3d delta = Vec3d::Zero();
                     if (t.contains("position")) {
-                        auto pos = t["position"];
-                        BoundingBoxf3 bbox = object_world_box(*obj);
-                        Vec3d current_center = bbox.center();
-                        Vec3d target(
+                        const auto& pos = t["position"];
+                        const Vec3d current_center = object_world_box(*obj).center();
+                        const Vec3d target(
                             pos.contains("x") ? pos["x"].get<double>() : current_center.x(),
                             pos.contains("y") ? pos["y"].get<double>() : current_center.y(),
                             pos.contains("z") ? pos["z"].get<double>() : current_center.z()
                         );
-                        obj->translate_instances(target - current_center);
+                        delta = target - current_center;
                     }
+                    Transform3d world_rotation = Transform3d::Identity();
+                    if (t.contains("rotation")) {
+                        const auto& rot = t["rotation"];
+                        const Vec3d degrees(rot.value("x", 0.0), rot.value("y", 0.0), rot.value("z", 0.0));
+                        world_rotation = Geometry::rotation_transform(degrees * deg_to_rad);
+                    }
+                    const bool translates = !delta.isZero();
+                    const bool turns      = !world_rotation.isApprox(Transform3d::Identity());
+                    const bool scales     = !factors.isApprox(Vec3d::Ones());
+                    if (!translates && !turns && !scales)
+                        continue;
+
+                    ensure_snapshot();
+                    moved.insert(object_id);
+                    if (translates)
+                        obj->translate_instances(delta);
 
                     // A rotation or scale lands a resting object back on the bed, as rotate_object
                     // and scale_object do -- unless this entry states a Z, which is the caller's
                     // intent exactly as it is for move_object.
                     const bool explicit_z = t.contains("position") && t["position"].contains("z");
                     const auto transform  = explicit_z ? transform_instances_in_plate_frame : transform_instances_on_bed;
-
-                    // Apply rotation (incremental)
-                    if (t.contains("rotation")) {
-                        auto rot = t["rotation"];
-                        const Vec3d degrees(rot.value("x", 0.0), rot.value("y", 0.0), rot.value("z", 0.0));
-                        const Transform3d world_rotation = Geometry::rotation_transform(degrees * deg_to_rad);
-                        if (!world_rotation.isApprox(Transform3d::Identity()))
-                            transform(*obj, world_rotation);
-                    }
-
-                    // Apply scale
-                    if (t.contains("scale"))
+                    if (turns)
+                        transform(*obj, world_rotation);
+                    if (scales)
                         transform(*obj, Geometry::scale_transform(factors));
 
                     obj->invalidate_bounding_box();
@@ -4568,7 +4591,7 @@ void OrcaMCPServer::register_builtin_tools()
                         {"status", "success"},
                         {"position", {{"x", center.x()}, {"y", center.y()}, {"z", center.z()}}}
                     };
-                    rehome_and_report_placement(entry, object_id);
+                    rehome_and_report_placement(entry, object_id, moved.count(object_id) > 0);
                     results.push_back(entry);
                 }
 
@@ -4668,7 +4691,7 @@ void OrcaMCPServer::register_builtin_tools()
                 // A mirror about the object's centre keeps its bounding box, but a left-handed
                 // instance re-homes and re-slices like any other change, and this tool reported no
                 // placement at all before.
-                rehome_and_report_placement(result, object_id);
+                rehome_and_report_placement(result, object_id, /*moved=*/true);
 
                 // Add turntable preview if requested
                 add_turntable_preview_if_requested(result, include_preview, preview_views, preview_resolution);
@@ -5022,7 +5045,8 @@ void OrcaMCPServer::register_builtin_tools()
                     {"status", "success"},
                     {"object_id", object_id},
                     {"old_name", old_name},
-                    {"new_name", new_name}
+                    {"new_name", new_name},
+                    {"changed", true}
                 };
             });
         }
@@ -5083,7 +5107,8 @@ void OrcaMCPServer::register_builtin_tools()
         ToolCategory::Models,
         "Include or skip an object when slicing",
         "Mark an object printable (included when slicing) or unprintable (skipped). "
-        "Useful for excluding specific objects from a print without removing them from the scene.",
+        "Useful for excluding specific objects from a print without removing them from the scene. "
+        "changed: false when every instance already was: no undo step, and the plates keep their slice.",
         {
             {"type", "object"},
             {"properties", {
@@ -5110,27 +5135,33 @@ void OrcaMCPServer::register_builtin_tools()
                 }
 
                 ModelObject* object = model.objects[object_id];
-                std::string snapshot_text = (boost::format("%1% \"%2%\"") %
-                    (printable ? "Set Object Printable" : "Set Object Unprintable") %
-                    object->name).str();
-                plater->take_snapshot(snapshot_text);
+                // Every instance already so: nothing to snapshot (it would drop the redo stack), and no
+                // plate loses its slice result.
+                const bool changed = printable_changes(*object, printable);
+                if (changed) {
+                    std::string snapshot_text = (boost::format("%1% \"%2%\"") %
+                        (printable ? "Set Object Printable" : "Set Object Unprintable") %
+                        object->name).str();
+                    plater->take_snapshot(snapshot_text);
 
-                for (auto* inst : object->instances)
-                    inst->printable = printable;
+                    for (auto* inst : object->instances)
+                        inst->printable = printable;
 
-                wxGetApp().obj_list()->update_printable_state(object_id, 0);
-                // The 3D view's canvas, as the object list uses (GUI_ObjectList.cpp): canvas3D() is
-                // whichever canvas is showing, and the Preview canvas holds no model volumes, so from
-                // the Preview tab the 3D view -- and every render drawn from it -- kept the old state.
-                plater->get_view3D_canvas3D()->update_instance_printable_state_for_object(static_cast<size_t>(object_id));
-                mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
-                plater->update();
+                    wxGetApp().obj_list()->update_printable_state(object_id, 0);
+                    // The 3D view's canvas, as the object list uses (GUI_ObjectList.cpp): canvas3D() is
+                    // whichever canvas is showing, and the Preview canvas holds no model volumes, so from
+                    // the Preview tab the 3D view -- and every render drawn from it -- kept the old state.
+                    plater->get_view3D_canvas3D()->update_instance_printable_state_for_object(static_cast<size_t>(object_id));
+                    mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
+                    plater->update();
+                }
 
                 return nlohmann::json{
                     {"status", "success"},
                     {"object_id", object_id},
                     {"object_name", object->name},
                     {"printable", printable},
+                    {"changed", changed},
                     {"active_warnings", get_active_warnings_json(plater)}
                 };
             });

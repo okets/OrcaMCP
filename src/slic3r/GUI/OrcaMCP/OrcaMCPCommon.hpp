@@ -6,6 +6,7 @@
 #include <string>
 #include <nlohmann/json.hpp>
 #include "libslic3r/BoundingBox.hpp"
+#include "libslic3r/BrimEarsPoint.hpp"
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "OrcaMCPMainThreadGate.hpp"
@@ -112,7 +113,11 @@ bool object_within_plate(const BoundingBoxf3& object_bbox, const BoundingBoxf3& 
 // tools. A tool that has just moved geometry wants rehome_and_report_placement instead.
 void report_placement(nlohmann::json& result, int object_id);
 
-void rehome_and_report_placement(nlohmann::json& result, int object_id);
+//
+// `moved` false (the call turned out to change nothing) re-homes nothing: notify_instance_update
+// marks the instance's plate not sliced even when the instance stays where it was, so a no-op call
+// would throw away the plate's slice. Only the report is written then, and `changed` says which.
+void rehome_and_report_placement(nlohmann::json& result, int object_id, bool moved);
 
 // Applies `world_transform` -- a rotation, a scale or a mirror written in *plate* axes -- to every
 // instance of `object`, each about its own world bounding-box centre, and invalidates the object's
@@ -172,6 +177,14 @@ InstancesOnPlate instances_on_plate(const ModelObject& object, int object_index,
 // The box a per-plate description of `object` uses: its instances' there, or the whole object's for
 // an object the plate lists without holding an instance of it (only a stale list does that).
 BoundingBoxf3 plate_box_of(const ModelObject& object, const InstancesOnPlate& here);
+
+// Whether setting every instance of `object` printable (or not) changes one: a call that changes
+// nothing takes no undo snapshot and leaves the plates' slice results alone.
+bool printable_changes(const ModelObject& object, bool printable);
+
+// Whether set_brim_ears changes an object's ears: `given` replaces `current`, or is added to it with
+// `append`. The same ears again, or none appended, change nothing.
+bool brim_ears_change(const std::vector<BrimPoint>& current, const std::vector<BrimPoint>& given, bool append);
 
 // The keys of an object's overrides (`object_keys`) that a reset with no keys named clears: every one
 // but "extruder", so the object keeps its filament, as the GUI's reset leaves it.

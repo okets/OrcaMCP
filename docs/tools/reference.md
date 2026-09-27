@@ -8,6 +8,17 @@ same grouping, with a one-line summary per tool, is what `get_server_info` retur
 it lists -- `get_filaments`, `set_mixed_filament`, `get_flush_volumes` among them -- have no
 dedicated section below yet.
 
+**A call that changes nothing leaves the scene alone.** Setting what is already there -- the
+filament an object already prints with, the printable state it already has, a move by zero, a
+rotation of 0 degrees, a scale of 1, the prime tower's own position, the brim ears or paint a
+volume already carries, a slot's own colour, flush volumes or mixed-filament recipe, the name it
+already has -- takes no undo step (one would drop the redo stack) and marks no plate unsliced, so a
+finished slice stays finished. The object and scene tools say which it was with `changed`
+(`set_object_printable`, `set_object_filament`, `rename_object`, `set_brim_ears`, `move_object`,
+`rotate_object`, `scale_object`, `mirror_object`, `transform_objects` per entry,
+`set_prime_tower_position`, `set_mixed_filament`), the painting tools with `annotation_changed`, the
+resets with their counts.
+
 ## Quick Reference Table
 
 | Category | Tools |

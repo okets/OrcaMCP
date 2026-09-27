@@ -2444,7 +2444,7 @@
     },
     {
       "category": "Filaments & colour",
-      "description": "Assign a filament slot (physical or mixed) to a whole object, or to one volume of it (volume_id). A volume's own slot beats the object's, so the whole-object form also clears the own slot of every part and, unless include_modifiers=false, of every modifier -- otherwise the change is invisible and the plate keeps its prime tower. Read the response, not just status: effective_filaments is every slot the object still prints with (volumes, painted facets, layer ranges); cleared_overrides lists each volume that lost its own slot and what it held; other_slots lists slots its volumes still force. The object is on one filament only when effective_filaments has one entry. get_object_info's `volumes` shows the same per volume; get_scene_info's filaments_used shows it per object.",
+      "description": "Assign a filament slot (physical or mixed) to a whole object, or to one volume of it (volume_id). A volume's own slot beats the object's, so the whole-object form also clears the own slot of every part and, unless include_modifiers=false, of every modifier -- otherwise the change is invisible and the plate keeps its prime tower. Read the response, not just status: effective_filaments is every slot the object still prints with (volumes, painted facets, layer ranges); cleared_overrides lists each volume that lost its own slot and what it held; other_slots lists slots its volumes still force. The object is on one filament only when effective_filaments has one entry. get_object_info's `volumes` shows the same per volume; get_scene_info's filaments_used shows it per object. changed: false when the call set what was already there: no undo step, and the plates keep their slice.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -2527,7 +2527,7 @@
     },
     {
       "category": "Models",
-      "description": "Mark an object printable (included when slicing) or unprintable (skipped). Useful for excluding specific objects from a print without removing them from the scene.",
+      "description": "Mark an object printable (included when slicing) or unprintable (skipped). Useful for excluding specific objects from a print without removing them from the scene. changed: false when every instance already was: no undo step, and the plates keep their slice.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {

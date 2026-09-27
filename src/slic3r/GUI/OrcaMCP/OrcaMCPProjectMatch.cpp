@@ -474,7 +474,8 @@ nlohmann::json match_project_to_printer(const std::vector<FlashforgeApi::Materia
         // derived work (both filament lists, the project-dirty flag, the app-config snapshot, the
         // background-process kick) runs once at the end. A four-slot station did all of that four
         // times for one button press.
-        bool colors_staged = false;
+        bool                         colors_staged = false;
+        const OrcaMCP::WrittenValues written(bundle->project_config, OrcaMCP::filament_colour_keys());
 
         for (SlotPlan& entry : plan) {
             if (entry.preset_changes) {
@@ -508,7 +509,7 @@ nlohmann::json match_project_to_printer(const std::vector<FlashforgeApi::Materia
         // Never conditional on the response being a success: export_selections lives in here, and it
         // is the only thing that makes a filament colour survive a restart.
         if (colors_staged)
-            OrcaMCPPresetConfigUtils::RefreshAfterProjectConfigChange();
+            OrcaMCPPresetConfigUtils::RefreshAfterProjectConfigChange(written);
         info_messages = suppression.messages();
     }
 

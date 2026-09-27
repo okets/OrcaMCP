@@ -113,11 +113,20 @@ void OrcaMCPServer::register_filament_tools()
                     if (!wxGetApp().preset_bundle->is_mixed_filament(edit_idx))
                         return nlohmann::json{{"status", "error"}, {"message", "slot is not a mixed filament"}};
                 }
+                // The keys Sidebar::apply_mixed_filament writes a slot's recipe to.
+                const WrittenValues written(wxGetApp().preset_bundle->project_config,
+                                            {"filament_is_mixed", "filament_colour", "filament_multi_colour",
+                                             "filament_mixed_components", "filament_mixed_sublayer_ratios",
+                                             "filament_mixed_gradient", "filament_mixed_gradient_range",
+                                             "filament_mixed_gradient_curve", "filament_mixed_gradient_per_part"});
                 int idx = wxGetApp().sidebar().apply_mixed_filament(req, edit_idx, error);
                 if (idx < 0) return nlohmann::json{{"status", "error"}, {"message", error}};
-                // A filament slot changed for every plate: none keeps a result made without it.
-                wxGetApp().plater()->get_partplate_list().invalid_all_slice_result();
-                return with_filaments({{"status", "success"}, {"slot", idx + 1}});
+                // A filament slot changed for every plate: none keeps a result made without it. A slot
+                // given the recipe it already had changed nothing, and every plate keeps its slice.
+                const bool changed = edit_idx < 0 || written.changed_in(wxGetApp().preset_bundle->project_config);
+                if (changed)
+                    wxGetApp().plater()->get_partplate_list().invalid_all_slice_result();
+                return with_filaments({{"status", "success"}, {"slot", idx + 1}, {"changed", changed}});
             });
         }
     });
@@ -170,7 +179,8 @@ void OrcaMCPServer::register_filament_tools()
         "painted facets, layer ranges); cleared_overrides lists each volume that lost its own slot "
         "and what it held; other_slots lists slots its volumes still force. The object is on one "
         "filament only when effective_filaments has one entry. get_object_info's `volumes` shows the "
-        "same per volume; get_scene_info's filaments_used shows it per object.",
+        "same per volume; get_scene_info's filaments_used shows it per object. changed: false when "
+        "the call set what was already there: no undo step, and the plates keep their slice.",
         {
             {"type", "object"},
             {"properties", {
@@ -216,6 +226,7 @@ void OrcaMCPServer::register_filament_tools()
                 r["effective_filaments"] = done.effective_filaments;
                 r["other_slots"]         = done.other_slots;
                 r["single_filament"]     = done.effective_filaments.size() == 1;
+                r["changed"]             = done.changed;
                 r["active_warnings"]     = get_active_warnings_json(wxGetApp().plater());
                 return r;
             });

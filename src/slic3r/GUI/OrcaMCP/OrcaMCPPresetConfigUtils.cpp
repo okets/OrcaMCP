@@ -20,6 +20,35 @@
 
 namespace Slic3r { namespace GUI {
 
+namespace OrcaMCP {
+
+WrittenValues::WrittenValues(const DynamicPrintConfig& config, const std::vector<std::string>& keys)
+{
+    m_before.reserve(keys.size());
+    for (const std::string& key : keys) {
+        const ConfigOption* option = config.option(key);
+        m_before.emplace_back(key, option != nullptr ? std::unique_ptr<ConfigOption>(option->clone()) : nullptr);
+    }
+}
+
+bool WrittenValues::changed_in(const DynamicPrintConfig& config) const
+{
+    return std::any_of(m_before.begin(), m_before.end(), [&config](const auto& before) {
+        const ConfigOption* now = config.option(before.first);
+        if (now == nullptr || before.second == nullptr)
+            return (now == nullptr) != (before.second == nullptr);
+        return !(*now == *before.second);
+    });
+}
+
+const std::vector<std::string>& filament_colour_keys()
+{
+    static const std::vector<std::string> keys = {"filament_colour", "filament_multi_colour", "filament_colour_type"};
+    return keys;
+}
+
+} // namespace OrcaMCP
+
 namespace {
 // Defined below, next to WriteProjectFilamentColor, which is its other caller.
 bool sync_filament_color_keys(size_t config_index, const std::string& color, bool& flattened, std::string& error);
@@ -403,6 +432,11 @@ ApplyConfigResult OrcaMCPPresetConfigUtils::ApplyConfig(const nlohmann::json& it
     if (type == "project")
         if (const auto* opt = config->option<ConfigOptionStrings>("filament_colour"))
             colors_before = opt->values;
+    // What a project write can change: the keys it names, and the colour keys a colour change syncs.
+    std::vector<std::string> written_keys = OrcaMCP::filament_colour_keys();
+    for (const auto& [key, value] : item.at("settings").items())
+        written_keys.push_back(key);
+    const OrcaMCP::WrittenValues written(*config, type == "project" ? written_keys : std::vector<std::string>());
 
     ConfigSubstitutionContext context(ForwardCompatibilitySubstitutionRule::Enable);
     for (auto& [key, value] : item.at("settings").items()) {
@@ -471,20 +505,19 @@ ApplyConfigResult OrcaMCPPresetConfigUtils::ApplyConfig(const nlohmann::json& it
                 else if (flattened)
                     result.flattened_slots.push_back(int(i) + 1);
             }
-        RefreshAfterProjectConfigChange();
+        RefreshAfterProjectConfigChange(written);
     }
 
     return result;
 }
 
-void OrcaMCPPresetConfigUtils::RefreshAfterProjectConfigChange(int only_plate) {
+void OrcaMCPPresetConfigUtils::RefreshAfterProjectConfigChange(const OrcaMCP::WrittenValues& written, int only_plate) {
     Plater* plater = wxGetApp().plater();
     // The plater's own reaction to a colour change -- the 3D scene, the object list's colours, both
     // filament lists -- runs only for keys that differ from its config, so it comes first: the line
     // after it copies the colours into that config and would leave nothing to differ.
     DynamicPrintConfig colours;
-    colours.apply_only(wxGetApp().preset_bundle->project_config,
-                       {"filament_colour", "filament_multi_colour", "filament_colour_type"}, /*ignore_nonexistent=*/true);
+    colours.apply_only(wxGetApp().preset_bundle->project_config, OrcaMCP::filament_colour_keys(), /*ignore_nonexistent=*/true);
     plater->on_config_change(colours);
     plater->update_filament_colors_in_full_config();
     wxGetApp().sidebar().update_dynamic_filament_list();
@@ -494,9 +527,11 @@ void OrcaMCPPresetConfigUtils::RefreshAfterProjectConfigChange(int only_plate) {
     // snapshot; see the header. Without this, an MCP write of a filament colour or a flush volume
     // is forgotten the next time OrcaSlicer starts.
     PersistProjectSnapshot();
-    if (only_plate >= 0)
+    // A write that left its values as they were changed nothing the plates were sliced with.
+    const bool changed = written.changed_in(wxGetApp().preset_bundle->project_config);
+    if (changed && only_plate >= 0)
         OrcaMCP::mark_plate_unsliced(plater->get_partplate_list(), only_plate);
-    else
+    else if (changed)
         plater->get_partplate_list().invalid_all_slice_result();
     wxPostEvent(&wxGetApp().sidebar(), SimpleEvent(EVT_SCHEDULE_BACKGROUND_PROCESS, &wxGetApp().sidebar()));
 }
@@ -561,9 +596,10 @@ bool OrcaMCPPresetConfigUtils::WriteProjectFilamentColor(size_t             conf
                                                          bool&              flattened,
                                                          std::string&       error)
 {
+    const OrcaMCP::WrittenValues written(wxGetApp().preset_bundle->project_config, OrcaMCP::filament_colour_keys());
     if (!StageProjectFilamentColor(config_index, color, flattened, error))
         return false;
-    RefreshAfterProjectConfigChange();
+    RefreshAfterProjectConfigChange(written);
     return true;
 }
 
