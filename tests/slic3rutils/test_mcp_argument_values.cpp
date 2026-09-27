@@ -47,3 +47,13 @@ TEST_CASE("delete_object_layer_range refuses one bound without the other, which 
     CHECK(refusal("delete_object_layer_range", {{"object_id", 0}, {"z_max", 2.0}}) ==
           "z_min is missing: pass both z_min and z_max to delete that range, or neither to delete every range of the object");
 }
+
+TEST_CASE("reset_object_config refuses an empty or malformed keys, which reset every override", "[McpArgumentValues][orcamcp]")
+{
+    CHECK(refusal("reset_object_config", {{"object_id", 0}, {"keys", json::array()}}) ==
+          "keys is empty: omit keys to reset every override but the filament");
+    CHECK(refusal("reset_object_config", {{"object_id", 0}, {"keys", "wall_loops"}}) ==
+          "keys must be an array of setting names; omit it to reset every override but the filament");
+    CHECK(refusal("reset_object_config", {{"object_id", 0}, {"keys", {"wall_loops", 3}}}) ==
+          "keys must be an array of setting names; got 3");
+}

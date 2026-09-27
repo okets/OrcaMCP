@@ -1522,6 +1522,9 @@ Clear per-object configuration overrides.
 | `object_id` | integer | Yes | Object index |
 | `keys` | array | No | Specific keys to reset. Omitted: every override but the object's filament (`extruder`), which stays, as the GUI's reset leaves it. `reset_count` is how many were cleared; a reset that clears nothing takes no undo snapshot |
 
+An empty `keys`, or one that is not a list of setting names, is refused: both used to reset every
+override. Leave `keys` out to reset them all.
+
 ---
 
 ## Layer Range Tools

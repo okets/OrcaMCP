@@ -1867,7 +1867,7 @@
         "additionalProperties": false,
         "properties": {
           "keys": {
-            "description": "Keys to reset. If omitted, resets every override but the object's filament (extruder), which stays, as the GUI's reset leaves it. reset_count says how many were cleared; a reset that clears nothing changes nothing.",
+            "description": "Keys to reset. If omitted, resets every override but the object's filament (extruder), which stays, as the GUI's reset leaves it. An empty list is refused. reset_count says how many were cleared; a reset that clears nothing changes nothing.",
             "items": {
               "type": "string"
             },

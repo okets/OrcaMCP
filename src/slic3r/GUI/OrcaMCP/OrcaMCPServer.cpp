@@ -2087,8 +2087,9 @@ void OrcaMCPServer::register_builtin_tools()
                 {"keys", {
                     {"type", "array"},
                     {"description", "Keys to reset. If omitted, resets every override but the object's filament "
-                                    "(extruder), which stays, as the GUI's reset leaves it. reset_count says how "
-                                    "many were cleared; a reset that clears nothing changes nothing."},
+                                    "(extruder), which stays, as the GUI's reset leaves it. An empty list is refused. "
+                                    "reset_count says how many were cleared; a reset that clears nothing changes "
+                                    "nothing."},
                     {"items", {{"type", "string"}}}
                 }}
             }},
@@ -2096,10 +2097,19 @@ void OrcaMCPServer::register_builtin_tools()
         },
         [](const nlohmann::json& params) -> nlohmann::json {
             int object_id = params["object_id"];
+            // No keys means every override; an empty or unreadable list used to mean that too.
             std::vector<std::string> keys;
-            if (params.contains("keys") && params["keys"].is_array()) {
-                for (const auto& k : params["keys"]) {
-                    keys.push_back(k.get<std::string>());
+            if (params.contains("keys") && !params["keys"].is_null()) {
+                const nlohmann::json& given = params["keys"];
+                if (!given.is_array())
+                    return error_response("keys must be an array of setting names; omit it to reset every override but "
+                                          "the filament");
+                if (given.empty())
+                    return error_response("keys is empty: omit keys to reset every override but the filament");
+                for (const nlohmann::json& key : given) {
+                    if (!key.is_string())
+                        return error_response("keys must be an array of setting names; got " + key.dump());
+                    keys.push_back(key.get<std::string>());
                 }
             }
             return run_on_main_thread([object_id, keys]() {
