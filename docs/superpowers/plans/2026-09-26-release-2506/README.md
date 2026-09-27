@@ -59,9 +59,11 @@ gave were wrong; the prompts carry the corrected facts.
 | 05 | [Mesh health](05-mesh-health.md) | 01, 03 | new tool, `active_warnings`, `get_scene_info` | merged and pushed 2026-09-27; Build all green (run 36282514718) |
 | 06 | [Workflow tools](06-workflow-tools.md) | 01, 03 | bridge, slicing status, preset reads, paint remap, estimate breakdown | merged and pushed 2026-09-27 (live checks passed); Build all green (run 36292935184) |
 | 07 | [Sliced layer plan](07-layer-plan.md) | 01, 03 | `OrcaMCPFirstLayerPlan.cpp`, `render_plate_view` | merged and pushed 2026-09-27 (overhang facts, not verdicts); Build all green (run 36302057792) |
-| 06b | [Slicing and loading follow-ups](06b-slicing-followups.md) | 07 | `slice_all`, slicing status, OrcaMCPCommon, load errors | implemented 2026-09-27 (three rounds, 25 commits); orchestrator verification, review and acceptance in progress |
-| 07b | [Over-height check on non-Bambu printers](07b-height-check.md) | 06b | GCodeProcessor `;Z:` parsing, MCP send/export gating | audit and design approved 2026-09-27; queued after 06b |
-| 08 | [Server instructions and hints](08-instructions-and-hints.md) | 01–07 | `initialize`, descriptions, result hints | not started |
+| 06b | [Slicing and loading follow-ups](06b-slicing-followups.md) | 07 | `slice_all`, slicing status, OrcaMCPCommon, load errors, undo, layer ranges | merged and pushed 2026-09-27 (five rounds, 31 commits; merge ca1a608e30; Build all 36319238134); probe letters Z, AA–AD |
+| 06c | (no prompt file; 06b's agent) | 06b | `slice_all`'s refusal reason across plates; `transform_objects` with one object twice | review follow-ups from 06b rounds 4–5; implementing |
+| 07b | [Over-height check on non-Bambu printers](07b-height-check.md) | 06b | GCodeProcessor `;Z:` parsing, MCP send/export gating | audit and design approved 2026-09-27; queued after 06c |
+| 07c | [A misspelled argument is refused](07c-unknown-arguments.md) | 07b | `handle_tools_call`, the bridge's own tools | added 2026-09-27 by the orchestrator (`scale_object {"scale": 0.5}` said success and did nothing); audit and design go to the orchestrator first |
+| 08 | [Server instructions and hints](08-instructions-and-hints.md) | 01–07c | `initialize`, descriptions, result hints | not started |
 | 09 | [Several instances, switch between them](09-second-instance-crash.md) | 01–08 | port fallback, instance registry (with open file), bridge `list_instances` / `select_instance` | added 2026-09-26 by the user; design goes to the user; starts after all other coding |
 
 If time runs short, the priority is 01, 02, 03, 04b, 05, 08, 04, 06, 07. Anything unfinished moves to the
@@ -111,6 +113,11 @@ roadmap; nothing ships half-done.
   dialogs with the close box takes the "proceed" branch (roadmap). (2) The G-code over-height check never
   fires on non-Bambu printers (07b). Warn upstream that parsing `;Z:` alone breaks every non-Bambu
   multi-extruder preset, because their unset per-nozzle height reads as 0 mm, so the guard is needed. (3) STL repair counts are thrown away (roadmap).
+  (4) Undo of a printable toggle leaves the plate unsliceable in the GUI too (probe AD, found in 06b).
+- **Sequencing the Flashforge print-options plan.** Another session wrote
+  `docs/superpowers/plans/2026-09-27-flashforge-print-options.md` (untracked; not this release's
+  orchestrator). Its first step waits for 06b's merge, which also releases 06c, 07b, 07c and 08 here, and
+  only one agent can build at a time. The user decides the order.
 
 ## Shared traps (also inside every prompt)
 

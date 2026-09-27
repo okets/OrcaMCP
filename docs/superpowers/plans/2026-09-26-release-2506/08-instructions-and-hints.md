@@ -102,6 +102,19 @@ In the session of 2026-09-26 (transcript
      every tool's parameter is called `object_id` and means the index. An agent can easily pass 71.
      Decide in your design how to remove the trap (rename or drop `id`, or say it in the descriptions),
      keeping existing readers of `object_index` working.
+   - Found in the orchestrator's 06b acceptance pass (2026-09-27): `get_scene_info`'s reference
+     example no longer matches a real response. Each plate carries `"index"`, while every other tool
+     (`select_plate`, `move_object` and the other transform results, `get_slicing_status`) says
+     `"plate_index"`. The example's `"plate_index"` and `"is_current": true` do not exist, and nothing
+     in the response says which plate is selected, except that `bed` is the selected plate's area.
+     Objects' `position`, `rotation_degrees` and `scale` are `{"x", "y", "z"}` objects, not arrays, and
+     `bounding_box` is `{"min": {x, y, z}, "max": {x, y, z}, "size_x", "size_y", "size_z"}`. Decide
+     whether to add `plate_index` and `is_current` (keeping `index` for existing readers). Replace the
+     example with one captured from a real response; a test comparing the example's keys with a real
+     response's would keep it true.
+   - `export_gcode` answers `"status": "export_started"`, not `"success"`. Its description and
+     reference entry should list the status words it can return, so an agent doesn't read
+     `export_started` as a failure.
 4. **Extend the name check** (from prompt 01) to cover the instructions, every description and every
    hint.
 5. **The acceptance test, with a fresh agent.**
