@@ -895,6 +895,7 @@ echo "V the object list's mesh-error text lives inside ObjectList / its first ic
 echo "X upstream's slic3rutils tests get no Windows-first force-include (rel2506/ci-fixes; 0 = bug): $(U tests/slic3rutils/CMakeLists.txt | grep -c 'win_platform.hpp')"
 echo "Z reslice refuses on a validation failure a settings fix removed until the 0.5 s timer runs / show_error defers its dialog (rel2506/06b): $(U src/slic3r/GUI/Plater.cpp | grep -c 'process_completed_with_error, return directly') / $(U src/slic3r/GUI/GUI.cpp | awk '/^void show_error\(wxWindow\* parent, const wxString/{f=1} f&&/CallAfter/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
 echo "AA a layer range without a layer_height crashes the slice / the adaptive profile (rel2506/06b): $(U src/libslic3r/Slicing.cpp | grep -c 'it_range->second.option("layer_height")->getFloat()') / $(U src/libslic3r/Slicing.cpp | awk '/print_z >= range.first && print_z <= range.second/{getline; print (index($0, "height = options.opt_float") ? "yes" : "no"); exit}')"
+echo "AB Print::apply copies a new object name without invalidating the G-code (rel2506/06b): $(U src/libslic3r/PrintApply.cpp | awk '/model_object.name       = model_object_new.name;/{print (prev ~ /invalidate_step\(psGCodeExport\)/ ? "no" : "yes"); exit} {prev=$0}')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -1009,6 +1010,12 @@ MCP's `set_object_layer_range` wrote such ranges until rel2506/06b), and the nex
 profile dereferenced null and crashed the app. Ours prints such a range at the object's layer height
 (and leaves the adaptive height alone). On 0 / no, take upstream's lines and re-run
 `fff_print_tests "[LayerRanges]"`.
+
+Item AB: an object's name is in its G-code (the `; printing object` labels, `EXCLUDE_OBJECT` names,
+`{first_object_name}`), but upstream's `Print::apply` copies a new name over without invalidating
+anything, so a finished plate kept its G-code and the next slice took it back with the old name in
+it. Ours invalidates `psGCodeExport` when the name changed. On "no", take upstream's and re-run
+`fff_print_tests "Renaming an object after a slice*"`.
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices

@@ -4925,7 +4925,8 @@ void OrcaMCPServer::register_builtin_tools()
                 model.objects[object_id]->name = new_name;
 
                 // Update the object list UI to reflect the new name. The name is in the G-code (its
-                // object labels), so the plates holding it no longer have its result.
+                // object labels), so the plates holding it no longer have its result; Print::apply
+                // invalidates the G-code export step for a renamed object, and the next slice writes it again.
                 wxGetApp().obj_list()->update_name_for_items();
                 mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
 

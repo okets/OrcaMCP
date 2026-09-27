@@ -838,13 +838,15 @@ Remove an object from the project.
 ---
 
 ### rename_object
-Rename an object.
+Rename an object. The name is in the G-code (object labels, `EXCLUDE_OBJECT` names,
+`{first_object_name}`), so the plates holding the object are marked not sliced, and the next slice
+writes their G-code again with the new name.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `object_id` | integer | Yes | Object index |
-| `name` | string | Yes | New name |
+| `new_name` | string | Yes | New name |
 
 ---
 
