@@ -10,6 +10,7 @@
 #include "BoundingBox.hpp"
 #include "ClipperUtils.hpp"
 #include "LocalesUtils.hpp"
+#include "libslic3r/PrintableHeightLimit.hpp"
 #include "Triangulation.hpp"
 
 
@@ -5410,7 +5411,8 @@ bool WipeTower::is_valid_last_layer(int tool, int layer_id, double layer_z) cons
 {
     int extruder_id = get_extruder_id(tool, layer_id);
     if (extruder_id < 0 || extruder_id >= m_printable_height.size()) return true;
-    if (m_last_layer_id[extruder_id] == layer_id && layer_z > m_printable_height[extruder_id]) return false;
+    // Orca: an extruder without a printable height of its own (0, the default) limits nothing.
+    if (m_last_layer_id[extruder_id] == layer_id && is_height_limit(m_printable_height[extruder_id]) && layer_z > m_printable_height[extruder_id]) return false;
     return true;
 }
 float WipeTower::get_block_gap_width(int tool,bool is_nozzlechangle)

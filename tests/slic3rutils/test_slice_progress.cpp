@@ -363,8 +363,59 @@ TEST_CASE("plates with nothing printable on them give nothing to slice", "[orcam
     const SliceStartReport report = judge_slice_start(signals_with({empty_plate(0), empty_plate(1)}));
     CHECK(report.status == SliceStart::not_started);
     CHECK(report.reason == "nothing_to_slice");
-    // An object partly off its plate is not printable there either, which an agent that sees the object
-    // on the plate needs told.
+    // An object partly off its plate, or too tall for the printer, is not printable there either, which an
+    // agent that sees the object on the plate needs told.
+    CHECK(report.message.find("partly outside its plate") != std::string::npos);
+    CHECK(report.message.find("taller than the printable height") != std::string::npos);
+}
+
+// An object over the printable height is outside its plate's box (PartPlate::check_outside), so the plate
+// has nothing printable, and the app's validation refuses it too (Print::validate's height check). The
+// app stops on the validation -- reslice() on the error it left -- and shows its words; slice_all said
+// nothing_to_slice, which sent the agent looking for an object off the plate.
+TEST_CASE("a validation failure is reported ahead of nothing to slice, in the app's words", "[orcamcp][SliceProgress]")
+{
+    const bool last_slice_failed = GENERATE(true, false);
+    DYNAMIC_SECTION("last error left " << last_slice_failed) {
+        SliceStartSignals signals = signals_with({selected(empty_plate(0))});
+        signals.validation_error  = "The object cube_20.stl exceeds the maximum build volume height.";
+        signals.last_slice_failed = last_slice_failed;
+        const SliceStartReport report = judge_slice_start(signals);
+        CHECK(report.reason == "invalid");
+        CHECK(report.message.find("exceeds the maximum build volume height") != std::string::npos);
+    }
+}
+
+// An object the build volume finds too tall is left out of the plate's Print, so the plate keeps the
+// verdict of the validation before that without its words: nothing printable is the true answer then, as
+// it is for another plate asked for with a verdict alone. A printable plate's bare verdict still refuses.
+TEST_CASE("a validation verdict without words does not outrank nothing to slice", "[orcamcp][SliceProgress]")
+{
+    SliceRunPlate stale = selected(empty_plate(0));
+    stale.valid         = false;
+    SliceRunPlate other = empty_plate(1);
+    other.valid         = false;
+    SliceStartSignals signals = signals_with({stale, other});
+    signals.last_slice_failed = GENERATE(true, false);
+    CHECK(judge_slice_start(signals).reason == "nothing_to_slice");
+
+    signals.last_slice_failed = false;
+    signals.plates[0].valid    = true;
+    signals.plates[1]          = unsliced_plate(1);
+    signals.plates[1].valid    = false;
+    const SliceStartReport printable_other = judge_slice_start(signals);
+    CHECK(printable_other.reason == "invalid");
+    CHECK(printable_other.message.find("plate_index 1 failed validation") != std::string::npos);
+}
+
+TEST_CASE("a plate with nothing printable and no validation failure is nothing to slice, whatever error it left", "[orcamcp][SliceProgress]")
+{
+    // An object partly off the plate leaves the plate not ready, and the app records that as its last
+    // error (Plater::priv::update_background_process); the plate still has nothing printable on it.
+    SliceStartSignals signals = signals_with({selected(empty_plate(0))});
+    signals.last_slice_failed = true;
+    const SliceStartReport report = judge_slice_start(signals);
+    CHECK(report.reason == "nothing_to_slice");
     CHECK(report.message.find("partly outside its plate") != std::string::npos);
 }
 
@@ -551,20 +602,44 @@ TEST_CASE("an export is refused before it is asked for, for the first reason tha
     ExportStart empty_scene;
     empty_scene.has_objects       = false;
     empty_scene.already_exporting = true;
+    REQUIRE(export_not_started(empty_scene).has_value());
     CHECK(export_not_started(empty_scene)->find("no objects") != std::string::npos);
 
     ExportStart busy;
     busy.already_exporting = true;
+    REQUIRE(export_not_started(busy).has_value());
     CHECK(*export_not_started(busy) == "Another export job is running.");
 
     ExportStart invalid;
     invalid.validation_error = "Prime Tower is partially outside the printable area";
+    REQUIRE(export_not_started(invalid).has_value());
     CHECK(export_not_started(invalid)->find("Prime Tower is partially outside the printable area") != std::string::npos);
 
     ExportStart failed;
     failed.failure = "PlaceholderParserError: unknown variable";
+    REQUIRE(export_not_started(failed).has_value());
     CHECK(export_not_started(failed)->find("unknown variable") != std::string::npos);
 
     // Nothing refused and not asked for yet: no verdict.
     CHECK_FALSE(export_not_started(ExportStart{}).has_value());
+}
+
+TEST_CASE("an export of a plate its slice's G-code check failed, or never checked, is refused", "[orcamcp][SliceProgress][GcodeCheck]")
+{
+    ExportStart unchecked;
+    unchecked.checked = false;
+    REQUIRE(export_not_started(unchecked).has_value());
+    CHECK(export_not_started(unchecked)->find("has not been checked") != std::string::npos);
+
+    ExportStart failed_check;
+    failed_check.gcode_check_refusal = "plate_index 0 failed the app's check of its sliced G-code";
+    REQUIRE(export_not_started(failed_check).has_value());
+    CHECK(*export_not_started(failed_check) == "The export did not start: plate_index 0 failed the app's check of its sliced G-code");
+
+    // A plate that failed validation has no result either: its validation failure is the reason given.
+    ExportStart invalid;
+    invalid.checked          = false;
+    invalid.validation_error = "Prime Tower is partially outside the printable area";
+    REQUIRE(export_not_started(invalid).has_value());
+    CHECK(export_not_started(invalid)->find("Prime Tower") != std::string::npos);
 }

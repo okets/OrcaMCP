@@ -1,10 +1,12 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPPrinterTools.cpp
 #include "OrcaMCPServer.hpp"
 #include "OrcaMCPCommon.hpp"
+#include "OrcaMCPGcodeCheck.hpp"
 #include "OrcaMCPPrinterUtils.hpp"
 #include "OrcaMCPProjectMatch.hpp"
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
+#include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/DeviceManager.hpp"
 #include "slic3r/GUI/DeviceCore/DevManager.h"
@@ -98,6 +100,18 @@ bool resolve_flashforge(std::unique_ptr<Slic3r::PrintHost>& host, Slic3r::Flashf
     return true;
 }
 
+// Why a send of plates first..last is refused: the first of them whose slice's check of its own
+// G-code failed, which keeps the GUI's Print and Send buttons off too. A plate without a slice result
+// has not been checked; the callers decide what an unsliced plate means.
+std::optional<std::string> gcode_check_send_refusal(GUI::PartPlateList& plates, int first, int last)
+{
+    for (int index = first; index <= last; ++index)
+        if (PartPlate* plate = plates.get_plate(index))
+            if (std::optional<std::string> refusal = plate_gcode_check_refusal(*plate, index))
+                return "The send did not start: " + *refusal;
+    return std::nullopt;
+}
+
 // send_to_printer with direct=false: hand the send over to the user's own dialog.
 nlohmann::json open_send_dialog(bool all_plates)
 {
@@ -109,6 +123,12 @@ nlohmann::json open_send_dialog(bool all_plates)
         // Check if slicing is complete
         if (plater->is_background_process_slicing())
             return error_response("Slicing is still in progress. Wait for slicing to complete before sending to printer.");
+
+        GUI::PartPlateList& plates = plater->get_partplate_list();
+        const int           first  = all_plates ? 0 : plates.get_curr_plate_index();
+        const int           last   = all_plates ? plates.get_plate_count() - 1 : first;
+        if (std::optional<std::string> refusal = gcode_check_send_refusal(plates, first, last))
+            return error_response(*refusal);
 
         // Check if current printer preset has a print host configured (OctoPrint, Klipper, etc.)
         PresetBundle* preset_bundle  = wxGetApp().preset_bundle;
@@ -397,7 +417,9 @@ void OrcaMCPServer::register_printer_tools()
         "Upload the sliced plate to the configured print host and START PRINTING IT: start_print defaults to true, so a bare call begins a print on real hardware. Pass start_print=false to upload only. The upload runs "
         "without any dialog: on a Flashforge printer with a material station the project's filaments are "
         "mapped onto the loaded slots automatically (pass material_mappings to choose the slots "
-        "yourself). Pass direct=false to open OrcaSlicer's send dialog and leave the send to the user.",
+        "yourself). Pass direct=false to open OrcaSlicer's send dialog and leave the send to the user. "
+        "Refused, as the GUI's Print and Send buttons are off, when a plate it would send failed the check its "
+        "slice ran on its G-code (get_slicing_status's plates[].gcode_check).",
         {
             {"type", "object"},
             {"properties", {
@@ -494,6 +516,10 @@ void OrcaMCPServer::register_printer_tools()
                     return nlohmann::json::object();
                 }
                 plate_idx = plater->get_partplate_list().get_curr_plate_index();
+                if (std::optional<std::string> refusal = gcode_check_send_refusal(plater->get_partplate_list(), plate_idx, plate_idx)) {
+                    prep_error = *refusal;
+                    return nlohmann::json::object();
+                }
                 if (!resolve_print_host_config(cfg, host_type, prep_error))
                     return nlohmann::json::object();
 
@@ -550,6 +576,11 @@ void OrcaMCPServer::register_printer_tools()
                 Plater*                   plater = wxGetApp().plater();
                 if (!plater) {
                     send_error = "Plater not available";
+                    return {{"ok", false}};
+                }
+                // Judged again: the plate may have been sliced anew while the printer was asked for its slots.
+                if (std::optional<std::string> refusal = gcode_check_send_refusal(plater->get_partplate_list(), plate_idx, plate_idx)) {
+                    send_error = *refusal;
                     return {{"ok", false}};
                 }
                 const bool ok = plater->send_gcode_direct(plate_idx, extended_info,

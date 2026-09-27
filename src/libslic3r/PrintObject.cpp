@@ -6,6 +6,7 @@
 #include "ClipperUtils.hpp"
 #include "Clipper2Utils.hpp"
 #include "ElephantFootCompensation.hpp"
+#include "PrintableHeightLimit.hpp"
 #include "Geometry.hpp"
 #include "I18N.hpp"
 #include "Layer.hpp"
@@ -314,6 +315,8 @@ std::vector<std::set<int>> PrintObject::detect_extruder_geometric_unprintables()
     // check unprintable filaments caused by printable height limit
     for (size_t extruder_id = 0; extruder_id < printable_height_per_extruder.size(); ++extruder_id) {
         double printable_height = printable_height_per_extruder[extruder_id];
+        if (!is_height_limit(printable_height)) // Orca: an extruder without a height of its own limits nothing
+            continue;
         for (size_t layer_idx = 0; layer_idx < m_layers.size(); ++layer_idx) {
             auto layer = m_layers[layer_idx];
             if (layer->print_z <= printable_height)

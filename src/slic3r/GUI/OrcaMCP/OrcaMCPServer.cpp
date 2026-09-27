@@ -7,6 +7,7 @@
 #include "OrcaMCPConfigKeys.hpp"
 #include "OrcaMCPConfigValues.hpp"
 #include "OrcaMCPFilamentUtils.hpp"
+#include "OrcaMCPGcodeCheck.hpp"
 #include "OrcaMCPLayerRanges.hpp"
 #include "OrcaMCPSliceEstimate.hpp"
 #include "OrcaMCPServerInfo.hpp"
@@ -292,11 +293,12 @@ void apply_pending_settings(Plater& plater, const McpDialogSuppressionGuard& gua
                                   [&plater] { plater.apply_pending_background_update(); });
 }
 
-// Why the app's own validation refused the selected plate, the one reslice() works on, or nullopt when
-// it did not. The verdict is the plate's (PartPlate::is_apply_result_invalid, which
-// update_background_process sets as it validates); the words are the app's validation of it, whose Print
-// the process holds, formatted as the GUI's notification formats them. The run's other plates are judged
-// by their verdict alone (SliceRunPlate::valid).
+// The app's words for why its own validation refused the selected plate, the one reslice() works on, or
+// nullopt when it did not or has none now. The verdict is the plate's (PartPlate::is_apply_result_invalid,
+// which update_background_process sets as it validates); the words are the app's validation of it, whose
+// Print the process holds, formatted as the GUI's notification formats them. A verdict the Print no longer
+// explains -- its object was left out of it since, as one the build volume finds too tall is -- has no
+// words, and is judged as the run's other plates are, by the verdict alone (SliceRunPlate::valid).
 std::optional<std::string> selected_plate_validation_failure(Plater& plater, PartPlateList& plate_list)
 {
     const PartPlate* plate = plate_list.get_curr_plate();
@@ -306,7 +308,7 @@ std::optional<std::string> selected_plate_validation_failure(Plater& plater, Par
     plater.post_process_string_object_exception(error);
     if (!error.string.empty())
         return error.string;
-    return "plate_index " + std::to_string(plate_list.get_curr_plate_index()) + " failed validation";
+    return std::nullopt;
 }
 
 // What the app shows right after slice_all dispatched its slice, for OrcaMCP::judge_slice_start.
@@ -2843,9 +2845,11 @@ void OrcaMCPServer::register_builtin_tools()
         "message: busy_slicing (the pipeline is busy -- get_slicing_status's busy: a slice or Slice All "
         "run, an export, an upload, or the last slice still stopping; nothing is started -- call "
         "wait_for_slice, then slice_all again), already_sliced (nothing to do), busy_job, "
-        "nothing_to_slice, invalid (the app refuses the plate as it stands -- its validation, an object "
+        "invalid (the app refuses the plate as it stands -- its validation, an object "
         "partly off the plate, a filament check, missing plugins, a broken mixed filament, or a last "
-        "slice that failed; message says which) or unknown. Then call "
+        "slice that failed; message says which, in the app's words for a validation failure), "
+        "nothing_to_slice (no printable object fully on the plates -- one partly off its plate or too tall "
+        "for the printer does not count -- and no refusal the app gives words for) or unknown. Then call "
         "wait_for_slice, or poll get_slicing_status until state is \"done\"; its plates array says which "
         "plates have a result. The plate selection walks from the first plate to the last while the "
         "run is in progress, and get_slicing_status puts back the plate that was selected here once "
@@ -2930,7 +2934,9 @@ void OrcaMCPServer::register_builtin_tools()
         "export_gcode",
         ToolCategory::Slicing,
         "Write the sliced plate's G-code",
-        "Export G-code. Requires slicing complete.",
+        "Export the selected plate's G-code. The plate must be sliced (slice_all, then wait_for_slice). "
+        "Refused, as the GUI's Export button is off, when the check its slice ran on its G-code failed: "
+        "get_slicing_status's plates[].gcode_check names what it found.",
         {
             {"type", "object"},
             {"properties", {
@@ -3251,7 +3257,12 @@ void OrcaMCPServer::register_builtin_tools()
         "still there (null once none is, after new_project or load_project), with a message "
         "saying which plates and why when it is not done. When a slice_all run over every plate ends, "
         "this restores the plate that was selected when slice_all was called and reports it as "
-        "restored_selected_plate.",
+        "restored_selected_plate. Each plate's gcode_check is the check its slice ran on its own G-code "
+        "(null without a result): {ok: true}, or ok false with problems -- outside_bed, "
+        "above_printable_height, above_extruder_height, outside_extruder_area, in_wrapping_area, "
+        "over_printed_mass, toolpath_outside, filament_bed_conflict -- and a message; above_printable_height "
+        "also gives highest_layer_z_mm and printable_height_mm, and a hint at the usual cause. The GUI keeps a "
+        "failed plate's Print and Export buttons off, and export_gcode and send_to_printer refuse it.",
         {
             {"type", "object"},
             {"properties", nlohmann::json::object()}
@@ -3302,7 +3313,8 @@ void OrcaMCPServer::register_builtin_tools()
                                                                     : std::nullopt;
                     plates.push_back({{"index", i},
                                       {"slice_result_valid", valid},
-                                      {"percent", percent ? nlohmann::json(*percent) : nlohmann::json(nullptr)}});
+                                      {"percent", percent ? nlohmann::json(*percent) : nlohmann::json(nullptr)},
+                                      {"gcode_check", p != nullptr ? OrcaMCP::plate_gcode_check_json(*p) : nlohmann::json(nullptr)}});
                 }
 
                 // The one answer slice_all's refusal and wait_for_slice go by (OrcaMCP::pipeline_busy).
@@ -5443,8 +5455,9 @@ void OrcaMCPServer::register_bridge_tools()
         "and the selected plate has no result), "
         "timed_out (still slicing: call it again), or app_gone (the app quit or crashed during the wait). "
         "slicing_status is get_slicing_status's final "
-        "answer, with each plate's percent. The wait is capped 15 s below ORCAMCP_TIMEOUT (105 s at the "
-        "default 120 s), or a quarter below it when that is less, because the bridge answers nothing "
+        "answer, with each plate's percent and gcode_check. The wait is capped 15 s below "
+        "ORCAMCP_TIMEOUT (105 s at the default 120 s), or a quarter below it when that is less, "
+        "because the bridge answers nothing "
         "else while it waits; timeout_cap_s reports the cap applied. Under an ORCAMCP_TIMEOUT of 2 s "
         "there is no room to wait, and the call is refused.",
         {

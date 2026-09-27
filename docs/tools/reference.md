@@ -281,8 +281,12 @@ Check slicing progress, for the selected plate and for every plate.
   "plate_index": 0,
   "slice_result_valid": true,
   "plates": [
-    {"index": 0, "slice_result_valid": true, "percent": 100},
-    {"index": 1, "slice_result_valid": true, "percent": 100}
+    {"index": 0, "slice_result_valid": true, "percent": 100, "gcode_check": {"ok": true}},
+    {"index": 1, "slice_result_valid": true, "percent": 100,
+     "gcode_check": {"ok": false, "problems": ["above_printable_height"],
+                     "message": "a toolpath is above the printer's printable height (the highest layer prints at 20.5 mm; the printable height is 20 mm)",
+                     "highest_layer_z_mm": 20.5, "printable_height_mm": 20,
+                     "hint": "The app's check before slicing measures each object without its raft, so a raft lifts an object that fits by the raft's thickness; fewer raft_layers, or a lower object, keeps its top layer within the printable height."}}
   ],
   "plates_sliced": 2,
   "plates_total": 2,
@@ -301,6 +305,7 @@ Check slicing progress, for the selected plate and for every plate.
 | `status` | Legacy field, `slicing` or `idle` only - use `state` |
 | `slice_result_valid` | The current plate's own slice-result flag, the same one the GUI's Print/Export buttons use |
 | `plates` | Every plate's slice-result flag and `percent`, so a multi-plate run can be followed plate by plate (and a plate that failed can be identified). `percent` is 0-100 while a plate slices and 100 once it has a result; `null` for a plate with no result that nothing is slicing. The GUI drops progress updates while another job (an arrange, an orient) runs, so a percent can stand still then. An MCP change to an object's settings, layer ranges, adaptive layers, name, filament or printable state, or to the project's colours, flush volumes, mixed filaments or a plate's prime tower, marks the plates it touches not sliced at once, the unselected ones too (the app alone would find out only when the plate is next selected). Slicing again takes back the result of a plate the change did not affect without slicing it |
+| `plates[].gcode_check` | The check the plate's slice ran on its own G-code, `null` without a slice result: `{"ok": true}`, or `ok: false` with `problems` and a `message` in words. The problems: `outside_bed` (a toolpath outside the bed's printable area), `above_printable_height` (above the printer's printable height: the highest layer an extrusion prints at is above it, and both are given in mm as `highest_layer_z_mm` / `printable_height_mm`, with a `hint`. The check before slicing already refuses an object whose own top layer is above the printable height, so what gets here is almost always lifted by a raft, which that check leaves out; a `printable_height` of 0 sets no limit), `above_extruder_height` (above the printable height of the extruder the filament is on), `outside_extruder_area` (outside the area that extruder can reach), `in_wrapping_area`, `over_printed_mass` (heavier than the printer's maximum printed mass), `toolpath_outside` (outside the printable volume), `filament_bed_conflict` (a filament the plate type has no first-layer bed temperature for), and `check_bit_<n>` for a check this list does not name yet. The GUI keeps a failed plate's Print, Send and Export buttons off, and `export_gcode` and `send_to_printer` refuse it. Until v2.5.0.6 the height checks never tripped on a non-Bambu printer |
 | `busy` / `busy_reason` | Whether the slicing pipeline is busy, and with what: `slicing` (a slice or Slice All run), `exporting` (the background process writes G-code), `uploading` (it sends G-code to a printer) or `stopping` (the last slice finished or was cancelled, and its completion is not taken in yet). `slice_all` starts nothing while it is busy, and `wait_for_slice` waits until it is not. `is_slicing` is only the first of these |
 | `stage` | While slicing: the app's progress text for the running slice ("Generating walls", "Generating support", ...), in the app's language. `null` when nothing is slicing |
 | `plates_sliced` / `plates_total` | How many of the plates have a valid result |
@@ -1622,8 +1627,8 @@ Slice every plate in the project, one after another, exactly as the GUI's **Slic
 | `busy_slicing` | The pipeline is busy (`get_slicing_status`'s `busy`): a slice or Slice All run, a G-code export, an upload, or the last slice still stopping. `message` says which, e.g. "Slice All is slicing plate_index 2 of 5 plate(s)" or "a G-code export is running". Nothing was started: call `wait_for_slice`, which waits the same state out, then `slice_all` again. Started then, a slice would be stopped by the previous one's completion |
 | `already_sliced` | Every plate asked for already has a valid result: nothing to do, and `wait_for_slice` reports `done` |
 | `busy_job` | An arrange or orient holds the app; call `slice_all` again when it is done |
-| `nothing_to_slice` | No printable object fully on the plates asked for: an object marked unprintable, or partly outside its plate, does not count (`get_object_info`'s `on_bed` and `placement_warning` say which) |
-| `invalid` | The app refuses a plate it was asked for as it stands, the way the GUI greys its Slice button; `message` says which check, the first that applies: its validation (the plate's validation result, not a guess from `active_warnings`; `message` gives the app's words, e.g. "Prime Tower is partially outside the printable area"), plugins slicing needs but that are missing, a mixed filament that lost a component, a plate not ready to slice (an object partly off the plate or over its height, or a filament that cannot print where it is), or the plate's last slice having failed, which the app does not retry until something on the plate changes. A setting fixed just before the call counts: the app takes in a settings change 0.5 s after it, and `slice_all` applies one still waiting first (so do `get_slicing_status`, `get_print_estimate` and `export_gcode`), so it is not refused on the failure the fix removed |
+| `nothing_to_slice` | No printable object fully on the plates asked for: an object marked unprintable, or partly outside its plate, does not count (`get_object_info`'s `on_bed` and `placement_warning` say which), and neither does one taller than the printable height, which the app leaves out of the slice (`active_warnings`: "laid over the boundary of plate or exceeds the height limit"). A refusal the app gives words for comes first: with a `printable_height` of 0, which the build volume takes for no limit, the object stays in the slice and the app's validation refuses it, reported as `invalid` with its words ("The object ... exceeds the maximum build volume height.") |
+| `invalid` | The app refuses a plate it was asked for as it stands, the way the GUI greys its Slice button, ahead of `nothing_to_slice`; `message` says which check, the first that applies: its validation (the plate's validation result, not a guess from `active_warnings`; `message` gives the app's words, e.g. "Prime Tower is partially outside the printable area"), plugins slicing needs but that are missing, a mixed filament that lost a component, a plate not ready to slice (an object partly off the plate or over its height, or a filament that cannot print where it is), or the plate's last slice having failed, which the app does not retry until something on the plate changes. A setting fixed just before the call counts: the app takes in a settings change 0.5 s after it, and `slice_all` applies one still waiting first (so do `get_slicing_status`, `get_print_estimate` and `export_gcode`), so it is not refused on the failure the fix removed |
 | `unknown` | No signal explains it; `active_warnings` may |
 
 **Note:** Async operation. Call `wait_for_slice`, or poll `get_slicing_status` until `state` is
@@ -1673,8 +1678,12 @@ Export the selected plate's sliced G-code to a file. The file is written asynchr
 running." while the previous export is still writing (call it again once `busy` in
 `get_slicing_status` is false), or "the plate failed validation: ..." with the app's words for the
 plate being exported (the selected one, never another plate's) -- the app's export refuses such a
-plate without a word, and nothing was ever written. An error dialog the
-app raised is added as `error_messages`.
+plate without a word, and nothing was ever written. The plate must be sliced: without a slice result
+its G-code has not been checked ("... has not been checked: slice_all, then wait_for_slice, first").
+A plate whose slice failed its G-code check is refused as the GUI's Export button is off, with the
+problems in words ("The export did not start: plate_index 0 failed the app's check of its sliced
+G-code, ...: a toolpath is above the printer's printable height. ..."); `get_slicing_status`'s
+`plates[].gcode_check` lists them. An error dialog the app raised is added as `error_messages`.
 
 ---
 
@@ -2657,14 +2666,24 @@ HTTP error, unreadable answer): only an unreachable printer falls back to its la
 ---
 
 ### send_to_printer
-Send sliced G-code to printer.
+Upload the selected plate's sliced G-code to the configured print host **and start printing it**:
+`start_print` defaults to true, so a bare call begins a print on real hardware. Never call it to
+look at a dialog or to test a refusal.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `all_plates` | boolean | No | Send all plates |
+| `direct` | boolean | No | `true` (default): upload with no dialog. `false`: open OrcaSlicer's send dialog (Bambu's `SelectMachineDialog`, or the print-host dialog) and leave the send to the user |
+| `start_print` | boolean | No | Start printing once the upload finishes (default `true`). Direct sends only |
+| `leveling_before_print`, `use_material_station`, `material_mappings` | | No | Flashforge hosts with local-API credentials only; see Material mapping below |
+| `file_name` | string | No | Name to store the upload under. Direct sends only |
+| `all_plates` | boolean | No | Dialog sends only (`direct: false`): send every plate |
 
-**Note:** Opens appropriate upload dialog (OctoPrint or Bambu).
+Refused, as the GUI's Print and Send buttons are off, when a plate it would send failed the check
+its slice ran on its G-code (`get_slicing_status`'s `plates[].gcode_check`): "The send did not
+start: plate_index 0 failed the app's check of its sliced G-code, ...: a toolpath is above the
+printer's printable height. ...". A direct send also needs the plate sliced ("Plate is not sliced;
+run slice_all first"), and judges the check again just before it uploads.
 
 ---
 

@@ -183,6 +183,7 @@
 #include "FilamentMapDialog.hpp"
 #include "CloneDialog.hpp"
 #include "PurgeModeDialog.hpp"
+#include "OrcaMCP/OrcaMCPGcodeCheck.hpp"
 #include "OrcaMCP/OrcaMCPModelLoad.hpp"
 #include "OrcaMCP/OrcaMCPQuit.hpp"
 #include "OrcaMCP/OrcaMCPSliceCredit.hpp"
@@ -18443,6 +18444,12 @@ std::optional<std::string> Plater::export_gcode_to_file(const std::string& outpu
     } catch (const std::exception &ex) {
         attempt.failure = ex.what();
     }
+    // The check the plate's slice ran on its G-code, which keeps the GUI's Print and Export buttons off
+    // when it fails (PartPlate::is_slice_result_ready_for_print): judged on the plate's own result.
+    PartPlate* plate = p->partplate_list.get_curr_plate();
+    attempt.checked  = plate != nullptr && OrcaMCP::plate_gcode_checked(*plate);
+    if (attempt.checked)
+        attempt.gcode_check_refusal = OrcaMCP::plate_gcode_check_refusal(*plate, p->partplate_list.get_curr_plate_index());
     if (auto refused = OrcaMCP::export_not_started(attempt)) {
         BOOST_LOG_TRIVIAL(warning) << "export_gcode_to_file: " << *refused;
         return refused;

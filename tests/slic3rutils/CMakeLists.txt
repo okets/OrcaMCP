@@ -58,6 +58,7 @@ add_executable(${_TEST_NAME}_tests
     test_queued_call.cpp
     test_slice_credit.cpp
     test_slice_progress.cpp
+    test_gcode_check.cpp
     test_config_values.cpp
     test_http_server.cpp
     test_thread_cancel.cpp

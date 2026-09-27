@@ -379,6 +379,7 @@ set(lisbslic3r_sources
     PublishSettings.cpp
     PublishSettings.hpp
     PrintApply.cpp
+    PrintableHeightLimit.hpp
     PrintBase.cpp
     PrintBase.hpp
     MaterialType.cpp
