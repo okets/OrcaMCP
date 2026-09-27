@@ -4,6 +4,7 @@
 #include "libslic3r/libslic3r.h"
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/Print.hpp"
+#include "libslic3r/ExtruderPrintableHeight.hpp"
 #include "libslic3r/ClipperUtils.hpp"
 #include "libslic3r/LocalesUtils.hpp"
 #include "libslic3r/format.hpp"
@@ -197,6 +198,14 @@ static float get_z_height(const std::string_view comment_1)
         print_z = stof(num_str);
     } catch (const std::exception &) {}
     return print_z;
+}
+
+// Orca: the tag carrying a layer's print_z. GCode::process_layer writes "; Z_HEIGHT:" for Bambu
+// printers and ";Z:" for every other; reading only the first left every other printer's print_z at
+// 0, so the G-code check never found a toolpath above the printable height there.
+static bool is_layer_z_tag(const std::string_view comment)
+{
+    return boost::starts_with(comment, " Z_HEIGHT:") || boost::starts_with(comment, "Z:");
 }
 
 CommandProcessor::CommandProcessor()
@@ -2874,8 +2883,9 @@ bool GCodeProcessor::check_multi_extruder_gcode_valid(const int                 
                         }
                     }
 
-                // check printable height
-                if ((extruder_id < printable_heights.size()) && (iter->second.max_print_z > printable_heights[extruder_id])) {
+                // check printable height. Orca: only an extruder with a height of its own limits it.
+                const bool has_extruder_height = extruder_id < printable_heights.size() && limits_extruder_height(printable_heights[extruder_id]);
+                if (has_extruder_height && (iter->second.max_print_z > printable_heights[extruder_id])) {
                     m_result.gcode_check_result.error_code |= (1 << 1);
                     std::pair<int, int> filament_to_object_id;
                     filament_to_object_id.first  = iter->first;
@@ -4153,8 +4163,8 @@ void GCodeProcessor::process_tags(const std::string_view comment, bool producers
         return;
     }
 
-    // ; Z_HEIGHT:
-    if (boost::starts_with(comment, " Z_HEIGHT:")) {
+    // ; Z_HEIGHT: or ;Z:
+    if (is_layer_z_tag(comment)) {
         m_print_z = get_z_height(comment);
         return;
     }
