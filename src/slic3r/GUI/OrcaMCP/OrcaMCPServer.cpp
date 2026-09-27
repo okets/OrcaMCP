@@ -5148,17 +5148,18 @@ void OrcaMCPServer::register_bridge_tools()
         "which plates and why), not_slicing (nothing was running and the selected plate has no result), "
         "timed_out (still slicing: call it again), or app_gone (the app quit or crashed during the wait). "
         "slicing_status is get_slicing_status's final "
-        "answer, with each plate's percent. The wait is capped at ORCAMCP_TIMEOUT minus 15 s (105 s at "
-        "the default 120 s), because the bridge answers nothing else while it waits; timeout_cap_s "
-        "reports the cap applied.",
+        "answer, with each plate's percent. The wait is capped 15 s below ORCAMCP_TIMEOUT (105 s at the "
+        "default 120 s), or a quarter below it when that is less, because the bridge answers nothing "
+        "else while it waits; timeout_cap_s reports the cap applied. Under an ORCAMCP_TIMEOUT of 2 s "
+        "there is no room to wait, and the call is refused.",
         {
             {"type", "object"},
             {"properties", {
                 {"timeout_s", {
                     {"type", "number"},
                     {"minimum", 1},
-                    {"description", "Longest wait in seconds. Default and ceiling: the cap (ORCAMCP_TIMEOUT "
-                                    "minus 15 s, 105 s by default). A longer value is capped, and the "
+                    {"description", "Longest wait in seconds. Default and ceiling: the cap (15 s below "
+                                    "ORCAMCP_TIMEOUT, 105 s by default). A longer value is capped, and the "
                                     "response says so with timeout_capped."}
                 }}
             }}

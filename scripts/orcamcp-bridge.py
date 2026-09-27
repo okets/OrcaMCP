@@ -496,10 +496,11 @@ def call_start_orca(request_id, arguments: dict) -> dict:
 
 # wait_for_slice. Its text is the C++ registration's, served from orcamcp_tools.json; these are the
 # numbers that text states.
-WAIT_FOR_SLICE_HEADROOM_S = 15               # the cap sits this far below ORCAMCP_TIMEOUT
-WAIT_FOR_SLICE_MIN_CAP_S = 5
-WAIT_FOR_SLICE_POLL_S = 1.5                  # between two get_slicing_status calls
-WAIT_FOR_SLICE_POLL_TIMEOUT_S = (1.0, 10.0)  # one poll's own HTTP timeout: (least, most)
+WAIT_FOR_SLICE_HEADROOM_S = 15           # the cap sits this far below ORCAMCP_TIMEOUT,
+WAIT_FOR_SLICE_HEADROOM_SHARE = 0.25     # or this share of it when that is less (ORCAMCP_TIMEOUT < 60 s)
+WAIT_FOR_SLICE_MIN_S = 1                 # the shortest wait; a cap below it leaves no room to wait
+WAIT_FOR_SLICE_POLL_S = 1.5              # between two get_slicing_status calls
+WAIT_FOR_SLICE_MAX_POLL_TIMEOUT_S = 10.0  # one poll's own HTTP timeout, at most; at least what is left
 # The outcomes the app's get_slicing_status reports in slice_run.outcome once a run is over.
 FINISHED_SLICE_OUTCOMES = ("done", "ended_early", "incomplete")
 # JSON-RPC error the app answers with while it quits (OrcaMCPJsonRpcError.hpp, McpShuttingDown).
@@ -521,13 +522,17 @@ class AppUnavailable(Exception):
 
 def wait_for_slice_cap() -> float:
     """The longest wait_for_slice waits. The bridge answers nothing else meanwhile -- not a ping, not a
-    cancel -- so the wait stays under ORCAMCP_TIMEOUT, the longest a user has said one call may take."""
-    return max(WAIT_FOR_SLICE_MIN_CAP_S, TIMEOUT - WAIT_FOR_SLICE_HEADROOM_S)
+    cancel -- so the wait always stays below ORCAMCP_TIMEOUT, the longest a user has said one call may
+    take: 15 s below it, or a quarter below it when that is less, so a small timeout keeps headroom too."""
+    return TIMEOUT - min(WAIT_FOR_SLICE_HEADROOM_S, TIMEOUT * WAIT_FOR_SLICE_HEADROOM_SHARE)
 
 
 def parse_wait_timeout(value, cap: float) -> tuple:
     """(seconds, capped, error) for wait_for_slice's timeout_s. Absent means the cap. A numeric string
     is read as a number, as the app's own parameters are for a client with a stale schema."""
+    if cap < WAIT_FOR_SLICE_MIN_S:
+        return None, False, (f"ORCAMCP_TIMEOUT is {TIMEOUT} s, which leaves no room to wait: wait_for_slice "
+                             f"needs it to be 2 s or more. Raise ORCAMCP_TIMEOUT, or poll get_slicing_status.")
     if value is None:
         return cap, False, None
     seconds = None
@@ -538,7 +543,7 @@ def parse_wait_timeout(value, cap: float) -> tuple:
             seconds = float(value)
         except ValueError:
             pass
-    if seconds is None or not math.isfinite(seconds) or seconds < 1:
+    if seconds is None or not math.isfinite(seconds) or seconds < WAIT_FOR_SLICE_MIN_S:
         return None, False, f"timeout_s must be a number of seconds, at least 1 (got {value!r})"
     return min(seconds, cap), seconds > cap, None
 
@@ -575,9 +580,9 @@ def call_app_tool(name: str, arguments: dict, timeout: float) -> dict:
 
 
 def poll_timeout(remaining: float) -> float:
-    """One status poll's HTTP timeout: what is left of the wait, within WAIT_FOR_SLICE_POLL_TIMEOUT_S."""
-    least, most = WAIT_FOR_SLICE_POLL_TIMEOUT_S
-    return min(most, max(least, remaining))
+    """One status poll's HTTP timeout: what is left of the wait, up to WAIT_FOR_SLICE_MAX_POLL_TIMEOUT_S,
+    so no poll carries the wait past its deadline."""
+    return max(0.05, min(WAIT_FOR_SLICE_MAX_POLL_TIMEOUT_S, remaining))
 
 
 def slice_outcome(status: dict) -> tuple:

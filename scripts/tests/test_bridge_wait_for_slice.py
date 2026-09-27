@@ -142,17 +142,46 @@ class WaitForSliceTest(unittest.TestCase):
         self.assertGreaterEqual(elapsed, 1.0)
         self.assertLess(elapsed, 3.0)
 
-    def test_the_cap_stays_fifteen_seconds_under_the_request_timeout(self):
-        for request_timeout, cap in ((120, 105), (300, 285), (10, 5), (3, 5)):
+    def test_the_cap_stays_fifteen_seconds_under_a_request_timeout_of_a_minute_or_more(self):
+        for request_timeout, cap in ((120, 105), (300, 285), (60, 45)):
             with self.subTest(ORCAMCP_TIMEOUT=request_timeout):
                 self.bridge.TIMEOUT = request_timeout
                 self.assertEqual(self.bridge.wait_for_slice_cap(), cap)
 
+    def test_under_a_minute_the_cap_stays_a_quarter_under_the_request_timeout(self):
+        for request_timeout, cap in ((40, 30), (10, 7.5), (2, 1.5)):
+            with self.subTest(ORCAMCP_TIMEOUT=request_timeout):
+                self.bridge.TIMEOUT = request_timeout
+                self.assertEqual(self.bridge.wait_for_slice_cap(), cap)
+
+    def test_the_cap_is_always_below_the_request_timeout(self):
+        for request_timeout in (1, 2, 3, 5, 10, 59, 60, 61, 120, 600):
+            with self.subTest(ORCAMCP_TIMEOUT=request_timeout):
+                self.bridge.TIMEOUT = request_timeout
+                self.assertLess(self.bridge.wait_for_slice_cap(), request_timeout)
+
+    def test_a_request_timeout_too_short_to_wait_in_is_refused_before_polling(self):
+        self.bridge.TIMEOUT = 1
+        result, text = self.call()
+        self.assertTrue(result["isError"])
+        self.assertIn("ORCAMCP_TIMEOUT", text)
+        self.assertEqual(FakeApp.calls, [])
+
+    def test_a_wait_never_outlasts_the_request_timeout_even_when_every_poll_is_slow(self):
+        self.bridge.TIMEOUT = 2
+        FakeApp.script = [SLICING]
+        FakeApp.delay_every_s = 0.4
+        started = time.monotonic()
+        _, report = self.call({"timeout_s": 60})
+        elapsed = time.monotonic() - started
+        self.assertEqual(report["outcome"], "timed_out")
+        self.assertLess(elapsed, 2.0)
+
     def test_a_timeout_above_the_cap_is_cut_to_the_cap_and_says_so(self):
         self.bridge.TIMEOUT = 20
         _, report = self.call({"timeout_s": 500})
-        self.assertEqual(report["timeout_s"], 5)
-        self.assertEqual(report["timeout_cap_s"], 5)
+        self.assertEqual(report["timeout_s"], 15)
+        self.assertEqual(report["timeout_cap_s"], 15)
         self.assertTrue(report["timeout_capped"])
 
     def test_a_timeout_within_the_cap_is_used_as_given(self):
@@ -191,7 +220,7 @@ class WaitForSliceTest(unittest.TestCase):
         self.assertEqual(report["outcome"], "done")
 
     def test_a_status_poll_the_app_is_too_busy_to_answer_does_not_end_the_wait(self):
-        self.bridge.WAIT_FOR_SLICE_POLL_TIMEOUT_S = (0.05, 0.05)
+        self.bridge.WAIT_FOR_SLICE_MAX_POLL_TIMEOUT_S = 0.05
         FakeApp.delay_first_s = 0.3
         FakeApp.script = [DONE]
         result, report = self.call({"timeout_s": 2})

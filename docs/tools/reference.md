@@ -2695,12 +2695,13 @@ any more, or at the timeout.
 |------|------|----------|-------------|
 | `timeout_s` | number | No | Longest wait in seconds, at least 1. Default and ceiling: the cap |
 
-**The cap** is `ORCAMCP_TIMEOUT` minus 15 s, and at least 5 s: 105 s at the default 120 s. While
-it waits the bridge answers nothing else (its stdio loop is single-threaded: no ping, no cancel), so
-the wait stays under the longest time a user has said one call may take. A longer `timeout_s` is
-cut to the cap and the response says `timeout_capped: true`. A slice that outlasts the cap needs
-another call; each poll's own HTTP request is bounded by what is left of the wait, and a poll the
-app is too busy to answer does not end it.
+**The cap** is 15 s below `ORCAMCP_TIMEOUT` (105 s at the default 120 s), or a quarter below it
+when that is less (30 s at 40 s, 7.5 s at 10 s). While it waits the bridge answers nothing else (its
+stdio loop is single-threaded: no ping, no cancel), so the wait always stays under the longest time a
+user has said one call may take. A longer `timeout_s` is cut to the cap and the response says
+`timeout_capped: true`. Below an `ORCAMCP_TIMEOUT` of 2 s there is no room to wait, and the call is
+refused. A slice that outlasts the cap needs another call; each poll's own HTTP request is bounded by
+what is left of the wait, so no poll carries it past the deadline.
 
 **Example:**
 ```json
