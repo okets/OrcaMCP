@@ -191,19 +191,19 @@ json tool_examples()
             {"relative", R"({"object_id": 0, "x": 10, "y": -5})"},
             {"absolute", R"({"object_id": 0, "x": 155, "y": 155, "relative": false})"},
             {"when_to_use", "Positioning objects on bed, separating objects"},
-            {"response_includes", "position, rotation_degrees, scale, on_bed, warnings"},
+            {"response_includes", "position, rotation_degrees, scale, on_bed, instance_placement, warnings"},
             {"tip", "Unspecified axes are preserved. Use on_bed to verify valid placement."}
         }},
         {"rotate_object", {
             {"example", R"({"object_id": 0, "z": 90})"},
             {"when_to_use", "Orienting objects for better print quality or bed adhesion"},
-            {"response_includes", "position, rotation_degrees, scale, on_bed, warnings"}
+            {"response_includes", "position, rotation_degrees, scale, on_bed, instance_placement, warnings"}
         }},
         {"scale_object", {
             {"uniform", R"({"object_id": 0, "x": 1.5, "uniform": true})"},
             {"non_uniform", R"({"object_id": 0, "x": 1.0, "y": 1.0, "z": 2.0})"},
             {"when_to_use", "Resizing models, adjusting proportions"},
-            {"response_includes", "position, rotation_degrees, scale, on_bed, warnings"}
+            {"response_includes", "position, rotation_degrees, scale, on_bed, instance_placement, warnings"}
         }},
         {"get_printers", {
             {"example", "{}"},
@@ -273,7 +273,7 @@ json concepts()
             {"find_free_space", "Call get_scene_info and subtract plates[].occupancy footprints from the "
                                 "plate's bounding box. The occupancy list includes the prime tower and "
                                 "excluded bed areas, which model_objects does not."},
-            {"transform_response", "All transforms return position, rotation_degrees, scale, on_bed. Use on_bed to verify placement."},
+            {"transform_response", "All transforms return position, rotation_degrees, scale, on_bed and instance_placement. Use on_bed to verify placement: it is true when every instance is inside the plate it is on, and instance_placement says which one is not."},
             {"rotation_degrees_note", "rotation_degrees is the instance's rotation, the same numbers get_object_info reports. rotate_object turns the object about the plate's axes and updates it."},
             {"recommendation", "Read bed bounds first. Use arrange_objects to auto-place, or relative=true with offsets."}
         }},

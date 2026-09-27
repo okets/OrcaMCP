@@ -4148,7 +4148,11 @@ void ObjectList::add_object_to_list(size_t obj_idx, bool call_selection_changed,
     //BBS start add obj_idx for debug
     PartPlateList& list = wxGetApp().plater()->get_partplate_list();
     if (notify_partplate) {
-        list.notify_instance_update(obj_idx, 0, true);
+        // Orca: every instance, not just the first: an object's instances can stand on different
+        // plates, and one never notified is on none. A project saved with an object on two plates
+        // opened with the second plate empty: nothing to slice there. The first is notified as
+        // before; the others are placed only (see notify_object_added).
+        list.notify_object_added(obj_idx);
     }
     //int plate_idx = list.find_instance_belongs(obj_idx, 0);
     //std::string item_name_str = (boost::format("[P%1%][O%2%]%3%") % plate_idx % std::to_string(obj_idx) % model_object->name).str();

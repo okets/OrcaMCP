@@ -1208,36 +1208,63 @@ nlohmann::json OrcaMCPPlateUtils::GetCurrentProject(bool with_model_object_featu
     };
     j["plates"] = GetPlates(with_model_object_features, mesh_health);
 
-    // Objects that belong to no plate at all. `plates` is walked plate by plate, so anything sitting
-    // outside every one of them was simply invisible here -- which is where deleting a plate leaves
-    // its objects: PartPlateList::delete_plate moves them to the unprintable area rather than
-    // deleting them or re-homing them. An agent could not see them, could not arrange them, and had
-    // no reason to suspect they were still in the model.
-    nlohmann::json unplaced = nlohmann::json::array();
-    PartPlateList& plate_list = plater->get_partplate_list();
-    for (size_t i = 0; i < model.objects.size(); ++i) {
-        if (plate_list.find_instance(int(i), 0) >= 0)
-            continue;
-
-        const ModelObject& object = *model.objects[i];
-        unplaced.push_back(UnplacedObjectJson(object, int(i), health_at(mesh_health, int(i), object), with_model_object_features));
-    }
-    j["unplaced_objects"] = std::move(unplaced);
+    j["unplaced_objects"] = UnplacedObjectsJson(model, plater->get_partplate_list(), mesh_health, with_model_object_features);
 
     return j;
 }
 
-nlohmann::json OrcaMCPPlateUtils::UnplacedObjectJson(const ModelObject& object, int object_index,
+nlohmann::json OrcaMCPPlateUtils::UnplacedObjectsJson(const Model& model, PartPlateList& plates,
+                                                      const std::vector<OrcaMCP::MeshHealth>& mesh_health, bool with_features)
+{
+    // Instances no plate holds. `plates` is walked plate by plate, so anything sitting outside every
+    // one of them was simply invisible there -- which is where deleting a plate leaves what stood on
+    // it: PartPlateList::delete_plate moves it to the unprintable area rather than deleting it or
+    // re-homing it. An agent could not see it, could not arrange it, and had no reason to suspect it
+    // was still in the model.
+    nlohmann::json unplaced = nlohmann::json::array();
+    for (size_t i = 0; i < model.objects.size(); ++i) {
+        const ModelObject&             object = *model.objects[i];
+        const OrcaMCP::InstancesOnPlate nowhere =
+            OrcaMCP::instances_on_plate(object, [&plates, i](int instance) { return plates.find_instance(int(i), instance) < 0; });
+        if (!nowhere.ids.empty())
+            unplaced.push_back(UnplacedObjectJson(object, int(i), nowhere, health_at(mesh_health, int(i), object), with_features));
+    }
+    return unplaced;
+}
+
+namespace {
+
+// What an unplaced_objects entry says about its instances: the whole object is on no plate, or some
+// of its copies are while the others are on plates.
+std::string unplaced_reason(const std::vector<int>& unplaced, size_t instance_count)
+{
+    if (unplaced.size() == instance_count)
+        return "Not on any plate. Deleting a plate moves its objects here rather than removing them; use "
+               "delete_object, or move it onto a plate.";
+    std::string ids;
+    for (int id : unplaced)
+        ids += (ids.empty() ? "" : ", ") + std::to_string(id);
+    const bool one = unplaced.size() == 1;
+    return std::string(one ? "Instance " : "Instances ") + ids + (one ? " is" : " are") +
+           " on no plate, so " + (one ? "it prints" : "they print") +
+           " nowhere; the object's other instances are on plates, whose model_objects list them. Deleting a "
+           "plate moves what stood on it here rather than removing it.";
+}
+
+} // namespace
+
+nlohmann::json OrcaMCPPlateUtils::UnplacedObjectJson(const ModelObject& object, int object_index, const OrcaMCP::InstancesOnPlate& unplaced,
                                                      const OrcaMCP::MeshHealth& health, bool with_features)
 {
-    const BoundingBoxf3 bbox = OrcaMCP::object_world_box(object);
+    const Vec3d centre = OrcaMCP::plate_box_of(object, unplaced).center();
     nlohmann::json entry{
         {"object_index", object_index},
         {"id", std::to_string(object.id().id)},
         {"name", object.name},
-        {"position", {{"x", bbox.center().x()}, {"y", bbox.center().y()}, {"z", bbox.center().z()}}},
-        {"reason", "Not on any plate. Deleting a plate moves its objects here rather than "
-                   "removing them; use delete_object, or move it onto a plate."}
+        {"instance_count", object.instances.size()},
+        {"unplaced_instances", unplaced.ids},
+        {"position", {{"x", centre.x()}, {"y", centre.y()}, {"z", centre.z()}}},
+        {"reason", unplaced_reason(unplaced.ids, object.instances.size())}
     };
     OrcaMCP::add_mesh_warning(entry, health);
     if (with_features)

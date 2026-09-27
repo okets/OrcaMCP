@@ -838,7 +838,18 @@ public:
     int find_instance_belongs(int obj_id, int instance_id);
 
     //notify instance's update, need to refresh the instance in plates
-    int notify_instance_update(int obj_id, int instance_id, bool is_new = false);
+    // Orca: `place_only` files the instance under the plate it stands on and does nothing else: no
+    // spiral-vase settings dialog, and the object is not given a vase plate's settings.
+    int notify_instance_update(int obj_id, int instance_id, bool is_new = false, bool place_only = false);
+    // Orca: the same for every instance of an object. Its instances can stand on different plates,
+    // and one never notified is on no plate.
+    void notify_object_instances_update(int obj_id, bool is_new = false);
+    // Orca: an object just added to the scene (ObjectList::add_object_to_list): its first instance
+    // notified as upstream always did (is_new, which gives the object a spiral-vase plate's settings),
+    // every other one placed only. Upstream placed the first alone, leaving the others on no plate.
+    // The vase settings are object-wide, and a copy standing on a vase plate must not impose them on
+    // the whole object: its user may have declined them when it was put there.
+    void notify_object_added(int obj_id);
 
     //notify instance is removed
     int notify_instance_removed(int obj_id, int instance_id);

@@ -113,9 +113,9 @@ grep -hA1 -E '^\s*register_(bridge_)?tool\(\{' src/slic3r/GUI/OrcaMCP/*.cpp | gr
 
 | Category | Tools |
 |----------|-------|
-| **Scene** | `get_scene_info` (plates, objects with `filaments_used` — read that, not `extruder_id` — and `mesh_warning` (the object list's warning icon, with its reason; `with_model_object_features` adds the mesh-health numbers), and each plate's full occupancy: object footprints with brim, the prime tower, excluded bed areas; `open_dialogs` / `system_dialog_open` / `untracked_modal_loop`: a dialog waiting for the user), `new_project`, `load_project` (both cancel a running slice; refused while the startup restore prompt waits), `save_project`, `export_3mf` |
+| **Scene** | `get_scene_info` (plates, objects with `filaments_used` — read that, not `extruder_id` — and `mesh_warning` (the object list's warning icon, with its reason; `with_model_object_features` adds the mesh-health numbers), and each plate's full occupancy: object footprints with brim, the prime tower, excluded bed areas; `unplaced_objects`: every object with an instance on no plate, and which (`unplaced_instances`); `open_dialogs` / `system_dialog_open` / `untracked_modal_loop`: a dialog waiting for the user), `new_project`, `load_project` (both cancel a running slice; refused while the startup restore prompt waits), `save_project`, `export_3mf` |
 | **Models** | `load_model` (a 3MF is always geometry only: never its presets, never a rename; `.gcode` / `.gcode.3mf` only onto an empty scene, as a preview; returns `loaded_objects` in `get_scene_info`'s object shape, `filaments_added`; `multipart: merge\|separate`), `auto_orient` / `arrange_objects` (the current plate's objects; answered once the job has been applied, with `objects`, each one's placement, or `finished: false` past the wait's cap, `status: cancelled` when the app cancelled it; see "Waiting for a UI job"), `get_object_info` (incl. every volume with its type and filament), `get_mesh_health` (mesh errors behind the object list's warning icon: the icon state, its exact tooltip, open edges, recorded repairs, shells, per object and per volume), `rename_object`, `set_object_printable` |
-| **Transforms** | `move_object`, `rotate_object` (a change in degrees; `relative: false` is refused), `scale_object`, `mirror_object`, `flatten_object` (the named object only, which replaces the selection, as the GUI's Orient does for a selection; an object with an instance on a locked plate is refused; answered once its orient has been applied), `clone_object` (answered once its arrange has been applied, with `objects`), `cut_object`, `delete_object`, `transform_objects` (rotate, scale, mirror and transform drop a resting object back onto the bed like the GUI; an explicit Z is kept) |
+| **Transforms** | Every transform, and `get_object_info`, reports each instance's placement (`instance_placement`: its plate and whether it is inside it), `plate_index` (instance 0's plate), `plate_indices` and `on_bed` (every instance inside the plate it is on). `move_object`, `rotate_object` (a change in degrees; `relative: false` is refused), `scale_object`, `mirror_object`, `flatten_object` (the named object only, which replaces the selection, as the GUI's Orient does for a selection; an object with an instance on a locked plate is refused; answered once its orient has been applied), `clone_object` (answered once its arrange has been applied, with `objects`), `cut_object`, `delete_object`, `transform_objects` (rotate, scale, mirror and transform drop a resting object back onto the bed like the GUI; an explicit Z is kept) |
 | **Plates** | `add_plate`, `select_plate`, `delete_plate`, `set_prime_tower_position` |
 | **Config** | `get_presets`, `get_edited_presets` (25-48 KB), `get_config_values` (no arguments: the selected printer, print and per-slot filament presets with dirty flags, ~400 B; `keys`: just those settings, grouped by `apply_config` type, with `dirty` saved values; `dirty_only`), `select_preset` (`type: printer` returns the resulting `filaments`, each with its observed `color_source`: `unchanged`/`remembered`/`default`/`other`), `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset`, `get_valid_config_keys` |
 | **Per-Object** | `get_object_config`, `set_object_config`, `reset_object_config` |
@@ -994,6 +994,7 @@ echo "AC ObjectList::get_default_layer_config reads the preset's float \"extrude
 echo "AD reload_scene recycles a GLVolume without its instance's printable flag (rel2506/06b): $(U src/slic3r/GUI/GLCanvas3D.cpp | awk '/^void GLCanvas3D::reload_scene/{f=1} f&&/[.>]printable *= /{print "no"; exit} f&&/^}/{print "yes"; exit}')"
 echo "AE cancel_all leaves a job whose process has returned to finalize as not cancelled (0 = bug) / a late finalize runs in ~priv with Plater::p null (rel2506/07e): $(U src/slic3r/GUI/Jobs/BoostThreadWorker.hpp | grep -c 'cancel_all_count') / $(U src/slic3r/GUI/Plater.cpp | grep -c '^Plater::~Plater() = default;')"
 echo "AF a cancelled or failed arrange keeps prepare_all's plates locked, its running flag and its notification (rel2506/07e): $(U src/slic3r/GUI/Jobs/ArrangeJob.cpp | awk '/^void ArrangeJob::finalize/{f=1} f&&/lock\(false\)|end_arrange_run/{print "no"; exit} f&&/if \(canceled \|\| eptr\)/{print "yes"; exit}')"
+echo "AG an object added to the scene has only its first instance on a plate (rel2506/07f): $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^void ObjectList::add_object_to_list\(/{f=1} f&&/notify_instance_update\(obj_idx, 0, true\)/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -1210,6 +1211,22 @@ delivers nothing, so a late one never runs. It unlocks the plates it locked by i
 (`ObjectID`), never by index: an arrange a new or opened project cancelled meets a new plate list,
 where the same index is another plate, maybe one the user saved locked. On "no", take upstream's and
 re-run `slic3rutils_tests "[McpUiJob]"`.
+
+Item AG: upstream's `ObjectList::add_object_to_list` tells the plate list about an object's first
+instance only (`notify_instance_update(obj_idx, 0, true)`). Every other instance is on no plate until
+something moves it. Opening a project runs through it -- the plates come from the file first, over
+an empty scene, and each loaded object is then added -- so a project saved with an object whose
+instances stand on two plates (a clone onto another plate, an arrange over several) opened with the
+second plate empty: the 3D view drew the copy there, but the plate did not hold it, sliced nothing,
+and MCP's `get_scene_info` listed that copy nowhere. The file was right: its plate list and the
+instance's transform both survive the round trip. Ours tells it about every instance
+(`PartPlateList::notify_object_added`): the first as upstream did (`is_new`, which gives the object a
+spiral-vase plate's settings), every other one placed only (`notify_instance_update`'s `place_only`),
+since those settings are object-wide and a copy's user may have declined them when it was put there.
+`slic3rutils_tests "[PlateInstances]"` covers that helper only: it acts out the open sequence without
+the app, so it stays green with the line in `add_object_to_list` reverted. On "no", take upstream's
+and confirm it by opening a project with an object on two plates: MCP's `export_3mf` then
+`load_project`, each instance on its plate in `get_scene_info`, or the same in the GUI.
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices

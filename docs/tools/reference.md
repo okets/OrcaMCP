@@ -201,6 +201,15 @@ agree only when that count is 0. `filaments_used` is the per-object half of the 
 applies for `prime_tower`; an object whose modifiers are pinned to another slot keeps the plate
 multi-filament however `extruder_id` reads.
 
+#### Unplaced objects
+
+`unplaced_objects` lists every object with an instance no plate holds: `object_index`, `id`, `name`,
+`instance_count`, `unplaced_instances` (the instances on no plate), `position` (their box's centre)
+and `reason`. Deleting a plate leaves what stood on it there, and a move can carry an instance off
+every plate. An object whose other instances are on plates is also listed under those plates, by the
+instances there. Before v2.5.0.6 only an object whose instance 0 was on no plate was listed, so a copy
+on no plate went unreported.
+
 #### Mesh warnings
 
 Every object, in `model_objects` and in `unplaced_objects`, carries `mesh_warning`: `true` when the
@@ -364,6 +373,10 @@ A project that fails to load (no objects) is `status: "error"`, with the app's e
 as `message` and `error_messages` (captured; no dialog is left open). A project that opened is
 `success`, with `project_renamed_to`, and any error dialog it raised on the way in `error_messages`.
 
+Every instance of every object is on the plate it stands on once the project has opened. Before
+v2.5.0.6 only each object's first instance was: an object with copies on two plates opened with the
+second plate empty, in the GUI too, so that plate sliced nothing.
+
 **Returns:**
 ```json
 {"status": "success",
@@ -512,7 +525,9 @@ Answered once the orient has been applied (see [Waiting for the job](#waiting-fo
 {"status": "success",
  "objects": [{"object_id": 1, "name": "cube20.stl", "position": {"x": 188.0, "y": 128.0, "z": 10.0},
               "rotation_degrees": {"x": 90.0, "y": 0.0, "z": 0.0}, "scale": {"x": 1.0, "y": 1.0, "z": 1.0},
-              "changed": true, "plate_index": 0, "on_bed": true}],
+              "changed": true, "plate_index": 0, "plate_indices": [0], "on_bed": true,
+              "instance_placement": [{"instance_id": 0, "plate_index": 0, "on_bed": true,
+                                      "position": {"x": 188.0, "y": 128.0, "z": 10.0}}]}],
  "active_warnings": {"count": 0, "warnings": []}}
 ```
 
@@ -668,14 +683,20 @@ caller asked for.
 {"name": "move_object", "arguments": {"object_id": 15, "x": 462, "y": -105, "relative": false}}
 ```
 
-**Placement in the response.** Every transform re-homes the object onto the plate whose area now
-contains it, then answers about *that* plate:
+**Placement in the response.** Every transform re-homes each instance onto the plate whose area
+now contains it, then answers about the plate each one is on:
 
 | Field | Meaning |
 |-------|---------|
-| `plate_index` | The plate the object is on after the transform, or `null` when it is on no plate |
-| `on_bed` | Whether the object fits inside that plate's printable area |
-| `placement_warning` | Present only when `on_bed` is false, and it names the plate |
+| `instance_placement` | One entry per instance: `instance_id`, `plate_index` (the plate it is on, or `null`), `on_bed` (whether its own box is inside that plate's printable area) and `position` (that box's centre) |
+| `plate_index` | The plate instance 0 is on after the transform, or `null` when it is on no plate |
+| `plate_indices` | Every plate one of the object's instances is on, ascending |
+| `on_bed` | Whether every instance is inside the plate it is on |
+| `placement_warning` | Present only when `on_bed` is false: which instance is off its plate or on none. A one-instance object's reads as before: "Object positioned outside the printable area of plate N" or "Object is not on any plate" |
+
+Before v2.5.0.6 `on_bed` measured the box around every instance against instance 0's plate, so an
+object with a copy inside each of two plates read `on_bed: false`, "outside the printable area of
+plate 0".
 
 Before v2.3.2 `on_bed` was measured against whichever plate happened to be *selected*, so a correct
 move into another plate's area was reported as "outside printable area"; `move_object` also left the
@@ -728,14 +749,20 @@ v2.5.0.6 a rotation about the centre left the object partly under the bed or flo
 with the object, whose corners sit below a tilted part, so a part standing on the bed read
 `on_bed: false`.
 
-**Placement in the response.** Every transform re-homes the object onto the plate whose area now
-contains it, then answers about *that* plate:
+**Placement in the response.** Every transform re-homes each instance onto the plate whose area
+now contains it, then answers about the plate each one is on:
 
 | Field | Meaning |
 |-------|---------|
-| `plate_index` | The plate the object is on after the transform, or `null` when it is on no plate |
-| `on_bed` | Whether the object fits inside that plate's printable area |
-| `placement_warning` | Present only when `on_bed` is false, and it names the plate |
+| `instance_placement` | One entry per instance: `instance_id`, `plate_index` (the plate it is on, or `null`), `on_bed` (whether its own box is inside that plate's printable area) and `position` (that box's centre) |
+| `plate_index` | The plate instance 0 is on after the transform, or `null` when it is on no plate |
+| `plate_indices` | Every plate one of the object's instances is on, ascending |
+| `on_bed` | Whether every instance is inside the plate it is on |
+| `placement_warning` | Present only when `on_bed` is false: which instance is off its plate or on none. A one-instance object's reads as before: "Object positioned outside the printable area of plate N" or "Object is not on any plate" |
+
+Before v2.5.0.6 `on_bed` measured the box around every instance against instance 0's plate, so an
+object with a copy inside each of two plates read `on_bed: false`, "outside the printable area of
+plate 0".
 
 Before v2.3.2 `on_bed` was measured against whichever plate happened to be *selected*, so a correct
 move into another plate's area was reported as "outside printable area"; `move_object` also left the
@@ -785,14 +812,20 @@ shear, and nothing can make it otherwise. It is applied, and the response carrie
 saying so. The GUI avoids this by refusing world coordinates for such an object; use `uniform: true`,
 or unrotate the object first. Uniform scale is frame-independent and always exact.
 
-**Placement in the response.** Every transform re-homes the object onto the plate whose area now
-contains it, then answers about *that* plate:
+**Placement in the response.** Every transform re-homes each instance onto the plate whose area
+now contains it, then answers about the plate each one is on:
 
 | Field | Meaning |
 |-------|---------|
-| `plate_index` | The plate the object is on after the transform, or `null` when it is on no plate |
-| `on_bed` | Whether the object fits inside that plate's printable area |
-| `placement_warning` | Present only when `on_bed` is false, and it names the plate |
+| `instance_placement` | One entry per instance: `instance_id`, `plate_index` (the plate it is on, or `null`), `on_bed` (whether its own box is inside that plate's printable area) and `position` (that box's centre) |
+| `plate_index` | The plate instance 0 is on after the transform, or `null` when it is on no plate |
+| `plate_indices` | Every plate one of the object's instances is on, ascending |
+| `on_bed` | Whether every instance is inside the plate it is on |
+| `placement_warning` | Present only when `on_bed` is false: which instance is off its plate or on none. A one-instance object's reads as before: "Object positioned outside the printable area of plate N" or "Object is not on any plate" |
+
+Before v2.5.0.6 `on_bed` measured the box around every instance against instance 0's plate, so an
+object with a copy inside each of two plates read `on_bed: false`, "outside the printable area of
+plate 0".
 
 Before v2.3.2 `on_bed` was measured against whichever plate happened to be *selected*, so a correct
 move into another plate's area was reported as "outside printable area"; `move_object` also left the
@@ -824,14 +857,20 @@ unless it was sinking). Before v2.3.2 it reflected the mesh about the volume ori
 object by its own width — and about the object's local axis, so on a rotated object "mirror z" was
 not a vertical flip at all.
 
-**Placement in the response.** Every transform re-homes the object onto the plate whose area now
-contains it, then answers about *that* plate:
+**Placement in the response.** Every transform re-homes each instance onto the plate whose area
+now contains it, then answers about the plate each one is on:
 
 | Field | Meaning |
 |-------|---------|
-| `plate_index` | The plate the object is on after the transform, or `null` when it is on no plate |
-| `on_bed` | Whether the object fits inside that plate's printable area |
-| `placement_warning` | Present only when `on_bed` is false, and it names the plate |
+| `instance_placement` | One entry per instance: `instance_id`, `plate_index` (the plate it is on, or `null`), `on_bed` (whether its own box is inside that plate's printable area) and `position` (that box's centre) |
+| `plate_index` | The plate instance 0 is on after the transform, or `null` when it is on no plate |
+| `plate_indices` | Every plate one of the object's instances is on, ascending |
+| `on_bed` | Whether every instance is inside the plate it is on |
+| `placement_warning` | Present only when `on_bed` is false: which instance is off its plate or on none. A one-instance object's reads as before: "Object positioned outside the printable area of plate N" or "Object is not on any plate" |
+
+Before v2.5.0.6 `on_bed` measured the box around every instance against instance 0's plate, so an
+object with a copy inside each of two plates read `on_bed: false`, "outside the printable area of
+plate 0".
 
 Before v2.3.2 `on_bed` was measured against whichever plate happened to be *selected*, so a correct
 move into another plate's area was reported as "outside printable area"; `move_object` also left the
@@ -851,7 +890,7 @@ Orient one object to lay flat on its best face, the way the GUI's **Orient** doe
 The object replaces the current selection and is turned, every instance of it; no other object
 moves. Before v2.5.0.6 this oriented every object on the current plate. It answers once the orient
 has been applied, with the object's placement as `rotate_object` reports it (`status: success`,
-`position`, `rotation_degrees`, `scale`, `changed`, `plate_index`, `on_bed`; see
+`position`, `rotation_degrees`, `scale`, `changed` and the placement fields; see
 [Waiting for the job](#waiting-for-the-job)). One `undo` puts the object back; it comes back selected.
 
 Refused, with nothing selected or oriented, when the job would not orient this object alone: another
@@ -976,8 +1015,9 @@ rest used to leave an object moved but unreported, still counted on its old plat
 undoes the whole batch; a batch that changes nothing takes none.
 
 On success `results` has one entry per transform, in order, with `entry`, `object_id`, `position`,
-`changed` and the same `plate_index` / `on_bed` / `placement_warning` fields the single-object
-transforms return, measured against the plate that object landed on. An object named in several
+`changed` and the same placement fields the single-object transforms return (`instance_placement`,
+`plate_index`, `plate_indices`, `on_bed`, `placement_warning`), each instance measured on the plate
+it landed on. An object named in several
 entries reports where it ended up in each.
 
 ---
@@ -1478,13 +1518,19 @@ Get detailed information about an object.
 | `object_id` | integer | Yes | Object index |
 
 **Placement fields:** alongside `position`, `bounding_box`, `rotation_degrees` and `scale`, the
-response carries the same three placement fields the transform tools return:
+response carries the same placement fields the transform tools return:
 
 | Field | Meaning |
 |-------|---------|
-| `plate_index` | The plate this object is on, or `null` if it is on none |
-| `on_bed` | Whether the object fits inside **that** plate's printable area |
-| `placement_warning` | Present only when `on_bed` is false, and it names the plate |
+| `instance_placement` | One entry per instance: `instance_id`, `plate_index` (the plate it is on, or `null`), `on_bed` (whether its own box is inside **that** plate's printable area) and `position` (that box's centre) |
+| `plate_index` | The plate instance 0 is on, or `null` if it is on none |
+| `plate_indices` | Every plate one of the object's instances is on, ascending |
+| `on_bed` | Whether every instance is inside the plate it is on |
+| `placement_warning` | Present only when `on_bed` is false: which instance is off its plate or on none |
+
+`position` and `bounding_box` stay the object's: for an object with copies on two plates they span
+both, and `instance_placement` says where each copy is. Before v2.5.0.6 `on_bed` measured that box
+against instance 0's plate, so such an object read `on_bed: false`.
 
 Before v2.3.2 `on_bed` here was measured against whichever plate happened to be *selected*, and
 `plate_index` was not reported at all. Plates do not share a coordinate range, so an object sitting

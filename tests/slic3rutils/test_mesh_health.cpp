@@ -525,15 +525,16 @@ TEST_CASE("Every object description flags the warning icon, with the reason when
 TEST_CASE("An unplaced object carries the mesh warning, and the features when they are asked for", "[MeshHealth][orcamcp]")
 {
     OnePartObject hole{TriangleMesh(cube_missing_facet())};
-    const MeshHealth health = object_mesh_health(*hole.object);
+    const MeshHealth       health  = object_mesh_health(*hole.object);
+    const InstancesOnPlate nowhere = instances_on_plate(*hole.object, [](int) { return true; }); // every instance
 
-    const nlohmann::json plain = GUI::OrcaMCPPlateUtils::UnplacedObjectJson(*hole.object, 3, health, false);
+    const nlohmann::json plain = GUI::OrcaMCPPlateUtils::UnplacedObjectJson(*hole.object, 3, nowhere, health, false);
     CHECK(plain["object_index"] == 3);
     CHECK(plain["name"] == "Test object");
     CHECK(plain["mesh_warning"] == true);
     CHECK(plain["mesh_warning_reason"] == "Error: 3 non-manifold edges.");
     CHECK_FALSE(plain.contains("features"));
 
-    const nlohmann::json with_features = GUI::OrcaMCPPlateUtils::UnplacedObjectJson(*hole.object, 3, health, true);
+    const nlohmann::json with_features = GUI::OrcaMCPPlateUtils::UnplacedObjectJson(*hole.object, 3, nowhere, health, true);
     CHECK(with_features["features"] == mesh_features_json(health));
 }

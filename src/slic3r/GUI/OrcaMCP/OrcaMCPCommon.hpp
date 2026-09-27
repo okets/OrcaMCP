@@ -97,9 +97,9 @@ bool object_within_plate(const BoundingBoxf3& object_bbox, const BoundingBoxf3& 
 // and a copy per tool is how they drift apart (move_object had neither half; the others had the
 // second half wrong).
 //
-// Sets on `result`: "plate_index" (the plate the object is on afterwards, null when it is on none),
-// "on_bed", and "placement_warning" when it is not. Measuring against the *selected* plate, which is
-// what these tools used to do, calls a correct cross-plate move "outside printable area".
+// Sets on `result` the placement fields write_placement writes. Measuring against the *selected*
+// plate, which is what these tools used to do, calls a correct cross-plate move "outside printable
+// area".
 //
 // Every instance is notified, not just the first: a multi-instance object can have its instances on
 // different plates, and a plate that keeps an instance it no longer holds slices the wrong thing.
@@ -112,10 +112,35 @@ bool object_within_plate(const BoundingBoxf3& object_bbox, const BoundingBoxf3& 
 // is the same outcome the dialog produces: under is_object_config the dialog is OK-only and its
 // answer is forced to wxID_YES regardless (ConfigManipulation::show_spiral_mode_settings_dialog).
 // clone_object already passes true for the same reason.
-// Report which plate holds the object and whether it sits inside that plate's printable area,
-// writing plate_index / on_bed / placement_warning into `result`. Read-only: use this from query
-// tools. A tool that has just moved geometry wants rehome_and_report_placement instead.
+// Report which plate holds each instance of the object and whether it sits inside that plate's
+// printable area (write_placement's fields). Read-only: use this from query tools. A tool that has
+// just moved geometry wants rehome_and_report_placement instead.
 void report_placement(nlohmann::json& result, int object_id);
+
+// Where one instance of an object is: the plate the plate list files it under (-1 for none, the list
+// get_scene_info groups objects by), whether its own exact box lies inside that plate's printable area
+// (object_within_plate), and that box's centre.
+struct InstancePlacement
+{
+    int   instance_id = 0;
+    int   plate_index = -1;
+    bool  on_bed      = false;
+    Vec3d position    = Vec3d::Zero();
+};
+
+// Every instance of `object` (index `object_index` in the model), each measured by its own box on
+// the plate it is on. The box around all of them, measured against instance 0's plate, called an
+// object with a copy inside each of two plates "outside the printable area of plate 0".
+std::vector<InstancePlacement> instance_placements(const ModelObject& object, int object_index, PartPlateList& plates);
+
+// The placement fields an object's instances make, written into `result`:
+//   plate_index        the plate instance 0 is on, null when it is on none;
+//   plate_indices      every plate one of its instances is on, ascending;
+//   on_bed             every instance is on a plate and inside that plate's printable area;
+//   instance_placement each instance's {instance_id, plate_index (or null), on_bed, position};
+//   placement_warning  when on_bed is false, naming the instances that are not and why; erased
+//                      otherwise. A single-instance object's reads as it always has ("Object ...").
+void write_placement(nlohmann::json& result, const std::vector<InstancePlacement>& placements);
 
 //
 // `moved` false (the call turned out to change nothing) re-homes nothing: notify_instance_update
