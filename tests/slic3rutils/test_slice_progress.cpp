@@ -40,12 +40,21 @@ TEST_CASE("the stage is the last status text that came with a percentage", "[orc
     forget_slicing_stage();
 }
 
+TEST_CASE("the stage is kept without the spaces the status text arrives with", "[orcamcp][SliceProgress]")
+{
+    forget_slicing_stage();
+    note_slicing_status(35, " plate 1:Generating infill toolpath ");
+    CHECK(slicing_stage_text() == "plate 1:Generating infill toolpath");
+    forget_slicing_stage();
+}
+
 TEST_CASE("a status update without a percentage or text leaves the stage alone", "[orcamcp][SliceProgress]")
 {
     forget_slicing_stage();
     note_slicing_status(25, "Generating infill regions");
     note_slicing_status(-1, "a warning refresh");
     note_slicing_status(30, "");
+    note_slicing_status(30, "   ");
     CHECK(slicing_stage_text() == "Generating infill regions");
     forget_slicing_stage();
 }
@@ -102,6 +111,15 @@ TEST_CASE("a run whose plates were deleted or rebuilt since is incomplete, and s
     CHECK(judged.outcome == SliceRunOutcome::incomplete);
     CHECK(judged.message.find("2 of the run's 3 plate(s)") != std::string::npos);
     CHECK(judged.message.find("plate list changed") != std::string::npos);
+}
+
+TEST_CASE("a run cancelled by a plate-list change also names the plates it left unsliced", "[orcamcp][SliceProgress]")
+{
+    const SliceRunJudgement judged =
+        judge_slice_run(/*run_known=*/true, /*slicing=*/false, {unsliced_plate(0), unsliced_plate(1), gone_plate()}, std::nullopt);
+    CHECK(judged.outcome == SliceRunOutcome::incomplete);
+    CHECK(judged.message.find("1 of the run's 3 plate(s)") != std::string::npos);
+    CHECK(judged.message.find("plate_index 0, 1 has no slice result") != std::string::npos);
 }
 
 TEST_CASE("every outcome has the name get_slicing_status reports", "[orcamcp][SliceProgress]")

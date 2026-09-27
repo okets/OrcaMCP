@@ -23,11 +23,12 @@ inline std::string& slicing_stage_text()
 
 // Called first thing in on_slicing_update, before upstream prefixes the text and before it drops an
 // update that arrives while a UI job runs. An update without a percentage is a warning refresh, not a
-// stage, and is ignored.
+// stage, and is ignored. The text arrives as " plate 1:Generating walls"; the space is dropped.
 inline void note_slicing_status(int percent, const std::string& text)
 {
-    if (percent >= 0 && !text.empty())
-        slicing_stage_text() = text;
+    const size_t first = text.find_first_not_of(' ');
+    if (percent >= 0 && first != std::string::npos)
+        slicing_stage_text() = text.substr(first, text.find_last_not_of(' ') - first + 1);
 }
 
 // slice_all forgets the last run's stage, so a new run never reports the one before it.
@@ -111,17 +112,18 @@ inline SliceRunJudgement judge_slice_run(bool                              run_k
         if (plate.exists && !plate.sliced)
             unsliced.push_back(plate.index);
 
+    if (gone == 0 && unsliced.empty())
+        return {SliceRunOutcome::done, {}};
+
+    std::string message;
     if (gone > 0)
-        return {SliceRunOutcome::incomplete,
-                std::to_string(gone) + " of the run's " + std::to_string(plates.size()) +
-                    " plate(s) no longer exist: the plate list changed (a plate was deleted, or an undo, redo or "
-                    "project load rebuilt the list), which cancels Slice All; call slice_all again"};
+        message = std::to_string(gone) + " of the run's " + std::to_string(plates.size()) +
+                  " plate(s) no longer exist: the plate list changed (a plate was deleted, or an undo, redo or project "
+                  "load rebuilt the list), which cancels Slice All";
     if (!unsliced.empty())
-        return {SliceRunOutcome::incomplete,
-                "plate_index " + plate_index_list(unsliced) +
-                    " has no slice result: its slice failed (active_warnings says why), was cancelled, or an edit "
-                    "since invalidated it; call slice_all again"};
-    return {SliceRunOutcome::done, {}};
+        message += (message.empty() ? "" : "; ") + std::string("plate_index ") + plate_index_list(unsliced) + " has no slice result" +
+                   (gone > 0 ? "" : ": its slice failed (active_warnings says why), was cancelled, or an edit since invalidated it");
+    return {SliceRunOutcome::incomplete, message + "; call slice_all again"};
 }
 
 }}} // namespace Slic3r::GUI::OrcaMCP
