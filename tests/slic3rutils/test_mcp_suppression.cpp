@@ -236,3 +236,32 @@ TEST_CASE("a pending settings update is not applied while the pipeline is busy o
     CHECK_FALSE(apply_pending_update(guard, PipelineState{}, /*scheduled=*/false, [&] { applied = true; }));
     CHECK_FALSE(applied);
 }
+
+// A load that changed the scene -- added objects, opened the project -- succeeded, even when the app
+// raised an error dialog on the way (one file of a ZIP, one object of a 3MF): reporting it failed sent
+// agents to load it again, and the scene then held the objects twice. Its errors are reported beside
+// it. Only a load that changed nothing failed, with the dialogs' words.
+TEST_CASE("a load that changed the scene succeeds and lists the errors it raised", "[McpSuppression][orcamcp][suppression]")
+{
+    Slic3r::GUI::OrcaMCP::McpDialogSuppressionGuard guard;
+    add_mcp_suppressed_error("Loading of a model file failed.");
+    const nlohmann::json answer =
+        Slic3r::GUI::OrcaMCP::load_answer(guard, /*changed_scene=*/true, {{"status", "success"}, {"loaded_objects", nlohmann::json::array({1})}});
+    CHECK(answer["status"] == "success");
+    CHECK(answer["error_messages"] == nlohmann::json::array({"Loading of a model file failed."}));
+    CHECK_FALSE(answer.contains("message"));
+}
+
+TEST_CASE("a load that changed nothing fails, with the error dialogs' words or its own", "[McpSuppression][orcamcp][suppression]")
+{
+    Slic3r::GUI::OrcaMCP::McpDialogSuppressionGuard guard;
+    const nlohmann::json own = Slic3r::GUI::OrcaMCP::load_answer(guard, /*changed_scene=*/false, {{"status", "error"}, {"message", "Failed to load model file"}});
+    CHECK(own["status"] == "error");
+    CHECK(own["message"] == "Failed to load model file");
+
+    add_mcp_suppressed_error("Loading of a model file failed.");
+    const nlohmann::json failed = Slic3r::GUI::OrcaMCP::load_answer(guard, false, {{"status", "error"}, {"message", "Failed to load model file"}});
+    CHECK(failed["status"] == "error");
+    CHECK(failed["message"] == "Loading of a model file failed.");
+    CHECK(failed["error_messages"] == nlohmann::json::array({"Loading of a model file failed."}));
+}

@@ -309,7 +309,9 @@ the end of it reads `done`; `plates_sliced` / `plates` say which plates have a r
 Create a new empty project. A running slice is cancelled first (see `quit_app` for how long that can
 take). Refused while the startup "restore unsaved items?" prompt waits (`get_scene_info`'s
 `open_dialogs`): the new project would take over the app's record of the backup that prompt offers,
-and a later launch would not offer it again. Answer the prompt, or `quit_app`, which keeps it.
+and a later launch would not offer it again. Answer the prompt, or `quit_app`, which keeps it. An
+error dialog the app raised on the way is listed in `error_messages`; the call is `success` whenever
+the new project was started.
 
 **Parameters:** None
 
@@ -335,8 +337,9 @@ Refused while the startup "restore unsaved items?" prompt waits, as `new_project
 {"name": "load_project", "arguments": {"file_path": "/path/to/project.3mf"}}
 ```
 
-A project that fails to load is `status: "error"`, with the app's error dialogs' words as `message`
-and `error_messages` (captured; no dialog is left open).
+A project that fails to load (no objects) is `status: "error"`, with the app's error dialogs' words
+as `message` and `error_messages` (captured; no dialog is left open). A project that opened is
+`success`, with `project_renamed_to`, and any error dialog it raised on the way in `error_messages`.
 
 **Returns:**
 ```json
@@ -443,7 +446,7 @@ G-code preview, model files are refused too; `new_project` returns to an editabl
 | `filaments_added` | Filament slots the import added, because the model uses more filaments than the scene had (0 when none) |
 | `project_renamed_to` | Present only if the project's name changed: never for a model file, and always for a G-code preview (named after the file, so a later `save_project {}` writes there) |
 | `info_messages` | What happened, then what the slicer would have shown. A 3MF import says whether the file carried presets that were not applied. A prompt that offered a choice ends with the answer given, e.g. `"Object too large: ... scale it down to fit the print bed automatically? (auto-answered Yes)"`; the multi-part question also names the other `multipart` value |
-| `error_messages` | The error dialogs the load raised, captured instead of shown: an STL the reader cannot parse ("Loading of a model file failed."), G-code with no valid moves, a 3MF with an invalid configuration. A failed load's `message` is their words. No dialog is left open |
+| `error_messages` | The error dialogs the load raised, captured instead of shown: an STL the reader cannot parse ("Loading of a model file failed."), G-code with no valid moves, a 3MF with an invalid configuration. No dialog is left open. A load that added objects is `success` whatever it raised -- the objects are in the scene, and loading again would add them twice -- and lists these as warnings; only a load that added nothing is `error`, with their words as `message` |
 | `active_warnings` | As for every scene tool, plus a `MeshErrors` warning for each object it added that the object list flags with its warning icon |
 
 A 20 mm cube exported 1000 times too large, on a 256 mm bed:

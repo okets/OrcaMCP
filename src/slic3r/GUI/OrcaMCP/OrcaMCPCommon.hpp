@@ -302,6 +302,20 @@ private:
     bool m_was_enabled;
 };
 
+// The answer of load_model, load_project and new_project. A load that changed the scene (added
+// objects, opened the project, started a new one) succeeded, even when the app raised an error dialog
+// on the way: reporting it failed sends an agent to load it again, and the scene then holds the
+// objects twice. Its errors go beside it as error_messages. A load that changed nothing failed, with
+// the dialogs' words (fail_on_errors).
+inline nlohmann::json load_answer(const McpDialogSuppressionGuard& guard, bool changed_scene, nlohmann::json response)
+{
+    if (!changed_scene)
+        return guard.fail_on_errors(std::move(response));
+    if (const std::vector<std::string> errors = guard.errors(); !errors.empty())
+        response["error_messages"] = errors;
+    return response;
+}
+
 // One undo snapshot for a tool call: taken right before its first change, and never for a call that
 // changes nothing. A snapshot discards the redo stack, so a no-op call must not take one; and a call
 // that changes several objects is one undo step, as the GUI's own edits are.

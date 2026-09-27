@@ -3200,8 +3200,8 @@ void OrcaMCPServer::register_builtin_tools()
                 } else {
                     response = {{"status", "error"}, {"message", load_failure_message(kind, loaded)}};
                 }
-                // A load the app answered with an error dialog failed, with its words.
-                response = suppression_guard.fail_on_errors(std::move(response));
+                // Succeeded when it changed the scene, whatever else the app said (OrcaMCP::load_answer).
+                response = load_answer(suppression_guard, succeeded, std::move(response));
 
                 report_filaments_added(response, info_messages, filaments_before,
                                        wxGetApp().preset_bundle->filament_presets.size());
@@ -3505,8 +3505,14 @@ void OrcaMCPServer::register_builtin_tools()
 
                 // Suppress dialogs (like "save unsaved changes?") and capture messages
                 McpDialogSuppressionGuard suppression_guard;
-                plater->new_project();
-                return suppression_guard.fail_on_errors(suppression_guard.report({{"status", "success"}}));
+                // Plater::new_project answers wxID_CANCEL when it did not start one (its confirmation or
+                // the preset check said no); otherwise the scene is new, whatever else the app said.
+                const bool started = plater->new_project() != wxID_CANCEL;
+                nlohmann::json response = started ? nlohmann::json{{"status", "success"}}
+                                                  : nlohmann::json{{"status", "error"}, {"message", "The app did not start a new project."}};
+                if (const auto notices = suppression_guard.notices(); !notices.empty())
+                    response["info_messages"] = notices;
+                return load_answer(suppression_guard, started, std::move(response));
             });
         }
     });
@@ -3563,8 +3569,8 @@ void OrcaMCPServer::register_builtin_tools()
                     result ? nlohmann::json{{"status", "success"}}
                            : nlohmann::json{{"status", "error"}, {"message", "No objects were loaded from " + file_path + "."}};
                 response["file"] = file_path;
-                // A load the app answered with an error dialog failed, with its words.
-                response = suppression_guard.fail_on_errors(std::move(response));
+                // Succeeded when the project opened, whatever else the app said (OrcaMCP::load_answer).
+                response = load_answer(suppression_guard, result, std::move(response));
 
                 // Say so: from here on save_project and the GUI's Save write back to this file.
                 if (result) {
