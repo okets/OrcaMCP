@@ -962,7 +962,9 @@ void OrcaMCPServer::register_builtin_tools()
         "preset the Filament tab is editing); dirty_only keeps only those, and with no keys lists every "
         "unsaved change of the presets. Project settings have no saved preset to compare with, so they "
         "are listed under not_judged instead. Values are the slicer's text, as get_edited_presets shows "
-        "them and apply_config accepts them. An unknown key is an error naming it (get_valid_config_keys "
+        "them and apply_config accepts them. Credentials (printhost_apikey, printhost_password, "
+        "flashforge_obico_token) are never shown: a set one reads \"<redacted>\", and a changed one is "
+        "dirty as {changed: true, secret: true}. An unknown key is an error naming it (get_valid_config_keys "
         "lists valid ones); a known key that belongs to no preset type nor the project (an object-only "
         "setting) is listed under not_in_presets.",
         {

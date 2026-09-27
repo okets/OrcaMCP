@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -241,10 +242,10 @@ TEST_CASE("a changed credential is reported dirty without either value", "[orcam
 
     const nlohmann::json report = config_values_json(presets.sources(), {"printhost_apikey"}, false);
     CHECK(report["values"]["printer"]["printhost_apikey"] == "<redacted>");
-    CHECK(report["dirty"]["printer"]["printhost_apikey"]["saved"] == "<redacted>");
+    CHECK(report["dirty"]["printer"]["printhost_apikey"] == nlohmann::json{{"changed", true}, {"secret", true}});
 
     const nlohmann::json changes = unsaved_changes_json(presets.sources());
-    CHECK(changes["printer"]["printhost_apikey"] == nlohmann::json{{"value", "<redacted>"}, {"saved", "<redacted>"}});
+    CHECK(changes["printer"]["printhost_apikey"] == nlohmann::json{{"changed", true}, {"secret", true}});
 
     const std::string everything = report.dump() + changes.dump();
     CHECK(everything.find("old-credential") == std::string::npos);
@@ -279,4 +280,31 @@ TEST_CASE("a filament setting is recognised even when slot 1's preset is gone", 
     const nlohmann::json report = config_values_json(sources, {"filament_type"}, false);
     CHECK(report["values"]["filament"]["filament_type"] == nlohmann::json::array({nullptr, "PETG"}));
     CHECK_FALSE(report.contains("not_in_presets"));
+}
+
+TEST_CASE("the settings ids every preset carries are grouped under their own preset", "[orcamcp][ConfigValues]")
+{
+    SelectedPresets presets;
+    presets.print_edited.config.set_deserialize_strict("print_settings_id", "0.20mm Standard");
+    presets.printer_edited.config.set_deserialize_strict("printer_settings_id", "Creator 5 Pro 0.4");
+    presets.pla.config.set_deserialize_strict("filament_settings_id", "Generic PLA");
+    presets.petg_edited.config.set_deserialize_strict("filament_settings_id", "Generic PETG");
+    const nlohmann::json report =
+        config_values_json(presets.sources(), {"print_settings_id", "filament_settings_id", "printer_settings_id"}, false);
+
+    CHECK(report["values"]["print"]["print_settings_id"] == "0.20mm Standard");
+    // The slicer's own text for a strings option, which quotes a name with a space in it.
+    CHECK(report["values"]["filament"]["filament_settings_id"] == nlohmann::json::array({"\"Generic PLA\"", "\"Generic PETG\""}));
+    CHECK(report["values"]["printer"]["printer_settings_id"] == "Creator 5 Pro 0.4");
+    CHECK_FALSE(report.contains("not_in_presets"));
+}
+
+TEST_CASE("a key no preset type lists is read from whichever selected preset carries it", "[orcamcp][ConfigValues]")
+{
+    SelectedPresets presets;
+    REQUIRE(std::find(Preset::printer_options().begin(), Preset::printer_options().end(), "printer_settings_id") ==
+            Preset::printer_options().end());
+    presets.printer_edited.config.set_deserialize_strict("printer_settings_id", "Creator 5 Pro 0.4");
+    CHECK(config_values_json(presets.sources(), {"printer_settings_id"}, false)["values"]["printer"]["printer_settings_id"] ==
+          "Creator 5 Pro 0.4");
 }
