@@ -358,6 +358,9 @@ TEST_CASE("plates with nothing printable on them give nothing to slice", "[orcam
     const SliceStartReport report = judge_slice_start(signals_with({empty_plate(0), empty_plate(1)}));
     CHECK(report.status == SliceStart::not_started);
     CHECK(report.reason == "nothing_to_slice");
+    // An object partly off its plate is not printable there either, which an agent that sees the object
+    // on the plate needs told.
+    CHECK(report.message.find("partly outside its plate") != std::string::npos);
 }
 
 TEST_CASE("a slice the app's validation stopped is invalid, with the app's message", "[orcamcp][SliceProgress]")
@@ -368,6 +371,76 @@ TEST_CASE("a slice the app's validation stopped is invalid, with the app's messa
     CHECK(report.status == SliceStart::not_started);
     CHECK(report.reason == "invalid");
     CHECK(report.message.find("Prime Tower is partially outside the printable area") != std::string::npos);
+}
+
+// reslice() refuses at once, without a word, while the app's own pre-slice checks turn the plate down
+// (process_completed_with_error, the checks behind the GUI's greyed Slice button). slice_all called it
+// unknown; each refusal is invalid now, and says which check refused and what changes it.
+TEST_CASE("a plate the app's own checks turn down is invalid, and says so", "[orcamcp][SliceProgress]")
+{
+    SliceRunPlate unready = unsliced_plate(2);
+    unready.ready         = false;
+    const SliceStartReport report = judge_slice_start(signals_with({sliced_plate(0), unready}));
+    CHECK(report.status == SliceStart::not_started);
+    CHECK(report.reason == "invalid");
+    CHECK(report.message.find("plate_index 2 is not ready to slice") != std::string::npos);
+    CHECK(report.message.find("partly outside the plate") != std::string::npos);
+}
+
+TEST_CASE("an empty plate is never the one reported as not ready", "[orcamcp][SliceProgress]")
+{
+    SliceRunPlate empty = empty_plate(1);
+    empty.ready         = false;
+    const SliceStartReport report = judge_slice_start(signals_with({unsliced_plate(0), empty}));
+    CHECK(report.reason == "unknown");
+}
+
+TEST_CASE("a plate whose last slice failed is invalid until something on it changes", "[orcamcp][SliceProgress]")
+{
+    SliceStartSignals signals = signals_with({unsliced_printable()});
+    signals.last_slice_failed = true;
+    const SliceStartReport report = judge_slice_start(signals);
+    CHECK(report.reason == "invalid");
+    CHECK(report.message.find("last slice") != std::string::npos);
+    CHECK(report.message.find("until something on it changes") != std::string::npos);
+}
+
+TEST_CASE("missing plugins and a broken mixed filament each name themselves", "[orcamcp][SliceProgress]")
+{
+    SliceStartSignals plugins = signals_with({unsliced_printable()});
+    plugins.plugins_missing   = true;
+    const SliceStartReport by_plugins = judge_slice_start(plugins);
+    CHECK(by_plugins.reason == "invalid");
+    CHECK(by_plugins.message.find("plugins") != std::string::npos);
+
+    SliceStartSignals mixed     = signals_with({unsliced_printable()});
+    mixed.broken_mixed_filament = true;
+    const SliceStartReport by_mixed = judge_slice_start(mixed);
+    CHECK(by_mixed.reason == "invalid");
+    CHECK(by_mixed.message.find("mixed filament") != std::string::npos);
+}
+
+// Several checks can refuse at once (the last error is kept while the plate is not ready, and a failed
+// validation leaves the plate not ready): the report names the one that decides, the most specific
+// first -- the validation's own words, then plugins, the mixed filament, readiness, the last slice.
+TEST_CASE("the refusal reported is the first that applies, in a fixed order", "[orcamcp][SliceProgress]")
+{
+    SliceRunPlate unready = unsliced_printable();
+    unready.ready         = false;
+    SliceStartSignals all = signals_with({unready});
+    all.validation_error      = "Prime Tower is partially outside the printable area";
+    all.plugins_missing       = true;
+    all.broken_mixed_filament = true;
+    all.last_slice_failed     = true;
+    CHECK(judge_slice_start(all).message.find("Prime Tower") != std::string::npos);
+    all.validation_error.reset();
+    CHECK(judge_slice_start(all).message.find("plugins") != std::string::npos);
+    all.plugins_missing = false;
+    CHECK(judge_slice_start(all).message.find("mixed filament") != std::string::npos);
+    all.broken_mixed_filament = false;
+    CHECK(judge_slice_start(all).message.find("not ready to slice") != std::string::npos);
+    all.plates = {unsliced_printable()};
+    CHECK(judge_slice_start(all).message.find("last slice") != std::string::npos);
 }
 
 TEST_CASE("a slice that did not start for a reason no signal shows says it did not start", "[orcamcp][SliceProgress]")

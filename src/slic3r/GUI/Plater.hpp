@@ -826,6 +826,9 @@ public:
     void enable_inactive_plugins(const std::vector<std::string>& refs);
     // True when the active preset references plugins that are missing and not yet acknowledged, as
     // of the last validate_current_plate. Other slice-ready writers consult this to stay consistent.
+    // Orca: reslice() returns at once while the current plate's last update or slice ended in an error
+    // (process_completed_with_error), until something on the plate changes. MCP names that refusal.
+    bool last_error_blocks_reslice() const;
     bool plugins_block_slicing() const;
     //BBS: select the plate by index
     int select_plate(int plate_index, bool need_slice = false);

@@ -21926,6 +21926,11 @@ void Plater::enable_inactive_plugins(const std::vector<std::string>& refs)
     resolve_inactive_plugins(refs);
 }
 
+bool Plater::last_error_blocks_reslice() const
+{
+    return p->process_completed_with_error >= 0 && p->process_completed_with_error == p->partplate_list.get_curr_plate_index();
+}
+
 bool Plater::plugins_block_slicing() const
 {
     // Single source of truth: slicing is blocked while PluginResolver still has unresolved plugin

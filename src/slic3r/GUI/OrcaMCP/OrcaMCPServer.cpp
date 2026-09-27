@@ -256,7 +256,7 @@ std::vector<OrcaMCP::SliceRunPlate> slice_run_plates(PartPlateList& plate_list)
         const int  index = plate_list.find_plate_by_print_index(print_index);
         PartPlate* plate = index >= 0 ? plate_list.get_plate(index) : nullptr;
         plates.push_back({plate != nullptr, plate != nullptr && plate->has_printable_instances(),
-                          plate != nullptr && plate->is_slice_result_valid(), index});
+                          plate != nullptr && plate->is_slice_result_valid(), index, plate == nullptr || plate->can_slice()});
     }
     return plates;
 }
@@ -313,8 +313,11 @@ OrcaMCP::SliceStartSignals slice_start_signals(Plater& plater, PartPlateList& pl
     OrcaMCP::SliceStartSignals signals;
     signals.slicing          = plater.is_background_process_slicing();
     signals.ui_job_running   = !plater.get_ui_job_worker().is_idle();
-    signals.validation_error = validation_failure(plater, plate_list);
-    signals.plates           = slice_run_plates(plate_list);
+    signals.validation_error      = validation_failure(plater, plate_list);
+    signals.plugins_missing       = plater.plugins_block_slicing();
+    signals.broken_mixed_filament = wxGetApp().sidebar().has_broken_mixed_filament();
+    signals.last_slice_failed     = plater.last_error_blocks_reslice();
+    signals.plates                = slice_run_plates(plate_list);
     return signals;
 }
 
@@ -2838,8 +2841,9 @@ void OrcaMCPServer::register_builtin_tools()
         "message: busy_slicing (the pipeline is busy -- get_slicing_status's busy: a slice or Slice All "
         "run, an export, an upload, or the last slice still stopping; nothing is started -- call "
         "wait_for_slice, then slice_all again), already_sliced (nothing to do), busy_job, "
-        "nothing_to_slice, invalid (the app's validation refused it; message gives its words) or "
-        "unknown. Then call "
+        "nothing_to_slice, invalid (the app refuses the plate as it stands -- its validation, an object "
+        "partly off the plate, a filament check, missing plugins, a broken mixed filament, or a last "
+        "slice that failed; message says which) or unknown. Then call "
         "wait_for_slice, or poll get_slicing_status until state is \"done\"; its plates array says which "
         "plates have a result. The plate selection walks from the first plate to the last while the "
         "run is in progress, and get_slicing_status puts back the plate that was selected here once "
