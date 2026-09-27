@@ -1649,8 +1649,9 @@ Export the selected plate's sliced G-code to a file. The file is written asynchr
 `status: "export_started"` only when the app scheduled the export. An export that did not start is
 `status: "error"` with the reason as `message`: the scene has no objects, "Another export job is
 running." while the previous export is still writing (call it again once `busy` in
-`get_slicing_status` is false), or "the plate failed validation: ..." with the app's words -- the
-app's export refuses such a plate without a word, and nothing was ever written. An error dialog the
+`get_slicing_status` is false), or "the plate failed validation: ..." with the app's words for the
+plate being exported (the selected one, never another plate's) -- the app's export refuses such a
+plate without a word, and nothing was ever written. An error dialog the
 app raised is added as `error_messages`.
 
 ---
