@@ -1,4 +1,5 @@
 #include "OrcaMCPPlateUtils.hpp"
+#include "OrcaMCPInstanceBox.hpp"
 #include "OrcaMCPImageFiles.hpp"
 #include "OrcaMCPPlateOccupancy.hpp"
 #include "OrcaMCPCommon.hpp"
@@ -180,7 +181,7 @@ static BoundingBoxf3 plate_contents_box(PartPlate& plate, const BoundingBoxf3& p
     for (size_t oi = 0; oi < objects.size(); ++oi)
         for (size_t ii = 0; ii < objects[oi]->instances.size(); ++ii)
             if (plate.contain_instance(int(oi), int(ii)))
-                box.merge(objects[oi]->instance_bounding_box(ii));
+                box.merge(OrcaMCP::instance_box(*objects[oi], ii));
     return box;
 }
 
@@ -863,7 +864,8 @@ ObjectFootprint OrcaMCPPlateUtils::GetObjectFootprint(const ModelObject& object,
     return out;
 }
 
-PrimeTowerState OrcaMCPPlateUtils::GetPrimeTowerState(int plate_index, const DynamicPrintConfig& full_config)
+PrimeTowerState OrcaMCPPlateUtils::GetPrimeTowerState(int plate_index, const DynamicPrintConfig& full_config,
+                                                      bool measure_unprinted)
 {
     PrimeTowerState state;
 
@@ -919,6 +921,8 @@ PrimeTowerState OrcaMCPPlateUtils::GetPrimeTowerState(int plate_index, const Dyn
     if (const auto* y_opt = proj_cfg.option<ConfigOptionFloats>("wipe_tower_y")) {
         if (size_t(plate_index) < y_opt->values.size()) state.stored_position.y() = y_opt->values[plate_index];
     }
+    if (!state.printed && !measure_unprinted)
+        return state;
 
     // estimate_wipe_tower_polygon is the slicer's own answer for both the position (clamped onto the
     // bed) and the size, and its returned contour is the brim-inclusive rectangle. Taking the brim
@@ -1087,7 +1091,7 @@ nlohmann::json OrcaMCPPlateUtils::GetPlates(bool with_model_object_features, con
         // The prime tower. It is printed plastic standing on the bed exactly as the objects above
         // are, and until this was reported an agent enumerating the plate's occupants simply did
         // not know it was there.
-        const PrimeTowerState tower = GetPrimeTowerState(plate->get_index(), full_config);
+        const PrimeTowerState tower = GetPrimeTowerState(plate->get_index(), full_config, /*measure_unprinted=*/false);
         plate_info["prime_tower"] = PrimeTowerJson(tower);
         if (tower.printed) {
             occupancy.push_back({

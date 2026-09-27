@@ -1,4 +1,5 @@
 #include "OrcaMCPCommon.hpp"
+#include "OrcaMCPInstanceBox.hpp"
 #include "OrcaMCPMeshHealth.hpp"
 #include "OrcaMCPPlateUtils.hpp"
 #include "OrcaMCPQuit.hpp"
@@ -289,11 +290,11 @@ double instance_min_z(const ModelObject& object, size_t instance_idx)
 
 void transform_instances_in_plate_frame(ModelObject& object, const Transform3d& world_transform)
 {
-    // Each instance turns about its own pre-transform centre: instance_bounding_box is read before
+    // Each instance turns about its own pre-transform centre: its box (instance_box) is read before
     // this instance is touched, and only this instance is touched.
     for (size_t i = 0; i < object.instances.size(); ++i)
         if (ModelInstance* instance = object.instances[i])
-            transform_instance_about_box(*instance, world_transform, object.instance_bounding_box(i));
+            transform_instance_about_box(*instance, world_transform, instance_box(object, i));
     object.invalidate_bounding_box();
 }
 
@@ -305,14 +306,15 @@ bool should_drop_to_bed(double min_z_before, double min_z_after)
 
 void transform_instances_on_bed(ModelObject& object, const Transform3d& world_transform)
 {
-    // One walk over the mesh per instance, for the box that gives both the pivot and the lowest point
-    // before; one over the convex hull for the lowest point after. The GUI reads the same two. An
-    // instance with no model part has no lowest point to keep, so it is not dropped.
+    // The instance's box (instance_box: one walk over the mesh unless it is cached), which gives both
+    // the pivot and the lowest point before; one walk over the convex hull for the lowest point after.
+    // The GUI reads the same two. An instance with no model part has no lowest point to keep, so it is
+    // not dropped.
     for (size_t i = 0; i < object.instances.size(); ++i) {
         ModelInstance* instance = object.instances[i];
         if (instance == nullptr)
             continue;
-        const BoundingBoxf3 before = object.instance_bounding_box(i);
+        const BoundingBoxf3 before = instance_box(object, i);
         transform_instance_about_box(*instance, world_transform, before);
         if (!instance->auto_drop || !before.defined)
             continue;
@@ -331,7 +333,7 @@ InstancesOnPlate instances_on_plate(const ModelObject& object, const std::functi
     for (size_t i = 0; i < object.instances.size(); ++i)
         if (holds(int(i))) {
             here.ids.push_back(int(i));
-            here.box.merge(object.instance_bounding_box(i));
+            here.box.merge(instance_box(object, i));
         }
     return here;
 }

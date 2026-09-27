@@ -443,6 +443,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/OrcaMCP/OrcaMCPRenderMath.cpp
     GUI/OrcaMCP/OrcaMCPImageFiles.hpp
     GUI/OrcaMCP/OrcaMCPImageFiles.cpp
+    GUI/OrcaMCP/OrcaMCPInstanceBox.hpp
+    GUI/OrcaMCP/OrcaMCPInstanceBox.cpp
     GUI/OrcaMCP/OrcaMCPFilamentModel.hpp
     GUI/OrcaMCP/OrcaMCPFilamentModel.cpp
     GUI/OrcaMCP/OrcaMCPRenderOverlay.hpp
