@@ -187,6 +187,17 @@ std::optional<Overhang> overhang_of(const PrintObject& object, size_t layer_inde
 
 nlohmann::json objects_at_height_json(const std::vector<ObjectAtHeight>& objects);
 
+// Where each of `print`'s objects stands on the bed: the box of its instances in bed mm (x, y), from
+// the sliced object's own size and each instance's place. It costs nothing per vertex, unlike the
+// model's exact instance box, which on a million-facet mesh took 1.7 s (-O0) and was needed twice.
+struct PrintFootprint
+{
+    int          object_index = -1;
+    std::string  name;
+    BoundingBoxf box;
+};
+std::vector<PrintFootprint> print_footprints(const Print& print, const Model& model);
+
 // --- colour and legend -----------------------------------------------------------------------
 
 struct LegendEntry

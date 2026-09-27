@@ -476,6 +476,19 @@ TEST_CASE("the cap's underside is an overhang with interface lines under it", "[
     CHECK_FALSE(overhang_of(object, 0, tolerance).has_value());
 }
 
+TEST_CASE("an object's footprint comes from the sliced object, where the model puts it", "[orcamcp][LayerPlan]")
+{
+    SlicedCap cap;
+    const std::vector<PrintFootprint> footprints = print_footprints(cap.print, cap.model);
+    REQUIRE(footprints.size() == 1);
+    CHECK(footprints[0].object_index == 0);
+    const BoundingBoxf3 model_box = cap.model.objects[0]->instance_bounding_box(0);
+    CHECK_THAT(footprints[0].box.min.x(), WithinAbs(model_box.min.x(), 0.01));
+    CHECK_THAT(footprints[0].box.min.y(), WithinAbs(model_box.min.y(), 0.01));
+    CHECK_THAT(footprints[0].box.max.x(), WithinAbs(model_box.max.x(), 0.01));
+    CHECK_THAT(footprints[0].box.max.y(), WithinAbs(model_box.max.y(), 0.01));
+}
+
 // Hidden ([.]): a timing, not a check. The plan runs on the GUI thread, so what it costs on a long
 // print matters: 1230 layers of about 4000 moves, a large model's G-code.
 TEST_CASE("the layer plan's arithmetic over a 1230-layer G-code", "[.][Benchmark][orcamcp][LayerPlan]")

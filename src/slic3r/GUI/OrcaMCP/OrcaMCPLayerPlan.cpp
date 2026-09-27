@@ -518,6 +518,22 @@ nlohmann::json objects_at_height_json(const std::vector<ObjectAtHeight>& objects
     return out;
 }
 
+std::vector<PrintFootprint> print_footprints(const Print& print, const Model& model)
+{
+    std::vector<PrintFootprint> out;
+    for (const PrintObject* po : print.objects()) {
+        PrintFootprint f;
+        f.object_index        = model_object_index(model, po->model_object());
+        f.name                = po->model_object() != nullptr ? po->model_object()->name : std::string();
+        const BoundingBox own = po->bounding_box();  // object coordinates, centred on the instance's shift
+        for (const PrintInstance& inst : po->instances())
+            for (const Point& corner : {Point(own.min + inst.shift), Point(own.max + inst.shift)})
+                f.box.merge(Vec2d(unscale<double>(corner.x()), unscale<double>(corner.y())));
+        out.push_back(std::move(f));
+    }
+    return out;
+}
+
 // --- colour and legend -----------------------------------------------------------------------
 
 ColorRGBA run_color(const ToolpathRun& run, LayerColorBy color_by, const std::vector<ColorRGBA>& slot_colors)

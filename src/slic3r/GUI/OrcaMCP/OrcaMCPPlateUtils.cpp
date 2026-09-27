@@ -289,27 +289,34 @@ static std::vector<ColorRGBA> preview_filament_colors(const GCodeProcessorResult
     return colors;
 }
 
-// The plate's objects, where the plan draws them: a label at each one's instances on this plate, and
-// its place in the picture.
-static void add_plan_objects(nlohmann::json& entry, std::vector<OrcaMCP::OverlayLabel>& labels, PartPlate& plate,
-                             const OrcaMCP::CameraFrame& camera)
+// The plate's objects, where the plan draws them: a label on each one's footprint, and its place in
+// the picture. From the sliced Print (print_footprints), which knows them without a pass over the mesh.
+static void add_plan_objects(nlohmann::json& entry, std::vector<OrcaMCP::OverlayLabel>& labels,
+                             const std::vector<OrcaMCP::PrintFootprint>& footprints, const OrcaMCP::CameraFrame& camera)
 {
     nlohmann::json in_frame = nlohmann::json::array();
-    for (const ModelObject* object : plate.get_objects_on_this_plate()) {
-        const int                       index = OrcaMCP::model_object_index(object);
-        const OrcaMCP::InstancesOnPlate here  = OrcaMCP::instances_on_plate(*object, index, plate);
-        if (!here.box.defined)
-            continue;
-        const BoundingBoxf3 flat(Vec3d(here.box.min.x(), here.box.min.y(), 0.), Vec3d(here.box.max.x(), here.box.max.y(), 0.));
+    for (const OrcaMCP::PrintFootprint& f : footprints) {
+        const BoundingBoxf3 flat(Vec3d(f.box.min.x(), f.box.min.y(), 0.), Vec3d(f.box.max.x(), f.box.max.y(), 0.));
         const OrcaMCP::ScreenBBox sb = OrcaMCP::screen_bbox_of(camera, flat);
         if (!sb.visible)
             continue;
-        labels.push_back({std::to_string(index), flat.center(), OrcaMCP::object_palette_color(index)});
-        in_frame.push_back({{"object_index", index}, {"name", object->name},
+        labels.push_back({std::to_string(f.object_index), flat.center(), OrcaMCP::object_palette_color(f.object_index)});
+        in_frame.push_back({{"object_index", f.object_index}, {"name", f.name},
                             {"screen_bbox", {std::round(sb.x0), std::round(sb.y0), std::round(sb.x1), std::round(sb.y1)}},
                             {"clipped", sb.clipped}});
     }
     entry["objects_in_frame"] = in_frame;
+}
+
+// What a layer plan's fit: {object_index} frames: that object's footprint in the sliced Print, or --
+// for an object the Print does not hold -- what a 3D view's fit frames, which also says where the
+// object is when this plate does not hold it.
+static BoundingBoxf3 layer_plan_fit_box(const std::vector<OrcaMCP::PrintFootprint>& footprints, int object_index, int plate_index)
+{
+    for (const OrcaMCP::PrintFootprint& f : footprints)
+        if (f.object_index == object_index && f.box.defined)
+            return BoundingBoxf3(Vec3d(f.box.min.x(), f.box.min.y(), 0.), Vec3d(f.box.max.x(), f.box.max.y(), 0.));
+    return object_fit_box_on_plate(object_index, plate_index);
 }
 
 // Why a filter drew nothing, and what this layer does print, so the next call can ask for it.
@@ -352,14 +359,18 @@ static nlohmann::json render_sliced_layer_view(PartPlate& plate, int plate_index
     const OrcaMCP::LayerExtrusion extrusion = OrcaMCP::layer_extrusion(result->moves, layer);
     const auto                  runs      = OrcaMCP::layer_toolpaths(result->moves, layer, request);
 
-    // What the Print says prints at this height: which object and support layers, and the overhang.
+    // What the Print says prints at this height -- which object and support layers, and the overhang
+    // -- and where its objects stand.
     std::vector<OrcaMCP::ObjectAtHeight> objects;
-    if (const Print* print = plate.fff_print(); print != nullptr && !print->objects().empty())
-        objects = OrcaMCP::objects_at_height(*print, wxGetApp().model(), layer.z, extrusion.extent,
-                                             print->config().nozzle_diameter.get_at(0));
+    std::vector<OrcaMCP::PrintFootprint> footprints;
+    if (const Print* print = plate.fff_print(); print != nullptr && !print->objects().empty()) {
+        objects    = OrcaMCP::objects_at_height(*print, wxGetApp().model(), layer.z, extrusion.extent,
+                                                print->config().nozzle_diameter.get_at(0));
+        footprints = OrcaMCP::print_footprints(*print, wxGetApp().model());
+    }
 
     const BoundingBoxf3 plate_box = plate.get_plate_box();
-    const BoundingBoxf3 frame     = request.fit_object ? object_fit_box_on_plate(*request.fit_object, plate_index) : plate_box;
+    const BoundingBoxf3 frame     = request.fit_object ? layer_plan_fit_box(footprints, *request.fit_object, plate_index) : plate_box;
     const OrcaMCP::PlanMapping mapping = OrcaMCP::plan_mapping(frame, resolution);
     const OrcaMCP::CameraFrame camera  = OrcaMCP::plan_camera(mapping);
 
@@ -382,7 +393,7 @@ static nlohmann::json render_sliced_layer_view(PartPlate& plate, int plate_index
         entry["hint"] = nothing_drawn_hint(number, extrusion);
     add_plan_camera(entry, plate_box, mapping);
     std::vector<OrcaMCP::OverlayLabel> labels;
-    add_plan_objects(entry, labels, plate, camera);
+    add_plan_objects(entry, labels, footprints, camera);
     entry["overlays"] = OrcaMCP::overlay_options_to_json(overlay_options);
 
     const auto    measured = std::chrono::steady_clock::now();
