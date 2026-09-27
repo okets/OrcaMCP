@@ -205,7 +205,7 @@ nlohmann::json time_by_feature_json(const std::map<std::string, double>& seconds
 {
     nlohmann::json out = nlohmann::json::object();
     for (const auto& [feature, seconds] : seconds_by_feature)
-        out[feature] = std::round(seconds * 10.0) / 10.0;
+        out[feature] = std::round(seconds * 10.0) / 10.0 + 0.0; // + 0.0: a rounded -0.04 reads 0, not -0
     return out;
 }
 

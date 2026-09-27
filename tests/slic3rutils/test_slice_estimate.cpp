@@ -374,3 +374,9 @@ TEST_CASE("the breakdown is reported to a tenth of a second", "[orcamcp][estimat
     CHECK_THAT(json.at("inner_wall").get<double>(), WithinAbs(12.3, 1e-9));
     CHECK_THAT(json.at("travel").get<double>(), WithinAbs(0.0, 1e-9));
 }
+
+TEST_CASE("a remainder that rounds to nothing is reported as 0, not -0", "[orcamcp][estimate]")
+{
+    const nlohmann::json json = time_by_feature_json({{"unattributed", -0.004}});
+    CHECK(json.dump() == R"({"unattributed":0.0})");
+}
