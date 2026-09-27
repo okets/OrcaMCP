@@ -10,6 +10,7 @@
 
 using Slic3r::GUI::OrcaMCP::parse_double_param;
 using Slic3r::GUI::OrcaMCP::parse_integer_param;
+using Slic3r::GUI::OrcaMCP::parse_object_param;
 using Slic3r::GUI::OrcaMCP::resolve_object_id;
 using Slic3r::GUI::OrcaMCP::error_response;
 
@@ -118,6 +119,29 @@ TEST_CASE("parse_integer_param refuses what is not a number at all", "[orcamcp][
 
 // The one place a tool turns object_id into an object, so every tool refuses a missing, mistyped or
 // out-of-range id with the same three messages.
+TEST_CASE("parse_object_param takes a JSON object or the text of one", "[orcamcp][params]")
+{
+    nlohmann::json out;
+    REQUIRE(parse_object_param(nlohmann::json{{"layer", 5}}, out));
+    CHECK(out == nlohmann::json{{"layer", 5}});
+    // A client whose cached schema still says the parameter is a string sends the object as its text.
+    REQUIRE(parse_object_param(nlohmann::json(R"({"z": 10.2, "features": ["support"]})"), out));
+    CHECK(out == nlohmann::json{{"z", 10.2}, {"features", {"support"}}});
+    REQUIRE(parse_object_param(nlohmann::json("  {\"layer\": 1}  "), out));
+    CHECK(out == nlohmann::json{{"layer", 1}});
+}
+
+TEST_CASE("parse_object_param refuses what is not an object", "[orcamcp][params]")
+{
+    nlohmann::json out = "untouched";
+    CHECK_FALSE(parse_object_param(nlohmann::json("first_layer"), out));
+    CHECK_FALSE(parse_object_param(nlohmann::json("[1, 2]"), out));
+    CHECK_FALSE(parse_object_param(nlohmann::json("{not json"), out));
+    CHECK_FALSE(parse_object_param(nlohmann::json(5), out));
+    CHECK_FALSE(parse_object_param(nlohmann::json::array({1}), out));
+    CHECK(out == "untouched");
+}
+
 TEST_CASE("resolve_object_id finds the object an object_id names, or says why it cannot", "[orcamcp][params]")
 {
     Slic3r::Model model;

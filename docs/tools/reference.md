@@ -1753,7 +1753,7 @@ starts at x ≈ 307. A camera aimed at another plate's area returns a flat image
 | `resolution` | integer | No | Pixels per view side (default 512, 32–2048). Prefer `fit` to an object over more pixels. |
 | `image_format` | `"png"` / `"jpeg"` | No | Default `png` for files, `jpeg` for inline base64. |
 | `overlays` | boolean / object | No | `true` (default) draws all; `false` none; or `{outline, grid, origin, labels, excluded}` booleans. |
-| `layer_view` | `"first_layer"` | No | A top-down **first-layer plan** instead of a 3D render — see below. Ignores `views`. |
+| `layer_view` | `"first_layer"` / object | No | A top-down plan instead of a 3D render: the **first-layer plan**, or **any sliced layer** as `{layer: N}` or `{z: mm}` — see below. Ignores `views`. |
 
 **A view** is one of:
 ```json
@@ -1773,6 +1773,8 @@ explicit camera be given relative to the plate's front-left corner.
 {"name": "render_plate_view", "arguments": {"plate_index": 1, "save_to_file": true,
   "views": [{"preset": "low", "fit": {"object_index": 8}}, {"preset": "top"}]}}
 {"name": "render_plate_view", "arguments": {"plate_index": 1, "save_to_file": true, "layer_view": "first_layer"}}
+{"name": "render_plate_view", "arguments": {"plate_index": 0, "save_to_file": true,
+  "layer_view": {"z": 10.0, "features": ["support", "support_interface"], "color_by": "filament"}}}
 ```
 
 **Returns** an array with one entry per view (or one contact-sheet entry):
@@ -1824,6 +1826,76 @@ unsliced plate it falls back to model footprints with the configured brim width 
 reports `source: "footprints"` instead of `"sliced"`. The entry adds `has_brim` and `on_raft` per
 object, `support_present` (a raft counts), `wipe_tower_present` and `camera.mm_per_pixel`. This is the view for
 "is the brim wide enough" and "where do the support feet land".
+
+**Sliced layer plan** (`layer_view: {layer: N}` or `{z: mm}`): one layer of the plate's sliced
+G-code, top-down, drawn from the same moves the Preview draws, each line at its real width. It is
+the view for "does the interface cover this overhang", "which tool prints the support" and "what
+changed on layer 400". An unsliced plate (or one whose slice is out of date) is an error saying to
+call `slice_all` and `wait_for_slice` first.
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `layer` | integer | Layer number from 1, as the Preview's layer slider numbers layers: `1..printed_layers` of `get_print_estimate`. |
+| `z` | number | A height in mm. The nearest printed layer is drawn; a height exactly between two goes to the lower. Give `layer` or `z`, not both. |
+| `features` | array | Draw only these: `perimeters` (walls and gap fill), `infill` (sparse, solid, top, bottom, bridges, ironing), `support`, `support_interface`, `brim`, `skirt`, `prime_tower` — the same names `get_print_estimate`'s `time_by_feature` uses. Default all. Start G-code purge lines are never drawn. |
+| `filaments` | array | Draw only these filament slots, 1-based as `get_scene_info`'s `filaments_used`. Default all. |
+| `color_by` | `"feature"` / `"filament"` | `feature` (default): the Preview's feature colours. `filament`: each slot's colour, as the Preview's Filament view. |
+| `fit` | `"plate"` / `{"object_index": n}` | Frame the plate (default) or that object's instances on this plate. |
+
+A line's filament is the one the G-code really prints it with, so support set to "any" filament,
+flushing into infill and mixed filaments show as they print. The entry adds:
+
+```json
+{
+  "layer_view": "layer", "source": "gcode",
+  "layer": {"number": 51, "of": 60, "z": 10.25, "requested_z": 10.2, "also_at": []},
+  "filaments": [1],
+  "extruded_mm2": {"perimeters": 93.22, "infill": 858.42, "support": 0.0, "support_interface": 0.0,
+                   "brim": 0.0, "skirt": 0.0, "prime_tower": 0.0},
+  "extruded_mm2_by_filament": {"1": {"perimeters": 93.22, "infill": 858.42, "support": 0.0, "...": 0.0}},
+  "object_mm2": 951.64, "support_mm2": 0.0,
+  "objects_at_height": [{
+    "object_index": 0, "name": "cap_on_stem.stl",
+    "object_layer": {"number": 51, "print_z": 10.25, "height": 0.2},
+    "support_layer": null,
+    "overhang": {"area_mm2": 829.44, "under_support_mm2": 742.31, "under_interface_mm2": 742.31,
+                 "support_z": 9.85, "tolerance_mm": 0.2}
+  }],
+  "drawn": {"features": ["support", "support_interface"], "filaments": "all", "color_by": "feature"},
+  "legend": [],
+  "nothing_drawn": true,
+  "hint": "Nothing on layer 51 matches the features and filaments asked for. This layer prints perimeters, infill, with filaments 1.",
+  "objects_in_frame": [{"object_index": 0, "name": "cap_on_stem.stl", "screen_bbox": [64, 64, 448, 448], "clipped": false}],
+  "frame": "bed_mm", "plate_origin": [0.0, 0.0],
+  "camera": {"type": "orthographic", "pixel_origin": "top_left", "mm_per_pixel": 0.078, "...": "..."}
+}
+```
+
+That is `{"z": 10.2, "features": ["support", "support_interface"], "fit": {"object_index": 0}}` on a
+30 mm cap over an 8 mm stem, sliced on a four-head toolchanger with tree supports in filament 2: the
+cap's first layer has no support in it (the 0.2 mm gap is layer 50, the interface layer 49, at
+`support_z`), and 742 of the 829 mm² that hang past the stem have interface lines under them.
+
+- `layer.z` is the height the layer prints at. With `z`, the entry also has `requested_z`, and
+  `also_at` lists other layer numbers at the same height (a by-object print reaches each height
+  once per object).
+- The areas are the whole layer's, whatever the filters draw: each line's length times its width,
+  so where two lines overlap the area counts twice. `object_mm2` is perimeters plus infill,
+  `support_mm2` support plus interface. `filaments` is every filament printing on the layer, in
+  the order they start.
+- `objects_at_height` says, per object, which of its own layers print at this height. Support can
+  have heights of its own (`independent_support_layer_height`), so at a support-only height
+  `object_layer` is `null`: nothing of the object prints there, and its layer spanning this height
+  is one number up or down. Layer numbers here count from 1 within the object.
+- `overhang` (on an object layer with one below it) is polygon arithmetic on the sliced layers, not
+  pixels: `area_mm2` is the part of this layer more than `tolerance_mm` (half the nozzle) beyond the
+  layer below, and `under_support_mm2` / `under_interface_mm2` how much of it has support lines /
+  interface lines directly under it, on the highest support layer at or below this layer's bottom
+  (`support_z`). They are ribbon areas: sparse support covers only the part its lines run under,
+  while a dense interface should come close to `area_mm2`.
+- `legend` has one entry per colour in the picture, with the area it drew; the image shows the same
+  legend in its top-right corner unless `overlays.labels` is off. `nothing_drawn: true` means the
+  filter matched no line on this layer, and `hint` says what the layer does print.
 
 ---
 

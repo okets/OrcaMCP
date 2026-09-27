@@ -43,6 +43,12 @@ bool parse_boolean_param(const nlohmann::json& value, bool& out);
 // in base 16 is a caller mistake worth reporting rather than silently giving a different number.
 bool parse_double_param(const nlohmann::json& value, double& out);
 
+// The same contract for an object-valued parameter: a JSON object, or a string holding the JSON text
+// of one -- what a client sends when its cached schema still types the parameter as a string (a
+// parameter that grew an object form, like render_plate_view's layer_view). Anything else, including
+// a string that is not an object's text, returns false without touching `out`.
+bool parse_object_param(const nlohmann::json& value, nlohmann::json& out);
+
 // {"status": "error", "message": message}: what a tool returns for a call it refuses.
 nlohmann::json error_response(const std::string& message);
 

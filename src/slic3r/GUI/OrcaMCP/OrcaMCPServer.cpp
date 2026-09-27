@@ -1094,8 +1094,8 @@ void OrcaMCPServer::register_builtin_tools()
     register_tool({
         "render_plate_view",
         ToolCategory::Visualization,
-        "Render a plate or object to PNG",
-        "Render a plate. Omit views for a contact sheet of iso, top and front fitted to the plate. A view is {preset: iso|top|front|back|left|right|low, fit: \"plate\" | {object_index}} or explicit {camera_position, target} in BED mm (the get_scene_info frame; plate N sits at plates[N].bounding_box) -- or add frame: \"plate_local\" to give them relative to the plate's front-left corner. The requested plate's objects are drawn, including any hanging over its edge, from the 3D scene whichever tab the app shows. Every view returns objects_in_frame, uniform_image (+hint), plate_origin and the camera; overlays (outline, 10 mm grid, origin, labels) are on by default. Use save_to_file=true for PNG paths.",
+        "Render a plate, object or sliced layer",
+        "Render a plate. Omit views for a contact sheet of iso, top and front fitted to the plate. A view is {preset: iso|top|front|back|left|right|low, fit: \"plate\" | {object_index}} or explicit {camera_position, target} in BED mm (the get_scene_info frame; plate N sits at plates[N].bounding_box) -- or add frame: \"plate_local\" to give them relative to the plate's front-left corner. The requested plate's objects are drawn, including any hanging over its edge, from the 3D scene whichever tab the app shows. Every view returns objects_in_frame, uniform_image (+hint), plate_origin and the camera; overlays (outline, 10 mm grid, origin, labels) are on by default. Use save_to_file=true for PNG paths. layer_view draws a top-down plan instead: \"first_layer\", or any sliced layer as {layer: N} or {z: mm}, filtered by features and filaments, with the layer's height, filaments and extruded areas -- the way to check supports, interfaces and which tool prints what on a given layer.",
         {
             {"type", "object"},
             {"properties", {
@@ -1122,9 +1122,36 @@ void OrcaMCPServer::register_builtin_tools()
                     }}
                 }},
                 {"layer_view", {
-                    {"type", "string"},
-                    {"enum", {"first_layer"}},
-                    {"description", "Instead of a 3D render: a top-down plan of the first layer -- object footprints, brim loops, support and wipe tower -- from the sliced plate (source: sliced) or the model footprints when unsliced (source: footprints). Ignores views. This is the view for 'is the brim wide enough' and 'where do the support feet land'."}
+                    {"type", {"string", "object"}},
+                    {"description", "Instead of a 3D render, a top-down plan; ignores views. \"first_layer\": the first layer -- object footprints (or their raft), brim loops, support and wipe tower -- from the sliced plate (source: sliced) or the model footprints when unsliced (source: footprints); the view for 'is the brim wide enough' and 'where do the support feet land'. {layer: N} or {z: mm}: any layer of the sliced G-code, the lines the Preview draws (source: gcode; an unsliced plate is an error). Returns layer {number, of, z}, filaments (printing on it, in order), extruded_mm2 by feature and extruded_mm2_by_filament (line length x width, the whole layer whatever is drawn), object_mm2 vs support_mm2, objects_at_height (per object its object_layer and support_layer printed at this height -- support can have heights of its own, so either can be null -- and overhang: area_mm2 hanging past the layer below, and how much of it has support and interface lines under it), drawn, legend, and nothing_drawn (+hint) when the filter matches no line."},
+                    {"properties", {
+                        {"layer", {
+                            {"type", "integer"},
+                            {"description", "Layer number from 1, as the Preview's layer slider numbers layers: 1..get_print_estimate's printed_layers."}
+                        }},
+                        {"z", {
+                            {"type", "number"},
+                            {"description", "A height in mm; the nearest printed layer is drawn (a tie goes to the lower)."}
+                        }},
+                        {"features", {
+                            {"type", "array"},
+                            {"items", {{"type", "string"}, {"enum", {"perimeters", "infill", "support", "support_interface", "brim", "skirt", "prime_tower"}}}},
+                            {"description", "Draw only these (default all)."}
+                        }},
+                        {"filaments", {
+                            {"type", "array"},
+                            {"items", {{"type", "integer"}}},
+                            {"description", "Draw only these filament slots, 1-based as get_scene_info's filaments_used (default all)."}
+                        }},
+                        {"color_by", {
+                            {"type", "string"},
+                            {"enum", {"feature", "filament"}},
+                            {"description", "feature (default): the Preview's feature colours. filament: each slot's colour, as the Preview's Filament view. The legend says which colour is which."}
+                        }},
+                        {"fit", {
+                            {"description", "\"plate\" (default) or {\"object_index\": n} to frame that object's instances on this plate."}
+                        }}
+                    }}
                 }},
                 {"image_format", {
                     {"type", "string"},

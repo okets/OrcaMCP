@@ -115,6 +115,21 @@ bool parse_double_param(const nlohmann::json& value, double& out)
     return false;
 }
 
+bool parse_object_param(const nlohmann::json& value, nlohmann::json& out)
+{
+    if (value.is_object()) {
+        out = value;
+        return true;
+    }
+    if (!value.is_string())
+        return false;
+    const nlohmann::json parsed = nlohmann::json::parse(value.get<std::string>(), nullptr, /*allow_exceptions=*/false);
+    if (!parsed.is_object())
+        return false;  // also a parse failure, which comes back as a discarded value
+    out = parsed;
+    return true;
+}
+
 bool parse_boolean_param(const nlohmann::json& value, bool& out)
 {
     if (value.is_boolean()) {

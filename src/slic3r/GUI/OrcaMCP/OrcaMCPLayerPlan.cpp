@@ -36,7 +36,13 @@ bool is_object_or_support(ExtrusionFeature f)
            f == ExtrusionFeature::support_interface;
 }
 
-double round_to(double value, double step) { return std::round(value / step) * step + 0.0; }  // + 0.0: never -0
+// `value` to `decimals` places, as the nearest double (dividing by the power of ten, not multiplying by
+// its inverse, keeps 6.05 from printing as 6.050000000000001), and never -0.
+double round_to(double value, int decimals)
+{
+    const double scale = std::pow(10., decimals);
+    return std::round(value * scale) / scale + 0.0;
+}
 double area_mm2(const ExPolygons& shape) { return area(shape) * SCALING_FACTOR * SCALING_FACTOR; }
 
 // The height layer [begin, end) prints at: where its last extrusion is, else its last move, else the
@@ -125,25 +131,25 @@ nlohmann::json layer_ref_json(const std::optional<PrintedLayerRef>& ref)
 {
     if (!ref)
         return nullptr;
-    return {{"number", ref->number}, {"print_z", round_to(ref->print_z, 1e-4)}, {"height", round_to(ref->height, 1e-4)}};
+    return {{"number", ref->number}, {"print_z", round_to(ref->print_z, 4)}, {"height", round_to(ref->height, 4)}};
 }
 
 nlohmann::json overhang_json(const std::optional<Overhang>& o)
 {
     if (!o)
         return nullptr;
-    return {{"area_mm2", round_to(o->area_mm2, 0.01)},
-            {"under_support_mm2", round_to(o->under_support_mm2, 0.01)},
-            {"under_interface_mm2", round_to(o->under_interface_mm2, 0.01)},
-            {"support_z", o->support_z ? nlohmann::json(round_to(*o->support_z, 1e-4)) : nlohmann::json(nullptr)},
-            {"tolerance_mm", round_to(o->tolerance_mm, 1e-4)}};
+    return {{"area_mm2", round_to(o->area_mm2, 2)},
+            {"under_support_mm2", round_to(o->under_support_mm2, 2)},
+            {"under_interface_mm2", round_to(o->under_interface_mm2, 2)},
+            {"support_z", o->support_z ? nlohmann::json(round_to(*o->support_z, 4)) : nlohmann::json(nullptr)},
+            {"tolerance_mm", round_to(o->tolerance_mm, 4)}};
 }
 
 nlohmann::json feature_areas_json(const FeatureAreas& areas)
 {
     nlohmann::json out = nlohmann::json::object();
     for (size_t f = 0; f < k_plan_feature_count; ++f)
-        out[extrusion_feature_key(ExtrusionFeature(f))] = round_to(areas[f], 0.01);
+        out[extrusion_feature_key(ExtrusionFeature(f))] = round_to(areas[f], 2);
     return out;
 }
 
@@ -424,8 +430,8 @@ nlohmann::json layer_extrusion_json(const LayerExtrusion& e)
         by_filament[std::to_string(filament)] = feature_areas_json(areas);
     return {{"extruded_mm2", feature_areas_json(e.mm2)},
             {"extruded_mm2_by_filament", by_filament},
-            {"object_mm2", round_to(e.object_mm2(), 0.01)},
-            {"support_mm2", round_to(e.support_mm2(), 0.01)},
+            {"object_mm2", round_to(e.object_mm2(), 2)},
+            {"support_mm2", round_to(e.support_mm2(), 2)},
             {"filaments", e.filament_order}};
 }
 
@@ -561,7 +567,7 @@ nlohmann::json legend_json(const std::vector<LegendEntry>& legend)
     nlohmann::json out = nlohmann::json::array();
     for (const LegendEntry& entry : legend)
         out.push_back({{"key", entry.key}, {"label", entry.label}, {"color", encode_color(entry.color)},
-                       {"extruded_mm2", round_to(entry.mm2, 0.01)}});
+                       {"extruded_mm2", round_to(entry.mm2, 2)}});
     return out;
 }
 

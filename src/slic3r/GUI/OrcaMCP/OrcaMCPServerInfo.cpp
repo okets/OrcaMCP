@@ -169,10 +169,11 @@ json tool_examples()
             {"preset_views", R"({"plate_index": 1, "save_to_file": true, "views": [{"preset": "iso"}, {"preset": "low", "fit": {"object_index": 8}}]})"},
             {"explicit_camera", R"({"plate_index": 0, "save_to_file": true, "views": [{"camera_position": [300, -200, 150], "target": [128, 128, 30]}]})"},
             {"first_layer_plan", R"({"plate_index": 1, "save_to_file": true, "layer_view": "first_layer"})"},
+            {"sliced_layer_plan", R"({"plate_index": 0, "save_to_file": true, "layer_view": {"z": 10.0, "features": ["support", "support_interface"], "color_by": "filament"}})"},
             {"coordinate_frame", "camera_position/target are BED mm, the get_scene_info frame; plate N is at plates[N].bounding_box. Add frame: \"plate_local\" to give them from the plate's front-left corner. Presets never need coordinates."},
             {"read_the_numbers_first", "Check uniform_image (and its hint) and objects_in_frame before reading the image; a flat image means the camera saw nothing on that plate."},
             {"tip", "ALWAYS use save_to_file=true (PNG paths). Prefer fit: {object_index} over a higher resolution."},
-            {"when_to_use", "Before/after transforms, to verify object state, to analyze geometry; layer_view first_layer for brim, support feet and adhesion questions"}
+            {"when_to_use", "Before/after transforms, to verify object state, to analyze geometry; layer_view first_layer for brim, support feet and adhesion questions; layer_view {layer} or {z} to see any sliced layer's supports, interfaces and which filament prints what, with the areas (objects_at_height overhang) that say whether support covers an overhang"}
         }},
         {"apply_config", {
             {"single_setting", R"({"settings": [{"type": "print", "key": "layer_height", "value": "0.2"}]})"},

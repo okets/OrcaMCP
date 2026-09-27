@@ -324,6 +324,22 @@ TEST_CASE("a layer's first line starts where the layer below ended", "[orcamcp][
     CHECK_THAT(runs[0].points.front().y(), WithinAbs(0., 1e-6));
 }
 
+TEST_CASE("heights and areas are reported as the numbers they are, not float noise", "[orcamcp][LayerPlan]")
+{
+    ObjectAtHeight o;
+    o.object_index = 0;
+    o.object_layer = PrintedLayerRef{30, 6.0500000000000007, 0.2};
+    Overhang hang;
+    hang.area_mm2  = 858.4200000000001;
+    hang.support_z = 9.8500000000000014;
+    o.overhang     = hang;
+    const nlohmann::json json = objects_at_height_json({o})[0];
+    CHECK(json["object_layer"]["print_z"].dump() == "6.05");
+    CHECK(json["overhang"]["area_mm2"].dump() == "858.42");
+    CHECK(json["overhang"]["support_z"].dump() == "9.85");
+    CHECK(json["support_layer"].is_null());
+}
+
 // --- colour and legend ---------------------------------------------------------------------------
 
 TEST_CASE("colour by feature is the Preview's, colour by filament is the slot's", "[orcamcp][LayerPlan]")
