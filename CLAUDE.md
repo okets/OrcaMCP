@@ -186,7 +186,7 @@ What the tests enforce, with no app running:
     app tool refuses an argument it does not take, and each required argument left out, with -32602
     naming it, before its handler runs; the nested cases above; arguments that are not an object;
     every required name is a declared property; each response entry in a request's shape is taken
-    back;
+    back; the walk's depth is the schema's, not the value's;
   - every summary is one line of at most 40 characters;
   - the golden file equals the registry: any name, category, summary, description or schema
     that differs fails, naming the tool and the field;

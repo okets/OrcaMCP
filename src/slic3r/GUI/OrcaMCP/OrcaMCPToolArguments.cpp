@@ -106,7 +106,9 @@ void check_object(Walk& walk, const json& schema, const json& value, const std::
             check_value(walk, property, *given, path.empty() ? key : path + "." + key);
 }
 
-// A nested value is looked into only when it is what its schema describes; its type is not checked.
+// A nested value is looked into only when it is what its schema describes -- an object against its
+// properties, an array against its items -- and its type is not checked. Every step down takes a
+// step down the schema too, so how deep the walk goes is the schema's to say, never the value's.
 void check_value(Walk& walk, const json& schema, const json& value, const std::string& path)
 {
     if (!schema.is_object())
@@ -114,9 +116,11 @@ void check_value(Walk& walk, const json& schema, const json& value, const std::s
     if (value.is_object() && describes_object(schema)) {
         check_object(walk, schema, value, path);
     } else if (value.is_array()) {
-        const json& items = member(schema, "items", json::value_t::object);
+        const auto items = schema.find("items");
+        if (items == schema.end() || !items->is_object())
+            return;
         for (size_t i = 0; i < value.size(); ++i)
-            check_value(walk, items, value[i], path + "[" + std::to_string(i) + "]");
+            check_value(walk, *items, value[i], path + "[" + std::to_string(i) + "]");
     }
 }
 

@@ -9,6 +9,8 @@
 #include "slic3r/GUI/OrcaMCP/OrcaMCPToolArguments.hpp"
 #include "libslic3r/Model.hpp"
 
+#include <boost/thread.hpp>
+
 #include <functional>
 #include <optional>
 #include <string>
@@ -238,6 +240,30 @@ TEST_CASE("A printer status nozzle entry is refused as a nozzles target, not rea
     CHECK(refusal("printer_control", {{"action", "set_temperature"}, {"nozzles", {{{"tool", 0}, {"current", 25.0}, {"target", 0.0}}}}}) ==
           "printer_control: nozzles[0] has no keys \"current\", \"target\" and is missing its required key \"temp\". "
           "Its keys: tool, temp.");
+}
+
+// ==================== HOW DEEP THE WALK GOES ====================
+
+TEST_CASE("An array whose schema gives no items is not looked into, however deep it is", "[McpToolArguments][orcamcp][tools]")
+{
+    // The check runs on the HTTP server's thread, whose stack is small; a walk that followed the value
+    // down would let a call's nesting decide how deep it recurses. So it runs here on a small stack.
+    const json schema = {{"type", "object"}, {"properties", {{"list", {{"type", "array"}}}}}, {"additionalProperties", false}};
+    json       deep   = json::array();
+    for (int i = 0; i < 100000; ++i) {
+        json outer = json::array();
+        outer.push_back(std::move(deep));
+        deep = std::move(outer);
+    }
+    json arguments    = json::object();
+    arguments["list"] = std::move(deep);
+
+    std::optional<std::string>  refused = std::string("not run");
+    boost::thread::attributes   small_stack;
+    small_stack.set_stack_size(256 * 1024);
+    boost::thread walk(small_stack, [&]() { refused = tool_arguments_error("tool", schema, arguments); });
+    walk.join();
+    CHECK(refused.value_or("") == "");
 }
 
 // ==================== ARGUMENTS THAT WERE DROPPED ====================
