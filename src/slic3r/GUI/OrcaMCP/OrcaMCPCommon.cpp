@@ -333,9 +333,14 @@ BoundingBoxf3 plate_box_of(const ModelObject& object, const InstancesOnPlate& he
 
 int model_object_index(const ModelObject* object)
 {
+    return model_object_index(wxGetApp().model(), object);
+}
+
+int model_object_index(const Model& model, const ModelObject* object)
+{
     if (object == nullptr)
         return -1;
-    const ModelObjectPtrs& objects = wxGetApp().model().objects;
+    const ModelObjectPtrs& objects = model.objects;
     for (size_t i = 0; i < objects.size(); ++i)
         if (objects[i] == object || objects[i]->id() == object->id())
             return int(i);

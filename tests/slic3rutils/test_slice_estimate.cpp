@@ -4,6 +4,7 @@
 
 #include "slic3r/GUI/OrcaMCP/OrcaMCPSliceEstimate.hpp"
 #include "fff_print/test_helpers.hpp"
+#include "mcp_slice_fixtures.hpp"
 #include "libslic3r/Print.hpp"
 #include "libslic3r/Slicing.hpp"
 
@@ -142,16 +143,7 @@ TEST_CASE("count_distinct_heights merges heights closer than EPSILON", "[orcamcp
 
 namespace {
 
-// A 30 x 30 mm cap on an 8 x 8 mm stem, 12 mm tall: the cap's underside needs support.
-Slic3r::TriangleMesh supported_cap()
-{
-    Slic3r::TriangleMesh model = Slic3r::make_cube(8, 8, 10);
-    model.translate(11, 11, 0);
-    Slic3r::TriangleMesh cap = Slic3r::make_cube(30, 30, 2);
-    cap.translate(0, 0, 10);
-    model.merge(cap);
-    return model;
-}
+using mcp_test::supported_cap;
 
 // The count the G-code itself states in its header, "; total layers count = N".
 int gcode_layer_count(const std::string& gcode)

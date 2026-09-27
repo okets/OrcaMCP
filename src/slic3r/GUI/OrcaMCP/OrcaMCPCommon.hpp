@@ -159,6 +159,8 @@ BoundingBoxf3 plate_box_of(const ModelObject& object, const InstancesOnPlate& he
 // The index of `object` in the plater's model, matched by pointer or by ObjectID (a Print's copy of
 // an object carries the original's id), or -1.
 int model_object_index(const ModelObject* object);
+// The same in `model`, for code that reads a Print without the app (a unit test's Print and Model).
+int model_object_index(const Model& model, const ModelObject* object);
 
 // One model object as every MCP response describes it: id, name, object_index (the index other
 // tools take), instance_count, volume_count, position (bounding-box centre), rotation_degrees and

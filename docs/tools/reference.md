@@ -1816,10 +1816,13 @@ explicit camera be given relative to the plate's front-left corner.
 
 **First-layer plan** (`layer_view: "first_layer"`): a top-down, orthographic plan drawn from the
 plate's sliced first layer — each object's footprint in its colour, its brim loops as darker
-lines, the support first layer hatched grey, the wipe tower in grey — plus the overlays. On an
+lines, the support first layer hatched grey, the wipe tower in grey — plus the overlays. It shows
+what prints at the plate's lowest height: an object on a raft is drawn as its raft (hatched like
+support, outlined in the object's colour, `on_raft: true`), since its own first layer prints on
+top of the raft, and support that starts higher up, standing on the part, is left out. On an
 unsliced plate it falls back to model footprints with the configured brim width as a ring and
-reports `source: "footprints"` instead of `"sliced"`. The entry adds `has_brim` per object,
-`support_present`, `wipe_tower_present` and `camera.mm_per_pixel`. This is the view for
+reports `source: "footprints"` instead of `"sliced"`. The entry adds `has_brim` and `on_raft` per
+object, `support_present` (a raft counts), `wipe_tower_present` and `camera.mm_per_pixel`. This is the view for
 "is the brim wide enough" and "where do the support feet land".
 
 ---

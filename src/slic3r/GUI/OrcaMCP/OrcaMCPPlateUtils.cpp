@@ -257,17 +257,20 @@ nlohmann::json OrcaMCPPlateUtils::RenderPlateView(const nlohmann::json& params) 
         entry["camera"]["pixel_origin"] = "top_left";
         entry["camera"]["mm_per_pixel"] = 1.0 / mapping.scale;
         nlohmann::json objects = nlohmann::json::array();
+        bool raft_present = false;
         for (const OrcaMCP::PlanObject& o : plan.objects) {
-            if (o.body.empty()) continue;
-            const BoundingBox   bb = get_extents(o.body);
+            if (o.on_bed().empty()) continue;
+            const BoundingBox   bb = get_extents(o.on_bed());
             const BoundingBoxf3 mm(Vec3d(unscale<double>(bb.min.x()), unscale<double>(bb.min.y()), 0.), Vec3d(unscale<double>(bb.max.x()), unscale<double>(bb.max.y()), 0.));
             const OrcaMCP::ScreenBBox sb = OrcaMCP::screen_bbox_of(camera, mm);
             objects.push_back({{"object_index", o.object_index}, {"name", o.name},
                                {"screen_bbox", {std::round(sb.x0), std::round(sb.y0), std::round(sb.x1), std::round(sb.y1)}},
-                               {"has_brim", !o.brim.empty()}});
+                               {"has_brim", !o.brim.empty()},
+                               {"on_raft", !o.raft.empty()}});
+            raft_present = raft_present || !o.raft.empty();
         }
         entry["objects_in_frame"] = objects;
-        entry["support_present"]  = !plan.support.empty();
+        entry["support_present"]  = !plan.support.empty() || raft_present;  // a raft is support too
         entry["wipe_tower_present"] = plan.wipe_tower.has_value();
         entry["overlays"] = OrcaMCP::overlay_options_to_json(overlay_options);
         if (save_to_file) entry["file_path"] = save_image_to_file(image, 0, use_png);

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 #include <wx/bitmap.h>
 #include <wx/dcmemory.h>
@@ -83,12 +84,13 @@ std::vector<OverlayLabel> plan_labels(const FirstLayerPlan& plan)
 {
     std::vector<OverlayLabel> labels;
     for (const PlanObject& o : plan.objects) {
-        if (o.body.empty())
+        const ExPolygons& on_bed = o.on_bed();
+        if (on_bed.empty())
             continue;
         // Centroid of the largest slice: a frame's hollow centre would otherwise put the label in air,
         // and this is still inside the object's footprint for anything convex-ish.
-        const ExPolygon* largest = &o.body.front();
-        for (const ExPolygon& e : o.body)
+        const ExPolygon* largest = &on_bed.front();
+        for (const ExPolygon& e : on_bed)
             if (e.contour.area() > largest->contour.area())
                 largest = &e;
         const Point c = largest->contour.centroid();
@@ -102,35 +104,65 @@ std::vector<OverlayLabel> plan_labels(const FirstLayerPlan& plan)
 // The Print works on its own copy of the model, so pointers never match the plater's objects;
 // ObjectIDs survive the copy and do, which is what OrcaMCP::model_object_index matches by.
 
-static FirstLayerPlan plan_from_print(const Print& print)
+// The height the plate prints first: the lowest first layer among its objects' object and support
+// layers. With a raft that is the raft's base; the object's own first layer sits on top of it.
+static double first_print_height(const Print& print)
+{
+    double z = std::numeric_limits<double>::max();
+    for (const PrintObject* po : print.objects()) {
+        if (!po->layers().empty())
+            z = std::min(z, po->layers().front()->print_z);
+        if (!po->support_layers().empty())
+            z = std::min(z, double(po->support_layers().front()->print_z));
+    }
+    return z;
+}
+
+static bool prints_at(const Layer* layer, double z) { return layer != nullptr && std::abs(layer->print_z - z) < EPSILON; }
+
+// The band a support layer's extrusions cover, moved to one instance's place on the bed.
+static ExPolygons support_covered(const SupportLayer& layer, const Point& shift)
+{
+    Polygons fills = layer.support_fills.polygons_covered_by_width(float(scale_(0.05)));
+    for (Polygon& p : fills)
+        p.translate(shift);
+    return union_ex(fills);
+}
+
+FirstLayerPlan plan_from_print(const Print& print, const Model& model)
 {
     FirstLayerPlan plan;
     plan.source = "sliced";
+    const double first_z = first_print_height(print);
     // ModelObject id -> index into plan.objects, so brim groups can be handed to their object.
     std::vector<std::pair<ObjectID, size_t>> by_model_id;
 
     for (const PrintObject* po : print.objects()) {
-        if (po->layers().empty())
+        const Layer*        first         = po->layers().empty() ? nullptr : po->layers().front();
+        const SupportLayer* first_support = po->support_layers().empty() ? nullptr : po->support_layers().front();
+        const bool          body_first    = prints_at(first, first_z);
+        const bool          support_first = prints_at(first_support, first_z);
+        if (!body_first && !support_first)
             continue;
-        const Layer* first = po->layers().front();
-        PlanObject   o;
-        o.object_index = model_object_index(po->model_object());
+        // A raft is the first layer of an object that does not print its own there.
+        const bool on_raft = !body_first && po->slicing_parameters().has_raft();
+        PlanObject o;
+        o.object_index = model_object_index(model, po->model_object());
         o.name         = po->model_object() != nullptr ? po->model_object()->name : std::string();
         o.color        = object_palette_color(o.object_index);
         for (const PrintInstance& inst : po->instances()) {
-            ExPolygons slices = first->lslices;
-            translate(slices, inst.shift);
-            append(o.body, std::move(slices));
-            if (!po->support_layers().empty()) {
-                Polygons fills = po->support_layers().front()->support_fills.polygons_covered_by_width(float(scale_(0.05)));
-                for (Polygon& p : fills)
-                    p.translate(inst.shift);
-                append(plan.support, union_ex(fills));
+            if (body_first) {
+                ExPolygons slices = first->lslices;
+                translate(slices, inst.shift);
+                append(o.body, std::move(slices));
             }
+            if (support_first)
+                append(on_raft ? o.raft : plan.support, support_covered(*first_support, inst.shift));
         }
         // Brim groups may name the PrintObject or its ModelObject; accept either.
         by_model_id.emplace_back(po->id(), plan.objects.size());
-        by_model_id.emplace_back(po->model_object()->id(), plan.objects.size());
+        if (po->model_object() != nullptr)
+            by_model_id.emplace_back(po->model_object()->id(), plan.objects.size());
         plan.objects.push_back(std::move(o));
     }
 
@@ -162,7 +194,7 @@ FirstLayerPlan collect_first_layer(PartPlate& plate, const DynamicPrintConfig& f
 {
     Print* print = plate.fff_print();
     if (plate.is_slice_result_valid() && print != nullptr && !print->objects().empty()) {
-        FirstLayerPlan plan = plan_from_print(*print);
+        FirstLayerPlan plan = plan_from_print(*print, wxGetApp().model());
         const PrimeTowerState tower = OrcaMCPPlateUtils::GetPrimeTowerState(plate.get_index(), full_config);
         if (tower.printed) {
             const double b = tower.brim_width;
@@ -240,46 +272,56 @@ void stroke_polygons(wxGraphicsContext& gc, const Polygons& polys, const PlanMap
 
 } // namespace
 
+wxImage paint_plan(const PlanMapping& m, const std::function<void(wxGraphicsContext&)>& paint)
+{
+    wxImage image(std::max(1, m.width), std::max(1, m.height));
+    image.InitAlpha();
+    const wxColour background = plan_background();
+    image.SetRGB(wxRect(0, 0, image.GetWidth(), image.GetHeight()), background.Red(), background.Green(), background.Blue());
+    {
+        unsigned char* a = image.GetAlpha();
+        if (a != nullptr) std::fill(a, a + size_t(image.GetWidth()) * size_t(image.GetHeight()), 255);
+    }
+
+    wxBitmap   bitmap(image, 32);
+    wxMemoryDC dc(bitmap);
+    std::unique_ptr<wxGraphicsContext> gc(wxGraphicsContext::Create(dc));
+    if (!gc)
+        return image;
+    gc->SetAntialiasMode(wxANTIALIAS_DEFAULT);
+    paint(*gc);
+    gc.reset();
+    dc.SelectObject(wxNullBitmap);
+    return bitmap.ConvertToImage();
+}
+
 wxImage draw_first_layer_plan(const FirstLayerPlan&             plan,
                               const PlanMapping&                m,
                               const BoundingBoxf3&              plate,
                               const std::vector<BoundingBoxf3>& excluded_areas,
                               const OverlayOptions&             overlays)
 {
-    wxImage image(std::max(1, m.width), std::max(1, m.height));
-    image.InitAlpha();
-    image.SetRGB(wxRect(0, 0, image.GetWidth(), image.GetHeight()), 237, 237, 237);
-    {
-        unsigned char* a = image.GetAlpha();
-        if (a != nullptr) std::fill(a, a + size_t(image.GetWidth()) * size_t(image.GetHeight()), 255);
-    }
-
-    {
-        wxBitmap   bitmap(image, 32);
-        wxMemoryDC dc(bitmap);
-        std::unique_ptr<wxGraphicsContext> gc(wxGraphicsContext::Create(dc));
-        if (gc) {
-            gc->SetAntialiasMode(wxANTIALIAS_DEFAULT);
-            // Support first: hatched grey under everything else.
-            fill_expolygons(*gc, plan.support, m, wxBrush(wxColour(120, 120, 120, 150), wxBRUSHSTYLE_CROSSDIAG_HATCH), wxPen(wxColour(90, 90, 90, 200), 1));
-            if (plan.wipe_tower.has_value()) {
-                const ColorRGBA grey = wipe_tower_color();
-                fill_expolygons(*gc, {ExPolygon(*plan.wipe_tower)}, m, wxBrush(to_wx(grey, 200)), wxPen(darker(grey, 255), 1));
-            }
-            // Brim as the band it covers, in a translucent darker shade of the owner's colour; the
-            // individual loops are too dense to read as lines at plan scale.
-            for (const PlanObject& o : plan.objects) {
-                if (!o.brim.empty())
-                    fill_expolygons(*gc, union_ex(o.brim), m, wxBrush(darker(o.color, 90)), wxPen(darker(o.color, 200), 1));
-                fill_expolygons(*gc, o.body, m, wxBrush(to_wx(o.color, 165)), wxPen(darker(o.color, 255), 1));
-            }
-            if (!plan.loose_brim.empty())
-                fill_expolygons(*gc, union_ex(plan.loose_brim), m, wxBrush(wxColour(80, 80, 80, 90)), wxPen(wxColour(80, 80, 80, 200), 1));
-            gc.reset();
-            dc.SelectObject(wxNullBitmap);
-            image = bitmap.ConvertToImage();
+    wxImage image = paint_plan(m, [&](wxGraphicsContext& gc) {
+        // Support first: hatched grey under everything else. A raft is support too, outlined in its
+        // object's colour so it reads as that object's.
+        const wxBrush support_brush(wxColour(120, 120, 120, 150), wxBRUSHSTYLE_CROSSDIAG_HATCH);
+        fill_expolygons(gc, plan.support, m, support_brush, wxPen(wxColour(90, 90, 90, 200), 1));
+        for (const PlanObject& o : plan.objects)
+            fill_expolygons(gc, o.raft, m, support_brush, wxPen(darker(o.color, 255), 1));
+        if (plan.wipe_tower.has_value()) {
+            const ColorRGBA grey = wipe_tower_color();
+            fill_expolygons(gc, {ExPolygon(*plan.wipe_tower)}, m, wxBrush(to_wx(grey, 200)), wxPen(darker(grey, 255), 1));
         }
-    }
+        // Brim as the band it covers, in a translucent darker shade of the owner's colour; the
+        // individual loops are too dense to read as lines at plan scale.
+        for (const PlanObject& o : plan.objects) {
+            if (!o.brim.empty())
+                fill_expolygons(gc, union_ex(o.brim), m, wxBrush(darker(o.color, 90)), wxPen(darker(o.color, 200), 1));
+            fill_expolygons(gc, o.body, m, wxBrush(to_wx(o.color, 165)), wxPen(darker(o.color, 255), 1));
+        }
+        if (!plan.loose_brim.empty())
+            fill_expolygons(gc, union_ex(plan.loose_brim), m, wxBrush(wxColour(80, 80, 80, 90)), wxPen(wxColour(80, 80, 80, 200), 1));
+    });
 
     draw_overlays(image, plan_camera(m), plate, excluded_areas, plan_labels(plan), overlays);
     return image;

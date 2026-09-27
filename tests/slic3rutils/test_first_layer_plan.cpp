@@ -1,6 +1,14 @@
 #include <catch2/catch_all.hpp>
 
+#include <algorithm>
+#include <limits>
+
 #include "slic3r/GUI/OrcaMCP/OrcaMCPFirstLayerPlan.hpp"
+#include "fff_print/test_helpers.hpp"
+#include "libslic3r/Layer.hpp"
+#include "libslic3r/Model.hpp"
+#include "libslic3r/Print.hpp"
+#include "mcp_slice_fixtures.hpp"
 
 using namespace Slic3r;
 using namespace Slic3r::GUI::OrcaMCP;
@@ -86,4 +94,85 @@ TEST_CASE("plan labels sit at each body's centroid", "[FirstLayerPlan]")
     CHECK_THAT(labels[0].world_anchor.x(), WithinAbs(20., 1e-6));
     CHECK_THAT(labels[0].world_anchor.y(), WithinAbs(40., 1e-6));
     CHECK_THAT(labels[0].world_anchor.z(), WithinAbs(0., 1e-9));
+}
+
+// The plan of a sliced plate shows what the printer lays down first. With a raft that is the raft's
+// base, and the object's own first layer prints several layers up, on top of it: drawing the
+// object's footprint there showed a part standing on the bed that never touches it.
+
+TEST_CASE("a print on a raft shows the raft as its first layer, not the object above it", "[FirstLayerPlan]")
+{
+    Print print;
+    Model model;
+    Test::init_print({Test::cube(10)}, print, model, {
+        {"raft_layers", 2},
+        {"layer_height", 0.2},
+        {"initial_layer_print_height", 0.2},
+    });
+    print.process();
+    REQUIRE(print.objects().front()->support_layer_count() >= 2);  // the raft's layers
+
+    const FirstLayerPlan plan = plan_from_print(print, model);
+    REQUIRE(plan.objects.size() == 1);
+    const PlanObject& cube = plan.objects.front();
+    CHECK(cube.object_index == 0);
+    CHECK(cube.body.empty());
+    REQUIRE_FALSE(cube.raft.empty());
+    CHECK(plan.support.empty());  // the raft is the cube's own, drawn with it
+
+    // The raft spreads at least as far as the 10 mm cube it carries.
+    const BoundingBox raft = get_extents(cube.raft);
+    CHECK(unscale<double>(raft.size().x()) >= 10.0 - 1e-3);
+    CHECK(unscale<double>(raft.size().y()) >= 10.0 - 1e-3);
+
+    // The label and the object's place in the frame come from the raft, not from nothing.
+    const auto labels = plan_labels(plan);
+    REQUIRE(labels.size() == 1);
+    CHECK(labels[0].text == "0");
+}
+
+TEST_CASE("without a raft the first layer is the object's own", "[FirstLayerPlan]")
+{
+    Print print;
+    Model model;
+    Test::init_print({Test::cube(10)}, print, model, {
+        {"raft_layers", 0},
+        {"layer_height", 0.2},
+        {"initial_layer_print_height", 0.2},
+    });
+    print.process();
+
+    const FirstLayerPlan plan = plan_from_print(print, model);
+    REQUIRE(plan.objects.size() == 1);
+    CHECK(plan.source == "sliced");
+    CHECK_FALSE(plan.objects[0].body.empty());
+    CHECK(plan.objects[0].raft.empty());
+    const BoundingBox body = get_extents(plan.objects[0].body);
+    CHECK_THAT(unscale<double>(body.size().x()), WithinAbs(10.0, 0.5));
+}
+
+TEST_CASE("support that starts above the bed is not drawn on the first layer", "[FirstLayerPlan]")
+{
+    // The support under the shelf stands on the base's top at z 2, so nothing of it prints first.
+    Print print;
+    Model model;
+    Test::init_print({mcp_test::shelf_over_base()}, print, model, {
+        {"enable_support", 1},
+        {"support_on_build_plate_only", 0},
+        {"layer_height", 0.2},
+        {"initial_layer_print_height", 0.2},
+    });
+    print.process();
+    // The support's lowest extrusions are on the base, above the first layer.
+    const PrintObject& object     = *print.objects().front();
+    double             lowest_fill = std::numeric_limits<double>::max();
+    for (const SupportLayer* layer : object.support_layers())
+        if (!layer->support_fills.empty())
+            lowest_fill = std::min(lowest_fill, double(layer->print_z));
+    REQUIRE(lowest_fill > 2.0);
+
+    const FirstLayerPlan plan = plan_from_print(print, model);
+    CHECK(plan.support.empty());
+    REQUIRE(plan.objects.size() == 1);
+    CHECK_FALSE(plan.objects[0].body.empty());
 }

@@ -9,11 +9,13 @@
 // Geometry is kept in Slic3r's scaled integer coordinates, in the BED frame (instance shifts
 // applied), and converted to pixels by PlanMapping at draw time.
 
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
 
 #include <nlohmann/json.hpp>
+#include <wx/colour.h>
 #include <wx/image.h>
 
 #include "libslic3r/BoundingBox.hpp"
@@ -23,8 +25,12 @@
 #include "slic3r/GUI/OrcaMCP/OrcaMCPRenderMath.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPRenderOverlay.hpp"
 
+class wxGraphicsContext;
+
 namespace Slic3r {
 class DynamicPrintConfig;
+class Model;
+class Print;
 namespace GUI {
 class PartPlate;
 namespace OrcaMCP {
@@ -33,15 +39,20 @@ struct PlanObject
 {
     int         object_index = -1;
     std::string name;
-    ExPolygons  body;   // first-layer slices, scaled, bed frame
+    ExPolygons  body;   // first-layer slices, scaled, bed frame; empty when the object's own first
+                        // layer is not what the plate prints first (it stands on a raft)
+    ExPolygons  raft;   // the raft's first layer under this object, when it stands on one
     Polygons    brim;   // brim loops that belong to this object, scaled, bed frame
     ColorRGBA   color;
+
+    // What the object puts on the bed: its body, or its raft.
+    const ExPolygons& on_bed() const { return body.empty() ? raft : body; }
 };
 
 struct FirstLayerPlan
 {
     std::vector<PlanObject> objects;
-    ExPolygons              support;       // support first layer, all objects
+    ExPolygons              support;       // support printed on the first layer, all objects (rafts are the objects')
     Polygons                loose_brim;    // brim loops no object claimed (grouped/merged brims)
     std::optional<Polygon>  wipe_tower;    // footprint incl. its brim, when a tower prints
     std::string             source;        // "sliced" or "footprints"
@@ -72,9 +83,21 @@ struct FootprintInput
 };
 FirstLayerPlan plan_from_footprints(const std::vector<FootprintInput>& footprints);
 
+// The first layer of a sliced `print`: what prints at its lowest height. An object's own first layer
+// is drawn only when it is printed there, so a raft is drawn in its place, and support that starts
+// higher up (standing on the part) is left out. `model` numbers the objects (object_index).
+FirstLayerPlan plan_from_print(const Print& print, const Model& model);
+
 // From the plate's Print when its slice result is valid, otherwise plan_from_footprints over the
 // plate's objects. `full_config` resolves brim settings for the fallback.
 FirstLayerPlan collect_first_layer(PartPlate& plate, const DynamicPrintConfig& full_config);
+
+// The plan's light grey background; overlays draw only where it still shows (draw_overlays).
+inline wxColour plan_background() { return wxColour(237, 237, 237); }
+
+// A blank plan image of `mapping`'s size, with `paint` drawing on it through one graphics context
+// (anti-aliased, bed mm to pixels by mapping.to_px). Shared by every top-down plan.
+wxImage paint_plan(const PlanMapping& mapping, const std::function<void(wxGraphicsContext&)>& paint);
 
 wxImage draw_first_layer_plan(const FirstLayerPlan&              plan,
                               const PlanMapping&                 mapping,
