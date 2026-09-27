@@ -738,6 +738,9 @@ nlohmann::json run_paint_remap(const nlohmann::json& params, const PaintRemapReq
         if (request.mode == PaintMode::Color)
             if (const std::vector<std::string> notes = unpainted_filament_notes(target, plan, writes, request.mapping); !notes.empty())
                 result["notes"] = notes;
+        // What paint_object says for every other selection: painted supports need enable_support, ...
+        if (const std::vector<std::string> messages = paint_prerequisite_messages(*target.object, request.mode); !messages.empty())
+            result["info_messages"] = messages;
         return result;
     });
 }
