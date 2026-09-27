@@ -87,16 +87,6 @@ TEST_CASE("the log says what happens to a plate Slice All could not start", "[Sl
     CHECK(plate_not_started_log(PlateNotStarted::run_ended, 1).find("the run ends here") != std::string::npos);
 }
 
-TEST_CASE("slicing one plate is refused while a Slice All run is in progress", "[SliceCredit]")
-{
-    // It would end the run half done, with no word said.
-    CHECK_FALSE(single_plate_slice_refusal(/*run_plate_index=*/-1, 3));
-    const auto refusal = single_plate_slice_refusal(/*run_plate_index=*/1, 3);
-    REQUIRE(refusal);
-    CHECK(refusal->find("a Slice All run is in progress (plate 2 of 3)") != std::string::npos);
-    CHECK(refusal->find("wait for it") != std::string::npos);
-}
-
 TEST_CASE("a slice the safety net cancelled is told with the path that freed its plate", "[SliceCredit]")
 {
     const std::string text = slice_cancelled_by_free_text("PartPlateList::reinit");

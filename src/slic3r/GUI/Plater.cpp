@@ -6785,7 +6785,6 @@ struct Plater::priv
     std::string m_broken_shown_sig;
     bool auto_reslice_pending {false};
     bool auto_reslice_after_cancel {false};
-    std::function<void()> m_start_after_slice_stops; // Orca MCP: Plater::start_after_slice_stops
     bool m_is_publishing {false};
     int m_is_RightClickInLeftUI{-1};
     int m_cur_slice_plate;
@@ -12984,9 +12983,6 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
         auto_reslice_after_cancel = false;
         schedule_auto_reslice_if_needed();
     }
-    // Orca MCP: the slice start_after_slice_stops cancelled is over; start the one it held back.
-    if (m_start_after_slice_stops && !m_is_slicing)
-        wxGetApp().CallAfter(std::exchange(m_start_after_slice_stops, nullptr));
 
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(", exit.");
 }
@@ -22315,16 +22311,6 @@ bool Plater::is_background_process_slicing() const
 }
 
 OrcaMCP::PlateListChangeDuringSlice Plater::stop_slice_for_plate_list_change() { return p->stop_slice_for_plate_list_change(); }
-void Plater::start_after_slice_stops(std::function<void()> start)
-{
-    if (!p->background_process.running() && !p->m_is_slicing) {
-        wxGetApp().CallAfter(std::move(start));
-        return;
-    }
-    // The cancel posts the slice's completion; on_process_completed calls `start` once it has handled it.
-    p->m_start_after_slice_stops = std::move(start);
-    p->background_process.stop();
-}
 const OrcaMCP::SliceAllEndedEarly* Plater::slice_all_ended_early() const
 {
     return p->m_slice_all_ended_early ? &*p->m_slice_all_ended_early : nullptr;

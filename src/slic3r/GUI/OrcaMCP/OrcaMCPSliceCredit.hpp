@@ -80,16 +80,6 @@ inline std::string plate_not_started_log(PlateNotStarted not_started, int plate_
     return plate;
 }
 
-// Why slice_all(all_plates=false) refuses: a Slice All run is on `run_plate_index` (0-based, -1: none).
-// Slicing one plate then would end the run half done, with no word said.
-inline std::optional<std::string> single_plate_slice_refusal(int run_plate_index, int plate_count)
-{
-    if (run_plate_index < 0)
-        return std::nullopt;
-    return "a Slice All run is in progress (plate " + std::to_string(run_plate_index + 1) + " of " + std::to_string(plate_count) +
-           "); wait for it (get_slicing_status) or cancel it in the app";
-}
-
 // An undo or redo whose snapshot load threw part way (Plater::priv::recover_from_failed_jump). The
 // project may be inconsistent, and nothing tries to mend it: from then on MCP refuses every tool that
 // reads or changes the scene, so none walks plates the load left half built, until the app is
