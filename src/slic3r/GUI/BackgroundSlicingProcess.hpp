@@ -14,6 +14,7 @@
 #include "libslic3r/Format/SL1.hpp"
 #include "slic3r/Utils/PrintHost.hpp"
 #include "libslic3r/GCode/GCodeProcessor.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPSliceProgress.hpp"
 #include "PartPlate.hpp"
 
 namespace boost { namespace filesystem { class path; } }
@@ -32,6 +33,9 @@ public:
 	virtual wxEvent *Clone() const { return new SlicingStatusEvent(*this); }
 
 	PrintBase::SlicingStatus status;
+	// Orca MCP: the slice this update belongs to, read when it is made on the slicing thread, so one
+	// still queued from a cancelled slice is told apart (OrcaMCPSliceProgress.hpp).
+	unsigned mcp_slicing_run = GUI::OrcaMCP::slicing_run_generation();
 };
 
 class SlicingProcessCompletedEvent : public wxEvent

@@ -1,6 +1,7 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPSliceProgress.hpp
 #pragma once
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <optional>
 #include <string>
@@ -21,20 +22,36 @@ inline std::string& slicing_stage_text()
     return text;
 }
 
-// Called first thing in on_slicing_update, before upstream prefixes the text and before it drops an
-// update that arrives while a UI job runs. An update without a percentage is a warning refresh, not a
-// stage, and is ignored. The text arrives as " plate 1:Generating walls"; the space is dropped.
-inline void note_slicing_status(int percent, const std::string& text)
+// Which slice a status update belongs to. Every SlicingStatusEvent reads it when it is made, on the
+// slicing thread (BackgroundSlicingProcess.hpp), and begin_slicing_run moves it on when a slice
+// starts. Updates of a cancelled slice can still be queued when the next one starts, and without it
+// they would bring the old stage back.
+inline std::atomic<unsigned>& slicing_run_counter()
 {
-    const size_t first = text.find_first_not_of(' ');
-    if (percent >= 0 && first != std::string::npos)
-        slicing_stage_text() = text.substr(first, text.find_last_not_of(' ') - first + 1);
+    static std::atomic<unsigned> counter{0};
+    return counter;
+}
+inline unsigned slicing_run_generation() { return slicing_run_counter().load(); }
+
+// A slice starts: BackgroundSlicingProcess::start, which the GUI's Slice button, background processing
+// and each plate of a Slice All run all go through, calls this before the slicing thread runs. The
+// last slice's stage is forgotten, and its updates still queued are ignored from now on.
+inline void begin_slicing_run()
+{
+    ++slicing_run_counter();
+    slicing_stage_text().clear();
 }
 
-// Every slice forgets the one before's stage when it starts (BackgroundSlicingProcess::start, which
-// the GUI's Slice button, background processing and each plate of a Slice All run all go through), so
-// a new slice never reports the last one's stage.
-inline void forget_slicing_stage() { slicing_stage_text().clear(); }
+// Called first thing in on_slicing_update, before upstream prefixes the text and before it drops an
+// update that arrives while a UI job runs. An update of an earlier slice (`generation`), or without a
+// percentage -- a warning refresh, not a stage -- is ignored. The text arrives as
+// " plate 1:Generating walls"; the space is dropped.
+inline void note_slicing_status(unsigned generation, int percent, const std::string& text)
+{
+    const size_t first = text.find_first_not_of(' ');
+    if (generation == slicing_run_generation() && percent >= 0 && first != std::string::npos)
+        slicing_stage_text() = text.substr(first, text.find_last_not_of(' ') - first + 1);
+}
 
 // A plate's PartPlate::get_slicing_percent as get_slicing_status reports it: a whole percentage,
 // 0-100, or nullopt for the -1 a plate holds while it has no slice result and nothing is slicing it

@@ -12472,7 +12472,7 @@ void Plater::priv::on_select_preset(wxCommandEvent &evt)
 void Plater::priv::on_slicing_update(SlicingStatusEvent &evt)
 {
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": event_type %1%, percent %2%, text %3%") % evt.GetEventType() % evt.status.percent % evt.status.text;
-    OrcaMCP::note_slicing_status(evt.status.percent, evt.status.text); // Orca MCP: get_slicing_status's stage
+    OrcaMCP::note_slicing_status(evt.mcp_slicing_run, evt.status.percent, evt.status.text); // Orca MCP: get_slicing_status's stage
     //BBS: add slice project logic
     std::string title_text = _u8L("Slicing");
     evt.status.text = title_text + evt.status.text;

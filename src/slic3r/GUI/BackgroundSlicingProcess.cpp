@@ -1,5 +1,4 @@
 #include "BackgroundSlicingProcess.hpp"
-#include "OrcaMCP/OrcaMCPSliceProgress.hpp"
 #include "GUI_App.hpp"
 #include "GUI.hpp"
 #include "MainFrame.hpp"
@@ -557,7 +556,7 @@ bool BackgroundSlicingProcess::start()
     if (!this->idle())
         throw Slic3r::RuntimeError("Cannot start a background task, the worker thread is not idle.");
     m_state = STATE_STARTED;
-    GUI::OrcaMCP::forget_slicing_stage(); // Orca MCP: get_slicing_status's stage is this slice's, from its first update
+    GUI::OrcaMCP::begin_slicing_run(); // Orca MCP: get_slicing_status's stage is this slice's, from its first update
     // Orca: the Print's print index, which its completion carries.
     m_started_print_index = -1;
     if (m_current_plate != nullptr)

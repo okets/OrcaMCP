@@ -33,37 +33,61 @@ TEST_CASE("a plate's percent is reported as a whole number from 0 to 100", "[orc
 
 TEST_CASE("the stage is the last status text that came with a percentage", "[orcamcp][SliceProgress]")
 {
-    forget_slicing_stage();
-    note_slicing_status(15, "Generating walls");
-    note_slicing_status(50, "Generating support");
+    begin_slicing_run();
+    const unsigned run = slicing_run_generation();
+    note_slicing_status(run, 15, "Generating walls");
+    note_slicing_status(run, 50, "Generating support");
     CHECK(slicing_stage_text() == "Generating support");
-    forget_slicing_stage();
+    begin_slicing_run();
 }
 
 TEST_CASE("the stage is kept without the spaces the status text arrives with", "[orcamcp][SliceProgress]")
 {
-    forget_slicing_stage();
-    note_slicing_status(35, " plate 1:Generating infill toolpath ");
+    begin_slicing_run();
+    note_slicing_status(slicing_run_generation(), 35, " plate 1:Generating infill toolpath ");
     CHECK(slicing_stage_text() == "plate 1:Generating infill toolpath");
-    forget_slicing_stage();
+    begin_slicing_run();
 }
 
 TEST_CASE("a status update without a percentage or text leaves the stage alone", "[orcamcp][SliceProgress]")
 {
-    forget_slicing_stage();
-    note_slicing_status(25, "Generating infill regions");
-    note_slicing_status(-1, "a warning refresh");
-    note_slicing_status(30, "");
-    note_slicing_status(30, "   ");
+    begin_slicing_run();
+    const unsigned run = slicing_run_generation();
+    note_slicing_status(run, 25, "Generating infill regions");
+    note_slicing_status(run, -1, "a warning refresh");
+    note_slicing_status(run, 30, "");
+    note_slicing_status(run, 30, "   ");
     CHECK(slicing_stage_text() == "Generating infill regions");
-    forget_slicing_stage();
+    begin_slicing_run();
 }
 
 TEST_CASE("a slice that starts forgets the previous slice's stage", "[orcamcp][SliceProgress]")
 {
-    note_slicing_status(80, "Exporting G-code");
-    forget_slicing_stage();
+    begin_slicing_run();
+    note_slicing_status(slicing_run_generation(), 80, "Exporting G-code");
+    begin_slicing_run();
     CHECK(slicing_stage_text().empty());
+}
+
+TEST_CASE("an update still queued from a cancelled slice does not bring its stage back", "[orcamcp][SliceProgress]")
+{
+    begin_slicing_run();
+    const unsigned cancelled = slicing_run_generation();
+    note_slicing_status(cancelled, 35, "Generating infill toolpath");
+    begin_slicing_run(); // the new slice starts before the old one's queued updates are handled
+    note_slicing_status(cancelled, 50, "Generating support");
+    CHECK(slicing_stage_text().empty());
+    note_slicing_status(slicing_run_generation(), 15, "Generating walls");
+    CHECK(slicing_stage_text() == "Generating walls");
+    begin_slicing_run();
+}
+
+TEST_CASE("each slice that starts has a generation of its own", "[orcamcp][SliceProgress]")
+{
+    begin_slicing_run();
+    const unsigned first = slicing_run_generation();
+    begin_slicing_run();
+    CHECK(slicing_run_generation() != first);
 }
 
 TEST_CASE("a slice in progress is running whatever its plates say", "[orcamcp][SliceProgress]")
