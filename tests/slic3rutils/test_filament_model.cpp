@@ -152,3 +152,35 @@ TEST_CASE("other_volume_filaments skips volumes already on the object's slot", "
 
     CHECK(other_volume_filaments(*f.object, 3) == std::vector<int>{1});
 }
+
+// set_object_filament with the slot the object or part already prints took an undo snapshot (dropping
+// the redo stack) and marked every plate holding the object unsliced, though Print::apply then found
+// nothing to reslice: the plate read idle until another slice_all. A call changes something only when
+// it sets another slot, or clears a part's own.
+TEST_CASE("assigning the slot an object already prints, with no part slot to clear, changes nothing", "[orcamcp][FilamentModel]")
+{
+    Fixture f;
+    CHECK_FALSE(filament_assignment_changes(*f.object, /*volume_id=*/-1, /*slot=*/3, /*include_modifiers=*/false));
+    CHECK(filament_assignment_changes(*f.object, -1, 2, false));
+
+    // A part's own slot the whole-object form would clear is a change.
+    ModelVolume* pinned = f.add(ModelVolumeType::MODEL_PART, "Pinned", 5);
+    CHECK(filament_assignment_changes(*f.object, -1, 3, false));
+    pinned->config.erase("extruder");
+    CHECK_FALSE(filament_assignment_changes(*f.object, -1, 3, false));
+
+    // A modifier's own slot counts only when modifiers are included.
+    f.add(ModelVolumeType::PARAMETER_MODIFIER, "Mod", 4);
+    CHECK_FALSE(filament_assignment_changes(*f.object, -1, 3, false));
+    CHECK(filament_assignment_changes(*f.object, -1, 3, true));
+}
+
+TEST_CASE("assigning a part the slot it already has changes nothing", "[orcamcp][FilamentModel]")
+{
+    Fixture f;
+    f.add(ModelVolumeType::MODEL_PART, "Pinned", 5);
+    CHECK_FALSE(filament_assignment_changes(*f.object, /*volume_id=*/1, /*slot=*/5, false));
+    CHECK(filament_assignment_changes(*f.object, 1, 2, false));
+    // A part without its own slot is given one: a change, even at the object's slot.
+    CHECK(filament_assignment_changes(*f.object, 0, 3, false));
+}

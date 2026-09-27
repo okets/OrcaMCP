@@ -122,7 +122,7 @@ grep -hA1 -E '^\s*register_(bridge_)?tool\(\{' src/slic3r/GUI/OrcaMCP/*.cpp | gr
 | **Layer Ranges** | `get_object_layer_ranges`, `set_object_layer_range`, `delete_object_layer_range` |
 | **Filaments & colour** | `get_filaments`, `set_object_filament` (whole-object form clears the volumes' own slots and reports `effective_filaments`; a volume's slot beats the object's), `set_mixed_filament`, `delete_mixed_filament`, `set_filament_color` (a slot's plate colour, saved for the selected printer so a switch away and back keeps it; `apply_config` edits the preset instead), `get_flush_volumes`, `set_flush_volumes`, `auto_calc_flush_volumes`, `get_toolchanger_config`, `suggest_color_mix`, `get_color_palette` |
 | **Painting** | `paint_object` (`selection: state` repaints every facet now in `match_filament` / `match_state`), `remap_paint` (renumbers painted filaments at once, `{"1": 2, "2": 3}`, never chained; one undo step; `facets_before` / `facets_after`; `notes` names the `set_object_filament` call for unpainted facets on a moved base filament), `get_object_paint`, `clear_object_paint`, `set_brim_ears`, `get_object_components`, `pick_facet` |
-| **Slicing** | `slice_all` (`status`: slicing_started, or not_started with a `reason`: `busy_slicing` — the pipeline is busy (slicing, exporting, uploading or stopping), nothing is started, call `wait_for_slice` then `slice_all` again — or already_sliced / busy_job / nothing_to_slice / invalid (the app's validation, with its message) / unknown), `wait_for_slice` (bridge-only: polls `get_slicing_status` until the run is over, capped 15 s below `ORCAMCP_TIMEOUT`, or a quarter below it under 60 s; `outcome` done / ended_early / incomplete / not_slicing / timed_out / app_gone), `get_slicing_status` (`busy` / `busy_reason`: the one busy test slice_all and wait_for_slice share; per-plate `percent`, `stage` text, and `slice_run.outcome` for the last `slice_all` run: running / done / ended_early / incomplete), `export_gcode`, `get_print_estimate` (`time_by_feature`: seconds per feature, walls split, travel, tool changes, other and unattributed, summing to the total; `printed_layers` = the G-code's layer count; `object_layers` / `support_layers` split; `layer_count` deprecated, now the printed count too) |
+| **Slicing** | `slice_all` (`status`: slicing_started, or not_started with a `reason`: `busy_slicing` — the pipeline is busy (slicing, exporting, uploading or stopping), nothing is started, call `wait_for_slice` then `slice_all` again — or already_sliced / busy_job / nothing_to_slice / invalid (the app refuses the plate as it stands: its validation, with its message, an object partly off the plate, a filament check, missing plugins, a broken mixed filament, or a failed last slice; `message` says which) / unknown), `wait_for_slice` (bridge-only: polls `get_slicing_status` until the run is over, capped 15 s below `ORCAMCP_TIMEOUT`, or a quarter below it under 60 s; `outcome` done / ended_early / incomplete / not_slicing / timed_out / app_gone), `get_slicing_status` (`busy` / `busy_reason`: the one busy test slice_all and wait_for_slice share; per-plate `percent`, `stage` text, and `slice_run.outcome` for the last `slice_all` run: running / done / ended_early / incomplete, with `skipped` empty plates, which never keep a run from `done`; `state` follows that run), `export_gcode`, `get_print_estimate` (`time_by_feature`: seconds per feature, walls split, travel, tool changes, other and unattributed, summing to the total; `printed_layers` = the G-code's layer count; `object_layers` / `support_layers` split; `layer_count` deprecated, now the printed count too) |
 | **Visualization** | `render_plate_view` (named cameras `iso/top/front/back/left/right/low`, fit to plate or object, default 3-view contact sheet, plate outline + 10 mm grid + origin + object labels, `objects_in_frame` / `uniform_image` metadata, `layer_view: first_layer` plan with brim, supports and rafts, and `layer_view: {layer}` / `{z}` for any sliced layer from the G-code, filtered by `features` / `filaments`, `color_by` feature or filament, with its height, filaments, extruded areas and per-object `objects_at_height` (object and support layer, overhang coverage); coordinates are bed mm; drawn from the 3D view whatever tab shows; images in the system temp directory), `get_preview_base64`, `set_gcode_view_type` |
 | **Printers** | `get_printers` (`is_online` is not a live check; `current_print_host.last_status_age_s` is), `select_printer`, `add_physical_printer` (incl. optional Obico URL/token for Flashforge), `discover_printers`, `send_to_printer`, `get_printer_status` (a failure names host:port and the next step, with the last known material station as `cached`), `printer_control`, `list_printer_files`, `print_printer_file`, `match_project_to_printer` (falls back to the printer's last status, applied only with `allow_cached: true`) |
 | **Adaptive** | `apply_adaptive_layer_height`, `clear_adaptive_layer_height` |
@@ -347,6 +347,7 @@ gh release upload v2.3.2.10 ./path/to/new/artifact.exe -R okets/OrcaMCP
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPRenderOverlay.cpp` | 2D overlays on finished renders: outline, grid, origin, labels, excluded areas |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPFirstLayerPlan.cpp` | Top-down first-layer plan from the sliced `Print` (what prints at the lowest height: bodies or rafts, brim, support, wipe tower) with footprint fallback; `paint_plan`, the canvas every top-down plan draws on |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPLayerPlan.cpp` | The sliced layer plan (`layer_view: {layer}` / `{z}`): layers of the G-code result (`gcode_layers`, by binary search on `layer_id`), height resolution, feature and filament filters, extruded areas, the object and support layers at a height and their overhang, legend and drawing (unit-tested in `tests/slic3rutils/test_layer_plan.cpp`, on synthetic moves and a real slice) |
+| `src/slic3r/GUI/OrcaMCP/OrcaMCPInstanceBox.cpp` | Cached exact box of one instance (`instance_box`), which every per-plate description reads: `ModelObject::instance_bounding_box` walks every vertex on every call |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPPresetConfigUtils.cpp` | Preset/config management |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPExtrusionFeatures.hpp` | The one table grouping extrusion roles into the features MCP tools report (`perimeters`, `infill`, `support`, `support_interface`, `brim`, `skirt`, `prime_tower`, `other`), plus the wall split; shared by `get_print_estimate`'s `time_by_feature` and the layer plan |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPModelLoad.cpp` | `load_model`'s decisions: what a file does to the scene (`load_file_kind`, `load_refusal`), the 3MF load type (`choose_3mf_load`, called by `Plater`'s `determine_load_type`) and the `loaded_objects` report, whose objects are `model_object_summary_json` (`OrcaMCPCommon.cpp`), shared with `get_scene_info` (unit-tested in `tests/slic3rutils/test_mcp_model_load.cpp`) |
@@ -688,6 +689,7 @@ given: `"<prompt> (auto-answered <answer>)"`. OK-only notices are captured as th
 | `TextureImportDialog` (textured or vertex-coloured OBJ, GLB, GLTF, FBX) | Not opened; imported as plain geometry, colours not mapped (`auto-answered Skip`) |
 | "Connected printer is X. Sync the printer information and switch the preset?" (`TipsDialog`, project load with a mismatched Bambu printer connected) | Auto-NO: the printer preset is not switched |
 | Any other `DPIDialog` modal (the fallback in `DPIAware::ShowModal`, `GUI_Utils.hpp`) | Not opened: answers Cancel, `"<dialog title> was suppressed (auto-answered Cancel)"`. The rows above answer their dialogs first, so this only catches a modal nobody handled |
+| Error dialogs from `GUI::show_error` (`ErrorDialog`, "OrcaMCP error": a load that fails -- an STL the reader cannot parse, G-code that will not process, an invalid 3MF configuration -- or "Another export job is running.") | Never opened. `show_error` defers its dialog with `CallAfter`, so it used to open after the tool call had returned and suppression was over: a modal nobody answers. Under suppression on the GUI thread the text is captured as an error (`add_mcp_suppressed_error`): `export_gcode` fails with it (`message` and `error_messages`); `load_model`, `load_project` and `new_project` fail with it only when they changed nothing, and otherwise succeed and list it in `error_messages` (`OrcaMCP::load_answer`: a load that added objects must not read as failed, or an agent loads it again); every other tool lists it in `info_messages`. The invalid-G-code `MessageDialog` of a G-code load is tagged `set_mcp_error()` and counts the same way |
 | Startup "Previously unsaved items have been detected. Restore them?" prompt (`EVT_RESTORE_PROJECT`, after a crash) | **Not suppressed**: no MCP call is in flight at startup, so it waits for the user, and every tool call runs underneath it (`get_scene_info`'s `open_dialogs` and an `OpenDialog` active warning show it). `quit_app` closes it unanswered (as No) and the backup is kept, so the next launch asks again; `quit_app` with `discard_changes: false` refuses and names it. While it waits, `new_project` and `load_project` are refused: they would point `last_backup_path` at the new project's backup, and the one it offers would never be offered again |
 | Send-to-printer (`send_to_printer`) | **Bambu:** the `SelectMachineDialog` is scheduled with `CallAfter` and the tool returns `dialog_opened`; the user drives it. **Print hosts (Flashforge, Moonraker, OctoPrint, …):** by default (`direct: true`) there is **no dialog** — the tool uploads the sliced plate and, because `start_print` also defaults to true, **starts the print**. It returns `queued`. Pass `start_print: false` to upload only, or `direct: false` to open the print-host dialog instead. Never call it to "look at the dialog": on 2026-09-18 that started a 7 h print. |
 
@@ -698,7 +700,10 @@ Dialog suppression is implemented in:
   `add_mcp_suppressed_answer()` (the `(auto-answered …)` format every site uses), and the per-prompt
   answers (`set_mcp_prompt_answer()`, `mcp_answer_for()`)
 - `MsgDialog.cpp`: `ShowModal()` override checks suppression flag; a dialog tagged with
-  `set_mcp_prompt_key()` takes the answer the tool set with `McpDialogSuppressionGuard::answer_prompt()`
+  `set_mcp_prompt_key()` takes the answer the tool set with `McpDialogSuppressionGuard::answer_prompt()`,
+  and one tagged `set_mcp_error()` is recorded as an error
+- `GUI.cpp`: `show_error()` captures its text under suppression instead of deferring the dialog
+  (`mcp_captures_error()`); the guard reads the errors apart (`errors()`, `notices()`, `fail_on_errors()`)
 - `UnsavedChangesDialog.cpp`: `ShowModal()` discards preset changes under suppression
 - `Plater.cpp`: `close_with_confirm()`, `determine_load_type()`, `priv::get_export_file()`, `preview_zip_archive()`, `mcp_skip_step_mesh_dialog()`, `priv::run_textured_mesh_import_dialog()` and the sync-printer `TipsDialog` in `priv::load_files()` check the flag before opening a modal
 - `OrcaMCPServer.cpp` / `OrcaMCPPrinterTools.cpp`: endpoints scope suppression with the RAII
@@ -742,9 +747,9 @@ it as a project and renamed it silently, and a later `save_project {}` overwrote
 |----------|-----------|
 | File Operations | `load_model`, `load_project`, `new_project`, `save_project`, `export_gcode`, `export_3mf` |
 | Preset Management | `select_preset`, `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset` |
-| Slicing & Printing | `slice_all`, `send_to_printer` |
+| Slicing & Printing | `slice_all`, `get_slicing_status`, `get_print_estimate`, `export_gcode`, `send_to_printer` (the first four apply a settings change the slicer has not taken in yet, and that update can raise an error dialog: `OrcaMCP::apply_pending_update` takes the caller's open guard) |
 
-Error messages that would have been shown in dialogs are captured and returned in the response as `error_messages` (for failures) or `info_messages` (for non-critical information).
+Error messages that would have been shown in dialogs are captured and returned in the response as `error_messages` (for failures) or `info_messages` (for non-critical information). A tool that assembles `info_messages` itself from `messages()` lists the errors there too; `report()` and `notices()` keep them apart.
 
 ---
 
@@ -888,6 +893,11 @@ echo "Q restore prompt closed by a quit deletes the backup (rel2506/04c):  $(U s
 echo "S the logout handler ends dialogs with wxID_ABORT (rel2506/04c):    $(U src/slic3r/GUI/GUI_App.cpp | grep -c 'EndModal(wxID_ABORT)')"
 echo "V the object list's mesh-error text lives inside ObjectList / its first icon reads mesh().stats() / ObjectList::get_repaired_errors_count exists (rel2506/05): $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^MeshErrorsInfo ObjectList::get_mesh_errors_info\(const int obj_idx/{f=1} f&&/_L_PLURAL/{print "yes"; exit} f&&/^}/{print "no"; exit}') / $(U src/slic3r/GUI/GUI_ObjectList.cpp | grep -c 'get_warning_icon_name(model_object->mesh().stats())') / $(U src/slic3r/GUI/GUI_ObjectList.cpp | grep -c '^int ObjectList::get_repaired_errors_count')"
 echo "X upstream's slic3rutils tests get no Windows-first force-include (rel2506/ci-fixes; 0 = bug): $(U tests/slic3rutils/CMakeLists.txt | grep -c 'win_platform.hpp')"
+echo "Z reslice refuses on a validation failure a settings fix removed until the 0.5 s timer runs / show_error defers its dialog (rel2506/06b): $(U src/slic3r/GUI/Plater.cpp | grep -c 'process_completed_with_error, return directly') / $(U src/slic3r/GUI/GUI.cpp | awk '/^void show_error\(wxWindow\* parent, const wxString/{f=1} f&&/CallAfter/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
+echo "AA upstream's slicer reads a layer range's layer_height unchecked, and a file can carry a range without one (rel2506/06b): $(U src/libslic3r/Slicing.cpp | grep -c 'it_range->second.option("layer_height")->getFloat()')"
+echo "AB Print::apply copies a new object name without invalidating the G-code (rel2506/06b): $(U src/libslic3r/PrintApply.cpp | awk '/model_object.name       = model_object_new.name;/{print (prev ~ /invalidate_step\(psGCodeExport\)/ ? "no" : "yes"); exit} {prev=$0}')"
+echo "AC ObjectList::get_default_layer_config reads the preset's float \"extruder\" (rel2506/06b): $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^DynamicPrintConfig ObjectList::get_default_layer_config/{f=1} f&&/opt_float\("extruder"\)/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
+echo "AD reload_scene recycles a GLVolume without its instance's printable flag (rel2506/06b): $(U src/slic3r/GUI/GLCanvas3D.cpp | awk '/^void GLCanvas3D::reload_scene/{f=1} f&&/[.>]printable *= /{print "no"; exit} f&&/^}/{print "yes"; exit}')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -981,6 +991,57 @@ icon from `mesh().stats()`, which merges the model parts only and keeps only the
 repairs, while every later icon update and the tooltip read `get_object_stl_stats()`; a modifier's hole
 or an earlier part's repairs left the icon off under a tooltip listing them. Ours reads
 `get_object_stl_stats()` there too. On 0, take upstream's line.
+
+Item Z: a settings change reaches the slicer only when `background_process_timer` fires, 0.5 s later
+(`Plater::priv::schedule_background_process`); until then upstream's `reslice()` returns early on the
+last validation failure (`process_completed_with_error`), so a `slice_all` right after an agent fixed a
+bad setting reported the old failure. Ours adds `Plater::apply_pending_background_update()`, which runs
+what the timer's handler runs, only when it would run it; MCP calls it before slicing, reporting or
+exporting, and only while the pipeline is idle (`OrcaMCP::should_apply_pending_update`). On 0, upstream
+dropped the early return: re-check that a fixed setting then slices at once, and remove the hook if so.
+The second check: upstream's `GUI::show_error` defers its `ErrorDialog` with `CallAfter`, so under MCP
+it opened after the tool call had returned and suppression was over. Ours captures the text under
+suppression on the GUI thread (`mcp_captures_error`). On "no", upstream shows it synchronously:
+`MsgDialog::ShowModal` then catches it, and the capture can go -- keep the error channel
+(`add_mcp_suppressed_error`) by tagging `ErrorDialog` instead.
+
+Item AA: upstream's slicer (`layer_height_profile_from_ranges`, `layer_height_profile_adaptive`),
+`Print::apply`'s range comparison and the object list all read a layer range's `layer_height`
+without checking it is there. The object list always gives a range one, but a file can carry a
+range without it (the importers copy whatever options it lists), the CLI's assemble list builds
+ranges from whatever `range_params` it is given, and MCP's `set_object_layer_range` wrote such
+ranges until rel2506/06b; the next slice dereferenced null and crashed the app (and the CLI). Ours
+completes every range where it enters a scene -- `Plater::priv::load_model_objects` (every GUI and
+MCP load), the CLI before slicing, `set_object_layer_range` -- with `complete_layer_ranges` (Model.cpp):
+the object's effective layer height from the settings the caller slices with, within its nozzle's
+limits, and extruder 0. The slicer keeps a backstop: a range that still arrives without one prints
+at the object's layer height. On 0, upstream checks the option itself: drop the backstop, keep the
+completion (the object list and `Print::apply` need it), and re-run `libslic3r_tests "[LayerRanges]"`
+and `fff_print_tests "[LayerRanges]"`.
+
+Item AC: upstream's `ObjectList::get_default_layer_config` (the defaults "Add height range" gives a
+new range) also read the object's extruder, unused, falling back to the process preset's float
+`extruder`, which it does not have: on an object without an extruder of its own it dereferenced
+null and crashed the app. Ours returns `layer_range_defaults` (Model.cpp), the same defaults a
+loaded file's ranges are completed with, by the extruder that prints the range (the range's own,
+else the object's); MCP's `set_object_layer_range` completes through the same function. On "no",
+take upstream's and re-check "Add height range" on an object whose config has no `extruder`.
+
+Item AB: an object's name is in its G-code (the `; printing object` labels, `EXCLUDE_OBJECT` names,
+`{first_object_name}`), but upstream's `Print::apply` copies a new name over without invalidating
+anything, so a finished plate kept its G-code and the next slice took it back with the old name in
+it. Ours invalidates `psGCodeExport` when the name changed. On "no", take upstream's and re-run
+`fff_print_tests "Renaming an object after a slice*"`.
+
+Item AD: a GLVolume's `printable` flag is set only by the printable toggles
+(`GLCanvas3D::update_instance_printable_state_for_object`); upstream's `reload_scene` recycles a volume
+without it. After an undo or redo of a toggle (the object list's or MCP's `set_object_printable`) the
+volume kept the other state; the canvas's outside check skips unprintable volumes, so the plate had
+nothing on it, was marked not ready to slice, and the next background update set
+`process_completed_with_error`: `reslice()` refused the plate, silently, until the object was moved.
+Ours sets every volume's flag from its instance in `reload_scene`, as it sets the instance's
+transformation. On "no", take upstream's and re-check `set_object_printable` false, `undo`,
+`slice_all`.
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices

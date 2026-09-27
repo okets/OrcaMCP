@@ -1,19 +1,23 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPCommon.hpp
 #pragma once
+#include <algorithm>
 #include <functional>
 #include <vector>
 #include <string>
 #include <nlohmann/json.hpp>
 #include "libslic3r/BoundingBox.hpp"
+#include "libslic3r/BrimEarsPoint.hpp"
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "OrcaMCPMainThreadGate.hpp"
+#include "OrcaMCPSliceProgress.hpp"
 
 namespace Slic3r {
 class Model;
 class ModelObject;
 namespace GUI {
 class PartPlate;
+class PartPlateList;
 class Plater;
 namespace OrcaMCP {
 struct MeshHealth;
@@ -48,6 +52,14 @@ bool parse_double_param(const nlohmann::json& value, double& out);
 // parameter that grew an object form, like render_plate_view's layer_view). Anything else, including
 // a string that is not an object's text, returns false without touching `out`.
 bool parse_object_param(const nlohmann::json& value, nlohmann::json& out);
+
+// A `settings` parameter: a list of {key, value} objects (each with a string type too when
+// `with_type`, as apply_config takes them), or a string holding the JSON text of one, for the same
+// reason as above. Returns false with `error` saying what is wrong -- not a list, or which item
+// lacks what -- without touching `out`. What set_object_config, set_object_layer_range and
+// apply_config read their settings through: a caller that sent an object got the JSON library's
+// type_error instead.
+bool parse_settings_param(const nlohmann::json& value, nlohmann::json& out, std::string& error, bool with_type = false);
 
 // {"status": "error", "message": message}: what a tool returns for a call it refuses.
 nlohmann::json error_response(const std::string& message);
@@ -101,7 +113,11 @@ bool object_within_plate(const BoundingBoxf3& object_bbox, const BoundingBoxf3& 
 // tools. A tool that has just moved geometry wants rehome_and_report_placement instead.
 void report_placement(nlohmann::json& result, int object_id);
 
-void rehome_and_report_placement(nlohmann::json& result, int object_id);
+//
+// `moved` false (the call turned out to change nothing) re-homes nothing: notify_instance_update
+// marks the instance's plate not sliced even when the instance stays where it was, so a no-op call
+// would throw away the plate's slice. Only the report is written then, and `changed` says which.
+void rehome_and_report_placement(nlohmann::json& result, int object_id, bool moved);
 
 // Applies `world_transform` -- a rotation, a scale or a mirror written in *plate* axes -- to every
 // instance of `object`, each about its own world bounding-box centre, and invalidates the object's
@@ -162,11 +178,35 @@ InstancesOnPlate instances_on_plate(const ModelObject& object, int object_index,
 // an object the plate lists without holding an instance of it (only a stale list does that).
 BoundingBoxf3 plate_box_of(const ModelObject& object, const InstancesOnPlate& here);
 
+// Whether setting every instance of `object` printable (or not) changes one: a call that changes
+// nothing takes no undo snapshot and leaves the plates' slice results alone.
+bool printable_changes(const ModelObject& object, bool printable);
+
+// Whether set_brim_ears changes an object's ears: `given` replaces `current`, or is added to it with
+// `append`. The same ears again, or none appended, change nothing.
+bool brim_ears_change(const std::vector<BrimPoint>& current, const std::vector<BrimPoint>& given, bool append);
+
+// The keys of an object's overrides (`object_keys`) that a reset with no keys named clears: every one
+// but "extruder", so the object keeps its filament, as the GUI's reset leaves it.
+std::vector<std::string> object_overrides_to_reset(const std::vector<std::string>& object_keys);
+
 // The index of `object` in the plater's model, matched by pointer or by ObjectID (a Print's copy of
 // an object carries the original's id), or -1.
 int model_object_index(const ModelObject* object);
 // The same in `model`, for code that reads a Print without the app (a unit test's Print and Model).
 int model_object_index(const Model& model, const ModelObject* object);
+
+// A change to what a plate prints reaches the plate's Print only when the plate is next applied --
+// selected, or reached by Slice All -- so until then an unselected plate reported its old result as
+// valid: get_slicing_status's plates, get_print_estimate(plate_index) and the run's outcome all went
+// by it. A tool that changes an object's settings, layers, name or filaments without moving it (a move
+// re-homes the instance, and the plate list marks the plates itself) marks every plate holding one of
+// its instances not sliced, as Tab::on_presets_changed marks every plate after a preset edit. The
+// Print is left as it is: one the change did not reach is still finished, and the next slice takes
+// its result back without slicing it again (PlateNotStarted::already_sliced).
+void mark_object_plates_unsliced(PartPlateList& plates, int object_index);
+// The same for one plate, by index: a change to that plate's own settings (its prime tower).
+void mark_plate_unsliced(PartPlateList& plates, int plate_index);
 
 // One model object as every MCP response describes it: id, name, object_index (the index other
 // tools take), instance_count, volume_count, position (bounding-box centre), rotation_degrees and
@@ -201,6 +241,15 @@ void add_preview_to(nlohmann::json& result, const std::function<nlohmann::json()
 // A turntable preview of the selected plate, through add_preview_to, when `include_preview` is set.
 void add_turntable_preview_if_requested(nlohmann::json& result, bool include_preview, int view_count = 4, int resolution = 256);
 
+// `lines` one per line, for a message made of several.
+inline std::string join_lines(const std::vector<std::string>& lines)
+{
+    std::string joined;
+    for (const std::string& line : lines)
+        joined += (joined.empty() ? "" : "\n") + line;
+    return joined;
+}
+
 // RAII: suppress modal dialogs for the lifetime of the guard and collect their messages.
 // Nest-safe: an inner guard keeps the outer guard's messages and restores its state.
 // answer_prompt chooses the answer for one keyed prompt (MsgDialog::set_mcp_prompt_key) until the
@@ -221,13 +270,40 @@ struct McpDialogSuppressionGuard
             clear_mcp_prompt_answers();
         set_mcp_dialog_suppression(m_was_enabled);
     }
+    // Everything the suppressed dialogs said, errors included.
     std::vector<std::string> messages() const { return get_mcp_suppressed_messages(); }
-    // Adds what the suppressed dialogs said to `response` as info_messages, when they said anything.
-    // Returns the response, so a handler can end with `return guard.report(result);` on every path.
+    // The errors among them: what show_error would have shown (add_mcp_suppressed_error).
+    std::vector<std::string> errors() const { return get_mcp_suppressed_errors(); }
+    // The messages that are not errors, for a response that reports its errors apart.
+    std::vector<std::string> notices() const
+    {
+        std::vector<std::string> said = messages();
+        for (const std::string& error : errors())
+            if (auto it = std::find(said.begin(), said.end(), error); it != said.end())
+                said.erase(it);
+        return said;
+    }
+    // Adds what the suppressed dialogs said to `response`: info_messages and error_messages, each
+    // when there is one. Returns the response, so a handler can end with `return guard.report(result);`
+    // on every path.
     nlohmann::json report(nlohmann::json response) const
     {
-        if (const auto said = messages(); !said.empty())
+        if (const auto said = notices(); !said.empty())
             response["info_messages"] = said;
+        if (const auto failed = errors(); !failed.empty())
+            response["error_messages"] = failed;
+        return response;
+    }
+    // A call the app answered with an error dialog failed, whatever the handler made of it: status
+    // error, message the dialog's words, and error_messages. Unchanged when there was no error.
+    nlohmann::json fail_on_errors(nlohmann::json response) const
+    {
+        const std::vector<std::string> failed = errors();
+        if (failed.empty())
+            return response;
+        response["status"]         = "error";
+        response["message"]        = join_lines(failed);
+        response["error_messages"] = failed;
         return response;
     }
     void answer_prompt(const std::string& key, int answer_id, const std::string& note = std::string())
@@ -238,5 +314,54 @@ struct McpDialogSuppressionGuard
 private:
     bool m_was_enabled;
 };
+
+// The answer of load_model, load_project and new_project. A load that changed the scene (added
+// objects, opened the project, started a new one) succeeded, even when the app raised an error dialog
+// on the way: reporting it failed sends an agent to load it again, and the scene then holds the
+// objects twice. Its errors go beside it as error_messages. A load that changed nothing failed, with
+// the dialogs' words (fail_on_errors).
+inline nlohmann::json load_answer(const McpDialogSuppressionGuard& guard, bool changed_scene, nlohmann::json response)
+{
+    if (!changed_scene)
+        return guard.fail_on_errors(std::move(response));
+    if (const std::vector<std::string> errors = guard.errors(); !errors.empty())
+        response["error_messages"] = errors;
+    return response;
+}
+
+// One undo snapshot for a tool call: taken right before its first change, and never for a call that
+// changes nothing. A snapshot discards the redo stack, so a no-op call must not take one; and a call
+// that changes several objects is one undo step, as the GUI's own edits are.
+class SnapshotOnce
+{
+public:
+    explicit SnapshotOnce(std::function<void()> take) : m_take(std::move(take)) {}
+    // Call right before each change; the first call takes the snapshot.
+    void before_change()
+    {
+        if (!m_taken) {
+            m_take();
+            m_taken = true;
+        }
+    }
+    bool taken() const { return m_taken; }
+
+private:
+    std::function<void()> m_take;
+    bool                  m_taken = false;
+};
+
+// Applies a settings change the slicer has not taken in yet (`apply`: Plater::apply_pending_background_update)
+// when should_apply_pending_update says so, and says whether it did. The update can raise an error
+// dialog (show_error), and one raised with no suppression open is a modal that blocks every later
+// call, so it takes the caller's open guard, which captures what the update says.
+template<typename Apply>
+bool apply_pending_update(const McpDialogSuppressionGuard&, const PipelineState& state, bool update_scheduled, Apply&& apply)
+{
+    if (!should_apply_pending_update(state, update_scheduled))
+        return false;
+    apply();
+    return true;
+}
 
 }}} // namespace Slic3r::GUI::OrcaMCP

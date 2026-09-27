@@ -3438,18 +3438,12 @@ wxDataViewItem ObjectList::add_layer_root_item(const wxDataViewItem obj_item)
 
 DynamicPrintConfig ObjectList::get_default_layer_config(const int obj_idx)
 {
-    DynamicPrintConfig config;
-    coordf_t layer_height = object(obj_idx)->config.has("layer_height") ?
-                            object(obj_idx)->config.opt_float("layer_height") :
-                            wxGetApp().preset_bundle->prints.get_edited_preset().config.opt_float("layer_height");
-    config.set_key_value("layer_height",new ConfigOptionFloat(layer_height));
-    // BBS
-    int extruder = object(obj_idx)->config.has("extruder") ?
-        object(obj_idx)->config.opt_int("extruder") :
-        wxGetApp().preset_bundle->prints.get_edited_preset().config.opt_float("extruder");
-    config.set_key_value("extruder",    new ConfigOptionInt(0));
-
-    return config;
+    // Orca: the same defaults a loaded file's ranges are completed with (Model.cpp), from the selected
+    // presets: the object's effective layer height within the nozzle of its extruder, which a new range
+    // prints with (extruder 0). Upstream also read the
+    // object's extruder here, unused, falling back to the process preset's float "extruder", which it
+    // does not have: "Add height range" on an object without an extruder of its own crashed.
+    return layer_range_defaults(*object(obj_idx), wxGetApp().preset_bundle->full_config());
 }
 
 bool ObjectList::get_volume_by_item(const wxDataViewItem& item, ModelVolume*& volume)

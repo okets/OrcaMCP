@@ -14,7 +14,7 @@
     },
     {
       "category": "Slicing",
-      "description": "Wait until the running slice is over, instead of polling get_slicing_status: call it after slice_all. It returns when the run ends, or after timeout_s. outcome is done (every plate the run sliced has a result), ended_early or incomplete (slicing_status.slice_run.message says which plates and why), not_slicing (nothing was running and the selected plate has no result), timed_out (still slicing: call it again), or app_gone (the app quit or crashed during the wait). slicing_status is get_slicing_status's final answer, with each plate's percent. The wait is capped 15 s below ORCAMCP_TIMEOUT (105 s at the default 120 s), or a quarter below it when that is less, because the bridge answers nothing else while it waits; timeout_cap_s reports the cap applied. Under an ORCAMCP_TIMEOUT of 2 s there is no room to wait, and the call is refused.",
+      "description": "Wait until the running slice is over, instead of polling get_slicing_status: call it after slice_all. It returns when the run ends, or after timeout_s. outcome is done (every plate the run asked for has a result, empty plates aside: those are skipped), ended_early or incomplete (slicing_status.slice_run.message says which plates and why), not_slicing (nothing was running and the selected plate has no result), timed_out (still slicing: call it again), or app_gone (the app quit or crashed during the wait). slicing_status is get_slicing_status's final answer, with each plate's percent. The wait is capped 15 s below ORCAMCP_TIMEOUT (105 s at the default 120 s), or a quarter below it when that is less, because the bridge answers nothing else while it waits; timeout_cap_s reports the cap applied. Under an ORCAMCP_TIMEOUT of 2 s there is no room to wait, and the call is refused.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -991,7 +991,7 @@
     },
     {
       "category": "Slicing",
-      "description": "Get the current slicing state: idle (not sliced), slicing (in progress) or done (the current plate has a valid slice result). Poll until state is done, then get_print_estimate. The plates array reports every plate's slice result and percent (0-100; null for a plate with no result that is not slicing), so a slice_all run can be followed plate by plate; stage is the app's progress text for the running slice (\"Generating support\", in the app's language; null when idle). busy says whether the slicing pipeline is busy, and busy_reason with what: slicing, exporting, uploading, or stopping (the last slice's completion is not taken in yet); slice_all starts nothing while it is, and wait_for_slice waits it out. slice_run says how the last slice_all run stands: scope, the plates it asked for, and outcome running, done, ended_early or incomplete, with a message saying which plates and why when it is not done. When a slice_all run over every plate ends, this restores the plate that was selected when slice_all was called and reports it as restored_selected_plate.",
+      "description": "Get the current slicing state: slicing (in progress), done (the last slice_all run is done -- every plate it asked for that has something on it is sliced -- and the selected plate is sliced or empty; before any slice_all, or once none of its plates exists (a new project), the selected plate is sliced) or idle (anything else); a plate deleted after the run does not undo it. Poll until state is done, then get_print_estimate. The plates array reports every plate's slice result and percent (0-100; null for a plate with no result that is not slicing), so a slice_all run can be followed plate by plate; stage is the app's progress text for the running slice (\"Generating support\", in the app's language; null when idle). busy says whether the slicing pipeline is busy, and busy_reason with what: slicing, exporting, uploading, or stopping (the last slice's completion is not taken in yet); slice_all starts nothing while it is, and wait_for_slice waits it out. slice_run says how the last slice_all run stands: scope, the plates it asked for, skipped (those of them with nothing on them to slice), and outcome running, done, ended_early or incomplete (also when no plate had anything to slice), judged by its plates still there (null once none is, after new_project or load_project), with a message saying which plates and why when it is not done. When a slice_all run over every plate ends, this restores the plate that was selected when slice_all was called and reports it as restored_selected_plate.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {},
@@ -1854,7 +1854,7 @@
         "additionalProperties": false,
         "properties": {
           "keys": {
-            "description": "Keys to reset. If omitted, resets all overrides.",
+            "description": "Keys to reset. If omitted, resets every override but the object's filament (extruder), which stays, as the GUI's reset leaves it. reset_count says how many were cleared; a reset that clears nothing changes nothing.",
             "items": {
               "type": "string"
             },
@@ -2444,7 +2444,7 @@
     },
     {
       "category": "Filaments & colour",
-      "description": "Assign a filament slot (physical or mixed) to a whole object, or to one volume of it (volume_id). A volume's own slot beats the object's, so the whole-object form also clears the own slot of every part and, unless include_modifiers=false, of every modifier -- otherwise the change is invisible and the plate keeps its prime tower. Read the response, not just status: effective_filaments is every slot the object still prints with (volumes, painted facets, layer ranges); cleared_overrides lists each volume that lost its own slot and what it held; other_slots lists slots its volumes still force. The object is on one filament only when effective_filaments has one entry. get_object_info's `volumes` shows the same per volume; get_scene_info's filaments_used shows it per object.",
+      "description": "Assign a filament slot (physical or mixed) to a whole object, or to one volume of it (volume_id). A volume's own slot beats the object's, so the whole-object form also clears the own slot of every part and, unless include_modifiers=false, of every modifier -- otherwise the change is invisible and the plate keeps its prime tower. Read the response, not just status: effective_filaments is every slot the object still prints with (volumes, painted facets, layer ranges); cleared_overrides lists each volume that lost its own slot and what it held; other_slots lists slots its volumes still force. The object is on one filament only when effective_filaments has one entry. get_object_info's `volumes` shows the same per volume; get_scene_info's filaments_used shows it per object. changed: false when the call set what was already there: no undo step, and the plates keep their slice.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -2476,7 +2476,7 @@
     },
     {
       "category": "Layer Ranges",
-      "description": "Set settings for a Z height range. z_min/z_max are measured from the object's own base, not from the bed, so they equal plate Z only while the object sits on the bed -- moving the object up does not move its ranges.",
+      "description": "Set settings for a Z height range. z_min/z_max are measured from the object's own base, not from the bed, so they equal plate Z only while the object sits on the bed -- moving the object up does not move its ranges. A range always has a layer_height and an extruder, as the GUI's object list gives it: the object's own (its layer_height, else the process preset's, within what the nozzle of the extruder printing the range prints; extruder 0, the object's) unless settings give one. The range as stored must print on that nozzle: a layer_height outside the printer's min_layer_height..max_layer_height for the extruder that prints the range (its own, else the object's) is rejected, and so is an extruder whose nozzle cannot print the range's height (rejected_values). A call that applies nothing, or gives no settings, is an error and leaves the ranges as they were.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -2527,7 +2527,7 @@
     },
     {
       "category": "Models",
-      "description": "Mark an object printable (included when slicing) or unprintable (skipped). Useful for excluding specific objects from a print without removing them from the scene.",
+      "description": "Mark an object printable (included when slicing) or unprintable (skipped). Useful for excluding specific objects from a print without removing them from the scene. changed: false when every instance already was: no undo step, and the plates keep their slice.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -2579,7 +2579,7 @@
     },
     {
       "category": "Slicing",
-      "description": "Slice every plate in the project, the way the GUI's Slice All button does: one plate at a time until all are sliced. Pass all_plates=false to slice only the plate that is currently selected. status says what happened: slicing_started, or not_started with a reason and a message: busy_slicing (the pipeline is busy -- get_slicing_status's busy: a slice or Slice All run, an export, an upload, or the last slice still stopping; nothing is started -- call wait_for_slice, then slice_all again), already_sliced (nothing to do), busy_job, nothing_to_slice, invalid (the app's validation refused it; message gives its words) or unknown. Then call wait_for_slice, or poll get_slicing_status until state is \"done\"; its plates array says which plates have a result. The plate selection walks from the first plate to the last while the run is in progress, and get_slicing_status puts back the plate that was selected here once it ends.",
+      "description": "Slice every plate in the project, the way the GUI's Slice All button does: one plate at a time until all are sliced. Pass all_plates=false to slice only the plate that is currently selected. status says what happened: slicing_started, or not_started with a reason and a message: busy_slicing (the pipeline is busy -- get_slicing_status's busy: a slice or Slice All run, an export, an upload, or the last slice still stopping; nothing is started -- call wait_for_slice, then slice_all again), already_sliced (nothing to do), busy_job, nothing_to_slice, invalid (the app refuses the plate as it stands -- its validation, an object partly off the plate, a filament check, missing plugins, a broken mixed filament, or a last slice that failed; message says which) or unknown. Then call wait_for_slice, or poll get_slicing_status until state is \"done\"; its plates array says which plates have a result. The plate selection walks from the first plate to the last while the run is in progress, and get_slicing_status puts back the plate that was selected here once it ends.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {

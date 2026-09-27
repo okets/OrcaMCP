@@ -8,6 +8,17 @@ same grouping, with a one-line summary per tool, is what `get_server_info` retur
 it lists -- `get_filaments`, `set_mixed_filament`, `get_flush_volumes` among them -- have no
 dedicated section below yet.
 
+**A call that changes nothing leaves the scene alone.** Setting what is already there -- the
+filament an object already prints with, the printable state it already has, a move by zero, a
+rotation of 0 degrees, a scale of 1, the prime tower's own position, the brim ears or paint a
+volume already carries, a slot's own colour, flush volumes or mixed-filament recipe, the name it
+already has -- takes no undo step (one would drop the redo stack) and marks no plate unsliced, so a
+finished slice stays finished. The object and scene tools say which it was with `changed`
+(`set_object_printable`, `set_object_filament`, `rename_object`, `set_brim_ears`, `move_object`,
+`rotate_object`, `scale_object`, `mirror_object`, `transform_objects` per entry,
+`set_prime_tower_position`, `set_mixed_filament`), the painting tools with `annotation_changed`, the
+resets with their counts.
+
 ## Quick Reference Table
 
 | Category | Tools |
@@ -278,28 +289,28 @@ Check slicing progress, for the selected plate and for every plate.
   "stage": null,
   "busy": false,
   "busy_reason": null,
-  "slice_run": {"ended_early": false, "scope": "all_plates", "plates": [0, 1], "outcome": "done"},
+  "slice_run": {"ended_early": false, "scope": "all_plates", "plates": [0, 1], "skipped": [], "outcome": "done"},
   "active_warnings": {"count": 0, "warnings": []}
 }
 ```
 
 | Field | Meaning |
 |-------|---------|
-| `state` | `idle` (never sliced, or the result was invalidated by an edit), `slicing` (in progress), `done` (the current plate has a valid slice result) |
+| `state` | `slicing` (in progress); `done` when the last `slice_all` run is done (`slice_run.outcome`) and the selected plate is sliced or empty -- before any `slice_all`, or once none of its plates exists (a new project), when the selected plate is sliced; `idle` otherwise (never sliced, an edit invalidated a result, or the run is not done) |
 | `is_slicing` | Background process running right now. During a `slice_all` run over every plate it stays true from the first plate to the last |
 | `status` | Legacy field, `slicing` or `idle` only - use `state` |
 | `slice_result_valid` | The current plate's own slice-result flag, the same one the GUI's Print/Export buttons use |
-| `plates` | Every plate's slice-result flag and `percent`, so a multi-plate run can be followed plate by plate (and a plate that failed can be identified). `percent` is 0-100 while a plate slices and 100 once it has a result; `null` for a plate with no result that nothing is slicing. The GUI drops progress updates while another job (an arrange, an orient) runs, so a percent can stand still then |
+| `plates` | Every plate's slice-result flag and `percent`, so a multi-plate run can be followed plate by plate (and a plate that failed can be identified). `percent` is 0-100 while a plate slices and 100 once it has a result; `null` for a plate with no result that nothing is slicing. The GUI drops progress updates while another job (an arrange, an orient) runs, so a percent can stand still then. An MCP change to an object's settings, layer ranges, adaptive layers, name, filament or printable state, or to the project's colours, flush volumes, mixed filaments or a plate's prime tower, marks the plates it touches not sliced at once, the unselected ones too (the app alone would find out only when the plate is next selected). Slicing again takes back the result of a plate the change did not affect without slicing it |
 | `busy` / `busy_reason` | Whether the slicing pipeline is busy, and with what: `slicing` (a slice or Slice All run), `exporting` (the background process writes G-code), `uploading` (it sends G-code to a printer) or `stopping` (the last slice finished or was cancelled, and its completion is not taken in yet). `slice_all` starts nothing while it is busy, and `wait_for_slice` waits until it is not. `is_slicing` is only the first of these |
 | `stage` | While slicing: the app's progress text for the running slice ("Generating walls", "Generating support", ...), in the app's language. `null` when nothing is slicing |
 | `plates_sliced` / `plates_total` | How many of the plates have a valid result |
 | `restored_selected_plate` | Present only on the poll that ends a `slice_all` run over every plate: the plate that was selected when `slice_all` was called has been selected again |
-| `slice_run` | How the last `slice_all` run stands. `scope` (`all_plates`, `current_plate`, or `null` before the first `slice_all`) and `plates`: the current indexes of the plates it asked for that still exist. `outcome`: `running`, `done` (every one of them has a result), `ended_early`, `incomplete` (the run is over and some have no result, or were deleted or rebuilt: a plate-list change cancels Slice All), or `null` with no run; `message` says which plates and why when it is `ended_early` or `incomplete`. `ended_early: true`, with `stopped_at_plate` and `reason`, when the last Slice All run stopped before its last plate because another job (an arrange, an orient) was running; that plate and the ones after it are not sliced. `active_warnings` carries a `SliceAllEndedEarly` warning then too. Cleared when the next Slice All starts; call `slice_all` again. `wait_for_slice` ends its wait on this |
+| `slice_run` | How the last `slice_all` run stands. `scope` (`all_plates`, `current_plate`, or `null` before the first `slice_all`) and `plates`: the current indexes of the plates it asked for that still exist. `skipped`: those of them with no printable object, which have nothing to slice (Slice All skips them). `outcome`: `running`, `done` (every one of them with something on it has a result), `ended_early`, `incomplete` (the run is over and some of the plates still there have no result -- a plate-list change during the run cancels Slice All, and `message` then says so -- or none of its plates had anything to slice, `message` "nothing to slice ..."), or `null` with no run or once none of its plates is left (after `new_project` or `load_project`). A plate deleted after the run does not make it incomplete; `message` says which plates and why when it is `ended_early` or `incomplete`. `ended_early: true`, with `stopped_at_plate` and `reason`, when the last Slice All run stopped before its last plate because another job (an arrange, an orient) was running; that plate and the ones after it are not sliced. `active_warnings` carries a `SliceAllEndedEarly` warning then too. Cleared when the next Slice All starts; call `slice_all` again. `wait_for_slice` ends its wait on this |
 
 **Usage:** After `slice_all`, call `wait_for_slice` (it polls this for you), or poll every 2-3
 seconds until `slice_run.outcome` is no longer `running`, then call `get_print_estimate`. `is_slicing: false` on its own does **not** mean the slice finished - it is
-also false before slicing ever started. `state` is about the *selected* plate; for a multi-plate
-run read `plates_sliced` / `plates`.
+also false before slicing ever started. `state` follows the last run, so an empty plate selected at
+the end of it reads `done`; `plates_sliced` / `plates` say which plates have a result.
 
 ---
 
@@ -309,7 +320,9 @@ run read `plates_sliced` / `plates`.
 Create a new empty project. A running slice is cancelled first (see `quit_app` for how long that can
 take). Refused while the startup "restore unsaved items?" prompt waits (`get_scene_info`'s
 `open_dialogs`): the new project would take over the app's record of the backup that prompt offers,
-and a later launch would not offer it again. Answer the prompt, or `quit_app`, which keeps it.
+and a later launch would not offer it again. Answer the prompt, or `quit_app`, which keeps it. An
+error dialog the app raised on the way is listed in `error_messages`; the call is `success` whenever
+the new project was started.
 
 **Parameters:** None
 
@@ -334,6 +347,10 @@ Refused while the startup "restore unsaved items?" prompt waits, as `new_project
 ```json
 {"name": "load_project", "arguments": {"file_path": "/path/to/project.3mf"}}
 ```
+
+A project that fails to load (no objects) is `status: "error"`, with the app's error dialogs' words
+as `message` and `error_messages` (captured; no dialog is left open). A project that opened is
+`success`, with `project_renamed_to`, and any error dialog it raised on the way in `error_messages`.
 
 **Returns:**
 ```json
@@ -440,6 +457,7 @@ G-code preview, model files are refused too; `new_project` returns to an editabl
 | `filaments_added` | Filament slots the import added, because the model uses more filaments than the scene had (0 when none) |
 | `project_renamed_to` | Present only if the project's name changed: never for a model file, and always for a G-code preview (named after the file, so a later `save_project {}` writes there) |
 | `info_messages` | What happened, then what the slicer would have shown. A 3MF import says whether the file carried presets that were not applied. A prompt that offered a choice ends with the answer given, e.g. `"Object too large: ... scale it down to fit the print bed automatically? (auto-answered Yes)"`; the multi-part question also names the other `multipart` value |
+| `error_messages` | The error dialogs the load raised, captured instead of shown: an STL the reader cannot parse ("Loading of a model file failed."), G-code with no valid moves, a 3MF with an invalid configuration. No dialog is left open. A load that added objects is `success` whatever it raised -- the objects are in the scene, and loading again would add them twice -- and lists these as warnings; only a load that added nothing is `error`, with their words as `message` |
 | `active_warnings` | As for every scene tool, plus a `MeshErrors` warning for each object it added that the object list flags with its warning icon |
 
 A 20 mm cube exported 1000 times too large, on a 256 mm bed:
@@ -834,13 +852,15 @@ Remove an object from the project.
 ---
 
 ### rename_object
-Rename an object.
+Rename an object. The name is in the G-code (object labels, `EXCLUDE_OBJECT` names,
+`{first_object_name}`), so the plates holding the object are marked not sliced, and the next slice
+writes their G-code again with the new name.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `object_id` | integer | Yes | Object index |
-| `name` | string | Yes | New name |
+| `new_name` | string | Yes | New name |
 
 ---
 
@@ -1459,7 +1479,10 @@ Set per-object configuration overrides.
 **Lists and failures:** identical to `apply_config` — a list-typed key takes a JSON array or the
 joined string, `unknown_keys` holds keys that do not exist, and `rejected_values` holds
 `{"key", "reason", "expected"}` for values this key would not take. `invalid_keys` remains the union
-of both, per object.
+of both, per object. `settings` that is not a list of `{key, value}` -- an object such as
+`{"wall_loops": 3}`, or an item without a `key` or `value` -- is refused with an error saying what is
+wrong (the same check `apply_config`, whose items also need a `type`, and `set_object_layer_range`
+make).
 
 ---
 
@@ -1470,7 +1493,7 @@ Clear per-object configuration overrides.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `object_id` | integer | Yes | Object index |
-| `keys` | array | No | Specific keys to reset (omit for all) |
+| `keys` | array | No | Specific keys to reset. Omitted: every override but the object's filament (`extruder`), which stays, as the GUI's reset leaves it. `reset_count` is how many were cleared; a reset that clears nothing takes no undo snapshot |
 
 ---
 
@@ -1530,7 +1553,19 @@ differences — a layer range reports no `duplicate_keys`, and a call where noth
 a JSON array or the joined string, `unknown_keys` holds keys that do not exist, `rejected_values`
 holds `{"key", "reason", "expected"}` for values this key would not take, and `invalid_keys` is the
 union. `applied_count` counts only what was written, so `status` is `partial` when some keys applied
-and `error` when none did.
+and `error` when none did, or when `settings` is empty (`message` says so). A call where nothing applied leaves the object's ranges as they were.
+
+**Every range has a `layer_height` and an `extruder`**, as the GUI's object list gives a new range
+them: the object's own layer height (its override, else the selected process preset's, within what
+the nozzle of the extruder that prints the range prints -- the range's own extruder, else the
+object's) and extruder `0` (the object's), unless `settings` gives them. The range as stored must
+print on that nozzle: an `extruder` whose nozzle cannot print the range's layer height is rejected
+too, in `rejected_values`, and the range keeps its extruder. A range without a
+layer height crashed the next slice, and a range a loaded file carries without one is completed the
+same way when its objects enter the scene. A
+`layer_height` the printer cannot print -- 0 or less, or outside its `min_layer_height` ..
+`max_layer_height` for the nozzle of the filament that prints the range (its own, else the object's; each tool's own on a toolchanger; three quarters of the nozzle when the maximum is 0) -- is
+rejected in `rejected_values`, as the object list's range editor refuses it.
 
 ---
 
@@ -1579,8 +1614,8 @@ Slice every plate in the project, one after another, exactly as the GUI's **Slic
 | `busy_slicing` | The pipeline is busy (`get_slicing_status`'s `busy`): a slice or Slice All run, a G-code export, an upload, or the last slice still stopping. `message` says which, e.g. "Slice All is slicing plate_index 2 of 5 plate(s)" or "a G-code export is running". Nothing was started: call `wait_for_slice`, which waits the same state out, then `slice_all` again. Started then, a slice would be stopped by the previous one's completion |
 | `already_sliced` | Every plate asked for already has a valid result: nothing to do, and `wait_for_slice` reports `done` |
 | `busy_job` | An arrange or orient holds the app; call `slice_all` again when it is done |
-| `nothing_to_slice` | No printable object on the plates asked for |
-| `invalid` | The app's own validation refused a plate it was asked for (the plate's validation result, not a guess from `active_warnings`); `message` gives the app's words, e.g. "Prime Tower is partially outside the printable area" |
+| `nothing_to_slice` | No printable object fully on the plates asked for: an object marked unprintable, or partly outside its plate, does not count (`get_object_info`'s `on_bed` and `placement_warning` say which) |
+| `invalid` | The app refuses a plate it was asked for as it stands, the way the GUI greys its Slice button; `message` says which check, the first that applies: its validation (the plate's validation result, not a guess from `active_warnings`; `message` gives the app's words, e.g. "Prime Tower is partially outside the printable area"), plugins slicing needs but that are missing, a mixed filament that lost a component, a plate not ready to slice (an object partly off the plate or over its height, or a filament that cannot print where it is), or the plate's last slice having failed, which the app does not retry until something on the plate changes. A setting fixed just before the call counts: the app takes in a settings change 0.5 s after it, and `slice_all` applies one still waiting first (so do `get_slicing_status`, `get_print_estimate` and `export_gcode`), so it is not refused on the failure the fix removed |
 | `unknown` | No signal explains it; `active_warnings` may |
 
 **Note:** Async operation. Call `wait_for_slice`, or poll `get_slicing_status` until `state` is
@@ -1617,12 +1652,21 @@ left with three unsliced plates and no error.
 ---
 
 ### export_gcode
-Export sliced G-code to file.
+Export the selected plate's sliced G-code to a file. The file is written asynchronously:
+`status: "export_started"`.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `output_path` | string | No | Output path (opens dialog if omitted) |
+| `output_path` | string | Yes | Output path (a file dialog cannot open under MCP) |
+
+`status: "export_started"` only when the app scheduled the export. An export that did not start is
+`status: "error"` with the reason as `message`: the scene has no objects, "Another export job is
+running." while the previous export is still writing (call it again once `busy` in
+`get_slicing_status` is false), or "the plate failed validation: ..." with the app's words for the
+plate being exported (the selected one, never another plate's) -- the app's export refuses such a
+plate without a word, and nothing was ever written. An error dialog the
+app raised is added as `error_messages`.
 
 ---
 
@@ -2653,7 +2697,12 @@ checked the same way.
 ## History Tools
 
 ### undo
-Undo the last operation. It rebuilds the plate list, so a slice in progress is cancelled first, and a
+Undo the last operation: each scene-changing tool takes an undo snapshot before it changes anything,
+the per-object settings tools included (`set_object_config`, `reset_object_config`,
+`set_object_layer_range`, `delete_object_layer_range`, `apply_adaptive_layer_height`,
+`clear_adaptive_layer_height`, `rename_object`), under the names the GUI's own edits use. A call is
+one undo step however many objects it changes, and a call that changes nothing takes no snapshot, so
+it leaves the redo stack as it was. It rebuilds the plate list, so a slice in progress is cancelled first, and a
 Slice All run with it: the response then carries `slice_cancelled: true` and an `info_messages` line
 saying so; call `slice_all` again. If the undo fails, the error response says so too when it had
 already stopped a slice. A snapshot load that fails partway (out of memory, a missing history entry)
@@ -2842,10 +2891,10 @@ wait still ends by it.
 
 | `outcome` | Meaning |
 |-----------|---------|
-| `done` | Every plate the last `slice_all` asked for has a slice result (without a `slice_all` this session: the selected plate has one) |
+| `done` | Every plate the last `slice_all` asked for has a slice result, empty plates aside: those have nothing to slice and are skipped (`slice_run.skipped`). Without a `slice_all` this session: the selected plate has one |
 | `ended_early` | Slice All stopped before its last plate; `message` is the app's reason |
-| `incomplete` | The run is over and some of its plates have no result, or no longer exist (a plate-list change cancels Slice All); `message` names them |
-| `not_slicing` | Nothing was slicing and the selected plate has no result: `slice_all` was never called, or could not start |
+| `incomplete` | The run is over and some of its plates still there have no result (a plate-list change during the run cancels Slice All), or none of them had anything to slice; `message` names them. A plate deleted after the run does not count |
+| `not_slicing` | Nothing was slicing and the selected plate has no result: `slice_all` was never called, could not start, or its plates are gone (a new project) |
 | `timed_out` | Still slicing at the timeout (`timed_out: true`); call it again |
 | `app_gone` | The app quit or crashed during the wait: it answered that it is quitting, or refused every connection for a second or more after it had been there. The slice did not finish; `start_orca`, then `slice_all` again |
 

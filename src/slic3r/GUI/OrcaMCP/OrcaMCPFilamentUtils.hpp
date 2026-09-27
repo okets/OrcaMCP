@@ -30,6 +30,7 @@ struct FilamentAssignment
     std::vector<ClearedOverride> cleared;              // volume overrides erased (whole-object form)
     std::vector<int>             effective_filaments;  // every slot the object prints with now
     std::vector<int>             other_slots;          // slots its volumes still force besides the object's
+    bool                         changed = true;       // false: the call set what was already there
 };
 
 // Assigns a filament slot to an object or one of its volumes. The whole-object form (volume_id

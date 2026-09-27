@@ -202,7 +202,7 @@ FirstLayerPlan collect_first_layer(PartPlate& plate, const DynamicPrintConfig& f
     Print* print = plate.fff_print();
     if (plate.is_slice_result_valid() && print != nullptr && !print->objects().empty()) {
         FirstLayerPlan plan = plan_from_print(*print, wxGetApp().model());
-        const PrimeTowerState tower = OrcaMCPPlateUtils::GetPrimeTowerState(plate.get_index(), full_config);
+        const PrimeTowerState tower = OrcaMCPPlateUtils::GetPrimeTowerState(plate.get_index(), full_config, /*measure_unprinted=*/false);
         if (tower.printed) {
             const double b = tower.brim_width;
             plan.wipe_tower = rectangle_scaled(BoundingBoxf(Vec2d(tower.corner.x() - b, tower.corner.y() - b),

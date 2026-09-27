@@ -1801,6 +1801,26 @@ bool model_has_advanced_features(const Model &model);
 // entries are applied simultaneously (no chained lookups), untouched slots keep everything.
 void remap_model_filament_slots(Model &model, const std::map<int, int> &slot_relocations);
 
+// Orca: every layer range must carry a layer_height -- the object list and Print::apply's range
+// comparison read it unchecked, and the slicer only has a backstop for one without. What a new range
+// starts with, as the object list's "Add height range" gives it (ObjectList::get_default_layer_config):
+// the object's effective layer height -- its own, else the one of `active_config`, the settings the
+// caller slices with (the app's selected presets, the CLI's config) -- within what the nozzle of the
+// extruder that prints the range prints, when `active_config` has the printer's nozzle settings; and
+// extruder 0 (the object's). `range_extruder` is the range's own extruder, 0 for the object's.
+DynamicPrintConfig layer_range_defaults(const ModelObject &object, const DynamicPrintConfig &active_config, int range_extruder = 0);
+// Orca: gives `range` each of `defaults` it lacks, keeping what it has.
+void complete_layer_range(ModelConfig &range, const DynamicPrintConfig &defaults);
+// Orca: gives `range` of `object` what it lacks from layer_range_defaults, by the extruder that prints
+// it: the range's own, else the object's.
+void complete_layer_range(ModelConfig &range, const ModelObject &object, const DynamicPrintConfig &active_config);
+// Orca: completes every layer range of `object`, or of every object of `model`, with
+// layer_range_defaults. A file can carry a range without a layer height (the importers copy whatever
+// options it lists), so the app completes the objects it loads (Plater::priv::load_model_objects) and
+// the CLI its models before slicing, each with the settings it slices with.
+void complete_layer_ranges(ModelObject &object, const DynamicPrintConfig &active_config);
+void complete_layer_ranges(Model &model, const DynamicPrintConfig &active_config);
+
 #ifndef NDEBUG
 // Verify whether the IDs of Model / ModelObject / ModelVolume / ModelInstance / ModelMaterial are valid and unique.
 void check_model_ids_validity(const Model &model);

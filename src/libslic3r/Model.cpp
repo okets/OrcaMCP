@@ -3871,6 +3871,51 @@ bool model_has_advanced_features(const Model &model)
     return false;
 }
 
+DynamicPrintConfig layer_range_defaults(const ModelObject &object, const DynamicPrintConfig &active_config, int range_extruder)
+{
+    double layer_height = object.config.has("layer_height") ? object.config.opt_float("layer_height")
+                        : active_config.has("layer_height") ? active_config.opt_float("layer_height")
+                                                            : print_config_def.get("layer_height")->get_default_value<ConfigOptionFloat>()->value;
+    if (active_config.has("nozzle_diameter") && active_config.has("min_layer_height") && active_config.has("max_layer_height")) {
+        // The nozzle of the extruder that prints the range: its own, else the object's, else the first.
+        const int object_extruder = object.config.has("extruder") ? object.config.extruder() : 0;
+        const int nozzle          = std::max(1, range_extruder > 0 ? range_extruder : object_extruder);
+        layer_height     = std::clamp(layer_height, Slicing::min_layer_height_from_nozzle(active_config, nozzle),
+                                      Slicing::max_layer_height_from_nozzle(active_config, nozzle));
+    }
+    DynamicPrintConfig defaults;
+    defaults.set_key_value("layer_height", new ConfigOptionFloat(layer_height));
+    defaults.set_key_value("extruder", new ConfigOptionInt(0));
+    return defaults;
+}
+
+void complete_layer_range(ModelConfig &range, const DynamicPrintConfig &defaults)
+{
+    for (const std::string &key : defaults.keys())
+        if (!range.has(key))
+            range.set_key_value(key, defaults.option(key)->clone());
+}
+
+void complete_layer_range(ModelConfig &range, const ModelObject &object, const DynamicPrintConfig &active_config)
+{
+    if (range.has("layer_height") && range.has("extruder"))
+        return;
+    const int range_extruder = range.has("extruder") ? range.opt_int("extruder") : 0;
+    complete_layer_range(range, layer_range_defaults(object, active_config, range_extruder));
+}
+
+void complete_layer_ranges(ModelObject &object, const DynamicPrintConfig &active_config)
+{
+    for (auto &[range, config] : object.layer_config_ranges)
+        complete_layer_range(config, object, active_config);
+}
+
+void complete_layer_ranges(Model &model, const DynamicPrintConfig &active_config)
+{
+    for (ModelObject *object : model.objects)
+        complete_layer_ranges(*object, active_config);
+}
+
 void remap_model_filament_slots(Model &model, const std::map<int, int> &slot_relocations)
 {
     if (slot_relocations.empty())

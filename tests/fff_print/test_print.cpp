@@ -456,3 +456,37 @@ TEST_CASE("Sequential printing publishes the nozzle group result", "[Print][Mult
         CHECK(gcode.find("; SEQ-ND-OK") != std::string::npos);
     }
 }
+
+// An object's name is in its G-code (the "; printing object" labels, EXCLUDE_OBJECT names,
+// {first_object_name}), but Print::apply copied a new name over without invalidating anything, so a
+// finished plate kept its G-code and the next slice took it back with the old name in it.
+TEST_CASE("Renaming an object after a slice makes the next one write its G-code again, with the new name", "[Print][Regression]")
+{
+    // The config init_print applies (it turns gcode_comments on), so that only the name differs.
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_deserialize_strict({{"gcode_label_objects", 1}, {"gcode_comments", 1}});
+    Print print;
+    Model model;
+    Slic3r::Test::init_print({cube(20)}, print, model, config);
+    model.objects.front()->name = "first_name";
+    // The first slice fills in settings it derives (filament_nozzle_map), which the next apply takes
+    // in; after that an apply with nothing changed is UNCHANGED.
+    print.apply(model, config);
+    Slic3r::Test::gcode(print);
+    print.apply(model, config);
+    const std::string before = Slic3r::Test::gcode(print);
+    REQUIRE_THAT(before, Catch::Matchers::ContainsSubstring("; printing object first_name"));
+    print.set_gcode_file_ready(); // what the app marks once the plate's G-code file is written
+    REQUIRE(print.finished());
+    // Applying the same model again changes nothing.
+    REQUIRE(print.apply(model, config) == PrintBase::APPLY_STATUS_UNCHANGED);
+    REQUIRE(print.finished());
+
+    model.objects.front()->name = "second_name";
+    CHECK(print.apply(model, config) != PrintBase::APPLY_STATUS_UNCHANGED);
+    CHECK_FALSE(print.finished());
+
+    const std::string after = Slic3r::Test::gcode(print);
+    CHECK_THAT(after, Catch::Matchers::ContainsSubstring("; printing object second_name"));
+    CHECK_THAT(after, !Catch::Matchers::ContainsSubstring("first_name"));
+}

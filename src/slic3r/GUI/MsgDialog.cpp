@@ -90,6 +90,8 @@ int MsgDialog::ShowModal()
         const McpAnswer   answer = mcp_answer_for(m_style, m_mcp_prompt_key);
         if (mcp_prompt_offers_choice(m_style))
             add_mcp_suppressed_answer(prompt, answer.text);
+        else if (m_mcp_error)
+            add_mcp_suppressed_error(prompt);
         else
             add_mcp_suppressed_message(prompt);
         return answer.id;

@@ -3,6 +3,7 @@
 #include "libslic3r/libslic3r.h"
 #include "libslic3r/Print.hpp"
 #include "libslic3r/Layer.hpp"
+#include "libslic3r/Slicing.hpp"
 #include "libslic3r/GCodeReader.hpp"
 #include "libslic3r/ClipperUtils.hpp"
 #include "libslic3r/AABBTreeLines.hpp"
@@ -136,6 +137,88 @@ TEST_CASE("Initial layer height is honored", "[PrintObject]")
     REQUIRE(layer_zs.size() > 1);
     REQUIRE_THAT(*layer_zs.begin(),            Catch::Matchers::WithinAbs(0.3, 1e-4));
     REQUIRE_THAT(*std::next(layer_zs.begin()), Catch::Matchers::WithinAbs(0.5, 1e-4));
+}
+
+// A layer range given only other settings -- as a 3MF can carry it, and as the CLI's assemble list
+// builds it -- is completed where it enters a scene (complete_layer_ranges: the app's
+// load_model_objects, the CLI before slicing), and the slicer prints one that was not at the
+// object's layer height rather than dereferencing the missing option, which crashed the app.
+namespace {
+DynamicPrintConfig two_mm_layers()
+{
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_deserialize_strict({{"initial_layer_print_height", 2}, {"layer_height", 2}, {"nozzle_diameter", 3}});
+    return config;
+}
+
+// A 20 mm cube at 2 mm layers is 10 layers, 2 mm apart through the range too.
+void check_two_mm_layers(const Print& print)
+{
+    ConstLayerPtrsAdaptor layers = print.objects().front()->layers();
+    REQUIRE(layers.size() == 10);
+    coordf_t last = 0.0;
+    for (size_t i = 0; i < layers.size(); ++i) {
+        CHECK_THAT(layers[i]->print_z - last, Catch::Matchers::WithinAbs(2.0, 1e-4));
+        last = layers[i]->print_z;
+    }
+}
+
+void add_bare_range(Model& model)
+{
+    ModelConfig range;
+    range.set_key_value("sparse_infill_density", new ConfigOptionPercent(30));
+    model.objects.front()->layer_config_ranges[{6.0, 10.0}].assign_config(range);
+}
+} // namespace
+
+TEST_CASE("A layer range given only other settings slices at the object's layer height once completed", "[PrintObject][LayerRanges][Regression]")
+{
+    const DynamicPrintConfig config = two_mm_layers();
+    Slic3r::Print print;
+    Slic3r::Model model;
+    Slic3r::Test::init_print({cube(20)}, print, model, config);
+    add_bare_range(model);
+    complete_layer_ranges(model, config);
+    REQUIRE(model.objects.front()->layer_config_ranges.begin()->second.has("layer_height"));
+
+    print.apply(model, config);
+    print.validate();
+    print.process();
+    check_two_mm_layers(print);
+}
+
+TEST_CASE("A layer range that reaches the slicer without a layer height prints at the object's", "[PrintObject][LayerRanges][Regression]")
+{
+    const DynamicPrintConfig config = two_mm_layers();
+    Slic3r::Print print;
+    Slic3r::Model model;
+    Slic3r::Test::init_print({cube(20)}, print, model, config);
+    add_bare_range(model);
+
+    print.apply(model, config);
+    print.validate();
+    print.process();
+    check_two_mm_layers(print);
+}
+
+TEST_CASE("An adaptive layer profile passes over a layer range without a layer height of its own", "[PrintObject][LayerRanges][Regression]")
+{
+    Slic3r::Model model;
+    ModelObject*  object = model.add_object();
+    object->add_volume(make_sphere(10, 2 * PI / 36));
+    object->add_instance();
+    object->ensure_on_bed();
+    ModelConfig range;
+    range.set_key_value("sparse_infill_density", new ConfigOptionPercent(30));
+    object->layer_config_ranges[{4.0, 8.0}].assign_config(range);
+
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_deserialize_strict({{"initial_layer_print_height", 0.2}, {"layer_height", 0.2}});
+    const SlicingParameters params = PrintObject::slicing_parameters(config, *object, float(object->max_z()), Vec3d(1., 1., 1.));
+    const std::vector<double> profile = layer_height_profile_adaptive(params, *object, 0.5f);
+    // Pairs of (z, height), up to the top of the 20 mm sphere.
+    REQUIRE(profile.size() >= 4);
+    CHECK_THAT(profile[profile.size() - 2], Catch::Matchers::WithinAbs(20.0, 0.5));
 }
 
 static TriangleMesh internal_bridge_step()

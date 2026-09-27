@@ -109,8 +109,12 @@ public:
                                              const OrcaMCP::MeshHealth& health, bool with_features);
 
     // Reads the prime tower's state on `plate_index`. `full_config` is passed in because building
-    // it is the expensive part and the per-plate loop only needs one.
-    static PrimeTowerState GetPrimeTowerState(int plate_index, const DynamicPrintConfig& full_config);
+    // it is the expensive part and the per-plate loop only needs one. With `measure_unprinted` false
+    // a tower that is not printed is not measured (size, footprint and legal_range stay empty): the
+    // slicer's estimate walks every instance's convex hull, which on a 1M-facet sphere took about
+    // 0.6 s per plate at -O0, on every get_scene_info, for a tower that was never there.
+    static PrimeTowerState GetPrimeTowerState(int plate_index, const DynamicPrintConfig& full_config,
+                                              bool measure_unprinted = true);
     static PrimeTowerState GetPrimeTowerState(int plate_index);
 
     // The `prime_tower` object of a plate's report. Always carries `printed`; carries the geometry

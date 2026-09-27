@@ -3,12 +3,35 @@
 
 #include <nlohmann/json.hpp>
 #include <map>
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/PrintConfig.hpp"
 
 namespace Slic3r { namespace GUI {
+
+namespace OrcaMCP {
+
+// The values a call is about to write into a config, copied before it writes them, so it can tell
+// afterwards whether it changed anything: a plain comparison of those keys, nothing else. A key the
+// config lacks before and has after, or the other way round, counts as changed.
+class WrittenValues
+{
+public:
+    WrittenValues(const DynamicPrintConfig& config, const std::vector<std::string>& keys);
+    bool changed_in(const DynamicPrintConfig& config) const;
+
+private:
+    std::vector<std::pair<std::string, std::unique_ptr<ConfigOption>>> m_before;
+};
+
+// The keys one slot's colour is written through, together (the sidebar's colour picker,
+// PlaterPresetComboBox::sync_colour_config).
+const std::vector<std::string>& filament_colour_keys();
+
+} // namespace OrcaMCP
 
 // What get_presets was asked for. The full preset list with every config key is ~1.9 MB, which no
 // MCP client can take in one response, so a query narrows it: `summary` (the default) drops the
@@ -151,7 +174,13 @@ public:
     // project this whole area exists to prevent. Every GUI path that writes one of those keys
     // (the filament colour picker, the wipe-tower dialog, Sidebar::auto_calc_flushing_volumes)
     // calls export_selections, so every MCP path must too.
-    static void RefreshAfterProjectConfigChange();
+    //
+    // The change reaches a plate's Print only when that plate is next applied, so the plates it
+    // touches are marked not sliced (OrcaMCP::mark_object_plates_unsliced says why): every plate, or
+    // only `only_plate` for a key that is one plate's own (its prime tower position). `written` holds
+    // the values the call wrote as they were before: a write that left them as they were (the colour
+    // or matrix a slot already had) marks no plate, so a call that changes nothing keeps every slice.
+    static void RefreshAfterProjectConfigChange(const OrcaMCP::WrittenValues& written, int only_plate = -1);
 
     // Saves that per-printer snapshot (PresetBundle::export_selections) for the selected printer: the
     // one place every MCP write of those keys persists them. It is also where a printer switch takes

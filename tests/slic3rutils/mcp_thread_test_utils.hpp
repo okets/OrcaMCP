@@ -13,9 +13,13 @@
 
 namespace mcp_test {
 
-// Far longer than any correct release takes, and short enough that a broken one fails the test
-// instead of stalling the suite.
-constexpr std::chrono::seconds k_bound{2};
+// How long a test waits for something that must happen -- a waiter released, a task queued, a latch
+// opened: a deadline for a condition, not a measure of how fast it happens. Far longer than any
+// correct release takes even on a loaded CI runner or the -O0 build under a parallel slicing suite
+// (2 s was, once, not enough there), and still short enough that a broken release fails the test
+// instead of stalling the suite. The short waits that check something did NOT happen yet (100 ms)
+// cannot fail from load: a slower machine only makes it less likely to have happened.
+constexpr std::chrono::seconds k_bound{30};
 
 // Shut until opened, from any thread.
 class Latch

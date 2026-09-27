@@ -7,6 +7,7 @@
 #include "OrcaMCPConfigKeys.hpp"
 #include "OrcaMCPConfigValues.hpp"
 #include "OrcaMCPFilamentUtils.hpp"
+#include "OrcaMCPLayerRanges.hpp"
 #include "OrcaMCPSliceEstimate.hpp"
 #include "OrcaMCPServerInfo.hpp"
 #include "OrcaMCPModelLoad.hpp"
@@ -254,7 +255,8 @@ std::vector<OrcaMCP::SliceRunPlate> slice_run_plates(PartPlateList& plate_list)
     for (int print_index : s_slice_run_print_indexes) {
         const int  index = plate_list.find_plate_by_print_index(print_index);
         PartPlate* plate = index >= 0 ? plate_list.get_plate(index) : nullptr;
-        plates.push_back({plate != nullptr, plate != nullptr && plate->is_slice_result_valid(), index});
+        plates.push_back({plate != nullptr, plate != nullptr && plate->has_printable_instances(),
+                          plate != nullptr && plate->is_slice_result_valid(), index, plate == nullptr || plate->can_slice()});
     }
     return plates;
 }
@@ -271,6 +273,16 @@ OrcaMCP::PipelineState pipeline_state(Plater& plater, int plate_count)
             process.is_upload_scheduled(),
             plater.slice_all_plate_in_progress(),
             plate_count};
+}
+
+// Applies a settings change the background timer has not taken in yet, while the pipeline is idle
+// (OrcaMCP::apply_pending_update), so what the caller does next -- slice, report a slice, export one
+// -- goes by the settings as they are now. Under the caller's `guard`, which captures what it says.
+void apply_pending_settings(Plater& plater, const McpDialogSuppressionGuard& guard)
+{
+    OrcaMCP::apply_pending_update(guard, pipeline_state(plater, plater.get_partplate_list().get_plate_count()),
+                                  plater.is_background_process_update_scheduled(),
+                                  [&plater] { plater.apply_pending_background_update(); });
 }
 
 // Why the app's own validation refused a plate the run asked for, or nullopt when none failed it.
@@ -301,26 +313,28 @@ OrcaMCP::SliceStartSignals slice_start_signals(Plater& plater, PartPlateList& pl
     OrcaMCP::SliceStartSignals signals;
     signals.slicing          = plater.is_background_process_slicing();
     signals.ui_job_running   = !plater.get_ui_job_worker().is_idle();
-    signals.validation_error = validation_failure(plater, plate_list);
-    for (int print_index : s_slice_run_print_indexes) {
-        const int  index = plate_list.find_plate_by_print_index(print_index);
-        PartPlate* plate = index >= 0 ? plate_list.get_plate(index) : nullptr;
-        if (plate != nullptr)
-            signals.plates.push_back({plate->is_slice_result_valid(), plate->has_printable_instances()});
-    }
+    signals.validation_error      = validation_failure(plater, plate_list);
+    signals.plugins_missing       = plater.plugins_block_slicing();
+    signals.broken_mixed_filament = wxGetApp().sidebar().has_broken_mixed_filament();
+    signals.last_slice_failed     = plater.last_error_blocks_reslice();
+    signals.plates                = slice_run_plates(plate_list);
     return signals;
 }
 
-// get_slicing_status's slice_run: how the last slice_all run stands (outcome, and why when it is
-// not done), which plates it asked for, and -- kept from before -- whether Slice All ended early.
-nlohmann::json slice_run_json(Plater& plater, PartPlateList& plate_list, bool slicing)
+// How the last slice_all run stands (OrcaMCP::judge_slice_run), from its plates as they are now.
+OrcaMCP::SliceRunJudgement judge_last_run(Plater& plater, PartPlateList& plate_list, bool slicing)
 {
     const OrcaMCP::SliceAllEndedEarly* ended = plater.slice_all_ended_early();
-    const std::vector<OrcaMCP::SliceRunPlate> plates = slice_run_plates(plate_list);
-    const OrcaMCP::SliceRunJudgement judged =
-        OrcaMCP::judge_slice_run(!s_slice_run_scope.empty(), slicing, plates,
-                                 ended ? std::optional<std::string>(OrcaMCP::slice_all_ended_early_text(*ended)) : std::nullopt);
+    return OrcaMCP::judge_slice_run(!s_slice_run_scope.empty(), slicing, slice_run_plates(plate_list),
+                                    ended ? std::optional<std::string>(OrcaMCP::slice_all_ended_early_text(*ended)) : std::nullopt);
+}
 
+// get_slicing_status's slice_run: how the last slice_all run stands (outcome, and why when it is
+// not done), which plates it asked for and skipped as empty, and -- kept from before -- whether Slice
+// All ended early.
+nlohmann::json slice_run_json(Plater& plater, PartPlateList& plate_list, const OrcaMCP::SliceRunJudgement& judged)
+{
+    const OrcaMCP::SliceAllEndedEarly* ended = plater.slice_all_ended_early();
     nlohmann::json run = {{"ended_early", ended != nullptr}};
     if (ended != nullptr) {
         run["stopped_at_plate"] = ended->plate_index;
@@ -328,15 +342,24 @@ nlohmann::json slice_run_json(Plater& plater, PartPlateList& plate_list, bool sl
     }
     run["scope"]   = s_slice_run_scope.empty() ? nlohmann::json(nullptr) : nlohmann::json(s_slice_run_scope);
     nlohmann::json indexes = nlohmann::json::array();
-    for (const OrcaMCP::SliceRunPlate& plate : plates)
+    for (const OrcaMCP::SliceRunPlate& plate : slice_run_plates(plate_list))
         if (plate.exists)
             indexes.push_back(plate.index);
     run["plates"]  = indexes;
+    run["skipped"] = judged.skipped;
     run["outcome"] = judged.outcome == OrcaMCP::SliceRunOutcome::none ? nlohmann::json(nullptr)
                                                                       : nlohmann::json(OrcaMCP::slice_run_outcome_name(judged.outcome));
     if (!judged.message.empty())
         run["message"] = judged.message;
     return run;
+}
+
+// The selected plate, as OrcaMCP::slice_state reads it.
+OrcaMCP::SliceRunPlate selected_plate_state(PartPlateList& plate_list)
+{
+    PartPlate* plate = plate_list.get_curr_plate();
+    return {plate != nullptr, plate != nullptr && plate->has_printable_instances(), plate != nullptr && plate->is_slice_result_valid(),
+            plate_list.get_curr_plate_index()};
 }
 
 // What load_model tells the agent about the multi-part question it answered for it: the other
@@ -1318,7 +1341,10 @@ void OrcaMCPServer::register_builtin_tools()
             {"required", {"settings"}}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
-            nlohmann::json settings = params["settings"];
+            nlohmann::json settings;
+            std::string    settings_error;
+            if (!parse_settings_param(params.value("settings", nlohmann::json()), settings, settings_error, /*with_type=*/true))
+                return error_response(settings_error);
             return run_on_main_thread([settings]() {
                 McpDialogSuppressionGuard suppression_guard;
 
@@ -1858,12 +1884,34 @@ void OrcaMCPServer::register_builtin_tools()
             // Build list of configs to process
             std::vector<std::pair<int, nlohmann::json>> config_list;
 
-            if (params.contains("configs") && params["configs"].is_array()) {
-                for (const auto& cfg : params["configs"]) {
-                    config_list.push_back({cfg["object_id"].get<int>(), cfg["settings"]});
+            // One object's settings, read the way every tool reads them (parse_integer_param,
+            // parse_settings_param): a malformed one is refused with what is wrong, not the JSON
+            // library's type_error.
+            std::string read_error;
+            const auto  read_config = [&config_list, &read_error](const nlohmann::json& item, const std::string& at) {
+                int            object_id = -1;
+                nlohmann::json settings;
+                if (!item.contains("object_id") || !parse_integer_param(item["object_id"], object_id)) {
+                    read_error = at + "object_id must be an integer";
+                    return false;
                 }
+                if (!parse_settings_param(item.value("settings", nlohmann::json()), settings, read_error)) {
+                    read_error = at + read_error;
+                    return false;
+                }
+                config_list.push_back({object_id, settings});
+                return true;
+            };
+            if (params.contains("configs")) {
+                if (!params["configs"].is_array())
+                    return error_response("configs must be a list of {object_id, settings}");
+                for (size_t i = 0; i < params["configs"].size(); ++i)
+                    if (!params["configs"][i].is_object() || !read_config(params["configs"][i], "configs[" + std::to_string(i) + "]: "))
+                        return error_response(read_error.empty() ? "configs[" + std::to_string(i) + "] must be an object {object_id, settings}"
+                                                                 : read_error);
             } else if (params.contains("object_id") && params.contains("settings")) {
-                config_list.push_back({params["object_id"].get<int>(), params["settings"]});
+                if (!read_config(params, ""))
+                    return error_response(read_error);
             } else {
                 return nlohmann::json{
                     {"status", "error"},
@@ -1878,6 +1926,8 @@ void OrcaMCPServer::register_builtin_tools()
 
                 nlohmann::json results = nlohmann::json::array();
                 bool any_changes = false;
+                // One undo step for the whole call, before its first change, as the GUI takes one per edit.
+                SnapshotOnce snapshot([plater] { plater->take_snapshot("Change object settings"); });
 
                 for (const auto& [object_id, settings] : config_list) {
                     nlohmann::json obj_result;
@@ -1889,8 +1939,9 @@ void OrcaMCPServer::register_builtin_tools()
                         results.push_back(obj_result);
                         continue;
                     }
-
                     ModelObject* obj = model.objects[object_id];
+                    // Read apart first, so the snapshot is taken only when a value really changes.
+                    DynamicPrintConfig parsed;
                     std::vector<std::string> applied_keys;
                     std::vector<std::string> invalid_keys;
                     // Same shape as apply_config: a key listed twice for one object is applied
@@ -1925,15 +1976,7 @@ void OrcaMCPServer::register_builtin_tools()
                         }
 
                         try {
-                            obj->config.set_deserialize(key, shaped.text, context);
-                            if (obj->config.has(key)) {
-                                applied_keys.push_back(key);
-                            } else {
-                                invalid_keys.push_back(key);
-                                rejected_values.push_back({{"key", key},
-                                                           {"reason", "the override was not stored"},
-                                                           {"expected", config_value_expected_shape(def->type)}});
-                            }
+                            parsed.set_deserialize(key, shaped.text, context);
                         } catch (const std::exception& e) {
                             invalid_keys.push_back(key);
                             rejected_values.push_back({{"key", key},
@@ -1942,8 +1985,27 @@ void OrcaMCPServer::register_builtin_tools()
                         }
                     }
 
-                    if (!applied_keys.empty()) {
+                    bool changed = false;
+                    for (const std::string& key : parsed.keys()) {
+                        const ConfigOption* now = obj->config.option(key);
+                        if (now == nullptr || !(*now == *parsed.option(key))) {
+                            snapshot.before_change();
+                            obj->config.set_key_value(key, parsed.option(key)->clone());
+                            changed = true;
+                        }
+                        if (obj->config.has(key)) {
+                            applied_keys.push_back(key);
+                        } else {
+                            invalid_keys.push_back(key);
+                            rejected_values.push_back({{"key", key},
+                                                       {"reason", "the override was not stored"},
+                                                       {"expected", config_value_expected_shape(print_config_def.get(key)->type)}});
+                        }
+                    }
+
+                    if (changed) {
                         wxGetApp().obj_list()->changed_object(object_id);
+                        mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
                         any_changes = true;
                     }
 
@@ -1997,7 +2059,9 @@ void OrcaMCPServer::register_builtin_tools()
                 }},
                 {"keys", {
                     {"type", "array"},
-                    {"description", "Keys to reset. If omitted, resets all overrides."},
+                    {"description", "Keys to reset. If omitted, resets every override but the object's filament "
+                                    "(extruder), which stays, as the GUI's reset leaves it. reset_count says how "
+                                    "many were cleared; a reset that clears nothing changes nothing."},
                     {"items", {{"type", "string"}}}
                 }}
             }},
@@ -2020,28 +2084,29 @@ void OrcaMCPServer::register_builtin_tools()
                 }
 
                 ModelObject* obj = model.objects[object_id];
-                int reset_count = 0;
+                // With no keys named, every override but the object's filament (extruder), which the
+                // GUI's reset keeps too; with keys, those of them the object overrides.
+                std::vector<std::string> reset_keys;
+                if (keys.empty())
+                    reset_keys = object_overrides_to_reset(obj->config.get().keys());
+                else
+                    for (const std::string& key : keys)
+                        if (obj->config.has(key) && std::find(reset_keys.begin(), reset_keys.end(), key) == reset_keys.end())
+                            reset_keys.push_back(key);
+                const int reset_count = int(reset_keys.size());
 
-                if (keys.empty()) {
-                    // Reset all overrides
-                    const auto all_keys = obj->config.get().keys();
-                    reset_count = all_keys.size();
-                    for (const auto& key : all_keys) {
+                if (reset_count > 0) {
+                    // The snapshot the object list's reset takes (TabPrintModel::reset_model_config), so
+                    // undo puts the settings back; none for a reset that clears nothing.
+                    plater->take_snapshot(std::string("Reset Options"));
+                    for (const auto& key : reset_keys)
                         obj->config.erase(key);
-                    }
-                } else {
-                    // Reset specific keys
-                    for (const auto& key : keys) {
-                        if (obj->config.has(key)) {
-                            obj->config.erase(key);
-                            reset_count++;
-                        }
-                    }
-                }
 
-                // Notify UI of changes
-                wxGetApp().obj_list()->changed_object(object_id);
-                plater->update();
+                    // Notify UI of changes
+                    wxGetApp().obj_list()->changed_object(object_id);
+                    mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
+                    plater->update();
+                }
 
                 return nlohmann::json{
                     {"status", "success"},
@@ -2242,7 +2307,14 @@ void OrcaMCPServer::register_builtin_tools()
         "Settings for a Z range of an object",
         "Set settings for a Z height range. z_min/z_max are measured from the object's own base, "
         "not from the bed, so they equal plate Z only while the object sits on the bed -- moving the "
-        "object up does not move its ranges.",
+        "object up does not move its ranges. A range always has a layer_height and an extruder, as the "
+        "GUI's object list gives it: the object's own (its layer_height, else the process preset's, "
+        "within what the nozzle of the extruder printing the range prints; extruder 0, the object's) "
+        "unless settings give one. The range as stored must print on that nozzle: a layer_height outside "
+        "the printer's min_layer_height..max_layer_height for the extruder that prints the range (its own, "
+        "else the object's) is rejected, and so is an extruder whose nozzle cannot print the range's height "
+        "(rejected_values). A call that applies nothing, or gives no settings, is an error and leaves the "
+        "ranges as they were.",
         {
             {"type", "object"},
             {"properties", {
@@ -2277,14 +2349,20 @@ void OrcaMCPServer::register_builtin_tools()
             {"required", {"object_id", "z_min", "z_max", "settings"}}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
-            int object_id = params["object_id"];
+            int object_id = -1;
+            if (!parse_integer_param(params.value("object_id", nlohmann::json()), object_id))
+                return error_response("object_id must be an integer");
             // Through parse_double_param, not get<double>(): the bridge delivered "1.4" as a string
             // on 2026-09-22 and the bare conversion threw past the handler as an "Internal error".
             double z_min = 0.0, z_max = 0.0;
-            if (!parse_double_param(params["z_min"], z_min) || !parse_double_param(params["z_max"], z_max))
+            if (!parse_double_param(params.value("z_min", nlohmann::json()), z_min) ||
+                !parse_double_param(params.value("z_max", nlohmann::json()), z_max))
                 return nlohmann::json{{"status", "error"},
                                       {"message", "z_min and z_max must be finite numbers, in millimetres above the object's base"}};
-            nlohmann::json settings = params["settings"];
+            nlohmann::json settings;
+            std::string    settings_error;
+            if (!parse_settings_param(params.value("settings", nlohmann::json()), settings, settings_error))
+                return error_response(settings_error);
             return run_on_main_thread([object_id, z_min, z_max, settings]() {
                 Plater* plater = wxGetApp().plater();
                 Model& model = plater->model();
@@ -2295,7 +2373,9 @@ void OrcaMCPServer::register_builtin_tools()
 
                 ModelObject* obj = model.objects[object_id];
                 t_layer_height_range range = {z_min, z_max};
-                ModelConfig& layer_cfg = obj->layer_config_ranges[range];
+                // Read apart first, so a call that applies nothing leaves the object's ranges as they
+                // were: it used to leave an empty range behind, which the next slice crashed on.
+                DynamicPrintConfig written;
 
                 ConfigSubstitutionContext context(ForwardCompatibilitySubstitutionRule::Enable);
                 std::vector<std::string> applied_keys;
@@ -2326,7 +2406,7 @@ void OrcaMCPServer::register_builtin_tools()
                         continue;
                     }
                     try {
-                        layer_cfg.set_deserialize(key, shaped.text, context);
+                        written.set_deserialize(key, shaped.text, context);
                         applied_keys.push_back(key);
                     } catch (const std::exception& e) {
                         invalid_keys.push_back(key);
@@ -2336,16 +2416,60 @@ void OrcaMCPServer::register_builtin_tools()
                     }
                 }
 
-                // Notify UI of changes
-                wxGetApp().obj_list()->changed_object(object_id);
-                plater->update();
+                // The range as it would be stored: what it has, this call's settings, and what it still
+                // lacks -- every range has a layer height and an extruder, as the object list gives a new
+                // range them, the object's own height within the nozzle of the extruder that prints the
+                // range (complete_layer_range): the slicer reads a range's layer height unconditionally.
+                const DynamicPrintConfig active   = wxGetApp().preset_bundle->full_config();
+                const auto               existing = obj->layer_config_ranges.find(range);
+                const auto range_as_stored = [&]() {
+                    ModelConfig updated;
+                    if (existing != obj->layer_config_ranges.end())
+                        updated.assign_config(existing->second.get());
+                    updated.apply(written);
+                    Slic3r::complete_layer_range(updated, *obj, active);
+                    return updated;
+                };
+                ModelConfig updated = range_as_stored();
 
-                // "error" only when nothing at all was written -- a range with no settings on it is
-                // not the success the old unconditional applied_count claimed it was.
-                const char* status = invalid_keys.empty() ? "success"
-                                                          : (applied_keys.empty() ? "error" : "partial");
-                return nlohmann::json{
-                    {"status", status},
+                // A height the nozzle cannot print is refused, as the object list's range editor refuses
+                // it (ObjectList::edit_layer_range), against the extruder that prints the range: its own,
+                // else the object's. The key refused is the one that caused it -- the height this call set,
+                // else the extruder it moved the range to (OrcaMCP::layer_range_rejection).
+                const int object_extruder = obj->config.has("extruder") ? obj->config.extruder() : 0;
+                while (const auto rejection = layer_range_rejection(
+                           updated.opt_float("layer_height"),
+                           layer_height_limits(active, layer_range_filament(updated.opt_int("extruder"), object_extruder)),
+                           written.has("layer_height"), written.has("extruder"))) {
+                    written.erase(rejection->key);
+                    applied_keys.erase(std::remove(applied_keys.begin(), applied_keys.end(), rejection->key), applied_keys.end());
+                    invalid_keys.push_back(rejection->key);
+                    rejected_values.push_back({{"key", rejection->key},
+                                               {"reason", rejection->reason},
+                                               {"expected", rejection->key == "layer_height"
+                                                                ? "a number of mm within the printer's min_layer_height and max_layer_height"
+                                                                : "an extruder whose nozzle prints the range's layer height"}});
+                    updated = range_as_stored();
+                }
+
+                // Only a range that really changes is written, after the snapshot undo takes it back with:
+                // a snapshot for a no-op would discard the redo stack.
+                if (!applied_keys.empty() &&
+                    (existing == obj->layer_config_ranges.end() || existing->second.get() != updated.get())) {
+                    plater->take_snapshot("Change height range settings");
+                    obj->layer_config_ranges[range].assign_config(updated.get());
+
+                    // Notify UI of changes
+                    wxGetApp().obj_list()->changed_object(object_id);
+                    mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
+                    plater->update();
+                }
+
+                // "error" when nothing at all was written -- a range with no settings on it is not the
+                // success the old unconditional applied_count claimed it was, nor is a call with none.
+                const LayerRangeWriteStatus written_status = layer_range_write_status(settings.size(), applied_keys.size());
+                nlohmann::json response = {
+                    {"status", written_status.status},
                     {"object_id", object_id},
                     {"range", {z_min, z_max}},
                     {"applied_count", applied_keys.size()},
@@ -2356,6 +2480,9 @@ void OrcaMCPServer::register_builtin_tools()
                     {"unknown_keys", unknown_keys},
                     {"rejected_values", rejected_values}
                 };
+                if (!written_status.message.empty())
+                    response["message"] = written_status.message;
+                return response;
             });
         }
     });
@@ -2401,23 +2528,22 @@ void OrcaMCPServer::register_builtin_tools()
                 }
 
                 ModelObject* obj = model.objects[object_id];
-                int deleted_count = 0;
+                const t_layer_height_range range = {z_min, z_max};
+                const int deleted_count = has_range ? int(obj->layer_config_ranges.count(range)) : int(obj->layer_config_ranges.size());
 
-                if (has_range) {
-                    // Delete specific range
-                    t_layer_height_range range = {z_min, z_max};
-                    if (obj->layer_config_ranges.erase(range) > 0) {
-                        deleted_count = 1;
-                    }
-                } else {
-                    // Delete all ranges
-                    deleted_count = obj->layer_config_ranges.size();
-                    obj->layer_config_ranges.clear();
+                if (deleted_count > 0) {
+                    // The object list's snapshot, so undo puts them back; none when nothing is deleted.
+                    plater->take_snapshot(_u8L("Remove height range"));
+                    if (has_range)
+                        obj->layer_config_ranges.erase(range);
+                    else
+                        obj->layer_config_ranges.clear();
+
+                    // Notify UI of changes
+                    wxGetApp().obj_list()->changed_object(object_id);
+                    mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
+                    plater->update();
                 }
-
-                // Notify UI of changes
-                wxGetApp().obj_list()->changed_object(object_id);
-                plater->update();
 
                 return nlohmann::json{
                     {"status", "success"},
@@ -2491,6 +2617,9 @@ void OrcaMCPServer::register_builtin_tools()
                 full_config.apply(wxGetApp().preset_bundle->printers.get_edited_preset().config);
 
                 nlohmann::json results = nlohmann::json::array();
+                // One undo step for the call, under the snapshot the GUI's own "Adaptive" button takes
+                // (GLCanvas3D), and none when no profile changes.
+                SnapshotOnce snapshot([plater] { plater->take_snapshot("Variable layer height - Adaptive"); });
 
                 for (int object_id : object_ids) {
                     nlohmann::json obj_result;
@@ -2514,11 +2643,15 @@ void OrcaMCPServer::register_builtin_tools()
                     // Generate adaptive layer height profile
                     std::vector<double> profile = layer_height_profile_adaptive(slicing_params, *obj, clamped_quality);
 
-                    // Set the profile on the model object
-                    obj->layer_height_profile.set(profile);
+                    // Set the profile on the model object, after the call's snapshot, when it changes.
+                    if (obj->layer_height_profile.get() != profile) {
+                        snapshot.before_change();
+                        obj->layer_height_profile.set(profile);
 
-                    // Notify UI of changes
-                    wxGetApp().obj_list()->update_info_items(object_id);
+                        // Notify UI of changes
+                        wxGetApp().obj_list()->update_info_items(object_id);
+                        mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
+                    }
 
                     // Calculate profile statistics
                     double min_layer_height = slicing_params.max_layer_height;
@@ -2633,6 +2766,9 @@ void OrcaMCPServer::register_builtin_tools()
                 Model& model = plater->model();
 
                 nlohmann::json results = nlohmann::json::array();
+                // One undo step for the call, under the GUI's own "Reset" snapshot, and none when no
+                // object had a profile to clear.
+                SnapshotOnce snapshot([plater] { plater->take_snapshot("Variable layer height - Reset"); });
 
                 for (int object_id : object_ids) {
                     nlohmann::json obj_result;
@@ -2648,8 +2784,12 @@ void OrcaMCPServer::register_builtin_tools()
                     ModelObject* obj = model.objects[object_id];
 
                     bool had_vlh = !obj->layer_height_profile.get().empty();
-                    obj->layer_height_profile.clear();
-                    wxGetApp().obj_list()->update_info_items(object_id);
+                    if (had_vlh) {
+                        snapshot.before_change();
+                        obj->layer_height_profile.clear();
+                        wxGetApp().obj_list()->update_info_items(object_id);
+                        mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
+                    }
 
                     obj_result["status"] = "success";
                     obj_result["object_name"] = obj->name;
@@ -2701,8 +2841,9 @@ void OrcaMCPServer::register_builtin_tools()
         "message: busy_slicing (the pipeline is busy -- get_slicing_status's busy: a slice or Slice All "
         "run, an export, an upload, or the last slice still stopping; nothing is started -- call "
         "wait_for_slice, then slice_all again), already_sliced (nothing to do), busy_job, "
-        "nothing_to_slice, invalid (the app's validation refused it; message gives its words) or "
-        "unknown. Then call "
+        "nothing_to_slice, invalid (the app refuses the plate as it stands -- its validation, an object "
+        "partly off the plate, a filament check, missing plugins, a broken mixed filament, or a last "
+        "slice that failed; message says which) or unknown. Then call "
         "wait_for_slice, or poll get_slicing_status until state is \"done\"; its plates array says which "
         "plates have a result. The plate selection walks from the first plate to the last while the "
         "run is in progress, and get_slicing_status puts back the plate that was selected here once "
@@ -2755,6 +2896,9 @@ void OrcaMCPServer::register_builtin_tools()
                     answer(*refusal, get_active_warnings_json(plater));
                     return result;
                 }
+                // A settings change made just before this call has not reached the slicer yet; until it
+                // does, the slice is refused on the failure the change may have fixed.
+                apply_pending_settings(*plater, suppression_guard);
 
                 // Plater::reslice() slices the *current* plate and nothing else, which is what
                 // this tool used to do under the name slice_all: with four plates and plate 4
@@ -2774,11 +2918,7 @@ void OrcaMCPServer::register_builtin_tools()
                                      "runs; get_slicing_status restores plate " +
                                      std::to_string(plate_at_call) + " when the run ends.";
                 }
-                auto info_messages = suppression_guard.messages();
-                if (!info_messages.empty()) {
-                    result["info_messages"] = info_messages;
-                }
-                return result;
+                return suppression_guard.report(result);
             });
         }
     });
@@ -2803,31 +2943,38 @@ void OrcaMCPServer::register_builtin_tools()
             std::string output_path = params.value("output_path", "");
             return run_on_main_thread([output_path]() {
                 Plater* plater = wxGetApp().plater();
-                if (plater->is_background_process_slicing()) {
-                    return nlohmann::json{{"status", "error"}, {"message", "Slicing still in progress"}};
-                }
-
                 // Enable dialog suppression to capture any error messages
                 McpDialogSuppressionGuard suppression_guard;
+                // A settings change made just before this call has not reached the slicer yet: until it
+                // does, the export is refused on the failure the change may have fixed.
+                apply_pending_settings(*plater, suppression_guard);
+                if (plater->is_background_process_slicing()) {
+                    return suppression_guard.report({{"status", "error"}, {"message", "Slicing still in progress"}});
+                }
 
                 nlohmann::json result;
 
                 if (!output_path.empty()) {
-                    // Silent export to specific path
-                    bool success = plater->export_gcode_to_file(output_path);
-                    auto info_messages = suppression_guard.messages();
+                    // Silent export to specific path. Not started says why: no objects, another export
+                    // running, the plate's validation failure, or the app not scheduling it.
+                    const std::optional<std::string> not_started = plater->export_gcode_to_file(output_path);
+                    auto info_messages = suppression_guard.notices();
 
-                    if (success) {
+                    if (!not_started) {
                         result["status"] = "export_started";
                         result["output_path"] = output_path;
                         result["note"] = "G-code export started. The file will be written asynchronously.";
                     } else {
                         result["status"] = "error";
-                        result["message"] = "Failed to start G-code export. Check that slicing completed successfully.";
+                        result["message"] = *not_started;
                     }
                     if (!info_messages.empty()) {
                         result["info_messages"] = info_messages;
                     }
+                    // An export the app answered with an error dialog failed, with its words.
+                    result = suppression_guard.fail_on_errors(result);
+                    if (result["status"] == "error")
+                        result.erase("note");
                 } else {
                     // No path provided. File dialogs are modal and would block the GUI thread
                     // for as long as the MCP call waits, so require an explicit path instead.
@@ -3046,7 +3193,8 @@ void OrcaMCPServer::register_builtin_tools()
                 McpDialogSuppressionGuard suppression_guard;
                 suppression_guard.answer_prompt(MCP_PROMPT_MULTIPART, multipart_answer, multipart_answer_note(multipart_answer));
                 const bool loaded = plater->load_files(files);
-                auto info_messages = suppression_guard.messages();
+                // The error dialogs the load raised (show_error, captured) are reported apart.
+                auto info_messages = suppression_guard.notices();
 
                 // load_files reports true for a 3MF or ZIP that added nothing (a suppressed ZIP
                 // picker, a file without geometry) and for any G-code, so success is judged by what
@@ -3063,6 +3211,8 @@ void OrcaMCPServer::register_builtin_tools()
                 } else {
                     response = {{"status", "error"}, {"message", load_failure_message(kind, loaded)}};
                 }
+                // Succeeded when it changed the scene, whatever else the app said (OrcaMCP::load_answer).
+                response = load_answer(suppression_guard, succeeded, std::move(response));
 
                 report_filaments_added(response, info_messages, filaments_before,
                                        wxGetApp().preset_bundle->filament_presets.size());
@@ -3082,8 +3232,11 @@ void OrcaMCPServer::register_builtin_tools()
         "get_slicing_status",
         ToolCategory::Slicing,
         "Slicing state per plate; poll this",
-        "Get the current slicing state: idle (not sliced), slicing (in progress) or done (the "
-        "current plate has a valid slice result). Poll until state is done, then get_print_estimate. "
+        "Get the current slicing state: slicing (in progress), done (the last slice_all run is done -- "
+        "every plate it asked for that has something on it is sliced -- and the selected plate is sliced "
+        "or empty; before any slice_all, or once none of its plates exists (a new project), the selected "
+        "plate is sliced) or idle (anything else); a plate deleted after the run does not undo it. Poll "
+        "until state is done, then get_print_estimate. "
         "The plates array reports every plate's slice result and percent (0-100; null for a plate "
         "with no result that is not slicing), so a slice_all run can be followed plate by plate; "
         "stage is the app's progress text for the running slice (\"Generating support\", in the app's "
@@ -3091,7 +3244,9 @@ void OrcaMCPServer::register_builtin_tools()
         "with what: slicing, exporting, uploading, or stopping (the last slice's completion is not "
         "taken in yet); slice_all starts nothing while it is, and wait_for_slice waits it out. "
         "slice_run says how the last slice_all run stands: scope, the "
-        "plates it asked for, and outcome running, done, ended_early or incomplete, with a message "
+        "plates it asked for, skipped (those of them with nothing on them to slice), and outcome running, "
+        "done, ended_early or incomplete (also when no plate had anything to slice), judged by its plates "
+        "still there (null once none is, after new_project or load_project), with a message "
         "saying which plates and why when it is not done. When a slice_all run over every plate ends, "
         "this restores the plate that was selected when slice_all was called and reports it as "
         "restored_selected_plate.",
@@ -3103,6 +3258,9 @@ void OrcaMCPServer::register_builtin_tools()
             return run_on_main_thread([]() {
                 Plater*        plater     = wxGetApp().plater();
                 PartPlateList& plate_list = plater->get_partplate_list();
+                McpDialogSuppressionGuard suppression_guard;
+                // A settings change made just before this call still leaves the plate its old result.
+                apply_pending_settings(*plater, suppression_guard);
                 const bool     is_running = plater->is_background_process_slicing();
 
                 nlohmann::json result;
@@ -3150,8 +3308,11 @@ void OrcaMCPServer::register_builtin_tools()
                 result["busy"]               = busy != OrcaMCP::PipelineBusy::idle;
                 result["busy_reason"]        = busy == OrcaMCP::PipelineBusy::idle ? nlohmann::json(nullptr)
                                                                                    : nlohmann::json(OrcaMCP::pipeline_busy_name(busy));
+                // The state is the last slice_all run's, not the selected plate's alone (OrcaMCP::slice_state).
+                const OrcaMCP::SliceRunJudgement judged = judge_last_run(*plater, plate_list, is_running);
                 result["is_slicing"]         = is_running;
-                result["state"]              = is_running ? "slicing" : (has_result ? "done" : "idle");
+                result["state"]              = OrcaMCP::slice_state_name(OrcaMCP::slice_state(is_running, judged.outcome,
+                                                                                              selected_plate_state(plate_list)));
                 result["status"]             = is_running ? "slicing" : "idle";  // kept for older callers
                 result["plate_index"]        = plate_list.get_curr_plate_index();
                 result["slice_result_valid"] = has_result;
@@ -3162,10 +3323,10 @@ void OrcaMCPServer::register_builtin_tools()
                 result["stage"] = is_running && !stage.empty() ? nlohmann::json(stage) : nlohmann::json(nullptr);
                 // How the last slice_all run stands; a Slice All run that ended before its last plate
                 // says where and why, until the next run.
-                result["slice_run"] = slice_run_json(*plater, plate_list, is_running);
+                result["slice_run"] = slice_run_json(*plater, plate_list, judged);
                 result["active_warnings"]    = get_active_warnings_json(plater);
 
-                return result;
+                return suppression_guard.report(result);
             });
         }
     });
@@ -3218,116 +3379,120 @@ void OrcaMCPServer::register_builtin_tools()
             }
             return run_on_main_thread([requested_plate, wanted_plate]() -> nlohmann::json {
                 Plater* plater = wxGetApp().plater();
+                McpDialogSuppressionGuard suppression_guard;
+                // A settings change made just before this call still leaves the plate its old result.
+                apply_pending_settings(*plater, suppression_guard);
+                return suppression_guard.report([&]() -> nlohmann::json {
+                    // Check if slicing is actively running
+                    if (plater->is_background_process_slicing()) {
+                        return nlohmann::json{
+                            {"status", "in_progress"},
+                            {"state", "slicing"},
+                            {"message", "Slicing still in progress. Poll get_slicing_status until state is \"done\"."}
+                        };
+                    }
 
-                // Check if slicing is actively running
-                if (plater->is_background_process_slicing()) {
-                    return nlohmann::json{
-                        {"status", "in_progress"},
-                        {"state", "slicing"},
-                        {"message", "Slicing still in progress. Poll get_slicing_status until state is \"done\"."}
-                    };
-                }
+                    // Plater::fff_print() is the Plater's own Print object, which nothing ever slices:
+                    // every plate owns its Print (PartPlate::set_print) and the background process is
+                    // pointed at it by PartPlate::update_slice_context. Asking the Plater's copy
+                    // whether it finished the G-code export therefore always answered "no", which is
+                    // what left this tool reporting in_progress forever after a completed slice.
+                    PartPlateList& plate_list  = plater->get_partplate_list();
+                    const int      plate_count = plate_list.get_plate_count();
+                    const int      plate_index = requested_plate ? wanted_plate : plate_list.get_curr_plate_index();
+                    if (requested_plate && (wanted_plate < 0 || wanted_plate >= plate_count)) {
+                        return nlohmann::json{
+                            {"status", "error"},
+                            {"state", "idle"},
+                            {"message", "plate_index " + std::to_string(wanted_plate) + " is out of range: the "
+                                        "project has " + std::to_string(plate_count) + " plate(s), 0.." +
+                                        std::to_string(plate_count - 1) + "."}
+                        };
+                    }
+                    PartPlate* plate = plate_list.get_plate(plate_index);
+                    if (plate == nullptr) {
+                        return nlohmann::json{{"status", "error"}, {"state", "idle"}, {"message", "No current plate"}};
+                    }
+                    GCodeProcessorResult* slice_result = plate->get_slice_result();
+                    if (!plate->is_slice_result_valid() || slice_result == nullptr) {
+                        return nlohmann::json{
+                            {"status", "error"},
+                            {"state", "idle"},
+                            {"plate_index", plate_index},
+                            {"message", "Plate " + std::to_string(plate_index) + " has no valid slice result. Run "
+                                        "slice_all and poll get_slicing_status until state is \"done\"."},
+                            {"active_warnings", get_active_warnings_json(plater)}
+                        };
+                    }
 
-                // Plater::fff_print() is the Plater's own Print object, which nothing ever slices:
-                // every plate owns its Print (PartPlate::set_print) and the background process is
-                // pointed at it by PartPlate::update_slice_context. Asking the Plater's copy
-                // whether it finished the G-code export therefore always answered "no", which is
-                // what left this tool reporting in_progress forever after a completed slice.
-                PartPlateList& plate_list  = plater->get_partplate_list();
-                const int      plate_count = plate_list.get_plate_count();
-                const int      plate_index = requested_plate ? wanted_plate : plate_list.get_curr_plate_index();
-                if (requested_plate && (wanted_plate < 0 || wanted_plate >= plate_count)) {
-                    return nlohmann::json{
-                        {"status", "error"},
-                        {"state", "idle"},
-                        {"message", "plate_index " + std::to_string(wanted_plate) + " is out of range: the "
-                                    "project has " + std::to_string(plate_count) + " plate(s), 0.." +
-                                    std::to_string(plate_count - 1) + "."}
+                    const PrintEstimatedStatistics& ps = slice_result->print_statistics;
+                    const double normal_time = ps.modes[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Normal)].time;
+                    const double silent_time = ps.modes[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Stealth)].time;
+
+                    const SliceEstimate estimate = compute_slice_estimate(
+                        ps.total_volumes_per_extruder, slice_result->filament_diameters,
+                        slice_result->filament_densities, slice_result->filament_costs);
+
+                    // A property the slicer did not record is reported as null, never as zero.
+                    auto number_or_null = [](const std::optional<double>& value) {
+                        return value ? nlohmann::json(*value) : nlohmann::json(nullptr);
                     };
-                }
-                PartPlate* plate = plate_list.get_plate(plate_index);
-                if (plate == nullptr) {
-                    return nlohmann::json{{"status", "error"}, {"state", "idle"}, {"message", "No current plate"}};
-                }
-                GCodeProcessorResult* slice_result = plate->get_slice_result();
-                if (!plate->is_slice_result_valid() || slice_result == nullptr) {
-                    return nlohmann::json{
-                        {"status", "error"},
-                        {"state", "idle"},
+
+                    nlohmann::json per_filament = nlohmann::json::array();
+                    for (const FilamentUsage& usage : estimate.per_filament) {
+                        per_filament.push_back({
+                            {"filament", static_cast<int>(usage.filament_id) + 1},  // 1-based, as every other filament tool
+                            {"volume_mm3", usage.volume_mm3},
+                            {"length_mm", number_or_null(usage.length_mm)},
+                            {"weight_grams", number_or_null(usage.weight_g)},
+                            {"cost", number_or_null(usage.cost)}
+                        });
+                    }
+
+                    // Layer counts come from the plate's own Print, the one that was actually sliced,
+                    // counted the way the G-code counts them. This used to be the tallest object's
+                    // total_layer_count(), which adds its support layers to its object layers -- mostly
+                    // the same heights twice -- and read 1567 for a model the G-code prints in 825.
+                    // A plate with no sliced objects (a G-code-only project) has no counts to give.
+                    const Print* print = plate->fff_print();
+                    const std::optional<LayerCounts> layers =
+                        print != nullptr && !print->objects().empty() ? std::optional(count_print_layers(*print)) : std::nullopt;
+
+                    nlohmann::json estimate_json = {
+                        {"status", "success"},
+                        {"state", "done"},
                         {"plate_index", plate_index},
-                        {"message", "Plate " + std::to_string(plate_index) + " has no valid slice result. Run "
-                                    "slice_all and poll get_slicing_status until state is \"done\"."},
+                        {"estimated_time", get_time_dhms(static_cast<float>(normal_time))},
+                        {"estimated_time_seconds", normal_time},
+                        {"estimated_time_silent", silent_time > 0.0 ? nlohmann::json(get_time_dhms(static_cast<float>(silent_time)))
+                                                                    : nlohmann::json(nullptr)},
+                        {"filament", {
+                            {"total_length_mm", number_or_null(estimate.length_mm)},
+                            {"total_volume_mm3", estimate.volume_mm3},
+                            {"total_weight_grams", number_or_null(estimate.weight_g)},
+                            {"total_cost", number_or_null(estimate.cost)},
+                            {"per_filament", per_filament}
+                        }},
+                        // Two distinct counters, reported under the names they actually mean. They are
+                        // the same two the G-code preview's legend shows as "Filament change times" and
+                        // "Tool changes" (GCodeViewer.cpp), and GCodeProcessor keeps them apart:
+                        // process_filament_change increments filament_changes only when a nozzle is
+                        // loaded with a *different* filament, and extruder_changes only when the printer
+                        // switches to a *different* physical extruder. On a toolchanger whose heads each
+                        // keep their own filament, filament_changes is legitimately 0 while every tool
+                        // change is counted in extruder_changes; on a single-nozzle AMS/MMU machine it is
+                        // the other way round. This used to report filament_changes as
+                        // "total_toolchanges", which is why a 4-head toolchanger interleaving ABS and a
+                        // PETG interface was told it made no tool changes at all.
+                        {"filament_changes", ps.total_filament_changes},
+                        {"extruder_changes", ps.total_extruder_changes},
+                        {"time_by_feature", time_by_feature_json(compute_time_by_feature(
+                                                slice_result->moves, PrintEstimatedStatistics::ETimeMode::Normal, normal_time))},
                         {"active_warnings", get_active_warnings_json(plater)}
                     };
-                }
-
-                const PrintEstimatedStatistics& ps = slice_result->print_statistics;
-                const double normal_time = ps.modes[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Normal)].time;
-                const double silent_time = ps.modes[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Stealth)].time;
-
-                const SliceEstimate estimate = compute_slice_estimate(
-                    ps.total_volumes_per_extruder, slice_result->filament_diameters,
-                    slice_result->filament_densities, slice_result->filament_costs);
-
-                // A property the slicer did not record is reported as null, never as zero.
-                auto number_or_null = [](const std::optional<double>& value) {
-                    return value ? nlohmann::json(*value) : nlohmann::json(nullptr);
-                };
-
-                nlohmann::json per_filament = nlohmann::json::array();
-                for (const FilamentUsage& usage : estimate.per_filament) {
-                    per_filament.push_back({
-                        {"filament", static_cast<int>(usage.filament_id) + 1},  // 1-based, as every other filament tool
-                        {"volume_mm3", usage.volume_mm3},
-                        {"length_mm", number_or_null(usage.length_mm)},
-                        {"weight_grams", number_or_null(usage.weight_g)},
-                        {"cost", number_or_null(usage.cost)}
-                    });
-                }
-
-                // Layer counts come from the plate's own Print, the one that was actually sliced,
-                // counted the way the G-code counts them. This used to be the tallest object's
-                // total_layer_count(), which adds its support layers to its object layers -- mostly
-                // the same heights twice -- and read 1567 for a model the G-code prints in 825.
-                // A plate with no sliced objects (a G-code-only project) has no counts to give.
-                const Print* print = plate->fff_print();
-                const std::optional<LayerCounts> layers =
-                    print != nullptr && !print->objects().empty() ? std::optional(count_print_layers(*print)) : std::nullopt;
-
-                nlohmann::json estimate_json = {
-                    {"status", "success"},
-                    {"state", "done"},
-                    {"plate_index", plate_index},
-                    {"estimated_time", get_time_dhms(static_cast<float>(normal_time))},
-                    {"estimated_time_seconds", normal_time},
-                    {"estimated_time_silent", silent_time > 0.0 ? nlohmann::json(get_time_dhms(static_cast<float>(silent_time)))
-                                                                : nlohmann::json(nullptr)},
-                    {"filament", {
-                        {"total_length_mm", number_or_null(estimate.length_mm)},
-                        {"total_volume_mm3", estimate.volume_mm3},
-                        {"total_weight_grams", number_or_null(estimate.weight_g)},
-                        {"total_cost", number_or_null(estimate.cost)},
-                        {"per_filament", per_filament}
-                    }},
-                    // Two distinct counters, reported under the names they actually mean. They are
-                    // the same two the G-code preview's legend shows as "Filament change times" and
-                    // "Tool changes" (GCodeViewer.cpp), and GCodeProcessor keeps them apart:
-                    // process_filament_change increments filament_changes only when a nozzle is
-                    // loaded with a *different* filament, and extruder_changes only when the printer
-                    // switches to a *different* physical extruder. On a toolchanger whose heads each
-                    // keep their own filament, filament_changes is legitimately 0 while every tool
-                    // change is counted in extruder_changes; on a single-nozzle AMS/MMU machine it is
-                    // the other way round. This used to report filament_changes as
-                    // "total_toolchanges", which is why a 4-head toolchanger interleaving ABS and a
-                    // PETG interface was told it made no tool changes at all.
-                    {"filament_changes", ps.total_filament_changes},
-                    {"extruder_changes", ps.total_extruder_changes},
-                    {"time_by_feature", time_by_feature_json(compute_time_by_feature(
-                                            slice_result->moves, PrintEstimatedStatistics::ETimeMode::Normal, normal_time))},
-                    {"active_warnings", get_active_warnings_json(plater)}
-                };
-                estimate_json.update(layer_counts_json(layers));
-                return estimate_json;
+                    estimate_json.update(layer_counts_json(layers));
+                    return estimate_json;
+                }());
             });
         }
     });
@@ -3351,14 +3516,14 @@ void OrcaMCPServer::register_builtin_tools()
 
                 // Suppress dialogs (like "save unsaved changes?") and capture messages
                 McpDialogSuppressionGuard suppression_guard;
-                plater->new_project();
-                auto info_messages = suppression_guard.messages();
-
-                nlohmann::json response = {{"status", "success"}};
-                if (!info_messages.empty()) {
-                    response["info_messages"] = info_messages;
-                }
-                return response;
+                // Plater::new_project answers wxID_CANCEL when it did not start one (its confirmation or
+                // the preset check said no); otherwise the scene is new, whatever else the app said.
+                const bool started = plater->new_project() != wxID_CANCEL;
+                nlohmann::json response = started ? nlohmann::json{{"status", "success"}}
+                                                  : nlohmann::json{{"status", "error"}, {"message", "The app did not start a new project."}};
+                if (const auto notices = suppression_guard.notices(); !notices.empty())
+                    response["info_messages"] = notices;
+                return load_answer(suppression_guard, started, std::move(response));
             });
         }
     });
@@ -3399,7 +3564,8 @@ void OrcaMCPServer::register_builtin_tools()
                 // This ensures both MCP suppression AND the silence flag are active
                 plater->load_project(wxString::FromUTF8(file_path), "<silence>");
 
-                auto info_messages = suppression_guard.messages();
+                // The error dialogs the load raised (show_error, captured) are reported apart.
+                auto info_messages = suppression_guard.notices();
 
                 // Check if project loaded by seeing if there are objects
                 bool result = !plater->model().objects.empty();
@@ -3410,10 +3576,12 @@ void OrcaMCPServer::register_builtin_tools()
                 if (result)
                     plater->set_project_filename(wxString::FromUTF8(file_path));
 
-                nlohmann::json response = {
-                    {"status", result ? "success" : "error"},
-                    {"file", file_path}
-                };
+                nlohmann::json response =
+                    result ? nlohmann::json{{"status", "success"}}
+                           : nlohmann::json{{"status", "error"}, {"message", "No objects were loaded from " + file_path + "."}};
+                response["file"] = file_path;
+                // Succeeded when the project opened, whatever else the app said (OrcaMCP::load_answer).
+                response = load_answer(suppression_guard, result, std::move(response));
 
                 // Say so: from here on save_project and the GUI's Save write back to this file.
                 if (result) {
@@ -3747,25 +3915,36 @@ void OrcaMCPServer::register_builtin_tools()
                     return nlohmann::json{{"status", "error"},
                                           {"message", "wipe_tower_x / wipe_tower_y are missing from the project config"}};
 
-                // Validated; only now is anything mutated, and the snapshot is taken first so `undo`
-                // puts the tower back. Plater::take_snapshot copies wipe_tower_x/y into
-                // model.wipe_tower.positions on its way, which is the state undo actually restores.
-                plater->take_snapshot(_u8L("Move Prime Tower"));
+                // The position the plate already reads (get_at falls back to the first entry for a
+                // plate the vectors do not reach yet) is no move: no undo step, which would drop the
+                // redo stack, and the plate keeps its slice.
+                const auto at = [index](const ConfigOptionFloats& opt) {
+                    return opt.values.empty() ? 0.0 : opt.get_at(size_t(index));
+                };
+                const bool changed = std::abs(at(*x_opt) - local_x) > kEdgeTolerance ||
+                                     std::abs(at(*y_opt) - local_y) > kEdgeTolerance;
+                if (changed) {
+                    // Validated; only now is anything mutated, and the snapshot is taken first so `undo`
+                    // puts the tower back. Plater::take_snapshot copies wipe_tower_x/y into
+                    // model.wipe_tower.positions on its way, which is the state undo actually restores.
+                    const WrittenValues written(wxGetApp().preset_bundle->project_config, {"wipe_tower_x", "wipe_tower_y"});
+                    plater->take_snapshot(_u8L("Move Prime Tower"));
 
-                // These vectors are per plate and are grown lazily elsewhere, so a project that has
-                // never had a tower on a later plate can still be shorter than the plate list.
-                if (x_opt->values.size() <= size_t(index))
-                    x_opt->values.resize(size_t(index) + 1, x_opt->values.empty() ? 0.0 : x_opt->values.front());
-                if (y_opt->values.size() <= size_t(index))
-                    y_opt->values.resize(size_t(index) + 1, y_opt->values.empty() ? 0.0 : y_opt->values.front());
+                    // These vectors are per plate and are grown lazily elsewhere, so a project that has
+                    // never had a tower on a later plate can still be shorter than the plate list.
+                    if (x_opt->values.size() <= size_t(index))
+                        x_opt->values.resize(size_t(index) + 1, x_opt->values.empty() ? 0.0 : x_opt->values.front());
+                    if (y_opt->values.size() <= size_t(index))
+                        y_opt->values.resize(size_t(index) + 1, y_opt->values.empty() ? 0.0 : y_opt->values.front());
 
-                ConfigOptionFloat new_x(local_x);
-                ConfigOptionFloat new_y(local_y);
-                x_opt->set_at(&new_x, index, 0);
-                y_opt->set_at(&new_y, index, 0);
+                    ConfigOptionFloat new_x(local_x);
+                    ConfigOptionFloat new_y(local_y);
+                    x_opt->set_at(&new_x, index, 0);
+                    y_opt->set_at(&new_y, index, 0);
 
-                OrcaMCPPresetConfigUtils::RefreshAfterProjectConfigChange();
-                plater->update();
+                    OrcaMCPPresetConfigUtils::RefreshAfterProjectConfigChange(written, /*only_plate=*/index);
+                    plater->update();
+                }
 
                 const PrimeTowerState after = OrcaMCPPlateUtils::GetPrimeTowerState(index);
 
@@ -3774,6 +3953,7 @@ void OrcaMCPServer::register_builtin_tools()
                     {"plate_index", index},
                     {"previous_position", {{"x", before.corner.x()}, {"y", before.corner.y()}}},
                     {"position", {{"x", after.corner.x()}, {"y", after.corner.y()}}},
+                    {"changed", changed},
                     {"allowed_range", range_json()},
                     {"prime_tower", OrcaMCPPlateUtils::PrimeTowerJson(after)}
                 };
@@ -3902,7 +4082,8 @@ void OrcaMCPServer::register_builtin_tools()
                 // coordinates, which is the frame every response here reports. Every instance moves
                 // by the same amount, so a multi-instance object keeps its arrangement and the
                 // object-level position this tool reports is the one that was asked for.
-                if (!requested_delta.isZero()) {
+                const bool moved = !requested_delta.isZero();
+                if (moved) {
                     plater->take_snapshot(_u8L("Move Object"));
                     obj->translate_instances(requested_delta);
                 }
@@ -3937,7 +4118,7 @@ void OrcaMCPServer::register_builtin_tools()
                 // Move the object onto the plate its new position sits in, and report which one that
                 // is. A move across a plate boundary that leaves the instance registered on its old
                 // plate slices onto the old plate, in that plate's filaments, with no error.
-                rehome_and_report_placement(result, object_id);
+                rehome_and_report_placement(result, object_id, moved);
 
                 // Add movement delta for clarity
                 Vec3d delta = new_center - current_center;
@@ -4036,7 +4217,8 @@ void OrcaMCPServer::register_builtin_tools()
                 const Transform3d world_rotation =
                     Geometry::rotation_transform(Vec3d(x_deg, y_deg, z_deg) * deg_to_rad);
 
-                if (!world_rotation.isApprox(Transform3d::Identity())) {
+                const bool turned = !world_rotation.isApprox(Transform3d::Identity());
+                if (turned) {
                     plater->take_snapshot(_u8L("Rotate Object"));
                     transform_instances_on_bed(*obj, world_rotation);
                 }
@@ -4066,7 +4248,7 @@ void OrcaMCPServer::register_builtin_tools()
 
                 // A rotation changes the convex hull, so it can push an instance over a plate
                 // boundary or off the bed; re-home it and measure against the plate it is on now.
-                rehome_and_report_placement(result, object_id);
+                rehome_and_report_placement(result, object_id, turned);
 
                 // Add turntable preview if requested
                 add_turntable_preview_if_requested(result, include_preview, preview_views, preview_resolution);
@@ -4166,7 +4348,8 @@ void OrcaMCPServer::register_builtin_tools()
                 const bool had_skew = !obj->instances.empty() &&
                                       obj->instances[0]->get_transformation().has_skew();
 
-                if (!factors.isApprox(Vec3d::Ones())) {
+                const bool scaled = !factors.isApprox(Vec3d::Ones());
+                if (scaled) {
                     plater->take_snapshot(_u8L("Scale Object"));
                     transform_instances_on_bed(*obj, Geometry::scale_transform(factors));
                 }
@@ -4207,7 +4390,7 @@ void OrcaMCPServer::register_builtin_tools()
 
                 // Scaling grows the convex hull about the object centre, so it can spill over a plate
                 // boundary or off the bed; re-home it and measure against the plate it is on now.
-                rehome_and_report_placement(result, object_id);
+                rehome_and_report_placement(result, object_id, scaled);
 
                 // Add turntable preview if requested
                 add_turntable_preview_if_requested(result, include_preview, preview_views, preview_resolution);
@@ -4288,6 +4471,7 @@ void OrcaMCPServer::register_builtin_tools()
                 Model& model = plater->model();
                 nlohmann::json results = nlohmann::json::array();
                 std::set<int> rejected;  // object_ids already reported as an error below
+                std::set<int> moved;     // object_ids an entry changed: only those re-home and lose their slice
 
                 const double deg_to_rad = M_PI / 180.0;
 
@@ -4344,38 +4528,45 @@ void OrcaMCPServer::register_builtin_tools()
                         }
                     }
 
-                    ensure_snapshot();
-
-                    // Apply position (absolute, unspecified axes preserved)
+                    // Position (absolute, unspecified axes preserved), then an incremental rotation,
+                    // then the scale. An entry that asks for where the object already is changes
+                    // nothing, and takes no undo step and no plate's slice with it.
+                    Vec3d delta = Vec3d::Zero();
                     if (t.contains("position")) {
-                        auto pos = t["position"];
-                        BoundingBoxf3 bbox = object_world_box(*obj);
-                        Vec3d current_center = bbox.center();
-                        Vec3d target(
+                        const auto& pos = t["position"];
+                        const Vec3d current_center = object_world_box(*obj).center();
+                        const Vec3d target(
                             pos.contains("x") ? pos["x"].get<double>() : current_center.x(),
                             pos.contains("y") ? pos["y"].get<double>() : current_center.y(),
                             pos.contains("z") ? pos["z"].get<double>() : current_center.z()
                         );
-                        obj->translate_instances(target - current_center);
+                        delta = target - current_center;
                     }
+                    Transform3d world_rotation = Transform3d::Identity();
+                    if (t.contains("rotation")) {
+                        const auto& rot = t["rotation"];
+                        const Vec3d degrees(rot.value("x", 0.0), rot.value("y", 0.0), rot.value("z", 0.0));
+                        world_rotation = Geometry::rotation_transform(degrees * deg_to_rad);
+                    }
+                    const bool translates = !delta.isZero();
+                    const bool turns      = !world_rotation.isApprox(Transform3d::Identity());
+                    const bool scales     = !factors.isApprox(Vec3d::Ones());
+                    if (!translates && !turns && !scales)
+                        continue;
+
+                    ensure_snapshot();
+                    moved.insert(object_id);
+                    if (translates)
+                        obj->translate_instances(delta);
 
                     // A rotation or scale lands a resting object back on the bed, as rotate_object
                     // and scale_object do -- unless this entry states a Z, which is the caller's
                     // intent exactly as it is for move_object.
                     const bool explicit_z = t.contains("position") && t["position"].contains("z");
                     const auto transform  = explicit_z ? transform_instances_in_plate_frame : transform_instances_on_bed;
-
-                    // Apply rotation (incremental)
-                    if (t.contains("rotation")) {
-                        auto rot = t["rotation"];
-                        const Vec3d degrees(rot.value("x", 0.0), rot.value("y", 0.0), rot.value("z", 0.0));
-                        const Transform3d world_rotation = Geometry::rotation_transform(degrees * deg_to_rad);
-                        if (!world_rotation.isApprox(Transform3d::Identity()))
-                            transform(*obj, world_rotation);
-                    }
-
-                    // Apply scale
-                    if (t.contains("scale"))
+                    if (turns)
+                        transform(*obj, world_rotation);
+                    if (scales)
                         transform(*obj, Geometry::scale_transform(factors));
 
                     obj->invalidate_bounding_box();
@@ -4404,7 +4595,7 @@ void OrcaMCPServer::register_builtin_tools()
                         {"status", "success"},
                         {"position", {{"x", center.x()}, {"y", center.y()}, {"z", center.z()}}}
                     };
-                    rehome_and_report_placement(entry, object_id);
+                    rehome_and_report_placement(entry, object_id, moved.count(object_id) > 0);
                     results.push_back(entry);
                 }
 
@@ -4504,7 +4695,7 @@ void OrcaMCPServer::register_builtin_tools()
                 // A mirror about the object's centre keeps its bounding box, but a left-handed
                 // instance re-homes and re-slices like any other change, and this tool reported no
                 // placement at all before.
-                rehome_and_report_placement(result, object_id);
+                rehome_and_report_placement(result, object_id, /*moved=*/true);
 
                 // Add turntable preview if requested
                 add_turntable_preview_if_requested(result, include_preview, preview_views, preview_resolution);
@@ -4842,16 +5033,24 @@ void OrcaMCPServer::register_builtin_tools()
                 }
 
                 std::string old_name = model.objects[object_id]->name;
+                if (new_name == old_name)
+                    return nlohmann::json{{"status", "success"}, {"object_id", object_id}, {"old_name", old_name}, {"new_name", new_name},
+                                          {"changed", false}};
+                plater->take_snapshot(_u8L("Rename Object")); // the object list's, so undo puts the name back
                 model.objects[object_id]->name = new_name;
 
-                // Update the object list UI to reflect the new name
+                // Update the object list UI to reflect the new name. The name is in the G-code (its
+                // object labels), so the plates holding it no longer have its result; Print::apply
+                // invalidates the G-code export step for a renamed object, and the next slice writes it again.
                 wxGetApp().obj_list()->update_name_for_items();
+                mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
 
                 return nlohmann::json{
                     {"status", "success"},
                     {"object_id", object_id},
                     {"old_name", old_name},
-                    {"new_name", new_name}
+                    {"new_name", new_name},
+                    {"changed", true}
                 };
             });
         }
@@ -4912,7 +5111,8 @@ void OrcaMCPServer::register_builtin_tools()
         ToolCategory::Models,
         "Include or skip an object when slicing",
         "Mark an object printable (included when slicing) or unprintable (skipped). "
-        "Useful for excluding specific objects from a print without removing them from the scene.",
+        "Useful for excluding specific objects from a print without removing them from the scene. "
+        "changed: false when every instance already was: no undo step, and the plates keep their slice.",
         {
             {"type", "object"},
             {"properties", {
@@ -4939,26 +5139,33 @@ void OrcaMCPServer::register_builtin_tools()
                 }
 
                 ModelObject* object = model.objects[object_id];
-                std::string snapshot_text = (boost::format("%1% \"%2%\"") %
-                    (printable ? "Set Object Printable" : "Set Object Unprintable") %
-                    object->name).str();
-                plater->take_snapshot(snapshot_text);
+                // Every instance already so: nothing to snapshot (it would drop the redo stack), and no
+                // plate loses its slice result.
+                const bool changed = printable_changes(*object, printable);
+                if (changed) {
+                    std::string snapshot_text = (boost::format("%1% \"%2%\"") %
+                        (printable ? "Set Object Printable" : "Set Object Unprintable") %
+                        object->name).str();
+                    plater->take_snapshot(snapshot_text);
 
-                for (auto* inst : object->instances)
-                    inst->printable = printable;
+                    for (auto* inst : object->instances)
+                        inst->printable = printable;
 
-                wxGetApp().obj_list()->update_printable_state(object_id, 0);
-                // The 3D view's canvas, as the object list uses (GUI_ObjectList.cpp): canvas3D() is
-                // whichever canvas is showing, and the Preview canvas holds no model volumes, so from
-                // the Preview tab the 3D view -- and every render drawn from it -- kept the old state.
-                plater->get_view3D_canvas3D()->update_instance_printable_state_for_object(static_cast<size_t>(object_id));
-                plater->update();
+                    wxGetApp().obj_list()->update_printable_state(object_id, 0);
+                    // The 3D view's canvas, as the object list uses (GUI_ObjectList.cpp): canvas3D() is
+                    // whichever canvas is showing, and the Preview canvas holds no model volumes, so from
+                    // the Preview tab the 3D view -- and every render drawn from it -- kept the old state.
+                    plater->get_view3D_canvas3D()->update_instance_printable_state_for_object(static_cast<size_t>(object_id));
+                    mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
+                    plater->update();
+                }
 
                 return nlohmann::json{
                     {"status", "success"},
                     {"object_id", object_id},
                     {"object_name", object->name},
                     {"printable", printable},
+                    {"changed", changed},
                     {"active_warnings", get_active_warnings_json(plater)}
                 };
             });
@@ -5255,8 +5462,9 @@ void OrcaMCPServer::register_bridge_tools()
         "Wait for the running slice to finish",
         "Wait until the running slice is over, instead of polling get_slicing_status: call it after "
         "slice_all. It returns when the run ends, or after timeout_s. outcome is done (every plate the "
-        "run sliced has a result), ended_early or incomplete (slicing_status.slice_run.message says "
-        "which plates and why), not_slicing (nothing was running and the selected plate has no result), "
+        "run asked for has a result, empty plates aside: those are skipped), ended_early or incomplete "
+        "(slicing_status.slice_run.message says which plates and why), not_slicing (nothing was running "
+        "and the selected plate has no result), "
         "timed_out (still slicing: call it again), or app_gone (the app quit or crashed during the wait). "
         "slicing_status is get_slicing_status's final "
         "answer, with each plate's percent. The wait is capped 15 s below ORCAMCP_TIMEOUT (105 s at the "

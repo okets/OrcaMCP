@@ -15,6 +15,9 @@
 #include <boost/algorithm/string.hpp>
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/any.hpp>
+#include <boost/log/trivial.hpp>
+
+#include <wx/thread.h>
 
 #if __APPLE__
 #import <IOKit/pwr_mgt/IOPMLib.h>
@@ -44,6 +47,7 @@ namespace GUI {
 // MCP dialog suppression state
 static bool s_mcp_dialog_suppression = false;
 static std::vector<std::string> s_mcp_suppressed_messages;
+static std::vector<std::string> s_mcp_suppressed_errors; // those of the messages that were errors (show_error)
 struct McpPromptAnswer
 {
     int         id;
@@ -71,6 +75,20 @@ void add_mcp_suppressed_message(const std::string& msg) {
 
 void clear_mcp_suppressed_messages() {
     s_mcp_suppressed_messages.clear();
+    s_mcp_suppressed_errors.clear();
+}
+
+void add_mcp_suppressed_error(const std::string& msg) {
+    add_mcp_suppressed_message(msg);
+    s_mcp_suppressed_errors.push_back(msg);
+}
+
+std::vector<std::string> get_mcp_suppressed_errors() {
+    return s_mcp_suppressed_errors;
+}
+
+bool mcp_captures_error(bool suppression_enabled, bool on_main_thread) {
+    return suppression_enabled && on_main_thread;
 }
 
 std::string mcp_answered_prompt(const std::string& prompt, const std::string& answer) {
@@ -371,6 +389,14 @@ void change_opt_value(DynamicPrintConfig& config, const t_config_option_key& opt
 
 void show_error(wxWindow* parent, const wxString& message, bool has_code_excerpts)
 {
+    // Orca MCP: the dialog below opens after the caller returns, so under MCP it opened once the tool
+    // call was over and suppression with it: a modal nobody answers. Captured instead, as a
+    // synchronous ErrorDialog would have been by MsgDialog::ShowModal.
+    if (mcp_captures_error(is_mcp_dialog_suppression_enabled(), wxThread::IsMain())) {
+        BOOST_LOG_TRIVIAL(error) << "MCP captured an error dialog: " << message.ToUTF8().data();
+        add_mcp_suppressed_error(message.ToUTF8().data());
+        return;
+    }
     wxGetApp().CallAfter([=] {
         ErrorDialog msg(parent, message, has_code_excerpts);
         msg.ShowModal();

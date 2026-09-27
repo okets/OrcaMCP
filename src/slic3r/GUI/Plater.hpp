@@ -548,8 +548,9 @@ public:
 
     void send_to_printer(bool isall = false);
     void export_gcode(bool prefer_removable);
-    // Silent G-code export to a specific file path (for MCP automation)
-    bool export_gcode_to_file(const std::string& output_path);
+    // Silent G-code export to a specific file path (for MCP automation). Returns why the export did
+    // not start (OrcaMCP::export_not_started), or nullopt when it is being written.
+    std::optional<std::string> export_gcode_to_file(const std::string& output_path);
     void export_gcode_3mf(bool export_all = false);
     void send_gcode_finish(wxString name);
     void export_core_3mf();
@@ -591,6 +592,9 @@ public:
     void changed_objects(const std::vector<size_t>& object_idxs);
     void schedule_background_process(bool schedule = true);
     bool is_background_process_update_scheduled() const;
+    // Orca: runs now what the background timer runs when it fires, if it is due (see
+    // apply_pending_background_update in Plater.cpp). Returns whether an update was pending.
+    bool apply_pending_background_update();
     void suppress_background_process(const bool stop_background_process) ;
     // Expose the slicing process so the device GUI can read the current
     // GCodeProcessorResult (e.g. the nozzle grouping for print-dispatch mapping).
@@ -822,6 +826,9 @@ public:
     void enable_inactive_plugins(const std::vector<std::string>& refs);
     // True when the active preset references plugins that are missing and not yet acknowledged, as
     // of the last validate_current_plate. Other slice-ready writers consult this to stay consistent.
+    // Orca: reslice() returns at once while the current plate's last update or slice ended in an error
+    // (process_completed_with_error), until something on the plate changes. MCP names that refusal.
+    bool last_error_blocks_reslice() const;
     bool plugins_block_slicing() const;
     //BBS: select the plate by index
     int select_plate(int plate_index, bool need_slice = false);

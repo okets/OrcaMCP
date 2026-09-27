@@ -56,7 +56,17 @@ void set_mcp_dialog_suppression(bool suppress);
 bool is_mcp_dialog_suppression_enabled();
 std::vector<std::string> get_mcp_suppressed_messages();
 void add_mcp_suppressed_message(const std::string& msg);
+// Clears the errors too: they are messages.
 void clear_mcp_suppressed_messages();
+// An error show_error captured instead of showing: recorded as a message, as a synchronous
+// ErrorDialog would have been, and as an error, so a tool can fail with its words.
+void add_mcp_suppressed_error(const std::string& msg);
+std::vector<std::string> get_mcp_suppressed_errors();
+// Whether show_error captures its message instead of showing it. Its dialog is deferred
+// (CallAfter), so under MCP it opened only after the call had returned and suppression was over:
+// captured under suppression on the GUI thread, which owns the capture lists; deferred as before
+// otherwise.
+bool mcp_captures_error(bool suppression_enabled, bool on_main_thread);
 // A suppressed prompt that offered a choice is recorded with the answer automation gave it, as
 // "<prompt> (auto-answered <answer>)", so an agent can tell a merge or a rescale from a notice.
 std::string mcp_answered_prompt(const std::string& prompt, const std::string& answer);

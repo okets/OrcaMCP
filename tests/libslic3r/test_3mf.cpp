@@ -1227,3 +1227,62 @@ SCENARIO("bbs_3mf_is_published detects only genuinely published 3MFs", "[3mf]") 
     }
 }
 
+
+// A 3MF can carry a layer range without a layer_height (the importers copy whatever options the
+// file lists; MCP's set_object_layer_range wrote such ranges before 2.5.0.6), and the next slice
+// dereferenced the missing option and crashed the app. The loader keeps what the file has; the app
+// completes the range from its active settings when the objects enter the scene
+// (complete_layer_ranges).
+SCENARIO("A layer range saved without a layer height loads as the file has it, and completes from the active settings", "[3mf][LayerRanges]") {
+    GIVEN("a model whose object has a layer range carrying only an infill density") {
+        Model model;
+        std::string src_file = std::string(TEST_DATA_DIR) + "/test_3mf/Prusa.stl";
+        REQUIRE(load_stl(src_file.c_str(), &model));
+        model.add_default_instances();
+        ModelConfig bare;
+        bare.set_key_value("sparse_infill_density", new ConfigOptionPercent(30));
+        model.objects.front()->layer_config_ranges[{2.0, 5.0}].assign_config(bare);
+
+        ScopedTemporaryDir backup_dir("orca_ranges");
+        model.set_backup_path(backup_dir.string());
+
+        WHEN("stored to a .3mf and loaded back") {
+            ScopedTemporaryFile temp(".3mf");
+            const std::string test_file = temp.string();
+
+            DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+            StoreParams store_params;
+            store_params.path    = test_file.c_str();
+            store_params.model   = &model;
+            store_params.config  = &config;
+            store_params.strategy = SaveStrategy::Zip64 | SaveStrategy::Silence;
+            REQUIRE(store_bbs_3mf(store_params));
+
+            DynamicPrintConfig        dst_config;
+            ConfigSubstitutionContext ctxt{ForwardCompatibilitySubstitutionRule::Enable};
+            PlateDataPtrs             dst_plates;
+            std::vector<Preset*>      project_presets;
+            Model dst_model = Model::read_from_file(test_file, &dst_config, &ctxt, LoadStrategy::LoadModel | LoadStrategy::LoadConfig,
+                                                    &dst_plates, &project_presets);
+            REQUIRE(dst_model.objects.size() == 1);
+            const auto& ranges = dst_model.objects.front()->layer_config_ranges;
+            REQUIRE(ranges.size() == 1);
+            THEN("the range comes back without a layer height, as the file has it") {
+                CHECK_FALSE(ranges.begin()->second.has("layer_height"));
+            }
+            THEN("completing it gives it the active layer height and the object's extruder, and keeps its own setting") {
+                DynamicPrintConfig active = DynamicPrintConfig::full_print_config();
+                active.set_key_value("layer_height", new ConfigOptionFloat(0.24));
+                complete_layer_ranges(dst_model, active);
+                const ModelConfig& range = ranges.begin()->second;
+                REQUIRE(range.has("layer_height"));
+                CHECK_THAT(range.opt_float("layer_height"), Catch::Matchers::WithinAbs(0.24, 1e-9));
+                CHECK(range.opt_int("extruder") == 0);
+                CHECK(range.has("sparse_infill_density"));
+            }
+            release_PlateData_list(dst_plates);
+            for (Preset* preset : project_presets)
+                delete preset;
+        }
+    }
+}

@@ -1,4 +1,5 @@
 #include "OrcaMCPCommon.hpp"
+#include "OrcaMCPInstanceBox.hpp"
 #include "OrcaMCPMeshHealth.hpp"
 #include "OrcaMCPPlateUtils.hpp"
 #include "OrcaMCPQuit.hpp"
@@ -9,7 +10,9 @@
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Geometry.hpp"
 
+#include <algorithm>
 #include <cctype>
+#include <iterator>
 #include <cmath>
 #include <cstdlib>
 #include <limits>
@@ -130,6 +133,41 @@ bool parse_object_param(const nlohmann::json& value, nlohmann::json& out)
     return true;
 }
 
+bool parse_settings_param(const nlohmann::json& value, nlohmann::json& out, std::string& error, bool with_type)
+{
+    const std::string shape   = with_type ? "a list of {type, key, value}" : "a list of {key, value}";
+    const std::string example = with_type ? "[{\"type\": \"print\", \"key\": \"wall_loops\", \"value\": 3}]"
+                                          : "[{\"key\": \"wall_loops\", \"value\": 3}]";
+    const nlohmann::json list = value.is_string() ? nlohmann::json::parse(value.get<std::string>(), nullptr, /*allow_exceptions=*/false)
+                                                  : value;
+    if (!list.is_array()) {
+        error = "settings must be " + shape + ", e.g. " + example + "; got " + value.dump();
+        return false;
+    }
+    for (size_t i = 0; i < list.size(); ++i) {
+        const nlohmann::json& item = list[i];
+        const std::string     at   = "settings[" + std::to_string(i) + "]";
+        if (!item.is_object()) {
+            error = at + " must be an object {key, value}; got " + item.dump();
+            return false;
+        }
+        if (with_type && !(item.contains("type") && item["type"].is_string())) {
+            error = at + " needs a string type (print, filament, printer or project)";
+            return false;
+        }
+        if (!(item.contains("key") && item["key"].is_string())) {
+            error = at + " needs a string key";
+            return false;
+        }
+        if (!item.contains("value")) {
+            error = at + " (" + item["key"].get<std::string>() + ") needs a value";
+            return false;
+        }
+    }
+    out = list;
+    return true;
+}
+
 bool parse_boolean_param(const nlohmann::json& value, bool& out)
 {
     if (value.is_boolean()) {
@@ -225,7 +263,7 @@ void report_placement(nlohmann::json& result, int object_id)
         result.erase("placement_warning");
 }
 
-void rehome_and_report_placement(nlohmann::json& result, int object_id)
+void rehome_and_report_placement(nlohmann::json& result, int object_id, bool moved)
 {
     Plater* plater = wxGetApp().plater();
     if (plater == nullptr)
@@ -233,6 +271,11 @@ void rehome_and_report_placement(nlohmann::json& result, int object_id)
     Model& model = plater->model();
     if (object_id < 0 || object_id >= int(model.objects.size()))
         return;
+    result["changed"] = moved;
+    if (!moved) {
+        report_placement(result, object_id);
+        return;
+    }
 
     // Re-home first: a transform can have carried the object onto a different plate, and the plate
     // lists only learn that from notify_instance_update. report_placement then reads the result.
@@ -289,11 +332,11 @@ double instance_min_z(const ModelObject& object, size_t instance_idx)
 
 void transform_instances_in_plate_frame(ModelObject& object, const Transform3d& world_transform)
 {
-    // Each instance turns about its own pre-transform centre: instance_bounding_box is read before
+    // Each instance turns about its own pre-transform centre: its box (instance_box) is read before
     // this instance is touched, and only this instance is touched.
     for (size_t i = 0; i < object.instances.size(); ++i)
         if (ModelInstance* instance = object.instances[i])
-            transform_instance_about_box(*instance, world_transform, object.instance_bounding_box(i));
+            transform_instance_about_box(*instance, world_transform, instance_box(object, i));
     object.invalidate_bounding_box();
 }
 
@@ -305,14 +348,15 @@ bool should_drop_to_bed(double min_z_before, double min_z_after)
 
 void transform_instances_on_bed(ModelObject& object, const Transform3d& world_transform)
 {
-    // One walk over the mesh per instance, for the box that gives both the pivot and the lowest point
-    // before; one over the convex hull for the lowest point after. The GUI reads the same two. An
-    // instance with no model part has no lowest point to keep, so it is not dropped.
+    // The instance's box (instance_box: one walk over the mesh unless it is cached), which gives both
+    // the pivot and the lowest point before; one walk over the convex hull for the lowest point after.
+    // The GUI reads the same two. An instance with no model part has no lowest point to keep, so it is
+    // not dropped.
     for (size_t i = 0; i < object.instances.size(); ++i) {
         ModelInstance* instance = object.instances[i];
         if (instance == nullptr)
             continue;
-        const BoundingBoxf3 before = object.instance_bounding_box(i);
+        const BoundingBoxf3 before = instance_box(object, i);
         transform_instance_about_box(*instance, world_transform, before);
         if (!instance->auto_drop || !before.defined)
             continue;
@@ -331,7 +375,7 @@ InstancesOnPlate instances_on_plate(const ModelObject& object, const std::functi
     for (size_t i = 0; i < object.instances.size(); ++i)
         if (holds(int(i))) {
             here.ids.push_back(int(i));
-            here.box.merge(object.instance_bounding_box(i));
+            here.box.merge(instance_box(object, i));
         }
     return here;
 }
@@ -344,6 +388,47 @@ InstancesOnPlate instances_on_plate(const ModelObject& object, int object_index,
 BoundingBoxf3 plate_box_of(const ModelObject& object, const InstancesOnPlate& here)
 {
     return here.box.defined ? here.box : object_world_box(object);
+}
+
+bool printable_changes(const ModelObject& object, bool printable)
+{
+    return std::any_of(object.instances.begin(), object.instances.end(),
+                       [printable](const ModelInstance* instance) { return instance->printable != printable; });
+}
+
+bool brim_ears_change(const std::vector<BrimPoint>& current, const std::vector<BrimPoint>& given, bool append)
+{
+    return append ? !given.empty() : given != current;
+}
+
+std::vector<std::string> object_overrides_to_reset(const std::vector<std::string>& object_keys)
+{
+    std::vector<std::string> reset;
+    std::copy_if(object_keys.begin(), object_keys.end(), std::back_inserter(reset),
+                 [](const std::string& key) { return key != "extruder"; });
+    return reset;
+}
+
+void mark_object_plates_unsliced(PartPlateList& plates, int object_index)
+{
+    const Model& model = wxGetApp().model();
+    if (object_index < 0 || size_t(object_index) >= model.objects.size())
+        return;
+    const size_t instances = model.objects[size_t(object_index)]->instances.size();
+    for (int p = 0; p < plates.get_plate_count(); ++p) {
+        PartPlate* plate = plates.get_plate(p);
+        for (size_t i = 0; plate != nullptr && i < instances; ++i)
+            if (plate->contain_instance(object_index, int(i))) {
+                plate->update_slice_result_valid_state(false);
+                break;
+            }
+    }
+}
+
+void mark_plate_unsliced(PartPlateList& plates, int plate_index)
+{
+    if (PartPlate* plate = plate_index >= 0 && plate_index < plates.get_plate_count() ? plates.get_plate(plate_index) : nullptr)
+        plate->update_slice_result_valid_state(false);
 }
 
 int model_object_index(const ModelObject* object)

@@ -116,4 +116,17 @@ std::vector<int> other_volume_filaments(const ModelObject& object, int object_fi
     return slots;
 }
 
+bool filament_assignment_changes(const ModelObject& object, int volume_id, int slot, bool include_modifiers)
+{
+    const auto sets_other_slot = [slot](const ModelConfigObject& config) { return !config.has("extruder") || config.extruder() != slot; };
+    if (volume_id >= 0)
+        return size_t(volume_id) < object.volumes.size() && sets_other_slot(object.volumes[size_t(volume_id)]->config);
+    if (sets_other_slot(object.config))
+        return true;
+    for (const ModelVolume* v : object.volumes)
+        if ((v->is_model_part() || (include_modifiers && v->is_modifier())) && v->config.has("extruder"))
+            return true;
+    return false;
+}
+
 }}} // namespace Slic3r::GUI::OrcaMCP

@@ -14,9 +14,10 @@
 using namespace Slic3r::GUI::OrcaMCP;
 
 namespace {
-SliceRunPlate sliced_plate(int index) { return {/*exists=*/true, /*sliced=*/true, index}; }
-SliceRunPlate unsliced_plate(int index) { return {/*exists=*/true, /*sliced=*/false, index}; }
-SliceRunPlate gone_plate() { return {/*exists=*/false, /*sliced=*/false, -1}; }
+SliceRunPlate sliced_plate(int index) { return {/*exists=*/true, /*printable=*/true, /*sliced=*/true, index}; }
+SliceRunPlate unsliced_plate(int index) { return {/*exists=*/true, /*printable=*/true, /*sliced=*/false, index}; }
+SliceRunPlate empty_plate(int index) { return {/*exists=*/true, /*printable=*/false, /*sliced=*/false, index}; }
+SliceRunPlate gone_plate() { return {/*exists=*/false, /*printable=*/false, /*sliced=*/false, -1}; }
 } // namespace
 
 TEST_CASE("a plate with no result and no slice running reports no percent", "[orcamcp][SliceProgress]")
@@ -129,13 +130,26 @@ TEST_CASE("a run that left plates unsliced is incomplete and names them", "[orca
     CHECK(judged.message.find("plate_index 1, 3 ") != std::string::npos);
 }
 
-TEST_CASE("a run whose plates were deleted or rebuilt since is incomplete, and says the plate list changed", "[orcamcp][SliceProgress]")
+// A plate deleted after the run left nothing unsliced: the run is judged by the plates there now.
+// Judging a deleted plate as a failure left get_slicing_status's state idle for good after a run
+// that sliced everything, once any plate was deleted.
+TEST_CASE("a run is judged by the plates still there, so deleting one after it does not undo it", "[orcamcp][SliceProgress]")
 {
     const SliceRunJudgement judged =
         judge_slice_run(/*run_known=*/true, /*slicing=*/false, {sliced_plate(0), gone_plate(), gone_plate()}, std::nullopt);
-    CHECK(judged.outcome == SliceRunOutcome::incomplete);
-    CHECK(judged.message.find("2 of the run's 3 plate(s)") != std::string::npos);
-    CHECK(judged.message.find("plate list changed") != std::string::npos);
+    CHECK(judged.outcome == SliceRunOutcome::done);
+    CHECK(judged.message.empty());
+    CHECK(slice_state(false, judged.outcome, sliced_plate(0)) == SliceState::done);
+}
+
+// new_project and load_project replace every plate: nothing the run asked for is left to judge, and
+// the state is the new project's selected plate's (wait_for_slice then goes by it too).
+TEST_CASE("a run none of whose plates are left has nothing to judge", "[orcamcp][SliceProgress]")
+{
+    const SliceRunJudgement judged = judge_slice_run(/*run_known=*/true, /*slicing=*/false, {gone_plate(), gone_plate()}, std::nullopt);
+    CHECK(judged.outcome == SliceRunOutcome::none);
+    CHECK(slice_state(false, judged.outcome, sliced_plate(0)) == SliceState::done);
+    CHECK(slice_state(false, judged.outcome, unsliced_plate(0)) == SliceState::idle);
 }
 
 TEST_CASE("a run cancelled by a plate-list change also names the plates it left unsliced", "[orcamcp][SliceProgress]")
@@ -145,6 +159,80 @@ TEST_CASE("a run cancelled by a plate-list change also names the plates it left 
     CHECK(judged.outcome == SliceRunOutcome::incomplete);
     CHECK(judged.message.find("1 of the run's 3 plate(s)") != std::string::npos);
     CHECK(judged.message.find("plate_index 0, 1 has no slice result") != std::string::npos);
+}
+
+// An empty plate has nothing to slice, so Slice All skips it (PlateNotStarted::skipped). Judging it
+// unsliced left every run with an empty plate "incomplete", and a wait for done never ended.
+TEST_CASE("a run's empty plates are skipped, and the run is done once the others are sliced", "[orcamcp][SliceProgress]")
+{
+    const SliceRunJudgement judged =
+        judge_slice_run(/*run_known=*/true, /*slicing=*/false, {sliced_plate(0), empty_plate(1), sliced_plate(2)}, std::nullopt);
+    CHECK(judged.outcome == SliceRunOutcome::done);
+    CHECK(judged.message.empty());
+    CHECK(judged.skipped == std::vector<int>{1});
+}
+
+TEST_CASE("a run that left plates unsliced names those, not the empty ones it skipped", "[orcamcp][SliceProgress]")
+{
+    const SliceRunJudgement judged =
+        judge_slice_run(/*run_known=*/true, /*slicing=*/false, {empty_plate(0), unsliced_plate(1), sliced_plate(2)}, std::nullopt);
+    CHECK(judged.outcome == SliceRunOutcome::incomplete);
+    CHECK(judged.message.find("plate_index 1 has no slice result") != std::string::npos);
+    CHECK(judged.message.find("plate_index 0") == std::string::npos);
+    CHECK(judged.skipped == std::vector<int>{0});
+}
+
+TEST_CASE("a run none of whose plates has anything to slice is incomplete, with nothing to slice", "[orcamcp][SliceProgress]")
+{
+    const SliceRunJudgement judged = judge_slice_run(/*run_known=*/true, /*slicing=*/false, {empty_plate(0), empty_plate(1)}, std::nullopt);
+    CHECK(judged.outcome == SliceRunOutcome::incomplete);
+    CHECK(judged.message.find("nothing to slice") == 0);
+    CHECK(judged.message.find("call slice_all again") != std::string::npos);
+    CHECK(judged.skipped == std::vector<int>{0, 1});
+}
+
+// ---- get_slicing_status's state -----------------------------------------------------------------
+//
+// state used to be the selected plate's alone: with an empty plate selected it stayed idle after a
+// run that sliced every other plate, so a poll for done never ended.
+
+TEST_CASE("a slice in progress is slicing whatever the plates say", "[orcamcp][SliceProgress]")
+{
+    CHECK(slice_state(/*slicing=*/true, SliceRunOutcome::none, sliced_plate(0)) == SliceState::slicing);
+    CHECK(slice_state(/*slicing=*/true, SliceRunOutcome::done, empty_plate(0)) == SliceState::slicing);
+}
+
+TEST_CASE("with an empty plate selected, the state is the run's", "[orcamcp][SliceProgress]")
+{
+    CHECK(slice_state(false, SliceRunOutcome::done, empty_plate(1)) == SliceState::done);
+    CHECK(slice_state(false, SliceRunOutcome::incomplete, empty_plate(1)) == SliceState::idle);
+    CHECK(slice_state(false, SliceRunOutcome::ended_early, empty_plate(1)) == SliceState::idle);
+}
+
+TEST_CASE("a run that is not done is not done, even on a plate that has its result", "[orcamcp][SliceProgress]")
+{
+    CHECK(slice_state(false, SliceRunOutcome::done, sliced_plate(0)) == SliceState::done);
+    CHECK(slice_state(false, SliceRunOutcome::incomplete, sliced_plate(0)) == SliceState::idle);
+}
+
+TEST_CASE("a selected plate with objects and no result is idle, whatever the run did", "[orcamcp][SliceProgress]")
+{
+    // A run over plate 0 alone, then plate 1 selected: the run is done, plate 1 is not sliced.
+    CHECK(slice_state(false, SliceRunOutcome::done, unsliced_plate(1)) == SliceState::idle);
+}
+
+TEST_CASE("before any slice_all the state is the selected plate's, as before", "[orcamcp][SliceProgress]")
+{
+    CHECK(slice_state(false, SliceRunOutcome::none, sliced_plate(0)) == SliceState::done);
+    CHECK(slice_state(false, SliceRunOutcome::none, unsliced_plate(0)) == SliceState::idle);
+    CHECK(slice_state(false, SliceRunOutcome::none, empty_plate(0)) == SliceState::idle);
+}
+
+TEST_CASE("every state has the name get_slicing_status reports", "[orcamcp][SliceProgress]")
+{
+    CHECK(std::string(slice_state_name(SliceState::idle)) == "idle");
+    CHECK(std::string(slice_state_name(SliceState::slicing)) == "slicing");
+    CHECK(std::string(slice_state_name(SliceState::done)) == "done");
 }
 
 TEST_CASE("every outcome has the name get_slicing_status reports", "[orcamcp][SliceProgress]")
@@ -162,13 +250,13 @@ TEST_CASE("every outcome has the name get_slicing_status reports", "[orcamcp][Sl
 // the new one was started and then stopped by the old one's completion, and nothing sliced.
 
 namespace {
-SliceStartSignals signals_with(std::vector<PlateToSlice> plates)
+SliceStartSignals signals_with(std::vector<SliceRunPlate> plates)
 {
     SliceStartSignals signals;
     signals.plates = std::move(plates);
     return signals;
 }
-PlateToSlice unsliced_printable() { return {/*sliced=*/false, /*printable=*/true}; }
+SliceRunPlate unsliced_printable() { return unsliced_plate(0); }
 
 PipelineState pipeline(bool is_slicing, bool working, bool done, bool exporting = false, bool uploading = false, int slice_all_plate = -1)
 {
@@ -245,8 +333,14 @@ TEST_CASE("a slice that is running after the dispatch has started", "[orcamcp][S
 
 TEST_CASE("plates that already have a result need no slice, which is not a failure to start", "[orcamcp][SliceProgress]")
 {
-    const SliceStartReport report = judge_slice_start(signals_with({{true, true}, {true, true}}));
+    const SliceStartReport report = judge_slice_start(signals_with({sliced_plate(0), sliced_plate(1)}));
     CHECK(report.status == SliceStart::not_started);
+    CHECK(report.reason == "already_sliced");
+}
+
+TEST_CASE("an empty plate does not keep the others' results from counting as already sliced", "[orcamcp][SliceProgress]")
+{
+    const SliceStartReport report = judge_slice_start(signals_with({sliced_plate(0), empty_plate(1)}));
     CHECK(report.reason == "already_sliced");
 }
 
@@ -261,9 +355,12 @@ TEST_CASE("a slice the UI worker blocks did not start, and names the job", "[orc
 
 TEST_CASE("plates with nothing printable on them give nothing to slice", "[orcamcp][SliceProgress]")
 {
-    const SliceStartReport report = judge_slice_start(signals_with({{false, false}}));
+    const SliceStartReport report = judge_slice_start(signals_with({empty_plate(0), empty_plate(1)}));
     CHECK(report.status == SliceStart::not_started);
     CHECK(report.reason == "nothing_to_slice");
+    // An object partly off its plate is not printable there either, which an agent that sees the object
+    // on the plate needs told.
+    CHECK(report.message.find("partly outside its plate") != std::string::npos);
 }
 
 TEST_CASE("a slice the app's validation stopped is invalid, with the app's message", "[orcamcp][SliceProgress]")
@@ -276,10 +373,151 @@ TEST_CASE("a slice the app's validation stopped is invalid, with the app's messa
     CHECK(report.message.find("Prime Tower is partially outside the printable area") != std::string::npos);
 }
 
+// reslice() refuses at once, without a word, while the app's own pre-slice checks turn the plate down
+// (process_completed_with_error, the checks behind the GUI's greyed Slice button). slice_all called it
+// unknown; each refusal is invalid now, and says which check refused and what changes it.
+TEST_CASE("a plate the app's own checks turn down is invalid, and says so", "[orcamcp][SliceProgress]")
+{
+    SliceRunPlate unready = unsliced_plate(2);
+    unready.ready         = false;
+    const SliceStartReport report = judge_slice_start(signals_with({sliced_plate(0), unready}));
+    CHECK(report.status == SliceStart::not_started);
+    CHECK(report.reason == "invalid");
+    CHECK(report.message.find("plate_index 2 is not ready to slice") != std::string::npos);
+    CHECK(report.message.find("partly outside the plate") != std::string::npos);
+}
+
+TEST_CASE("an empty plate is never the one reported as not ready", "[orcamcp][SliceProgress]")
+{
+    SliceRunPlate empty = empty_plate(1);
+    empty.ready         = false;
+    const SliceStartReport report = judge_slice_start(signals_with({unsliced_plate(0), empty}));
+    CHECK(report.reason == "unknown");
+}
+
+TEST_CASE("a plate whose last slice failed is invalid until something on it changes", "[orcamcp][SliceProgress]")
+{
+    SliceStartSignals signals = signals_with({unsliced_printable()});
+    signals.last_slice_failed = true;
+    const SliceStartReport report = judge_slice_start(signals);
+    CHECK(report.reason == "invalid");
+    CHECK(report.message.find("last slice") != std::string::npos);
+    CHECK(report.message.find("until something on it changes") != std::string::npos);
+}
+
+TEST_CASE("missing plugins and a broken mixed filament each name themselves", "[orcamcp][SliceProgress]")
+{
+    SliceStartSignals plugins = signals_with({unsliced_printable()});
+    plugins.plugins_missing   = true;
+    const SliceStartReport by_plugins = judge_slice_start(plugins);
+    CHECK(by_plugins.reason == "invalid");
+    CHECK(by_plugins.message.find("plugins") != std::string::npos);
+
+    SliceStartSignals mixed     = signals_with({unsliced_printable()});
+    mixed.broken_mixed_filament = true;
+    const SliceStartReport by_mixed = judge_slice_start(mixed);
+    CHECK(by_mixed.reason == "invalid");
+    CHECK(by_mixed.message.find("mixed filament") != std::string::npos);
+}
+
+// Several checks can refuse at once (the last error is kept while the plate is not ready, and a failed
+// validation leaves the plate not ready): the report names the one that decides, the most specific
+// first -- the validation's own words, then plugins, the mixed filament, readiness, the last slice.
+TEST_CASE("the refusal reported is the first that applies, in a fixed order", "[orcamcp][SliceProgress]")
+{
+    SliceRunPlate unready = unsliced_printable();
+    unready.ready         = false;
+    SliceStartSignals all = signals_with({unready});
+    all.validation_error      = "Prime Tower is partially outside the printable area";
+    all.plugins_missing       = true;
+    all.broken_mixed_filament = true;
+    all.last_slice_failed     = true;
+    CHECK(judge_slice_start(all).message.find("Prime Tower") != std::string::npos);
+    all.validation_error.reset();
+    CHECK(judge_slice_start(all).message.find("plugins") != std::string::npos);
+    all.plugins_missing = false;
+    CHECK(judge_slice_start(all).message.find("mixed filament") != std::string::npos);
+    all.broken_mixed_filament = false;
+    CHECK(judge_slice_start(all).message.find("not ready to slice") != std::string::npos);
+    all.plates = {unsliced_printable()};
+    CHECK(judge_slice_start(all).message.find("last slice") != std::string::npos);
+}
+
 TEST_CASE("a slice that did not start for a reason no signal shows says it did not start", "[orcamcp][SliceProgress]")
 {
     const SliceStartReport report = judge_slice_start(signals_with({unsliced_printable()}));
     CHECK(report.status == SliceStart::not_started);
     CHECK(report.reason == "unknown");
     CHECK(std::string(slice_start_status_name(report.status)) == "not_started");
+}
+
+// ---- a settings change the background timer has not taken in yet --------------------------------
+//
+// The slicer takes in a settings change only when its background timer fires, 0.5 s later. Until then
+// slice_all was refused on the last validation failure the change had fixed, and a read of the plate
+// could report the result the change had made stale.
+
+TEST_CASE("a pending settings change is applied first only while the pipeline is idle", "[orcamcp][SliceProgress]")
+{
+    for (int bits = 0; bits < 32; ++bits)
+        for (int slice_all_plate : {-1, 2})
+            for (bool scheduled : {false, true}) {
+                const PipelineState state = pipeline(bits & 1, bits & 2, bits & 4, bits & 8, bits & 16, slice_all_plate);
+                DYNAMIC_SECTION("state " << bits << " on plate " << slice_all_plate << (scheduled ? ", scheduled" : ""))
+                {
+                    const bool idle     = pipeline_busy(state) == PipelineBusy::idle;
+                    const bool expected = scheduled ? idle : false;
+                    CHECK(should_apply_pending_update(state, scheduled) == expected);
+                }
+            }
+}
+
+// ---- what export_gcode reports -------------------------------------------------------------------
+//
+// export_gcode said export_started whenever Plater::export_gcode_to_file got as far as asking for
+// the export, but the app's export refuses silently on a plate that fails its own (forced)
+// validation, and then nothing was ever written.
+
+TEST_CASE("an export that was scheduled has started", "[orcamcp][SliceProgress]")
+{
+    ExportStart attempt;
+    attempt.scheduled = true;
+    CHECK_FALSE(export_not_started(attempt).has_value());
+}
+
+TEST_CASE("an export the app did not schedule did not start, and says the plate's validation failure", "[orcamcp][SliceProgress]")
+{
+    ExportStart attempt;
+    attempt.scheduled        = false;
+    attempt.validation_error = "Layer height cannot exceed nozzle diameter.";
+    const std::optional<std::string> why = export_not_started(attempt);
+    REQUIRE(why.has_value());
+    CHECK(why->find("Layer height cannot exceed nozzle diameter.") != std::string::npos);
+
+    attempt.validation_error.reset();
+    REQUIRE(export_not_started(attempt).has_value());
+    CHECK(export_not_started(attempt)->find("did not start") != std::string::npos);
+}
+
+TEST_CASE("an export is refused before it is asked for, for the first reason that holds", "[orcamcp][SliceProgress]")
+{
+    ExportStart empty_scene;
+    empty_scene.has_objects       = false;
+    empty_scene.already_exporting = true;
+    CHECK(export_not_started(empty_scene)->find("no objects") != std::string::npos);
+
+    ExportStart busy;
+    busy.already_exporting = true;
+    CHECK(*export_not_started(busy) == "Another export job is running.");
+
+    ExportStart invalid;
+    invalid.validation_error = "Prime Tower is partially outside the printable area";
+    CHECK(export_not_started(invalid)->find("Prime Tower is partially outside the printable area") != std::string::npos);
+
+    ExportStart failed;
+    failed.failure = "PlaceholderParserError: unknown variable";
+    CHECK(export_not_started(failed)->find("unknown variable") != std::string::npos);
+
+    // Nothing refused and not asked for yet: no verdict.
+    CHECK_FALSE(export_not_started(ExportStart{}).has_value());
 }

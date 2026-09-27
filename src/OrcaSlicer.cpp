@@ -4102,6 +4102,12 @@ int CLI::run(int argc, char **argv)
         flush_and_exit(CLI_INVALID_VALUES_IN_3MF);
     }
 
+    // Orca: every layer range gets a layer height before slicing -- a file, or the assemble list's
+    // height_ranges, can give one without -- from the settings the CLI slices with: here, once the
+    // command line's overrides (--layer_height, --nozzle_diameter, ...) are applied and normalized.
+    for (Model& model : m_models)
+        complete_layer_ranges(model, m_print_config);
+
     ConfigOptionBool* enable_wrapping_detection_option = m_print_config.option<ConfigOptionBool>("enable_wrapping_detection", true);
     BOOST_LOG_TRIVIAL(info) << boost::format("%1%, remove_wrapping_detect %2%, old value %3%")%__LINE__ %remove_wrapping_detect %enable_wrapping_detection_option->value;
     if (is_bbl_3mf && remove_wrapping_detect) {
