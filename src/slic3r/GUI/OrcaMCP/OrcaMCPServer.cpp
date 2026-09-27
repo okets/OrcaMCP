@@ -724,7 +724,7 @@ void OrcaMCPServer::register_builtin_tools()
             {"properties", {
                 {"with_model_object_features", {
                     {"type", "boolean"},
-                    {"description", "Adds `features` to each model object: the mesh-health numbers behind "
+                    {"description", "Adds `features` to every object, unplaced_objects' too: the mesh-health numbers behind "
                                     "mesh_warning -- facets, shells, open_edges, manifold, repaired, "
                                     "errors_repaired, repaired_errors and volume_mm3 -- as get_mesh_health's "
                                     "`summary` reports them. No overhang analysis: slice to see where "

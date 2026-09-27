@@ -120,7 +120,7 @@ Get current project state including plates, objects, and positions.
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `with_model_object_features` | boolean | No | Adds `features` to each model object: the mesh-health numbers behind `mesh_warning` (facets, shells, open_edges, manifold, repaired, errors_repaired, repaired_errors, volume_mm3), as `get_mesh_health`'s `summary`. No overhang analysis: slice to see where support is needed. |
+| `with_model_object_features` | boolean | No | Adds `features` to every object, `unplaced_objects`' too: the mesh-health numbers behind `mesh_warning` (facets, shells, open_edges, manifold, repaired, errors_repaired, repaired_errors, volume_mm3), as `get_mesh_health`'s `summary`. No overhang analysis: slice to see where support is needed. |
 | `include_preview` | boolean | No | Include turntable preview path |
 
 **Example:**

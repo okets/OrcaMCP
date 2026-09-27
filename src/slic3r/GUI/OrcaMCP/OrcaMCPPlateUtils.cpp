@@ -1040,22 +1040,30 @@ nlohmann::json OrcaMCPPlateUtils::GetCurrentProject(bool with_model_object_featu
         if (plate_list.find_instance(int(i), 0) >= 0)
             continue;
 
-        const ModelObject* object = model.objects[i];
-        const BoundingBoxf3 bbox  = OrcaMCP::object_world_box(*object);
-        nlohmann::json entry{
-            {"object_index", int(i)},
-            {"id", std::to_string(object->id().id)},
-            {"name", object->name},
-            {"position", {{"x", bbox.center().x()}, {"y", bbox.center().y()}, {"z", bbox.center().z()}}},
-            {"reason", "Not on any plate. Deleting a plate moves its objects here rather than "
-                       "removing them; use delete_object, or move it onto a plate."}
-        };
-        OrcaMCP::add_mesh_warning(entry, health_at(mesh_health, int(i), *object));
-        unplaced.push_back(std::move(entry));
+        const ModelObject& object = *model.objects[i];
+        unplaced.push_back(UnplacedObjectJson(object, int(i), health_at(mesh_health, int(i), object), with_model_object_features));
     }
     j["unplaced_objects"] = std::move(unplaced);
 
     return j;
+}
+
+nlohmann::json OrcaMCPPlateUtils::UnplacedObjectJson(const ModelObject& object, int object_index,
+                                                     const OrcaMCP::MeshHealth& health, bool with_features)
+{
+    const BoundingBoxf3 bbox = OrcaMCP::object_world_box(object);
+    nlohmann::json entry{
+        {"object_index", object_index},
+        {"id", std::to_string(object.id().id)},
+        {"name", object.name},
+        {"position", {{"x", bbox.center().x()}, {"y", bbox.center().y()}, {"z", bbox.center().z()}}},
+        {"reason", "Not on any plate. Deleting a plate moves its objects here rather than "
+                   "removing them; use delete_object, or move it onto a plate."}
+    };
+    OrcaMCP::add_mesh_warning(entry, health);
+    if (with_features)
+        entry["features"] = OrcaMCP::mesh_features_json(health);
+    return entry;
 }
 
 void OrcaMCPPlateUtils::CleanupTempImages() {

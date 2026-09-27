@@ -4,6 +4,7 @@
 #include "slic3r/GUI/GUI_ObjectList.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPCommon.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPMeshHealth.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPPlateUtils.hpp"
 #include "libslic3r/Format/STL.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/TriangleMesh.hpp"
@@ -517,4 +518,22 @@ TEST_CASE("Every object description flags the warning icon, with the reason when
     CHECK(model_object_summary_json(*hole.object, 0, object_mesh_health(*hole.object)) == summary);
     CHECK(model_object_summary_json(*clean.object, 0)["mesh_warning"] == false);
     CHECK_FALSE(model_object_summary_json(*clean.object, 0).contains("mesh_warning_reason"));
+}
+
+// An object on no plate (where deleting a plate leaves its objects) is described in
+// get_scene_info's unplaced_objects: it carries the same mesh fields as a plate's object entry.
+TEST_CASE("An unplaced object carries the mesh warning, and the features when they are asked for", "[MeshHealth][orcamcp]")
+{
+    OnePartObject hole{TriangleMesh(cube_missing_facet())};
+    const MeshHealth health = object_mesh_health(*hole.object);
+
+    const nlohmann::json plain = GUI::OrcaMCPPlateUtils::UnplacedObjectJson(*hole.object, 3, health, false);
+    CHECK(plain["object_index"] == 3);
+    CHECK(plain["name"] == "Test object");
+    CHECK(plain["mesh_warning"] == true);
+    CHECK(plain["mesh_warning_reason"] == "Error: 3 non-manifold edges.");
+    CHECK_FALSE(plain.contains("features"));
+
+    const nlohmann::json with_features = GUI::OrcaMCPPlateUtils::UnplacedObjectJson(*hole.object, 3, health, true);
+    CHECK(with_features["features"] == mesh_features_json(health));
 }

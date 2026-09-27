@@ -103,6 +103,10 @@ public:
     // mesh_warning, and its features when asked for, come from it.
     static nlohmann::json GetCurrentProject(const bool with_model_object_features,
                                             const std::vector<OrcaMCP::MeshHealth>& mesh_health);
+    // One unplaced_objects entry: an object on no plate, with the mesh fields a plate's object entry
+    // carries -- mesh_warning (and its reason), and features when `with_features`.
+    static nlohmann::json UnplacedObjectJson(const ModelObject& object, int object_index,
+                                             const OrcaMCP::MeshHealth& health, bool with_features);
 
     // Reads the prime tower's state on `plate_index`. `full_config` is passed in because building
     // it is the expensive part and the per-plate loop only needs one.
