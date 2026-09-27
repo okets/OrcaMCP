@@ -384,6 +384,31 @@ class WaitForSliceTest(unittest.TestCase):
         _, report = self.call({"timeout_s": 2})
         self.assertEqual(report["outcome"], "done")
 
+    def test_an_export_that_keeps_the_pipeline_busy_is_waited_out(self):
+        exporting = dict(status(False, state="done", outcome="done"), busy=True, busy_reason="exporting")
+        idle = dict(status(False, state="done", outcome="done"), busy=False, busy_reason=None)
+        FakeApp.script = [exporting, exporting, idle]
+        _, report = self.call({"timeout_s": 5})
+        self.assertEqual(report["outcome"], "done")
+        self.assertEqual(report["polls"], 3)
+
+    def test_a_poll_the_app_drops_after_refusals_does_not_revive_the_old_status(self):
+        self.bridge.WAIT_FOR_SLICE_MIN_POLL_TIMEOUT_S = 0.5
+        self.bridge.WAIT_FOR_SLICE_POLL_S = 0.05
+        FakeApp.script = [SLICING]
+
+        def come_back_dropping():
+            FakeApp.drop_calls = set(range(1, 100000))  # every later reply: the connection reset
+            self.restart_app_after(0.2)
+
+        timer = threading.Timer(1.2, come_back_dropping)
+        timer.daemon = True
+        timer.start()
+        _, report = self.call({"timeout_s": 2})
+        self.assertEqual(report["outcome"], "timed_out")
+        self.assertIn("stopped answering", report["message"])
+        self.assertNotIn("Still slicing", report["message"])
+
     def test_a_request_the_bridge_fails_on_is_answered_under_its_own_id(self):
         line = json.dumps({"jsonrpc": "2.0", "id": 42, "method": "tools/call",
                            "params": {"name": "wait_for_slice", "arguments": {}}})

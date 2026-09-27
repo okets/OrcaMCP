@@ -607,8 +607,12 @@ def next_poll_delay(remaining: float):
 
 
 def slice_over(status) -> bool:
-    """Whether a status says the slice is over."""
-    return status is not None and not status.get("is_slicing", False)
+    """Whether a status says the slicing pipeline has nothing left to do: its busy, which also covers
+    an export, an upload and a completion not yet taken in -- the same answer slice_all refuses on.
+    An app from before busy existed is judged by is_slicing."""
+    if status is None:
+        return False
+    return not status.get("busy", status.get("is_slicing", False))
 
 
 def slice_outcome(status: dict) -> tuple:
@@ -648,12 +652,16 @@ class PollHistory:
         self.answered = False        # it gave a clean answer
         self.seen = False            # something accepted a connection: a clean answer or a busy poll
         self.refused_since = None    # when the current run of refusals began
+        self.stale_since = None      # when the first refusal since the last clean answer came: from then
+                                     # on the last status is from before, and says nothing about now
 
     def answer(self):
         self.answered = self.seen = True
-        self.refused_since = None
+        self.refused_since = self.stale_since = None
 
     def busy(self):
+        # Something took the connection, so the app counts as there again; but it gave no answer, so
+        # a status from before a refusal stays stale.
         self.seen = True
         self.refused_since = None
 
@@ -661,6 +669,8 @@ class PollHistory:
         """Records a refusal; True once the app counts as gone."""
         if self.refused_since is None:
             self.refused_since = now
+        if self.stale_since is None:
+            self.stale_since = now
         return now - self.refused_since >= WAIT_FOR_SLICE_GONE_AFTER_S
 
 
@@ -694,7 +704,7 @@ class WaitState:
             self.gone = e.quitting or self.history.refused(time.monotonic())
 
     def finished(self) -> bool:
-        return self.gone or (self.history.refused_since is None and slice_over(self.status))
+        return self.gone or (self.history.stale_since is None and slice_over(self.status))
 
 
 def confirm_refusals(state: WaitState, deadline: float):
@@ -703,7 +713,8 @@ def confirm_refusals(state: WaitState, deadline: float):
     report a status from before the refusals. That poll may run past the deadline into half the cap's
     headroom below ORCAMCP_TIMEOUT, never further; when it cannot fit there, it is not made."""
     headroom_end = deadline + (TIMEOUT - wait_for_slice_cap()) / 2
-    confirm_at = state.history.refused_since + WAIT_FOR_SLICE_GONE_AFTER_S
+    first_refusal = state.history.refused_since or state.history.stale_since
+    confirm_at = first_refusal + WAIT_FOR_SLICE_GONE_AFTER_S
     if confirm_at > headroom_end - 0.05:
         return
     time.sleep(max(0.0, confirm_at - time.monotonic()))
@@ -722,10 +733,10 @@ def run_wait_for_slice(timeout_s: float) -> dict:
         if state.finished() or delay is None:
             break
         time.sleep(delay)
-    if not state.finished() and state.history.refused_since is not None:
+    if not state.finished() and state.history.stale_since is not None:
         confirm_refusals(state, deadline)
 
-    refused_at = state.history.refused_since
+    refused_at = state.history.stale_since
     if state.gone:
         outcome, message = "app_gone", APP_GONE_MESSAGE
     elif state.finished():
