@@ -135,6 +135,9 @@ instances?", "also have it list the open file."
   `CMakeLists.txt:742-750`), so slicing, especially tree supports, runs 20-70x slower than the release.
   For live checks, slice small models without tree support. Never read a slow slice as a stall or a
   regression without first timing the same case on `/Applications/OrcaMCP.app` on a data-dir copy.
+- **Scratch space.** Use a scratch folder named after your prompt, e.g. `/private/tmp/claude-501/rel2506-<id>/`.
+  Never read from or copy out of another agent's folder. On 2026-09-27 an agent copied 29 stale files out of a
+  shared `final/` folder over the working tree; it was caught and undone.
 - **Test MCP behaviour through the `mcp__orca-slicer__*` tools**, not curl.
 - **Never call `send_to_printer`**: on Flashforge it uploads *and starts* the print. Never call
   `printer_control` or `print_printer_file`.

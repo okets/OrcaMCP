@@ -169,6 +169,18 @@ upstream issue if the user wants one filed.
 - **`object_id` validation.** About 20 MCP tools still validate `object_id` their own way; move them
   onto the shared `resolve_object_id` (prompt 05) in a follow-up.
 
+- **Ghost "Loading..." windows on a locked screen.** While the Mac's screen is locked, AppKit's close
+  animation never finishes, so each progress dialog stays listed as an on-screen ghost until the app
+  quits. On 2026-09-27, with the screen unlocked, five loads on the release app left none (checked
+  with the user present). A possible fix is to turn off the animation for `ProgressDialog` on macOS
+  (prompt 04d's design, probe U). It only matters for unattended agent runs; it was not shipped,
+  because it changes the dialog for every user to fix something users don't see.
+
+- **Finding overhang layers.** In the 2026-09-27 acceptance pass, finding the layer where a cap starts
+  took four `render_plate_view` layer calls of guessing. A summary (e.g. in `get_print_estimate`, or as a
+  `layer_view` option) listing the layers where overhang area first appears, with each one's
+  `support_below` gap, would find it in one call.
+
 ### 3D toolpath render
 
 **What:** render the sliced G-code from any camera, coloured by feature, speed or tool, with a layer
