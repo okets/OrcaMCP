@@ -38,3 +38,12 @@ TEST_CASE("rotate_object refuses relative false, which it would have applied as 
           "absolute rotation is not supported: pass the change in degrees, relative to rotation_degrees from "
           "get_object_info");
 }
+
+TEST_CASE("delete_object_layer_range refuses one bound without the other, which deleted every range",
+          "[McpArgumentValues][orcamcp]")
+{
+    CHECK(refusal("delete_object_layer_range", {{"object_id", 0}, {"z_min", 1.0}}) ==
+          "z_max is missing: pass both z_min and z_max to delete that range, or neither to delete every range of the object");
+    CHECK(refusal("delete_object_layer_range", {{"object_id", 0}, {"z_max", 2.0}}) ==
+          "z_min is missing: pass both z_min and z_max to delete that range, or neither to delete every range of the object");
+}

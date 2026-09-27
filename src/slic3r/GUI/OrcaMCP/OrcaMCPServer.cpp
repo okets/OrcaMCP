@@ -2519,8 +2519,9 @@ void OrcaMCPServer::register_builtin_tools()
         "delete_object_layer_range",
         ToolCategory::LayerRanges,
         "Remove an object's layer ranges",
-        "Remove layer range config. If z_min/z_max omitted, removes ALL ranges. Range Z is measured "
-        "from the object's own base, not from the bed.",
+        "Remove an object's layer ranges: pass z_min and z_max to remove that one range, or neither to "
+        "remove every range of the object; one without the other is refused. Range Z is measured from "
+        "the object's own base, not from the bed.",
         {
             {"type", "object"},
             {"properties", {
@@ -2530,17 +2531,22 @@ void OrcaMCPServer::register_builtin_tools()
                 }},
                 {"z_min", {
                     {"type", "number"},
-                    {"description", "Min Z height (mm) above the object's own base. Omit both to delete all ranges."}
+                    {"description", "Min Z height (mm) above the object's own base, with z_max. Omit both to delete every range."}
                 }},
                 {"z_max", {
                     {"type", "number"},
-                    {"description", "Max Z height (mm) above the object's own base. Omit both to delete all ranges."}
+                    {"description", "Max Z height (mm) above the object's own base, with z_min. Omit both to delete every range."}
                 }}
             }},
             {"required", {"object_id"}}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
             int object_id = params["object_id"];
+            // One bound alone used to fall through to "no range given" and delete every range.
+            if (params.contains("z_min") != params.contains("z_max"))
+                return error_response(std::string(params.contains("z_min") ? "z_max" : "z_min") +
+                                      " is missing: pass both z_min and z_max to delete that range, or neither to "
+                                      "delete every range of the object");
             bool has_range = params.contains("z_min") && params.contains("z_max");
             double z_min = 0.0, z_max = 0.0;
             if (has_range && (!parse_double_param(params["z_min"], z_min) || !parse_double_param(params["z_max"], z_max)))

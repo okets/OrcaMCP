@@ -1603,7 +1603,13 @@ Remove a layer range configuration. Range Z is measured from the object's own ba
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `object_id` | integer | Yes | Object index |
-| `z_min` | number | Yes | Range start to delete |
+| `z_min` | number | No | Start of the range to delete, with `z_max` |
+| `z_max` | number | No | End of the range to delete, with `z_min` |
+
+Pass both bounds to delete that one range, or neither to delete **every** range of the object.
+One without the other is refused, naming the missing bound: it used to delete every range. The
+response's `deleted_count` says how many went; `0`, and no undo step, when the range was not
+there.
 
 ---
 

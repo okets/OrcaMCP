@@ -442,7 +442,7 @@
     },
     {
       "category": "Layer Ranges",
-      "description": "Remove layer range config. If z_min/z_max omitted, removes ALL ranges. Range Z is measured from the object's own base, not from the bed.",
+      "description": "Remove an object's layer ranges: pass z_min and z_max to remove that one range, or neither to remove every range of the object; one without the other is refused. Range Z is measured from the object's own base, not from the bed.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -451,11 +451,11 @@
             "type": "integer"
           },
           "z_max": {
-            "description": "Max Z height (mm) above the object's own base. Omit both to delete all ranges.",
+            "description": "Max Z height (mm) above the object's own base, with z_min. Omit both to delete every range.",
             "type": "number"
           },
           "z_min": {
-            "description": "Min Z height (mm) above the object's own base. Omit both to delete all ranges.",
+            "description": "Min Z height (mm) above the object's own base, with z_max. Omit both to delete every range.",
             "type": "number"
           }
         },
