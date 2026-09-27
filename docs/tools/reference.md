@@ -335,6 +335,9 @@ Refused while the startup "restore unsaved items?" prompt waits, as `new_project
 {"name": "load_project", "arguments": {"file_path": "/path/to/project.3mf"}}
 ```
 
+A project that fails to load is `status: "error"`, with the app's error dialogs' words as `message`
+and `error_messages` (captured; no dialog is left open).
+
 **Returns:**
 ```json
 {"status": "success",
@@ -440,6 +443,7 @@ G-code preview, model files are refused too; `new_project` returns to an editabl
 | `filaments_added` | Filament slots the import added, because the model uses more filaments than the scene had (0 when none) |
 | `project_renamed_to` | Present only if the project's name changed: never for a model file, and always for a G-code preview (named after the file, so a later `save_project {}` writes there) |
 | `info_messages` | What happened, then what the slicer would have shown. A 3MF import says whether the file carried presets that were not applied. A prompt that offered a choice ends with the answer given, e.g. `"Object too large: ... scale it down to fit the print bed automatically? (auto-answered Yes)"`; the multi-part question also names the other `multipart` value |
+| `error_messages` | The error dialogs the load raised, captured instead of shown: an STL the reader cannot parse ("Loading of a model file failed."), G-code with no valid moves, a 3MF with an invalid configuration. A failed load's `message` is their words. No dialog is left open |
 | `active_warnings` | As for every scene tool, plus a `MeshErrors` warning for each object it added that the object list flags with its warning icon |
 
 A 20 mm cube exported 1000 times too large, on a 256 mm bed:
@@ -1617,12 +1621,17 @@ left with three unsliced plates and no error.
 ---
 
 ### export_gcode
-Export sliced G-code to file.
+Export the selected plate's sliced G-code to a file. The file is written asynchronously:
+`status: "export_started"`.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `output_path` | string | No | Output path (opens dialog if omitted) |
+| `output_path` | string | Yes | Output path (a file dialog cannot open under MCP) |
+
+An export the app refuses fails with its words as `message` and `error_messages`, e.g. "Another
+export job is running." while the previous export is still writing; call it again once `busy` in
+`get_slicing_status` is false.
 
 ---
 

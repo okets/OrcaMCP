@@ -4,6 +4,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <vector>
 #include <nlohmann/json.hpp>
 
 #include "libslic3r/ObjectID.hpp"
@@ -45,6 +46,11 @@ bool threemf_carries_presets(const std::string& path);
 
 // What load_model says after importing a 3MF's geometry.
 std::string threemf_import_message(bool carries_presets);
+
+// A load that failed: status error, with the words of the error dialogs the app showed for it
+// (captured under MCP: an STL admesh cannot read, G-code the processor cannot parse, an invalid
+// configuration) as message and error_messages, or `fallback` when it showed none.
+nlohmann::json load_failure_json(const std::string& fallback, const std::vector<std::string>& errors);
 
 // The ids of the objects in `model`, taken before a load so the objects it adds can be told apart
 // from the ones already there (every load path appends, but compare ids, not counts).

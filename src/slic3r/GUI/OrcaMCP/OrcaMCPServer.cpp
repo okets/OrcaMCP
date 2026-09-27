@@ -2845,7 +2845,7 @@ void OrcaMCPServer::register_builtin_tools()
                 if (!output_path.empty()) {
                     // Silent export to specific path
                     bool success = plater->export_gcode_to_file(output_path);
-                    auto info_messages = suppression_guard.messages();
+                    auto info_messages = suppression_guard.notices();
 
                     if (success) {
                         result["status"] = "export_started";
@@ -2858,6 +2858,11 @@ void OrcaMCPServer::register_builtin_tools()
                     if (!info_messages.empty()) {
                         result["info_messages"] = info_messages;
                     }
+                    // An export the app refused with an error dialog ("Another export job is running.")
+                    // did not start, though export_gcode_to_file reported it started.
+                    result = suppression_guard.fail_on_errors(result);
+                    if (result["status"] == "error")
+                        result.erase("note");
                 } else {
                     // No path provided. File dialogs are modal and would block the GUI thread
                     // for as long as the MCP call waits, so require an explicit path instead.
@@ -3076,7 +3081,8 @@ void OrcaMCPServer::register_builtin_tools()
                 McpDialogSuppressionGuard suppression_guard;
                 suppression_guard.answer_prompt(MCP_PROMPT_MULTIPART, multipart_answer, multipart_answer_note(multipart_answer));
                 const bool loaded = plater->load_files(files);
-                auto info_messages = suppression_guard.messages();
+                // The error dialogs the load raised (show_error, captured) are reported apart.
+                auto info_messages = suppression_guard.notices();
 
                 // load_files reports true for a 3MF or ZIP that added nothing (a suppressed ZIP
                 // picker, a file without geometry) and for any G-code, so success is judged by what
@@ -3091,8 +3097,10 @@ void OrcaMCPServer::register_builtin_tools()
                         info_messages.insert(info_messages.begin(), done);
                     add_turntable_preview_if_requested(response, include_preview);
                 } else {
-                    response = {{"status", "error"}, {"message", load_failure_message(kind, loaded)}};
+                    response = load_failure_json(load_failure_message(kind, loaded), suppression_guard.errors());
                 }
+                if (const auto errors = suppression_guard.errors(); !errors.empty())
+                    response["error_messages"] = errors;
 
                 report_filaments_added(response, info_messages, filaments_before,
                                        wxGetApp().preset_bundle->filament_presets.size());
@@ -3392,13 +3400,7 @@ void OrcaMCPServer::register_builtin_tools()
                 // Suppress dialogs (like "save unsaved changes?") and capture messages
                 McpDialogSuppressionGuard suppression_guard;
                 plater->new_project();
-                auto info_messages = suppression_guard.messages();
-
-                nlohmann::json response = {{"status", "success"}};
-                if (!info_messages.empty()) {
-                    response["info_messages"] = info_messages;
-                }
-                return response;
+                return suppression_guard.fail_on_errors(suppression_guard.report({{"status", "success"}}));
             });
         }
     });
@@ -3439,7 +3441,8 @@ void OrcaMCPServer::register_builtin_tools()
                 // This ensures both MCP suppression AND the silence flag are active
                 plater->load_project(wxString::FromUTF8(file_path), "<silence>");
 
-                auto info_messages = suppression_guard.messages();
+                // The error dialogs the load raised (show_error, captured) are reported apart.
+                auto info_messages = suppression_guard.notices();
 
                 // Check if project loaded by seeing if there are objects
                 bool result = !plater->model().objects.empty();
@@ -3450,10 +3453,12 @@ void OrcaMCPServer::register_builtin_tools()
                 if (result)
                     plater->set_project_filename(wxString::FromUTF8(file_path));
 
-                nlohmann::json response = {
-                    {"status", result ? "success" : "error"},
-                    {"file", file_path}
-                };
+                nlohmann::json response =
+                    result ? nlohmann::json{{"status", "success"}}
+                           : load_failure_json("No objects were loaded from " + file_path + ".", suppression_guard.errors());
+                response["file"] = file_path;
+                if (const auto errors = suppression_guard.errors(); !errors.empty())
+                    response["error_messages"] = errors;
 
                 // Say so: from here on save_project and the GUI's Save write back to this file.
                 if (result) {

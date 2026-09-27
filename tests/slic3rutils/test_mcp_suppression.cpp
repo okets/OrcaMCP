@@ -6,6 +6,7 @@
 #include <wx/defs.h>
 
 #include "slic3r/GUI/GUI.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPCommon.hpp"
 
 // What an agent reads when MCP suppression answered a dialog for it. Until 2026-09-26 only the
 // prompt's text was captured, so "Object too large: ... scale it down?" read the same whether the
@@ -115,4 +116,75 @@ TEST_CASE("a modal no handler answered is cancelled under MCP and shown otherwis
 
     CHECK(mcp_unhandled_modal(true, "").message == "A dialog was suppressed (auto-answered Cancel)");
     CHECK_FALSE(mcp_unhandled_modal(false, "Filament grouping").suppress);
+}
+
+// show_error defers its dialog (CallAfter), so under MCP it opened after the call had returned and
+// suppression was over: a failed load_model left an "OrcaMCP error" modal nobody answers. Under
+// suppression on the GUI thread the error is captured instead. Off it, the dialog is still deferred:
+// the capture lists belong to the GUI thread.
+TEST_CASE("an error shown under MCP on the GUI thread is captured, not left for a dialog after the call", "[McpSuppression][orcamcp][suppression]")
+{
+    CHECK(mcp_captures_error(/*suppression_enabled=*/true, /*on_main_thread=*/true));
+    CHECK_FALSE(mcp_captures_error(/*suppression_enabled=*/false, /*on_main_thread=*/true));
+    CHECK_FALSE(mcp_captures_error(/*suppression_enabled=*/true, /*on_main_thread=*/false));
+}
+
+TEST_CASE("a captured error is one of the messages, and the notices leave it out", "[McpSuppression][orcamcp][suppression]")
+{
+    Slic3r::GUI::OrcaMCP::McpDialogSuppressionGuard guard;
+    add_mcp_suppressed_message("Object too large (auto-answered Yes)");
+    add_mcp_suppressed_error("Loading of a model file failed.");
+    CHECK(guard.messages() == std::vector<std::string>{"Object too large (auto-answered Yes)", "Loading of a model file failed."});
+    CHECK(guard.errors() == std::vector<std::string>{"Loading of a model file failed."});
+    CHECK(guard.notices() == std::vector<std::string>{"Object too large (auto-answered Yes)"});
+}
+
+TEST_CASE("a nested guard keeps the errors its caller is collecting", "[McpSuppression][orcamcp][suppression]")
+{
+    Slic3r::GUI::OrcaMCP::McpDialogSuppressionGuard outer;
+    add_mcp_suppressed_error("first");
+    {
+        Slic3r::GUI::OrcaMCP::McpDialogSuppressionGuard inner;
+        add_mcp_suppressed_error("second");
+    }
+    CHECK(outer.errors() == std::vector<std::string>{"first", "second"});
+}
+
+TEST_CASE("a new call starts with no errors from the last one", "[McpSuppression][orcamcp][suppression]")
+{
+    {
+        Slic3r::GUI::OrcaMCP::McpDialogSuppressionGuard earlier;
+        add_mcp_suppressed_error("from an earlier call");
+    }
+    Slic3r::GUI::OrcaMCP::McpDialogSuppressionGuard guard;
+    CHECK(guard.errors().empty());
+    CHECK(guard.messages().empty());
+}
+
+TEST_CASE("a guard's report puts errors in error_messages and the rest in info_messages", "[McpSuppression][orcamcp][suppression]")
+{
+    Slic3r::GUI::OrcaMCP::McpDialogSuppressionGuard guard;
+    const nlohmann::json quiet = guard.report({{"status", "success"}});
+    CHECK_FALSE(quiet.contains("info_messages"));
+    CHECK_FALSE(quiet.contains("error_messages"));
+
+    add_mcp_suppressed_message("a notice");
+    add_mcp_suppressed_error("an error");
+    const nlohmann::json said = guard.report({{"status", "success"}});
+    CHECK(said["info_messages"] == nlohmann::json::array({"a notice"}));
+    CHECK(said["error_messages"] == nlohmann::json::array({"an error"}));
+}
+
+// export_gcode reported export_started when the app had refused the export with an error dialog
+// ("Another export job is running."). A call the app answered with an error failed.
+TEST_CASE("a response the app answered with an error fails with the error's words", "[McpSuppression][orcamcp][suppression]")
+{
+    Slic3r::GUI::OrcaMCP::McpDialogSuppressionGuard guard;
+    CHECK(guard.fail_on_errors({{"status", "export_started"}})["status"] == "export_started");
+
+    add_mcp_suppressed_error("Another export job is running.");
+    const nlohmann::json failed = guard.fail_on_errors({{"status", "export_started"}, {"note", "written asynchronously"}});
+    CHECK(failed["status"] == "error");
+    CHECK(failed["message"] == "Another export job is running.");
+    CHECK(failed["error_messages"] == nlohmann::json::array({"Another export job is running."}));
 }

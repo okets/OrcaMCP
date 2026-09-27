@@ -1,5 +1,6 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPCommon.hpp
 #pragma once
+#include <algorithm>
 #include <functional>
 #include <vector>
 #include <string>
@@ -214,6 +215,15 @@ void add_preview_to(nlohmann::json& result, const std::function<nlohmann::json()
 // A turntable preview of the selected plate, through add_preview_to, when `include_preview` is set.
 void add_turntable_preview_if_requested(nlohmann::json& result, bool include_preview, int view_count = 4, int resolution = 256);
 
+// `lines` one per line, for a message made of several.
+inline std::string join_lines(const std::vector<std::string>& lines)
+{
+    std::string joined;
+    for (const std::string& line : lines)
+        joined += (joined.empty() ? "" : "\n") + line;
+    return joined;
+}
+
 // RAII: suppress modal dialogs for the lifetime of the guard and collect their messages.
 // Nest-safe: an inner guard keeps the outer guard's messages and restores its state.
 // answer_prompt chooses the answer for one keyed prompt (MsgDialog::set_mcp_prompt_key) until the
@@ -234,13 +244,40 @@ struct McpDialogSuppressionGuard
             clear_mcp_prompt_answers();
         set_mcp_dialog_suppression(m_was_enabled);
     }
+    // Everything the suppressed dialogs said, errors included.
     std::vector<std::string> messages() const { return get_mcp_suppressed_messages(); }
-    // Adds what the suppressed dialogs said to `response` as info_messages, when they said anything.
-    // Returns the response, so a handler can end with `return guard.report(result);` on every path.
+    // The errors among them: what show_error would have shown (add_mcp_suppressed_error).
+    std::vector<std::string> errors() const { return get_mcp_suppressed_errors(); }
+    // The messages that are not errors, for a response that reports its errors apart.
+    std::vector<std::string> notices() const
+    {
+        std::vector<std::string> said = messages();
+        for (const std::string& error : errors())
+            if (auto it = std::find(said.begin(), said.end(), error); it != said.end())
+                said.erase(it);
+        return said;
+    }
+    // Adds what the suppressed dialogs said to `response`: info_messages and error_messages, each
+    // when there is one. Returns the response, so a handler can end with `return guard.report(result);`
+    // on every path.
     nlohmann::json report(nlohmann::json response) const
     {
-        if (const auto said = messages(); !said.empty())
+        if (const auto said = notices(); !said.empty())
             response["info_messages"] = said;
+        if (const auto failed = errors(); !failed.empty())
+            response["error_messages"] = failed;
+        return response;
+    }
+    // A call the app answered with an error dialog failed, whatever the handler made of it: status
+    // error, message the dialog's words, and error_messages. Unchanged when there was no error.
+    nlohmann::json fail_on_errors(nlohmann::json response) const
+    {
+        const std::vector<std::string> failed = errors();
+        if (failed.empty())
+            return response;
+        response["status"]         = "error";
+        response["message"]        = join_lines(failed);
+        response["error_messages"] = failed;
         return response;
     }
     void answer_prompt(const std::string& key, int answer_id, const std::string& note = std::string())

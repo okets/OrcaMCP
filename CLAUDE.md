@@ -689,6 +689,7 @@ given: `"<prompt> (auto-answered <answer>)"`. OK-only notices are captured as th
 | `TextureImportDialog` (textured or vertex-coloured OBJ, GLB, GLTF, FBX) | Not opened; imported as plain geometry, colours not mapped (`auto-answered Skip`) |
 | "Connected printer is X. Sync the printer information and switch the preset?" (`TipsDialog`, project load with a mismatched Bambu printer connected) | Auto-NO: the printer preset is not switched |
 | Any other `DPIDialog` modal (the fallback in `DPIAware::ShowModal`, `GUI_Utils.hpp`) | Not opened: answers Cancel, `"<dialog title> was suppressed (auto-answered Cancel)"`. The rows above answer their dialogs first, so this only catches a modal nobody handled |
+| Error dialogs from `GUI::show_error` (`ErrorDialog`, "OrcaMCP error": a load that fails -- an STL the reader cannot parse, G-code that will not process, an invalid 3MF configuration -- or "Another export job is running.") | Never opened. `show_error` defers its dialog with `CallAfter`, so it used to open after the tool call had returned and suppression was over: a modal nobody answers. Under suppression on the GUI thread the text is captured as an error (`add_mcp_suppressed_error`): `load_model`, `load_project`, `new_project` and `export_gcode` fail with it (`message` and `error_messages`), and every other tool lists it in `info_messages`. The invalid-G-code `MessageDialog` of a G-code load is tagged `set_mcp_error()` and counts the same way |
 | Startup "Previously unsaved items have been detected. Restore them?" prompt (`EVT_RESTORE_PROJECT`, after a crash) | **Not suppressed**: no MCP call is in flight at startup, so it waits for the user, and every tool call runs underneath it (`get_scene_info`'s `open_dialogs` and an `OpenDialog` active warning show it). `quit_app` closes it unanswered (as No) and the backup is kept, so the next launch asks again; `quit_app` with `discard_changes: false` refuses and names it. While it waits, `new_project` and `load_project` are refused: they would point `last_backup_path` at the new project's backup, and the one it offers would never be offered again |
 | Send-to-printer (`send_to_printer`) | **Bambu:** the `SelectMachineDialog` is scheduled with `CallAfter` and the tool returns `dialog_opened`; the user drives it. **Print hosts (Flashforge, Moonraker, OctoPrint, …):** by default (`direct: true`) there is **no dialog** — the tool uploads the sliced plate and, because `start_print` also defaults to true, **starts the print**. It returns `queued`. Pass `start_print: false` to upload only, or `direct: false` to open the print-host dialog instead. Never call it to "look at the dialog": on 2026-09-18 that started a 7 h print. |
 
@@ -699,7 +700,10 @@ Dialog suppression is implemented in:
   `add_mcp_suppressed_answer()` (the `(auto-answered …)` format every site uses), and the per-prompt
   answers (`set_mcp_prompt_answer()`, `mcp_answer_for()`)
 - `MsgDialog.cpp`: `ShowModal()` override checks suppression flag; a dialog tagged with
-  `set_mcp_prompt_key()` takes the answer the tool set with `McpDialogSuppressionGuard::answer_prompt()`
+  `set_mcp_prompt_key()` takes the answer the tool set with `McpDialogSuppressionGuard::answer_prompt()`,
+  and one tagged `set_mcp_error()` is recorded as an error
+- `GUI.cpp`: `show_error()` captures its text under suppression instead of deferring the dialog
+  (`mcp_captures_error()`); the guard reads the errors apart (`errors()`, `notices()`, `fail_on_errors()`)
 - `UnsavedChangesDialog.cpp`: `ShowModal()` discards preset changes under suppression
 - `Plater.cpp`: `close_with_confirm()`, `determine_load_type()`, `priv::get_export_file()`, `preview_zip_archive()`, `mcp_skip_step_mesh_dialog()`, `priv::run_textured_mesh_import_dialog()` and the sync-printer `TipsDialog` in `priv::load_files()` check the flag before opening a modal
 - `OrcaMCPServer.cpp` / `OrcaMCPPrinterTools.cpp`: endpoints scope suppression with the RAII
@@ -745,7 +749,7 @@ it as a project and renamed it silently, and a later `save_project {}` overwrote
 | Preset Management | `select_preset`, `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset` |
 | Slicing & Printing | `slice_all`, `send_to_printer` |
 
-Error messages that would have been shown in dialogs are captured and returned in the response as `error_messages` (for failures) or `info_messages` (for non-critical information).
+Error messages that would have been shown in dialogs are captured and returned in the response as `error_messages` (for failures) or `info_messages` (for non-critical information). A tool that assembles `info_messages` itself from `messages()` lists the errors there too; `report()` and `notices()` keep them apart.
 
 ---
 
@@ -889,7 +893,7 @@ echo "Q restore prompt closed by a quit deletes the backup (rel2506/04c):  $(U s
 echo "S the logout handler ends dialogs with wxID_ABORT (rel2506/04c):    $(U src/slic3r/GUI/GUI_App.cpp | grep -c 'EndModal(wxID_ABORT)')"
 echo "V the object list's mesh-error text lives inside ObjectList / its first icon reads mesh().stats() / ObjectList::get_repaired_errors_count exists (rel2506/05): $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^MeshErrorsInfo ObjectList::get_mesh_errors_info\(const int obj_idx/{f=1} f&&/_L_PLURAL/{print "yes"; exit} f&&/^}/{print "no"; exit}') / $(U src/slic3r/GUI/GUI_ObjectList.cpp | grep -c 'get_warning_icon_name(model_object->mesh().stats())') / $(U src/slic3r/GUI/GUI_ObjectList.cpp | grep -c '^int ObjectList::get_repaired_errors_count')"
 echo "X upstream's slic3rutils tests get no Windows-first force-include (rel2506/ci-fixes; 0 = bug): $(U tests/slic3rutils/CMakeLists.txt | grep -c 'win_platform.hpp')"
-echo "Z reslice refuses on a validation failure a settings fix removed until the 0.5 s timer runs (rel2506/06b): $(U src/slic3r/GUI/Plater.cpp | grep -c 'process_completed_with_error, return directly')"
+echo "Z reslice refuses on a validation failure a settings fix removed until the 0.5 s timer runs / show_error defers its dialog (rel2506/06b): $(U src/slic3r/GUI/Plater.cpp | grep -c 'process_completed_with_error, return directly') / $(U src/slic3r/GUI/GUI.cpp | awk '/^void show_error\(wxWindow\* parent, const wxString/{f=1} f&&/CallAfter/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -991,6 +995,11 @@ bad setting reported the old failure. Ours adds `Plater::apply_pending_backgroun
 what the timer's handler runs, only when it would run it; MCP calls it before slicing, reporting or
 exporting, and only while the pipeline is idle (`OrcaMCP::should_apply_pending_update`). On 0, upstream
 dropped the early return: re-check that a fixed setting then slices at once, and remove the hook if so.
+The second check: upstream's `GUI::show_error` defers its `ErrorDialog` with `CallAfter`, so under MCP
+it opened after the tool call had returned and suppression was over. Ours captures the text under
+suppression on the GUI thread (`mcp_captures_error`). On "no", upstream shows it synchronously:
+`MsgDialog::ShowModal` then catches it, and the capture can go -- keep the error channel
+(`add_mcp_suppressed_error`) by tagging `ErrorDialog` instead.
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices

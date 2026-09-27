@@ -17141,8 +17141,10 @@ void Plater::load_gcode(const wxString& filename)
     p->preview->get_canvas3d()->zoom_to_plate(0);
 
     if (p->preview->get_canvas3d()->get_gcode_layers_zs().empty()) {
-        MessageDialog(this, _L("The selected file") + ":\n" + filename + "\n" + _L("Does not contain valid G-code."),
-            wxString(GCODEVIEWER_APP_NAME) + " - " + _L("An Error has occurred while loading the G-code file."), wxCLOSE | wxICON_WARNING | wxCENTRE).ShowModal();
+        MessageDialog dlg(this, _L("The selected file") + ":\n" + filename + "\n" + _L("Does not contain valid G-code."),
+            wxString(GCODEVIEWER_APP_NAME) + " - " + _L("An Error has occurred while loading the G-code file."), wxCLOSE | wxICON_WARNING | wxCENTRE);
+        dlg.set_mcp_error(); // Orca MCP: the load failed; load_model fails with these words
+        dlg.ShowModal();
         set_project_filename(DEFAULT_PROJECT_NAME);
     } else {
         set_project_filename(filename);
@@ -18423,6 +18425,13 @@ bool Plater::export_gcode_to_file(const std::string& output_path)
         return false;
     } catch (const std::exception &ex) {
         BOOST_LOG_TRIVIAL(error) << "export_gcode_to_file: Exception: " << ex.what();
+        return false;
+    }
+
+    // priv::export_gcode refuses a second export with this error and returns, which left the export
+    // reported as started, with its "export began" state set. Refused here first instead.
+    if (p->background_process.is_export_scheduled()) {
+        GUI::show_error(this, _L("Another export job is running."));
         return false;
     }
 
