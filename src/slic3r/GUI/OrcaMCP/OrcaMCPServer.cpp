@@ -21,7 +21,6 @@
 #include "slic3r/GUI/BackgroundSlicingProcess.hpp"
 #include "slic3r/GUI/MainFrame.hpp"
 #include "slic3r/GUI/GUI_ObjectList.hpp"
-#include "slic3r/GUI/Tab.hpp"
 #include "slic3r/GUI/DeviceManager.hpp"
 #include "slic3r/GUI/DeviceCore/DevManager.h"
 #include "slic3r/GUI/GLCanvas3D.hpp"
@@ -2051,8 +2050,9 @@ void OrcaMCPServer::register_builtin_tools()
                 }},
                 {"keys", {
                     {"type", "array"},
-                    {"description", "Keys to reset. If omitted, resets every setting the GUI's object settings edit; "
-                                    "the object's filament (extruder) stays, as the GUI's reset leaves it."},
+                    {"description", "Keys to reset. If omitted, resets every override but the object's filament "
+                                    "(extruder), which stays, as the GUI's reset leaves it. reset_count says how "
+                                    "many were cleared; a reset that clears nothing changes nothing."},
                     {"items", {{"type", "string"}}}
                 }}
             }},
@@ -2075,34 +2075,29 @@ void OrcaMCPServer::register_builtin_tools()
                 }
 
                 ModelObject* obj = model.objects[object_id];
-                int reset_count = 0;
-                // The snapshot the object list's reset takes (TabPrintModel::reset_model_config), so undo
-                // puts the settings back.
-                plater->take_snapshot(std::string("Reset Options"));
+                // With no keys named, every override but the object's filament (extruder), which the
+                // GUI's reset keeps too; with keys, those of them the object overrides.
+                std::vector<std::string> reset_keys;
+                if (keys.empty())
+                    reset_keys = object_overrides_to_reset(obj->config.get().keys());
+                else
+                    for (const std::string& key : keys)
+                        if (obj->config.has(key) && std::find(reset_keys.begin(), reset_keys.end(), key) == reset_keys.end())
+                            reset_keys.push_back(key);
+                const int reset_count = int(reset_keys.size());
 
-                if (keys.empty()) {
-                    // Reset all overrides the GUI's object tab resets: the object keeps its filament.
-                    auto* object_tab = dynamic_cast<TabPrintModel*>(wxGetApp().get_model_tab());
-                    const auto resettable = [object_tab](const std::string& key) { return object_tab != nullptr && object_tab->has_key(key); };
-                    const auto reset_keys = object_overrides_to_reset(obj->config.get().keys(), resettable);
-                    reset_count = int(reset_keys.size());
-                    for (const auto& key : reset_keys) {
+                if (reset_count > 0) {
+                    // The snapshot the object list's reset takes (TabPrintModel::reset_model_config), so
+                    // undo puts the settings back; none for a reset that clears nothing.
+                    plater->take_snapshot(std::string("Reset Options"));
+                    for (const auto& key : reset_keys)
                         obj->config.erase(key);
-                    }
-                } else {
-                    // Reset specific keys
-                    for (const auto& key : keys) {
-                        if (obj->config.has(key)) {
-                            obj->config.erase(key);
-                            reset_count++;
-                        }
-                    }
-                }
 
-                // Notify UI of changes
-                wxGetApp().obj_list()->changed_object(object_id);
-                mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
-                plater->update();
+                    // Notify UI of changes
+                    wxGetApp().obj_list()->changed_object(object_id);
+                    mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
+                    plater->update();
+                }
 
                 return nlohmann::json{
                     {"status", "success"},

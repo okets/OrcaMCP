@@ -173,11 +173,9 @@ InstancesOnPlate instances_on_plate(const ModelObject& object, int object_index,
 // an object the plate lists without holding an instance of it (only a stale list does that).
 BoundingBoxf3 plate_box_of(const ModelObject& object, const InstancesOnPlate& here);
 
-// The keys of an object's overrides (`object_keys`) that a reset with no keys named clears: those the
-// GUI's object tab edits and resets (`resettable`: TabPrintModel::has_key), so the object's
-// "extruder", which no tab edits, and so its filament, stays -- as the object list's reset leaves it.
-std::vector<std::string> object_overrides_to_reset(const std::vector<std::string>& object_keys,
-                                                   const std::function<bool(const std::string&)>& resettable);
+// The keys of an object's overrides (`object_keys`) that a reset with no keys named clears: every one
+// but "extruder", so the object keeps its filament, as the GUI's reset leaves it.
+std::vector<std::string> object_overrides_to_reset(const std::vector<std::string>& object_keys);
 
 // The index of `object` in the plater's model, matched by pointer or by ObjectID (a Print's copy of
 // an object carries the original's id), or -1.
