@@ -13,17 +13,19 @@
 // tests/slic3rutils/test_config_values.cpp.
 
 namespace Slic3r {
+class Preset;
 class PresetBundle;
 namespace GUI { namespace OrcaMCP {
 
-// One selected preset: the config slicing uses now (edited) and the saved preset it came from. For a
-// filament slot whose preset is not the one the Filament tab edits, both are that preset's saved config.
+// One selected preset: the preset slicing uses now (edited) and the saved one it came from. For a
+// filament slot whose preset is not the one the Filament tab edits, both are that saved preset.
+// Which keys differ between the two is PresetCollection::dirty_options' answer, the GUI's own.
 struct PresetConfigs
 {
-    std::string               name;
-    const DynamicPrintConfig* edited = nullptr;
-    const DynamicPrintConfig* saved  = nullptr;
-    bool                      dirty  = false; // it has unsaved changes (PresetCollection::current_is_dirty)
+    std::string   name;
+    const Preset* edited = nullptr; // null for a slot whose preset no longer exists
+    const Preset* saved  = nullptr;
+    bool          dirty  = false;   // it has unsaved changes (PresetCollection::current_is_dirty)
 };
 
 // Every config a setting can be read from.

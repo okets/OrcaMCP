@@ -25,33 +25,47 @@ DynamicPrintConfig preset_config(const std::vector<std::string>& keys)
     return config;
 }
 
+// A preset of `type` named `name`, holding exactly that type's keys, at their defaults.
+Preset preset_of_type(Preset::Type type, const std::string& name, const std::vector<std::string>& keys)
+{
+    Preset preset(type, name);
+    preset.config = preset_config(keys);
+    return preset;
+}
+
 // A printer, a process, and two filament slots: slot 1 PLA, slot 2 PETG, which the Filament tab
-// edits. Each test changes what it needs and reads the sources back through sources().
+// edits. Each test changes what it needs and reads the sources back through sources(); a preset's
+// dirty flag is the GUI's own (PresetCollection::is_dirty), as config_sources_from reads it.
 struct SelectedPresets
 {
-    DynamicPrintConfig print_saved    = preset_config(Preset::print_options());
-    DynamicPrintConfig print_edited   = print_saved;
-    DynamicPrintConfig printer_saved  = preset_config(Preset::printer_options());
-    DynamicPrintConfig printer_edited = printer_saved;
-    DynamicPrintConfig pla            = preset_config(Preset::filament_options());
-    DynamicPrintConfig petg_saved     = preset_config(Preset::filament_options());
-    DynamicPrintConfig petg_edited;
+    Preset             print_saved    = preset_of_type(Preset::TYPE_PRINT, "0.20mm Standard", Preset::print_options());
+    Preset             print_edited   = print_saved;
+    Preset             printer_saved  = preset_of_type(Preset::TYPE_PRINTER, "Creator 5 Pro 0.4", Preset::printer_options());
+    Preset             printer_edited = printer_saved;
+    Preset             pla            = preset_of_type(Preset::TYPE_FILAMENT, "Generic PLA", Preset::filament_options());
+    Preset             petg_saved     = preset_of_type(Preset::TYPE_FILAMENT, "Generic PETG", Preset::filament_options());
+    Preset             petg_edited    = petg_saved;
     DynamicPrintConfig project;
 
     SelectedPresets()
     {
-        petg_saved.set_deserialize_strict("filament_type", "PETG");
+        petg_saved.config.set_deserialize_strict("filament_type", "PETG");
         petg_edited = petg_saved;
         project.set_deserialize_strict("filament_colour", "#FF0000;#00FF00");
+    }
+
+    static PresetConfigs selected(const Preset& edited, const Preset& saved)
+    {
+        return {edited.name, &edited, &saved, PresetCollection::is_dirty(&edited, &saved)};
     }
 
     ConfigSources sources() const
     {
         ConfigSources sources;
-        sources.print   = {"0.20mm Standard", &print_edited, &print_saved, print_edited.diff(print_saved).size() > 0};
-        sources.printer = {"Creator 5 Pro 0.4", &printer_edited, &printer_saved, false};
-        sources.filaments.push_back({"Generic PLA", &pla, &pla, false});
-        sources.filaments.push_back({"Generic PETG", &petg_edited, &petg_saved, petg_edited.diff(petg_saved).size() > 0});
+        sources.print   = selected(print_edited, print_saved);
+        sources.printer = selected(printer_edited, printer_saved);
+        sources.filaments.push_back({pla.name, &pla, &pla, false});
+        sources.filaments.push_back(selected(petg_edited, petg_saved));
         sources.project = &project;
         return sources;
     }
@@ -68,7 +82,7 @@ const std::vector<std::string> twelve_support_keys = {
 TEST_CASE("with no keys, the report is the selected presets and whether each has unsaved changes", "[orcamcp][ConfigValues]")
 {
     SelectedPresets presets;
-    presets.print_edited.set_deserialize_strict("support_type", "tree(auto)");
+    presets.print_edited.config.set_deserialize_strict("support_type", "tree(auto)");
     const nlohmann::json selected = selected_presets_json(presets.sources());
 
     CHECK(selected["printer"]["name"] == "Creator 5 Pro 0.4");
@@ -117,8 +131,8 @@ TEST_CASE("a filament setting has one value per slot", "[orcamcp][ConfigValues]"
 TEST_CASE("a setting changed from its saved preset is dirty, with the saved value", "[orcamcp][ConfigValues]")
 {
     SelectedPresets presets;
-    presets.print_saved.set_deserialize_strict("support_type", "normal(auto)");
-    presets.print_edited.set_deserialize_strict("support_type", "tree(auto)");
+    presets.print_saved.config.set_deserialize_strict("support_type", "normal(auto)");
+    presets.print_edited.config.set_deserialize_strict("support_type", "tree(auto)");
     const nlohmann::json report = config_values_json(presets.sources(), {"support_type", "enable_support"}, false);
 
     CHECK(report["values"]["print"]["support_type"] == "tree(auto)");
@@ -135,8 +149,8 @@ TEST_CASE("a read with nothing changed carries no dirty section", "[orcamcp][Con
 TEST_CASE("a key only the edited config carries is not an unsaved change, as the GUI judges it", "[orcamcp][ConfigValues]")
 {
     SelectedPresets presets;
-    presets.printer_edited.set_deserialize_strict("extruder_nozzle_stats", "Standard#1");
-    REQUIRE_FALSE(presets.printer_saved.has("extruder_nozzle_stats"));
+    presets.printer_edited.config.set_deserialize_strict("extruder_nozzle_stats", "Standard#1");
+    REQUIRE_FALSE(presets.printer_saved.config.has("extruder_nozzle_stats"));
 
     CHECK_FALSE(config_values_json(presets.sources(), {"extruder_nozzle_stats"}, false).contains("dirty"));
     CHECK_FALSE(unsaved_changes_json(presets.sources()).contains("printer"));
@@ -145,7 +159,7 @@ TEST_CASE("a key only the edited config carries is not an unsaved change, as the
 TEST_CASE("dirty_only keeps just the settings that differ from the saved preset", "[orcamcp][ConfigValues]")
 {
     SelectedPresets presets;
-    presets.print_edited.set_deserialize_strict("support_threshold_angle", "40");
+    presets.print_edited.config.set_deserialize_strict("support_threshold_angle", "40");
     const nlohmann::json report = config_values_json(presets.sources(), twelve_support_keys, /*dirty_only=*/true);
 
     CHECK(report["values"]["print"].size() == 1);
@@ -155,7 +169,7 @@ TEST_CASE("dirty_only keeps just the settings that differ from the saved preset"
 TEST_CASE("a changed filament setting names the slots whose preset is being edited", "[orcamcp][ConfigValues]")
 {
     SelectedPresets presets;
-    presets.petg_edited.set_deserialize_strict("filament_type", "PCTG");
+    presets.petg_edited.config.set_deserialize_strict("filament_type", "PCTG");
     const nlohmann::json report = config_values_json(presets.sources(), {"filament_type"}, false);
 
     CHECK(report["values"]["filament"]["filament_type"] == nlohmann::json::array({"PLA", "PCTG"}));
@@ -167,9 +181,9 @@ TEST_CASE("a known key no selected preset carries is listed apart", "[orcamcp][C
 {
     SelectedPresets presets;
     const ConfigSources sources = presets.sources();
-    REQUIRE_FALSE(presets.print_edited.has("extruder"));
-    REQUIRE_FALSE(presets.printer_edited.has("extruder"));
-    REQUIRE_FALSE(presets.pla.has("extruder"));
+    REQUIRE_FALSE(presets.print_edited.config.has("extruder"));
+    REQUIRE_FALSE(presets.printer_edited.config.has("extruder"));
+    REQUIRE_FALSE(presets.pla.config.has("extruder"));
     REQUIRE_FALSE(presets.project.has("extruder"));
 
     const nlohmann::json report = config_values_json(sources, {"extruder", "support_type"}, false);
@@ -196,9 +210,9 @@ TEST_CASE("a print-host credential is reported as set or empty, never by value",
 TEST_CASE("every unsaved change is listed with its value and its saved value", "[orcamcp][ConfigValues]")
 {
     SelectedPresets presets;
-    presets.print_saved.set_deserialize_strict("support_type", "normal(auto)");
-    presets.print_edited.set_deserialize_strict("support_type", "tree(auto)");
-    presets.petg_edited.set_deserialize_strict("filament_type", "PCTG");
+    presets.print_saved.config.set_deserialize_strict("support_type", "normal(auto)");
+    presets.print_edited.config.set_deserialize_strict("support_type", "tree(auto)");
+    presets.petg_edited.config.set_deserialize_strict("filament_type", "PCTG");
     const nlohmann::json changes = unsaved_changes_json(presets.sources());
 
     CHECK(changes["print"].size() == 1);
@@ -206,4 +220,33 @@ TEST_CASE("every unsaved change is listed with its value and its saved value", "
     CHECK(changes["filament"]["filament_type"]["slots"] == nlohmann::json::array({2}));
     CHECK(changes["filament"]["filament_type"]["value"] == "PCTG");
     CHECK_FALSE(changes.contains("printer"));
+}
+
+TEST_CASE("an optional key one side lacks is dirty, as the GUI marks it", "[orcamcp][ConfigValues]")
+{
+    SelectedPresets presets;
+    presets.print_saved.config.erase("compatible_printers");
+    presets.print_edited.config.set_deserialize_strict("compatible_printers", "Creator 5 Pro 0.4");
+    const nlohmann::json report = config_values_json(presets.sources(), {"compatible_printers"}, false);
+
+    CHECK(report["dirty"]["print"]["compatible_printers"]["saved"].is_null());
+    CHECK(unsaved_changes_json(presets.sources())["print"].contains("compatible_printers"));
+}
+
+TEST_CASE("a changed credential is reported dirty without either value", "[orcamcp][ConfigValues]")
+{
+    SelectedPresets presets;
+    presets.printer_saved.config.set_deserialize_strict("printhost_apikey", "old-credential");
+    presets.printer_edited.config.set_deserialize_strict("printhost_apikey", "new-credential");
+
+    const nlohmann::json report = config_values_json(presets.sources(), {"printhost_apikey"}, false);
+    CHECK(report["values"]["printer"]["printhost_apikey"] == "<redacted>");
+    CHECK(report["dirty"]["printer"]["printhost_apikey"]["saved"] == "<redacted>");
+
+    const nlohmann::json changes = unsaved_changes_json(presets.sources());
+    CHECK(changes["printer"]["printhost_apikey"] == nlohmann::json{{"value", "<redacted>"}, {"saved", "<redacted>"}});
+
+    const std::string everything = report.dump() + changes.dump();
+    CHECK(everything.find("old-credential") == std::string::npos);
+    CHECK(everything.find("new-credential") == std::string::npos);
 }

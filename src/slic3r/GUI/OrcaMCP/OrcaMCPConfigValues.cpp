@@ -29,17 +29,19 @@ const char* source_name(ConfigSource source)
 
 bool carries(const DynamicPrintConfig* config, const std::string& key) { return config != nullptr && config->has(key); }
 
+const DynamicPrintConfig* config_of(const Preset* preset) { return preset != nullptr ? &preset->config : nullptr; }
+
 // The project keys first (filament_colour is the plate's, not a filament preset's default), then the
 // presets in the order apply_config's types are usually meant, then anything else the project holds.
 ConfigSource source_of(const ConfigSources& sources, const std::string& key)
 {
     if (project_keys.count(key) != 0 && carries(sources.project, key))
         return ConfigSource::project;
-    if (carries(sources.print.edited, key))
+    if (carries(config_of(sources.print.edited), key))
         return ConfigSource::print;
-    if (!sources.filaments.empty() && carries(sources.filaments.front().edited, key))
+    if (!sources.filaments.empty() && carries(config_of(sources.filaments.front().edited), key))
         return ConfigSource::filament;
-    if (carries(sources.printer.edited, key))
+    if (carries(config_of(sources.printer.edited), key))
         return ConfigSource::printer;
     if (carries(sources.project, key))
         return ConfigSource::project;
@@ -51,49 +53,60 @@ nlohmann::json value_or_null(const DynamicPrintConfig* config, const std::string
     return carries(config, key) ? nlohmann::json(reported_config_value(*config, key)) : nlohmann::json(nullptr);
 }
 
-// Whether `key` in the preset's edited config differs from its saved preset, judged as the GUI judges
-// a preset dirty (PresetCollection::dirty_options): only a key both configs carry. The edited config
-// can gain keys the saved preset never had (extruder_nozzle_stats, for one), and those are not edits.
-bool differs(const PresetConfigs& preset, const std::string& key)
+// The keys that differ between a preset and its saved version, as the GUI marks them
+// (PresetCollection::dirty_options, compared on the raw values: a changed credential counts too).
+std::set<std::string> dirty_keys(const PresetConfigs& preset)
 {
-    if (!carries(preset.edited, key) || !carries(preset.saved, key))
-        return false;
-    return reported_config_value(*preset.edited, key) != reported_config_value(*preset.saved, key);
+    if (preset.edited == nullptr || preset.saved == nullptr || preset.edited == preset.saved)
+        return {};
+    const std::vector<std::string> keys = PresetCollection::dirty_options(preset.edited, preset.saved, /*deep_compare=*/false);
+    return {keys.begin(), keys.end()};
 }
+
+// The dirty keys of every selected preset, worked out once per call.
+struct DirtyKeys
+{
+    std::set<std::string>              print;
+    std::set<std::string>              printer;
+    std::vector<std::set<std::string>> filaments; // per slot
+
+    explicit DirtyKeys(const ConfigSources& sources) : print(dirty_keys(sources.print)), printer(dirty_keys(sources.printer))
+    {
+        for (const PresetConfigs& slot : sources.filaments)
+            filaments.push_back(dirty_keys(slot));
+    }
+
+    // The 1-based slots whose filament differs from its saved preset for `key`.
+    std::vector<int> slots(const std::string& key) const
+    {
+        std::vector<int> dirty;
+        for (size_t i = 0; i < filaments.size(); ++i)
+            if (filaments[i].count(key) != 0)
+                dirty.push_back(int(i) + 1);
+        return dirty;
+    }
+};
 
 const PresetConfigs& preset_of(const ConfigSources& sources, ConfigSource source)
 {
     return source == ConfigSource::printer ? sources.printer : sources.print;
 }
 
-// The 1-based slots whose filament differs from its saved preset for `key`.
-std::vector<int> dirty_slots(const ConfigSources& sources, const std::string& key)
-{
-    std::vector<int> slots;
-    for (size_t i = 0; i < sources.filaments.size(); ++i)
-        if (differs(sources.filaments[i], key))
-            slots.push_back(int(i) + 1);
-    return slots;
-}
-
 nlohmann::json per_slot_values(const ConfigSources& sources, const std::string& key)
 {
     nlohmann::json values = nlohmann::json::array();
     for (const PresetConfigs& slot : sources.filaments)
-        values.push_back(value_or_null(slot.edited, key));
+        values.push_back(value_or_null(config_of(slot.edited), key));
     return values;
 }
 
 nlohmann::json preset_json(const PresetConfigs& preset) { return {{"name", preset.name}, {"dirty", preset.dirty}}; }
 
-// Every key of `preset` that differs from its saved preset, as {key: {value, saved}}.
-void add_unsaved(nlohmann::json& group, const PresetConfigs& preset)
+// Every dirty key of `preset`, as {key: {value, saved}}.
+void add_unsaved(nlohmann::json& group, const PresetConfigs& preset, const std::set<std::string>& dirty)
 {
-    if (preset.edited == nullptr)
-        return;
-    for (const std::string& key : preset.edited->keys())
-        if (differs(preset, key))
-            group[key] = {{"value", reported_config_value(*preset.edited, key)}, {"saved", value_or_null(preset.saved, key)}};
+    for (const std::string& key : dirty)
+        group[key] = {{"value", value_or_null(config_of(preset.edited), key)}, {"saved", value_or_null(config_of(preset.saved), key)}};
 }
 
 } // namespace
@@ -102,7 +115,7 @@ ConfigSources config_sources_from(const PresetBundle& bundle)
 {
     const auto selected = [](const PresetCollection& collection) {
         const Preset& edited = collection.get_edited_preset();
-        return PresetConfigs{edited.name, &edited.config, &collection.get_selected_preset().config, collection.current_is_dirty()};
+        return PresetConfigs{edited.name, &edited, &collection.get_selected_preset(), collection.current_is_dirty()};
     };
     ConfigSources sources;
     sources.print   = selected(bundle.prints);
@@ -115,7 +128,7 @@ ConfigSources config_sources_from(const PresetBundle& bundle)
         if (name == edited_filament)
             sources.filaments.push_back(selected(bundle.filaments));
         else if (const Preset* preset = bundle.filaments.find_preset(name, false))
-            sources.filaments.push_back({name, &preset->config, &preset->config, false});
+            sources.filaments.push_back({name, preset, preset, false});
         else
             sources.filaments.push_back({name, nullptr, nullptr, false});
     }
@@ -149,6 +162,7 @@ nlohmann::json selected_presets_json(const ConfigSources& sources)
 
 nlohmann::json config_values_json(const ConfigSources& sources, const std::vector<std::string>& keys, bool dirty_only)
 {
+    const DirtyKeys       dirty_keys(sources);
     nlohmann::json        values  = nlohmann::json::object();
     nlohmann::json        dirty   = nlohmann::json::object();
     nlohmann::json        missing = nlohmann::json::array();
@@ -165,23 +179,24 @@ nlohmann::json config_values_json(const ConfigSources& sources, const std::vecto
                 values[group][key] = value_or_null(sources.project, key);
             break;
         case ConfigSource::filament: {
-            const std::vector<int> slots = dirty_slots(sources, key);
+            const std::vector<int> slots = dirty_keys.slots(key);
             if (dirty_only && slots.empty())
                 break;
             values[group][key] = per_slot_values(sources, key);
             if (!slots.empty())
-                dirty[group][key] = {{"slots", slots}, {"saved", value_or_null(sources.filaments[size_t(slots.front() - 1)].saved, key)}};
+                dirty[group][key] = {{"slots", slots},
+                                     {"saved", value_or_null(config_of(sources.filaments[size_t(slots.front() - 1)].saved), key)}};
             break;
         }
         case ConfigSource::print:
         case ConfigSource::printer: {
             const PresetConfigs& preset   = preset_of(sources, source);
-            const bool           is_dirty = differs(preset, key);
+            const bool           is_dirty = (source == ConfigSource::print ? dirty_keys.print : dirty_keys.printer).count(key) != 0;
             if (dirty_only && !is_dirty)
                 break;
-            values[group][key] = value_or_null(preset.edited, key);
+            values[group][key] = value_or_null(config_of(preset.edited), key);
             if (is_dirty)
-                dirty[group][key] = {{"saved", value_or_null(preset.saved, key)}};
+                dirty[group][key] = {{"saved", value_or_null(config_of(preset.saved), key)}};
             break;
         }
         }
@@ -196,28 +211,25 @@ nlohmann::json config_values_json(const ConfigSources& sources, const std::vecto
 
 nlohmann::json unsaved_changes_json(const ConfigSources& sources)
 {
-    nlohmann::json changes = nlohmann::json::object();
-    nlohmann::json print   = nlohmann::json::object();
-    add_unsaved(print, sources.print);
+    const DirtyKeys dirty_keys(sources);
+    nlohmann::json  changes = nlohmann::json::object();
+    nlohmann::json  print   = nlohmann::json::object();
+    add_unsaved(print, sources.print, dirty_keys.print);
     nlohmann::json printer = nlohmann::json::object();
-    add_unsaved(printer, sources.printer);
+    add_unsaved(printer, sources.printer, dirty_keys.printer);
 
     // One entry per key, however many slots share the edited filament preset.
     nlohmann::json filament = nlohmann::json::object();
     for (size_t i = 0; i < sources.filaments.size(); ++i) {
         const PresetConfigs& slot = sources.filaments[i];
-        if (slot.edited == nullptr)
-            continue;
-        for (const std::string& key : slot.edited->keys()) {
-            if (!differs(slot, key))
-                continue;
+        for (const std::string& key : dirty_keys.filaments[i]) {
             if (filament.contains(key)) {
                 filament[key]["slots"].push_back(int(i) + 1);
                 continue;
             }
             filament[key] = {{"slots", nlohmann::json::array({int(i) + 1})},
-                             {"value", reported_config_value(*slot.edited, key)},
-                             {"saved", value_or_null(slot.saved, key)}};
+                             {"value", value_or_null(config_of(slot.edited), key)},
+                             {"saved", value_or_null(config_of(slot.saved), key)}};
         }
     }
     if (!print.empty())
