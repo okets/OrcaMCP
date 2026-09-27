@@ -124,6 +124,18 @@ TEST_CASE("a height snaps to the nearest printed layer", "[orcamcp][LayerPlan]")
     CHECK_THROWS(layer_nearest_z({}, 0.2));
 }
 
+TEST_CASE("a height exactly between two layers goes to the lower, whatever float rounding did", "[orcamcp][LayerPlan]")
+{
+    // G-code heights come from floats: float(0.7) is 0.69999999, float(0.9) 0.89999998, so the upper
+    // layer is 4e-8 nearer to 0.8 than the lower. Such a difference is noise, not a nearer layer.
+    const std::vector<GcodeLayer> layers = layers_at({double(float(0.7)), double(float(0.9))});
+    CHECK(layer_nearest_z(layers, 0.8).index == 0);
+    // Heights the G-code rounds to a thousandth: 0.3 is still "between" 0.2 and 0.4005.
+    CHECK(layer_nearest_z(layers_at({0.2, 0.4005}), 0.3).index == 0);
+    // A real difference still decides.
+    CHECK(layer_nearest_z(layers, 0.81).index == 1);
+}
+
 TEST_CASE("a height a by-object print reaches twice names the other layer", "[orcamcp][LayerPlan]")
 {
     // Two objects printed one after the other, two layers each.

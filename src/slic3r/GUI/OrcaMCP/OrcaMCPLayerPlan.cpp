@@ -301,19 +301,22 @@ LayerAtHeight layer_nearest_z(const std::vector<GcodeLayer>& layers, double z)
 {
     if (layers.empty())
         throw std::runtime_error("the plate's G-code has no layers");
+    // G-code heights come from floats written to a thousandth, so two distances this close are the same
+    // distance, and a height between two layers goes to the lower one.
+    const double  same = k_gcode_height_tolerance / 2.;
     LayerAtHeight hit;
     double        best = std::numeric_limits<double>::max();
     for (size_t i = 0; i < layers.size(); ++i) {
         const double d = std::abs(layers[i].z - z);
-        const bool   closer = d < best - 1e-9;
-        const bool   tie_lower = std::abs(d - best) <= 1e-9 && layers[i].z < layers[hit.index].z;
+        const bool   closer = d < best - same;
+        const bool   tie_lower = std::abs(d - best) <= same && layers[i].z < layers[hit.index].z;
         if (closer || tie_lower) {
             best      = d;
             hit.index = i;
         }
     }
     for (size_t i = 0; i < layers.size(); ++i)
-        if (i != hit.index && std::abs(layers[i].z - layers[hit.index].z) < k_gcode_height_tolerance / 2.)
+        if (i != hit.index && std::abs(layers[i].z - layers[hit.index].z) < same)
             hit.also_at.push_back(int(i) + 1);
     return hit;
 }
