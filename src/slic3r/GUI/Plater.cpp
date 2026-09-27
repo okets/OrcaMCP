@@ -9778,9 +9778,17 @@ std::vector<size_t> Plater::priv::load_model_objects(const ModelObjectPtrs& mode
 #ifdef AUTOPLACEMENT_ON_LOAD
     ModelInstancePtrs new_instances;
 #endif /* AUTOPLACEMENT_ON_LOAD */
+    // Orca: every layer range entering the scene gets a layer height (a file can carry one without),
+    // completed from the selected presets; built only when an object has ranges.
+    std::optional<DynamicPrintConfig> active_config;
     for (ModelObject *model_object : model_objects) {
         auto *object = model.add_object(*model_object);
         object->sort_volumes(true);
+        if (!object->layer_config_ranges.empty()) {
+            if (!active_config)
+                active_config = wxGetApp().preset_bundle->full_config();
+            complete_layer_ranges(*object, *active_config);
+        }
         std::string object_name = object->name.empty() ? fs::path(object->input_file).filename().string() : object->name;
         obj_idxs.push_back(obj_count++);
 

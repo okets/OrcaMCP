@@ -2305,9 +2305,10 @@ void OrcaMCPServer::register_builtin_tools()
         "Set settings for a Z height range. z_min/z_max are measured from the object's own base, "
         "not from the bed, so they equal plate Z only while the object sits on the bed -- moving the "
         "object up does not move its ranges. A range always has a layer_height and an extruder, as the "
-        "GUI's object list gives it: the object's own (its layer_height, else the process preset's; "
-        "extruder 0, the object's) unless settings give one. A layer_height outside the printer's "
-        "min_layer_height..max_layer_height, for the nozzle of the filament that prints the range (its "
+        "GUI's object list gives it: the object's own (its layer_height, else the process preset's, "
+        "within its nozzle's limits; extruder 0, the object's) unless settings give one. A layer_height "
+        "outside the printer's min_layer_height..max_layer_height, for the nozzle of the filament that "
+        "prints the range (its "
         "own, else the object's), is rejected (rejected_values). A call that applies nothing, or gives no "
         "settings, is an error and leaves the ranges as they were.",
         {

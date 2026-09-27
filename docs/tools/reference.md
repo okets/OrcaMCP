@@ -1545,9 +1545,10 @@ union. `applied_count` counts only what was written, so `status` is `partial` wh
 and `error` when none did, or when `settings` is empty (`message` says so). A call where nothing applied leaves the object's ranges as they were.
 
 **Every range has a `layer_height` and an `extruder`**, as the GUI's object list gives a new range
-them: the object's own layer height (its override, else the process preset's) and extruder `0` (the
-object's), unless `settings` gives them. A range without a layer height crashed the next slice, and a
-range a loaded file carries without one is completed the same way when it loads. A
+them: the object's own layer height (its override, else the selected process preset's, within what
+its nozzle prints) and extruder `0` (the object's), unless `settings` gives them. A range without a
+layer height crashed the next slice, and a range a loaded file carries without one is completed the
+same way when its objects enter the scene. A
 `layer_height` the printer cannot print -- 0 or less, or outside its `min_layer_height` ..
 `max_layer_height` for the nozzle of the filament that prints the range (its own, else the object's; each tool's own on a toolchanger; three quarters of the nozzle when the maximum is 0) -- is
 rejected in `rejected_values`, as the object list's range editor refuses it.
