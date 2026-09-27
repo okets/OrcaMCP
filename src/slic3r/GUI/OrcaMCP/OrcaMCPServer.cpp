@@ -2306,11 +2306,12 @@ void OrcaMCPServer::register_builtin_tools()
         "not from the bed, so they equal plate Z only while the object sits on the bed -- moving the "
         "object up does not move its ranges. A range always has a layer_height and an extruder, as the "
         "GUI's object list gives it: the object's own (its layer_height, else the process preset's, "
-        "within its nozzle's limits; extruder 0, the object's) unless settings give one. A layer_height "
-        "outside the printer's min_layer_height..max_layer_height, for the nozzle of the filament that "
-        "prints the range (its "
-        "own, else the object's), is rejected (rejected_values). A call that applies nothing, or gives no "
-        "settings, is an error and leaves the ranges as they were.",
+        "within what the nozzle of the extruder printing the range prints; extruder 0, the object's) "
+        "unless settings give one. The range as stored must print on that nozzle: a layer_height outside "
+        "the printer's min_layer_height..max_layer_height for the extruder that prints the range (its own, "
+        "else the object's) is rejected, and so is an extruder whose nozzle cannot print the range's height "
+        "(rejected_values). A call that applies nothing, or gives no settings, is an error and leaves the "
+        "ranges as they were.",
         {
             {"type", "object"},
             {"properties", {
@@ -2412,48 +2413,53 @@ void OrcaMCPServer::register_builtin_tools()
                     }
                 }
 
-                // A layer height the printer cannot print is refused, as the object list's range editor
-                // refuses it (ObjectList::edit_layer_range), against the nozzle of the filament that prints
-                // the range: its own, else the object's.
-                if (written.has("layer_height")) {
-                    const auto existing       = obj->layer_config_ranges.find(range);
-                    const int  range_extruder = written.has("extruder") ? written.opt_int("extruder")
-                                              : existing != obj->layer_config_ranges.end() && existing->second.has("extruder")
-                                                  ? existing->second.opt_int("extruder") : 0;
-                    const int  filament       = layer_range_filament(range_extruder, obj->config.has("extruder") ? obj->config.extruder() : 0);
-                    const DynamicPrintConfig& printer = wxGetApp().preset_bundle->printers.get_edited_preset().config;
-                    if (const auto error = layer_range_height_error(written.opt_float("layer_height"), layer_height_limits(printer, filament))) {
-                        written.erase("layer_height");
-                        applied_keys.erase(std::remove(applied_keys.begin(), applied_keys.end(), std::string("layer_height")), applied_keys.end());
-                        invalid_keys.push_back("layer_height");
-                        rejected_values.push_back({{"key", "layer_height"},
-                                                   {"reason", *error},
-                                                   {"expected", "a number of mm within the printer's min_layer_height and max_layer_height"}});
-                    }
-                }
-
-                if (!applied_keys.empty()) {
-                    // Every range has a layer height and an extruder, the object's unless given, as the
-                    // object list gives a new range them (its get_default_layer_config): the slicer
-                    // reads a range's layer height unconditionally.
-                    const auto   existing = obj->layer_config_ranges.find(range);
-                    ModelConfig  updated;
+                // The range as it would be stored: what it has, this call's settings, and what it still
+                // lacks -- every range has a layer height and an extruder, as the object list gives a new
+                // range them, the object's own height within the nozzle of the extruder that prints the
+                // range (complete_layer_range): the slicer reads a range's layer height unconditionally.
+                const DynamicPrintConfig active   = wxGetApp().preset_bundle->full_config();
+                const auto               existing = obj->layer_config_ranges.find(range);
+                const auto range_as_stored = [&]() {
+                    ModelConfig updated;
                     if (existing != obj->layer_config_ranges.end())
                         updated.assign_config(existing->second.get());
                     updated.apply(written);
-                    Slic3r::complete_layer_range(updated, wxGetApp().obj_list()->get_default_layer_config(object_id));
+                    Slic3r::complete_layer_range(updated, *obj, active);
+                    return updated;
+                };
+                ModelConfig updated = range_as_stored();
 
-                    // Only a range that really changes is written, after the snapshot undo takes it back
-                    // with: a snapshot for a no-op would discard the redo stack.
-                    if (existing == obj->layer_config_ranges.end() || existing->second.get() != updated.get()) {
-                        plater->take_snapshot("Change height range settings");
-                        obj->layer_config_ranges[range].assign_config(updated.get());
+                // A height the nozzle cannot print is refused, as the object list's range editor refuses
+                // it (ObjectList::edit_layer_range), against the extruder that prints the range: its own,
+                // else the object's. The key refused is the one that caused it -- the height this call set,
+                // else the extruder it moved the range to (OrcaMCP::layer_range_rejection).
+                const int object_extruder = obj->config.has("extruder") ? obj->config.extruder() : 0;
+                while (const auto rejection = layer_range_rejection(
+                           updated.opt_float("layer_height"),
+                           layer_height_limits(active, layer_range_filament(updated.opt_int("extruder"), object_extruder)),
+                           written.has("layer_height"), written.has("extruder"))) {
+                    written.erase(rejection->key);
+                    applied_keys.erase(std::remove(applied_keys.begin(), applied_keys.end(), rejection->key), applied_keys.end());
+                    invalid_keys.push_back(rejection->key);
+                    rejected_values.push_back({{"key", rejection->key},
+                                               {"reason", rejection->reason},
+                                               {"expected", rejection->key == "layer_height"
+                                                                ? "a number of mm within the printer's min_layer_height and max_layer_height"
+                                                                : "an extruder whose nozzle prints the range's layer height"}});
+                    updated = range_as_stored();
+                }
 
-                        // Notify UI of changes
-                        wxGetApp().obj_list()->changed_object(object_id);
-                        mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
-                        plater->update();
-                    }
+                // Only a range that really changes is written, after the snapshot undo takes it back with:
+                // a snapshot for a no-op would discard the redo stack.
+                if (!applied_keys.empty() &&
+                    (existing == obj->layer_config_ranges.end() || existing->second.get() != updated.get())) {
+                    plater->take_snapshot("Change height range settings");
+                    obj->layer_config_ranges[range].assign_config(updated.get());
+
+                    // Notify UI of changes
+                    wxGetApp().obj_list()->changed_object(object_id);
+                    mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
+                    plater->update();
                 }
 
                 // "error" when nothing at all was written -- a range with no settings on it is not the

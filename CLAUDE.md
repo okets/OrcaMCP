@@ -1022,7 +1022,8 @@ Item AC: upstream's `ObjectList::get_default_layer_config` (the defaults "Add he
 new range) also read the object's extruder, unused, falling back to the process preset's float
 `extruder`, which it does not have: on an object without an extruder of its own it dereferenced
 null and crashed the app. Ours returns `layer_range_defaults` (Model.cpp), the same defaults a
-loaded file's ranges are completed with, which MCP's `set_object_layer_range` uses too. On "no",
+loaded file's ranges are completed with, by the extruder that prints the range (the range's own,
+else the object's); MCP's `set_object_layer_range` completes through the same function. On "no",
 take upstream's and re-check "Add height range" on an object whose config has no `extruder`.
 
 Item AB: an object's name is in its G-code (the `; printing object` labels, `EXCLUDE_OBJECT` names,

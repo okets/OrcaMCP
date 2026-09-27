@@ -29,6 +29,18 @@ LayerHeightLimits layer_height_limits(const DynamicPrintConfig& printer, int fil
 // the limits.
 std::optional<std::string> layer_range_height_error(double layer_height, const LayerHeightLimits& limits);
 
+// Which key of a set_object_layer_range call to refuse, and why, when the range as it would be
+// stored has a `layer_height` its extruder's nozzle cannot print (`limits`, for the extruder that
+// prints the range): the height when the call set it, else the extruder when the call set that, else
+// none -- a height stored before is not this call's to refuse. nullopt: the range can print.
+struct LayerRangeRejection
+{
+    std::string key;
+    std::string reason;
+};
+std::optional<LayerRangeRejection> layer_range_rejection(double layer_height, const LayerHeightLimits& limits,
+                                                         bool wrote_layer_height, bool wrote_extruder);
+
 // set_object_layer_range's status for a call that gave `given` settings and wrote `applied` of them:
 // success when it wrote them all, partial when some, error when none -- a call that gave none too,
 // with a message saying so: it used to write nothing and say success.

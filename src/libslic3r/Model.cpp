@@ -3871,13 +3871,15 @@ bool model_has_advanced_features(const Model &model)
     return false;
 }
 
-DynamicPrintConfig layer_range_defaults(const ModelObject &object, const DynamicPrintConfig &active_config)
+DynamicPrintConfig layer_range_defaults(const ModelObject &object, const DynamicPrintConfig &active_config, int range_extruder)
 {
     double layer_height = object.config.has("layer_height") ? object.config.opt_float("layer_height")
                         : active_config.has("layer_height") ? active_config.opt_float("layer_height")
                                                             : print_config_def.get("layer_height")->get_default_value<ConfigOptionFloat>()->value;
     if (active_config.has("nozzle_diameter") && active_config.has("min_layer_height") && active_config.has("max_layer_height")) {
-        const int nozzle = std::max(1, object.config.has("extruder") ? object.config.extruder() : 1);
+        // The nozzle of the extruder that prints the range: its own, else the object's, else the first.
+        const int object_extruder = object.config.has("extruder") ? object.config.extruder() : 0;
+        const int nozzle          = std::max(1, range_extruder > 0 ? range_extruder : object_extruder);
         layer_height     = std::clamp(layer_height, Slicing::min_layer_height_from_nozzle(active_config, nozzle),
                                       Slicing::max_layer_height_from_nozzle(active_config, nozzle));
     }
@@ -3894,13 +3896,18 @@ void complete_layer_range(ModelConfig &range, const DynamicPrintConfig &defaults
             range.set_key_value(key, defaults.option(key)->clone());
 }
 
+void complete_layer_range(ModelConfig &range, const ModelObject &object, const DynamicPrintConfig &active_config)
+{
+    if (range.has("layer_height") && range.has("extruder"))
+        return;
+    const int range_extruder = range.has("extruder") ? range.opt_int("extruder") : 0;
+    complete_layer_range(range, layer_range_defaults(object, active_config, range_extruder));
+}
+
 void complete_layer_ranges(ModelObject &object, const DynamicPrintConfig &active_config)
 {
-    if (object.layer_config_ranges.empty())
-        return;
-    const DynamicPrintConfig defaults = layer_range_defaults(object, active_config);
     for (auto &[range, config] : object.layer_config_ranges)
-        complete_layer_range(config, defaults);
+        complete_layer_range(config, object, active_config);
 }
 
 void complete_layer_ranges(Model &model, const DynamicPrintConfig &active_config)

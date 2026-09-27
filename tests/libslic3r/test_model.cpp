@@ -84,6 +84,39 @@ TEST_CASE("A new layer range's height is one the object's nozzle can print", "[M
     CHECK_THAT(layer_range_defaults(*object, toolchanger).opt_float("layer_height"), Catch::Matchers::WithinAbs(0.5, 1e-9));
 }
 
+// A range can name its own extruder, and it prints at that extruder's nozzle: its default height is
+// clamped to that nozzle, not the object's. On a toolchanger with a 0.4 mm T1 and a 0.8 mm T2, a
+// range moved to T1 of an object printing at 0.5 mm on T2 kept 0.5 mm on the 0.4 mm nozzle.
+TEST_CASE("A layer range is completed within the nozzle of the extruder that prints it", "[Model][LayerRanges]")
+{
+    Model        model;
+    ModelObject* object = model.add_object();
+    object->config.set_key_value("extruder", new ConfigOptionInt(2));
+    object->config.set_key_value("layer_height", new ConfigOptionFloat(0.5));
+    const DynamicPrintConfig toolchanger = active_config(0.2, {0.4, 0.8}, {0.08, 0.2}, {0.0, 0.0});
+
+    ModelConfig on_t1;
+    on_t1.set_key_value("extruder", new ConfigOptionInt(1));
+    complete_layer_range(on_t1, *object, toolchanger);
+    CHECK_THAT(on_t1.opt_float("layer_height"), Catch::Matchers::WithinAbs(0.3, 1e-9));
+    CHECK(on_t1.opt_int("extruder") == 1);
+
+    // Extruder 0, or none, is the object's.
+    ModelConfig on_object;
+    on_object.set_key_value("sparse_infill_density", new ConfigOptionPercent(30));
+    complete_layer_range(on_object, *object, toolchanger);
+    CHECK_THAT(on_object.opt_float("layer_height"), Catch::Matchers::WithinAbs(0.5, 1e-9));
+    CHECK(on_object.opt_int("extruder") == 0);
+
+    // A model's ranges each by their own extruder.
+    object->layer_config_ranges[{1.0, 2.0}].assign_config(on_t1.get());
+    ModelConfig bare_t1;
+    bare_t1.set_key_value("extruder", new ConfigOptionInt(1));
+    object->layer_config_ranges[{3.0, 4.0}].assign_config(bare_t1);
+    complete_layer_ranges(model, toolchanger);
+    CHECK_THAT(object->layer_config_ranges.at({3.0, 4.0}).opt_float("layer_height"), Catch::Matchers::WithinAbs(0.3, 1e-9));
+}
+
 TEST_CASE("Completing a layer range adds what it lacks and keeps what it has", "[Model][LayerRanges]")
 {
     ModelConfig range;

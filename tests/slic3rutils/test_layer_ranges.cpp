@@ -90,3 +90,26 @@ TEST_CASE("a layer range write says success, partial or error by how much of it 
     CHECK(nothing.message.find("no settings") != std::string::npos);
     CHECK(nothing.message.find("unchanged") != std::string::npos);
 }
+
+// set_object_layer_range judges the range as it would be stored: its layer height against the nozzle
+// of the extruder that prints it. A range given only an extruder whose nozzle cannot print the
+// stored height is refused for the extruder, as an explicit height the nozzle cannot print is refused
+// for the height.
+TEST_CASE("a range write is refused for the key that makes its height unprintable", "[orcamcp][LayerRanges]")
+{
+    const LayerHeightLimits fine = layer_height_limits(printer(0.08, 0.28), /*filament=*/1);
+    CHECK_FALSE(layer_range_rejection(0.2, fine, /*wrote_layer_height=*/true, /*wrote_extruder=*/true).has_value());
+
+    const auto height = layer_range_rejection(0.5, fine, true, true);
+    REQUIRE(height.has_value());
+    CHECK(height->key == "layer_height");
+
+    const auto extruder = layer_range_rejection(0.5, fine, false, true);
+    REQUIRE(extruder.has_value());
+    CHECK(extruder->key == "extruder");
+    CHECK(extruder->reason.find("0.5") != std::string::npos);
+    CHECK(extruder->reason.find("0.28") != std::string::npos);
+
+    // A height this call set neither way (stored before) is not this call's to refuse.
+    CHECK_FALSE(layer_range_rejection(0.5, fine, false, false).has_value());
+}

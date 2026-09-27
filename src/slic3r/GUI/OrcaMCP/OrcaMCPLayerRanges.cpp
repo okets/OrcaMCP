@@ -46,6 +46,24 @@ std::optional<std::string> layer_range_height_error(double layer_height, const L
     return reason.str();
 }
 
+std::optional<LayerRangeRejection> layer_range_rejection(double layer_height, const LayerHeightLimits& limits,
+                                                         bool wrote_layer_height, bool wrote_extruder)
+{
+    const std::optional<std::string> error = layer_range_height_error(layer_height, limits);
+    if (!error)
+        return std::nullopt;
+    if (wrote_layer_height)
+        return LayerRangeRejection{"layer_height", *error};
+    if (wrote_extruder) {
+        std::ostringstream reason;
+        reason << std::setprecision(6) << "the range's layer height of " << layer_height << " mm is outside what this extruder's "
+               << "nozzle prints (min_layer_height " << limits.min << " mm to max_layer_height " << limits.max
+               << " mm): give the range a layer_height it can print too";
+        return LayerRangeRejection{"extruder", reason.str()};
+    }
+    return std::nullopt;
+}
+
 LayerRangeWriteStatus layer_range_write_status(size_t given, size_t applied)
 {
     if (given == 0)

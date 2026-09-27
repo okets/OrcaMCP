@@ -1546,7 +1546,10 @@ and `error` when none did, or when `settings` is empty (`message` says so). A ca
 
 **Every range has a `layer_height` and an `extruder`**, as the GUI's object list gives a new range
 them: the object's own layer height (its override, else the selected process preset's, within what
-its nozzle prints) and extruder `0` (the object's), unless `settings` gives them. A range without a
+the nozzle of the extruder that prints the range prints -- the range's own extruder, else the
+object's) and extruder `0` (the object's), unless `settings` gives them. The range as stored must
+print on that nozzle: an `extruder` whose nozzle cannot print the range's layer height is rejected
+too, in `rejected_values`, and the range keeps its extruder. A range without a
 layer height crashed the next slice, and a range a loaded file carries without one is completed the
 same way when its objects enter the scene. A
 `layer_height` the printer cannot print -- 0 or less, or outside its `min_layer_height` ..
