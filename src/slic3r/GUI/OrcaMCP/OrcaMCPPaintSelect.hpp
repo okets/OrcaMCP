@@ -168,4 +168,25 @@ FacetAssignment assign_connected(const TriangleMesh& mesh,
 // fit a mode and a project is state_mapping_error's question, not this one's.
 bool parse_state_mapping(const nlohmann::json& value, PaintStateMap& out, std::string& error);
 
+// ---- The one state a paint call names ------------------------------------------------------------
+//
+// paint_object reads a state under two pairs of names: `filament` / `state`, what to paint with, and
+// `match_filament` / `match_state`, whose facets selection "state" repaints. Colour mode takes the
+// first of each pair, a filament number; the other modes the second, a state name.
+struct StateParam
+{
+    const char* filament_key;
+    const char* state_key;
+    const char* purpose;        // how a message finishes "the filament ..." / "the state ..."
+    bool        must_be_a_slot; // a filament written must be a slot the project has; one matched need not
+};
+inline constexpr StateParam k_paint_with{"filament", "state", "to paint with", true};
+inline constexpr StateParam k_repaint_from{"match_filament", "match_state", "whose facets to repaint", false};
+
+// Reads `param`'s state out of `params` for `mode`, in a project with `slot_count` filament slots. A
+// number may come as a numeric string or a whole float, as every other integer parameter may. False,
+// with `error` naming the parameter and what it is for, when it is missing or cannot be that state.
+bool parse_state_param(const nlohmann::json& params, PaintMode mode, const StateParam& param, int slot_count, int& out,
+                       std::string& error);
+
 }}} // namespace Slic3r::GUI::OrcaMCP

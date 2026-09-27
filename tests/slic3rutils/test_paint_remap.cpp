@@ -193,3 +193,55 @@ TEST_CASE("a mapping whose keys or values are not whole numbers is refused, nami
     CHECK_FALSE(parse_state_mapping(nlohmann::json{{"-1", 2}}, mapping, error));
     CHECK_FALSE(parse_state_mapping(nlohmann::json::array({1, 2}), mapping, error));
 }
+
+// ---- the state a paint call names: one reader for `filament`/`state` and `match_filament`/`match_state`
+
+TEST_CASE("the filament to paint with must be an existing slot, or 0", "[orcamcp][PaintRemap]")
+{
+    int         state = -1;
+    std::string error;
+    REQUIRE(parse_state_param(nlohmann::json{{"filament", 3}}, PaintMode::Color, k_paint_with, /*slot_count=*/4, state, error));
+    CHECK(state == 3);
+    CHECK_FALSE(parse_state_param(nlohmann::json{{"filament", 6}}, PaintMode::Color, k_paint_with, 4, state, error));
+    CHECK(error.find("out of range 1..4") != std::string::npos);
+}
+
+TEST_CASE("the filament whose facets to repaint may be a stale one no slot has", "[orcamcp][PaintRemap]")
+{
+    int         state = -1;
+    std::string error;
+    REQUIRE(parse_state_param(nlohmann::json{{"match_filament", "9"}}, PaintMode::Color, k_repaint_from, /*slot_count=*/4, state, error));
+    CHECK(state == 9);
+    CHECK_FALSE(parse_state_param(nlohmann::json{{"match_filament", -1}}, PaintMode::Color, k_repaint_from, 4, state, error));
+    CHECK(error.find("match_filament") != std::string::npos);
+}
+
+TEST_CASE("a missing or malformed state parameter is named in the message, with what it is for", "[orcamcp][PaintRemap]")
+{
+    int         state = -1;
+    std::string error;
+    CHECK_FALSE(parse_state_param(nlohmann::json::object(), PaintMode::Color, k_repaint_from, 4, state, error));
+    CHECK(error.find("match_filament") != std::string::npos);
+    CHECK(error.find("whose facets to repaint") != std::string::npos);
+
+    CHECK_FALSE(parse_state_param(nlohmann::json{{"filament", "two"}}, PaintMode::Color, k_paint_with, 4, state, error));
+    CHECK(error.find("filament must be a whole number") != std::string::npos);
+
+    CHECK_FALSE(parse_state_param(nlohmann::json::object(), PaintMode::Support, k_paint_with, 4, state, error));
+    CHECK(error.find("needs state") != std::string::npos);
+    CHECK(error.find("to paint with") != std::string::npos);
+}
+
+TEST_CASE("outside colour mode the state is a name, read the same way for either parameter", "[orcamcp][PaintRemap]")
+{
+    int         state = -1;
+    std::string error;
+    REQUIRE(parse_state_param(nlohmann::json{{"match_state", "enforcer"}}, PaintMode::Support, k_repaint_from, 4, state, error));
+    CHECK(state == 1);
+    REQUIRE(parse_state_param(nlohmann::json{{"state", "blocker"}}, PaintMode::Seam, k_paint_with, 4, state, error));
+    CHECK(state == 2);
+    CHECK_FALSE(parse_state_param(nlohmann::json{{"match_state", "blocker"}}, PaintMode::FuzzySkin, k_repaint_from, 4, state, error));
+    CHECK(error.find("Unknown match_state for mode 'fuzzy_skin'") != std::string::npos);
+    CHECK_FALSE(parse_state_param(nlohmann::json{{"state", 1}}, PaintMode::Support, k_paint_with, 4, state, error));
+    CHECK(error.find("needs state") != std::string::npos);
+}

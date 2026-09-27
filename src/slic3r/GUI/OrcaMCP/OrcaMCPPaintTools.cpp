@@ -317,33 +317,7 @@ struct PaintRequest
 // the other three.
 bool parse_single_state(const nlohmann::json& params, PaintMode mode, int& out, std::string& error)
 {
-    if (mode == PaintMode::Color) {
-        if (!params.contains("filament")) {
-            error = "mode 'color' needs a `filament` (1-based slot, or 0 to unpaint)";
-            return false;
-        }
-        // Through parse_integer_param rather than get<int>: a client whose cached tool schema
-        // predates this tool sends "2" as a string, and get<int> would throw a nlohmann type_error
-        // instead of the message validate_color_slot exists to produce.
-        if (!parse_integer_param(params["filament"], out)) {
-            error = "filament must be a whole number: a 1-based slot, or 0 to unpaint";
-            return false;
-        }
-        return validate_color_slot(out, error);
-    }
-    if (!params.contains("state")) {
-        error = std::string("mode '") + paint_mode_name(mode) +
-                "' needs a `state`: none, enforcer" + (mode == PaintMode::FuzzySkin ? "" : " or blocker");
-        return false;
-    }
-    if (!parse_paint_state(mode, params["state"].get<std::string>(), out)) {
-        error = std::string("Unknown state for mode '") + paint_mode_name(mode) + "': expected none, enforcer" +
-                (mode == PaintMode::FuzzySkin
-                     ? " (fuzzy skin has no blocker: it is painted or it is not)"
-                     : " or blocker");
-        return false;
-    }
-    return true;
+    return parse_state_param(params, mode, k_paint_with, filament_slot_count(), out, error);
 }
 
 bool read_vec3(const nlohmann::json& value, Slic3r::Vec3d& out, const std::string& what, std::string& error)
@@ -747,48 +721,6 @@ nlohmann::json run_paint_remap(const nlohmann::json& params, const PaintRemapReq
     });
 }
 
-// The state paint_object's selection "state" repaints: match_filament in colour mode, match_state
-// in the other three.
-bool parse_matched_state(const nlohmann::json& params, PaintMode mode, int& out, std::string& error)
-{
-    if (mode == PaintMode::Color) {
-        if (!params.contains("match_filament") || !parse_integer_param(params["match_filament"], out) || out < 0) {
-            error = "selection 'state' in mode 'color' needs match_filament: the filament whose facets to repaint "
-                    "(0 = the unpainted ones)";
-            return false;
-        }
-        return true;
-    }
-    if (!params.contains("match_state") || !params["match_state"].is_string() ||
-        !parse_paint_state(mode, params["match_state"].get<std::string>(), out)) {
-        error = std::string("selection 'state' in mode '") + paint_mode_name(mode) +
-                "' needs match_state: the state whose facets to repaint (none, enforcer" +
-                (mode == PaintMode::FuzzySkin ? ")" : " or blocker)");
-        return false;
-    }
-    return true;
-}
-
-// What selection "state" paints them with: `filament` in colour mode, `state` in the other three.
-// Checked against the project in the first hop, with the rest of the mapping.
-bool parse_new_state(const nlohmann::json& params, PaintMode mode, int& out, std::string& error)
-{
-    if (mode == PaintMode::Color) {
-        if (!params.contains("filament") || !parse_integer_param(params["filament"], out)) {
-            error = "mode 'color' needs a `filament` (1-based slot, or 0 to unpaint)";
-            return false;
-        }
-        return true;
-    }
-    if (!params.contains("state") || !params["state"].is_string() ||
-        !parse_paint_state(mode, params["state"].get<std::string>(), out)) {
-        error = std::string("mode '") + paint_mode_name(mode) + "' needs a `state`: none, enforcer" +
-                (mode == PaintMode::FuzzySkin ? "" : " or blocker");
-        return false;
-    }
-    return true;
-}
-
 // paint_object with selection "state": every facet now in one state is painted with another. That is
 // a one-entry renumbering, so it runs as remap_paint does -- on the leaf triangles, so a facet a
 // gizmo split keeps exactly the parts that were in the matched state.
@@ -804,7 +736,8 @@ nlohmann::json paint_by_state(const nlohmann::json& params)
     int         from = 0;
     int         to   = 0;
     std::string error;
-    if (!parse_matched_state(params, mode, from, error) || !parse_new_state(params, mode, to, error))
+    if (!parse_state_param(params, mode, k_repaint_from, filament_slot_count(), from, error) ||
+        !parse_single_state(params, mode, to, error))
         return error_response(error);
     return run_paint_remap(params, {mode,
                                     {{from, to}},
