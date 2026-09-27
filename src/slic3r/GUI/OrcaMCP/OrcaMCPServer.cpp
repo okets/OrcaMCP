@@ -16,6 +16,7 @@
 #include "OrcaMCPQuit.hpp"
 #include "OrcaMCPSliceCredit.hpp"
 #include "OrcaMCPSliceProgress.hpp"
+#include "OrcaMCPToolArguments.hpp"
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Plater.hpp"
@@ -616,10 +617,14 @@ nlohmann::json OrcaMCPServer::handle_initialize(const nlohmann::json& params)
     };
 }
 
-nlohmann::json OrcaMCPServer::tool_list_entry(const ToolDefinition& tool)
+namespace {
+
+// A tool's inputSchema as tools/list publishes it, and as tools/call holds its arguments to: a
+// registration that leaves out additionalProperties takes no argument it does not declare.
+nlohmann::json listed_input_schema(const nlohmann::json& input_schema)
 {
     // Ensure schema is valid JSON Schema draft 2020-12
-    nlohmann::json schema = tool.input_schema;
+    nlohmann::json schema = input_schema;
 
     // Ensure additionalProperties is set (required for valid schema)
     if (!schema.contains("additionalProperties")) {
@@ -630,11 +635,17 @@ nlohmann::json OrcaMCPServer::tool_list_entry(const ToolDefinition& tool)
     if (!schema.contains("required")) {
         schema["required"] = nlohmann::json::array();
     }
+    return schema;
+}
 
+} // namespace
+
+nlohmann::json OrcaMCPServer::tool_list_entry(const ToolDefinition& tool)
+{
     return {
         {"name", tool.name},
         {"description", tool.description},
-        {"inputSchema", schema}
+        {"inputSchema", listed_input_schema(tool.input_schema)}
     };
 }
 
@@ -675,7 +686,9 @@ nlohmann::json OrcaMCPServer::handle_tools_call(const nlohmann::json& params)
     }
 
     std::string tool_name = params["name"];
-    nlohmann::json arguments = params.value("arguments", nlohmann::json::object());
+    // Absent and null both mean no arguments.
+    const nlohmann::json given     = params.value("arguments", nlohmann::json());
+    const nlohmann::json arguments = given.is_null() ? nlohmann::json::object() : given;
 
     const auto& tools = registered_tools();
     auto it = tools.find(tool_name);
@@ -685,6 +698,13 @@ nlohmann::json OrcaMCPServer::handle_tools_call(const nlohmann::json& params)
     if (it->second.bridge_only) {
         throw JsonRpcError(-32602, tool_name + " is answered by the OrcaMCP bridge (orcamcp-bridge.py), not by the "
                                    "app. Call it through the bridge.");
+    }
+    // Held to the schema tools/list publishes, before the handler: an argument it does not take would
+    // otherwise be ignored and the call report success, and a required one left out would reach a
+    // handler that reads it unchecked.
+    if (const auto refusal = tool_arguments_error(tool_name, listed_input_schema(it->second.input_schema), arguments)) {
+        BOOST_LOG_TRIVIAL(warning) << "OrcaMCPServer: '" << tool_name << "' refused: " << *refusal;
+        throw JsonRpcError(-32602, *refusal);
     }
     // After an undo or redo that failed partway only saving a copy and quitting are left.
     if (auto refusal = refusal_after_failed_jump(jump_failed_partway(), tool_name)) {
@@ -3378,9 +3398,8 @@ void OrcaMCPServer::register_builtin_tools()
             }}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
-            // Schema "required" is not enforced server-side and an unknown key used to be ignored in
-            // silence, so an agent asking for plate 2 was handed plate 1's numbers under plate 1's
-            // label. Parse it here, and reject a bad value rather than falling back to the selection.
+            // An agent asking for plate 2 must not be handed plate 1's numbers under plate 1's label:
+            // a bad value is rejected here rather than falling back to the selection.
             bool requested_plate = params.contains("plate_index") && !params["plate_index"].is_null();
             int  wanted_plate    = -1;
             // Through parse_integer_param, not is_number_integer(): a client whose JSON layer
@@ -3859,7 +3878,8 @@ void OrcaMCPServer::register_builtin_tools()
             {"required", {"x", "y"}}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
-            // Schema `required` is not enforced server-side, so every read is guarded.
+            // tools/call refuses a call without x or y (both are required); this keeps the read below
+            // safe for a caller that reaches the handler another way.
             if (!params.contains("x") || !params.contains("y"))
                 return nlohmann::json{{"status", "error"},
                                       {"message", "x and y are required, in plate millimetres"}};

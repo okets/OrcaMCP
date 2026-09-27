@@ -112,7 +112,8 @@ public:
     // tools/list: every registered tool except the bridge-only ones.
     static nlohmann::json handle_tools_list();
 
-    // tools/call. A missing or unknown tool name, or a bridge-only tool, throws OrcaMCP::JsonRpcError -32602.
+    // tools/call. A missing or unknown tool name, a bridge-only tool, and arguments the tool's listed
+    // schema refuses (OrcaMCPToolArguments.hpp) throw OrcaMCP::JsonRpcError -32602; the handler never runs.
     static nlohmann::json handle_tools_call(const nlohmann::json& params);
 
     // A tool as tools/list serves it: name, description and a normalised inputSchema.

@@ -131,14 +131,22 @@ auto* plater = wxGetApp().plater();  // Called on HTTP thread!
 
 ### Parameter Validation
 
-Validate early and throw clear errors:
+The schema is enforced before your handler runs (`OrcaMCPToolArguments.cpp`): `tools/call` refuses,
+with JSON-RPC -32602, an argument the schema does not declare, a `required` one left out, and
+arguments that are not an object. So:
+
+- **Declare every argument the handler reads.** Anything else is refused before the handler sees
+  it; an undeclared "legacy" spelling no longer reaches you.
+- **A required argument is always present** in the handler, so it may be read directly. An optional
+  one may be absent: read it with `value()` or behind `contains()`, never with `operator[]` on the
+  const `params` (that is undefined behaviour for a missing key).
+- **A nested object is checked only if its schema says `additionalProperties: false`** (and its
+  `required` keys always). Say so wherever the handler reads only the keys it declares; leave it out
+  where a caller may pass back an object a response gave it, with more fields than you read.
+- **Types, ranges and enums are yours to check**, with a clear message:
 
 ```cpp
-// Check required parameters
-if (!params.contains("object_id")) {
-    throw std::runtime_error("object_id is required");
-}
-
+// object_id is required, so it is there; its value is still the handler's to check.
 int object_id = params["object_id"].get<int>();
 
 // Validate range

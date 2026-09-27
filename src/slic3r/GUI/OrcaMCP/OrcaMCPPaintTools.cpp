@@ -1593,11 +1593,8 @@ void OrcaMCPServer::register_paint_tools()
                                                       "instance 0, so only instance_id: 0 is "
                                                       "meaningful here"}};
 
-                // params["points"] would be UB on a missing key (const operator[] asserts
-                // find != end(), and NDEBUG compiles that assert out in every non-Debug config
-                // this project ships) rather than throwing something the dispatcher could catch.
-                // Nothing validates `required` server-side, so this guard is load-bearing, not
-                // belt-and-suspenders.
+                // tools/call refuses a call without points (it is required), but not one whose points
+                // is not an array, which the loop below could not read.
                 if (!params.contains("points") || !params["points"].is_array())
                     return nlohmann::json{{"status", "error"},
                                           {"message", "points must be an array of {x, y, radius?}"}};

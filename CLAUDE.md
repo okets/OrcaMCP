@@ -144,6 +144,25 @@ generated from that registry:
 
 Regenerate the golden file with the command in "Adding New Tools", step 4, below.
 
+The schema is also what a call is held to. Before the handler runs, `tools/call` refuses with
+JSON-RPC **-32602** (`OrcaMCP::tool_arguments_error`, `OrcaMCPToolArguments.cpp`, against the schema
+as `tools/list` publishes it):
+
+- an argument the schema does not declare (every top-level schema says `additionalProperties: false`;
+  `tools/list` adds it where a registration leaves it out), and a key of a nested object whose own
+  schema says `additionalProperties: false` (`set_object_config`'s items, `set_object_layer_range`'s
+  settings, `transform_objects`' entries and their `position`/`rotation`/`scale`);
+- a required argument, or a nested object's required key, left out;
+- `arguments` that is not an object (absent and `null` both mean no arguments).
+
+The message names the tool, what is wrong, and what the object takes:
+`scale_object has no argument "scale". Its arguments: object_id, include_preview, preview_resolution, preview_views, uniform, x, y, z.`,
+`set_object_config: settings[0] has no key "unit". Its keys: key, value.` No type, range or enum is
+checked; that stays the handler's job, and a nested value is looked into only when it is what its
+schema describes (a settings list sent as its JSON text passes as it is). So a handler may read a
+required argument directly, and every argument it reads must be declared: any other is refused
+before the handler sees it.
+
 What the tests enforce, with no app running:
 
 - `tests/slic3rutils/test_mcp_tool_list.cpp` (`[orcamcp][tools]`, run by CI's unit-test jobs on
@@ -151,6 +170,10 @@ What the tests enforce, with no app running:
   - a registration without a category does not compile, and a duplicate name or an app tool
     without a handler throws;
   - `tools/call` refuses a bridge-only or unknown tool with JSON-RPC error -32602;
+  - `tests/slic3rutils/test_mcp_tool_arguments.cpp` (`[McpToolArguments][orcamcp][tools]`): every
+    app tool refuses an argument it does not take, and each required argument left out, with -32602
+    naming it, before its handler runs; the nested cases above; arguments that are not an object;
+    every required name is a declared property;
   - every summary is one line of at most 40 characters;
   - the golden file equals the registry: any name, category, summary, description or schema
     that differs fails, naming the tool and the field;
@@ -359,6 +382,7 @@ gh release upload v2.3.2.10 ./path/to/new/artifact.exe -R okets/OrcaMCP
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPMainThreadGate.hpp` | How a call hands work to the main thread and waits, and how quitting releases it: the gate is `QueuedCalls` (`src/slic3r/Utils/QueuedCall.hpp`), with `call_through` for a tool's json (see "Threading Model"; unit-tested in `tests/slic3rutils/test_mcp_shutdown.cpp`, `test_queued_call.cpp`) |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPQuit.cpp` | Quitting while a modal dialog is open: which dialogs are open, ending the innermost unanswered, holding the close until they are gone, and `quit_app`'s refusals (unit-tested in `tests/slic3rutils/test_mcp_quit.cpp`); the wx side (modal hook, turn timer) is `OrcaMCPQuitApp.cpp` |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPLoginServer.cpp` | Where the cloud login's callback is answered: a second port of the MCP server, on its thread (unit-tested in `tests/slic3rutils/test_http_server.cpp`) |
+| `src/slic3r/GUI/OrcaMCP/OrcaMCPToolArguments.cpp` | Which tool calls reach a handler: an argument the tool's schema does not declare, a required one left out, or arguments that are not an object are refused with -32602 (see "Tool list"; unit-tested in `tests/slic3rutils/test_mcp_tool_arguments.cpp`) |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPRequestGuard.cpp` | Which requests the server answers: no web page's and no DNS-rebound one on `/mcp`, login callbacks only where a login listens (see "Security"; unit-tested in `tests/slic3rutils/test_mcp_request_guard.cpp`) |
 | `src/slic3r/Utils/ThreadCancel.cpp` | The per-request cancel check a quit applies to blocking network calls on the HTTP thread (unit-tested in `tests/slic3rutils/test_thread_cancel.cpp`) |
 | `src/slic3r/GUI/GUI_App.cpp` | MCP route registration, HTTP server startup, and the shutdown order (`stop_http_server`) |
@@ -426,6 +450,10 @@ register_tool({
 
 The category is one of CLAUDE.md's tool-table rows (`OrcaMCPServer::ToolCategory`). A second tool
 with the same name, or one without a handler, throws when the registry is built.
+
+Declare every argument the handler reads: `tools/call` refuses any other, and a `required` one left
+out, before the handler runs (see "Tool list"). A nested object is held to its keys only when its
+schema says `additionalProperties: false`; add it wherever the handler reads nothing else.
 
 ### 2. Implement the handler
 

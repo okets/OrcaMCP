@@ -19,6 +19,11 @@ finished slice stays finished. The object and scene tools say which it was with 
 `set_prime_tower_position`, `set_mixed_filament`), the painting tools with `annotation_changed`, the
 resets with their counts.
 
+**A call is held to the tool's schema.** An argument a tool does not take, a required one left out,
+or arguments that are not an object are refused before the tool runs, with JSON-RPC error -32602
+naming the problem and what the tool takes -- never ignored, so a misspelled argument cannot turn
+into a call that reports success and changes nothing. See [Error Handling](#error-handling).
+
 ## Quick Reference Table
 
 | Category | Tools |
@@ -2803,22 +2808,46 @@ Many tools return an `active_warnings` section in their response, providing visi
 
 ## Error Handling
 
-All tools return errors in JSON-RPC format:
+A tool that ran and could not do what it was asked answers normally, with `"status": "error"` and a
+`message` in its result. A call that never reached the tool is a JSON-RPC error instead.
+
+**Arguments the tool's schema does not allow** are refused before the tool runs, with -32602. The
+message names the tool, what is wrong, and every argument (or, inside a nested object, every key)
+it takes, required ones first:
+
 ```json
-{
-  "error": {
-    "code": -32602,
-    "message": "Invalid params: object_id is required"
-  }
-}
+{"jsonrpc": "2.0", "id": 7, "error": {"code": -32602,
+ "message": "scale_object has no argument \"scale\". Its arguments: object_id, include_preview, preview_resolution, preview_views, uniform, x, y, z."}}
 ```
 
-Common error codes:
+| The call | The message |
+|----------|-------------|
+| An argument the tool does not take | `scale_object has no argument "scale". Its arguments: ...` |
+| A required argument left out | `get_object_info is missing its required argument "object_id". Its arguments: object_id.` |
+| A misspelled required argument (both at once) | `scale_object has no argument "objectid" and is missing its required argument "object_id". Its arguments: ...` |
+| A tool that takes no arguments | `get_slicing_status has no argument "plate". It takes no arguments.` |
+| A key a nested object does not take | `set_object_config: settings[0] has no key "unit". Its keys: key, value.` |
+| A nested object's required key left out | `apply_config: settings[0] is missing its required key "type". Its keys: type, key, value.` |
+| `arguments` that is not an object | `get_server_info's arguments must be a JSON object of named arguments; got array.` |
+
+Absent and `null` `arguments` both mean no arguments. Nested objects are checked where their schema
+says `additionalProperties: false`: `set_object_config`'s items, `set_object_layer_range`'s
+`settings` items, and `transform_objects`' entries and their `position`/`rotation`/`scale`.
+Others take any key: a render's
+`views` and a paint call's `bands` may be passed back with the extra fields the response carried.
+Types, ranges and enum values are not checked here; the tool reports those itself.
+
+JSON-RPC error codes:
 | Code | Meaning |
 |------|---------|
-| -32602 | Invalid parameters |
-| -32603 | Internal error |
-| -32601 | Unknown tool |
+| -32700 | The request is not valid JSON |
+| -32600 | Not a JSON-RPC 2.0 request, or not a POST |
+| -32601 | Unknown JSON-RPC method (not a tool: an unknown tool is -32602) |
+| -32602 | Invalid params: an unknown or bridge-only tool, or arguments the tool's schema refuses (above) |
+| -32603 | Internal error: the tool failed unexpectedly; the message names it |
+| -32001 | OrcaMCP is still starting up; retry in a few seconds |
+| -32002 | OrcaMCP is quitting, so the call was not run; `start_orca` starts it again |
+| -32003 | Refused: the request came from a web page (`Origin`) or named another host (`Host`) |
 
 ---
 
