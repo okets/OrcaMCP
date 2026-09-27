@@ -1,7 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
-#include <cmath>
 #include <optional>
 #include <string>
 #include <vector>
@@ -15,6 +15,7 @@
 // anyway, and on Flashforge a send starts the print.
 
 using namespace Slic3r::GUI::OrcaMCP;
+using Catch::Matchers::WithinAbs;
 
 namespace {
 std::vector<std::string> codes(const std::vector<GcodeCheckProblem>& problems)
@@ -119,8 +120,8 @@ TEST_CASE("a toolpath above the printable height is refused with the heights tha
     CHECK(problems.front().words.find("the printable height is 20 mm") != std::string::npos);
 
     const nlohmann::json summary = gcode_check_json(problems);
-    CHECK(summary["highest_layer_z_mm"] == 20.5);
-    CHECK(summary["printable_height_mm"] == 20.);
+    CHECK_THAT(summary["highest_layer_z_mm"].get<double>(), WithinAbs(20.5, 1e-9));
+    CHECK_THAT(summary["printable_height_mm"].get<double>(), WithinAbs(20., 1e-9));
     REQUIRE(summary.contains("hint"));
     CHECK(summary["hint"].get<std::string>().find("raft_layers") != std::string::npos);
 
@@ -164,6 +165,6 @@ TEST_CASE("the highest layer is read from the result's extrusions, and only when
     result.gcode_check_result.error_code = 1 << 3;
     const GcodeCheckInput check = gcode_check_input(result);
     REQUIRE(check.highest_layer_z.has_value());
-    CHECK(std::abs(*check.highest_layer_z - 20.5) < 1e-6);
-    CHECK(check.printable_height == 20.);
+    CHECK_THAT(*check.highest_layer_z, WithinAbs(20.5, 1e-6)); // print_z is a float
+    CHECK_THAT(check.printable_height, WithinAbs(20., 1e-6));
 }
