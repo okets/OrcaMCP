@@ -900,7 +900,7 @@ The `count` field is always present (even when 0) to help confirm issues have be
 |----------|---------|-------------|
 | `ORCAMCP_HOST` | `localhost` | OrcaSlicer HTTP server host. The app listens on 127.0.0.1 only, so this is `localhost` or `127.0.0.1`; another machine cannot reach it |
 | `ORCAMCP_PORT` | `13618` | OrcaSlicer HTTP server port |
-| `ORCAMCP_TIMEOUT` | `120` | Request timeout in seconds |
+| `ORCAMCP_TIMEOUT` | `120` | Request timeout in seconds. It also bounds how long a tool waits for its arrange or orient: the bridge sends `wait_for_slice`'s cap with every tool call, as `params._meta["orcamcp/wait_cap_s"]` (see "Waiting for a UI job") |
 | `ORCAMCP_DEBUG` | (unset) | Enable debug logging to stderr |
 | `ORCAMCP_SKIP_CLOUD_LOGIN` | (set by `start_orca`) | App-side: marks an agent launch (`GUI::is_agent_launch()`), so startup waits on nothing a person must answer. It skips the Orca cloud silent sign-in, which reads the keychain synchronously on the GUI thread (on macOS a permission prompt per freshly built binary), and the recent-project thumbnails, which open every recent 3MF on the GUI thread (for projects in `~/Documents`, a macOS privacy prompt per fresh binary). Home then shows the projects listed before the launch without thumbnails; projects saved or opened during the session get theirs. Either prompt, unanswered, blocks the app before the MCP server starts. Set it yourself when launching the app for an agent. |
 
