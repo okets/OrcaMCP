@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -277,7 +278,8 @@ void refresh_after_paint(const PaintTarget& target)
     plater->update();
 }
 
-// How many filament slots the project has: the bound every colour write is checked against.
+// How many filament slots the project has: the bound every colour write is checked against. GUI
+// thread only -- it reads the preset bundle -- so every caller is inside a run_on_main_thread hop.
 int filament_slot_count() { return int(wxGetApp().preset_bundle->filament_presets.size()); }
 
 // A filament slot a caller asked to paint with. 0 means "unpainted" -- back to whatever filament
@@ -579,8 +581,11 @@ std::vector<std::string> paint_prerequisite_messages(const Slic3r::ModelObject& 
 // One renumbering: remap_paint's mapping, or paint_object's selection "state" (a single entry).
 struct PaintRemapRequest
 {
-    PaintMode      mode = PaintMode::Color;
-    PaintStateMap  mapping;
+    PaintMode mode = PaintMode::Color;
+    // Reads the mapping, given the project's filament slot count, or says why it cannot ("" when it
+    // can). Called in the first hop, on the GUI thread: the slot count is the preset bundle's, which
+    // only the GUI thread may read.
+    std::function<std::string(int slot_count, PaintStateMap& mapping)> read_mapping;
     std::string    snapshot_name; // the undo entry the write makes
     nlohmann::json extra;         // what the calling tool adds to the response, e.g. its selection
 };
@@ -642,12 +647,16 @@ nlohmann::json run_paint_remap(const nlohmann::json& params, const PaintRemapReq
     const PaintTargetNeeds needs{/*volumes=*/true, /*instance=*/false};
     PaintPlan              plan;
     std::vector<PaintData> base;
-    nlohmann::json gate = run_on_main_thread([&params, &request, &needs, &plan, &base]() -> nlohmann::json {
+    PaintStateMap          mapping;
+    nlohmann::json gate = run_on_main_thread([&params, &request, &needs, &plan, &base, &mapping]() -> nlohmann::json {
         PaintTarget target;
         std::string error;
         if (!resolve_paint_target(params, target, error, needs))
             return error_response(error);
-        if (const std::string refusal = state_mapping_error(request.mode, request.mapping, filament_slot_count()); !refusal.empty())
+        const int slot_count = filament_slot_count();
+        if (const std::string refusal = request.read_mapping(slot_count, mapping); !refusal.empty())
+            return error_response(refusal);
+        if (const std::string refusal = state_mapping_error(request.mode, mapping, slot_count); !refusal.empty())
             return error_response(refusal);
         for (std::size_t i = 0; i < target.volumes.size(); ++i)
             if (target.volumes[i]->mesh().its.indices.empty())
@@ -661,11 +670,11 @@ nlohmann::json run_paint_remap(const nlohmann::json& params, const PaintRemapReq
 
     std::vector<PaintRemapWrite> writes(plan.volumes.size());
     for (std::size_t i = 0; i < plan.volumes.size(); ++i)
-        if (!build_remap_write(*plan.volumes[i].mesh, base[i], request.mapping, writes[i]))
+        if (!build_remap_write(*plan.volumes[i].mesh, base[i], mapping, writes[i]))
             return error_response("volume_id " + std::to_string(plan.volumes[i].volume_id) +
                                   ": the renumbering does not fit its paint, so nothing was changed");
 
-    return run_on_main_thread([&params, &request, &needs, &plan, &base, &writes]() -> nlohmann::json {
+    return run_on_main_thread([&params, &request, &needs, &plan, &base, &writes, &mapping]() -> nlohmann::json {
         PaintTarget target;
         std::string error;
         // Coordinate-free: a move since the first hop changes nothing it computed, so only the volumes,
@@ -705,14 +714,14 @@ nlohmann::json run_paint_remap(const nlohmann::json& params, const PaintRemapReq
                                  {"object_id", target.object_id},
                                  {"object_name", target.object->name},
                                  {"mode", paint_mode_name(request.mode)},
-                                 {"mapping", mapping_json(request.mapping)},
+                                 {"mapping", mapping_json(mapping)},
                                  {"annotation_changed", changed},
                                  {"facets_before", facet_counts_json(writes, /*after=*/false)},
                                  {"facets_after", facet_counts_json(writes, /*after=*/true)},
                                  {"volumes", volumes}};
         result.update(request.extra);
         if (request.mode == PaintMode::Color)
-            if (const std::vector<std::string> notes = unpainted_filament_notes(target, plan, writes, request.mapping); !notes.empty())
+            if (const std::vector<std::string> notes = unpainted_filament_notes(target, plan, writes, mapping); !notes.empty())
                 result["notes"] = notes;
         // What paint_object says for every other selection: painted supports need enable_support, ...
         if (const std::vector<std::string> messages = paint_prerequisite_messages(*target.object, request.mode); !messages.empty())
@@ -733,16 +742,17 @@ nlohmann::json paint_by_state(const nlohmann::json& params)
     if (params.contains("replace") && (!parse_boolean_param(params["replace"], replace) || replace))
         return error_response("selection 'state' repaints only the facets in that state and keeps the rest, so replace "
                               "must be false or omitted");
-    int         from = 0;
-    int         to   = 0;
-    std::string error;
-    if (!parse_state_param(params, mode, k_repaint_from, filament_slot_count(), from, error) ||
-        !parse_single_state(params, mode, to, error))
-        return error_response(error);
-    return run_paint_remap(params, {mode,
-                                    {{from, to}},
-                                    _u8L("Paint Object") + " (" + paint_mode_name(mode) + ")",
-                                    {{"selection", "state"}}});
+    const auto read_states = [params, mode](int slot_count, PaintStateMap& mapping) -> std::string {
+        int         from = 0;
+        int         to   = 0;
+        std::string error;
+        if (!parse_state_param(params, mode, k_repaint_from, slot_count, from, error) ||
+            !parse_state_param(params, mode, k_paint_with, slot_count, to, error))
+            return error;
+        mapping = {{from, to}};
+        return {};
+    };
+    return run_paint_remap(params, {mode, read_states, _u8L("Paint Object") + " (" + paint_mode_name(mode) + ")", {{"selection", "state"}}});
 }
 
 } // namespace
@@ -1370,7 +1380,11 @@ void OrcaMCPServer::register_paint_tools()
                 return error_response(params.contains("mapping") ? error
                                                                  : "mapping is required: old filament -> new filament, "
                                                                    "e.g. {\"1\": 2, \"2\": 3}");
-            return run_paint_remap(params, {PaintMode::Color, mapping, _u8L("Remap Paint") + " (color)", nlohmann::json::object()});
+            const auto parsed = [mapping](int /*slot_count: state_mapping_error checks it*/, PaintStateMap& out) {
+                out = mapping;
+                return std::string();
+            };
+            return run_paint_remap(params, {PaintMode::Color, parsed, _u8L("Remap Paint") + " (color)", nlohmann::json::object()});
         }
     });
 
