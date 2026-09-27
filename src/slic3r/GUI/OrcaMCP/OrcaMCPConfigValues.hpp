@@ -58,8 +58,13 @@ nlohmann::json selected_presets_json(const ConfigSources& sources);
 //           the `type` apply_config takes for it. A filament key has one value per slot.
 //   dirty:  {print|printer: {key: {saved}}, filament: {key: {slots, saved}}}, for the keys whose value
 //           differs from the saved preset. Omitted when none does.
-//   not_in_presets: keys no selected preset nor the project carries. Omitted when empty.
-// dirty_only keeps only the dirty keys.
+//   not_judged: {keys, reason} for project keys, which have no saved preset to compare with, so
+//           neither "dirty" nor its absence says anything about them. Omitted when none was asked.
+//   not_in_presets: known keys that belong to no preset type nor the project (an object-only key).
+//           Omitted when empty.
+// A key's group comes from its preset type (Preset::print_options and the others), not from whether
+// one config happens to carry it. dirty_only keeps only the dirty keys; project keys it cannot judge
+// are still listed under not_judged.
 nlohmann::json config_values_json(const ConfigSources& sources, const std::vector<std::string>& keys, bool dirty_only);
 
 // Every unsaved change: {print|printer: {key: {value, saved}}, filament: {key: {slots, value, saved}}}.

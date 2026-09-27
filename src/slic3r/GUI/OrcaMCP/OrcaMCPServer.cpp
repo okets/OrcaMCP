@@ -961,9 +961,11 @@ void OrcaMCPServer::register_builtin_tools()
         "printer or project, the type apply_config takes for it. dirty names the ones whose value "
         "differs from the saved preset, with the saved value (for a filament setting, the slots whose "
         "preset the Filament tab is editing); dirty_only keeps only those, and with no keys lists every "
-        "unsaved change. Values are the slicer's text, as get_edited_presets shows them and apply_config "
-        "accepts them. An unknown key is an error naming it (get_valid_config_keys lists valid ones); a "
-        "known key no selected preset carries is listed under not_in_presets.",
+        "unsaved change of the presets. Project settings have no saved preset to compare with, so they "
+        "are listed under not_judged instead. Values are the slicer's text, as get_edited_presets shows "
+        "them and apply_config accepts them. An unknown key is an error naming it (get_valid_config_keys "
+        "lists valid ones); a known key that belongs to no preset type nor the project (an object-only "
+        "setting) is listed under not_in_presets.",
         {
             {"type", "object"},
             {"properties", {

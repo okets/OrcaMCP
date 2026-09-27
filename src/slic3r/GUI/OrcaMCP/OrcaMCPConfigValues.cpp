@@ -1,6 +1,7 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPConfigValues.cpp
 #include "OrcaMCPConfigValues.hpp"
 
+#include <algorithm>
 #include <set>
 
 #include "OrcaMCPConfigKeys.hpp"
@@ -31,17 +32,24 @@ bool carries(const DynamicPrintConfig* config, const std::string& key) { return 
 
 const DynamicPrintConfig* config_of(const Preset* preset) { return preset != nullptr ? &preset->config : nullptr; }
 
-// The project keys first (filament_colour is the plate's, not a filament preset's default), then the
-// presets in the order apply_config's types are usually meant, then anything else the project holds.
+bool one_of(const std::vector<std::string>& options, const std::string& key)
+{
+    return std::find(options.begin(), options.end(), key) != options.end();
+}
+
+// A key's group, by the preset type that defines it, so a slot whose preset is gone does not hide
+// every filament key. The project keys first (filament_colour is the plate's, not a filament preset's
+// default), then anything else the project holds. A key in two types' lists (inherits,
+// compatible_printers) is read from the first.
 ConfigSource source_of(const ConfigSources& sources, const std::string& key)
 {
-    if (project_keys.count(key) != 0 && carries(sources.project, key))
+    if (project_keys.count(key) != 0)
         return ConfigSource::project;
-    if (carries(config_of(sources.print.edited), key))
+    if (one_of(Preset::print_options(), key))
         return ConfigSource::print;
-    if (!sources.filaments.empty() && carries(config_of(sources.filaments.front().edited), key))
+    if (one_of(Preset::filament_options(), key))
         return ConfigSource::filament;
-    if (carries(config_of(sources.printer.edited), key))
+    if (one_of(Preset::printer_options(), key))
         return ConfigSource::printer;
     if (carries(sources.project, key))
         return ConfigSource::project;
@@ -163,9 +171,10 @@ nlohmann::json selected_presets_json(const ConfigSources& sources)
 nlohmann::json config_values_json(const ConfigSources& sources, const std::vector<std::string>& keys, bool dirty_only)
 {
     const DirtyKeys       dirty_keys(sources);
-    nlohmann::json        values  = nlohmann::json::object();
-    nlohmann::json        dirty   = nlohmann::json::object();
-    nlohmann::json        missing = nlohmann::json::array();
+    nlohmann::json        values     = nlohmann::json::object();
+    nlohmann::json        dirty      = nlohmann::json::object();
+    nlohmann::json        missing    = nlohmann::json::array();
+    nlohmann::json        not_judged = nlohmann::json::array();
     std::set<std::string> seen;
     for (const std::string& key : keys) {
         if (!seen.insert(key).second)
@@ -175,6 +184,7 @@ nlohmann::json config_values_json(const ConfigSources& sources, const std::vecto
         switch (source) {
         case ConfigSource::none: missing.push_back(key); break;
         case ConfigSource::project:
+            not_judged.push_back(key);
             if (!dirty_only)
                 values[group][key] = value_or_null(sources.project, key);
             break;
@@ -204,6 +214,8 @@ nlohmann::json config_values_json(const ConfigSources& sources, const std::vecto
     nlohmann::json result = {{"status", "success"}, {"values", values}};
     if (!dirty.empty())
         result["dirty"] = dirty;
+    if (!not_judged.empty())
+        result["not_judged"] = {{"keys", not_judged}, {"reason", "project settings have no saved preset to compare with"}};
     if (!missing.empty())
         result["not_in_presets"] = missing;
     return result;

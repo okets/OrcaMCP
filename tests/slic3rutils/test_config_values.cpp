@@ -250,3 +250,33 @@ TEST_CASE("a changed credential is reported dirty without either value", "[orcam
     CHECK(everything.find("old-credential") == std::string::npos);
     CHECK(everything.find("new-credential") == std::string::npos);
 }
+
+TEST_CASE("a project setting is never judged dirty or clean, and says so", "[orcamcp][ConfigValues]")
+{
+    SelectedPresets      presets;
+    const nlohmann::json report = config_values_json(presets.sources(), {"filament_colour", "support_type"}, false);
+
+    CHECK(report["values"]["project"]["filament_colour"] == "#FF0000;#00FF00");
+    CHECK(report["not_judged"]["keys"] == nlohmann::json::array({"filament_colour"}));
+    CHECK(report["not_judged"]["reason"] == "project settings have no saved preset to compare with");
+}
+
+TEST_CASE("dirty_only lists a project setting it cannot judge instead of dropping it", "[orcamcp][ConfigValues]")
+{
+    SelectedPresets      presets;
+    const nlohmann::json report = config_values_json(presets.sources(), {"filament_colour"}, /*dirty_only=*/true);
+
+    CHECK(report["values"].empty());
+    CHECK(report["not_judged"]["keys"] == nlohmann::json::array({"filament_colour"}));
+}
+
+TEST_CASE("a filament setting is recognised even when slot 1's preset is gone", "[orcamcp][ConfigValues]")
+{
+    SelectedPresets presets;
+    ConfigSources   sources = presets.sources();
+    sources.filaments[0]    = {"Deleted PLA", nullptr, nullptr, false};
+
+    const nlohmann::json report = config_values_json(sources, {"filament_type"}, false);
+    CHECK(report["values"]["filament"]["filament_type"] == nlohmann::json::array({nullptr, "PETG"}));
+    CHECK_FALSE(report.contains("not_in_presets"));
+}

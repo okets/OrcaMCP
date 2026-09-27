@@ -1097,7 +1097,11 @@ takes for it. A filament setting has one value per slot.
 |-------|---------|
 | `values` | `print`, `filament`, `printer` and `project` groups, present only when a key lives there. Values are the slicer's text, as `get_edited_presets` shows them and `apply_config` accepts them. A print-host credential is `"<redacted>"` (or `""`), never its value |
 | `dirty` | The keys whose value differs from the saved preset, with the saved value. For a filament key: `slots`, the slots whose preset the Filament tab is editing, and their `saved` value. Omitted when nothing differs. With `dirty_only` and no `keys`, every unsaved change as `{key: {value, saved}}` (filament: `{slots, value, saved}`) |
-| `not_in_presets` | Known keys that no selected preset nor the project carries (an object-only key such as `extruder`) |
+| `not_judged` | `{keys, reason}` for the project settings asked for: they have no saved preset to compare with, so neither `dirty` nor its absence says anything about them. Listed with `dirty_only` too, rather than dropped |
+| `not_in_presets` | Known keys that belong to no preset type nor the project (an object-only key such as `extruder`) |
+
+A key's group comes from the preset type that defines it, so a filament setting is still recognised
+when a slot's preset no longer exists (its value there is `null`).
 
 A dozen keys cost well under 1 KB. An unknown key is an error naming it, in `unknown_keys`;
 `get_valid_config_keys` lists the valid ones.
