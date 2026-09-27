@@ -278,6 +278,18 @@ std::optional<std::string> flatten_refusal(int object_id, bool printable, size_t
     return std::nullopt;
 }
 
+std::optional<std::string> flatten_selection_refusal(int object_id, size_t instances, const std::map<int, std::set<int>>& selected)
+{
+    std::set<int> every_instance;
+    for (size_t i = 0; i < instances; ++i)
+        every_instance.insert(int(i));
+    if (selected.size() == 1 && selected.begin()->first == object_id && selected.begin()->second == every_instance)
+        return std::nullopt;
+    return "the 3D view has not caught up with object " + std::to_string(object_id) +
+           " yet, so the orient would not be this object alone, and was not started: show the Prepare tab, then call "
+           "flatten_object again";
+}
+
 bool valid_scale_factors(const Vec3d& factors)
 {
     return std::all_of(factors.data(), factors.data() + 3, [](double f) { return std::isfinite(f) && f > 0.0; });

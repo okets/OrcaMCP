@@ -5282,13 +5282,24 @@ void OrcaMCPServer::register_builtin_tools()
 
                 // This object alone: the orient job orients the selection (PREPARE_STATE_DEFAULT), as the
                 // toolbar's Orient does. PREPARE_STATE_MENU is the whole current plate, which is what this
-                // used to orient.
+                // used to orient. The selection is made in the 3D view, brought up to date first: a view
+                // that postponed its reload while hidden has no volumes for an object it has not caught up
+                // with, and would select nothing.
+                bool        view_current = false;
+                GLCanvas3D* view         = OrcaMCPPlateUtils::SceneCanvas(view_current);
+                if (view == nullptr)
+                    return error_response("the 3D view is not available, so nothing can be selected to orient");
                 {
                     // Selecting it is not an edit: otherwise an undo step of its own, before Orient's.
                     Plater::SuppressSnapshots selection_is_not_an_edit(plater);
-                    plater->get_view3D_canvas3D()->get_selection().add_object(unsigned(object_id), /*as_single_selection=*/true);
+                    view->get_selection().add_object(unsigned(object_id), /*as_single_selection=*/true);
                     wxGetApp().obj_list()->update_selections();
                 }
+                // Never started on anything but exactly this object: on an empty selection the job
+                // orients every object.
+                if (const auto refusal = flatten_selection_refusal(object_id, object->instances.size(),
+                                                                   view->get_selection().get_content()))
+                    return error_response(*refusal);
                 plater->set_prepare_state(Job::PREPARE_STATE_DEFAULT);
                 plater->orient();
 

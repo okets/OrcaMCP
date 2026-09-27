@@ -822,8 +822,10 @@ is `"status": "orient_started"`, and `get_object_info` shows the result once it 
 
 Refused, with nothing selected or changed, when the job would not orient this object alone: another
 job (an arrange or an orient) is still running; the object is marked not printable, which the orient
-job leaves out (and, finding nothing selected, would orient every other object instead); or every
-instance of it is on a locked plate. Each message says what to do instead.
+job leaves out (and, finding nothing selected, would orient every other object instead); every
+instance of it is on a locked plate; or the 3D view has not caught up with the object (it postpones
+its scene reloads while another tab is shown, and this call first asks it to catch up), so the
+selection is not exactly this object. Each message says what to do instead.
 
 ---
 

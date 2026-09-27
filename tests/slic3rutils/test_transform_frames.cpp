@@ -8,6 +8,9 @@
 #include "libslic3r/TriangleMesh.hpp"
 
 #include <cmath>
+#include <map>
+#include <set>
+#include <string>
 #include <vector>
 
 // The frame the transform tools move, rotate, scale and mirror in. The handlers themselves need a
@@ -591,4 +594,20 @@ TEST_CASE("flatten_object orients an object only when the orient job would orien
     CHECK(flatten_refusal(2, true, /*instances=*/0, 0, false) == "object 2 has no instance to orient");
     CHECK(flatten_refusal(2, true, /*instances=*/2, /*on_locked_plates=*/2, false) ==
           "object 2 is on a locked plate, which is never oriented: unlock the plate, or turn it with rotate_object");
+}
+
+TEST_CASE("flatten_object starts the orient job only on a selection of exactly the named object", "[orcamcp][transform_frames]")
+{
+    // A 3D view whose reload is still postponed has no volumes for a new object: selecting it leaves
+    // the selection empty, and the orient job, finding nothing selected, orients every object.
+    using Slic3r::GUI::OrcaMCP::flatten_selection_refusal;
+    using Selected = std::map<int, std::set<int>>;
+    CHECK_FALSE(flatten_selection_refusal(2, 2, Selected{{2, {0, 1}}}).has_value());
+    const std::string not_in_view =
+        "the 3D view has not caught up with object 2 yet, so the orient would not be this object alone, and was "
+        "not started: show the Prepare tab, then call flatten_object again";
+    CHECK(flatten_selection_refusal(2, 2, Selected{}) == not_in_view);
+    CHECK(flatten_selection_refusal(2, 2, Selected{{2, {0}}}) == not_in_view);
+    CHECK(flatten_selection_refusal(2, 1, Selected{{1, {0}}}) == not_in_view);
+    CHECK(flatten_selection_refusal(2, 1, Selected{{1, {0}}, {2, {0}}}) == not_in_view);
 }
