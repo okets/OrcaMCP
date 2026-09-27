@@ -5231,8 +5231,10 @@ void OrcaMCPServer::register_builtin_tools()
         ToolCategory::Transforms,
         "Lay an object flat on its best face",
         "Orient one object to lay flat on its best face for printing, the way the GUI's Orient does for a "
-        "selection: the object is selected and turned, and no other object moves. It runs in the "
-        "background (status orient_started); get_object_info shows the result once it has finished.",
+        "selection: the object replaces the current selection and is turned, and no other object moves. "
+        "An instance on a locked plate is not turned (instances_left_on_locked_plates lists them), though "
+        "the drop of the object back onto the bed still moves it up or down with the others. It runs in "
+        "the background (status orient_started); get_object_info shows the result once it has finished.",
         {
             {"type", "object"},
             {"properties", {
@@ -5270,14 +5272,15 @@ void OrcaMCPServer::register_builtin_tools()
 
                 const ModelObject* object = model.objects[object_id];
                 PartPlateList&     plates = plater->get_partplate_list();
-                size_t             on_locked_plates = 0;
+                // The orient job skips an instance on a locked plate and turns the rest.
+                std::vector<int> on_locked_plates;
                 for (size_t i = 0; i < object->instances.size(); ++i) {
                     const int plate = plates.find_instance(object_id, int(i));
                     if (plate >= 0 && plate < plates.get_plate_count() && plates.is_locked(plate))
-                        ++on_locked_plates;
+                        on_locked_plates.push_back(int(i));
                 }
-                if (const auto refusal = flatten_refusal(object_id, object->printable, object->instances.size(), on_locked_plates,
-                                                         !plater->get_ui_job_worker().is_idle()))
+                if (const auto refusal = flatten_refusal(object_id, object->printable, object->instances.size(),
+                                                         on_locked_plates.size(), !plater->get_ui_job_worker().is_idle()))
                     return error_response(*refusal);
 
                 // This object alone: the orient job orients the selection (PREPARE_STATE_DEFAULT), as the
@@ -5306,6 +5309,7 @@ void OrcaMCPServer::register_builtin_tools()
                 nlohmann::json result = {
                     {"status", "orient_started"},
                     {"object_id", object_id},
+                    {"instances_left_on_locked_plates", on_locked_plates},
                     {"active_warnings", get_active_warnings_json(plater)}
                 };
 

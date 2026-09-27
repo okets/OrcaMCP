@@ -815,17 +815,22 @@ Orient one object to lay flat on its best face, the way the GUI's **Orient** doe
 | `object_id` | integer | Yes | Object index |
 | `include_preview` | boolean | No | Include preview |
 
-The object is selected and turned (every instance of it); no other object moves. Before v2.5.0.6
-this oriented every object on the current plate. The orient runs in the background: the response
-is `"status": "orient_started"`, and `get_object_info` shows the result once it has finished. One
-`undo` puts the object back.
+The object replaces the current selection and is turned; no other object moves. Before v2.5.0.6
+this oriented every object on the current plate. Every instance of the object is turned except one on
+a locked plate, which the orient job does not turn: `instances_left_on_locked_plates` lists those
+instance ids (empty when there are none), so a partly locked object can come out turned on one plate
+and not on another. Such an instance is not left entirely alone, though: the orient job drops the
+object back onto the bed by its first instance's new bottom, and moves every instance by that
+amount, the locked ones too, which can leave one floating or sunk into the bed. The orient runs in the background: the response is `"status": "orient_started"`,
+and `get_object_info` shows the result once it has finished. One `undo` puts the object back; it
+comes back selected.
 
-Refused, with nothing selected or changed, when the job would not orient this object alone: another
-job (an arrange or an orient) is still running; the object is marked not printable, which the orient
-job leaves out (and, finding nothing selected, would orient every other object instead); every
-instance of it is on a locked plate; or the 3D view has not caught up with the object (it postpones
-its scene reloads while another tab is shown, and this call first asks it to catch up), so the
-selection is not exactly this object. Each message says what to do instead.
+Refused, with nothing oriented, when the job would not orient this object alone: another job (an
+arrange or an orient) is still running; the object is marked not printable, which the orient job
+leaves out (and, finding nothing selected, would orient every other object instead); every instance
+of it is on a locked plate; or the 3D view has not caught up with the object (it postpones its scene
+reloads while another tab is shown, and this call first asks it to catch up), so the selection is
+not exactly this object. Each message says what to do instead.
 
 ---
 
