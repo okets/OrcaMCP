@@ -291,22 +291,23 @@ LayerAtHeight layer_nearest_z(const std::vector<GcodeLayer>& layers, double z)
 {
     if (layers.empty())
         throw std::runtime_error("the plate's G-code has no layers");
-    // G-code heights come from floats written to a thousandth, so two distances this close are the same
-    // distance, and a height between two layers goes to the lower one.
-    const double  same = k_gcode_height_tolerance / 2.;
+    // A layer at exactly the height asked for wins. Otherwise the nearest does, and distances within
+    // half the thousandth the G-code writes heights to are the same distance, so a height between two
+    // layers goes to the lower one; real layers can be a thousandth apart, so that is as wide as it gets.
+    const double exact = 1e-6, same = 0.0005;
+    double       best  = std::numeric_limits<double>::max();
+    for (const GcodeLayer& layer : layers)
+        best = std::min(best, std::abs(layer.z - z));
+    const double  reach = best < exact ? exact : best + same;
     LayerAtHeight hit;
-    double        best = std::numeric_limits<double>::max();
-    for (size_t i = 0; i < layers.size(); ++i) {
-        const double d = std::abs(layers[i].z - z);
-        const bool   closer = d < best - same;
-        const bool   tie_lower = std::abs(d - best) <= same && layers[i].z < layers[hit.index].z;
-        if (closer || tie_lower) {
-            best      = d;
-            hit.index = i;
-        }
-    }
+    bool          found = false;
     for (size_t i = 0; i < layers.size(); ++i)
-        if (i != hit.index && std::abs(layers[i].z - layers[hit.index].z) < same)
+        if (std::abs(layers[i].z - z) <= reach && (!found || layers[i].z < layers[hit.index].z - exact)) {
+            hit.index = i;
+            found     = true;
+        }
+    for (size_t i = 0; i < layers.size(); ++i)
+        if (i != hit.index && std::abs(layers[i].z - layers[hit.index].z) < exact)
             hit.also_at.push_back(int(i) + 1);
     return hit;
 }

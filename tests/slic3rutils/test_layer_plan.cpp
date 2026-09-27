@@ -138,10 +138,20 @@ TEST_CASE("a height exactly between two layers goes to the lower, whatever float
     // layer is 4e-8 nearer to 0.8 than the lower. Such a difference is noise, not a nearer layer.
     const std::vector<GcodeLayer> layers = layers_at({double(float(0.7)), double(float(0.9))});
     CHECK(layer_nearest_z(layers, 0.8).index == 0);
-    // Heights the G-code rounds to a thousandth: 0.3 is still "between" 0.2 and 0.4005.
-    CHECK(layer_nearest_z(layers_at({0.2, 0.4005}), 0.3).index == 0);
+    // Heights the G-code rounds to a thousandth: 0.3 is still "between" 0.2 and 0.4004.
+    CHECK(layer_nearest_z(layers_at({0.2, 0.4004}), 0.3).index == 0);
     // A real difference still decides.
     CHECK(layer_nearest_z(layers, 0.81).index == 1);
+}
+
+TEST_CASE("real layers a thousandth apart are told apart, and an exact height always wins", "[orcamcp][LayerPlan]")
+{
+    const std::vector<GcodeLayer> layers = layers_at({2.280, 2.281});
+    CHECK(layer_nearest_z(layers, 2.280).index == 0);
+    CHECK(layer_nearest_z(layers, 2.281).index == 1);    // exact: never lost to a tie
+    CHECK(layer_nearest_z(layers, 2.2805).index == 0);   // between: the lower
+    CHECK(layer_nearest_z(layers, 2.2809).index == 1);   // 0.0001 from one, 0.0009 from the other
+    CHECK(layer_nearest_z(layers, 2.281).also_at.empty());  // a thousandth apart is not the same height
 }
 
 TEST_CASE("a height a by-object print reaches twice names the other layer", "[orcamcp][LayerPlan]")
