@@ -21,7 +21,7 @@ dedicated section below yet.
 | **Layer Ranges** | `get_object_layer_ranges`, `set_object_layer_range`, `delete_object_layer_range` |
 | **Filaments & colour** | `get_filaments`, `set_object_filament`, `set_mixed_filament`, `delete_mixed_filament`, `set_filament_color`, `get_flush_volumes`, `set_flush_volumes`, `auto_calc_flush_volumes`, `get_toolchanger_config`, `suggest_color_mix`, `get_color_palette` |
 | **Painting** | `paint_object`, `get_object_paint`, `clear_object_paint`, `set_brim_ears`, `get_object_components`, `pick_facet` |
-| **Slicing** | `slice_all`, `get_slicing_status`, `export_gcode`, `get_print_estimate` |
+| **Slicing** | `slice_all`, `wait_for_slice` (bridge-only), `get_slicing_status`, `export_gcode`, `get_print_estimate` |
 | **Visualization** | `render_plate_view`, `get_preview_base64`, `set_gcode_view_type` |
 | **Printers** | `get_printers`, `select_printer`, `add_physical_printer`, `discover_printers`, `send_to_printer`, `get_printer_status`, `printer_control`, `list_printer_files`, `print_printer_file`, `match_project_to_printer` |
 | **Adaptive** | `apply_adaptive_layer_height`, `clear_adaptive_layer_height` |
@@ -2492,7 +2492,7 @@ Common error codes:
 
 ## Bridge Tools
 
-These tools are handled by the MCP bridge script (`orcamcp-bridge.py`), not the OrcaSlicer server. They work even when OrcaSlicer is not running.
+These tools are handled by the MCP bridge script (`orcamcp-bridge.py`), not the OrcaSlicer server. `start_orca` works even when OrcaSlicer is not running; `wait_for_slice` needs it running, but waits in the bridge so the app stays free to answer other calls.
 
 ### start_orca
 Start the OrcaMCP application. Use this when OrcaMCP is not running.
@@ -2545,6 +2545,53 @@ Start the OrcaMCP application. Use this when OrcaMCP is not running.
 - `%LOCALAPPDATA%\Programs\OrcaMCP\orca-mcp.exe`
 
 *Override:* Set `ORCAMCP_APP_PATH` environment variable to specify a custom path.
+
+### wait_for_slice
+Wait until the running slice is over, instead of polling `get_slicing_status`. Call it right after
+`slice_all`: the bridge polls `get_slicing_status` every 1.5 s and returns when nothing is slicing
+any more, or at the timeout.
+
+**Parameters:**
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `timeout_s` | number | No | Longest wait in seconds, at least 1. Default and ceiling: the cap |
+
+**The cap** is `ORCAMCP_TIMEOUT` minus 15 s, and at least 5 s: 105 s at the default 120 s. While
+it waits the bridge answers nothing else (its stdio loop is single-threaded: no ping, no cancel), so
+the wait stays under the longest time a user has said one call may take. A longer `timeout_s` is
+cut to the cap and the response says `timeout_capped: true`. A slice that outlasts the cap needs
+another call; each poll's own HTTP request is bounded by what is left of the wait, and a poll the
+app is too busy to answer does not end it.
+
+**Example:**
+```json
+{"name": "wait_for_slice", "arguments": {"timeout_s": 60}}
+```
+
+**Returns:**
+```json
+{
+  "status": "success",
+  "outcome": "done",
+  "timed_out": false,
+  "waited_s": 12.4,
+  "polls": 9,
+  "timeout_s": 60,
+  "timeout_cap_s": 105,
+  "slicing_status": {"is_slicing": false, "state": "done", "plates": [{"index": 0, "slice_result_valid": true, "percent": 100}], "slice_run": {"outcome": "done", "...": "..."}}
+}
+```
+
+| `outcome` | Meaning |
+|-----------|---------|
+| `done` | Every plate the last `slice_all` asked for has a slice result (without a `slice_all` this session: the selected plate has one) |
+| `ended_early` | Slice All stopped before its last plate; `message` is the app's reason |
+| `incomplete` | The run is over and some of its plates have no result, or no longer exist (a plate-list change cancels Slice All); `message` names them |
+| `not_slicing` | Nothing was slicing and the selected plate has no result: `slice_all` was never called, or could not start |
+| `timed_out` | Still slicing at the timeout (`timed_out: true`); call it again |
+
+`slicing_status` is `get_slicing_status`'s last answer (`null` if the app answered no poll in
+time). An app that is not running, or that fails the status call, ends the wait with an error.
 
 ### Tool list freshness
 

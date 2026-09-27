@@ -29,6 +29,7 @@ Configuration (Claude Code):
 
 import sys
 import json
+import math
 import os
 import socket
 import subprocess
@@ -109,6 +110,9 @@ ORCAMCP_HOST = os.environ.get("ORCAMCP_HOST", "localhost")
 ORCAMCP_PORT = int(os.environ.get("ORCAMCP_PORT", "13618"))
 ORCAMCP_URL = f"http://{ORCAMCP_HOST}:{ORCAMCP_PORT}/mcp"
 TIMEOUT = int(os.environ.get("ORCAMCP_TIMEOUT", "120"))  # 2 minute default for slicing
+
+# What a tool call gets while nothing answers at ORCAMCP_URL.
+NOT_RUNNING_MESSAGE = "OrcaMCP is not running. Use the 'start_orca' tool to start it, then try again."
 
 # Server info for when OrcaMCP isn't connected
 # Version is omitted since we don't know the actual OrcaMCP version
@@ -489,10 +493,147 @@ def call_start_orca(request_id, arguments: dict) -> dict:
     return make_success_response(request_id, make_tool_error_result(result["message"]))
 
 
+# wait_for_slice. Its text is the C++ registration's, served from orcamcp_tools.json; these are the
+# numbers that text states.
+WAIT_FOR_SLICE_HEADROOM_S = 15               # the cap sits this far below ORCAMCP_TIMEOUT
+WAIT_FOR_SLICE_MIN_CAP_S = 5
+WAIT_FOR_SLICE_POLL_S = 1.5                  # between two get_slicing_status calls
+WAIT_FOR_SLICE_POLL_TIMEOUT_S = (1.0, 10.0)  # one poll's own HTTP timeout: (least, most)
+# The outcomes the app's get_slicing_status reports in slice_run.outcome once a run is over.
+FINISHED_SLICE_OUTCOMES = ("done", "ended_early", "incomplete")
+
+
+class AppBusy(Exception):
+    """A poll the app did not answer in time. It serves one request at a time, so the wait goes on."""
+
+
+class AppUnavailable(Exception):
+    """A call that ends a wait: the app is down, refused the call, or answered something unreadable."""
+
+
+def wait_for_slice_cap() -> float:
+    """The longest wait_for_slice waits. The bridge answers nothing else meanwhile -- not a ping, not a
+    cancel -- so the wait stays under ORCAMCP_TIMEOUT, the longest a user has said one call may take."""
+    return max(WAIT_FOR_SLICE_MIN_CAP_S, TIMEOUT - WAIT_FOR_SLICE_HEADROOM_S)
+
+
+def parse_wait_timeout(value, cap: float) -> tuple:
+    """(seconds, capped, error) for wait_for_slice's timeout_s. Absent means the cap. A numeric string
+    is read as a number, as the app's own parameters are for a client with a stale schema."""
+    if value is None:
+        return cap, False, None
+    seconds = None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        seconds = float(value)
+    elif isinstance(value, str):
+        try:
+            seconds = float(value)
+        except ValueError:
+            pass
+    if seconds is None or not math.isfinite(seconds) or seconds < 1:
+        return None, False, f"timeout_s must be a number of seconds, at least 1 (got {value!r})"
+    return min(seconds, cap), seconds > cap, None
+
+
+def call_app_tool(name: str, arguments: dict, timeout: float) -> dict:
+    """One tools/call to the app, and its decoded result. Raises AppBusy for a call it did not answer
+    within `timeout`, and AppUnavailable for everything that ends a wait."""
+    request = {"jsonrpc": "2.0", "id": name, "method": "tools/call",
+               "params": {"name": name, "arguments": arguments}}
+    try:
+        reply = post_to_app(request, timeout)
+    except urllib.error.HTTPError as e:
+        raise AppUnavailable(f"OrcaSlicer answered with HTTP {e.code} ({e.reason}) at {ORCAMCP_URL}.")
+    except (socket.timeout, TimeoutError):
+        raise AppBusy()
+    except urllib.error.URLError as e:
+        if _verdict_for_exception(e) == DOWN:
+            raise AppUnavailable(NOT_RUNNING_MESSAGE)
+        raise AppBusy()
+    except json.JSONDecodeError as e:
+        raise AppUnavailable(f"Invalid JSON response from OrcaSlicer: {e}")
+    if "error" in reply:
+        raise AppUnavailable(f"{name} failed: {reply['error'].get('message', reply['error'])}")
+    try:
+        return json.loads(reply["result"]["content"][0]["text"])
+    except (KeyError, IndexError, TypeError, json.JSONDecodeError):
+        raise AppUnavailable(f"{name} answered with a result wait_for_slice cannot read.")
+
+
+def poll_timeout(remaining: float) -> float:
+    """One status poll's HTTP timeout: what is left of the wait, within WAIT_FOR_SLICE_POLL_TIMEOUT_S."""
+    least, most = WAIT_FOR_SLICE_POLL_TIMEOUT_S
+    return min(most, max(least, remaining))
+
+
+def slice_outcome(status: dict) -> tuple:
+    """(outcome, message) for a status that says nothing is slicing. The app judges a slice_all run
+    itself (slice_run.outcome); without one, the selected plate's result is all there is to go on."""
+    run = status.get("slice_run") or {}
+    if run.get("outcome") in FINISHED_SLICE_OUTCOMES:
+        return run["outcome"], run.get("message")
+    if status.get("state") == "done":
+        return "done", None
+    return "not_slicing", ("Nothing is slicing, and the selected plate has no slice result: call slice_all "
+                           "to start a slice.")
+
+
+def timed_out_message(timeout_s: float, status) -> str:
+    if status is None:
+        return (f"OrcaSlicer answered no status poll within {timeout_s:g} s: it serves one request at a "
+                f"time and was busy. Call wait_for_slice again.")
+    return f"Still slicing after {timeout_s:g} s. Call wait_for_slice again to keep waiting."
+
+
+def run_wait_for_slice(timeout_s: float) -> dict:
+    """Poll get_slicing_status until nothing is slicing or timeout_s has passed, and report which."""
+    started = time.monotonic()
+    deadline = started + timeout_s
+    status, polls = None, 0
+    while True:
+        try:
+            status = call_app_tool("get_slicing_status", {}, poll_timeout(deadline - time.monotonic()))
+            polls += 1
+        except AppBusy:
+            pass
+        finished = status is not None and not status.get("is_slicing", False)
+        remaining = deadline - time.monotonic()
+        if finished or remaining <= 0:
+            break
+        time.sleep(min(WAIT_FOR_SLICE_POLL_S, remaining))
+
+    outcome, message = slice_outcome(status) if finished else ("timed_out", timed_out_message(timeout_s, status))
+    report = {"status": "success", "outcome": outcome, "timed_out": not finished}
+    if message:
+        report["message"] = message
+    report.update(waited_s=round(time.monotonic() - started, 1), polls=polls, slicing_status=status)
+    return report
+
+
+def call_wait_for_slice(request_id, arguments: dict) -> dict:
+    """wait_for_slice: answered here, because a wait inside the app would stall every other call."""
+    cap = wait_for_slice_cap()
+    timeout_s, capped, error = parse_wait_timeout((arguments or {}).get("timeout_s"), cap)
+    if error:
+        return make_success_response(request_id, make_tool_error_result(error))
+    try:
+        report = run_wait_for_slice(timeout_s)
+    except AppUnavailable as e:
+        return make_success_response(request_id, make_tool_error_result(str(e)))
+    report.update(timeout_s=timeout_s, timeout_cap_s=cap)
+    if capped:
+        report["timeout_capped"] = True
+    return make_success_response(request_id, {
+        "content": [{"type": "text", "text": json.dumps(report)}],
+        "isError": False
+    })
+
+
 # The bridge's own tools. Their text is in orcamcp_tools.json's bridge_tools; every name there has a
 # handler here and nothing else does (scripts/tests/test_bridge_tool_lists.py).
 BRIDGE_HANDLERS = {
     "start_orca": call_start_orca,
+    "wait_for_slice": call_wait_for_slice,
 }
 
 
@@ -564,9 +705,7 @@ def handle_local_request(request: dict) -> dict | None:
 
     elif method == "tools/call":
         # start_orca is handled above, so any tool call here is for an unavailable tool
-        return make_success_response(request_id, make_tool_error_result(
-            f"OrcaMCP is not running. Use the 'start_orca' tool to start it, then try again."
-        ))
+        return make_success_response(request_id, make_tool_error_result(NOT_RUNNING_MESSAGE))
 
     # For other methods, return a graceful error
     return make_success_response(request_id, make_tool_error_result(
@@ -609,6 +748,25 @@ def normalize_paths_for_windows(request: dict) -> dict:
     return request
 
 
+def post_to_app(request: dict, timeout: float) -> dict:
+    """POST one JSON-RPC request to OrcaSlicer and return its decoded reply. Raises whatever urlopen
+    and json raise: send_request turns those into JSON-RPC errors, wait_for_slice into its own."""
+    req = urllib.request.Request(
+        ORCAMCP_URL,
+        data=json.dumps(request).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        method="POST"
+    )
+    log_debug(f"Sending request: {request.get('method', 'unknown')}")
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        response_data = response.read().decode("utf-8")
+    log_debug(f"Response received: {len(response_data)} bytes")
+    return json.loads(response_data)
+
+
 def send_request(request: dict) -> dict:
     """Send JSON-RPC request to OrcaSlicer HTTP server"""
     request_id = request.get("id", 0)
@@ -616,28 +774,12 @@ def send_request(request: dict) -> dict:
     # Normalize paths for Windows before sending
     request = normalize_paths_for_windows(request)
 
-    data = json.dumps(request).encode("utf-8")
-
-    req = urllib.request.Request(
-        ORCAMCP_URL,
-        data=data,
-        headers={
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        },
-        method="POST"
-    )
-
     try:
-        log_debug(f"Sending request: {request.get('method', 'unknown')}")
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as response:
-            response_data = response.read().decode("utf-8")
-            log_debug(f"Response received: {len(response_data)} bytes")
-            result = json.loads(response_data)
-            # Ensure response has proper id
-            if "id" not in result or result["id"] is None:
-                result["id"] = request_id
-            return result
+        result = post_to_app(request, TIMEOUT)
+        # Ensure response has proper id
+        if "id" not in result or result["id"] is None:
+            result["id"] = request_id
+        return result
     except urllib.error.HTTPError as e:
         log_debug(f"HTTP error: {e}")
         return make_error_response(

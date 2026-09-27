@@ -245,21 +245,25 @@ TEST_CASE("The tool-name check also reads plain text", "[orcamcp][tools]")
 
 // ==================== BRIDGE-ONLY TOOLS ====================
 //
-// start_orca launches the app, so the app cannot serve it; orcamcp-bridge.py answers it. Its text
-// still lives in the registry, with every other tool's, so it exists in exactly one place.
+// start_orca launches the app, so the app cannot serve it, and wait_for_slice waits on it, which the
+// app's one request thread cannot do without stalling every other call; orcamcp-bridge.py answers
+// both. Their text still lives in the registry, with every other tool's, so it exists in one place.
 
-TEST_CASE("start_orca is registered as a bridge-only tool", "[orcamcp][tools]")
+TEST_CASE("start_orca and wait_for_slice are registered as bridge-only tools", "[orcamcp][tools]")
 {
     const auto& tools = OrcaMCPServer::registered_tools();
     REQUIRE(tools.count("start_orca") == 1);
-    const ToolDefinition& start_orca = tools.at("start_orca");
-    CHECK(start_orca.bridge_only);
-    CHECK(start_orca.category == ToolCategory::Info);
+    REQUIRE(tools.count("wait_for_slice") == 1);
+    CHECK(tools.at("start_orca").bridge_only);
+    CHECK(tools.at("start_orca").category == ToolCategory::Info);
+    CHECK(tools.at("wait_for_slice").bridge_only);
+    CHECK(tools.at("wait_for_slice").category == ToolCategory::Slicing);
 
-    size_t bridge_only = 0;
+    std::set<std::string> bridge_only;
     for (const auto& [name, tool] : tools)
-        bridge_only += tool.bridge_only ? 1 : 0;
-    CHECK(bridge_only == 1);
+        if (tool.bridge_only)
+            bridge_only.insert(name);
+    CHECK(bridge_only == std::set<std::string>{"start_orca", "wait_for_slice"});
 }
 
 TEST_CASE("tools/list leaves bridge-only tools to the bridge", "[orcamcp][tools]")
@@ -301,8 +305,9 @@ TEST_CASE("A call to an unknown tool is a JSON-RPC invalid-params error, not an 
 
 TEST_CASE("get_server_info names the bridge-only tools", "[orcamcp][tools]")
 {
-    CHECK(get_server_info().at("bridge_only") == nlohmann::json::array({"start_orca"}));
-    CHECK(get_server_info({{"section", "all"}}).at("bridge_only") == nlohmann::json::array({"start_orca"}));
+    const nlohmann::json bridge_tools = nlohmann::json::array({"start_orca", "wait_for_slice"});
+    CHECK(get_server_info().at("bridge_only") == bridge_tools);
+    CHECK(get_server_info({{"section", "all"}}).at("bridge_only") == bridge_tools);
 }
 
 // ==================== THE GOLDEN TOOLS FILE ====================
@@ -404,7 +409,7 @@ TEST_CASE("The golden file lists app tools and bridge-only tools apart", "[orcam
         bridge_names.insert(tool.at("name").get<std::string>());
 
     CHECK(server_names.count("get_scene_info") == 1);
-    CHECK(bridge_names == std::set<std::string>{"start_orca"});
+    CHECK(bridge_names == std::set<std::string>{"start_orca", "wait_for_slice"});
     for (const std::string& name : bridge_names)
         CHECK(server_names.count(name) == 0);
     CHECK(server_names.size() + bridge_names.size() == OrcaMCPServer::registered_tools().size());

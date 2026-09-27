@@ -4986,6 +4986,35 @@ void OrcaMCPServer::register_bridge_tools()
             {"properties", nlohmann::json::object()}
         }
     });
+
+    // wait_for_slice - the bridge polls get_slicing_status, so an agent whose harness blocks sleep
+    // does not have to. Bridge-side because the app serves one request at a time (HttpServer.cpp):
+    // a wait inside it would stall every other call for as long as the slice runs.
+    register_bridge_tool({
+        "wait_for_slice",
+        ToolCategory::Slicing,
+        "Wait for the running slice to finish",
+        "Wait until the running slice is over, instead of polling get_slicing_status: call it after "
+        "slice_all. It returns when the run ends, or after timeout_s. outcome is done (every plate the "
+        "run sliced has a result), ended_early or incomplete (slicing_status.slice_run.message says "
+        "which plates and why), not_slicing (nothing was running and the selected plate has no result), "
+        "or timed_out (still slicing: call it again). slicing_status is get_slicing_status's final "
+        "answer, with each plate's percent. The wait is capped at ORCAMCP_TIMEOUT minus 15 s (105 s at "
+        "the default 120 s), because the bridge answers nothing else while it waits; timeout_cap_s "
+        "reports the cap applied.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"timeout_s", {
+                    {"type", "number"},
+                    {"minimum", 1},
+                    {"description", "Longest wait in seconds. Default and ceiling: the cap (ORCAMCP_TIMEOUT "
+                                    "minus 15 s, 105 s by default). A longer value is capped, and the "
+                                    "response says so with timeout_capped."}
+                }}
+            }}
+        }
+    });
 }
 
 }} // namespace Slic3r::GUI
