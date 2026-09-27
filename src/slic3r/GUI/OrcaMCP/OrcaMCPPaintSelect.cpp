@@ -365,8 +365,7 @@ bool parse_state_mapping(const nlohmann::json& value, PaintStateMap& out, std::s
     return true;
 }
 
-bool parse_state_param(const nlohmann::json& params, PaintMode mode, const StateParam& param, int slot_count, int& out,
-                       std::string& error)
+bool parse_state_param(const nlohmann::json& params, PaintMode mode, const StateParam& param, int& out, std::string& error)
 {
     if (mode == PaintMode::Color) {
         const std::string key = param.filament_key;
@@ -377,18 +376,8 @@ bool parse_state_param(const nlohmann::json& params, PaintMode mode, const State
         // Through parse_integer_param rather than get<int>: a client whose cached tool schema predates
         // the parameter sends "2" as a string, and get<int> would throw a type_error instead.
         int value = 0;
-        if (!parse_integer_param(params[key], value)) {
-            error = key + " must be a whole number: a 1-based slot, or 0 for unpainted";
-            return false;
-        }
-        // Judged by this call's own finding, never by what `error` held on entry.
-        const std::string refusal =
-            param.must_be_a_slot ? color_slot_error(value, slot_count)
-            : value < 0 || value > max_paint_state()
-                ? key + " " + std::to_string(value) + " is not a state a facet can hold (0.." + std::to_string(max_paint_state()) + ")"
-                : std::string();
-        if (!refusal.empty()) {
-            error = refusal;
+        if (!parse_integer_param(params[key], value) || value < 0) {
+            error = key + " must be a whole number of 0 or more: a 1-based slot, or 0 for unpainted";
             return false;
         }
         out = value;

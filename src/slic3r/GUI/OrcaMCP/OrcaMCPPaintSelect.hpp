@@ -177,16 +177,16 @@ struct StateParam
 {
     const char* filament_key;
     const char* state_key;
-    const char* purpose;        // how a message finishes "the filament ..." / "the state ..."
-    bool        must_be_a_slot; // a filament written must be a slot the project has; one matched need not
+    const char* purpose; // how a message finishes "the filament ..." / "the state ..."
 };
-inline constexpr StateParam k_paint_with{"filament", "state", "to paint with", true};
-inline constexpr StateParam k_repaint_from{"match_filament", "match_state", "whose facets to repaint", false};
+inline constexpr StateParam k_paint_with{"filament", "state", "to paint with"};
+inline constexpr StateParam k_repaint_from{"match_filament", "match_state", "whose facets to repaint"};
 
-// Reads `param`'s state out of `params` for `mode`, in a project with `slot_count` filament slots. A
-// number may come as a numeric string or a whole float, as every other integer parameter may. False,
-// with `error` naming the parameter and what it is for, when it is missing or cannot be that state.
-bool parse_state_param(const nlohmann::json& params, PaintMode mode, const StateParam& param, int slot_count, int& out,
-                       std::string& error);
+// Reads `param`'s state out of `params` for `mode`: its shape only, from the call alone, on any thread.
+// Whether a filament is a slot the project has, or a state a facet can hold, is checked where the
+// project is at hand (color_slot_error, state_mapping_error). A number may come as a numeric string or
+// a whole float, as every other integer parameter may. False, with `error` naming the parameter and
+// what it is for, when it is missing or cannot be read as one.
+bool parse_state_param(const nlohmann::json& params, PaintMode mode, const StateParam& param, int& out, std::string& error);
 
 }}} // namespace Slic3r::GUI::OrcaMCP
