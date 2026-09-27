@@ -74,6 +74,12 @@ std::shared_ptr<HttpServer::Response> json_response(const nlohmann::json& body)
 
 bool contains(const std::string& text, const std::string& part) { return text.find(part) != std::string::npos; }
 
+// True when `reply` is the sign-in's answer: the one outcome a closed login route must never give.
+// Closed, a route answers 404 (the guard), refuses the connection, or resets one the kernel had queued
+// on the listener when the server's thread closed it: stop_listening() changes the route at once, but
+// the listener closes later, on that thread (HttpServer::replace_also). Which refusal is timing.
+bool served_by_sign_in(const std::string& reply) { return contains(reply, "\"login\":"); }
+
 // A sign-in handler that records what it was asked, and answers with its provider.
 struct FakeSignIn
 {
@@ -280,6 +286,7 @@ TEST_CASE("a cloud login moves between ports without stopping, moving or re-rout
     const unsigned short mcp_port = free_loopback_port();
     HttpServer           mcp(mcp_port);
     LoginCallbackServer  login(mcp, sign_in.handler(), "orca", quit_gate);
+    mcp.set_request_guard(app_request_guard(mcp_port, [&login](boost::asio::ip::port_type port) { return login.listens_on(port); }));
     mcp.set_request_handler(app_routes(login, [] { return json_response({{"mcp", true}}); }));
     mcp.start();
     auto check_mcp_untouched = [&] {
@@ -301,7 +308,9 @@ TEST_CASE("a cloud login moves between ports without stopping, moving or re-rout
     CHECK(login.listens_on(second));
     CHECK_FALSE(login.listens_on(first));
     CHECK(contains(exchange(second, "GET", "/callback?code=2").get(), "\"login\":\"orca\""));
-    CHECK(exchange(first, "GET", "/callback").get().find("connect failed") == 0);
+    CHECK_FALSE(served_by_sign_in(exchange(first, "GET", "/callback?code=3").get()));
+    const int sign_ins = sign_in.calls;
+    CHECK(sign_ins == 2); // code=1 on the first port and code=2 on the second, nothing since
     check_mcp_untouched();
 
     mcp.stop();
@@ -365,23 +374,63 @@ TEST_CASE("a cloud login's callback route closes when the login ends", "[HttpSer
     mcp.set_request_guard(app_request_guard(mcp_port, [&login](boost::asio::ip::port_type port) { return login.listens_on(port); }));
     mcp.set_request_handler(app_routes(login, [] { return json_response({{"mcp", true}}); }));
     mcp.start();
-    auto refused = [](const std::string& reply) { return reply.rfind("HTTP/1.1 404", 0) == 0 || reply.rfind("connect failed", 0) == 0; };
 
     const unsigned short login_port = free_loopback_port();
     REQUIRE(login.listen(login_port, "bbl"));
     CHECK(contains(exchange(login_port, "GET", "/callback?code=6").get(), "\"login\":\"bbl\""));
     login.stop_listening();
     CHECK_FALSE(login.listens_on(login_port));
-    CHECK(refused(exchange(login_port, "GET", "/callback?access_token=x").get()));
+    CHECK_FALSE(served_by_sign_in(exchange(login_port, "GET", "/callback?access_token=x").get()));
 
     // The fallback onto the MCP port closes the same way.
     REQUIRE(login.listen(mcp_port, "bbl"));
     CHECK(contains(exchange(mcp_port, "GET", "/callback?code=7").get(), "\"login\":\"bbl\""));
     login.stop_listening();
-    CHECK(refused(exchange(mcp_port, "GET", "/callback?access_token=x").get()));
+    // Nothing closes on the MCP port, so the guard's 404 is the only possible answer there.
+    CHECK(exchange(mcp_port, "GET", "/callback?access_token=x").get().rfind("HTTP/1.1 404", 0) == 0);
     CHECK(contains(exchange(mcp_port, "GET", "/mcp").get(), "\"mcp\":true"));
     const int sign_ins = sign_in.calls;
     CHECK(sign_ins == 2);
+    mcp.stop();
+}
+
+TEST_CASE("a callback that reaches a login's port while its listener is still closing is never served",
+          "[HttpServer][Login][McpRequestGuard]")
+{
+    // The Linux CI interleaving, made certain on any OS: an MCP call holds the server's thread, so the
+    // listener close that stop_listening() queued has not run when the forged callback connects. It
+    // then gets a 404 or a reset, whichever the thread does first -- never the sign-in.
+    HeldMainThread quit_queue;
+    MainThreadGate quit_gate(quit_queue.post());
+    FakeSignIn     sign_in;
+    Latch          mcp_entered, mcp_release;
+
+    const unsigned short mcp_port = free_loopback_port();
+    HttpServer           mcp(mcp_port);
+    LoginCallbackServer  login(mcp, sign_in.handler(), "orca", quit_gate);
+    mcp.set_request_guard(app_request_guard(mcp_port, [&login](boost::asio::ip::port_type port) { return login.listens_on(port); }));
+    mcp.set_request_handler(app_routes(login, [&] {
+        mcp_entered.open();
+        mcp_release.wait();
+        return json_response({{"mcp", true}});
+    }));
+    mcp.start();
+    const unsigned short login_port = free_loopback_port();
+    REQUIRE(login.listen(login_port, "bbl"));
+
+    auto mcp_call = exchange(mcp_port, "POST", "/mcp", "{}");
+    REQUIRE(mcp_entered.wait_for(k_bound));
+    login.stop_listening(); // its listener's close waits behind the MCP call
+    auto forged = exchange(login_port, "GET", "/callback?access_token=x");
+    std::this_thread::sleep_for(100ms); // connected to the listener that is still open
+    mcp_release.open();
+
+    const std::string reply = forged.get();
+    INFO(reply);
+    CHECK_FALSE(served_by_sign_in(reply));
+    const int sign_ins = sign_in.calls;
+    CHECK(sign_ins == 0);
+    CHECK(contains(mcp_call.get(), "\"mcp\":true"));
     mcp.stop();
 }
 
