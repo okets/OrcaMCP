@@ -28,7 +28,7 @@ DynamicPrintConfig printer(double min_layer_height, double max_layer_height)
 
 TEST_CASE("a range's layer height must be one the printer's extruder can print", "[orcamcp][LayerRanges]")
 {
-    const LayerHeightLimits limits = layer_height_limits(printer(0.08, 0.28), /*extruder=*/0);
+    const LayerHeightLimits limits = layer_height_limits(printer(0.08, 0.28), /*filament=*/1);
     CHECK_THAT(limits.min, WithinAbs(0.08, 1e-9));
     CHECK_THAT(limits.max, WithinAbs(0.28, 1e-9));
 
@@ -45,9 +45,34 @@ TEST_CASE("a range's layer height must be one the printer's extruder can print",
 
 TEST_CASE("a printer with no maximum layer height allows three quarters of its nozzle, as the GUI does", "[orcamcp][LayerRanges]")
 {
-    const LayerHeightLimits limits = layer_height_limits(printer(0.0, 0.0), /*extruder=*/1);
+    const LayerHeightLimits limits = layer_height_limits(printer(0.0, 0.0), /*filament=*/1);
     CHECK_THAT(limits.max, WithinAbs(0.3, 1e-9));
     CHECK(layer_range_height_error(0.31, limits).has_value());
     // No minimum: any height above 0 is allowed from below.
     CHECK_FALSE(layer_range_height_error(0.01, limits).has_value());
+}
+
+// On a toolchanger each tool has a nozzle of its own, and the limits were read for the first tool
+// whatever printed the range. A range prints with its own filament, else the object's.
+TEST_CASE("a range's limits are those of the filament that prints it: its own, else the object's", "[orcamcp][LayerRanges]")
+{
+    CHECK(layer_range_filament(/*range=*/3, /*object=*/2) == 3);
+    CHECK(layer_range_filament(/*range=*/0, /*object=*/2) == 2);
+    CHECK(layer_range_filament(/*range=*/0, /*object=*/0) == 1);
+}
+
+TEST_CASE("each tool of a toolchanger bounds a range by its own nozzle", "[orcamcp][LayerRanges]")
+{
+    DynamicPrintConfig toolchanger;
+    toolchanger.set_key_value("nozzle_diameter", new Slic3r::ConfigOptionFloats({0.4, 0.8}));
+    toolchanger.set_key_value("min_layer_height", new Slic3r::ConfigOptionFloats({0.08, 0.2}));
+    toolchanger.set_key_value("max_layer_height", new Slic3r::ConfigOptionFloats({0.0, 0.0}));
+
+    const LayerHeightLimits fine  = layer_height_limits(toolchanger, /*filament=*/1);
+    const LayerHeightLimits coarse = layer_height_limits(toolchanger, /*filament=*/2);
+    CHECK_THAT(fine.max, WithinAbs(0.3, 1e-9));
+    CHECK_THAT(coarse.min, WithinAbs(0.2, 1e-9));
+    CHECK_THAT(coarse.max, WithinAbs(0.6, 1e-9));
+    CHECK(layer_range_height_error(0.5, fine).has_value());
+    CHECK_FALSE(layer_range_height_error(0.5, coarse).has_value());
 }

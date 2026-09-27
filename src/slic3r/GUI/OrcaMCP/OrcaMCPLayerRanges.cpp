@@ -20,9 +20,14 @@ double extruder_value(const DynamicPrintConfig& printer, const char* key, int in
 
 } // namespace
 
-LayerHeightLimits layer_height_limits(const DynamicPrintConfig& printer, int extruder)
+int layer_range_filament(int range_extruder, int object_extruder)
 {
-    const int index = std::max(0, extruder - 1);
+    return range_extruder > 0 ? range_extruder : std::max(1, object_extruder);
+}
+
+LayerHeightLimits layer_height_limits(const DynamicPrintConfig& printer, int filament)
+{
+    const int index = std::max(0, filament - 1);
     LayerHeightLimits limits;
     limits.min = extruder_value(printer, "min_layer_height", index);
     limits.max = extruder_value(printer, "max_layer_height", index);

@@ -2267,8 +2267,9 @@ void OrcaMCPServer::register_builtin_tools()
         "object up does not move its ranges. A range always has a layer_height and an extruder, as the "
         "GUI's object list gives it: the object's own (its layer_height, else the process preset's; "
         "extruder 0, the object's) unless settings give one. A layer_height outside the printer's "
-        "min_layer_height..max_layer_height is rejected (rejected_values), and a call that applies "
-        "nothing leaves the ranges as they were.",
+        "min_layer_height..max_layer_height, for the nozzle of the filament that prints the range (its "
+        "own, else the object's), is rejected (rejected_values), and a call that applies nothing leaves "
+        "the ranges as they were.",
         {
             {"type", "object"},
             {"properties", {
@@ -2365,14 +2366,16 @@ void OrcaMCPServer::register_builtin_tools()
                 }
 
                 // A layer height the printer cannot print is refused, as the object list's range editor
-                // refuses it (ObjectList::edit_layer_range), against the range's extruder.
+                // refuses it (ObjectList::edit_layer_range), against the nozzle of the filament that prints
+                // the range: its own, else the object's.
                 if (written.has("layer_height")) {
-                    const auto existing = obj->layer_config_ranges.find(range);
-                    const int  extruder = written.has("extruder") ? written.opt_int("extruder")
-                                        : existing != obj->layer_config_ranges.end() && existing->second.has("extruder")
-                                            ? existing->second.opt_int("extruder") : 0;
+                    const auto existing       = obj->layer_config_ranges.find(range);
+                    const int  range_extruder = written.has("extruder") ? written.opt_int("extruder")
+                                              : existing != obj->layer_config_ranges.end() && existing->second.has("extruder")
+                                                  ? existing->second.opt_int("extruder") : 0;
+                    const int  filament       = layer_range_filament(range_extruder, obj->config.has("extruder") ? obj->config.extruder() : 0);
                     const DynamicPrintConfig& printer = wxGetApp().preset_bundle->printers.get_edited_preset().config;
-                    if (const auto error = layer_range_height_error(written.opt_float("layer_height"), layer_height_limits(printer, extruder))) {
+                    if (const auto error = layer_range_height_error(written.opt_float("layer_height"), layer_height_limits(printer, filament))) {
                         written.erase("layer_height");
                         applied_keys.erase(std::remove(applied_keys.begin(), applied_keys.end(), std::string("layer_height")), applied_keys.end());
                         invalid_keys.push_back("layer_height");

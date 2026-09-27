@@ -1543,7 +1543,7 @@ them: the object's own layer height (its override, else the process preset's) an
 object's), unless `settings` gives them. A range without a layer height crashed the next slice, and a
 range a loaded file carries without one is completed the same way when it loads. A
 `layer_height` the printer cannot print -- 0 or less, or outside its `min_layer_height` ..
-`max_layer_height` for the range's extruder (three quarters of the nozzle when the maximum is 0) -- is
+`max_layer_height` for the nozzle of the filament that prints the range (its own, else the object's; each tool's own on a toolchanger; three quarters of the nozzle when the maximum is 0) -- is
 rejected in `rejected_values`, as the object list's range editor refuses it.
 
 ---
