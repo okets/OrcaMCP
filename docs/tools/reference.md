@@ -1840,7 +1840,7 @@ call `slice_all` and `wait_for_slice` first.
 | `features` | array | Draw only these: `perimeters` (walls and gap fill), `infill` (sparse, solid, top, bottom, bridges, ironing), `support`, `support_interface`, `brim`, `skirt`, `prime_tower` — the same names `get_print_estimate`'s `time_by_feature` uses. Default all. Start G-code purge lines are never drawn. |
 | `filaments` | array | Draw only these filament slots, 1-based as `get_scene_info`'s `filaments_used`. Default all. |
 | `color_by` | `"feature"` / `"filament"` | `feature` (default): the Preview's feature colours. `filament`: each slot's colour, as the Preview's Filament view. |
-| `fit` | `"plate"` / `{"object_index": n}` | Frame the plate (default) or that object's instances on this plate. |
+| `fit` | `"plate"` / `{"object_index": n}` | Frame the plate (default), or that object with everything of its own on this layer: its support lines (tree feet included) and, on the first layer, its brim and raft. |
 
 A line's filament is the one the G-code really prints it with, so support set to "any" filament,
 flushing into infill and mixed filaments show as they print. The entry adds:

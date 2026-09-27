@@ -1737,7 +1737,7 @@
                 "type": "array"
               },
               "fit": {
-                "description": "\"plate\" (default) or {\"object_index\": n} to frame that object's instances on this plate."
+                "description": "\"plate\" (default) or {\"object_index\": n} to frame that object with what it prints on this layer: its support lines, and on the first layer its brim and raft."
               },
               "layer": {
                 "description": "Layer number from 1, as the Preview's layer slider numbers layers: 1..get_print_estimate's printed_layers.",

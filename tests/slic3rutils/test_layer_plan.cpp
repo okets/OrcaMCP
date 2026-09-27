@@ -719,6 +719,31 @@ TEST_CASE("the overhang tolerance is half the nozzle that prints the object's wa
     CHECK_THAT(hang->tolerance_mm, WithinAbs(0.4, 1e-9));
 }
 
+TEST_CASE("an object's frame on a layer takes in its brim and its support lines", "[orcamcp][LayerPlan]")
+{
+    // A 10 mm cube with a 5 mm brim: on the first layer the frame reaches the brim's edge.
+    Print print;
+    Model model;
+    Test::init_print({Test::cube(10)}, print, model, {
+        {"brim_type", "outer_only"},
+        {"brim_width", 5},
+        {"layer_height", 0.2},
+        {"initial_layer_print_height", 0.2},
+    });
+    print.process();
+    const BoundingBoxf3 cube = model.objects[0]->instance_bounding_box(0);
+    const std::optional<BoundingBoxf> first = object_frame(print, model, 0, first_print_height(print));
+    REQUIRE(first.has_value());
+    CHECK(first->min.x() <= cube.min.x() - 4.5);
+    CHECK(first->max.y() >= cube.max.y() + 4.5);
+    // Higher up there is no brim, and the frame is the cube's.
+    const std::optional<BoundingBoxf> mid = object_frame(print, model, 0, 5.0);
+    REQUIRE(mid.has_value());
+    CHECK_THAT(mid->min.x(), WithinAbs(cube.min.x(), 0.5));
+    CHECK_THAT(mid->max.y(), WithinAbs(cube.max.y(), 0.5));
+    CHECK_FALSE(object_frame(print, model, 7, 5.0).has_value());  // no such object
+}
+
 TEST_CASE("an object's footprint comes from the sliced object, where the model puts it", "[orcamcp][LayerPlan]")
 {
     SlicedCap cap;

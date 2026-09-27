@@ -619,6 +619,30 @@ std::vector<PrintFootprint> print_footprints(const Print& print, const Model& mo
     return out;
 }
 
+std::optional<BoundingBoxf> object_frame(const Print& print, const Model& model, int object_index, double z)
+{
+    const PrintObject* po = print_object_of(print, model, object_index);
+    if (po == nullptr)
+        return std::nullopt;
+    BoundingBoxf frame;
+    merge_on_bed(frame, *po, po->bounding_box());
+    if (const std::optional<size_t> oi = index_at(po->layers(), z))
+        merge_on_bed(frame, *po, get_extents(po->layers()[*oi]->lslices));
+    if (const std::optional<size_t> si = index_at(po->support_layers(), z)) {
+        Points points;  // tree support's feet and branches reach well past the part
+        po->support_layers()[*si]->support_fills.collect_points(points);
+        if (!points.empty())
+            merge_on_bed(frame, *po, BoundingBox(points));
+    }
+    if (std::abs(z - first_print_height(print)) < k_gcode_height_tolerance)  // brim and raft: the first-layer plan's
+        for (const PlanObject& o : plan_from_print(print, model).objects)
+            if (o.object_index == object_index) {
+                merge_mm(frame, get_extents(o.on_bed()));
+                merge_mm(frame, get_extents(o.brim));
+            }
+    return frame;
+}
+
 nlohmann::json layer_json(const std::vector<GcodeLayer>& layers, const LayerAtHeight& chosen, const LayerPlanRequest& request)
 {
     nlohmann::json out = {{"number", int(chosen.index) + 1}, {"of", layers.size()}, {"z", round_to(layers[chosen.index].z, 4)}};

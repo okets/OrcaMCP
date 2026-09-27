@@ -1149,7 +1149,7 @@ void OrcaMCPServer::register_builtin_tools()
                             {"description", "feature (default): the Preview's feature colours. filament: each slot's colour, as the Preview's Filament view. The legend says which colour is which."}
                         }},
                         {"fit", {
-                            {"description", "\"plate\" (default) or {\"object_index\": n} to frame that object's instances on this plate."}
+                            {"description", "\"plate\" (default) or {\"object_index\": n} to frame that object with what it prints on this layer: its support lines, and on the first layer its brim and raft."}
                         }}
                     }}
                 }},

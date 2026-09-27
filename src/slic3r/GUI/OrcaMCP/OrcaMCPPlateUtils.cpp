@@ -317,14 +317,15 @@ static void add_plan_objects(nlohmann::json& entry, std::vector<OrcaMCP::Overlay
     entry["objects_in_frame"] = in_frame;
 }
 
-// What a layer plan's fit: {object_index} frames: that object's footprint in the sliced Print, or --
-// for an object the Print does not hold -- what a 3D view's fit frames, which also says where the
-// object is when this plate does not hold it.
-static BoundingBoxf3 layer_plan_fit_box(const std::vector<OrcaMCP::PrintFootprint>& footprints, int object_index, int plate_index)
+// What a layer plan's fit: {object_index} frames: that object and whatever of its own prints on this
+// layer past its footprint -- support lines, and on the first layer its brim and raft
+// (OrcaMCP::object_frame). An object the sliced Print does not hold is framed as a 3D view frames it,
+// which is an error naming its plate when this plate does not hold it.
+static BoundingBoxf3 layer_plan_fit_box(const Print* print, int object_index, int plate_index, double z)
 {
-    for (const OrcaMCP::PrintFootprint& f : footprints)
-        if (f.object_index == object_index && f.box.defined)
-            return BoundingBoxf3(Vec3d(f.box.min.x(), f.box.min.y(), 0.), Vec3d(f.box.max.x(), f.box.max.y(), 0.));
+    if (print != nullptr)
+        if (const std::optional<BoundingBoxf> frame = OrcaMCP::object_frame(*print, wxGetApp().model(), object_index, z))
+            return BoundingBoxf3(Vec3d(frame->min.x(), frame->min.y(), 0.), Vec3d(frame->max.x(), frame->max.y(), 0.));
     return object_fit_box_on_plate(object_index, plate_index);
 }
 
@@ -380,7 +381,7 @@ static nlohmann::json render_sliced_layer_view(const PlanTarget& target, const O
         footprints = OrcaMCP::print_footprints(*print, wxGetApp().model());
     }
 
-    const BoundingBoxf3 frame = request.fit_object ? layer_plan_fit_box(footprints, *request.fit_object, target.plate_index)
+    const BoundingBoxf3 frame = request.fit_object ? layer_plan_fit_box(print, *request.fit_object, target.plate_index, layer.z)
                                                    : target.plate_box;
     const OrcaMCP::PlanMapping mapping = OrcaMCP::plan_mapping(frame, target.resolution);
     const OrcaMCP::CameraFrame camera  = OrcaMCP::plan_camera(mapping);

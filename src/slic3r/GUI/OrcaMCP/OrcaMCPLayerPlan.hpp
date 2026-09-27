@@ -228,6 +228,11 @@ struct PrintFootprint
 };
 std::vector<PrintFootprint> print_footprints(const Print& print, const Model& model);
 
+// What a layer plan's fit: {object_index} frames on the layer at `z`: the object's footprint, and
+// whatever of its own prints at that height reaching past it -- its support lines, and on the first
+// layer its brim and raft (plan_from_print). None when `print` does not hold that object.
+std::optional<BoundingBoxf> object_frame(const Print& print, const Model& model, int object_index, double z);
+
 // The response's layer: {number, of, z}, and with a height asked for, requested_z and also_at.
 nlohmann::json layer_json(const std::vector<GcodeLayer>& layers, const LayerAtHeight& chosen, const LayerPlanRequest& request);
 
