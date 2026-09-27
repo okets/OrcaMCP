@@ -199,6 +199,19 @@ Vec3f brim_point_to_object(const ModelObject& obj, double plate_x, double plate_
     return local.cast<float>();
 }
 
+nlohmann::json brim_ears_json(const ModelObject& obj, std::size_t instance_idx)
+{
+    nlohmann::json ears = nlohmann::json::array();
+    for (const BrimPoint& point : obj.brim_points) {
+        const Vec3d plate_pos = brim_point_to_plate(obj, point.pos, instance_idx);
+        ears.push_back({{"x", plate_pos.x()},
+                        {"y", plate_pos.y()},
+                        {"z", plate_pos.z()},
+                        {"radius", double(point.head_front_radius)}});
+    }
+    return ears;
+}
+
 namespace {
 
 // The per-state report for a selector that already holds the paint. Shared by the write path --

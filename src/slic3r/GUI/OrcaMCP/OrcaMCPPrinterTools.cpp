@@ -223,15 +223,19 @@ std::optional<nlohmann::json> last_status_age_json(const DynamicPrintConfig& con
     return cached ? nlohmann::json(cached->age_s) : nlohmann::json(nullptr);
 }
 
-// One entry of material_mappings, as send_to_printer and print_printer_file take it. Any other key is
-// refused: a misspelled one would otherwise leave the pair unmapped and the print on the wrong spool.
+// One entry of material_mappings, as send_to_printer and print_printer_file take it, and as they report
+// it (mapping_report): the reported list can be sent back as it is. Any other key is refused: a
+// misspelled one would otherwise leave the pair unmapped and the print on the wrong spool.
 nlohmann::json material_mapping_schema()
 {
     return {
         {"type", "object"},
         {"properties", {
             {"tool_id", {{"type", "integer"}, {"description", "Project filament/tool index, 0-based"}}},
-            {"slot_id", {{"type", "integer"}, {"description", "Material station slot id"}}}
+            {"slot_id", {{"type", "integer"}, {"description", "Material station slot id"}}},
+            {"color_delta_e", {{"type", {"number", "null"}},
+                               {"description", "Accepted and ignored: the colour match a send reports per pair. Here so "
+                                               "the material_mappings a response lists can be sent back as they are."}}}
         }},
         {"required", {"tool_id", "slot_id"}},
         {"additionalProperties", false}

@@ -166,6 +166,15 @@ required argument directly, and every argument it reads must be declared: any ot
 before the handler sees it. The bridge holds its own two tools to their schemas in the golden file
 the same way, with the same words (`argument_error`, top level only: neither takes a nested object).
 
+**Anything a tool returns in the shape a request takes must be accepted back**: an agent edits a
+list by sending back the one a response gave it. So a strict nested object declares, as accepted and
+ignored, the extra fields its response twin carries: `set_brim_ears.points[]` takes `z` (the
+`brim_ears` of `set_brim_ears` and `get_object_paint`), both `material_mappings[]` take
+`color_delta_e` (what a send reports). Adding `additionalProperties: false` to a nested object, or a
+field to a response in a request's shape, means checking the other side, with a test that feeds the
+response entry back through `tool_arguments_error` ("What a tool returns, sent back" in
+`test_mcp_tool_arguments.cpp`).
+
 What the tests enforce, with no app running:
 
 - `tests/slic3rutils/test_mcp_tool_list.cpp` (`[orcamcp][tools]`, run by CI's unit-test jobs on
@@ -176,7 +185,8 @@ What the tests enforce, with no app running:
   - `tests/slic3rutils/test_mcp_tool_arguments.cpp` (`[McpToolArguments][orcamcp][tools]`): every
     app tool refuses an argument it does not take, and each required argument left out, with -32602
     naming it, before its handler runs; the nested cases above; arguments that are not an object;
-    every required name is a declared property;
+    every required name is a declared property; each response entry in a request's shape is taken
+    back;
   - every summary is one line of at most 40 characters;
   - the golden file equals the registry: any name, category, summary, description or schema
     that differs fails, naming the tool and the field;
@@ -458,7 +468,8 @@ with the same name, or one without a handler, throws when the registry is built.
 
 Declare every argument the handler reads: `tools/call` refuses any other, and a `required` one left
 out, before the handler runs (see "Tool list"). A nested object is held to its keys only when its
-schema says `additionalProperties: false`; add it wherever the handler reads nothing else.
+schema says `additionalProperties: false`; add it wherever the handler reads nothing else, and accept
+back whatever a response returns in that object's shape.
 
 ### 2. Implement the handler
 

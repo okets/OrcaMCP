@@ -2,14 +2,18 @@
 #include <catch2/generators/catch_generators.hpp>
 
 #include "slic3r/GUI/OrcaMCP/OrcaMCPJsonRpcError.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPPaintModel.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPPrinterUtils.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPServer.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPServerInfo.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPToolArguments.hpp"
+#include "libslic3r/Model.hpp"
 
 #include <functional>
 #include <optional>
 #include <string>
 #include <tuple>
+#include <vector>
 
 // A tools/call's arguments are checked against the tool's published inputSchema before its handler
 // runs: an argument (or a key of a nested object whose schema says additionalProperties: false) the
@@ -178,6 +182,62 @@ TEST_CASE("A value of another kind than its schema describes is left to the hand
 TEST_CASE("A nested object whose additionalProperties is a schema takes any key", "[McpToolArguments][orcamcp][tools]")
 {
     CHECK("" == refusal("remap_paint", {{"object_id", 0}, {"mapping", {{"1", 2}, {"2", 3}}}}));
+}
+
+// ==================== WHAT A TOOL RETURNS, SENT BACK ====================
+//
+// Anything a tool returns in the shape a request takes is accepted back: an agent edits a list by
+// sending back the one a response gave it. Where the response is built by a function a test can
+// call, the entry here is that function's.
+
+TEST_CASE("The brim ears a response lists are taken back as set_brim_ears' points", "[McpToolArguments][orcamcp][tools]")
+{
+    // No tool removes one ear: an agent drops it from get_object_paint's brim_ears and sends the rest
+    // back with append false.
+    Slic3r::Model        model;
+    Slic3r::ModelObject* object = model.add_object();
+    object->add_instance()->set_offset(Slic3r::Vec3d(100.0, 50.0, 0.0));
+    object->brim_points.emplace_back(Slic3r::Vec3f(1.f, 2.f, -0.0001f), 3.f);
+    const json ears = Slic3r::GUI::OrcaMCP::brim_ears_json(*object, 0);
+    REQUIRE(ears.size() == 1);
+    CHECK(refusal("set_brim_ears", {{"object_id", 0}, {"points", ears}, {"append", false}}) == "");
+}
+
+TEST_CASE("The material mappings a send reports are taken back by both printer tools", "[McpToolArguments][orcamcp][tools]")
+{
+    // An upload with start_print false, then print_printer_file with the mapping the upload reported.
+    Slic3r::FlashforgeApi::MaterialSlot slot;
+    slot.slot_id        = 1;
+    slot.has_filament   = true;
+    slot.material_name  = "PLA";
+    slot.material_color = "#FFFFFF";
+    const json project_filaments = json::array({{{"tool_id", 0}, {"type", "PLA"}, {"color", "#FFFFFF"}}});
+    json       payload, error, report;
+    REQUIRE(Slic3r::GUI::OrcaMCP::resolve_material_mappings(json::array({{{"tool_id", 0}, {"slot_id", 1}}}), {slot},
+                                                            project_filaments, payload, error, &report));
+    REQUIRE(report.size() == 1);
+    CHECK(refusal("send_to_printer", {{"start_print", false}, {"material_mappings", report}}) == "");
+    CHECK(refusal("print_printer_file", {{"file_name", "cube.gcode"}, {"material_mappings", report}}) == "");
+}
+
+TEST_CASE("The position, rotation and scale an object reports are taken back by transform_objects",
+          "[McpToolArguments][orcamcp][tools]")
+{
+    // get_object_info, get_scene_info and the transform tools report position, rotation_degrees and
+    // scale in this shape, built in their handlers.
+    const json reported = {{"x", 128.0}, {"y", 128.0}, {"z", 10.0}};
+    CHECK(refusal("transform_objects",
+                  {{"transforms", {{{"object_id", 0}, {"position", reported}, {"rotation", reported}, {"scale", reported}}}}}) == "");
+}
+
+TEST_CASE("A printer status nozzle entry is refused as a nozzles target, not read as no change",
+          "[McpToolArguments][orcamcp][tools]")
+{
+    // get_printer_status reports each nozzle as {tool, current, target}: not the shape nozzles takes,
+    // whose target is temp, so sending the status back names what is missing.
+    CHECK(refusal("printer_control", {{"action", "set_temperature"}, {"nozzles", {{{"tool", 0}, {"current", 25.0}, {"target", 0.0}}}}}) ==
+          "printer_control: nozzles[0] has no keys \"current\", \"target\" and is missing its required key \"temp\". "
+          "Its keys: tool, temp.");
 }
 
 // ==================== ARGUMENTS THAT WERE DROPPED ====================

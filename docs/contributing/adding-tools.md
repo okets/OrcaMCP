@@ -143,6 +143,10 @@ arguments that are not an object. So:
 - **A nested object is checked only if its schema says `additionalProperties: false`** (and its
   `required` keys always). Say so wherever the handler reads only the keys it declares; leave it out
   where a caller may pass back an object a response gave it, with more fields than you read.
+- **What a tool returns in the shape a request takes must be accepted back.** If a response lists
+  entries a strict nested object also takes (`brim_ears` and `set_brim_ears`' `points`, a send's
+  `material_mappings`), declare the response's extra fields there as accepted and ignored, and add a
+  test that feeds the real response entry back through `tool_arguments_error`.
 - **Types, ranges and enums are yours to check**, with a clear message:
 
 ```cpp

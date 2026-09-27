@@ -2469,7 +2469,7 @@ Place the small brim tabs at chosen points. Brim ears are **not** facet paint â€
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `object_id` | integer | Yes | Object index (0-based). No `volume_id`: ears are object-level, and the object need not have a model part |
-| `points` | array | Yes | `[{x, y, radius?}]` in plate mm. An empty array removes every ear, when `append` is left `false` |
+| `points` | array | Yes | `[{x, y, radius?}]` in plate mm. An empty array removes every ear, when `append` is left `false`. A point may also carry `z`, which is ignored, so the `brim_ears` a response lists can be sent back as they are |
 | `radius` | number | No | Default ear radius for points without one (default 5.0 mm, range 0.1-100) |
 | `append` | boolean | No | `false` (default) replaces the object's ears; `true` adds to them |
 | `instance_id` | integer | No | Must be `0` (the default) â€” `set_brim_ears` rejects any other value |
@@ -2477,6 +2477,10 @@ Place the small brim tabs at chosen points. Brim ears are **not** facet paint â€
 Only `x` and `y` matter: an ear always sits on the underside of the object. Ears produce
 brim only when `brim_type` is `painted`; the response says so in `info_messages` when it
 is not.
+
+No tool removes or moves a single ear. To edit them, take the `brim_ears` this tool or
+`get_object_paint` returned, change the list, and send it back as `points` with `append` left
+`false`; their `z` is accepted and ignored.
 
 Brim ears are object-level data, not per-instance: `Brim.cpp` resolves stored ears through
 instance 0 only when slicing, so writing through any other instance's frame would store a
@@ -2725,7 +2729,9 @@ read the first free slot of the family is used, as before.
 | `color_delta_e` | number \| null | Perceptual distance between the project filament's colour and the slot's. `0` is an exact match, ~2.3 is a just-noticeable difference, and anything above ~10 is a visibly different colour â€” worth warning the user about before printing. `null` when either colour is missing or is not a `#RRGGBB` value. |
 
 `color_delta_e` is reported for explicitly requested mappings too, so a hand-picked slot can be
-checked the same way.
+checked the same way. A reported list can be passed back as `material_mappings` as it is, for
+example to `print_printer_file` after an upload with `start_print: false`: `color_delta_e` is
+accepted there and ignored.
 
 ---
 
@@ -2838,8 +2844,12 @@ says `additionalProperties: false`: `set_object_config`'s items, `set_object_lay
 `settings` items, `transform_objects`' entries and their `position`/`rotation`/`scale`,
 `apply_config`'s `settings` items, `set_brim_ears`' `points`, `printer_control`'s `nozzles`,
 `send_to_printer`'s and `print_printer_file`'s `material_mappings`, `paint_object`'s `box` and
-`sphere`, and `pick_facet`'s `ray`. Others take any key: a render's
-`views` and a paint call's `bands` may be passed back with the extra fields the response carried.
+`sphere`, and `pick_facet`'s `ray`. What a tool returns in the shape one of these takes is accepted
+back: `brim_ears` as `set_brim_ears`' `points` (their `z` is ignored), a send's reported
+`material_mappings` (their `color_delta_e` is ignored), and an object's `position`,
+`rotation_degrees` and `scale` as `transform_objects`' `position`, `rotation` and `scale`. Other
+nested objects take any key: a render's `views` and a paint call's `bands` may be passed back with
+the extra fields the response carried.
 Types, ranges and enum values are not checked here; the tool reports those itself. The bridge's own
 tools (`start_orca`, `wait_for_slice`) are held to their schemas the same way.
 

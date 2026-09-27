@@ -1513,6 +1513,13 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "color_delta_e": {
+                  "description": "Accepted and ignored: the colour match a send reports per pair. Here so the material_mappings a response lists can be sent back as they are.",
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
                 "slot_id": {
                   "description": "Material station slot id",
                   "type": "integer"
@@ -2142,6 +2149,13 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "color_delta_e": {
+                  "description": "Accepted and ignored: the colour match a send reports per pair. Here so the material_mappings a response lists can be sent back as they are.",
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
                 "slot_id": {
                   "description": "Material station slot id",
                   "type": "integer"
@@ -2205,6 +2219,10 @@
                   "type": "number"
                 },
                 "y": {
+                  "type": "number"
+                },
+                "z": {
+                  "description": "Accepted and ignored: an ear always sits on the object's underside. Here so the brim_ears a response lists can be sent back as they are.",
                   "type": "number"
                 }
               },
