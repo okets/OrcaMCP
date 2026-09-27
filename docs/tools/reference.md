@@ -1064,7 +1064,7 @@ can repeat as it works.
 | `keys` | array of strings | No | Setting keys to read. Omit for the selected presets alone |
 | `dirty_only` | boolean | No | Only settings whose value differs from the saved preset. With no `keys`: every unsaved change. Default `false` |
 
-**Returns (no arguments):** the selected presets, about 300 bytes:
+**Returns (no arguments):** the selected presets, about 400 bytes with four slots:
 ```json
 {
   "status": "success",

@@ -132,6 +132,16 @@ TEST_CASE("a read with nothing changed carries no dirty section", "[orcamcp][Con
     CHECK_FALSE(config_values_json(presets.sources(), twelve_support_keys, false).contains("dirty"));
 }
 
+TEST_CASE("a key only the edited config carries is not an unsaved change, as the GUI judges it", "[orcamcp][ConfigValues]")
+{
+    SelectedPresets presets;
+    presets.printer_edited.set_deserialize_strict("extruder_nozzle_stats", "Standard#1");
+    REQUIRE_FALSE(presets.printer_saved.has("extruder_nozzle_stats"));
+
+    CHECK_FALSE(config_values_json(presets.sources(), {"extruder_nozzle_stats"}, false).contains("dirty"));
+    CHECK_FALSE(unsaved_changes_json(presets.sources()).contains("printer"));
+}
+
 TEST_CASE("dirty_only keeps just the settings that differ from the saved preset", "[orcamcp][ConfigValues]")
 {
     SelectedPresets presets;

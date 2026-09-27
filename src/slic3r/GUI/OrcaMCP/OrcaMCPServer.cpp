@@ -955,7 +955,7 @@ void OrcaMCPServer::register_builtin_tools()
         ToolCategory::Config,
         "Selected presets and chosen settings",
         "Which presets are selected: with no arguments, the selected printer, print (process) and each "
-        "filament slot's preset, with a dirty flag for unsaved changes, in about 300 bytes. Pass keys to "
+        "filament slot's preset, with a dirty flag for unsaved changes, in about 400 bytes. Pass keys to "
         "read just those settings -- a dozen cost well under 1 KB, against 25-48 KB for "
         "get_edited_presets -- grouped under where each lives: print, filament (one value per slot), "
         "printer or project, the type apply_config takes for it. dirty names the ones whose value "

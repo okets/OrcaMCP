@@ -51,13 +51,14 @@ nlohmann::json value_or_null(const DynamicPrintConfig* config, const std::string
     return carries(config, key) ? nlohmann::json(reported_config_value(*config, key)) : nlohmann::json(nullptr);
 }
 
-// Whether `key` in the preset's edited config differs from its saved preset. A preset with no saved
-// config to compare with (the project) is never dirty.
+// Whether `key` in the preset's edited config differs from its saved preset, judged as the GUI judges
+// a preset dirty (PresetCollection::dirty_options): only a key both configs carry. The edited config
+// can gain keys the saved preset never had (extruder_nozzle_stats, for one), and those are not edits.
 bool differs(const PresetConfigs& preset, const std::string& key)
 {
-    if (!carries(preset.edited, key) || preset.saved == nullptr)
+    if (!carries(preset.edited, key) || !carries(preset.saved, key))
         return false;
-    return !carries(preset.saved, key) || reported_config_value(*preset.edited, key) != reported_config_value(*preset.saved, key);
+    return reported_config_value(*preset.edited, key) != reported_config_value(*preset.saved, key);
 }
 
 const PresetConfigs& preset_of(const ConfigSources& sources, ConfigSource source)
