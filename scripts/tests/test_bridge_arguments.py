@@ -146,5 +146,49 @@ class WindowsPathNormalizationTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], INVALID_PARAMS)
 
 
+
+class ToolWaitCapTests(unittest.TestCase):
+    """Every tools/call the bridge forwards tells the app, in params._meta, how long a tool may wait for a
+    job it starts (arrange_objects, auto_orient, flatten_object, clone_object): wait_for_slice's cap, so
+    the call is answered before ORCAMCP_TIMEOUT."""
+
+    def setUp(self):
+        self.bridge = load_bridge()
+
+    def forwarded(self, request):
+        with mock.patch.object(self.bridge, "post_to_app", return_value={"jsonrpc": "2.0", "id": 1, "result": {}}) as post:
+            self.bridge.send_request(request)
+        return post.call_args.args[0]
+
+    def test_a_tool_call_carries_the_cap(self):
+        sent = self.forwarded({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                               "params": {"name": "arrange_objects", "arguments": {}}})
+        self.assertEqual(sent["params"]["_meta"]["orcamcp/wait_cap_s"], self.bridge.wait_for_slice_cap())
+        self.assertEqual(sent["params"]["arguments"], {})
+
+    def test_the_client_s_own_meta_is_kept(self):
+        sent = self.forwarded({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                               "params": {"name": "auto_orient", "_meta": {"progressToken": 7}}})
+        self.assertEqual(sent["params"]["_meta"]["progressToken"], 7)
+        self.assertIn("orcamcp/wait_cap_s", sent["params"]["_meta"])
+
+    def test_a_meta_that_is_not_an_object_is_replaced_by_one_with_the_cap(self):
+        """Otherwise the app, finding no cap, would wait its own 105 s past a shorter ORCAMCP_TIMEOUT."""
+        for meta in ("x", [1], 5, None):
+            with self.subTest(meta=meta):
+                sent = self.forwarded({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                       "params": {"name": "auto_orient", "_meta": meta}})
+                self.assertEqual(sent["params"]["_meta"], {"orcamcp/wait_cap_s": self.bridge.wait_for_slice_cap()})
+
+    def test_a_timeout_too_short_to_wait_in_sends_no_wait(self):
+        self.bridge.TIMEOUT = 1
+        sent = self.forwarded({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "auto_orient"}})
+        self.assertEqual(sent["params"]["_meta"]["orcamcp/wait_cap_s"], 0)
+
+    def test_other_methods_are_sent_as_they_are(self):
+        sent = self.forwarded({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
+        self.assertNotIn("_meta", sent["params"])
+
+
 if __name__ == "__main__":
     unittest.main()

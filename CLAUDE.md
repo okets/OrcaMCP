@@ -114,15 +114,15 @@ grep -hA1 -E '^\s*register_(bridge_)?tool\(\{' src/slic3r/GUI/OrcaMCP/*.cpp | gr
 | Category | Tools |
 |----------|-------|
 | **Scene** | `get_scene_info` (plates, objects with `filaments_used` — read that, not `extruder_id` — and `mesh_warning` (the object list's warning icon, with its reason; `with_model_object_features` adds the mesh-health numbers), and each plate's full occupancy: object footprints with brim, the prime tower, excluded bed areas; `open_dialogs` / `system_dialog_open` / `untracked_modal_loop`: a dialog waiting for the user), `new_project`, `load_project` (both cancel a running slice; refused while the startup restore prompt waits), `save_project`, `export_3mf` |
-| **Models** | `load_model` (a 3MF is always geometry only: never its presets, never a rename; `.gcode` / `.gcode.3mf` only onto an empty scene, as a preview; returns `loaded_objects` in `get_scene_info`'s object shape, `filaments_added`; `multipart: merge\|separate`), `auto_orient`, `arrange_objects`, `get_object_info` (incl. every volume with its type and filament), `get_mesh_health` (mesh errors behind the object list's warning icon: the icon state, its exact tooltip, open edges, recorded repairs, shells, per object and per volume), `rename_object`, `set_object_printable` |
-| **Transforms** | `move_object`, `rotate_object` (a change in degrees; `relative: false` is refused), `scale_object`, `mirror_object`, `flatten_object` (the named object only, which replaces the selection, as the GUI's Orient does for a selection; an object with an instance on a locked plate is refused), `clone_object`, `cut_object`, `delete_object`, `transform_objects` (rotate, scale, mirror and transform drop a resting object back onto the bed like the GUI; an explicit Z is kept) |
+| **Models** | `load_model` (a 3MF is always geometry only: never its presets, never a rename; `.gcode` / `.gcode.3mf` only onto an empty scene, as a preview; returns `loaded_objects` in `get_scene_info`'s object shape, `filaments_added`; `multipart: merge\|separate`), `auto_orient` / `arrange_objects` (the current plate's objects; answered once the job has been applied, with `objects`, each one's placement, or `finished: false` past the wait's cap, `status: cancelled` when the app cancelled it; see "Waiting for a UI job"), `get_object_info` (incl. every volume with its type and filament), `get_mesh_health` (mesh errors behind the object list's warning icon: the icon state, its exact tooltip, open edges, recorded repairs, shells, per object and per volume), `rename_object`, `set_object_printable` |
+| **Transforms** | `move_object`, `rotate_object` (a change in degrees; `relative: false` is refused), `scale_object`, `mirror_object`, `flatten_object` (the named object only, which replaces the selection, as the GUI's Orient does for a selection; an object with an instance on a locked plate is refused; answered once its orient has been applied), `clone_object` (answered once its arrange has been applied, with `objects`), `cut_object`, `delete_object`, `transform_objects` (rotate, scale, mirror and transform drop a resting object back onto the bed like the GUI; an explicit Z is kept) |
 | **Plates** | `add_plate`, `select_plate`, `delete_plate`, `set_prime_tower_position` |
 | **Config** | `get_presets`, `get_edited_presets` (25-48 KB), `get_config_values` (no arguments: the selected printer, print and per-slot filament presets with dirty flags, ~400 B; `keys`: just those settings, grouped by `apply_config` type, with `dirty` saved values; `dirty_only`), `select_preset` (`type: printer` returns the resulting `filaments`, each with its observed `color_source`: `unchanged`/`remembered`/`default`/`other`), `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset`, `get_valid_config_keys` |
 | **Per-Object** | `get_object_config`, `set_object_config`, `reset_object_config` |
 | **Layer Ranges** | `get_object_layer_ranges`, `set_object_layer_range`, `delete_object_layer_range` |
 | **Filaments & colour** | `get_filaments`, `set_object_filament` (whole-object form clears the volumes' own slots and reports `effective_filaments`; a volume's slot beats the object's), `set_mixed_filament`, `delete_mixed_filament`, `set_filament_color` (a slot's plate colour, saved for the selected printer so a switch away and back keeps it; `apply_config` edits the preset instead), `get_flush_volumes`, `set_flush_volumes`, `auto_calc_flush_volumes`, `get_toolchanger_config`, `suggest_color_mix`, `get_color_palette` |
 | **Painting** | `paint_object` (`selection: state` repaints every facet now in `match_filament` / `match_state`), `remap_paint` (renumbers painted filaments at once, `{"1": 2, "2": 3}`, never chained; one undo step; `facets_before` / `facets_after`; `notes` names the `set_object_filament` call for unpainted facets on a moved base filament), `get_object_paint`, `clear_object_paint`, `set_brim_ears`, `get_object_components`, `pick_facet` |
-| **Slicing** | `slice_all` (`status`: slicing_started, or not_started with a `reason`: `busy_slicing` — the pipeline is busy (slicing, exporting, uploading or stopping), nothing is started, call `wait_for_slice` then `slice_all` again — or already_sliced / busy_job / invalid (the app refuses the plate as it stands: its validation, with its message, an object partly off the plate, a filament check, missing plugins, a broken mixed filament, or a failed last slice; `message` says which) / nothing_to_slice (nothing printable on the plates -- partly off one or too tall -- and no refusal the app gives words for, which comes first) / unknown), `wait_for_slice` (bridge-only: polls `get_slicing_status` until the run is over, capped 15 s below `ORCAMCP_TIMEOUT`, or a quarter below it under 60 s; `outcome` done / ended_early / incomplete / not_slicing / timed_out / app_gone), `get_slicing_status` (`busy` / `busy_reason`: the one busy test slice_all and wait_for_slice share; per-plate `percent`, `stage` text, and `slice_run.outcome` for the last `slice_all` run: running / done / ended_early / incomplete, with `skipped` empty plates, which never keep a run from `done`; `state` follows that run; per-plate `gcode_check`: the check the slice ran on its own G-code, `{ok: true}` or `problems` codes and a `message`; `above_printable_height` adds `highest_layer_z_mm`, `printable_height_mm` and a `hint`), `export_gcode` (the selected plate, sliced; refused when its `gcode_check` failed, as the GUI's Export button is off), `get_print_estimate` (`time_by_feature`: seconds per feature, walls split, travel, tool changes, other and unattributed, summing to the total; `printed_layers` = the G-code's layer count; `object_layers` / `support_layers` split; `layer_count` deprecated, now the printed count too) |
+| **Slicing** | `slice_all` (`status`: slicing_started, or not_started with a `reason`: `busy_slicing` — the pipeline is busy (slicing, exporting, uploading or stopping), nothing is started, call `wait_for_slice` then `slice_all` again — or already_sliced / busy_job (an arrange or an orient holds the app: poll `get_slicing_status` until `ui_job` is null) / invalid (the app refuses the plate as it stands: its validation, with its message, an object partly off the plate, a filament check, missing plugins, a broken mixed filament, or a failed last slice; `message` says which) / nothing_to_slice (nothing printable on the plates -- partly off one or too tall -- and no refusal the app gives words for, which comes first) / unknown), `wait_for_slice` (bridge-only: polls `get_slicing_status` until the run is over, capped 15 s below `ORCAMCP_TIMEOUT`, or a quarter below it under 60 s; `outcome` done / ended_early / incomplete / not_slicing / timed_out / app_gone), `get_slicing_status` (`busy` / `busy_reason`: the one busy test slice_all and wait_for_slice share; `ui_job`: `arranging` / `orienting` (a tool's job past its wait), `other` (the GUI's), or null, kept apart from `busy`; per-plate `percent`, `stage` text, and `slice_run.outcome` for the last `slice_all` run: running / done / ended_early / incomplete, with `skipped` empty plates, which never keep a run from `done`; `state` follows that run; per-plate `gcode_check`: the check the slice ran on its own G-code, `{ok: true}` or `problems` codes and a `message`; `above_printable_height` adds `highest_layer_z_mm`, `printable_height_mm` and a `hint`), `export_gcode` (the selected plate, sliced; refused when its `gcode_check` failed, as the GUI's Export button is off), `get_print_estimate` (`time_by_feature`: seconds per feature, walls split, travel, tool changes, other and unattributed, summing to the total; `printed_layers` = the G-code's layer count; `object_layers` / `support_layers` split; `layer_count` deprecated, now the printed count too) |
 | **Visualization** | `render_plate_view` (named cameras `iso/top/front/back/left/right/low`, fit to plate or object, default 3-view contact sheet, plate outline + 10 mm grid + origin + object labels, `objects_in_frame` / `uniform_image` metadata, `layer_view: first_layer` plan with brim, supports and rafts, and `layer_view: {layer}` / `{z}` for any sliced layer from the G-code, filtered by `features` / `filaments`, `color_by` feature or filament, with its height, filaments, extruded areas and per-object `objects_at_height` (object and support layer, overhang coverage); coordinates are bed mm; drawn from the 3D view whatever tab shows; images in the system temp directory), `get_preview_base64`, `set_gcode_view_type` |
 | **Printers** | `get_printers` (`is_online` is not a live check; `current_print_host.last_status_age_s` is), `select_printer`, `add_physical_printer` (incl. optional Obico URL/token for Flashforge), `discover_printers`, `send_to_printer` (refused when a plate it would send failed its `gcode_check`), `get_printer_status` (a failure names host:port and the next step, with the last known material station as `cached`), `printer_control`, `list_printer_files`, `print_printer_file`, `match_project_to_printer` (falls back to the printer's last status, applied only with `allow_cached: true`) |
 | **Adaptive** | `apply_adaptive_layer_height`, `clear_adaptive_layer_height` |
@@ -413,6 +413,7 @@ gh release upload v2.3.2.10 ./path/to/new/artifact.exe -R okets/OrcaMCP
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPMainThreadGate.hpp` | How a call hands work to the main thread and waits, and how quitting releases it: the gate is `QueuedCalls` (`src/slic3r/Utils/QueuedCall.hpp`), with `call_through` for a tool's json (see "Threading Model"; unit-tested in `tests/slic3rutils/test_mcp_shutdown.cpp`, `test_queued_call.cpp`) |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPQuit.cpp` | Quitting while a modal dialog is open: which dialogs are open, ending the innermost unanswered, holding the close until they are gone, and `quit_app`'s refusals (unit-tested in `tests/slic3rutils/test_mcp_quit.cpp`); the wx side (modal hook, turn timer) is `OrcaMCPQuitApp.cpp` |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPLoginServer.cpp` | Where the cloud login's callback is answered: a second port of the MCP server, on its thread (unit-tested in `tests/slic3rutils/test_http_server.cpp`) |
+| `src/slic3r/GUI/OrcaMCP/OrcaMCPUiJob.cpp` | The UI worker's jobs a tool waits for (arrange, orient): the reported outcome, the wait on the HTTP thread and its answers, `get_slicing_status`'s `ui_job`, the bridge's cap; `OrcaMCPUiJobApp.cpp` starts them and reads the placement they left (see "Waiting for a UI job"; unit-tested in `tests/slic3rutils/test_mcp_ui_job.cpp`) |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPToolArguments.cpp` | Which tool calls reach a handler: an argument the tool's schema does not declare, a required one left out, or arguments that are not an object are refused with -32602 (see "Tool list"; unit-tested in `tests/slic3rutils/test_mcp_tool_arguments.cpp`) |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPRequestGuard.cpp` | Which requests the server answers: no web page's and no DNS-rebound one on `/mcp`, login callbacks only where a login listens (see "Security"; unit-tested in `tests/slic3rutils/test_mcp_request_guard.cpp`) |
 | `src/slic3r/Utils/ThreadCancel.cpp` | The per-request cancel check a quit applies to blocking network calls on the HTTP thread (unit-tested in `tests/slic3rutils/test_thread_cancel.cpp`) |
@@ -535,6 +536,37 @@ one at a time. All tool handlers use `run_on_main_thread()` which:
 template<typename Func>
 nlohmann::json run_on_main_thread(Func&& func);  // throws McpShuttingDown once the app is quitting
 ```
+
+### Waiting for a UI job: arrange and orient
+
+`arrange_objects`, `auto_orient`, `flatten_object` and `clone_object` start a job on the UI worker (an
+arrange or an orient), whose `finalize` applies it on the main thread's next idle. They answer only
+once it has been applied, with the placement it left (`OrcaMCPUiJob.hpp`, the app side in
+`OrcaMCPUiJobApp.cpp`):
+
+- **Started from the main thread, waited for from the HTTP thread.** `start_ui_job` does what
+  `Plater::arrange` / `Plater::orient` do (an undo step, then the job) but pushes the job wrapped in a
+  `ReportingJob`, which records how it ended in a shared `UiJobOutcome`: finished, cancelled or failed
+  by its finalize, dropped when it is destroyed without one (`cancel_all` cleared it before it
+  started). `wait_for_ui_job` polls that outcome every 50 ms on the HTTP thread -- never inside
+  `run_on_main_thread`, so the main thread stays free to run the finalize -- and a second main-thread
+  step then reads the result and draws the preview. A tool refuses to start while the UI worker is
+  busy (`ui_job_busy_message`).
+- **One call at a time closes the window.** While a call waits, no other MCP call can run, so none
+  lands between the job's result and its finalize (a rotate that the orient would overwrite, a
+  delete it would write through).
+- **The cap is the bridge's.** The bridge stamps every forwarded `tools/call` with
+  `params._meta["orcamcp/wait_cap_s"]`, `wait_for_slice`'s cap (15 s below `ORCAMCP_TIMEOUT`, a quarter
+  below it under 60 s; 0 under 2 s, no wait); without it the cap is 105 s. `handle_tools_call` scopes it
+  for the call (`ScopedToolWaitCap`). Past it the tool answers `arrange_started` / `orient_started` with
+  `finished: false`, and `get_slicing_status`'s `ui_job` says when the job has ended.
+- **A quit releases the wait within one poll.** It checks `this_thread_cancelled()` each turn, the
+  request's check that the gate is closed, and answers `finished: false`, "OrcaMCP began quitting": not
+  -32002, since the job did start. A gate closed after the job finished, before its answer, is answered
+  the same way. The outcome is shared, so a finalize the worker's destruction delivers after the call
+  has returned writes to memory that is still there.
+- **Unit-tested without the app** in `tests/slic3rutils/test_mcp_ui_job.cpp`, on a real
+  `BoostThreadWorker` whose messages the test thread delivers, as the plater's idle handler does.
 
 ### Shutdown: never wait on something that waits on the main thread
 
@@ -868,7 +900,7 @@ The `count` field is always present (even when 0) to help confirm issues have be
 |----------|---------|-------------|
 | `ORCAMCP_HOST` | `localhost` | OrcaSlicer HTTP server host. The app listens on 127.0.0.1 only, so this is `localhost` or `127.0.0.1`; another machine cannot reach it |
 | `ORCAMCP_PORT` | `13618` | OrcaSlicer HTTP server port |
-| `ORCAMCP_TIMEOUT` | `120` | Request timeout in seconds |
+| `ORCAMCP_TIMEOUT` | `120` | Request timeout in seconds. It also bounds how long a tool waits for its arrange or orient: the bridge sends `wait_for_slice`'s cap with every tool call, as `params._meta["orcamcp/wait_cap_s"]` (see "Waiting for a UI job") |
 | `ORCAMCP_DEBUG` | (unset) | Enable debug logging to stderr |
 | `ORCAMCP_SKIP_CLOUD_LOGIN` | (set by `start_orca`) | App-side: marks an agent launch (`GUI::is_agent_launch()`), so startup waits on nothing a person must answer. It skips the Orca cloud silent sign-in, which reads the keychain synchronously on the GUI thread (on macOS a permission prompt per freshly built binary), and the recent-project thumbnails, which open every recent 3MF on the GUI thread (for projects in `~/Documents`, a macOS privacy prompt per fresh binary). Home then shows the projects listed before the launch without thumbnails; projects saved or opened during the session get theirs. Either prompt, unanswered, blocks the app before the MCP server starts. Set it yourself when launching the app for an agent. |
 
@@ -960,6 +992,8 @@ echo "AA upstream's slicer reads a layer range's layer_height unchecked, and a f
 echo "AB Print::apply copies a new object name without invalidating the G-code (rel2506/06b): $(U src/libslic3r/PrintApply.cpp | awk '/model_object.name       = model_object_new.name;/{print (prev ~ /invalidate_step\(psGCodeExport\)/ ? "no" : "yes"); exit} {prev=$0}')"
 echo "AC ObjectList::get_default_layer_config reads the preset's float \"extruder\" (rel2506/06b): $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^DynamicPrintConfig ObjectList::get_default_layer_config/{f=1} f&&/opt_float\("extruder"\)/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
 echo "AD reload_scene recycles a GLVolume without its instance's printable flag (rel2506/06b): $(U src/slic3r/GUI/GLCanvas3D.cpp | awk '/^void GLCanvas3D::reload_scene/{f=1} f&&/[.>]printable *= /{print "no"; exit} f&&/^}/{print "yes"; exit}')"
+echo "AE cancel_all leaves a job whose process has returned to finalize as not cancelled (0 = bug) / a late finalize runs in ~priv with Plater::p null (rel2506/07e): $(U src/slic3r/GUI/Jobs/BoostThreadWorker.hpp | grep -c 'cancel_all_count') / $(U src/slic3r/GUI/Plater.cpp | grep -c '^Plater::~Plater() = default;')"
+echo "AF a cancelled or failed arrange keeps prepare_all's plates locked, its running flag and its notification (rel2506/07e): $(U src/slic3r/GUI/Jobs/ArrangeJob.cpp | awk '/^void ArrangeJob::finalize/{f=1} f&&/lock\(false\)|end_arrange_run/{print "no"; exit} f&&/if \(canceled \|\| eptr\)/{print "yes"; exit}')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -1125,6 +1159,57 @@ nothing on it, was marked not ready to slice, and the next background update set
 Ours sets every volume's flag from its instance in `reload_scene`, as it sets the instance's
 transformation. On "no", take upstream's and re-check `set_object_printable` false, `undo`,
 `slice_all`.
+
+Item AE: upstream's `BoostThreadWorker` records whether a job was cancelled when its `process()`
+returns, and delivers the finalize with that verdict later, on the main thread's next idle. A
+`cancel_all` in between -- which `Plater::priv::remove`, `delete_object_from_model`, `reset` (a new or
+loaded project) and `remove_selected` call just before freeing the model's objects -- was lost, and
+the arrange's or orient's finalize then wrote to instances that had just been freed. Ours counts
+`cancel_all` calls: a job pushed before one is finalized as cancelled, whenever it came
+(`cancel_all_count`). So in that window the GUI now drops the result of an arrange or an orient
+where upstream applied it: a delete, a new project, or a reslice's `stop_queue` (cancel_all, then
+wait) that lands after the job computed its result and before it was applied cancels it, and the
+objects stay where they were. That is what `cancel_all` means -- "delete the queued jobs and cancel
+the current one" -- and every finalize already handles `canceled` by applying nothing. On a
+non-zero, take upstream's and re-run `slic3rutils_tests "[McpUiJob]"`. The second count: the worker is
+a member of `Plater::priv`, and upstream's `~Plater() = default` left a job's last messages -- its
+finalize, a main-thread call its process waits on (an arrange's or orient's `prepare`), a status --
+to the worker's own destructor, which delivers them inside `~priv`, where `Plater::p` is already null
+(libc++; a priv half destroyed elsewhere): a quit while an arrange's process ran crashed there. Ours
+drains the worker in `~Plater`'s body, while the plater is whole (`drain_worker`,
+`Jobs/WorkerDrain.cpp`): it cancels every job and delivers what they send until the worker is idle,
+for at most 10 s however often they send. Every finalize is then delivered as cancelled; every job's
+finalize (arrange, orient, fill bed, rotation optimize, SLA import, print, send, bind, emboss) returns
+on `canceled` before it touches the scene, and the arrange's cleanup (Item AF) runs on a whole
+plater. A delivery that throws -- a finalize that left its error set (`PlaterJob` clears only a
+`std::exception`), a main-thread call's own -- is logged and the drain goes on: a destructor must not
+throw. Then `stop_delivering`: what a job that ignored the cancel for those 10 s sends later, which
+the worker's destructor would deliver inside `~priv` (its status reached the canvas through `p`), is
+dropped: no status, no main-thread call (the job waiting on one is let go), no finalize, so no
+cleanup of a plater that is going. Not covered: a job still running once the worker's destructor has
+given up too (upstream's: its wait ends 10 s after the last message, then a 10 s join); a dropped
+`wxEndBusyCursor` from such a job leaves the busy cursor on after a GUI rebuild; and a job whose
+process threw a `std::exception` during the drain still has its error shown through `show_error`,
+which defers an `ErrorDialog` parented to the plater (upstream's path, unchanged). The cost: a job
+that ignores its cancel holds a quit, or a GUI rebuild, up to 10 s longer than upstream -- the
+drain's 10 s come before the worker destructor's own waits. On 0, upstream drains it itself: take
+upstream's and drop ours.
+
+Item AF: upstream's `ArrangeJob::finalize` returns early for a cancelled or failed arrange, before
+it undoes what the run set up: the plates `prepare_all` locked because their print sequence differs
+from the global one stayed locked (a lock icon the user never set; every later arrange, orient and
+`flatten_object` took them for locked), `Plater::m_arrange_running` stayed set (the plate toolbar's
+arrange button, `last_arrange_job_is_finished`, did nothing again until an arrange was applied), and
+"Arranging..." stayed up until it timed out. Item AE makes a cancel in the post-process window a
+cancelled finalize too. Ours undoes all three however the finalize returns (`end_arrange_run`, from a
+`ScopeGuard` at its top). The job takes the plate list, the notification manager and the flag when
+it is made, not through `Plater::p`, but closing the notification asks the plater for its canvas
+(`PopNotification::close`), so the cleanup is safe only on a whole plater. Item AE sees to that at
+teardown: `~Plater`'s drain delivers it while the plater is whole, and after the drain the worker
+delivers nothing, so a late one never runs. It unlocks the plates it locked by identity
+(`ObjectID`), never by index: an arrange a new or opened project cancelled meets a new plate list,
+where the same index is another plate, maybe one the user saved locked. On "no", take upstream's and
+re-run `slic3rutils_tests "[McpUiJob]"`.
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices

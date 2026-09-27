@@ -17,6 +17,7 @@
 #include "OrcaMCPSliceCredit.hpp"
 #include "OrcaMCPSliceProgress.hpp"
 #include "OrcaMCPToolArguments.hpp"
+#include "OrcaMCPUiJob.hpp"
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Plater.hpp"
@@ -714,6 +715,9 @@ nlohmann::json OrcaMCPServer::handle_tools_call(const nlohmann::json& params)
         throw JsonRpcError(-32602, tool_name + " is answered by the OrcaMCP bridge (orcamcp-bridge.py), not by the "
                                    "app. Call it through the bridge.");
     }
+    // How long a tool may wait for a job it starts (arrange_objects, auto_orient, flatten_object,
+    // clone_object): the cap the bridge sends in params._meta, for this call.
+    const ScopedToolWaitCap wait_cap(params);
     // Held to the schema tools/list publishes, before the handler: an argument it does not take would
     // otherwise be ignored and the call report success, and a required one left out would reach a
     // handler that reads it unchecked.
@@ -1706,37 +1710,25 @@ void OrcaMCPServer::register_builtin_tools()
     register_tool({
         "auto_orient",
         ToolCategory::Models,
-        "Auto-orient all objects for printing",
-        "Automatically orient all objects for optimal printing",
+        "Orient the current plate's objects",
+        "Orient every object on the current plate for printing, as the plate's Auto Rotate does, and "
+        "answer once the orient has been applied: status success with objects, each one's placement "
+        "(position, rotation_degrees, scale, changed, plate_index, on_bed). The orient runs in the "
+        "background while this waits, up to the bridge's cap (15 s below ORCAMCP_TIMEOUT); still running "
+        "then, status orient_started with finished false, and get_slicing_status's ui_job says when it has "
+        "finished. status cancelled when the app cancelled it (nothing moved); refused while another job runs.",
         {
             {"type", "object"},
             {"properties", {
                 {"include_preview", {
                     {"type", "boolean"},
-                    {"description", "Return turntable preview path"}
+                    {"description", "Return turntable preview path, drawn once the orient has been applied"}
                 }}
             }}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
-            bool include_preview = params.value("include_preview", false);
-            return run_on_main_thread([include_preview]() {
-                Plater* plater = wxGetApp().plater();
-                plater->set_prepare_state(Job::PREPARE_STATE_MENU);
-                plater->orient();
-
-                nlohmann::json result = {
-                    {"status", "orient_started"},
-                    {"active_warnings", get_active_warnings_json(plater)}
-                };
-
-                // Add preview if requested
-                if (include_preview) {
-                    add_turntable_preview_if_requested(result, true);
-                    result["preview_hint"] = "Check the preview image to see how objects are now oriented on the plate.";
-                }
-
-                return result;
-            });
+            return run_plate_ui_job("auto_orient", UiJobKind::orient, params.value("include_preview", false),
+                                    "Check the preview image to see how objects are now oriented on the plate.");
         }
     });
 
@@ -1744,37 +1736,25 @@ void OrcaMCPServer::register_builtin_tools()
     register_tool({
         "arrange_objects",
         ToolCategory::Models,
-        "Auto-arrange objects on the plates",
-        "Automatically arrange all objects on the build plate",
+        "Arrange the current plate's objects",
+        "Arrange every object on the current plate, as the plate's Arrange does, and answer once the "
+        "arrange has been applied: status success with objects, each one's placement (position, "
+        "rotation_degrees, scale, changed, plate_index, on_bed). The arrange runs in the background while "
+        "this waits, up to the bridge's cap (15 s below ORCAMCP_TIMEOUT); still running then, status "
+        "arrange_started with finished false, and get_slicing_status's ui_job says when it has finished. "
+        "status cancelled when the app cancelled it (nothing moved); refused while another job runs.",
         {
             {"type", "object"},
             {"properties", {
                 {"include_preview", {
                     {"type", "boolean"},
-                    {"description", "Return turntable preview path"}
+                    {"description", "Return turntable preview path, drawn once the arrange has been applied"}
                 }}
             }}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
-            bool include_preview = params.value("include_preview", false);
-            return run_on_main_thread([include_preview]() {
-                Plater* plater = wxGetApp().plater();
-                plater->set_prepare_state(Job::PREPARE_STATE_MENU);
-                plater->arrange();
-
-                nlohmann::json result = {
-                    {"status", "arrange_started"},
-                    {"active_warnings", get_active_warnings_json(plater)}
-                };
-
-                // Add preview if requested
-                if (include_preview) {
-                    add_turntable_preview_if_requested(result, true);
-                    result["preview_hint"] = "Check the preview image to see the new arrangement of objects on the plate.";
-                }
-
-                return result;
-            });
+            return run_plate_ui_job("arrange_objects", UiJobKind::arrange, params.value("include_preview", false),
+                                    "Check the preview image to see the new arrangement of objects on the plate.");
         }
     });
 
@@ -2902,7 +2882,8 @@ void OrcaMCPServer::register_builtin_tools()
         "selected. status says what happened: slicing_started, or not_started with a reason and a "
         "message: busy_slicing (the pipeline is busy -- get_slicing_status's busy: a slice or Slice All "
         "run, an export, an upload, or the last slice still stopping; nothing is started -- call "
-        "wait_for_slice, then slice_all again), already_sliced (nothing to do), busy_job, "
+        "wait_for_slice, then slice_all again), already_sliced (nothing to do), busy_job (an arrange or an "
+        "orient holds the app: poll get_slicing_status until ui_job is null, then slice_all again), "
         "invalid (the app refuses the plate as it stands -- its validation, an object "
         "partly off the plate, a filament check, missing plugins, a broken mixed filament, or a last "
         "slice that failed; message says which, in the app's words for a validation failure), "
@@ -3304,7 +3285,9 @@ void OrcaMCPServer::register_builtin_tools()
         "stage is the app's progress text for the running slice (\"Generating support\", in the app's "
         "language; null when idle). busy says whether the slicing pipeline is busy, and busy_reason "
         "with what: slicing, exporting, uploading, or stopping (the last slice's completion is not "
-        "taken in yet); slice_all starts nothing while it is, and wait_for_slice waits it out. "
+        "taken in yet); slice_all starts nothing while it is, and wait_for_slice waits it out. ui_job "
+        "names a job holding the app apart from slicing: arranging or orienting (one a tool started and "
+        "is past its wait), other (one the GUI started), or null; slice_all's busy_job means one. "
         "slice_run says how the last slice_all run stands: scope, the "
         "plates it asked for, skipped (those of them with nothing on them to slice), and outcome running, "
         "done, ended_early or incomplete (also when no plate had anything to slice), judged by its plates "
@@ -3376,6 +3359,10 @@ void OrcaMCPServer::register_builtin_tools()
                 result["busy"]               = busy != OrcaMCP::PipelineBusy::idle;
                 result["busy_reason"]        = busy == OrcaMCP::PipelineBusy::idle ? nlohmann::json(nullptr)
                                                                                    : nlohmann::json(OrcaMCP::pipeline_busy_name(busy));
+                // Apart from busy: an arrange or an orient is not the slicing pipeline, which slice_all's
+                // refusal and wait_for_slice go by.
+                const std::shared_ptr<UiJobOutcome> last_job = last_started_ui_job();
+                result["ui_job"] = ui_job_json(plater->get_ui_job_worker().is_idle(), last_job.get());
                 // The state is the last slice_all run's, not the selected plate's alone (OrcaMCP::slice_state).
                 const OrcaMCP::SliceRunJudgement judged = judge_last_run(*plater, plate_list, is_running);
                 result["is_slicing"]         = is_running;
@@ -4762,7 +4749,11 @@ void OrcaMCPServer::register_builtin_tools()
         "clone_object",
         ToolCategory::Transforms,
         "Copy an object as instances or objects",
-        "Clone object. duplicate=true for independent copies.",
+        "Clone object. duplicate=true for independent copies. The copies are placed by an arrange of the "
+        "destination plate, and the answer comes once it has been applied: objects lists every object on "
+        "that plate with its placement. Past the bridge's cap the arrange is still running (status "
+        "arrange_started, finished false; get_slicing_status's ui_job says when it has finished); refused, "
+        "with nothing copied, while another job runs.",
         {
             {"type", "object"},
             {"properties", {
@@ -4806,13 +4797,20 @@ void OrcaMCPServer::register_builtin_tools()
                                                   ": use a 0-based plate index, or omit it (or pass -1) for the current plate"}};
             }
             bool include_preview = params.value("include_preview", false);
-            return run_on_main_thread([object_id, count, duplicate, destination_plate, destination_was_explicit, include_preview]() {
+            // What the copies are, as the clone made them; answered once its arrange has been applied.
+            nlohmann::json                result;
+            std::shared_ptr<UiJobOutcome> outcome;
+            std::vector<ObjectTransforms> scope;
+            const nlohmann::json refusal = run_on_main_thread([&]() -> nlohmann::json {
                 Plater* plater = wxGetApp().plater();
                 Model& model = plater->model();
 
                 if (object_id < 0 || object_id >= static_cast<int>(model.objects.size())) {
                     throw std::runtime_error("Invalid object_id: " + std::to_string(object_id));
                 }
+                // Before anything is copied: the copies are placed by an arrange, which cannot start now.
+                if (!plater->get_ui_job_worker().is_idle())
+                    return error_response(ui_job_busy_message("clone_object"));
 
                 // Determine source and destination plates
                 PartPlateList& plate_list = plater->get_partplate_list();
@@ -4835,7 +4833,6 @@ void OrcaMCPServer::register_builtin_tools()
                 }
 
                 ModelObject* obj = model.objects[object_id];
-                nlohmann::json result;
 
                 if (duplicate) {
                     // Create independent copies - each gets its own object_id
@@ -4872,8 +4869,8 @@ void OrcaMCPServer::register_builtin_tools()
                     plater->update();
 
                     // Arrange to place the new objects on the destination plate
-                    plater->set_prepare_state(Job::PREPARE_STATE_MENU);
-                    plater->arrange();
+                    scope   = current_plate_objects(*plater);
+                    outcome = start_ui_job(*plater, UiJobKind::arrange, Job::PREPARE_STATE_MENU);
 
                     // Build enhanced response with clear metadata
                     result = {
@@ -4886,8 +4883,7 @@ void OrcaMCPServer::register_builtin_tools()
                         {"copies_created", count},
                         {"new_object_ids", new_object_ids},
                         {"mode", "duplicate"},
-                        {"total_objects", model.objects.size()},
-                        {"active_warnings", get_active_warnings_json(plater)}
+                        {"total_objects", model.objects.size()}
                     };
                     // Add note if source and destination are the same
                     if (source_plate == actual_destination) {
@@ -4926,8 +4922,8 @@ void OrcaMCPServer::register_builtin_tools()
                     }
 
                     // Arrange to place the new instances on the destination plate
-                    plater->set_prepare_state(Job::PREPARE_STATE_MENU);
-                    plater->arrange();
+                    scope   = current_plate_objects(*plater);
+                    outcome = start_ui_job(*plater, UiJobKind::arrange, Job::PREPARE_STATE_MENU);
 
                     // Build enhanced response with clear metadata
                     result = {
@@ -4939,8 +4935,7 @@ void OrcaMCPServer::register_builtin_tools()
                         {"destination_mode", destination_was_explicit ? "explicit" : "defaulted_to_current"},
                         {"copies_created", count},
                         {"total_instances", obj->instances.size()},
-                        {"mode", "instance"},
-                        {"active_warnings", get_active_warnings_json(plater)}
+                        {"mode", "instance"}
                     };
                     // Add note if source and destination are the same
                     if (source_plate == actual_destination) {
@@ -4948,13 +4943,22 @@ void OrcaMCPServer::register_builtin_tools()
                     }
                 }
 
-                // Add preview if requested
+                return nullptr;
+            });
+            if (!refusal.is_null())
+                return refusal;
+            return answer_after_ui_job(*outcome, [result, scope, include_preview]() -> nlohmann::json {
+                nlohmann::json answer = result;
+                nlohmann::json objects = nlohmann::json::array();
+                for (const ObjectTransforms& before : scope)
+                    objects.push_back(placement_after_job(before));
+                answer["objects"]         = objects;
+                answer["active_warnings"] = get_active_warnings_json(wxGetApp().plater());
                 if (include_preview) {
-                    add_turntable_preview_if_requested(result, true);
-                    result["preview_hint"] = "Check the preview image to see the cloned object(s) and their arrangement on the plate.";
+                    add_turntable_preview_if_requested(answer, true);
+                    answer["preview_hint"] = "Check the preview image to see the cloned object(s) and their arrangement on the plate.";
                 }
-
-                return result;
+                return answer;
             });
         }
     });
@@ -5232,8 +5236,11 @@ void OrcaMCPServer::register_builtin_tools()
         "Lay an object flat on its best face",
         "Orient one object to lay flat on its best face for printing, the way the GUI's Orient does for a "
         "selection: the object replaces the current selection and is turned, and no other object moves. "
-        "An object with an instance on a locked plate is refused. It runs in the background (status "
-        "orient_started); get_object_info shows the result once it has finished.",
+        "An object with an instance on a locked plate is refused. Answered once the orient has been "
+        "applied, with the object's placement as rotate_object reports it; the orient runs in the "
+        "background while this waits, up to the bridge's cap (15 s below ORCAMCP_TIMEOUT). Still running "
+        "then: status orient_started with finished false, and get_slicing_status's ui_job says when it "
+        "has finished. status cancelled when the app cancelled it (nothing moved).",
         {
             {"type", "object"},
             {"properties", {
@@ -5261,7 +5268,9 @@ void OrcaMCPServer::register_builtin_tools()
             bool include_preview = params.value("include_preview", false);
             int preview_views = params.value("preview_views", 4);
             int preview_resolution = params.value("preview_resolution", 256);
-            return run_on_main_thread([object_id, include_preview, preview_views, preview_resolution]() {
+            std::shared_ptr<UiJobOutcome> outcome;
+            ObjectTransforms              before;
+            const nlohmann::json refusal = run_on_main_thread([&]() -> nlohmann::json {
                 Plater* plater = wxGetApp().plater();
                 Model& model = plater->model();
 
@@ -5302,18 +5311,18 @@ void OrcaMCPServer::register_builtin_tools()
                 if (const auto refusal = flatten_selection_refusal(object_id, object->instances.size(),
                                                                    view->get_selection().get_content()))
                     return error_response(*refusal);
-                plater->set_prepare_state(Job::PREPARE_STATE_DEFAULT);
-                plater->orient();
-
-                nlohmann::json result = {
-                    {"status", "orient_started"},
-                    {"object_id", object_id},
-                    {"active_warnings", get_active_warnings_json(plater)}
-                };
-
-                // Add turntable preview if requested
+                before  = transforms_of(*object);
+                outcome = start_ui_job(*plater, UiJobKind::orient, Job::PREPARE_STATE_DEFAULT);
+                return nullptr;
+            });
+            if (!refusal.is_null())
+                return refusal;
+            // Answered once the orient has been applied, with the object as rotate_object reports it.
+            return answer_after_ui_job(*outcome, [before, include_preview, preview_views, preview_resolution]() -> nlohmann::json {
+                nlohmann::json result = placement_after_job(before);
+                result["status"]          = "success";
+                result["active_warnings"] = get_active_warnings_json(wxGetApp().plater());
                 add_turntable_preview_if_requested(result, include_preview, preview_views, preview_resolution);
-
                 return result;
             });
         }

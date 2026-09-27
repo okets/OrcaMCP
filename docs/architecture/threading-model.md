@@ -136,6 +136,12 @@ Long operations that may approach this limit:
 - Multi-object arrangements
 - High-resolution preview rendering
 
+An arrange or an orient (`arrange_objects`, `auto_orient`, `flatten_object`, `clone_object`) runs on
+the UI worker, and the tool waits for it on the HTTP thread, never inside main-thread work, so the
+main thread stays free to apply it. The wait stops at the cap the bridge sends with every tool call
+(`params._meta["orcamcp/wait_cap_s"]`, 15 s below `ORCAMCP_TIMEOUT`), and at once when the app quits;
+CLAUDE.md, "Waiting for a UI job", has the details.
+
 ### No Parallelism
 Sequential execution on main thread means:
 - Tools cannot run concurrently

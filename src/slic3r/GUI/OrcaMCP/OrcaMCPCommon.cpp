@@ -4,6 +4,7 @@
 #include "OrcaMCPPlateUtils.hpp"
 #include "OrcaMCPQuit.hpp"
 #include "OrcaMCPSliceCredit.hpp"
+#include "OrcaMCPUiJob.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/GUI/NotificationManager.hpp"
@@ -268,7 +269,7 @@ std::optional<std::string> flatten_refusal(int object_id, bool printable, size_t
 {
     const std::string object = "object " + std::to_string(object_id);
     if (job_running)
-        return std::string("another job (an arrange or an orient) is running: call flatten_object again once it has finished");
+        return ui_job_busy_message("flatten_object");
     if (!printable)
         return object + " is marked not printable, and only printable objects are oriented: turn it with rotate_object instead";
     if (instances == 0)

@@ -195,7 +195,7 @@ void ArrangeJob::prepare_all() {
         plate->get_real_print_seq(&same_as_global_print_seq);
         if (plate->is_locked() == false && !same_as_global_print_seq) {
             plate->lock(true);
-            m_uncompatible_plates.push_back(i);
+            m_uncompatible_plates.push_back(plate->id());
         }
     }
 
@@ -594,7 +594,12 @@ void ArrangeJob::process(Ctl &ctl)
         we_have_unpackable_items ? _u8L("Arranging complete, but some items were not able to be arranged. Reduce spacing and try again.") : _u8L("Arranging done."));
 }
 
-ArrangeJob::ArrangeJob() : m_plater{wxGetApp().plater()} { }
+ArrangeJob::ArrangeJob()
+    : m_plater{wxGetApp().plater()}
+    , m_plate_list{&m_plater->get_partplate_list()}
+    , m_notifications{m_plater->get_notification_manager()}
+    , m_arrange_running{&m_plater->m_arrange_running}
+{ }
 
 static std::string concat_strings(const std::set<std::string> &strings,
                                   const std::string &delim = "\n")
@@ -606,7 +611,25 @@ static std::string concat_strings(const std::set<std::string> &strings,
         });
 }
 
+void end_arrange_run(PartPlateList& plates, const std::vector<ObjectID>& plates_to_unlock, std::atomic<bool>& arrange_running,
+                     const std::function<void()>& close_notification)
+{
+    for (int i = 0; i < plates.get_plate_count(); ++i) {
+        PartPlate* plate = plates.get_plate(i);
+        if (std::find(plates_to_unlock.begin(), plates_to_unlock.end(), plate->id()) != plates_to_unlock.end())
+            plate->lock(false);
+    }
+    arrange_running.store(false);
+    close_notification();
+}
+
 void ArrangeJob::finalize(bool canceled, std::exception_ptr &eptr) {
+    // Orca: undone however this returns, a cancelled or failed arrange included (end_arrange_run).
+    // Nothing here reaches through m_plater, whose priv may be going away (see m_plate_list).
+    const ScopeGuard end_run([this] {
+        end_arrange_run(*m_plate_list, m_uncompatible_plates, *m_arrange_running,
+                        [this] { m_notifications->close_notification_of_type(NotificationType::ArrangeOngoing); });
+    });
     try {
         if (eptr)
             std::rethrow_exception(eptr);
@@ -711,8 +734,6 @@ void ArrangeJob::finalize(bool canceled, std::exception_ptr &eptr) {
             _L("Arrangement ignored the following objects which can't fit into a single bed:\n%s"),
             concat_strings(names, "\n")));
     }
-    m_plater->get_notification_manager()->close_notification_of_type(NotificationType::ArrangeOngoing);
-
     //BBS: reload all objects due to arrange
     if (only_on_partplate) {
         plate_list.rebuild_plates_after_arrangement(!only_on_partplate, true, current_plate_index);
@@ -721,18 +742,12 @@ void ArrangeJob::finalize(bool canceled, std::exception_ptr &eptr) {
         plate_list.rebuild_plates_after_arrangement(!only_on_partplate, true);
     }
 
-    // unlock the plates we just locked
-    for (int i : m_uncompatible_plates)
-        plate_list.get_plate(i)->lock(false);
-
     // BBS: update slice context and gcode result.
     m_plater->update_slicing_context_to_current_partplate();
 
     wxGetApp().obj_list()->reload_all_plates();
 
     m_plater->update();
-
-    m_plater->m_arrange_running.store(false);
 }
 
 std::optional<arrangement::ArrangePolygon>

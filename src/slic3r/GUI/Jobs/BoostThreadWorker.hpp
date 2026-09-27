@@ -28,6 +28,9 @@ class BoostThreadWorker : public Worker, private Job::Ctl
         std::shared_ptr<Job> job;
         bool                 canceled = false;
         std::exception_ptr   eptr     = nullptr;
+        // Orca: how many cancel_all calls came before this job was pushed. One since then cancels it,
+        // even after its process has returned (see cancel_all).
+        unsigned             cancel_all_count = 0;
     };
 
     // A message data for status updates. Only goes from worker to main thread.
@@ -69,6 +72,8 @@ class BoostThreadWorker : public Worker, private Job::Ctl
 
     boost::thread                      m_thread;
     std::atomic<bool>                  m_running{false}, m_canceled{false};
+    std::atomic<unsigned>              m_cancel_all_count{0};
+    bool                               m_delivering = true; // Orca: main thread only, see stop_delivering
     std::shared_ptr<ProgressIndicator> m_progress;
     JobQueue     m_input_queue;  // from main thread to worker
     MessageQueue m_output_queue; // form worker to main thread
@@ -125,7 +130,22 @@ public:
     }
 
     void cancel() override { m_canceled.store(true); }
-    void cancel_all() override { m_input_queue.clear(); cancel(); }
+    // Orca: the job whose process has already returned is cancelled too: its finalize, still queued, is
+    // delivered as cancelled. Upstream recorded the verdict when process returned, so a cancel_all in
+    // the window before the finalize ran -- the delete paths call it just before freeing the model's
+    // objects -- let that finalize write to what they freed.
+    void cancel_all() override
+    {
+        m_input_queue.clear();
+        m_cancel_all_count.fetch_add(1);
+        cancel();
+    }
+
+    // Orca: main thread. From now on the worker's messages are dropped, not delivered: no status, no
+    // main-thread call (a job waiting on one is let go, with a broken promise), no finalize. For an
+    // owner being torn down once it has drained the worker (~Plater): what a job that ignored the
+    // cancel sends later would reach an owner half destroyed.
+    void stop_delivering() { m_delivering = false; }
 
     ProgressIndicator * get_pri() { return m_progress.get(); }
     const ProgressIndicator * get_pri() const  { return m_progress.get(); }

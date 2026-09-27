@@ -333,6 +333,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/Jobs/UpgradeNetworkJob.cpp
     GUI/Jobs/UpgradeNetworkJob.hpp
     GUI/Jobs/Worker.hpp
+    GUI/Jobs/WorkerDrain.cpp
+    GUI/Jobs/WorkerDrain.hpp
     GUI/KBShortcutsDialog.cpp
     GUI/KBShortcutsDialog.hpp
     GUI/LibVGCode/LibVGCodeWrapper.hpp
@@ -420,6 +422,9 @@ set(SLIC3R_GUI_SOURCES
     GUI/OrcaMCP/OrcaMCPRequestGuard.cpp
     GUI/OrcaMCP/OrcaMCPToolArguments.hpp
     GUI/OrcaMCP/OrcaMCPToolArguments.cpp
+    GUI/OrcaMCP/OrcaMCPUiJob.hpp
+    GUI/OrcaMCP/OrcaMCPUiJob.cpp
+    GUI/OrcaMCP/OrcaMCPUiJobApp.cpp
     GUI/OrcaMCP/OrcaMCPServer.hpp
     GUI/OrcaMCP/OrcaMCPServer.cpp
     GUI/OrcaMCP/OrcaMCPServerInfo.hpp

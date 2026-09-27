@@ -44,7 +44,7 @@ The bridge script accepts these environment variables:
 |----------|---------|-------------|
 | `ORCAMCP_HOST` | `localhost` | OrcaSlicer HTTP server host: `localhost` or `127.0.0.1`. The app listens on 127.0.0.1 only, so another machine cannot reach it |
 | `ORCAMCP_PORT` | `13618` | OrcaSlicer HTTP server port |
-| `ORCAMCP_TIMEOUT` | `120` | Request timeout in seconds |
+| `ORCAMCP_TIMEOUT` | `120` | Request timeout in seconds. It also bounds how long `arrange_objects`, `auto_orient`, `flatten_object` and `clone_object` wait for their job: the bridge sends wait_for_slice's cap (15 s below it) with every tool call, as `params._meta["orcamcp/wait_cap_s"]` |
 | `ORCAMCP_DEBUG` | (unset) | Enable debug logging to stderr |
 | `ORCAMCP_SKIP_CLOUD_LOGIN` | set to `1` by `start_orca` | Read by the **app**, not the bridge: skips the Orca cloud silent sign-in at startup. That sign-in reads the keychain synchronously on the GUI thread and, on macOS, can block on a permission prompt before the MCP server starts. Set it yourself if you launch the app for an agent by other means. |
 
