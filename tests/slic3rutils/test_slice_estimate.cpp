@@ -8,6 +8,7 @@
 #include "libslic3r/Slicing.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <map>
 #include <optional>
@@ -296,10 +297,12 @@ const std::vector<std::string> k_feature_keys = {"outer_wall", "inner_wall",   "
 
 TEST_CASE("time_by_feature names every feature, at zero when a plate has none of it", "[orcamcp][estimate]")
 {
-    const std::map<std::string, double> times = compute_time_by_feature({}, k_normal, /*total_seconds=*/0.0);
-    std::vector<std::string>            keys;
-    for (const auto& [key, seconds] : times)
+    const nlohmann::json     json = time_by_feature_json(compute_time_by_feature({}, k_normal, /*total_seconds=*/0.0));
+    std::vector<std::string> keys;
+    for (const auto& [key, seconds] : json.items()) {
         keys.push_back(key);
+        CHECK_THAT(seconds.get<double>(), WithinAbs(0.0, 1e-12));
+    }
     std::vector<std::string> expected = k_feature_keys;
     std::sort(expected.begin(), expected.end());
     CHECK(keys == expected);
@@ -310,10 +313,10 @@ TEST_CASE("the walls are split into outer, inner, overhang and gap fill", "[orca
     const std::vector<Move> moves = {extrusion(Slic3r::erExternalPerimeter, 10.0f), extrusion(Slic3r::erPerimeter, 20.0f),
                                      extrusion(Slic3r::erOverhangPerimeter, 3.0f), extrusion(Slic3r::erGapFill, 1.0f)};
     const auto              times = compute_time_by_feature(moves, k_normal, 34.0);
-    CHECK_THAT(times.at("outer_wall"), WithinRel(10.0, 1e-6));
-    CHECK_THAT(times.at("inner_wall"), WithinRel(20.0, 1e-6));
-    CHECK_THAT(times.at("overhang_wall"), WithinRel(3.0, 1e-6));
-    CHECK_THAT(times.at("gap_fill"), WithinRel(1.0, 1e-6));
+    CHECK_THAT(times.at(TimeFeature::outer_wall), WithinRel(10.0, 1e-6));
+    CHECK_THAT(times.at(TimeFeature::inner_wall), WithinRel(20.0, 1e-6));
+    CHECK_THAT(times.at(TimeFeature::overhang_wall), WithinRel(3.0, 1e-6));
+    CHECK_THAT(times.at(TimeFeature::gap_fill), WithinRel(1.0, 1e-6));
 }
 
 TEST_CASE("sparse, solid, surface, bridge and ironing time all count as infill", "[orcamcp][estimate]")
@@ -322,7 +325,7 @@ TEST_CASE("sparse, solid, surface, bridge and ironing time all count as infill",
                                      extrusion(Slic3r::erTopSolidInfill, 1.0f), extrusion(Slic3r::erBottomSurface, 1.0f),
                                      extrusion(Slic3r::erBridgeInfill, 1.0f),   extrusion(Slic3r::erInternalBridgeInfill, 1.0f),
                                      extrusion(Slic3r::erIroning, 1.0f)};
-    CHECK_THAT(compute_time_by_feature(moves, k_normal, 7.0).at("infill"), WithinRel(7.0, 1e-6));
+    CHECK_THAT(compute_time_by_feature(moves, k_normal, 7.0).at(TimeFeature::infill), WithinRel(7.0, 1e-6));
 }
 
 TEST_CASE("support, its interface, the prime tower, brim and skirt each have their own time", "[orcamcp][estimate]")
@@ -331,11 +334,11 @@ TEST_CASE("support, its interface, the prime tower, brim and skirt each have the
                                      extrusion(Slic3r::erSupportMaterialInterface, 2.0f), extrusion(Slic3r::erWipeTower, 4.0f),
                                      extrusion(Slic3r::erBrim, 1.5f), extrusion(Slic3r::erSkirt, 0.5f)};
     const auto              times = compute_time_by_feature(moves, k_normal, 14.0);
-    CHECK_THAT(times.at("support"), WithinRel(6.0, 1e-6));
-    CHECK_THAT(times.at("support_interface"), WithinRel(2.0, 1e-6));
-    CHECK_THAT(times.at("prime_tower"), WithinRel(4.0, 1e-6));
-    CHECK_THAT(times.at("brim"), WithinRel(1.5, 1e-6));
-    CHECK_THAT(times.at("skirt"), WithinRel(0.5, 1e-6));
+    CHECK_THAT(times.at(TimeFeature::support), WithinRel(6.0, 1e-6));
+    CHECK_THAT(times.at(TimeFeature::support_interface), WithinRel(2.0, 1e-6));
+    CHECK_THAT(times.at(TimeFeature::prime_tower), WithinRel(4.0, 1e-6));
+    CHECK_THAT(times.at(TimeFeature::brim), WithinRel(1.5, 1e-6));
+    CHECK_THAT(times.at(TimeFeature::skirt), WithinRel(0.5, 1e-6));
 }
 
 TEST_CASE("travel and tool changes are timed apart, and everything else is other", "[orcamcp][estimate]")
@@ -344,9 +347,9 @@ TEST_CASE("travel and tool changes are timed apart, and everything else is other
                                      move(EMoveType::Retract, Slic3r::erNone, 0.5f), move(EMoveType::Wipe, Slic3r::erNone, 0.25f),
                                      move(EMoveType::Custom_GCode, Slic3r::erNone, 2.0f), extrusion(Slic3r::erCustom, 0.25f)};
     const auto              times = compute_time_by_feature(moves, k_normal, 41.0);
-    CHECK_THAT(times.at("travel"), WithinRel(8.0, 1e-6));
-    CHECK_THAT(times.at("tool_changes"), WithinRel(30.0, 1e-6));
-    CHECK_THAT(times.at("other"), WithinRel(3.0, 1e-6));
+    CHECK_THAT(times.at(TimeFeature::travel), WithinRel(8.0, 1e-6));
+    CHECK_THAT(times.at(TimeFeature::tool_changes), WithinRel(30.0, 1e-6));
+    CHECK_THAT(times.at(TimeFeature::other), WithinRel(3.0, 1e-6));
 }
 
 TEST_CASE("the parts add up to the total, with the processor's unattributed remainder", "[orcamcp][estimate]")
@@ -356,27 +359,51 @@ TEST_CASE("the parts add up to the total, with the processor's unattributed rema
     const double            total = 400.0; // 10 s the processor added to the total without a move
     const auto              times = compute_time_by_feature(moves, k_normal, total);
     double                  sum   = 0.0;
-    for (const auto& [key, seconds] : times)
+    for (double seconds : times.seconds)
         sum += seconds;
     CHECK_THAT(sum, WithinRel(total, 1e-9));
-    CHECK_THAT(times.at("unattributed"), WithinAbs(10.0, 1e-6));
+    CHECK_THAT(times.at(TimeFeature::unattributed), WithinAbs(10.0, 1e-6));
 }
 
 TEST_CASE("the breakdown reads the time mode it is asked for", "[orcamcp][estimate]")
 {
     const std::vector<Move> moves = {move(EMoveType::Extrude, Slic3r::erPerimeter, /*normal_s=*/10.0f, /*stealth_s=*/25.0f)};
-    CHECK_THAT(compute_time_by_feature(moves, k_stealth, 25.0).at("inner_wall"), WithinRel(25.0, 1e-6));
+    CHECK_THAT(compute_time_by_feature(moves, k_stealth, 25.0).at(TimeFeature::inner_wall), WithinRel(25.0, 1e-6));
 }
 
 TEST_CASE("the breakdown is reported to a tenth of a second", "[orcamcp][estimate]")
 {
-    const nlohmann::json json = time_by_feature_json({{"inner_wall", 12.3456}, {"travel", 0.04}});
+    FeatureTimes times;
+    times.seconds[size_t(TimeFeature::inner_wall)] = 12.3456;
+    times.seconds[size_t(TimeFeature::travel)]     = 0.04;
+    const nlohmann::json json                      = time_by_feature_json(times);
     CHECK_THAT(json.at("inner_wall").get<double>(), WithinAbs(12.3, 1e-9));
     CHECK_THAT(json.at("travel").get<double>(), WithinAbs(0.0, 1e-9));
 }
 
 TEST_CASE("a remainder that rounds to nothing is reported as 0, not -0", "[orcamcp][estimate]")
 {
-    const nlohmann::json json = time_by_feature_json({{"unattributed", -0.004}});
-    CHECK(json.dump() == R"({"unattributed":0.0})");
+    FeatureTimes times;
+    times.seconds[size_t(TimeFeature::unattributed)] = -0.004;
+    CHECK(time_by_feature_json(times).at("unattributed").dump() == "0.0");
+}
+
+// Hidden ([.]): a timing, not a check. get_print_estimate runs the breakdown on the GUI thread over
+// every move of the plate's G-code, so its cost per move matters; run it by its tag to measure.
+TEST_CASE("time_by_feature over five million moves", "[.][Benchmark][orcamcp][estimate]")
+{
+    const std::vector<Slic3r::ExtrusionRole> roles = {Slic3r::erExternalPerimeter, Slic3r::erPerimeter, Slic3r::erInternalInfill,
+                                                      Slic3r::erSupportMaterialInterface, Slic3r::erWipeTower, Slic3r::erSolidInfill};
+    std::vector<Move>                        moves;
+    moves.reserve(5'000'000);
+    for (size_t i = 0; moves.size() < 5'000'000; ++i) {
+        moves.push_back(extrusion(roles[i % roles.size()], 0.01f));
+        moves.push_back(move(i % 7 == 0 ? EMoveType::Retract : EMoveType::Travel, Slic3r::erNone, 0.005f));
+    }
+    const auto           started = std::chrono::steady_clock::now();
+    const auto           times   = compute_time_by_feature(moves, k_normal, 40000.0);
+    const nlohmann::json json    = time_by_feature_json(times);
+    const auto           elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+    WARN("compute_time_by_feature + time_by_feature_json over " << moves.size() << " moves: " << elapsed << " ms");
+    CHECK(json.size() == k_feature_keys.size());
 }

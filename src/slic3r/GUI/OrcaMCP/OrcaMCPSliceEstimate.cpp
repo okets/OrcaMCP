@@ -163,49 +163,98 @@ std::optional<size_t> count_profile_layers(const SlicingParameters& params, cons
 
 namespace {
 
-// The time_by_feature key one move's time is counted under.
-const char* time_feature_key(EMoveType type, ExtrusionRole role)
+// A role's time feature: its wall when it is one, else its feature in the shared table.
+TimeFeature time_feature_of(ExtrusionRole role)
 {
-    switch (type) {
-    case EMoveType::Travel: return "travel";
-    case EMoveType::Tool_change: return "tool_changes";
-    case EMoveType::Extrude: break;
-    default: return "other";
+    switch (wall_kind_of(role)) {
+    case WallKind::outer_wall: return TimeFeature::outer_wall;
+    case WallKind::inner_wall: return TimeFeature::inner_wall;
+    case WallKind::overhang_wall: return TimeFeature::overhang_wall;
+    case WallKind::gap_fill: return TimeFeature::gap_fill;
+    case WallKind::none: break;
     }
-    if (const char* wall = wall_key(role))
-        return wall;
-    return extrusion_feature_key(extrusion_feature_of(role));
+    switch (extrusion_feature_of(role)) {
+    case ExtrusionFeature::infill: return TimeFeature::infill;
+    case ExtrusionFeature::support: return TimeFeature::support;
+    case ExtrusionFeature::support_interface: return TimeFeature::support_interface;
+    case ExtrusionFeature::brim: return TimeFeature::brim;
+    case ExtrusionFeature::skirt: return TimeFeature::skirt;
+    case ExtrusionFeature::prime_tower: return TimeFeature::prime_tower;
+    case ExtrusionFeature::perimeters: // every perimeters role is a wall, above
+    case ExtrusionFeature::other: break;
+    }
+    return TimeFeature::other;
+}
+
+// time_feature_of for every role, worked out once.
+const std::array<TimeFeature, size_t(erCount)>& role_time_features()
+{
+    static const std::array<TimeFeature, size_t(erCount)> table = [] {
+        std::array<TimeFeature, size_t(erCount)> features{};
+        for (size_t role = 0; role < features.size(); ++role)
+            features[role] = time_feature_of(ExtrusionRole(role));
+        return features;
+    }();
+    return table;
+}
+
+// The feature one move's time is counted under.
+TimeFeature time_feature_of(const GCodeProcessorResult::MoveVertex& move)
+{
+    switch (move.type) {
+    case EMoveType::Travel: return TimeFeature::travel;
+    case EMoveType::Tool_change: return TimeFeature::tool_changes;
+    case EMoveType::Extrude:
+        return size_t(move.extrusion_role) < size_t(erCount) ? role_time_features()[size_t(move.extrusion_role)] : TimeFeature::other;
+    default: return TimeFeature::other;
+    }
 }
 
 } // namespace
 
-std::map<std::string, double> compute_time_by_feature(const std::vector<GCodeProcessorResult::MoveVertex>& moves,
-                                                      PrintEstimatedStatistics::ETimeMode       mode,
-                                                      double                                    total_seconds)
+const char* time_feature_key(TimeFeature feature)
 {
-    std::map<std::string, double> seconds;
-    for (const char* key : {"outer_wall", "inner_wall", "overhang_wall", "gap_fill", "travel", "tool_changes", "unattributed"})
-        seconds[key] = 0.0;
-    for (ExtrusionFeature feature : {ExtrusionFeature::infill, ExtrusionFeature::support, ExtrusionFeature::support_interface,
-                                     ExtrusionFeature::brim, ExtrusionFeature::skirt, ExtrusionFeature::prime_tower,
-                                     ExtrusionFeature::other})
-        seconds[extrusion_feature_key(feature)] = 0.0;
-
-    double attributed = 0.0;
-    for (const GCodeProcessorResult::MoveVertex& move : moves) {
-        const double time = move.time[static_cast<size_t>(mode)];
-        seconds[time_feature_key(move.type, move.extrusion_role)] += time;
-        attributed += time;
+    switch (feature) {
+    case TimeFeature::outer_wall: return "outer_wall";
+    case TimeFeature::inner_wall: return "inner_wall";
+    case TimeFeature::overhang_wall: return "overhang_wall";
+    case TimeFeature::gap_fill: return "gap_fill";
+    case TimeFeature::infill: return extrusion_feature_key(ExtrusionFeature::infill);
+    case TimeFeature::support: return extrusion_feature_key(ExtrusionFeature::support);
+    case TimeFeature::support_interface: return extrusion_feature_key(ExtrusionFeature::support_interface);
+    case TimeFeature::brim: return extrusion_feature_key(ExtrusionFeature::brim);
+    case TimeFeature::skirt: return extrusion_feature_key(ExtrusionFeature::skirt);
+    case TimeFeature::prime_tower: return extrusion_feature_key(ExtrusionFeature::prime_tower);
+    case TimeFeature::travel: return "travel";
+    case TimeFeature::tool_changes: return "tool_changes";
+    case TimeFeature::other: return extrusion_feature_key(ExtrusionFeature::other);
+    case TimeFeature::unattributed: return "unattributed";
+    case TimeFeature::count: break;
     }
-    seconds["unattributed"] = total_seconds - attributed;
-    return seconds;
+    return "other";
 }
 
-nlohmann::json time_by_feature_json(const std::map<std::string, double>& seconds_by_feature)
+FeatureTimes compute_time_by_feature(const std::vector<GCodeProcessorResult::MoveVertex>& moves,
+                                     PrintEstimatedStatistics::ETimeMode       mode,
+                                     double                                    total_seconds)
+{
+    FeatureTimes times;
+    double       attributed = 0.0;
+    const size_t mode_index = static_cast<size_t>(mode);
+    for (const GCodeProcessorResult::MoveVertex& move : moves) {
+        const double time = move.time[mode_index];
+        times.seconds[size_t(time_feature_of(move))] += time;
+        attributed += time;
+    }
+    times.seconds[size_t(TimeFeature::unattributed)] = total_seconds - attributed;
+    return times;
+}
+
+nlohmann::json time_by_feature_json(const FeatureTimes& times)
 {
     nlohmann::json out = nlohmann::json::object();
-    for (const auto& [feature, seconds] : seconds_by_feature)
-        out[feature] = std::round(seconds * 10.0) / 10.0 + 0.0; // + 0.0: a rounded -0.04 reads 0, not -0
+    for (size_t feature = 0; feature < times.seconds.size(); ++feature)
+        out[time_feature_key(TimeFeature(feature))] = std::round(times.seconds[feature] * 10.0) / 10.0 + 0.0; // + 0.0: -0 reads 0
     return out;
 }
 
