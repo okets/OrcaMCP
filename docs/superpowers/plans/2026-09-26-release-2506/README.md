@@ -60,9 +60,9 @@ gave were wrong; the prompts carry the corrected facts.
 | 06 | [Workflow tools](06-workflow-tools.md) | 01, 03 | bridge, slicing status, preset reads, paint remap, estimate breakdown | merged and pushed 2026-09-27 (live checks passed); Build all green (run 36292935184) |
 | 07 | [Sliced layer plan](07-layer-plan.md) | 01, 03 | `OrcaMCPFirstLayerPlan.cpp`, `render_plate_view` | merged and pushed 2026-09-27 (overhang facts, not verdicts); Build all green (run 36302057792) |
 | 06b | [Slicing and loading follow-ups](06b-slicing-followups.md) | 07 | `slice_all`, slicing status, OrcaMCPCommon, load errors, undo, layer ranges | merged and pushed 2026-09-27 (five rounds, 31 commits; merge ca1a608e30; Build all 36319238134); probe letters Z, AA–AD |
-| 06c | (no prompt file; 06b's agent) | 06b | `slice_all`'s refusal reason across plates; `transform_objects` all-or-nothing | merged and pushed 2026-09-27 (merge 871ff5a60a, three commits; Build all 36320742400 also covers 06b) |
-| 07b | [Over-height check on non-Bambu printers](07b-height-check.md) | 06b | GCodeProcessor `;Z:` parsing, MCP send/export gating | audit and design approved 2026-09-27; next: GO sent after 06c merged |
-| 07c | [A misspelled or missing argument is refused](07c-unknown-arguments.md) | 07b | `handle_tools_call`, the bridge's own tools | added 2026-09-27 by the orchestrator (`scale_object {"scale": 0.5}` said success and did nothing); audit and design go to the orchestrator first |
+| 06c | (no prompt file; 06b's agent) | 06b | `slice_all`'s refusal reason across plates; `transform_objects` all-or-nothing | merged and pushed 2026-09-27 (merge 871ff5a60a, three commits; Build all 36320742400 green on every platform, also covers 06b) |
+| 07b | [Over-height check on non-Bambu printers](07b-height-check.md) | 06c | GCodeProcessor `;Z:` parsing, the 0-means-no-limit rule, MCP send/export gating | merged and pushed 2026-09-27 (four rounds, 10 commits; merge a726b9ca52); probe Y (six counts) |
+| 07c | [A misspelled or missing argument is refused](07c-unknown-arguments.md) | 07b | `handle_tools_call`, the bridge's own tools | added 2026-09-27 by the orchestrator (`scale_object {"scale": 0.5}` said success and did nothing); audit and design in progress (read-only) since 2026-09-27 23:20 |
 | 08 | [Server instructions and hints](08-instructions-and-hints.md) | 01–07c | `initialize`, descriptions, result hints | not started |
 | 09 | [Several instances, switch between them](09-second-instance-crash.md) | 01–08 | port fallback, instance registry (with open file), bridge `list_instances` / `select_instance` | added 2026-09-26 by the user; design goes to the user; starts after all other coding |
 
@@ -114,6 +114,9 @@ roadmap; nothing ships half-done.
   fires on non-Bambu printers (07b). Warn upstream that parsing `;Z:` alone breaks every non-Bambu
   multi-extruder preset, because their unset per-nozzle height reads as 0 mm, so the guard is needed. (3) STL repair counts are thrown away (roadmap).
   (4) Undo of a printable toggle leaves the plate unsliceable in the GUI too (probe AD, found in 06b).
+  (5) A Type 1 prime tower on a non-Bambu printer drops its top tool-change layer's block, because an unset
+  extruder height (0) reads as a limit (probe Y's sixth count, found in 07b). 07b's agent recommends offering (2)
+  with (5) and the PrintObject companion as one issue: treat 0 as no limit everywhere a height is compared.
 - **Sequencing the Flashforge print-options plan.** Another session wrote
   `docs/superpowers/plans/2026-09-27-flashforge-print-options.md` (untracked; not this release's
   orchestrator). Its first step waits for 06b's merge, which also releases 06c, 07b, 07c and 08 here, and
