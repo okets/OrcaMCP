@@ -166,6 +166,17 @@ required argument directly, and every argument it reads must be declared: any ot
 before the handler sees it. The bridge holds its own two tools to their schemas in the golden file
 the same way, with the same words (`argument_error`, top level only: neither takes a nested object).
 
+**A value a tool would act on as something else is refused, not reinterpreted.** Past the schema,
+a handler that cannot do what a value asks answers with its own error (`{"status": "error",
+"message"}` naming what to send instead), before it changes anything or takes an undo step:
+`rotate_object relative: false`, one bound of `delete_object_layer_range`, an empty or malformed
+`reset_object_config keys`, `clone_object count < 1`, an unknown `cut_object keep` or
+`get_valid_config_keys category`, `scale_object uniform` without `x`, `printer_control
+set_temperature` with nothing to set, and a `flatten_object` the orient job would not scope to the
+object (`tests/slic3rutils/test_mcp_argument_values.cpp`, `[McpArgumentValues]`). A call that
+changes nothing because nothing was asked -- no axes, an empty list -- stays a success with
+`changed: false` or a zero count.
+
 **Anything a tool returns in the shape a request takes must be accepted back**: an agent edits a
 list by sending back the one a response gave it. So a strict nested object declares, as accepted and
 ignored, the extra fields its response twin carries: `set_brim_ears.points[]` takes `z` (the
