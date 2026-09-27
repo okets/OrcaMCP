@@ -656,7 +656,7 @@ struct OffscreenRenderTarget
 // own framebuffer, not the canvas's. GTK/EGL may refuse SetCurrent on a hidden canvas; the reload
 // then stays delayed and `scene_current` says so. The shared context goes back to the canvas on
 // screen afterwards, so the visible tab carries on exactly as it was.
-static GLCanvas3D* scene_canvas(bool& scene_current)
+GLCanvas3D* OrcaMCPPlateUtils::SceneCanvas(bool& scene_current)
 {
     Plater*     plater = wxGetApp().plater();
     GLCanvas3D* canvas = plater->get_view3D_canvas3D();
@@ -666,7 +666,7 @@ static GLCanvas3D* scene_canvas(bool& scene_current)
         canvas->reload_scene(true);
         if (GLCanvas3D* shown = plater->get_current_canvas3D(); shown != nullptr && shown != canvas)
             shown->make_current_for_postinit();
-        BOOST_LOG_TRIVIAL(info) << "RenderThumbnail: the hidden 3D view had a scene reload pending; "
+        BOOST_LOG_TRIVIAL(info) << "OrcaMCP: the hidden 3D view had a scene reload pending; "
                                 << (canvas->is_reload_delayed() ? "it could not be refreshed" : "refreshed it");
     }
     scene_current = !canvas->is_reload_delayed();
@@ -698,7 +698,7 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
     ModelObjectPtrs& model_objects = GUI::wxGetApp().model().objects;
     std::vector<ColorRGBA> extruder_colors = wxGetApp().plater()->get_extruders_colors();
     bool scene_current = true;
-    GLCanvas3D* canvas3D = scene_canvas(scene_current);
+    GLCanvas3D* canvas3D = SceneCanvas(scene_current);
     if (canvas3D == nullptr)
         return;
     const GLVolumeCollection& volumes = canvas3D->get_volumes();

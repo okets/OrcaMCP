@@ -299,7 +299,7 @@
         "additionalProperties": false,
         "properties": {
           "count": {
-            "description": "Number of copies (default: 1)",
+            "description": "Number of copies, 1 or more (default: 1)",
             "type": "integer"
           },
           "destination_plate": {
@@ -442,7 +442,7 @@
     },
     {
       "category": "Layer Ranges",
-      "description": "Remove layer range config. If z_min/z_max omitted, removes ALL ranges. Range Z is measured from the object's own base, not from the bed.",
+      "description": "Remove an object's layer ranges: pass z_min and z_max to remove that one range, or neither to remove every range of the object; one without the other is refused. Range Z is measured from the object's own base, not from the bed.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -451,11 +451,11 @@
             "type": "integer"
           },
           "z_max": {
-            "description": "Max Z height (mm) above the object's own base. Omit both to delete all ranges.",
+            "description": "Max Z height (mm) above the object's own base, with z_min. Omit both to delete every range.",
             "type": "number"
           },
           "z_min": {
-            "description": "Min Z height (mm) above the object's own base. Omit both to delete all ranges.",
+            "description": "Min Z height (mm) above the object's own base, with z_max. Omit both to delete every range.",
             "type": "number"
           }
         },
@@ -570,7 +570,7 @@
     },
     {
       "category": "Transforms",
-      "description": "Automatically orient an object to lay flat on its best face for printing",
+      "description": "Orient one object to lay flat on its best face for printing, the way the GUI's Orient does for a selection: the object replaces the current selection and is turned, and no other object moves. An object with an instance on a locked plate is refused. It runs in the background (status orient_started); get_object_info shows the result once it has finished.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -1021,7 +1021,16 @@
         "additionalProperties": false,
         "properties": {
           "category": {
-            "description": "per_object, print, filament, printer, toolchanger, project, or all",
+            "description": "per_object (default), print, filament, printer, toolchanger, project, or all",
+            "enum": [
+              "per_object",
+              "print",
+              "filament",
+              "printer",
+              "toolchanger",
+              "project",
+              "all"
+            ],
             "type": "string"
           },
           "include_descriptions": {
@@ -1573,7 +1582,7 @@
             "type": "number"
           },
           "nozzles": {
-            "description": "set_temperature only: per-tool target temperatures. Tools not listed are left unchanged.",
+            "description": "set_temperature only: per-tool target temperatures. Tools not listed are left unchanged. set_temperature needs at least one of bed, chamber or a nozzle.",
             "items": {
               "additionalProperties": false,
               "properties": {
@@ -1867,7 +1876,7 @@
         "additionalProperties": false,
         "properties": {
           "keys": {
-            "description": "Keys to reset. If omitted, resets every override but the object's filament (extruder), which stays, as the GUI's reset leaves it. reset_count says how many were cleared; a reset that clears nothing changes nothing.",
+            "description": "Keys to reset. If omitted, resets every override but the object's filament (extruder), which stays, as the GUI's reset leaves it. An empty list is refused. reset_count says how many were cleared; a reset that clears nothing changes nothing.",
             "items": {
               "type": "string"
             },
@@ -1933,7 +1942,7 @@
             "type": "integer"
           },
           "relative": {
-            "description": "true=add, false=absolute",
+            "description": "true (the default): x, y and z are the change in degrees. false is refused: absolute rotation is not supported, so work out the change from rotation_degrees in get_object_info.",
             "type": "boolean"
           },
           "x": {
@@ -2025,7 +2034,7 @@
             "type": "integer"
           },
           "uniform": {
-            "description": "If true, use x for all axes (default: false)",
+            "description": "If true, x scales every axis, so give x (default: false)",
             "type": "boolean"
           },
           "x": {

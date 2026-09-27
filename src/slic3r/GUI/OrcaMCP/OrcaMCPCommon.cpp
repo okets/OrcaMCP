@@ -263,6 +263,43 @@ void report_placement(nlohmann::json& result, int object_id)
         result.erase("placement_warning");
 }
 
+std::optional<std::string> flatten_refusal(int object_id, bool printable, size_t instances,
+                                           const std::vector<int>& instances_on_locked_plates, bool job_running)
+{
+    const std::string object = "object " + std::to_string(object_id);
+    if (job_running)
+        return std::string("another job (an arrange or an orient) is running: call flatten_object again once it has finished");
+    if (!printable)
+        return object + " is marked not printable, and only printable objects are oriented: turn it with rotate_object instead";
+    if (instances == 0)
+        return object + " has no instance to orient";
+    if (instances_on_locked_plates.size() == instances)
+        return object + " is on a locked plate, which is never oriented: unlock the plate, or turn it with rotate_object";
+    if (!instances_on_locked_plates.empty()) {
+        const bool  one = instances_on_locked_plates.size() == 1;
+        std::string ids;
+        for (int id : instances_on_locked_plates)
+            ids += (ids.empty() ? "" : ", ") + std::to_string(id);
+        return object + " has " + (one ? "instance " : "instances ") + ids +
+               " on a locked plate, which the orient would move up or down with the others without turning " +
+               (one ? "it: unlock its plate, or move it" : "them: unlock their plate, or move them") +
+               " to another plate, then call flatten_object again";
+    }
+    return std::nullopt;
+}
+
+std::optional<std::string> flatten_selection_refusal(int object_id, size_t instances, const std::map<int, std::set<int>>& selected)
+{
+    std::set<int> every_instance;
+    for (size_t i = 0; i < instances; ++i)
+        every_instance.insert(int(i));
+    if (selected.size() == 1 && selected.begin()->first == object_id && selected.begin()->second == every_instance)
+        return std::nullopt;
+    return "the 3D view has not caught up with object " + std::to_string(object_id) +
+           " yet, so the orient would not be this object alone, and was not started: show the Prepare tab, then call "
+           "flatten_object again";
+}
+
 bool valid_scale_factors(const Vec3d& factors)
 {
     return std::all_of(factors.data(), factors.data() + 3, [](double f) { return std::isfinite(f) && f > 0.0; });

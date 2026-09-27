@@ -115,7 +115,7 @@ grep -hA1 -E '^\s*register_(bridge_)?tool\(\{' src/slic3r/GUI/OrcaMCP/*.cpp | gr
 |----------|-------|
 | **Scene** | `get_scene_info` (plates, objects with `filaments_used` — read that, not `extruder_id` — and `mesh_warning` (the object list's warning icon, with its reason; `with_model_object_features` adds the mesh-health numbers), and each plate's full occupancy: object footprints with brim, the prime tower, excluded bed areas; `open_dialogs` / `system_dialog_open` / `untracked_modal_loop`: a dialog waiting for the user), `new_project`, `load_project` (both cancel a running slice; refused while the startup restore prompt waits), `save_project`, `export_3mf` |
 | **Models** | `load_model` (a 3MF is always geometry only: never its presets, never a rename; `.gcode` / `.gcode.3mf` only onto an empty scene, as a preview; returns `loaded_objects` in `get_scene_info`'s object shape, `filaments_added`; `multipart: merge\|separate`), `auto_orient`, `arrange_objects`, `get_object_info` (incl. every volume with its type and filament), `get_mesh_health` (mesh errors behind the object list's warning icon: the icon state, its exact tooltip, open edges, recorded repairs, shells, per object and per volume), `rename_object`, `set_object_printable` |
-| **Transforms** | `move_object`, `rotate_object`, `scale_object`, `mirror_object`, `flatten_object`, `clone_object`, `cut_object`, `delete_object`, `transform_objects` (rotate, scale, mirror and transform drop a resting object back onto the bed like the GUI; an explicit Z is kept) |
+| **Transforms** | `move_object`, `rotate_object` (a change in degrees; `relative: false` is refused), `scale_object`, `mirror_object`, `flatten_object` (the named object only, which replaces the selection, as the GUI's Orient does for a selection; an object with an instance on a locked plate is refused), `clone_object`, `cut_object`, `delete_object`, `transform_objects` (rotate, scale, mirror and transform drop a resting object back onto the bed like the GUI; an explicit Z is kept) |
 | **Plates** | `add_plate`, `select_plate`, `delete_plate`, `set_prime_tower_position` |
 | **Config** | `get_presets`, `get_edited_presets` (25-48 KB), `get_config_values` (no arguments: the selected printer, print and per-slot filament presets with dirty flags, ~400 B; `keys`: just those settings, grouped by `apply_config` type, with `dirty` saved values; `dirty_only`), `select_preset` (`type: printer` returns the resulting `filaments`, each with its observed `color_source`: `unchanged`/`remembered`/`default`/`other`), `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset`, `get_valid_config_keys` |
 | **Per-Object** | `get_object_config`, `set_object_config`, `reset_object_config` |
@@ -165,6 +165,21 @@ schema describes (a settings list sent as its JSON text passes as it is). So a h
 required argument directly, and every argument it reads must be declared: any other is refused
 before the handler sees it. The bridge holds its own two tools to their schemas in the golden file
 the same way, with the same words (`argument_error`, top level only: neither takes a nested object).
+
+**A value a tool would act on as something else is refused, not reinterpreted.** Past the schema,
+a handler that cannot do what a value asks answers with its own error (`{"status": "error",
+"message"}` naming what to send instead), before it changes anything or takes an undo step:
+`rotate_object relative: false`, one bound of `delete_object_layer_range`, an empty or malformed
+`reset_object_config keys`, `clone_object count < 1`, an unknown `cut_object keep` or
+`get_valid_config_keys category`, `scale_object uniform` without `x`, and `printer_control
+set_temperature` with nothing to set (`tests/slic3rutils/test_mcp_argument_values.cpp`,
+`[McpArgumentValues]`); and a `flatten_object` the orient job would not scope to the object
+(`flatten_refusal`, `flatten_selection_refusal`; `tests/slic3rutils/test_transform_frames.cpp`,
+`[orcamcp][transform_frames]`). A call that asks for no change stays a success with `changed: false`
+or a zero count: a transform with no axes, `apply_config` / `set_object_config` with no settings, the
+adaptive tools with no `object_ids`. An empty list that would be read as something else is refused
+instead: `reset_object_config`'s `keys: []` (which meant every override) and `set_temperature`'s
+`nozzles: []` (a command with nothing in it).
 
 **Anything a tool returns in the shape a request takes must be accepted back**: an agent edits a
 list by sending back the one a response gave it. So a strict nested object declares, as accepted and

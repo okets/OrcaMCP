@@ -129,6 +129,11 @@ public:
     static ObjectFootprint GetObjectFootprint(const ModelObject& object, const BoundingBoxf3& body_box,
                                               const DynamicPrintConfig& print_cfg);
 
+    // The 3D view's canvas, whatever tab is showing, with a scene reload it postponed while hidden done
+    // first, so its volumes are the model's. `scene_current` is false when the reload could not be done
+    // (GTK/EGL may refuse a hidden canvas). Renders draw from it; flatten_object selects in it.
+    static GLCanvas3D* SceneCanvas(bool& scene_current);
+
     // Turntable preview - captures multiple views around the plate
     static nlohmann::json CaptureTurntablePreview(int plate_index, int view_count = 4,
                                                    int resolution = 128);

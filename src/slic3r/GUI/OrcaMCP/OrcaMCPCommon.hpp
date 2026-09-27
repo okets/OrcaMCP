@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <array>
 #include <functional>
+#include <map>
 #include <optional>
+#include <set>
 #include <vector>
 #include <string>
 #include <nlohmann/json.hpp>
@@ -151,6 +153,22 @@ bool should_drop_to_bed(double min_z_before, double min_z_after);
 // the GUI leaves them. A pivot at the bounding-box centre is what moves the lowest point at all: a
 // uniform 1.49x scale about the centre of a 99 mm figurine put its feet 24 mm under the bed.
 void transform_instances_on_bed(ModelObject& object, const Transform3d& world_transform);
+
+// Why flatten_object cannot orient object `object_id` now, or nothing. It orients through the orient
+// job's selection path (the toolbar's Orient), which leaves out an object marked not printable
+// (ModelObject::printable) and every instance on a locked plate -- and, left with an empty selection,
+// orients every object instead -- and which Plater::orient does not start while another job runs. An
+// object with only some instances on a locked plate is refused too: the job drops the whole object by
+// its first instance's new bottom, moving the locked instances it did not turn, maybe into the bed.
+// `instances_on_locked_plates`: the ids of those instances.
+std::optional<std::string> flatten_refusal(int object_id, bool printable, size_t instances,
+                                           const std::vector<int>& instances_on_locked_plates, bool job_running);
+
+// Why flatten_object must not start the orient job on the selection it made: `selected` (object index ->
+// its selected instances, Selection::get_content) is not exactly the `instances` instances of object
+// `object_id`. A 3D view whose reload is postponed has no volumes for an object it has not caught up
+// with, and an empty selection makes the job orient every object instead.
+std::optional<std::string> flatten_selection_refusal(int object_id, size_t instances, const std::map<int, std::set<int>>& selected);
 
 // A scale the transform tools accept: every factor positive and finite. A zero factor makes the
 // instance matrix singular, and a negative one is a mirror under a scale's name (mirror_object says so).

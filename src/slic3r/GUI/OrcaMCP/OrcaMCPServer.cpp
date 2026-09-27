@@ -638,6 +638,21 @@ nlohmann::json listed_input_schema(const nlohmann::json& input_schema)
     return schema;
 }
 
+// The values an argument takes one of: its schema's enum, and what its refusal lists.
+const std::vector<std::string> k_cut_keep_values{"below", "above", "both"};
+const std::vector<std::string> k_config_key_categories{"per_object", "print", "filament", "printer", "toolchanger", "project", "all"};
+
+// The refusal of a value `values` does not hold, or nothing when it does.
+std::optional<std::string> not_one_of(const char* name, const std::vector<std::string>& values, const std::string& given)
+{
+    if (std::find(values.begin(), values.end(), given) != values.end())
+        return std::nullopt;
+    std::string listed;
+    for (const std::string& value : values)
+        listed += (listed.empty() ? "" : ", ") + value;
+    return std::string(name) + " must be one of " + listed + "; got \"" + given + "\"";
+}
+
 } // namespace
 
 nlohmann::json OrcaMCPServer::tool_list_entry(const ToolDefinition& tool)
@@ -2087,8 +2102,9 @@ void OrcaMCPServer::register_builtin_tools()
                 {"keys", {
                     {"type", "array"},
                     {"description", "Keys to reset. If omitted, resets every override but the object's filament "
-                                    "(extruder), which stays, as the GUI's reset leaves it. reset_count says how "
-                                    "many were cleared; a reset that clears nothing changes nothing."},
+                                    "(extruder), which stays, as the GUI's reset leaves it. An empty list is refused. "
+                                    "reset_count says how many were cleared; a reset that clears nothing changes "
+                                    "nothing."},
                     {"items", {{"type", "string"}}}
                 }}
             }},
@@ -2096,10 +2112,19 @@ void OrcaMCPServer::register_builtin_tools()
         },
         [](const nlohmann::json& params) -> nlohmann::json {
             int object_id = params["object_id"];
+            // No keys means every override; an empty or unreadable list used to mean that too.
             std::vector<std::string> keys;
-            if (params.contains("keys") && params["keys"].is_array()) {
-                for (const auto& k : params["keys"]) {
-                    keys.push_back(k.get<std::string>());
+            if (params.contains("keys") && !params["keys"].is_null()) {
+                const nlohmann::json& given = params["keys"];
+                if (!given.is_array())
+                    return error_response("keys must be an array of setting names; omit it to reset every override but "
+                                          "the filament");
+                if (given.empty())
+                    return error_response("keys is empty: omit keys to reset every override but the filament");
+                for (const nlohmann::json& key : given) {
+                    if (!key.is_string())
+                        return error_response("keys must be an array of setting names; got " + key.dump());
+                    keys.push_back(key.get<std::string>());
                 }
             }
             return run_on_main_thread([object_id, keys]() {
@@ -2155,7 +2180,8 @@ void OrcaMCPServer::register_builtin_tools()
             {"properties", {
                 {"category", {
                     {"type", "string"},
-                    {"description", "per_object, print, filament, printer, toolchanger, project, or all"}
+                    {"enum", k_config_key_categories},
+                    {"description", "per_object (default), print, filament, printer, toolchanger, project, or all"}
                 }},
                 {"include_descriptions", {
                     {"type", "boolean"},
@@ -2165,6 +2191,9 @@ void OrcaMCPServer::register_builtin_tools()
         },
         [](const nlohmann::json& params) -> nlohmann::json {
             std::string category = params.value("category", "per_object");
+            // Anything else used to list no keys, with success.
+            if (const auto refusal = not_one_of("category", k_config_key_categories, category))
+                return error_response(*refusal);
             bool include_descriptions = params.value("include_descriptions", false);
 
             return run_on_main_thread([category, include_descriptions]() {
@@ -2519,8 +2548,9 @@ void OrcaMCPServer::register_builtin_tools()
         "delete_object_layer_range",
         ToolCategory::LayerRanges,
         "Remove an object's layer ranges",
-        "Remove layer range config. If z_min/z_max omitted, removes ALL ranges. Range Z is measured "
-        "from the object's own base, not from the bed.",
+        "Remove an object's layer ranges: pass z_min and z_max to remove that one range, or neither to "
+        "remove every range of the object; one without the other is refused. Range Z is measured from "
+        "the object's own base, not from the bed.",
         {
             {"type", "object"},
             {"properties", {
@@ -2530,17 +2560,22 @@ void OrcaMCPServer::register_builtin_tools()
                 }},
                 {"z_min", {
                     {"type", "number"},
-                    {"description", "Min Z height (mm) above the object's own base. Omit both to delete all ranges."}
+                    {"description", "Min Z height (mm) above the object's own base, with z_max. Omit both to delete every range."}
                 }},
                 {"z_max", {
                     {"type", "number"},
-                    {"description", "Max Z height (mm) above the object's own base. Omit both to delete all ranges."}
+                    {"description", "Max Z height (mm) above the object's own base, with z_min. Omit both to delete every range."}
                 }}
             }},
             {"required", {"object_id"}}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
             int object_id = params["object_id"];
+            // One bound alone used to fall through to "no range given" and delete every range.
+            if (params.contains("z_min") != params.contains("z_max"))
+                return error_response(std::string(params.contains("z_min") ? "z_max" : "z_min") +
+                                      " is missing: pass both z_min and z_max to delete that range, or neither to "
+                                      "delete every range of the object");
             bool has_range = params.contains("z_min") && params.contains("z_max");
             double z_min = 0.0, z_max = 0.0;
             if (has_range && (!parse_double_param(params["z_min"], z_min) || !parse_double_param(params["z_max"], z_max)))
@@ -4202,7 +4237,9 @@ void OrcaMCPServer::register_builtin_tools()
                 }},
                 {"relative", {
                     {"type", "boolean"},
-                    {"description", "true=add, false=absolute"}
+                    {"description", "true (the default): x, y and z are the change in degrees. false is refused: "
+                                    "absolute rotation is not supported, so work out the change from "
+                                    "rotation_degrees in get_object_info."}
                 }},
                 {"include_preview", {
                     {"type", "boolean"},
@@ -4226,8 +4263,13 @@ void OrcaMCPServer::register_builtin_tools()
                 return nlohmann::json{{"status", "error"}, {"message", *error}};
             const Vec3d  degrees = axes.value_or(Vec3d::Zero());
             const double x_deg = degrees.x(), y_deg = degrees.y(), z_deg = degrees.z();
-            bool relative = params.value("relative", true);
-            (void)relative;  // Reserved for future absolute rotation support
+            // Every rotation is a change: relative false used to be accepted and applied as one anyway.
+            bool relative = true;
+            if (params.contains("relative") && !parse_boolean_param(params["relative"], relative))
+                return error_response("relative must be true or false");
+            if (!relative)
+                return error_response("absolute rotation is not supported: pass the change in degrees, relative to "
+                                      "rotation_degrees from get_object_info");
             bool include_preview = params.value("include_preview", false);
             int preview_views = params.value("preview_views", 4);
             int preview_resolution = params.value("preview_resolution", 256);
@@ -4330,7 +4372,7 @@ void OrcaMCPServer::register_builtin_tools()
                 }},
                 {"uniform", {
                     {"type", "boolean"},
-                    {"description", "If true, use x for all axes (default: false)"}
+                    {"description", "If true, x scales every axis, so give x (default: false)"}
                 }},
                 {"include_preview", {
                     {"type", "boolean"},
@@ -4355,6 +4397,9 @@ void OrcaMCPServer::register_builtin_tools()
             const Vec3d  given = axes.value_or(Vec3d::Ones());
             const double x = given.x(), y = given.y(), z = given.z();
             bool uniform = params.value("uniform", false);
+            // uniform reads x alone: a y or z without it was ignored, and the object left as it was.
+            if (uniform && !axes.axis[0] && (axes.axis[1] || axes.axis[2]))
+                return error_response("uniform scales every axis by x: give x");
             bool include_preview = params.value("include_preview", false);
             int preview_views = params.value("preview_views", 4);
             int preview_resolution = params.value("preview_resolution", 256);
@@ -4727,7 +4772,7 @@ void OrcaMCPServer::register_builtin_tools()
                 }},
                 {"count", {
                     {"type", "integer"},
-                    {"description", "Number of copies (default: 1)"}
+                    {"description", "Number of copies, 1 or more (default: 1)"}
                 }},
                 {"duplicate", {
                     {"type", "boolean"},
@@ -4747,6 +4792,9 @@ void OrcaMCPServer::register_builtin_tools()
         [](const nlohmann::json& params) -> nlohmann::json {
             int object_id = params["object_id"];
             int count = params.value("count", 1);
+            // Refused before anything runs: a count below 1 made no copy but still rearranged the plate.
+            if (count < 1)
+                return error_response("count must be 1 or more: the number of copies to make");
             bool duplicate = params.value("duplicate", false);
             const int  destination_plate        = params.value("destination_plate", -1);  // -1 means current plate
             const bool destination_was_explicit = params.contains("destination_plate");
@@ -5182,7 +5230,10 @@ void OrcaMCPServer::register_builtin_tools()
         "flatten_object",
         ToolCategory::Transforms,
         "Lay an object flat on its best face",
-        "Automatically orient an object to lay flat on its best face for printing",
+        "Orient one object to lay flat on its best face for printing, the way the GUI's Orient does for a "
+        "selection: the object replaces the current selection and is turned, and no other object moves. "
+        "An object with an instance on a locked plate is refused. It runs in the background (status "
+        "orient_started); get_object_info shows the result once it has finished.",
         {
             {"type", "object"},
             {"properties", {
@@ -5218,8 +5269,40 @@ void OrcaMCPServer::register_builtin_tools()
                     throw std::runtime_error("Invalid object_id: " + std::to_string(object_id));
                 }
 
-                // Use the orient function which auto-orients for optimal printing
-                plater->set_prepare_state(Job::PREPARE_STATE_MENU);
+                const ModelObject* object = model.objects[object_id];
+                PartPlateList&     plates = plater->get_partplate_list();
+                // The orient job does not turn an instance on a locked plate, but moves it with the rest.
+                std::vector<int> on_locked_plates;
+                for (size_t i = 0; i < object->instances.size(); ++i) {
+                    const int plate = plates.find_instance(object_id, int(i));
+                    if (plate >= 0 && plate < plates.get_plate_count() && plates.is_locked(plate))
+                        on_locked_plates.push_back(int(i));
+                }
+                if (const auto refusal = flatten_refusal(object_id, object->printable, object->instances.size(),
+                                                         on_locked_plates, !plater->get_ui_job_worker().is_idle()))
+                    return error_response(*refusal);
+
+                // This object alone: the orient job orients the selection (PREPARE_STATE_DEFAULT), as the
+                // toolbar's Orient does. PREPARE_STATE_MENU is the whole current plate, which is what this
+                // used to orient. The selection is made in the 3D view, brought up to date first: a view
+                // that postponed its reload while hidden has no volumes for an object it has not caught up
+                // with, and would select nothing.
+                bool        view_current = false;
+                GLCanvas3D* view         = OrcaMCPPlateUtils::SceneCanvas(view_current);
+                if (view == nullptr)
+                    return error_response("the 3D view is not available, so nothing can be selected to orient");
+                {
+                    // Selecting it is not an edit: otherwise an undo step of its own, before Orient's.
+                    Plater::SuppressSnapshots selection_is_not_an_edit(plater);
+                    view->get_selection().add_object(unsigned(object_id), /*as_single_selection=*/true);
+                    wxGetApp().obj_list()->update_selections();
+                }
+                // Never started on anything but exactly this object: on an empty selection the job
+                // orients every object.
+                if (const auto refusal = flatten_selection_refusal(object_id, object->instances.size(),
+                                                                   view->get_selection().get_content()))
+                    return error_response(*refusal);
+                plater->set_prepare_state(Job::PREPARE_STATE_DEFAULT);
                 plater->orient();
 
                 nlohmann::json result = {
@@ -5259,7 +5342,7 @@ void OrcaMCPServer::register_builtin_tools()
                 }},
                 {"keep", {
                     {"type", "string"},
-                    {"enum", nlohmann::json::array({"below", "above", "both"})},
+                    {"enum", k_cut_keep_values},
                     {"description", "below (default), above, or both"}
                 }},
                 {"include_preview", {
@@ -5276,6 +5359,9 @@ void OrcaMCPServer::register_builtin_tools()
                 return nlohmann::json{{"status", "error"},
                                       {"message", "z_height must be a finite number, in plate millimetres"}};
             std::string keep = params.value("keep", "below");
+            // Anything else used to be cut as below.
+            if (const auto refusal = not_one_of("keep", k_cut_keep_values, keep))
+                return error_response(*refusal);
             bool include_preview = params.value("include_preview", false);
             return run_on_main_thread([object_id, z_height, keep, include_preview]() {
                 Plater* plater = wxGetApp().plater();

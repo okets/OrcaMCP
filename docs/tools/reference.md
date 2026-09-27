@@ -660,13 +660,19 @@ Rotate an object.
 | `x` | number | No | Rotation about the plate's X axis (degrees) |
 | `y` | number | No | Rotation about the plate's Y axis (degrees) |
 | `z` | number | No | Rotation about the plate's Z axis, the vertical (degrees) |
-| `relative` | boolean | No | Relative rotation (default: true) |
+| `relative` | boolean | No | `true` (the default): `x`, `y` and `z` are the change in degrees. `false` is refused: absolute rotation is not supported |
 | `include_preview` | boolean | No | Include preview |
 
 **Example:**
 ```json
 {"name": "rotate_object", "arguments": {"object_id": 0, "z": 45}}
 ```
+
+Every rotation is a change from where the object is. To reach an orientation, subtract its
+`rotation_degrees` (from `get_object_info`) from the one wanted and pass the difference.
+`relative: false` used to be accepted and applied as a change anyway; it is now refused with
+"absolute rotation is not supported: pass the change in degrees, relative to rotation_degrees from
+get_object_info".
 
 **Coordinate frame.** `x`, `y` and `z` are plate millimetres along the *plate's* axes — the same
 frame `get_object_info` reports `position` and `bounding_box` in, and the frame this tool's own
@@ -714,7 +720,7 @@ Scale an object.
 | `x` | number | No | Scale factor along the plate's X axis (must be > 0) |
 | `y` | number | No | Scale factor along the plate's Y axis (must be > 0) |
 | `z` | number | No | Scale factor along the plate's Z axis, the vertical (must be > 0) |
-| `uniform` | boolean | No | Apply X scale to all axes |
+| `uniform` | boolean | No | Apply X scale to all axes. With `uniform`, give `x`: a `y` or `z` without it is refused ("uniform scales every axis by x: give x"), since it used to be ignored |
 | `include_preview` | boolean | No | Include preview |
 
 **Examples:**
@@ -801,13 +807,27 @@ object registered on its old plate, which sliced it onto the wrong plate with no
 ---
 
 ### flatten_object
-Flatten object to the bed (place flat side down).
+Orient one object to lay flat on its best face, the way the GUI's **Orient** does for a selection.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `object_id` | integer | Yes | Object index |
 | `include_preview` | boolean | No | Include preview |
+
+The object replaces the current selection and is turned, every instance of it; no other object
+moves. Before v2.5.0.6 this oriented every object on the current plate. The orient runs in the
+background: the response is `"status": "orient_started"`, and `get_object_info` shows the result once
+it has finished. One `undo` puts the object back; it comes back selected.
+
+Refused, with nothing selected or oriented, when the job would not orient this object alone: another
+job (an arrange or an orient) is still running; the object is marked not printable, which the orient
+job leaves out (and, finding nothing selected, would orient every other object instead); an instance
+of it is on a locked plate (the job does not turn it, but drops the whole object by its first
+instance's new bottom, which moves the locked instance up or down, maybe into the bed; the message
+names the instances); or the 3D view has not caught up with the object (it postpones its scene
+reloads while another tab is shown, and this call first asks it to catch up), so the selection is
+not exactly this object. Each message says what to do instead.
 
 ---
 
@@ -820,7 +840,7 @@ Create copies of an object.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `object_id` | integer | Yes | Object index |
-| `count` | integer | No | Number of clones (default: 1) |
+| `count` | integer | No | Number of clones, 1 or more (default: 1). A count below 1 is refused before anything runs: it used to make no copy and still rearrange the plate |
 | `duplicate` | boolean | No | Independent copies (true) vs linked instances (false) |
 | `destination_plate` | integer | No | Target plate (default: current plate) |
 | `include_preview` | boolean | No | Include preview |
@@ -840,7 +860,7 @@ Cut an object at a specified Z height.
 |-----------|------|----------|-------------|
 | `object_id` | integer | Yes | Object index |
 | `z_height` | number | Yes | Cut height in plate mm, measured from the bed |
-| `keep` | string | No | "below", "above", or "both" (default: "both") |
+| `keep` | string | No | "below" (the default), "above", or "both". Any other value is refused, listing these: it used to be cut as "below" |
 
 **Example:**
 ```json
@@ -1402,7 +1422,8 @@ List valid configuration keys for a category.
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `category` | string | Yes | "per_object", "print", "filament", or "printer" |
+| `category` | string | No | "per_object" (the default), "print", "filament", "printer", "toolchanger", "project", or "all". Any other value is refused, listing these: it used to return no keys |
+| `include_descriptions` | boolean | No | Add each key's description |
 
 ---
 
@@ -1516,6 +1537,9 @@ Clear per-object configuration overrides.
 | `object_id` | integer | Yes | Object index |
 | `keys` | array | No | Specific keys to reset. Omitted: every override but the object's filament (`extruder`), which stays, as the GUI's reset leaves it. `reset_count` is how many were cleared; a reset that clears nothing takes no undo snapshot |
 
+An empty `keys`, or one that is not a list of setting names, is refused: both used to reset every
+override. Leave `keys` out to reset them all.
+
 ---
 
 ## Layer Range Tools
@@ -1597,7 +1621,13 @@ Remove a layer range configuration. Range Z is measured from the object's own ba
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `object_id` | integer | Yes | Object index |
-| `z_min` | number | Yes | Range start to delete |
+| `z_min` | number | No | Start of the range to delete, with `z_max` |
+| `z_max` | number | No | End of the range to delete, with `z_min` |
+
+Pass both bounds to delete that one range, or neither to delete **every** range of the object.
+One without the other is refused, naming the missing bound: it used to delete every range. The
+response's `deleted_count` says how many went; `0`, and no undo step, when the range was not
+there.
 
 ---
 
@@ -2650,6 +2680,21 @@ status and elapsed time (the first of a streak, every 100th, and the recovery), 
 body.
 
 ---
+
+### printer_control
+Pause, resume or cancel the Flashforge printer's current job, turn its light on or off, or set its
+target temperatures. It acts on real hardware.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `action` | string | Yes | `pause`, `resume`, `cancel`, `light_on`, `light_off` or `set_temperature` |
+| `bed`, `chamber` | number | No | `set_temperature` only: that heater's target, degrees C |
+| `nozzles` | array | No | `set_temperature` only: `[{tool, temp}]`, tool 0-3. Tools not listed are left unchanged |
+
+`set_temperature` needs something to set: with none of `bed`, `chamber` or a nozzle (or with an
+empty `nozzles`) it is refused and nothing is sent to the printer. It used to send "no change" for
+every heater and report success. A `nozzles` that is not a list is refused the same way.
 
 ### match_project_to_printer
 Make the project's filament slots say what the Flashforge material station holds: for each loaded

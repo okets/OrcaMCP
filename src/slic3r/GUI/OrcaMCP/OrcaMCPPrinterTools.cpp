@@ -820,7 +820,8 @@ void OrcaMCPServer::register_printer_tools()
                 }},
                 {"nozzles", {
                     {"type", "array"},
-                    {"description", "set_temperature only: per-tool target temperatures. Tools not listed are left unchanged."},
+                    {"description", "set_temperature only: per-tool target temperatures. Tools not listed are left "
+                                    "unchanged. set_temperature needs at least one of bed, chamber or a nozzle."},
                     {"items", {
                         {"type", "object"},
                         {"properties", {
@@ -861,7 +862,10 @@ void OrcaMCPServer::register_printer_tools()
                         return error_response("chamber must be a finite number, in degrees C");
                     chamber = parsed;
                 }
-                if (params.contains("nozzles") && params.at("nozzles").is_array()) {
+                // Not an array used to be skipped in silence, the printer sent "no change" for every tool.
+                if (params.contains("nozzles") && !params.at("nozzles").is_array())
+                    return error_response("nozzles must be an array of {tool, temp}");
+                if (params.contains("nozzles")) {
                     for (const auto& entry : params.at("nozzles")) {
                         if (!entry.is_object() || !entry.contains("tool") || !entry.contains("temp"))
                             return error_response("Each entry in nozzles requires 'tool' and 'temp'");
@@ -879,6 +883,10 @@ void OrcaMCPServer::register_printer_tools()
                         nozzles[tool] = temp;
                     }
                 }
+                // Nothing to set used to reach the printer as "no change" for every heater, and succeed.
+                const bool any_nozzle = std::any_of(nozzles.begin(), nozzles.end(), [](const auto& t) { return t.has_value(); });
+                if (!bed && !chamber && !any_nozzle)
+                    return error_response("set_temperature needs something to set: bed, chamber or nozzles ([{tool, temp}])");
             }
 
             std::unique_ptr<Slic3r::PrintHost> host;
