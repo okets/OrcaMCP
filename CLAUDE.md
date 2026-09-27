@@ -1007,13 +1007,16 @@ suppression on the GUI thread (`mcp_captures_error`). On "no", upstream shows it
 Item AA: upstream's slicer (`layer_height_profile_from_ranges`, `layer_height_profile_adaptive`),
 `Print::apply`'s range comparison and the object list all read a layer range's `layer_height`
 without checking it is there. The object list always gives a range one, but a file can carry a
-range without it (the importers copy whatever options it lists; MCP's `set_object_layer_range`
-wrote such ranges until rel2506/06b), and the next slice dereferenced null and crashed the app.
-Ours completes every range when a file is loaded (`complete_layer_ranges`, Model.cpp, at the end of
-`Model::read_from_file` and `read_from_archive`): the object's own layer height, else the file's,
-else the default, and extruder 0. The slicer is left as upstream's. On 0, upstream checks the
-option itself: the completion can stay (it matches what the object list gives a range) or go;
-re-run `libslic3r_tests "[LayerRanges]"` and `fff_print_tests "[LayerRanges]"` either way.
+range without it (the importers copy whatever options it lists), the CLI's assemble list builds
+ranges from whatever `range_params` it is given, and MCP's `set_object_layer_range` wrote such
+ranges until rel2506/06b; the next slice dereferenced null and crashed the app (and the CLI). Ours
+completes every range where it enters a scene -- `Plater::priv::load_model_objects` (every GUI and
+MCP load), the CLI before slicing, `set_object_layer_range` -- with `complete_layer_ranges` (Model.cpp):
+the object's effective layer height from the settings the caller slices with, within its nozzle's
+limits, and extruder 0. The slicer keeps a backstop: a range that still arrives without one prints
+at the object's layer height. On 0, upstream checks the option itself: drop the backstop, keep the
+completion (the object list and `Print::apply` need it), and re-run `libslic3r_tests "[LayerRanges]"`
+and `fff_print_tests "[LayerRanges]"`.
 
 Item AC: upstream's `ObjectList::get_default_layer_config` (the defaults "Add height range" gives a
 new range) also read the object's extruder, unused, falling back to the process preset's float

@@ -3925,6 +3925,11 @@ int CLI::run(int argc, char **argv)
        }
    }
 
+    // Orca: every layer range gets a layer height before slicing -- a file, or the assemble list's
+    // height_ranges, can give one without -- from the settings the CLI slices with.
+    for (Model& model : m_models)
+        complete_layer_ranges(model, m_print_config);
+
     //load custom gcodes into model if needed
     if ((custom_gcodes_map.size() > 0)&&(m_models.size() > 0))
     {

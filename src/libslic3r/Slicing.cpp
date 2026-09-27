@@ -246,7 +246,10 @@ std::vector<coordf_t> layer_height_profile_from_ranges(
     for (t_layer_config_ranges::const_iterator it_range = layer_config_ranges.begin(); it_range != layer_config_ranges.end(); ++ it_range) {
         coordf_t lo = it_range->first.first;
         coordf_t hi = std::min(it_range->first.second, slicing_params.object_print_z_height());
-        coordf_t height = it_range->second.option("layer_height")->getFloat();
+        // Orca: a range reaches here with a layer height once it is completed where it enters a scene
+        // (complete_layer_ranges); one that was not prints at the object's rather than crashing.
+        const ConfigOption* range_height = it_range->second.option("layer_height");
+        coordf_t height = range_height != nullptr ? range_height->getFloat() : slicing_params.layer_height;
         if (! ranges_non_overlapping.empty())
             // Trim current low with the last high.
             lo = std::max(lo, ranges_non_overlapping.back().first.second);
@@ -386,7 +389,9 @@ std::vector<double> layer_height_profile_adaptive(const SlicingParameters& slici
 
         for (auto const& [range,options] : object.layer_config_ranges) {
             if ( print_z >= range.first && print_z <= range.second) {
-                    height = options.opt_float("layer_height");
+                    // Orca: a range without a layer height of its own leaves the adaptive height.
+                    if (options.has("layer_height"))
+                        height = options.opt_float("layer_height");
                     break;
             };
         };
