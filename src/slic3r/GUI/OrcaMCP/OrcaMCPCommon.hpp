@@ -9,6 +9,7 @@
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "OrcaMCPMainThreadGate.hpp"
+#include "OrcaMCPSliceProgress.hpp"
 
 namespace Slic3r {
 class Model;
@@ -288,5 +289,18 @@ struct McpDialogSuppressionGuard
 private:
     bool m_was_enabled;
 };
+
+// Applies a settings change the slicer has not taken in yet (`apply`: Plater::apply_pending_background_update)
+// when should_apply_pending_update says so, and says whether it did. The update can raise an error
+// dialog (show_error), and one raised with no suppression open is a modal that blocks every later
+// call, so it takes the caller's open guard, which captures what the update says.
+template<typename Apply>
+bool apply_pending_update(const McpDialogSuppressionGuard&, const PipelineState& state, bool update_scheduled, Apply&& apply)
+{
+    if (!should_apply_pending_update(state, update_scheduled))
+        return false;
+    apply();
+    return true;
+}
 
 }}} // namespace Slic3r::GUI::OrcaMCP

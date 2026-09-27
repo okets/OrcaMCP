@@ -276,13 +276,13 @@ OrcaMCP::PipelineState pipeline_state(Plater& plater, int plate_count)
 }
 
 // Applies a settings change the background timer has not taken in yet, while the pipeline is idle
-// (OrcaMCP::should_apply_pending_update), so what the caller does next -- slice, report a slice,
-// export one -- goes by the settings as they are now.
-void apply_pending_settings(Plater& plater)
+// (OrcaMCP::apply_pending_update), so what the caller does next -- slice, report a slice, export one
+// -- goes by the settings as they are now. Under the caller's `guard`, which captures what it says.
+void apply_pending_settings(Plater& plater, const McpDialogSuppressionGuard& guard)
 {
-    const OrcaMCP::PipelineState state = pipeline_state(plater, plater.get_partplate_list().get_plate_count());
-    if (OrcaMCP::should_apply_pending_update(state, plater.is_background_process_update_scheduled()))
-        plater.apply_pending_background_update();
+    OrcaMCP::apply_pending_update(guard, pipeline_state(plater, plater.get_partplate_list().get_plate_count()),
+                                  plater.is_background_process_update_scheduled(),
+                                  [&plater] { plater.apply_pending_background_update(); });
 }
 
 // Why the app's own validation refused a plate the run asked for, or nullopt when none failed it.
@@ -2816,7 +2816,7 @@ void OrcaMCPServer::register_builtin_tools()
                 }
                 // A settings change made just before this call has not reached the slicer yet; until it
                 // does, the slice is refused on the failure the change may have fixed.
-                apply_pending_settings(*plater);
+                apply_pending_settings(*plater, suppression_guard);
 
                 // Plater::reslice() slices the *current* plate and nothing else, which is what
                 // this tool used to do under the name slice_all: with four plates and plate 4
@@ -2836,11 +2836,7 @@ void OrcaMCPServer::register_builtin_tools()
                                      "runs; get_slicing_status restores plate " +
                                      std::to_string(plate_at_call) + " when the run ends.";
                 }
-                auto info_messages = suppression_guard.messages();
-                if (!info_messages.empty()) {
-                    result["info_messages"] = info_messages;
-                }
-                return result;
+                return suppression_guard.report(result);
             });
         }
     });
@@ -2865,15 +2861,14 @@ void OrcaMCPServer::register_builtin_tools()
             std::string output_path = params.value("output_path", "");
             return run_on_main_thread([output_path]() {
                 Plater* plater = wxGetApp().plater();
-                // A settings change made just before this call has not reached the slicer yet: until it
-                // does, the export is refused on the failure the change may have fixed.
-                apply_pending_settings(*plater);
-                if (plater->is_background_process_slicing()) {
-                    return nlohmann::json{{"status", "error"}, {"message", "Slicing still in progress"}};
-                }
-
                 // Enable dialog suppression to capture any error messages
                 McpDialogSuppressionGuard suppression_guard;
+                // A settings change made just before this call has not reached the slicer yet: until it
+                // does, the export is refused on the failure the change may have fixed.
+                apply_pending_settings(*plater, suppression_guard);
+                if (plater->is_background_process_slicing()) {
+                    return suppression_guard.report({{"status", "error"}, {"message", "Slicing still in progress"}});
+                }
 
                 nlohmann::json result;
 
@@ -3181,8 +3176,9 @@ void OrcaMCPServer::register_builtin_tools()
             return run_on_main_thread([]() {
                 Plater*        plater     = wxGetApp().plater();
                 PartPlateList& plate_list = plater->get_partplate_list();
+                McpDialogSuppressionGuard suppression_guard;
                 // A settings change made just before this call still leaves the plate its old result.
-                apply_pending_settings(*plater);
+                apply_pending_settings(*plater, suppression_guard);
                 const bool     is_running = plater->is_background_process_slicing();
 
                 nlohmann::json result;
@@ -3248,7 +3244,7 @@ void OrcaMCPServer::register_builtin_tools()
                 result["slice_run"] = slice_run_json(*plater, plate_list, judged);
                 result["active_warnings"]    = get_active_warnings_json(plater);
 
-                return result;
+                return suppression_guard.report(result);
             });
         }
     });
@@ -3301,118 +3297,120 @@ void OrcaMCPServer::register_builtin_tools()
             }
             return run_on_main_thread([requested_plate, wanted_plate]() -> nlohmann::json {
                 Plater* plater = wxGetApp().plater();
+                McpDialogSuppressionGuard suppression_guard;
                 // A settings change made just before this call still leaves the plate its old result.
-                apply_pending_settings(*plater);
+                apply_pending_settings(*plater, suppression_guard);
+                return suppression_guard.report([&]() -> nlohmann::json {
+                    // Check if slicing is actively running
+                    if (plater->is_background_process_slicing()) {
+                        return nlohmann::json{
+                            {"status", "in_progress"},
+                            {"state", "slicing"},
+                            {"message", "Slicing still in progress. Poll get_slicing_status until state is \"done\"."}
+                        };
+                    }
 
-                // Check if slicing is actively running
-                if (plater->is_background_process_slicing()) {
-                    return nlohmann::json{
-                        {"status", "in_progress"},
-                        {"state", "slicing"},
-                        {"message", "Slicing still in progress. Poll get_slicing_status until state is \"done\"."}
-                    };
-                }
+                    // Plater::fff_print() is the Plater's own Print object, which nothing ever slices:
+                    // every plate owns its Print (PartPlate::set_print) and the background process is
+                    // pointed at it by PartPlate::update_slice_context. Asking the Plater's copy
+                    // whether it finished the G-code export therefore always answered "no", which is
+                    // what left this tool reporting in_progress forever after a completed slice.
+                    PartPlateList& plate_list  = plater->get_partplate_list();
+                    const int      plate_count = plate_list.get_plate_count();
+                    const int      plate_index = requested_plate ? wanted_plate : plate_list.get_curr_plate_index();
+                    if (requested_plate && (wanted_plate < 0 || wanted_plate >= plate_count)) {
+                        return nlohmann::json{
+                            {"status", "error"},
+                            {"state", "idle"},
+                            {"message", "plate_index " + std::to_string(wanted_plate) + " is out of range: the "
+                                        "project has " + std::to_string(plate_count) + " plate(s), 0.." +
+                                        std::to_string(plate_count - 1) + "."}
+                        };
+                    }
+                    PartPlate* plate = plate_list.get_plate(plate_index);
+                    if (plate == nullptr) {
+                        return nlohmann::json{{"status", "error"}, {"state", "idle"}, {"message", "No current plate"}};
+                    }
+                    GCodeProcessorResult* slice_result = plate->get_slice_result();
+                    if (!plate->is_slice_result_valid() || slice_result == nullptr) {
+                        return nlohmann::json{
+                            {"status", "error"},
+                            {"state", "idle"},
+                            {"plate_index", plate_index},
+                            {"message", "Plate " + std::to_string(plate_index) + " has no valid slice result. Run "
+                                        "slice_all and poll get_slicing_status until state is \"done\"."},
+                            {"active_warnings", get_active_warnings_json(plater)}
+                        };
+                    }
 
-                // Plater::fff_print() is the Plater's own Print object, which nothing ever slices:
-                // every plate owns its Print (PartPlate::set_print) and the background process is
-                // pointed at it by PartPlate::update_slice_context. Asking the Plater's copy
-                // whether it finished the G-code export therefore always answered "no", which is
-                // what left this tool reporting in_progress forever after a completed slice.
-                PartPlateList& plate_list  = plater->get_partplate_list();
-                const int      plate_count = plate_list.get_plate_count();
-                const int      plate_index = requested_plate ? wanted_plate : plate_list.get_curr_plate_index();
-                if (requested_plate && (wanted_plate < 0 || wanted_plate >= plate_count)) {
-                    return nlohmann::json{
-                        {"status", "error"},
-                        {"state", "idle"},
-                        {"message", "plate_index " + std::to_string(wanted_plate) + " is out of range: the "
-                                    "project has " + std::to_string(plate_count) + " plate(s), 0.." +
-                                    std::to_string(plate_count - 1) + "."}
+                    const PrintEstimatedStatistics& ps = slice_result->print_statistics;
+                    const double normal_time = ps.modes[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Normal)].time;
+                    const double silent_time = ps.modes[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Stealth)].time;
+
+                    const SliceEstimate estimate = compute_slice_estimate(
+                        ps.total_volumes_per_extruder, slice_result->filament_diameters,
+                        slice_result->filament_densities, slice_result->filament_costs);
+
+                    // A property the slicer did not record is reported as null, never as zero.
+                    auto number_or_null = [](const std::optional<double>& value) {
+                        return value ? nlohmann::json(*value) : nlohmann::json(nullptr);
                     };
-                }
-                PartPlate* plate = plate_list.get_plate(plate_index);
-                if (plate == nullptr) {
-                    return nlohmann::json{{"status", "error"}, {"state", "idle"}, {"message", "No current plate"}};
-                }
-                GCodeProcessorResult* slice_result = plate->get_slice_result();
-                if (!plate->is_slice_result_valid() || slice_result == nullptr) {
-                    return nlohmann::json{
-                        {"status", "error"},
-                        {"state", "idle"},
+
+                    nlohmann::json per_filament = nlohmann::json::array();
+                    for (const FilamentUsage& usage : estimate.per_filament) {
+                        per_filament.push_back({
+                            {"filament", static_cast<int>(usage.filament_id) + 1},  // 1-based, as every other filament tool
+                            {"volume_mm3", usage.volume_mm3},
+                            {"length_mm", number_or_null(usage.length_mm)},
+                            {"weight_grams", number_or_null(usage.weight_g)},
+                            {"cost", number_or_null(usage.cost)}
+                        });
+                    }
+
+                    // Layer counts come from the plate's own Print, the one that was actually sliced,
+                    // counted the way the G-code counts them. This used to be the tallest object's
+                    // total_layer_count(), which adds its support layers to its object layers -- mostly
+                    // the same heights twice -- and read 1567 for a model the G-code prints in 825.
+                    // A plate with no sliced objects (a G-code-only project) has no counts to give.
+                    const Print* print = plate->fff_print();
+                    const std::optional<LayerCounts> layers =
+                        print != nullptr && !print->objects().empty() ? std::optional(count_print_layers(*print)) : std::nullopt;
+
+                    nlohmann::json estimate_json = {
+                        {"status", "success"},
+                        {"state", "done"},
                         {"plate_index", plate_index},
-                        {"message", "Plate " + std::to_string(plate_index) + " has no valid slice result. Run "
-                                    "slice_all and poll get_slicing_status until state is \"done\"."},
+                        {"estimated_time", get_time_dhms(static_cast<float>(normal_time))},
+                        {"estimated_time_seconds", normal_time},
+                        {"estimated_time_silent", silent_time > 0.0 ? nlohmann::json(get_time_dhms(static_cast<float>(silent_time)))
+                                                                    : nlohmann::json(nullptr)},
+                        {"filament", {
+                            {"total_length_mm", number_or_null(estimate.length_mm)},
+                            {"total_volume_mm3", estimate.volume_mm3},
+                            {"total_weight_grams", number_or_null(estimate.weight_g)},
+                            {"total_cost", number_or_null(estimate.cost)},
+                            {"per_filament", per_filament}
+                        }},
+                        // Two distinct counters, reported under the names they actually mean. They are
+                        // the same two the G-code preview's legend shows as "Filament change times" and
+                        // "Tool changes" (GCodeViewer.cpp), and GCodeProcessor keeps them apart:
+                        // process_filament_change increments filament_changes only when a nozzle is
+                        // loaded with a *different* filament, and extruder_changes only when the printer
+                        // switches to a *different* physical extruder. On a toolchanger whose heads each
+                        // keep their own filament, filament_changes is legitimately 0 while every tool
+                        // change is counted in extruder_changes; on a single-nozzle AMS/MMU machine it is
+                        // the other way round. This used to report filament_changes as
+                        // "total_toolchanges", which is why a 4-head toolchanger interleaving ABS and a
+                        // PETG interface was told it made no tool changes at all.
+                        {"filament_changes", ps.total_filament_changes},
+                        {"extruder_changes", ps.total_extruder_changes},
+                        {"time_by_feature", time_by_feature_json(compute_time_by_feature(
+                                                slice_result->moves, PrintEstimatedStatistics::ETimeMode::Normal, normal_time))},
                         {"active_warnings", get_active_warnings_json(plater)}
                     };
-                }
-
-                const PrintEstimatedStatistics& ps = slice_result->print_statistics;
-                const double normal_time = ps.modes[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Normal)].time;
-                const double silent_time = ps.modes[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Stealth)].time;
-
-                const SliceEstimate estimate = compute_slice_estimate(
-                    ps.total_volumes_per_extruder, slice_result->filament_diameters,
-                    slice_result->filament_densities, slice_result->filament_costs);
-
-                // A property the slicer did not record is reported as null, never as zero.
-                auto number_or_null = [](const std::optional<double>& value) {
-                    return value ? nlohmann::json(*value) : nlohmann::json(nullptr);
-                };
-
-                nlohmann::json per_filament = nlohmann::json::array();
-                for (const FilamentUsage& usage : estimate.per_filament) {
-                    per_filament.push_back({
-                        {"filament", static_cast<int>(usage.filament_id) + 1},  // 1-based, as every other filament tool
-                        {"volume_mm3", usage.volume_mm3},
-                        {"length_mm", number_or_null(usage.length_mm)},
-                        {"weight_grams", number_or_null(usage.weight_g)},
-                        {"cost", number_or_null(usage.cost)}
-                    });
-                }
-
-                // Layer counts come from the plate's own Print, the one that was actually sliced,
-                // counted the way the G-code counts them. This used to be the tallest object's
-                // total_layer_count(), which adds its support layers to its object layers -- mostly
-                // the same heights twice -- and read 1567 for a model the G-code prints in 825.
-                // A plate with no sliced objects (a G-code-only project) has no counts to give.
-                const Print* print = plate->fff_print();
-                const std::optional<LayerCounts> layers =
-                    print != nullptr && !print->objects().empty() ? std::optional(count_print_layers(*print)) : std::nullopt;
-
-                nlohmann::json estimate_json = {
-                    {"status", "success"},
-                    {"state", "done"},
-                    {"plate_index", plate_index},
-                    {"estimated_time", get_time_dhms(static_cast<float>(normal_time))},
-                    {"estimated_time_seconds", normal_time},
-                    {"estimated_time_silent", silent_time > 0.0 ? nlohmann::json(get_time_dhms(static_cast<float>(silent_time)))
-                                                                : nlohmann::json(nullptr)},
-                    {"filament", {
-                        {"total_length_mm", number_or_null(estimate.length_mm)},
-                        {"total_volume_mm3", estimate.volume_mm3},
-                        {"total_weight_grams", number_or_null(estimate.weight_g)},
-                        {"total_cost", number_or_null(estimate.cost)},
-                        {"per_filament", per_filament}
-                    }},
-                    // Two distinct counters, reported under the names they actually mean. They are
-                    // the same two the G-code preview's legend shows as "Filament change times" and
-                    // "Tool changes" (GCodeViewer.cpp), and GCodeProcessor keeps them apart:
-                    // process_filament_change increments filament_changes only when a nozzle is
-                    // loaded with a *different* filament, and extruder_changes only when the printer
-                    // switches to a *different* physical extruder. On a toolchanger whose heads each
-                    // keep their own filament, filament_changes is legitimately 0 while every tool
-                    // change is counted in extruder_changes; on a single-nozzle AMS/MMU machine it is
-                    // the other way round. This used to report filament_changes as
-                    // "total_toolchanges", which is why a 4-head toolchanger interleaving ABS and a
-                    // PETG interface was told it made no tool changes at all.
-                    {"filament_changes", ps.total_filament_changes},
-                    {"extruder_changes", ps.total_extruder_changes},
-                    {"time_by_feature", time_by_feature_json(compute_time_by_feature(
-                                            slice_result->moves, PrintEstimatedStatistics::ETimeMode::Normal, normal_time))},
-                    {"active_warnings", get_active_warnings_json(plater)}
-                };
-                estimate_json.update(layer_counts_json(layers));
-                return estimate_json;
+                    estimate_json.update(layer_counts_json(layers));
+                    return estimate_json;
+                }());
             });
         }
     });

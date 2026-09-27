@@ -747,7 +747,7 @@ it as a project and renamed it silently, and a later `save_project {}` overwrote
 |----------|-----------|
 | File Operations | `load_model`, `load_project`, `new_project`, `save_project`, `export_gcode`, `export_3mf` |
 | Preset Management | `select_preset`, `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset` |
-| Slicing & Printing | `slice_all`, `send_to_printer` |
+| Slicing & Printing | `slice_all`, `get_slicing_status`, `get_print_estimate`, `export_gcode`, `send_to_printer` (the first four apply a settings change the slicer has not taken in yet, and that update can raise an error dialog: `OrcaMCP::apply_pending_update` takes the caller's open guard) |
 
 Error messages that would have been shown in dialogs are captured and returned in the response as `error_messages` (for failures) or `info_messages` (for non-critical information). A tool that assembles `info_messages` itself from `messages()` lists the errors there too; `report()` and `notices()` keep them apart.
 

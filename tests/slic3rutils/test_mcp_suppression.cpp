@@ -188,3 +188,34 @@ TEST_CASE("a response the app answered with an error fails with the error's word
     CHECK(failed["message"] == "Another export job is running.");
     CHECK(failed["error_messages"] == nlohmann::json::array({"Another export job is running."}));
 }
+
+// A settings change the slicer has not taken in yet is applied by the tool about to slice, report or
+// export (OrcaMCP::apply_pending_update). That update can raise an error dialog, and one raised with
+// no suppression open is a modal that blocks every later call: the helper takes the caller's guard,
+// and runs only while it is open.
+TEST_CASE("a pending settings update runs under the caller's suppression, which captures its errors", "[McpSuppression][orcamcp][suppression]")
+{
+    using namespace Slic3r::GUI::OrcaMCP;
+    const PipelineState idle{};
+    Slic3r::GUI::OrcaMCP::McpDialogSuppressionGuard guard;
+    bool suppressed_while_applying = false;
+    CHECK(apply_pending_update(guard, idle, /*scheduled=*/true, [&] {
+        suppressed_while_applying = is_mcp_dialog_suppression_enabled();
+        add_mcp_suppressed_error("Placeholder parser error");
+    }));
+    CHECK(suppressed_while_applying);
+    CHECK(guard.errors() == std::vector<std::string>{"Placeholder parser error"});
+}
+
+TEST_CASE("a pending settings update is not applied while the pipeline is busy or nothing is pending", "[McpSuppression][orcamcp][suppression]")
+{
+    using namespace Slic3r::GUI::OrcaMCP;
+    Slic3r::GUI::OrcaMCP::McpDialogSuppressionGuard guard;
+    PipelineState slicing{};
+    slicing.is_slicing      = true;
+    slicing.process_working = true;
+    bool applied = false;
+    CHECK_FALSE(apply_pending_update(guard, slicing, /*scheduled=*/true, [&] { applied = true; }));
+    CHECK_FALSE(apply_pending_update(guard, PipelineState{}, /*scheduled=*/false, [&] { applied = true; }));
+    CHECK_FALSE(applied);
+}
