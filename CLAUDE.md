@@ -163,7 +163,8 @@ The message names the tool, what is wrong, and what the object takes:
 checked; that stays the handler's job, and a nested value is looked into only when it is what its
 schema describes (a settings list sent as its JSON text passes as it is). So a handler may read a
 required argument directly, and every argument it reads must be declared: any other is refused
-before the handler sees it.
+before the handler sees it. The bridge holds its own two tools to their schemas in the golden file
+the same way, with the same words (`argument_error`, top level only: neither takes a nested object).
 
 What the tests enforce, with no app running:
 
@@ -187,7 +188,9 @@ What the tests enforce, with no app running:
   `Python tests` workflow on pushes to `mcp`): the bridge's offline and online lists are identical
   in names, descriptions and order; no bridge tool's text appears in the bridge; every
   bridge tool has a Python handler and every handler a tool; a missing or malformed file never
-  stops the bridge, which then offers a fallback `start_orca` whose description names the file.
+  stops the bridge, which then offers a fallback `start_orca` whose description names the file;
+  `start_orca` and `wait_for_slice` refuse an argument their schema in the file does not declare,
+  in the app's words, and no bridge tool takes a nested object (`test_bridge_arguments.py`).
 - CI: Build all also runs on a change to `scripts/orcamcp_tools.json` alone, since only its C++
   tests can compare the file with the registry.
 

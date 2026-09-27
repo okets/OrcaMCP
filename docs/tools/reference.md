@@ -2840,7 +2840,8 @@ says `additionalProperties: false`: `set_object_config`'s items, `set_object_lay
 `send_to_printer`'s and `print_printer_file`'s `material_mappings`, `paint_object`'s `box` and
 `sphere`, and `pick_facet`'s `ray`. Others take any key: a render's
 `views` and a paint call's `bands` may be passed back with the extra fields the response carried.
-Types, ranges and enum values are not checked here; the tool reports those itself.
+Types, ranges and enum values are not checked here; the tool reports those itself. The bridge's own
+tools (`start_orca`, `wait_for_slice`) are held to their schemas the same way.
 
 JSON-RPC error codes:
 | Code | Meaning |
