@@ -1636,9 +1636,12 @@ Export the selected plate's sliced G-code to a file. The file is written asynchr
 |-----------|------|----------|-------------|
 | `output_path` | string | Yes | Output path (a file dialog cannot open under MCP) |
 
-An export the app refuses fails with its words as `message` and `error_messages`, e.g. "Another
-export job is running." while the previous export is still writing; call it again once `busy` in
-`get_slicing_status` is false.
+`status: "export_started"` only when the app scheduled the export. An export that did not start is
+`status: "error"` with the reason as `message`: the scene has no objects, "Another export job is
+running." while the previous export is still writing (call it again once `busy` in
+`get_slicing_status` is false), or "the plate failed validation: ..." with the app's words -- the
+app's export refuses such a plate without a word, and nothing was ever written. An error dialog the
+app raised is added as `error_messages`.
 
 ---
 

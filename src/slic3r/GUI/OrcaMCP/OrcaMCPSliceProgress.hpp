@@ -349,4 +349,36 @@ inline SliceStartReport judge_slice_start(const SliceStartSignals& signals)
     return {SliceStart::not_started, "unknown", "The app did not start a slice; active_warnings may say why."};
 }
 
+// ---- What export_gcode reports ------------------------------------------------------------------
+
+// One export_gcode call as it went (Plater::export_gcode_to_file): what refused it before the export
+// was asked for, and, once asked, whether the app scheduled it. The app's export returns without a
+// word when the plate fails its own forced validation, so being asked is not having started.
+struct ExportStart
+{
+    bool                       has_objects       = true;
+    bool                       already_exporting = false; // BackgroundSlicingProcess::is_export_scheduled() before asking
+    std::optional<std::string> validation_error;          // the selected plate's validation failure, in the app's words
+    std::optional<std::string> failure;                   // what the update before the export threw
+    std::optional<bool>        scheduled;                 // after asking; nullopt: not asked (yet)
+};
+
+// Why the export did not start, or nullopt when it started or nothing has refused it yet.
+inline std::optional<std::string> export_not_started(const ExportStart& attempt)
+{
+    if (!attempt.has_objects)
+        return std::string("The scene has no objects, so there is no G-code to export.");
+    if (attempt.already_exporting)
+        return std::string("Another export job is running.");
+    if (attempt.failure)
+        return "The export did not start: " + *attempt.failure;
+    if (attempt.scheduled.value_or(false))
+        return std::nullopt;
+    if (attempt.validation_error)
+        return "The export did not start: the plate failed validation: " + *attempt.validation_error;
+    if (attempt.scheduled.has_value())
+        return std::string("The app did not start the export; active_warnings may say why.");
+    return std::nullopt;
+}
+
 }}} // namespace Slic3r::GUI::OrcaMCP

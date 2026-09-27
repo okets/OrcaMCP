@@ -18401,38 +18401,38 @@ void Plater::export_gcode(bool prefer_removable)
 }
 
 // Silent G-code export to a specific file path (for MCP automation)
-bool Plater::export_gcode_to_file(const std::string& output_path)
+std::optional<std::string> Plater::export_gcode_to_file(const std::string& output_path)
 {
-    if (p->model.objects.empty()) {
-        BOOST_LOG_TRIVIAL(warning) << "export_gcode_to_file: No objects in model";
-        return false;
-    }
+    // The selected plate's validation failure, in the words the GUI's notification uses.
+    const auto validation_error = [this]() -> std::optional<std::string> {
+        StringObjectException error = p->background_process.validate();
+        post_process_string_object_exception(error);
+        return error.string.empty() ? std::nullopt : std::optional<std::string>(error.string);
+    };
 
-    if (p->process_completed_with_error == p->partplate_list.get_curr_plate_index()) {
-        BOOST_LOG_TRIVIAL(warning) << "export_gcode_to_file: Process completed with error";
-        return false;
+    OrcaMCP::ExportStart attempt;
+    attempt.has_objects       = !p->model.objects.empty();
+    attempt.already_exporting = p->background_process.is_export_scheduled();
+    if (p->process_completed_with_error == p->partplate_list.get_curr_plate_index())
+        attempt.validation_error = validation_error().value_or("the plate cannot be sliced");
+    if (auto refused = OrcaMCP::export_not_started(attempt)) {
+        BOOST_LOG_TRIVIAL(warning) << "export_gcode_to_file: " << *refused;
+        return refused;
     }
 
     try {
         // Update the background processing
         unsigned int state = this->p->update_restart_background_process(false, false);
-        if (state & priv::UPDATE_BACKGROUND_PROCESS_INVALID) {
-            BOOST_LOG_TRIVIAL(warning) << "export_gcode_to_file: Background process invalid";
-            return false;
-        }
+        if (state & priv::UPDATE_BACKGROUND_PROCESS_INVALID)
+            attempt.validation_error = validation_error().value_or("the plate cannot be sliced");
     } catch (const Slic3r::PlaceholderParserError &ex) {
-        BOOST_LOG_TRIVIAL(error) << "export_gcode_to_file: PlaceholderParserError: " << ex.what();
-        return false;
+        attempt.failure = std::string("PlaceholderParserError: ") + ex.what();
     } catch (const std::exception &ex) {
-        BOOST_LOG_TRIVIAL(error) << "export_gcode_to_file: Exception: " << ex.what();
-        return false;
+        attempt.failure = ex.what();
     }
-
-    // priv::export_gcode refuses a second export with this error and returns, which left the export
-    // reported as started, with its "export began" state set. Refused here first instead.
-    if (p->background_process.is_export_scheduled()) {
-        GUI::show_error(this, _L("Another export job is running."));
-        return false;
+    if (auto refused = OrcaMCP::export_not_started(attempt)) {
+        BOOST_LOG_TRIVIAL(warning) << "export_gcode_to_file: " << *refused;
+        return refused;
     }
 
     fs::path path(output_path);
@@ -18442,8 +18442,19 @@ bool Plater::export_gcode_to_file(const std::string& output_path)
     p->last_output_dir_path = path.parent_path().string();
     p->export_gcode(path, false);
 
+    // priv::export_gcode returns without a word when the plate fails its forced validation.
+    attempt.scheduled = p->background_process.is_export_scheduled();
+    if (!*attempt.scheduled) {
+        attempt.validation_error = validation_error();
+        p->exporting_status = ExportingStatus::NOT_EXPORTING;
+    }
+    if (auto refused = OrcaMCP::export_not_started(attempt)) {
+        BOOST_LOG_TRIVIAL(warning) << "export_gcode_to_file: " << *refused;
+        return refused;
+    }
+
     BOOST_LOG_TRIVIAL(info) << "export_gcode_to_file: Started export to " << output_path;
-    return true;
+    return std::nullopt;
 }
 
 void Plater::send_to_printer(bool isall)

@@ -2873,23 +2873,23 @@ void OrcaMCPServer::register_builtin_tools()
                 nlohmann::json result;
 
                 if (!output_path.empty()) {
-                    // Silent export to specific path
-                    bool success = plater->export_gcode_to_file(output_path);
+                    // Silent export to specific path. Not started says why: no objects, another export
+                    // running, the plate's validation failure, or the app not scheduling it.
+                    const std::optional<std::string> not_started = plater->export_gcode_to_file(output_path);
                     auto info_messages = suppression_guard.notices();
 
-                    if (success) {
+                    if (!not_started) {
                         result["status"] = "export_started";
                         result["output_path"] = output_path;
                         result["note"] = "G-code export started. The file will be written asynchronously.";
                     } else {
                         result["status"] = "error";
-                        result["message"] = "Failed to start G-code export. Check that slicing completed successfully.";
+                        result["message"] = *not_started;
                     }
                     if (!info_messages.empty()) {
                         result["info_messages"] = info_messages;
                     }
-                    // An export the app refused with an error dialog ("Another export job is running.")
-                    // did not start, though export_gcode_to_file reported it started.
+                    // An export the app answered with an error dialog failed, with its words.
                     result = suppression_guard.fail_on_errors(result);
                     if (result["status"] == "error")
                         result.erase("note");

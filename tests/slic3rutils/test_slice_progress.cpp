@@ -397,3 +397,53 @@ TEST_CASE("a pending settings change is applied first only while the pipeline is
                 }
             }
 }
+
+// ---- what export_gcode reports -------------------------------------------------------------------
+//
+// export_gcode said export_started whenever Plater::export_gcode_to_file got as far as asking for
+// the export, but the app's export refuses silently on a plate that fails its own (forced)
+// validation, and then nothing was ever written.
+
+TEST_CASE("an export that was scheduled has started", "[orcamcp][SliceProgress]")
+{
+    ExportStart attempt;
+    attempt.scheduled = true;
+    CHECK_FALSE(export_not_started(attempt).has_value());
+}
+
+TEST_CASE("an export the app did not schedule did not start, and says the plate's validation failure", "[orcamcp][SliceProgress]")
+{
+    ExportStart attempt;
+    attempt.scheduled        = false;
+    attempt.validation_error = "Layer height cannot exceed nozzle diameter.";
+    const std::optional<std::string> why = export_not_started(attempt);
+    REQUIRE(why.has_value());
+    CHECK(why->find("Layer height cannot exceed nozzle diameter.") != std::string::npos);
+
+    attempt.validation_error.reset();
+    REQUIRE(export_not_started(attempt).has_value());
+    CHECK(export_not_started(attempt)->find("did not start") != std::string::npos);
+}
+
+TEST_CASE("an export is refused before it is asked for, for the first reason that holds", "[orcamcp][SliceProgress]")
+{
+    ExportStart empty_scene;
+    empty_scene.has_objects       = false;
+    empty_scene.already_exporting = true;
+    CHECK(export_not_started(empty_scene)->find("no objects") != std::string::npos);
+
+    ExportStart busy;
+    busy.already_exporting = true;
+    CHECK(*export_not_started(busy) == "Another export job is running.");
+
+    ExportStart invalid;
+    invalid.validation_error = "Prime Tower is partially outside the printable area";
+    CHECK(export_not_started(invalid)->find("Prime Tower is partially outside the printable area") != std::string::npos);
+
+    ExportStart failed;
+    failed.failure = "PlaceholderParserError: unknown variable";
+    CHECK(export_not_started(failed)->find("unknown variable") != std::string::npos);
+
+    // Nothing refused and not asked for yet: no verdict.
+    CHECK_FALSE(export_not_started(ExportStart{}).has_value());
+}
