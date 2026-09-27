@@ -3,6 +3,7 @@
 #include "OrcaMCPCommon.hpp"
 #include "OrcaMCPPaintModel.hpp"
 #include "OrcaMCPPaintSelect.hpp"
+#include "OrcaMCPFilamentModel.hpp"
 
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Plater.hpp"
@@ -18,6 +19,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -275,25 +277,15 @@ void refresh_after_paint(const PaintTarget& target)
     plater->update();
 }
 
+// How many filament slots the project has: the bound every colour write is checked against.
+int filament_slot_count() { return int(wxGetApp().preset_bundle->filament_presets.size()); }
+
 // A filament slot a caller asked to paint with. 0 means "unpainted" -- back to whatever filament
 // the volume itself is assigned -- which is the colour-mode equivalent of state NONE.
 bool validate_color_slot(int slot, std::string& error)
 {
-    if (slot == 0)
-        return true;
-    const int filament_count = int(wxGetApp().preset_bundle->filament_presets.size());
-    if (slot < 0 || slot > filament_count) {
-        error = "filament " + std::to_string(slot) + " out of range 1.." + std::to_string(filament_count) +
-                " (0 means unpainted)";
-        return false;
-    }
-    if (slot > max_paint_state()) {
-        error = "filament " + std::to_string(slot) + " cannot be painted: a facet state stops at " +
-                std::to_string(max_paint_state()) + " (EnforcerBlockerType::ExtruderMax), so slots above "
-                "that can only be assigned to a whole object or part with set_object_filament";
-        return false;
-    }
-    return true;
+    error = color_slot_error(slot, filament_slot_count());
+    return error.empty();
 }
 
 // One parsed paint_object call.
@@ -387,7 +379,7 @@ bool parse_paint_request(const nlohmann::json& params,
 
     out.selection = params.value("selection", std::string());
     if (out.selection.empty()) {
-        error = "selection is required: bands, box, sphere, all, connected or component";
+        error = "selection is required: bands, box, sphere, all, connected, component or state";
         return false;
     }
 
@@ -568,7 +560,7 @@ bool parse_paint_request(const nlohmann::json& params,
     }
 
     error = "Unknown selection '" + out.selection +
-            "': expected bands, box, sphere, all, connected or component";
+            "': expected bands, box, sphere, all, connected, component or state";
     return false;
 }
 
@@ -608,6 +600,213 @@ std::vector<std::string> paint_prerequisite_messages(const Slic3r::ModelObject& 
     return messages;
 }
 
+// ---- Renumbering painted states: remap_paint, and paint_object's selection "state" -------------
+
+// One renumbering: remap_paint's mapping, or paint_object's selection "state" (a single entry).
+struct PaintRemapRequest
+{
+    PaintMode      mode = PaintMode::Color;
+    PaintStateMap  mapping;
+    std::string    snapshot_name; // the undo entry the write makes
+    nlohmann::json extra;         // what the calling tool adds to the response, e.g. its selection
+};
+
+nlohmann::json mapping_json(const PaintStateMap& mapping)
+{
+    nlohmann::json out = nlohmann::json::object();
+    for (const auto& [from, to] : mapping)
+        out[std::to_string(from)] = to;
+    return out;
+}
+
+// {"state": facets} over every volume the call addressed.
+nlohmann::json facet_counts_json(const std::vector<PaintRemapWrite>& writes, bool after)
+{
+    std::map<int, int> counts;
+    for (const PaintRemapWrite& write : writes)
+        for (const PaintedStateInfo& info : after ? write.after : write.before)
+            counts[info.state] += info.facet_count;
+    nlohmann::json out = nlohmann::json::object();
+    for (const auto& [state, facets] : counts)
+        out[std::to_string(state)] = facets;
+    return out;
+}
+
+int unpainted_facets(const std::vector<PaintedStateInfo>& painted)
+{
+    for (const PaintedStateInfo& info : painted)
+        if (info.state == 0)
+            return info.facet_count;
+    return 0;
+}
+
+// What a colour renumbering leaves on parts whose unpainted facets print with a filament it moved.
+std::vector<std::string> unpainted_filament_notes(const PaintTarget&                  target,
+                                                  const PaintPlan&                    plan,
+                                                  const std::vector<PaintRemapWrite>& writes,
+                                                  const PaintStateMap&                mapping)
+{
+    const std::vector<VolumeFilament> filaments = describe_volume_filaments(*target.object);
+    const auto parts = std::count_if(target.object->volumes.begin(), target.object->volumes.end(),
+                                     [](const Slic3r::ModelVolume* mv) { return mv->is_model_part(); });
+    std::vector<std::string> notes;
+    for (std::size_t i = 0; i < plan.volumes.size(); ++i) {
+        const VolumeFilament& part = filaments[std::size_t(plan.volumes[i].volume_id)];
+        if (auto note = unpainted_filament_note(target.object_id, part.volume_id, part.own_filament != 0, parts == 1,
+                                                part.effective_filament, unpainted_facets(writes[i].after), mapping))
+            notes.push_back(*note);
+    }
+    return notes;
+}
+
+// The three hops paint_object runs, for a renumbering. Main thread: validate and capture the paint
+// it is built on. This HTTP worker thread: the selectors, all of the cost. Main thread: confirm
+// nothing moved, then write every volume as one undo step.
+nlohmann::json run_paint_remap(const nlohmann::json& params, const PaintRemapRequest& request)
+{
+    // No coordinates, so no instance to read them through.
+    const PaintTargetNeeds needs{/*volumes=*/true, /*instance=*/false};
+    PaintPlan              plan;
+    std::vector<PaintData> base;
+    nlohmann::json gate = run_on_main_thread([&params, &request, &needs, &plan, &base]() -> nlohmann::json {
+        PaintTarget target;
+        std::string error;
+        if (!resolve_paint_target(params, target, error, needs))
+            return error_response(error);
+        if (const std::string refusal = state_mapping_error(request.mode, request.mapping, filament_slot_count()); !refusal.empty())
+            return error_response(refusal);
+        for (std::size_t i = 0; i < target.volumes.size(); ++i)
+            if (target.volumes[i]->mesh().its.indices.empty())
+                return error_response("volume_id " + std::to_string(target.volume_ids[i]) + " has an empty mesh, so it has no paint");
+        plan = capture_paint_plan(target);
+        base = capture_paint_base(target, request.mode);
+        return {{"status", "success"}};
+    });
+    if (gate.value("status", "") != "success")
+        return gate;
+
+    std::vector<PaintRemapWrite> writes(plan.volumes.size());
+    for (std::size_t i = 0; i < plan.volumes.size(); ++i)
+        if (!build_remap_write(*plan.volumes[i].mesh, base[i], request.mapping, writes[i]))
+            return error_response("volume_id " + std::to_string(plan.volumes[i].volume_id) +
+                                  ": the renumbering does not fit its paint, so nothing was changed");
+
+    return run_on_main_thread([&params, &request, &needs, &plan, &base, &writes]() -> nlohmann::json {
+        PaintTarget target;
+        std::string error;
+        if (!resolve_paint_target(params, target, error, needs) || !plan_still_valid(target, plan, error))
+            return error_response(error);
+        // Built on the paint each volume carried in the first hop: a gizmo stroke landing since would
+        // be discarded by writing it, so every volume is checked before anything is written.
+        bool any_change = false;
+        for (std::size_t i = 0; i < plan.volumes.size(); ++i) {
+            const Slic3r::ModelVolume* mv = target.volumes[std::size_t(plan.volumes[i].index)];
+            if (!paint_base_unchanged(*mv, request.mode, base[i]))
+                return error_response(std::string("the ") + paint_mode_name(request.mode) + " paint on volume " +
+                                      std::to_string(plan.volumes[i].volume_id) +
+                                      " changed while the renumbering was computed, so writing it now would discard that "
+                                      "change; retry");
+            any_change |= writes[i].data != base[i];
+        }
+
+        // One snapshot for every volume, so one undo puts all of them back.
+        if (any_change)
+            wxGetApp().plater()->take_snapshot(request.snapshot_name);
+        bool           changed = false;
+        nlohmann::json volumes = nlohmann::json::array();
+        for (std::size_t i = 0; i < plan.volumes.size(); ++i) {
+            Slic3r::ModelVolume* mv = target.volumes[std::size_t(plan.volumes[i].index)];
+            volumes.push_back({{"volume_id", plan.volumes[i].volume_id},
+                               {"name", mv->name},
+                               {"before", painted_json(request.mode, writes[i].before)},
+                               {"after", painted_json(request.mode, writes[i].after)}});
+            changed |= apply_paint_data(*mv, request.mode, std::move(writes[i].data));
+        }
+        if (changed)
+            refresh_after_paint(target);
+
+        nlohmann::json result = {{"status", "success"},
+                                 {"object_id", target.object_id},
+                                 {"object_name", target.object->name},
+                                 {"mode", paint_mode_name(request.mode)},
+                                 {"mapping", mapping_json(request.mapping)},
+                                 {"annotation_changed", changed},
+                                 {"facets_before", facet_counts_json(writes, /*after=*/false)},
+                                 {"facets_after", facet_counts_json(writes, /*after=*/true)},
+                                 {"volumes", volumes}};
+        result.update(request.extra);
+        if (request.mode == PaintMode::Color)
+            if (const std::vector<std::string> notes = unpainted_filament_notes(target, plan, writes, request.mapping); !notes.empty())
+                result["notes"] = notes;
+        return result;
+    });
+}
+
+// The state paint_object's selection "state" repaints: match_filament in colour mode, match_state
+// in the other three.
+bool parse_matched_state(const nlohmann::json& params, PaintMode mode, int& out, std::string& error)
+{
+    if (mode == PaintMode::Color) {
+        if (!params.contains("match_filament") || !parse_integer_param(params["match_filament"], out) || out < 0) {
+            error = "selection 'state' in mode 'color' needs match_filament: the filament whose facets to repaint "
+                    "(0 = the unpainted ones)";
+            return false;
+        }
+        return true;
+    }
+    if (!params.contains("match_state") || !params["match_state"].is_string() ||
+        !parse_paint_state(mode, params["match_state"].get<std::string>(), out)) {
+        error = std::string("selection 'state' in mode '") + paint_mode_name(mode) +
+                "' needs match_state: the state whose facets to repaint (none, enforcer" +
+                (mode == PaintMode::FuzzySkin ? ")" : " or blocker)");
+        return false;
+    }
+    return true;
+}
+
+// What selection "state" paints them with: `filament` in colour mode, `state` in the other three.
+// Checked against the project in the first hop, with the rest of the mapping.
+bool parse_new_state(const nlohmann::json& params, PaintMode mode, int& out, std::string& error)
+{
+    if (mode == PaintMode::Color) {
+        if (!params.contains("filament") || !parse_integer_param(params["filament"], out)) {
+            error = "mode 'color' needs a `filament` (1-based slot, or 0 to unpaint)";
+            return false;
+        }
+        return true;
+    }
+    if (!params.contains("state") || !params["state"].is_string() ||
+        !parse_paint_state(mode, params["state"].get<std::string>(), out)) {
+        error = std::string("mode '") + paint_mode_name(mode) + "' needs a `state`: none, enforcer" +
+                (mode == PaintMode::FuzzySkin ? "" : " or blocker");
+        return false;
+    }
+    return true;
+}
+
+// paint_object with selection "state": every facet now in one state is painted with another. That is
+// a one-entry renumbering, so it runs as remap_paint does -- on the leaf triangles, so a facet a
+// gizmo split keeps exactly the parts that were in the matched state.
+nlohmann::json paint_by_state(const nlohmann::json& params)
+{
+    PaintMode mode = PaintMode::Color;
+    if (params.contains("mode") && !(params["mode"].is_string() && parse_paint_mode(params["mode"].get<std::string>(), mode)))
+        return error_response("Unknown mode; expected color, support, seam or fuzzy_skin");
+    bool replace = false;
+    if (params.contains("replace") && (!parse_boolean_param(params["replace"], replace) || replace))
+        return error_response("selection 'state' repaints only the facets in that state and keeps the rest, so replace "
+                              "must be false or omitted");
+    int         from = 0;
+    int         to   = 0;
+    std::string error;
+    if (!parse_matched_state(params, mode, from, error) || !parse_new_state(params, mode, to, error))
+        return error_response(error);
+    return run_paint_remap(params, {mode,
+                                    {{from, to}},
+                                    _u8L("Paint Object") + " (" + paint_mode_name(mode) + ")",
+                                    {{"selection", "state"}}});
+}
+
 } // namespace
 
 void OrcaMCPServer::register_paint_tools()
@@ -622,7 +821,9 @@ void OrcaMCPServer::register_paint_tools()
         "list of filaments, or explicit ranges), a box, a sphere, or the whole volume. "
         "connected fills the surface region around a seed without crossing an edge sharper than "
         "`angle` -- the way to paint a feature such as a bag or a sleeve; component paints one "
-        "shell by id. Very large meshes (millions of facets) take seconds to minutes; the work "
+        "shell by id; state repaints every facet now in one state (match_filament, or match_state "
+        "outside colour mode) with filament / state and leaves the rest, e.g. everything painted with "
+        "filament 1 becomes filament 3 (remap_paint renumbers several at once). Very large meshes (millions of facets) take seconds to minutes; the work "
         "runs off the GUI thread, but the bridge's ORCAMCP_TIMEOUT (default 120 s) may still need "
         "raising. "
         "ALL COORDINATES ARE PLATE MILLIMETRES -- the same frame get_object_info reports its "
@@ -658,7 +859,7 @@ void OrcaMCPServer::register_paint_tools()
                 }},
                 {"selection", {
                     {"type", "string"},
-                    {"enum", {"bands", "box", "sphere", "all", "connected", "component"}},
+                    {"enum", {"bands", "box", "sphere", "all", "connected", "component", "state"}},
                     {"description", "Where to paint"}
                 }},
                 {"seed", {
@@ -730,9 +931,20 @@ void OrcaMCPServer::register_paint_tools()
                 }},
                 {"filament", {
                     {"type", "integer"},
-                    {"description", "1-based filament slot for selection=box/sphere/all/connected/component "
+                    {"description", "1-based filament slot for selection=box/sphere/all/connected/component/state "
                                     "(mode=color). "
                                     "0 means unpainted."}
+                }},
+                {"match_filament", {
+                    {"type", "integer"},
+                    {"minimum", 0},
+                    {"description", "selection=state, mode=color: repaint every facet now painted with this "
+                                    "filament (0 = the unpainted facets)"}
+                }},
+                {"match_state", {
+                    {"type", "string"},
+                    {"enum", {"none", "enforcer", "blocker", "fuzzy_skin"}},
+                    {"description", "selection=state, other modes: repaint every facet now in this state"}
                 }},
                 {"state", {
                     {"type", "string"},
@@ -740,7 +952,7 @@ void OrcaMCPServer::register_paint_tools()
                     // enforcer state, so it has to be accepted here or the round-trip we built
                     // is blocked for a client that validates against this schema.
                     {"enum", {"none", "enforcer", "blocker", "fuzzy_skin"}},
-                    {"description", "State for selection=box/sphere/all/connected/component when mode "
+                    {"description", "State for selection=box/sphere/all/connected/component/state when mode "
                                     "is not color. "
                                     "fuzzy_skin accepts none and enforcer (spelled either "
                                     "'enforcer' or 'fuzzy_skin'), never blocker."}
@@ -748,12 +960,16 @@ void OrcaMCPServer::register_paint_tools()
                 {"replace", {
                     {"type", "boolean"},
                     {"description", "true (default) discards this mode's existing paint first; "
-                                    "false paints on top of it"}
+                                    "false paints on top of it. selection=state always keeps the rest: "
+                                    "omit it there, or pass false"}
                 }}
             }},
             {"required", {"object_id", "selection"}}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
+            if (params.contains("selection") && params["selection"].is_string() &&
+                params["selection"].get<std::string>() == "state")
+                return paint_by_state(params);
             // Three hops, because painting a multi-million-facet mesh takes minutes and the GUI
             // thread is the only one every other tool also needs. Only the validation and the
             // write actually touch the Model; the arithmetic between them does not, and doing it
@@ -1161,6 +1377,62 @@ void OrcaMCPServer::register_paint_tools()
 
                 return result;
             });
+        }
+    });
+
+    register_tool({
+        "remap_paint",
+        ToolCategory::Painting,
+        "Renumber painted filaments in one step",
+        "Renumber an object's painted filaments in one step: mapping {\"1\": 2, \"2\": 3, \"3\": 4} moves "
+        "every facet painted with filament 1 to 2, 2 to 3 and 3 to 4 together -- never chained, so 1 does "
+        "not end up at 3 -- which frees slot 1, e.g. for a support filament. Filaments the mapping does "
+        "not list keep their facets. 0 means unpainted: as a key it paints the bare facets, as a value it "
+        "unpaints. New filaments must be existing slots (get_filaments). One undo step. Returns facet "
+        "counts per filament before and after (facets_before / facets_after, and per volume). Unpainted "
+        "facets print with the part's own filament, which this leaves as it is: when the mapping moves "
+        "that filament, notes names the set_object_filament call that moves them too. For one filament, "
+        "paint_object with selection \"state\" does the same.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"object_id", {
+                    {"type", "integer"},
+                    {"minimum", 0},
+                    {"description", "Object index (0-based)"}
+                }},
+                {"volume_id", {
+                    {"type", "integer"},
+                    {"minimum", -1},
+                    {"description", "Part index within the object (0-based); omit, or pass -1, for every part"}
+                }},
+                {"mode", {
+                    {"type", "string"},
+                    {"enum", {"color"}},
+                    {"description", "Which paint to renumber: color, the filament paint (default). For support, "
+                                    "seam or fuzzy skin states use paint_object's selection state."}
+                }},
+                {"mapping", {
+                    {"type", "object"},
+                    {"additionalProperties", {{"type", "integer"}}},
+                    {"description", "Old filament -> new filament, e.g. {\"1\": 2, \"2\": 3, \"3\": 4}, applied "
+                                    "all at once"}
+                }}
+            }},
+            {"required", {"object_id", "mapping"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            if (params.contains("mode") &&
+                !(params["mode"].is_string() && params["mode"].get<std::string>() == "color"))
+                return error_response("remap_paint renumbers filaments, so mode must be color; for support, seam or "
+                                      "fuzzy skin states use paint_object with selection \"state\"");
+            PaintStateMap mapping;
+            std::string   error;
+            if (!params.contains("mapping") || !parse_state_mapping(params["mapping"], mapping, error))
+                return error_response(params.contains("mapping") ? error
+                                                                 : "mapping is required: old filament -> new filament, "
+                                                                   "e.g. {\"1\": 2, \"2\": 3}");
+            return run_paint_remap(params, {PaintMode::Color, mapping, _u8L("Remap Paint") + " (color)", nlohmann::json::object()});
         }
     });
 

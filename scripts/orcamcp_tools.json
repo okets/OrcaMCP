@@ -1230,7 +1230,7 @@
     },
     {
       "category": "Painting",
-      "description": "Paint per-triangle annotations on an object, the same data the GUI paint gizmos write. mode selects which: color (multi-material / MMU segmentation), support, seam or fuzzy_skin. selection selects where: bands along a plate axis (an even split across a list of filaments, or explicit ranges), a box, a sphere, or the whole volume. connected fills the surface region around a seed without crossing an edge sharper than `angle` -- the way to paint a feature such as a bag or a sleeve; component paints one shell by id. Very large meshes (millions of facets) take seconds to minutes; the work runs off the GUI thread, but the bridge's ORCAMCP_TIMEOUT (default 120 s) may still need raising. ALL COORDINATES ARE PLATE MILLIMETRES -- the same frame get_object_info reports its bounding_box and position in, not object-local coordinates. But for the numbers, use THIS call's own bounding_box in the response (or get_object_paint's), not get_object_info's: that one spans every instance of the object, and matches this tool's, which is instance_id's alone, only when the object has one instance. A facet belongs to the band or region containing its centroid. Paint lives on the volume, so it applies to every instance; instance_id only says whose transform reads your coordinates. Verify with get_object_paint, undo with undo, reset with clear_object_paint.",
+      "description": "Paint per-triangle annotations on an object, the same data the GUI paint gizmos write. mode selects which: color (multi-material / MMU segmentation), support, seam or fuzzy_skin. selection selects where: bands along a plate axis (an even split across a list of filaments, or explicit ranges), a box, a sphere, or the whole volume. connected fills the surface region around a seed without crossing an edge sharper than `angle` -- the way to paint a feature such as a bag or a sleeve; component paints one shell by id; state repaints every facet now in one state (match_filament, or match_state outside colour mode) with filament / state and leaves the rest, e.g. everything painted with filament 1 becomes filament 3 (remap_paint renumbers several at once). Very large meshes (millions of facets) take seconds to minutes; the work runs off the GUI thread, but the bridge's ORCAMCP_TIMEOUT (default 120 s) may still need raising. ALL COORDINATES ARE PLATE MILLIMETRES -- the same frame get_object_info reports its bounding_box and position in, not object-local coordinates. But for the numbers, use THIS call's own bounding_box in the response (or get_object_paint's), not get_object_info's: that one spans every instance of the object, and matches this tool's, which is instance_id's alone, only when the object has one instance. A facet belongs to the band or region containing its centroid. Paint lives on the volume, so it applies to every instance; instance_id only says whose transform reads your coordinates. Verify with get_object_paint, undo with undo, reset with clear_object_paint.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -1298,7 +1298,7 @@
             "type": "integer"
           },
           "filament": {
-            "description": "1-based filament slot for selection=box/sphere/all/connected/component (mode=color). 0 means unpainted.",
+            "description": "1-based filament slot for selection=box/sphere/all/connected/component/state (mode=color). 0 means unpainted.",
             "type": "integer"
           },
           "filaments": {
@@ -1317,6 +1317,21 @@
             "minimum": 0,
             "type": "integer"
           },
+          "match_filament": {
+            "description": "selection=state, mode=color: repaint every facet now painted with this filament (0 = the unpainted facets)",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "match_state": {
+            "description": "selection=state, other modes: repaint every facet now in this state",
+            "enum": [
+              "none",
+              "enforcer",
+              "blocker",
+              "fuzzy_skin"
+            ],
+            "type": "string"
+          },
           "mode": {
             "description": "Which annotation to write (default: color)",
             "enum": [
@@ -1333,7 +1348,7 @@
             "type": "integer"
           },
           "replace": {
-            "description": "true (default) discards this mode's existing paint first; false paints on top of it",
+            "description": "true (default) discards this mode's existing paint first; false paints on top of it. selection=state always keeps the rest: omit it there, or pass false",
             "type": "boolean"
           },
           "seed": {
@@ -1348,7 +1363,8 @@
               "sphere",
               "all",
               "connected",
-              "component"
+              "component",
+              "state"
             ],
             "type": "string"
           },
@@ -1368,7 +1384,7 @@
             "type": "object"
           },
           "state": {
-            "description": "State for selection=box/sphere/all/connected/component when mode is not color. fuzzy_skin accepts none and enforcer (spelled either 'enforcer' or 'fuzzy_skin'), never blocker.",
+            "description": "State for selection=box/sphere/all/connected/component/state when mode is not color. fuzzy_skin accepts none and enforcer (spelled either 'enforcer' or 'fuzzy_skin'), never blocker.",
             "enum": [
               "none",
               "enforcer",
@@ -1607,6 +1623,46 @@
       },
       "name": "redo",
       "summary": "Redo the last undone operation"
+    },
+    {
+      "category": "Painting",
+      "description": "Renumber an object's painted filaments in one step: mapping {\"1\": 2, \"2\": 3, \"3\": 4} moves every facet painted with filament 1 to 2, 2 to 3 and 3 to 4 together -- never chained, so 1 does not end up at 3 -- which frees slot 1, e.g. for a support filament. Filaments the mapping does not list keep their facets. 0 means unpainted: as a key it paints the bare facets, as a value it unpaints. New filaments must be existing slots (get_filaments). One undo step. Returns facet counts per filament before and after (facets_before / facets_after, and per volume). Unpainted facets print with the part's own filament, which this leaves as it is: when the mapping moves that filament, notes names the set_object_filament call that moves them too. For one filament, paint_object with selection \"state\" does the same.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "mapping": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "description": "Old filament -> new filament, e.g. {\"1\": 2, \"2\": 3, \"3\": 4}, applied all at once",
+            "type": "object"
+          },
+          "mode": {
+            "description": "Which paint to renumber: color, the filament paint (default). For support, seam or fuzzy skin states use paint_object's selection state.",
+            "enum": [
+              "color"
+            ],
+            "type": "string"
+          },
+          "object_id": {
+            "description": "Object index (0-based)",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "volume_id": {
+            "description": "Part index within the object (0-based); omit, or pass -1, for every part",
+            "minimum": -1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "object_id",
+          "mapping"
+        ],
+        "type": "object"
+      },
+      "name": "remap_paint",
+      "summary": "Renumber painted filaments in one step"
     },
     {
       "category": "Models",

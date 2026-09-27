@@ -13,6 +13,7 @@
 #include "libslic3r/TriangleSelector.hpp"
 
 #include "OrcaMCPPaintGeometry.hpp"
+#include "OrcaMCPPaintModel.hpp"
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
@@ -158,5 +159,13 @@ FacetAssignment assign_connected(const TriangleMesh& mesh,
                                  const Vec3f&        seed_point_local,
                                  double              angle_deg,
                                  int                 state);
+
+// ---- remap_paint's mapping ----------------------------------------------------------------------
+//
+// {"1": 2, "2": 3} read into a PaintStateMap. A key is an old state and a value a new one, both
+// whole numbers of 0 or more; a value may come as a numeric string or a whole float, as every other
+// integer parameter may. False, with `error` naming the entry, for anything else. Whether the states
+// fit a mode and a project is state_mapping_error's question, not this one's.
+bool parse_state_mapping(const nlohmann::json& value, PaintStateMap& out, std::string& error);
 
 }}} // namespace Slic3r::GUI::OrcaMCP

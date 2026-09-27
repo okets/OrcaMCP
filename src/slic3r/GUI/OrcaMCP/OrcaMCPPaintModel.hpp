@@ -1,7 +1,9 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPPaintModel.hpp
 #pragma once
 #include <cstddef>
+#include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -238,5 +240,48 @@ bool has_volume_paint(const ModelVolume& mv, PaintMode mode);
 // Returns false when the annotation was already empty, so a caller can tell "cleared" from
 // "there was nothing to clear".
 bool clear_volume_paint(ModelVolume& mv, PaintMode mode);
+
+// ---- Renumbering painted states (remap_paint, paint_object's selection "state") ---------------
+
+// Why a colour write of filament `slot` cannot be made in a project with `slot_count` filament
+// slots, or "" when it can. 0 means unpainted, back to whatever filament the part itself prints with.
+std::string color_slot_error(int slot, int slot_count);
+
+// A renumbering of painted states: old state -> new state. Applied all at once, so {1: 2, 2: 3}
+// moves 1 to 2 and 2 to 3 -- never 1 on to 3 -- and a state it does not list keeps its facets.
+using PaintStateMap = std::map<int, int>;
+
+// Why `mapping` cannot be applied to `mode`'s paint, or "" when it can. Every new state is one the
+// mode can hold -- in colour, a real slot (color_slot_error) or 0 to unpaint. An old state need
+// only be one a facet can hold, so a stale state left by an import can still be moved off.
+std::string state_mapping_error(PaintMode mode, const PaintStateMap& mapping, int slot_count);
+
+// What a renumbering makes of one volume's paint, and what the paint was, off one TriangleSelector.
+struct PaintRemapWrite
+{
+    PaintData                     data;
+    std::vector<PaintedStateInfo> before;
+    std::vector<PaintedStateInfo> after;
+};
+
+// Any thread: `base` -- one volume's current paint for a mode -- with every facet state renumbered
+// through `mapping` by TriangleSelector::remap_triangle_state, the pass FacetsAnnotation::remap_states
+// runs (Model.cpp). Unlike that one it does not return early on an unpainted volume, so a mapping
+// from 0 paints the bare facets. Returns false, leaving `out` alone, for a mesh with no facets or a
+// state outside 0..max_paint_state().
+bool build_remap_write(const TriangleMesh& mesh, const PaintData& base, const PaintStateMap& mapping, PaintRemapWrite& out);
+
+// What a colour remap leaves behind on one part: its unpainted facets still print with the part's
+// own filament, which remap_paint does not change. When `mapping` moves that filament to another
+// slot, the note naming the set_object_filament call that moves them too -- the volume form when the
+// part has its own slot or the object has other parts, which the whole-object form would also
+// change. nullopt when nothing is unpainted or the part's filament is not moved.
+std::optional<std::string> unpainted_filament_note(int                  object_id,
+                                                   int                  volume_id,
+                                                   bool                 part_has_own_filament,
+                                                   bool                 object_has_one_part,
+                                                   int                  part_filament,
+                                                   int                  unpainted_facets,
+                                                   const PaintStateMap& mapping);
 
 }}} // namespace Slic3r::GUI::OrcaMCP

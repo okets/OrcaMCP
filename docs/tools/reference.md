@@ -20,7 +20,7 @@ dedicated section below yet.
 | **Per-Object** | `get_object_config`, `set_object_config`, `reset_object_config` |
 | **Layer Ranges** | `get_object_layer_ranges`, `set_object_layer_range`, `delete_object_layer_range` |
 | **Filaments & colour** | `get_filaments`, `set_object_filament`, `set_mixed_filament`, `delete_mixed_filament`, `set_filament_color`, `get_flush_volumes`, `set_flush_volumes`, `auto_calc_flush_volumes`, `get_toolchanger_config`, `suggest_color_mix`, `get_color_palette` |
-| **Painting** | `paint_object`, `get_object_paint`, `clear_object_paint`, `set_brim_ears`, `get_object_components`, `pick_facet` |
+| **Painting** | `paint_object`, `remap_paint`, `get_object_paint`, `clear_object_paint`, `set_brim_ears`, `get_object_components`, `pick_facet` |
 | **Slicing** | `slice_all`, `wait_for_slice` (bridge-only), `get_slicing_status`, `export_gcode`, `get_print_estimate` |
 | **Visualization** | `render_plate_view`, `get_preview_base64`, `set_gcode_view_type` |
 | **Printers** | `get_printers`, `select_printer`, `add_physical_printer`, `discover_printers`, `send_to_printer`, `get_printer_status`, `printer_control`, `list_printer_files`, `print_printer_file`, `match_project_to_printer` |
@@ -2018,7 +2018,7 @@ Write per-triangle paint — the same data the GUI paint gizmos write.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `object_id` | integer | Yes | Object index (0-based) |
-| `selection` | string | Yes | `bands`, `box`, `sphere`, `all`, `connected` or `component` |
+| `selection` | string | Yes | `bands`, `box`, `sphere`, `all`, `connected`, `component` or `state` |
 | `mode` | string | No | `color` (default), `support`, `seam`, `fuzzy_skin` |
 | `volume_id` | integer | No | Part index (0-based); omit or `-1` for every model part |
 | `instance_id` | integer | No | Whose transform reads your coordinates (default 0) |
@@ -2031,9 +2031,11 @@ Write per-triangle paint — the same data the GUI paint gizmos write.
 | `seed` | object | `connected` | `{point: [x,y,z]}` in plate mm (snapped to the nearest surface), or `{volume_id, facet}` from `pick_facet` |
 | `angle` | number | No | `connected` only: stop the fill at edges sharper than this many degrees. Default 30 — the gizmo's smart-fill default |
 | `component` | integer | `component` | A shell id from `get_object_components`. Needs `volume_id` when the object has several parts |
-| `filament` | integer | `box`/`sphere`/`all`/`connected`/`component` + `color` | 1-based slot; `0` = unpainted |
-| `state` | string | `box`/`sphere`/`all`/`connected`/`component`, non-color | `none`, `enforcer`, `blocker`; in `fuzzy_skin` mode, `fuzzy_skin` is also accepted as a synonym for `enforcer` (there is no `blocker`) |
-| `replace` | boolean | No | `true` (default) discards this mode's existing paint first |
+| `filament` | integer | `box`/`sphere`/`all`/`connected`/`component`/`state` + `color` | 1-based slot; `0` = unpainted |
+| `match_filament` | integer | `state` + `color` | Repaint every facet now painted with this filament (`0` = the unpainted facets) |
+| `match_state` | string | `state`, non-color | Repaint every facet now in this state: `none`, `enforcer`, `blocker` (`fuzzy_skin` for `enforcer` in that mode) |
+| `state` | string | `box`/`sphere`/`all`/`connected`/`component`/`state`, non-color | `none`, `enforcer`, `blocker`; in `fuzzy_skin` mode, `fuzzy_skin` is also accepted as a synonym for `enforcer` (there is no `blocker`) |
+| `replace` | boolean | No | `true` (default) discards this mode's existing paint first. `selection: state` always keeps the rest; `replace: true` is refused there |
 
 **Notes:**
 - An even split (`filaments`) is colour-only. The other three modes take explicit `bands`
@@ -2076,6 +2078,12 @@ Write per-triangle paint — the same data the GUI paint gizmos write.
   `info_messages` when they are not.
 - Filament slots above 32 cannot be painted — a facet state stops at
   `EnforcerBlockerType::ExtruderMax`. Use `set_object_filament` for those.
+- `state` repaints by what is already painted, not by where: every facet now in
+  `match_filament` (or `match_state`) takes `filament` (or `state`), and nothing else changes.
+  It works on the leaf triangles a gizmo split, so a split facet keeps exactly its parts that were
+  in the matched state. It is `remap_paint` with a one-entry mapping, and answers in
+  `remap_paint`'s shape (`mapping`, `facets_before`, `facets_after`, per-volume `before` / `after`),
+  plus `selection: "state"`.
 
 **Example — find a feature by eye, then fill it:**
 ```json
@@ -2098,6 +2106,11 @@ paint_object  {"object_id": 0, "selection": "connected", "seed": {"point": [129.
 ```json
 {"object_id": 0, "selection": "bands", "axis": "y",
  "filaments": [5,6,7,8,9,10,11,12,13,14,15,16,17,18]}
+```
+
+**Example — everything painted with filament 1 becomes filament 3:**
+```json
+{"object_id": 0, "selection": "state", "match_filament": 1, "filament": 3}
 ```
 
 **Example — support enforcers under a Z height:**
@@ -2126,6 +2139,55 @@ fabricated — but `modes.<mode>` reads the same way every other painting tool's
 point seed's snap and the part it landed on are both visible without a second call.
 `info_messages` also flags when a `bands` call left facets outside every band, the usual
 symptom of banding from too wide a range.
+
+---
+
+### remap_paint
+Renumber an object's painted filaments in one step. Every facet painted with an old filament
+takes the new one, all at once: `{"1": 2, "2": 3, "3": 4}` moves 1 to 2, 2 to 3 and 3 to 4 —
+never 1 on to 3. That frees slot 1, for a support filament say, on a model whose colours an
+exporter numbered 1 to 3.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `object_id` | integer | Yes | Object index (0-based) |
+| `mapping` | object | Yes | Old filament → new filament, e.g. `{"1": 2, "2": 3, "3": 4}` |
+| `volume_id` | integer | No | Part index (0-based); omit or `-1` for every model part |
+| `mode` | string | No | `color` only (the default). For support, seam or fuzzy-skin states use `paint_object`'s `selection: state` |
+
+- Filaments the mapping does not list keep their facets; two mapped to one merge.
+- `0` means unpainted: as a key it paints the bare facets, as a value it unpaints.
+- A new filament must be an existing slot (`get_filaments`) and at most 32. An old one may be any
+  state a facet holds, so a stale one left by an import can be moved off.
+- One undo step for every part, even when several change. A call that changes nothing makes no
+  undo entry (`annotation_changed: false`).
+- Unpainted facets print with the part's own filament, which `remap_paint` leaves as it is. When
+  the mapping moves that filament, `notes` names the call that moves them too.
+
+**Example:**
+```json
+{"object_id": 0, "mapping": {"1": 2, "2": 3, "3": 4}}
+```
+
+**Returns:**
+```json
+{
+  "status": "success",
+  "object_id": 0,
+  "object_name": "figurine",
+  "mode": "color",
+  "mapping": {"1": 2, "2": 3, "3": 4},
+  "annotation_changed": true,
+  "facets_before": {"0": 120, "1": 5400, "2": 3100, "3": 880},
+  "facets_after": {"0": 120, "2": 5400, "3": 3100, "4": 880},
+  "volumes": [{"volume_id": 0, "name": "figurine", "before": [...], "after": [...]}],
+  "notes": ["volume 0: 120 unpainted facets still print with filament 1, the part's own; call set_object_filament {object_id: 0, filament: 2} to move them too"]
+}
+```
+`before` and `after` are `get_object_paint`'s per-state list: `state`, `label`, `filament`,
+`facet_count`, `coverage_percent`. Facet counts count leaf triangles, so a facet a gizmo split
+counts once per piece.
 
 ---
 

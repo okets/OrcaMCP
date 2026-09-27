@@ -37,6 +37,7 @@ add_executable(${_TEST_NAME}_tests
     test_paint_geometry.cpp
     test_scalar_params.cpp
     test_paint_select.cpp
+    test_paint_remap.cpp
     test_object_placement.cpp
     test_plate_occupancy.cpp
     test_transform_frames.cpp

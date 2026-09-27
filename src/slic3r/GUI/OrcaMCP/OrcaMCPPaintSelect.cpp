@@ -1,5 +1,6 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPPaintSelect.cpp
 #include "OrcaMCPPaintSelect.hpp"
+#include "OrcaMCPCommon.hpp"
 
 #include "libslic3r/AABBMesh.hpp"
 
@@ -338,6 +339,30 @@ FacetAssignment assign_connected(const TriangleMesh& mesh,
         --out.unassigned;
     }
     return out;
+}
+
+bool parse_state_mapping(const nlohmann::json& value, PaintStateMap& out, std::string& error)
+{
+    if (!value.is_object() || value.empty()) {
+        error = "mapping must be an object of old filament -> new filament, e.g. {\"1\": 2, \"2\": 3}";
+        return false;
+    }
+    PaintStateMap mapping;
+    for (const auto& [key, to_value] : value.items()) {
+        int from = -1;
+        int to   = -1;
+        if (!parse_integer_param(nlohmann::json(key), from) || from < 0) {
+            error = "mapping key \"" + key + "\" is not a state: use a whole number of 0 or more (0 = unpainted)";
+            return false;
+        }
+        if (!parse_integer_param(to_value, to) || to < 0) {
+            error = "mapping \"" + key + "\" -> " + to_value.dump() + ": the new state must be a whole number of 0 or more";
+            return false;
+        }
+        mapping[from] = to;
+    }
+    out = std::move(mapping);
+    return true;
 }
 
 }}} // namespace Slic3r::GUI::OrcaMCP

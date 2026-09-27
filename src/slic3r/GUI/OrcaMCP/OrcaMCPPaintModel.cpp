@@ -323,4 +323,78 @@ bool clear_volume_paint(ModelVolume& mv, PaintMode mode)
     return annotation.set(fresh_selector);
 }
 
+std::string color_slot_error(int slot, int slot_count)
+{
+    if (slot == 0)
+        return {};
+    if (slot < 0 || slot > slot_count)
+        return "filament " + std::to_string(slot) + " out of range 1.." + std::to_string(slot_count) + " (0 means unpainted)";
+    if (slot > max_paint_state())
+        return "filament " + std::to_string(slot) + " cannot be painted: a facet state stops at " + std::to_string(max_paint_state()) +
+               " (EnforcerBlockerType::ExtruderMax), so slots above that can only be assigned to a whole object or part with "
+               "set_object_filament";
+    return {};
+}
+
+std::string state_mapping_error(PaintMode mode, const PaintStateMap& mapping, int slot_count)
+{
+    if (mapping.empty())
+        return "mapping is empty: give at least one \"old\": new pair";
+    for (const auto& [from, to] : mapping) {
+        if (from < 0 || from > max_paint_state())
+            return "state " + std::to_string(from) + " cannot be remapped: facet states run 0.." + std::to_string(max_paint_state());
+        const std::string entry = std::to_string(from) + " -> " + std::to_string(to) + ": ";
+        if (mode == PaintMode::Color) {
+            if (const std::string error = color_slot_error(to, slot_count); !error.empty())
+                return entry + error;
+        } else if (to < 0 || to > max_paint_state_for(mode)) {
+            return entry + paint_mode_name(mode) + " paint has no state " + std::to_string(to);
+        }
+    }
+    return {};
+}
+
+bool build_remap_write(const TriangleMesh& mesh, const PaintData& base, const PaintStateMap& mapping, PaintRemapWrite& out)
+{
+    if (mesh.its.indices.empty())
+        return false;
+    EnforcerBlockerStateMap state_map;
+    for (size_t state = 0; state < state_map.size(); ++state)
+        state_map[state] = EnforcerBlockerType(state);
+    for (const auto& [from, to] : mapping) {
+        if (from < 0 || from > max_paint_state() || to < 0 || to > max_paint_state())
+            return false;
+        state_map[size_t(from)] = EnforcerBlockerType(to);
+    }
+
+    TriangleSelector selector(mesh);
+    selector.deserialize(base, false); // the constructor already reset, as build_paint_write relies on
+    const double area = its_surface_area(mesh.its);
+    out.before        = summarize_selector(selector, area);
+    selector.remap_triangle_state(state_map);
+    out.after = summarize_selector(selector, area);
+    out.data  = selector.serialize();
+    return true;
+}
+
+std::optional<std::string> unpainted_filament_note(int                  object_id,
+                                                   int                  volume_id,
+                                                   bool                 part_has_own_filament,
+                                                   bool                 object_has_one_part,
+                                                   int                  part_filament,
+                                                   int                  unpainted_facets,
+                                                   const PaintStateMap& mapping)
+{
+    const auto moved = mapping.find(part_filament);
+    if (unpainted_facets <= 0 || moved == mapping.end() || moved->second <= 0 || moved->second == part_filament)
+        return std::nullopt;
+    const bool        volume_form = part_has_own_filament || !object_has_one_part;
+    const std::string call        = "set_object_filament {object_id: " + std::to_string(object_id) +
+                             (volume_form ? ", volume_id: " + std::to_string(volume_id) : std::string()) +
+                             ", filament: " + std::to_string(moved->second) + "}";
+    return "volume " + std::to_string(volume_id) + ": " + std::to_string(unpainted_facets) +
+           " unpainted facets still print with filament " + std::to_string(part_filament) + ", the part's own; call " + call +
+           " to move them too";
+}
+
 }}} // namespace Slic3r::GUI::OrcaMCP

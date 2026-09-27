@@ -99,9 +99,9 @@ cd build && ctest --output-on-failure
 
 **Status**: Complete & Tested ✓
 
-### MCP Tools (81 in the app, 83 reachable)
+### MCP Tools (82 in the app, 84 reachable)
 
-The registry holds 83: the app serves 81 through `tools/list`, and two are registered as
+The registry holds 84: the app serves 82 through `tools/list`, and two are registered as
 bridge-only and served by the bridge: `start_orca`, which launches OrcaSlicer and so cannot be
 answered by it, and `wait_for_slice`, a wait the app's one request thread could not do without
 stalling every other call.
@@ -121,7 +121,7 @@ grep -hA1 -E '^\s*register_(bridge_)?tool\(\{' src/slic3r/GUI/OrcaMCP/*.cpp | gr
 | **Per-Object** | `get_object_config`, `set_object_config`, `reset_object_config` |
 | **Layer Ranges** | `get_object_layer_ranges`, `set_object_layer_range`, `delete_object_layer_range` |
 | **Filaments & colour** | `get_filaments`, `set_object_filament` (whole-object form clears the volumes' own slots and reports `effective_filaments`; a volume's slot beats the object's), `set_mixed_filament`, `delete_mixed_filament`, `set_filament_color` (a slot's plate colour, saved for the selected printer so a switch away and back keeps it; `apply_config` edits the preset instead), `get_flush_volumes`, `set_flush_volumes`, `auto_calc_flush_volumes`, `get_toolchanger_config`, `suggest_color_mix`, `get_color_palette` |
-| **Painting** | `paint_object`, `get_object_paint`, `clear_object_paint`, `set_brim_ears`, `get_object_components`, `pick_facet` |
+| **Painting** | `paint_object` (`selection: state` repaints every facet now in `match_filament` / `match_state`), `remap_paint` (renumbers painted filaments at once, `{"1": 2, "2": 3}`, never chained; one undo step; `facets_before` / `facets_after`; `notes` names the `set_object_filament` call for unpainted facets on a moved base filament), `get_object_paint`, `clear_object_paint`, `set_brim_ears`, `get_object_components`, `pick_facet` |
 | **Slicing** | `slice_all`, `wait_for_slice` (bridge-only: polls `get_slicing_status` until the run is over, capped at `ORCAMCP_TIMEOUT` − 15 s; `outcome` done / ended_early / incomplete / not_slicing / timed_out), `get_slicing_status` (per-plate `percent`, `stage` text, and `slice_run.outcome` for the last `slice_all` run: running / done / ended_early / incomplete), `export_gcode`, `get_print_estimate` (`printed_layers` = the G-code's layer count; `object_layers` / `support_layers` split; `layer_count` deprecated, now the printed count too) |
 | **Visualization** | `render_plate_view` (named cameras `iso/top/front/back/left/right/low`, fit to plate or object, default 3-view contact sheet, plate outline + 10 mm grid + origin + object labels, `objects_in_frame` / `uniform_image` metadata, `layer_view: first_layer` plan with brim and supports; coordinates are bed mm; drawn from the 3D view whatever tab shows; images in the system temp directory), `get_preview_base64`, `set_gcode_view_type` |
 | **Printers** | `get_printers` (`is_online` is not a live check; `current_print_host.last_status_age_s` is), `select_printer`, `add_physical_printer` (incl. optional Obico URL/token for Flashforge), `discover_printers`, `send_to_printer`, `get_printer_status` (a failure names host:port and the next step, with the last known material station as `cached`), `printer_control`, `list_printer_files`, `print_printer_file`, `match_project_to_printer` (falls back to the printer's last status, applied only with `allow_cached: true`) |
