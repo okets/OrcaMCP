@@ -75,6 +75,8 @@ struct SliceRunPlate
     int  index     = -1;    // its 0-based plate index now, when it exists
     bool ready     = true;  // the app's own checks let it slice (PartPlate::can_slice): no object partly
                             // off the plate or over its height, no filament that cannot print where it is
+    bool valid     = true;  // its validation did not fail (PartPlate::is_apply_result_invalid)
+    bool selected  = false; // it is the selected plate, the one reslice() works on
 };
 
 enum class SliceRunOutcome
@@ -321,7 +323,7 @@ struct SliceStartSignals
 {
     bool                       slicing        = false; // Plater::is_background_process_slicing()
     bool                       ui_job_running = false; // an arrange or an orient holds the UI worker
-    std::optional<std::string> validation_error;       // the app's own validation of a plate asked for failed, saying this
+    std::optional<std::string> validation_error;       // the selected plate's validation failed, in the app's words
     bool                       plugins_missing       = false; // slicing needs plugins not installed or active (Plater::plugins_block_slicing)
     bool                       broken_mixed_filament = false; // a mixed filament of the selected plate lost a component
     bool                       last_slice_failed     = false; // the selected plate's last slice, or the check before it,
@@ -330,30 +332,60 @@ struct SliceStartSignals
     std::vector<SliceRunPlate> plates;                 // the plates slice_all asked for, right after it asked
 };
 
-// Why the app turns the plates down as they stand, besides its validation, or nullopt. reslice() refuses
-// these without a word (the GUI greys its Slice button), so each is named here, the most specific first:
-// plugins and a broken mixed filament also make a plate not ready, and a plate not ready also keeps
-// the last error.
+namespace detail {
+inline std::string validation_refusal(const std::string& words) { return "The slice failed validation: " + words; }
+inline std::string plugins_refusal()
+{
+    return "Slicing needs plugins that are missing, inactive or broken, and the app slices nothing until they are "
+           "resolved (active_warnings names them).";
+}
+inline std::string not_ready_refusal(int plate_index)
+{
+    return "plate_index " + std::to_string(plate_index) +
+           " is not ready to slice, as the app's own checks decide (its Slice button is off too): an object on it is "
+           "partly outside the plate or over its height limit, or a filament cannot print where it is placed. "
+           "active_warnings says which; move the object fully onto or off the plate, or fix the filament, then "
+           "slice_all again.";
+}
+} // namespace detail
+
+// Why the app turned the plates down as they stand, or nullopt: the check reslice() stopped on, which it
+// does without a word (the GUI greys its Slice button). It works on the selected plate and refuses, in
+// this order, on the error that plate's last update or slice left (process_completed_with_error), named
+// by what left it; a broken mixed filament; missing plugins; then the validation and readiness its update
+// checks. Only then are the run's other plates looked at: Slice All never reaches them.
 inline std::optional<std::string> pre_slice_refusal(const SliceStartSignals& signals)
 {
-    if (signals.plugins_missing)
-        return std::string("Slicing needs plugins that are missing, inactive or broken, and the app slices nothing until "
-                           "they are resolved (active_warnings names them).");
+    const auto selected = std::find_if(signals.plates.begin(), signals.plates.end(),
+                                       [](const SliceRunPlate& p) { return p.exists && p.selected; });
+    const bool has_selected      = selected != signals.plates.end();
+    const bool selected_unready  = has_selected && selected->printable && !selected->ready;
+    if (signals.last_slice_failed) {
+        if (signals.validation_error)
+            return detail::validation_refusal(*signals.validation_error);
+        if (signals.plugins_missing)
+            return detail::plugins_refusal();
+        if (selected_unready)
+            return detail::not_ready_refusal(selected->index);
+        return std::string("The app does not slice the selected plate again until something on it changes: its last "
+                           "slice ended in an error (active_warnings has it).");
+    }
     if (signals.broken_mixed_filament)
         return std::string("A mixed filament the selected plate uses has lost a component (deleted, or no longer the "
                            "same type), and the app will not slice it: fix it with set_mixed_filament or "
                            "delete_mixed_filament.");
-    const auto unready = std::find_if(signals.plates.begin(), signals.plates.end(),
-                                      [](const SliceRunPlate& p) { return p.exists && p.printable && !p.ready; });
-    if (unready != signals.plates.end())
-        return "plate_index " + std::to_string(unready->index) +
-               " is not ready to slice, as the app's own checks decide (its Slice button is off too): an object on "
-               "it is partly outside the plate or over its height limit, or a filament cannot print where it is "
-               "placed. active_warnings says which; move the object fully onto or off the plate, or fix the "
-               "filament, then slice_all again.";
-    if (signals.last_slice_failed)
-        return std::string("The app does not slice the selected plate again until something on it changes: its last "
-                           "slice, or the check before it, ended in an error (active_warnings has it).");
+    if (signals.plugins_missing)
+        return detail::plugins_refusal();
+    if (signals.validation_error)
+        return detail::validation_refusal(*signals.validation_error);
+    if (selected_unready)
+        return detail::not_ready_refusal(selected->index);
+    for (const SliceRunPlate& plate : signals.plates)
+        if (plate.exists && !plate.valid)
+            return detail::validation_refusal("plate_index " + std::to_string(plate.index) + " failed validation");
+    for (const SliceRunPlate& plate : signals.plates)
+        if (plate.exists && plate.printable && !plate.ready)
+            return detail::not_ready_refusal(plate.index);
     return std::nullopt;
 }
 
@@ -380,8 +412,6 @@ inline SliceStartReport judge_slice_start(const SliceStartSignals& signals)
         return {SliceStart::not_started, "nothing_to_slice",
                 "No plate it was asked for has a printable object fully on it: an object marked unprintable, or partly "
                 "outside its plate, does not count (get_object_info's on_bed and placement_warning say which)."};
-    if (signals.validation_error)
-        return {SliceStart::not_started, "invalid", "The slice failed validation: " + *signals.validation_error};
     if (const std::optional<std::string> refusal = pre_slice_refusal(signals))
         return {SliceStart::not_started, "invalid", *refusal};
     return {SliceStart::not_started, "unknown", "The app did not start a slice; active_warnings may say why."};

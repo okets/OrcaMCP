@@ -255,8 +255,15 @@ std::vector<OrcaMCP::SliceRunPlate> slice_run_plates(PartPlateList& plate_list)
     for (int print_index : s_slice_run_print_indexes) {
         const int  index = plate_list.find_plate_by_print_index(print_index);
         PartPlate* plate = index >= 0 ? plate_list.get_plate(index) : nullptr;
-        plates.push_back({plate != nullptr, plate != nullptr && plate->has_printable_instances(),
-                          plate != nullptr && plate->is_slice_result_valid(), index, plate == nullptr || plate->can_slice()});
+        OrcaMCP::SliceRunPlate state;
+        state.exists    = plate != nullptr;
+        state.printable = plate != nullptr && plate->has_printable_instances();
+        state.sliced    = plate != nullptr && plate->is_slice_result_valid();
+        state.index     = index;
+        state.ready     = plate == nullptr || plate->can_slice();
+        state.valid     = plate == nullptr || !plate->is_apply_result_invalid();
+        state.selected  = plate != nullptr && index == plate_list.get_curr_plate_index();
+        plates.push_back(state);
     }
     return plates;
 }
@@ -285,26 +292,21 @@ void apply_pending_settings(Plater& plater, const McpDialogSuppressionGuard& gua
                                   [&plater] { plater.apply_pending_background_update(); });
 }
 
-// Why the app's own validation refused a plate the run asked for, or nullopt when none failed it.
-// The verdict is the plate's (PartPlate::is_apply_result_invalid, which update_background_process sets
-// as it validates); the words are the app's validation of the current plate, whose Print the process
-// holds, formatted as the GUI's notification formats them.
-std::optional<std::string> validation_failure(Plater& plater, PartPlateList& plate_list)
+// Why the app's own validation refused the selected plate, the one reslice() works on, or nullopt when
+// it did not. The verdict is the plate's (PartPlate::is_apply_result_invalid, which
+// update_background_process sets as it validates); the words are the app's validation of it, whose Print
+// the process holds, formatted as the GUI's notification formats them. The run's other plates are judged
+// by their verdict alone (SliceRunPlate::valid).
+std::optional<std::string> selected_plate_validation_failure(Plater& plater, PartPlateList& plate_list)
 {
-    for (int print_index : s_slice_run_print_indexes) {
-        const int  index = plate_list.find_plate_by_print_index(print_index);
-        PartPlate* plate = index >= 0 ? plate_list.get_plate(index) : nullptr;
-        if (plate == nullptr || !plate->is_apply_result_invalid())
-            continue;
-        if (index == plate_list.get_curr_plate_index()) {
-            StringObjectException error = plater.background_process().validate();
-            plater.post_process_string_object_exception(error);
-            if (!error.string.empty())
-                return error.string;
-        }
-        return "plate_index " + std::to_string(index) + " failed validation";
-    }
-    return std::nullopt;
+    const PartPlate* plate = plate_list.get_curr_plate();
+    if (plate == nullptr || !plate->is_apply_result_invalid())
+        return std::nullopt;
+    StringObjectException error = plater.background_process().validate();
+    plater.post_process_string_object_exception(error);
+    if (!error.string.empty())
+        return error.string;
+    return "plate_index " + std::to_string(plate_list.get_curr_plate_index()) + " failed validation";
 }
 
 // What the app shows right after slice_all dispatched its slice, for OrcaMCP::judge_slice_start.
@@ -313,7 +315,7 @@ OrcaMCP::SliceStartSignals slice_start_signals(Plater& plater, PartPlateList& pl
     OrcaMCP::SliceStartSignals signals;
     signals.slicing          = plater.is_background_process_slicing();
     signals.ui_job_running   = !plater.get_ui_job_worker().is_idle();
-    signals.validation_error      = validation_failure(plater, plate_list);
+    signals.validation_error      = selected_plate_validation_failure(plater, plate_list);
     signals.plugins_missing       = plater.plugins_block_slicing();
     signals.broken_mixed_filament = wxGetApp().sidebar().has_broken_mixed_filament();
     signals.last_slice_failed     = plater.last_error_blocks_reslice();
