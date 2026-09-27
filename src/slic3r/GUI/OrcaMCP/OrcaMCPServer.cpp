@@ -4372,7 +4372,7 @@ void OrcaMCPServer::register_builtin_tools()
                 }},
                 {"uniform", {
                     {"type", "boolean"},
-                    {"description", "If true, use x for all axes (default: false)"}
+                    {"description", "If true, x scales every axis, so give x (default: false)"}
                 }},
                 {"include_preview", {
                     {"type", "boolean"},
@@ -4397,6 +4397,9 @@ void OrcaMCPServer::register_builtin_tools()
             const Vec3d  given = axes.value_or(Vec3d::Ones());
             const double x = given.x(), y = given.y(), z = given.z();
             bool uniform = params.value("uniform", false);
+            // uniform reads x alone: a y or z without it was ignored, and the object left as it was.
+            if (uniform && !axes.axis[0] && (axes.axis[1] || axes.axis[2]))
+                return error_response("uniform scales every axis by x: give x");
             bool include_preview = params.value("include_preview", false);
             int preview_views = params.value("preview_views", 4);
             int preview_resolution = params.value("preview_resolution", 256);

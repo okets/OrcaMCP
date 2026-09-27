@@ -2034,7 +2034,7 @@
             "type": "integer"
           },
           "uniform": {
-            "description": "If true, use x for all axes (default: false)",
+            "description": "If true, x scales every axis, so give x (default: false)",
             "type": "boolean"
           },
           "x": {

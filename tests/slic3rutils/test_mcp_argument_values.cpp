@@ -77,3 +77,9 @@ TEST_CASE("get_valid_config_keys refuses a category it does not know, which list
     CHECK(refusal("get_valid_config_keys", {{"category", "speed"}}) ==
           "category must be one of per_object, print, filament, printer, toolchanger, project, all; got \"speed\"");
 }
+
+TEST_CASE("scale_object refuses uniform without x, whose y or z it ignored", "[McpArgumentValues][orcamcp]")
+{
+    CHECK(refusal("scale_object", {{"object_id", 0}, {"uniform", true}, {"y", 2.0}}) == "uniform scales every axis by x: give x");
+    CHECK(refusal("scale_object", {{"object_id", 0}, {"uniform", true}, {"z", 0.5}}) == "uniform scales every axis by x: give x");
+}

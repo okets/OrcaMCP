@@ -720,7 +720,7 @@ Scale an object.
 | `x` | number | No | Scale factor along the plate's X axis (must be > 0) |
 | `y` | number | No | Scale factor along the plate's Y axis (must be > 0) |
 | `z` | number | No | Scale factor along the plate's Z axis, the vertical (must be > 0) |
-| `uniform` | boolean | No | Apply X scale to all axes |
+| `uniform` | boolean | No | Apply X scale to all axes. With `uniform`, give `x`: a `y` or `z` without it is refused ("uniform scales every axis by x: give x"), since it used to be ignored |
 | `include_preview` | boolean | No | Include preview |
 
 **Examples:**
