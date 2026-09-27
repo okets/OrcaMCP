@@ -146,6 +146,7 @@
           "settings": {
             "description": "Settings array",
             "items": {
+              "additionalProperties": false,
               "properties": {
                 "key": {
                   "description": "Key name",
@@ -1275,6 +1276,7 @@
             "type": "array"
           },
           "box": {
+            "additionalProperties": false,
             "description": "Axis-aligned box in plate mm (selection=box)",
             "properties": {
               "max": {
@@ -1369,6 +1371,7 @@
             "type": "string"
           },
           "sphere": {
+            "additionalProperties": false,
             "description": "Sphere in plate mm (selection=sphere)",
             "properties": {
               "center": {
@@ -1455,6 +1458,7 @@
             "type": "array"
           },
           "ray": {
+            "additionalProperties": false,
             "description": "Plate mm; the first surface along the ray is picked",
             "properties": {
               "direction": {
@@ -1507,6 +1511,7 @@
           "material_mappings": {
             "description": "Explicit tool-to-slot mapping. Overrides auto_map when provided.",
             "items": {
+              "additionalProperties": false,
               "properties": {
                 "slot_id": {
                   "description": "Material station slot id",
@@ -1563,6 +1568,7 @@
           "nozzles": {
             "description": "set_temperature only: per-tool target temperatures. Tools not listed are left unchanged.",
             "items": {
+              "additionalProperties": false,
               "properties": {
                 "temp": {
                   "description": "Target temperature",
@@ -1981,10 +1987,6 @@
           "output_path": {
             "description": "Path of the .3mf to save to. Required while the project has no file name; naming it any other way needs a file dialog, which MCP cannot open. Also acts as Save As.",
             "type": "string"
-          },
-          "save_as": {
-            "description": "Legacy, ignored: use output_path to save under a new name.",
-            "type": "boolean"
           }
         },
         "required": [],
@@ -2138,6 +2140,7 @@
           "material_mappings": {
             "description": "Explicit tool-to-slot mapping. Omit to map the project's filaments onto matching loaded slots automatically. Direct sends to a Flashforge host with local-API credentials only; ignored otherwise.",
             "items": {
+              "additionalProperties": false,
               "properties": {
                 "slot_id": {
                   "description": "Material station slot id",
@@ -2192,6 +2195,7 @@
           "points": {
             "description": "Ear positions in plate mm. An empty array removes every ear, when append is left false.",
             "items": {
+              "additionalProperties": false,
               "properties": {
                 "radius": {
                   "description": "Ear radius in mm, 0.1 to 100",

@@ -383,7 +383,10 @@ Save the current project.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `output_path` | string | No | Path of the `.3mf` to save to. **Required while the project has no file name.** Also acts as Save As. |
-| `save_as` | boolean | No | Legacy, ignored - use `output_path` |
+
+The old `save_as` flag is gone: it was ignored, so `save_as: true` without `output_path` saved in
+place over the current file. It is now refused like any argument the tool does not take (see
+[Error Handling](#error-handling)); pass `output_path` to save under a new name.
 
 A project that already has a file name (it was loaded with `load_project`, or named by a previous
 `export_3mf` / `save_project`) is saved in place when `output_path` is omitted. A project with no
@@ -2832,8 +2835,10 @@ it takes, required ones first:
 
 Absent and `null` `arguments` both mean no arguments. Nested objects are checked where their schema
 says `additionalProperties: false`: `set_object_config`'s items, `set_object_layer_range`'s
-`settings` items, and `transform_objects`' entries and their `position`/`rotation`/`scale`.
-Others take any key: a render's
+`settings` items, `transform_objects`' entries and their `position`/`rotation`/`scale`,
+`apply_config`'s `settings` items, `set_brim_ears`' `points`, `printer_control`'s `nozzles`,
+`send_to_printer`'s and `print_printer_file`'s `material_mappings`, `paint_object`'s `box` and
+`sphere`, and `pick_facet`'s `ray`. Others take any key: a render's
 `views` and a paint call's `bands` may be passed back with the extra fields the response carried.
 Types, ranges and enum values are not checked here; the tool reports those itself.
 

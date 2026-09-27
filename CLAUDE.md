@@ -151,7 +151,9 @@ as `tools/list` publishes it):
 - an argument the schema does not declare (every top-level schema says `additionalProperties: false`;
   `tools/list` adds it where a registration leaves it out), and a key of a nested object whose own
   schema says `additionalProperties: false` (`set_object_config`'s items, `set_object_layer_range`'s
-  settings, `transform_objects`' entries and their `position`/`rotation`/`scale`);
+  settings, `transform_objects`' entries and their `position`/`rotation`/`scale`,
+  `apply_config.settings[]`, `set_brim_ears.points[]`, `printer_control.nozzles[]`, both
+  `material_mappings[]`, `paint_object`'s `box`/`sphere`, `pick_facet.ray`);
 - a required argument, or a nested object's required key, left out;
 - `arguments` that is not an object (absent and `null` both mean no arguments).
 

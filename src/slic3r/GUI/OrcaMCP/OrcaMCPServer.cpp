@@ -1358,7 +1358,10 @@ void OrcaMCPServer::register_builtin_tools()
                                 {"description", "Value"}
                             }}
                         }},
-                        {"required", {"type", "key", "value"}}
+                        {"required", {"type", "key", "value"}},
+                        // An item carrying anything else (an object_id, a plate) means something this
+                        // tool does not do: the setting would be applied to the whole preset.
+                        {"additionalProperties", false}
                     }}
                 }}
             }},
@@ -3103,10 +3106,6 @@ void OrcaMCPServer::register_builtin_tools()
                     {"description", "Path of the .3mf to save to. Required while the project has no "
                                     "file name; naming it any other way needs a file dialog, which "
                                     "MCP cannot open. Also acts as Save As."}
-                }},
-                {"save_as", {
-                    {"type", "boolean"},
-                    {"description", "Legacy, ignored: use output_path to save under a new name."}
                 }}
             }}
         },
@@ -4749,10 +4748,8 @@ void OrcaMCPServer::register_builtin_tools()
             int object_id = params["object_id"];
             int count = params.value("count", 1);
             bool duplicate = params.value("duplicate", false);
-            // Support both "destination_plate" (new) and "target_plate" (legacy) for backward compatibility
-            int destination_plate = params.contains("destination_plate") ? params["destination_plate"].get<int>() :
-                                    params.value("target_plate", -1);  // -1 means current plate
-            bool destination_was_explicit = params.contains("destination_plate") || params.contains("target_plate");
+            const int  destination_plate        = params.value("destination_plate", -1);  // -1 means current plate
+            const bool destination_was_explicit = params.contains("destination_plate");
             // -1 is the documented "current plate"; any other negative index is a caller mistake and
             // must not silently become "current plate" (same rule as set_object_filament's volume_id).
             if (destination_was_explicit && destination_plate < -1) {

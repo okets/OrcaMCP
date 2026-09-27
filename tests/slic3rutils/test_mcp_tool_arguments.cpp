@@ -134,6 +134,29 @@ TEST_CASE("A key a nested object does not take is refused, however deep", "[McpT
           "transform_objects: transforms[0].position has no key \"w\". Its keys: x, y, z.");
 }
 
+TEST_CASE("A misspelled nozzle key is refused rather than sent to the printer as no change", "[McpToolArguments][orcamcp][tools]")
+{
+    // Only through the check: printer_control's handler talks to a real printer.
+    CHECK(refusal("printer_control", {{"action", "set_temperature"}, {"nozzles", {{{"tool", 0}, {"temperature", 200}}}}}) ==
+          "printer_control: nozzles[0] has no key \"temperature\" and is missing its required key \"temp\". Its keys: tool, temp.");
+}
+
+TEST_CASE("Nested objects whose handlers read only what they declare refuse any other key", "[McpToolArguments][orcamcp][tools]")
+{
+    const auto [tool, arguments, path] = GENERATE(table<std::string, json, std::string>({
+        {"apply_config", {{"settings", {{{"type", "print"}, {"key", "wall_loops"}, {"value", 2}, {"object_id", 0}}}}}, "settings[0]"},
+        {"set_brim_ears", {{"object_id", 0}, {"points", {{{"x", 1}, {"y", 2}, {"r", 3}}}}}, "points[0]"},
+        {"printer_control", {{"action", "set_temperature"}, {"nozzles", {{{"tool", 0}, {"temp", 200}, {"wait", true}}}}}, "nozzles[0]"},
+        {"send_to_printer", {{"material_mappings", {{{"tool_id", 0}, {"slot_id", 1}, {"color", "#FFFFFF"}}}}}, "material_mappings[0]"},
+        {"print_printer_file", {{"file_name", "a.gcode"}, {"material_mappings", {{{"tool_id", 0}, {"slot_id", 1}, {"slot", 1}}}}}, "material_mappings[0]"},
+        {"paint_object", {{"object_id", 0}, {"selection", "box"}, {"box", {{"min", {0, 0, 0}}, {"max", {1, 1, 1}}, {"center", {0, 0, 0}}}}}, "box"},
+        {"paint_object", {{"object_id", 0}, {"selection", "sphere"}, {"sphere", {{"center", {0, 0, 0}}, {"radius", 1}, {"r", 1}}}}, "sphere"},
+        {"pick_facet", {{"object_id", 0}, {"ray", {{"origin", {0, 0, 0}}, {"direction", {0, 0, 1}}, {"length", 5}}}}, "ray"}}));
+    INFO(tool << " " << arguments.dump());
+    const std::string refused = refusal(tool, arguments);
+    CHECK(refused.rfind(tool + ": " + path + " has no key ", 0) == 0);
+}
+
 TEST_CASE("Nested objects without additionalProperties false take any key", "[McpToolArguments][orcamcp][tools]")
 {
     // A render's own camera or a paint call's bands may be passed back with the extra fields its response
@@ -155,6 +178,21 @@ TEST_CASE("A value of another kind than its schema describes is left to the hand
 TEST_CASE("A nested object whose additionalProperties is a schema takes any key", "[McpToolArguments][orcamcp][tools]")
 {
     CHECK("" == refusal("remap_paint", {{"object_id", 0}, {"mapping", {{"1", 2}, {"2", 3}}}}));
+}
+
+// ==================== ARGUMENTS THAT WERE DROPPED ====================
+
+TEST_CASE("clone_object no longer reads target_plate, and names destination_plate instead", "[McpToolArguments][orcamcp][tools]")
+{
+    const std::string refused = refusal("clone_object", {{"object_id", 0}, {"target_plate", 1}});
+    CHECK(contains(refused, "has no argument \"target_plate\""));
+    CHECK(contains(refused, "destination_plate"));
+}
+
+TEST_CASE("save_project no longer takes save_as, so save_as without output_path cannot save in place",
+          "[McpToolArguments][orcamcp][tools]")
+{
+    CHECK(refusal("save_project", {{"save_as", true}}) == "save_project has no argument \"save_as\". Its arguments: output_path.");
 }
 
 // ==================== THE WHOLE REGISTRY, THROUGH tools/call ====================

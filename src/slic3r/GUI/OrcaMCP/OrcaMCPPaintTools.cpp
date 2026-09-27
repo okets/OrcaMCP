@@ -859,6 +859,7 @@ void OrcaMCPServer::register_paint_tools()
                         {"min", {{"type", "array"}, {"items", {{"type", "number"}}}}},
                         {"max", {{"type", "array"}, {"items", {{"type", "number"}}}}}
                     }},
+                    {"additionalProperties", false},
                     {"description", "Axis-aligned box in plate mm (selection=box)"}
                 }},
                 {"sphere", {
@@ -867,6 +868,7 @@ void OrcaMCPServer::register_paint_tools()
                         {"center", {{"type", "array"}, {"items", {{"type", "number"}}}}},
                         {"radius", {{"type", "number"}}}
                     }},
+                    {"additionalProperties", false},
                     {"description", "Sphere in plate mm (selection=sphere)"}
                 }},
                 {"filament", {
@@ -1549,7 +1551,8 @@ void OrcaMCPServer::register_paint_tools()
                             {"y", {{"type", "number"}}},
                             {"radius", {{"type", "number"}, {"description", "Ear radius in mm, 0.1 to 100"}}}
                         }},
-                        {"required", {"x", "y"}}
+                        {"required", {"x", "y"}},
+                        {"additionalProperties", false}
                     }},
                     {"description", "Ear positions in plate mm. An empty array removes every ear, "
                                     "when append is left false."}
@@ -1901,6 +1904,7 @@ void OrcaMCPServer::register_paint_tools()
                 {"ray", {{"type", "object"},
                          {"properties", {{"origin", {{"type", "array"}, {"items", {{"type", "number"}}}}},
                                          {"direction", {{"type", "array"}, {"items", {{"type", "number"}}}}}}},
+                         {"additionalProperties", false},
                          {"description", "Plate mm; the first surface along the ray is picked"}}},
                 {"pixel", {{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 2}, {"maxItems", 2},
                            {"description", "[u, v] in the render's pixels, (0,0) top-left; needs `camera`"}}},
