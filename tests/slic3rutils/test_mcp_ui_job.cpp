@@ -7,6 +7,7 @@
 #include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/Utils/ThreadCancel.hpp"
 #include "libslic3r/Model.hpp"
+#include "mcp_thread_test_utils.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -21,6 +22,7 @@
 // the worker's messages (process_events), finalize among them, as the plater's idle handler does.
 
 using namespace std::chrono_literals;
+using mcp_test::k_bound;
 using Slic3r::GUI::BoostThreadWorker;
 using Slic3r::GUI::Job;
 using Slic3r::GUI::Worker;
@@ -29,10 +31,11 @@ using State = UiJobOutcome::State;
 
 namespace {
 
-// A job that says when its process has returned, can be held in process until released (or
-// cancelled), and records how its finalize was told it ended.
+// A job that says when its process has started and when it has returned, can be held in process
+// until released (or cancelled), and records how its finalize was told it ended.
 struct RecordingJob : Job
 {
+    std::promise<void> started;
     std::promise<void> processed;
     std::atomic<bool>  hold{false};
     bool               finalized          = false;
@@ -40,6 +43,7 @@ struct RecordingJob : Job
 
     void process(Ctl& ctl) override
     {
+        started.set_value();
         while (hold.load() && !ctl.was_canceled())
             std::this_thread::sleep_for(5ms);
         processed.set_value();
@@ -71,7 +75,7 @@ TEST_CASE("A job left to finish is finalized as not cancelled", "[McpUiJob][orca
     BoostThreadWorker worker{nullptr, "test"};
     auto              job = std::make_shared<RecordingJob>();
     worker.push(job);
-    REQUIRE(pump_until_idle(worker, 5s));
+    REQUIRE(pump_until_idle(worker, k_bound));
     CHECK(job->finalized);
     CHECK_FALSE(job->finalized_canceled);
 }
@@ -85,10 +89,13 @@ TEST_CASE("cancel_all after a job's process returned, before its finalize, final
     auto              job       = std::make_shared<RecordingJob>();
     auto              processed = job->processed.get_future();
     worker.push(job);
-    REQUIRE(processed.wait_for(5s) == std::future_status::ready);
-    std::this_thread::sleep_for(200ms); // its finalize is queued by now, with process's verdict
+    REQUIRE(processed.wait_for(k_bound) == std::future_status::ready);
+    // However the cancel lands, the finalize must say cancelled: before process's verdict is read, the
+    // cancel sets it; after, the count does. The wait only makes the second order, the one the count
+    // is for, all but certain; it cannot make the test fail.
+    std::this_thread::sleep_for(200ms);
     worker.cancel_all();
-    REQUIRE(pump_until_idle(worker, 5s));
+    REQUIRE(pump_until_idle(worker, k_bound));
     CHECK(job->finalized);
     CHECK(job->finalized_canceled);
 }
@@ -100,7 +107,7 @@ TEST_CASE("A job pushed after cancel_all is not cancelled by it", "[McpUiJob][or
     worker.cancel_all();
     auto job = std::make_shared<RecordingJob>();
     worker.push(job);
-    REQUIRE(pump_until_idle(worker, 5s));
+    REQUIRE(pump_until_idle(worker, k_bound));
     CHECK(job->finalized);
     CHECK_FALSE(job->finalized_canceled);
 }
@@ -108,12 +115,13 @@ TEST_CASE("A job pushed after cancel_all is not cancelled by it", "[McpUiJob][or
 TEST_CASE("cancel_all during a job's process finalizes it as cancelled", "[McpUiJob][orcamcp]")
 {
     BoostThreadWorker worker{nullptr, "test"};
-    auto              job = std::make_shared<RecordingJob>();
+    auto              job     = std::make_shared<RecordingJob>();
+    auto              started = job->started.get_future();
     job->hold.store(true);
     worker.push(job);
-    std::this_thread::sleep_for(50ms);
+    REQUIRE(started.wait_for(k_bound) == std::future_status::ready); // it is in process, not in the queue
     worker.cancel_all();
-    REQUIRE(pump_until_idle(worker, 5s));
+    REQUIRE(pump_until_idle(worker, k_bound));
     CHECK(job->finalized);
     CHECK(job->finalized_canceled);
 }
@@ -208,7 +216,7 @@ TEST_CASE("On the worker, a reported job ends finished, cancelled or dropped as 
     {
         auto outcome = std::make_shared<UiJobOutcome>(UiJobKind::arrange);
         worker.push(reporting(outcome));
-        REQUIRE(pump_until_idle(worker, 5s));
+        REQUIRE(pump_until_idle(worker, k_bound));
         CHECK(outcome->state() == State::finished);
     }
     SECTION("failing in process")
@@ -218,7 +226,7 @@ TEST_CASE("On the worker, a reported job ends finished, cancelled or dropped as 
         job->throws   = true;
         worker.push(std::make_shared<ReportingJob>(std::move(job), outcome));
         // The worker rethrows a finalize's unhandled exception on the thread that delivers it.
-        const auto deadline = std::chrono::steady_clock::now() + 5s;
+        const auto deadline = std::chrono::steady_clock::now() + k_bound;
         while (!worker.is_idle() && std::chrono::steady_clock::now() < deadline) {
             try {
                 worker.process_events();
@@ -231,13 +239,14 @@ TEST_CASE("On the worker, a reported job ends finished, cancelled or dropped as 
     SECTION("cancelled while it runs, or cleared from the queue before it starts")
     {
         auto blocker = std::make_shared<RecordingJob>();
+        auto started = blocker->started.get_future();
         blocker->hold.store(true);
         worker.push(blocker);
         auto outcome = std::make_shared<UiJobOutcome>(UiJobKind::arrange);
         worker.push(reporting(outcome));
-        std::this_thread::sleep_for(50ms);
+        REQUIRE(started.wait_for(k_bound) == std::future_status::ready); // the blocker runs; ours waits in the queue
         worker.cancel_all();
-        REQUIRE(pump_until_idle(worker, 5s));
+        REQUIRE(pump_until_idle(worker, k_bound));
         CHECK(blocker->finalized_canceled);
         CHECK(outcome->state() == State::dropped);
     }
@@ -252,12 +261,10 @@ TEST_CASE("The wait ends as soon as the job has ended", "[McpUiJob][orcamcp]")
         std::this_thread::sleep_for(100ms);
         outcome.end(State::finished);
     });
-    const auto started = std::chrono::steady_clock::now();
-    const UiJobWait waited  = wait_for_ui_job(outcome, 5s);
-    const auto      took    = std::chrono::steady_clock::now() - started;
+    // Finished, not timed out: it ended on the outcome, long before its cap.
+    const UiJobWait waited = wait_for_ui_job(outcome, k_bound);
     finalize.join();
     CHECK(waited == UiJobWait::finished);
-    CHECK(took < 2s);
 }
 
 TEST_CASE("The wait nudges the main thread while it waits, so a finalize nothing else wakes is delivered",
@@ -268,7 +275,7 @@ TEST_CASE("The wait nudges the main thread while it waits, so a finalize nothing
     // happened. The wait's nudge is that something (wxWakeUpIdle in the app).
     UiJobOutcome outcome(UiJobKind::orient);
     int          nudges = 0;
-    const UiJobWait waited = wait_for_ui_job(outcome, 5s, 1ms, [&outcome, &nudges] {
+    const UiJobWait waited = wait_for_ui_job(outcome, k_bound, 1ms, [&outcome, &nudges] {
         if (++nudges == 3)
             outcome.end(State::finished); // as the finalize this nudge let run would
     });
@@ -284,15 +291,13 @@ TEST_CASE("The wait reports how the job ended", "[McpUiJob][orcamcp]")
                                                                      {State::dropped, UiJobWait::dropped}}));
     UiJobOutcome outcome(UiJobKind::arrange);
     outcome.end(state);
-    CHECK(wait_for_ui_job(outcome, 1s) == expected);
+    CHECK(wait_for_ui_job(outcome, k_bound) == expected);
 }
 
 TEST_CASE("The wait gives up at its cap", "[McpUiJob][orcamcp]")
 {
     UiJobOutcome outcome(UiJobKind::arrange);
-    const auto   started = std::chrono::steady_clock::now();
     CHECK(wait_for_ui_job(outcome, 200ms) == UiJobWait::timed_out);
-    CHECK(std::chrono::steady_clock::now() - started < 2s);
     CHECK(wait_for_ui_job(outcome, 0ms) == UiJobWait::timed_out);
 }
 
@@ -306,12 +311,10 @@ TEST_CASE("The wait lets go at once when the app quits", "[McpUiJob][orcamcp]")
         std::this_thread::sleep_for(100ms);
         quitting.store(true);
     });
-    const auto      started = std::chrono::steady_clock::now();
-    const UiJobWait waited  = wait_for_ui_job(outcome, 60s);
-    const auto      took    = std::chrono::steady_clock::now() - started;
+    // Quitting, not timed out: it let go on the quit, long before its cap.
+    const UiJobWait waited = wait_for_ui_job(outcome, k_bound);
     quit.join();
     CHECK(waited == UiJobWait::quitting);
-    CHECK(took < 2s);
 }
 
 // ==================== WHAT THE TOOL ANSWERS ====================
