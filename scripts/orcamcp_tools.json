@@ -299,7 +299,7 @@
         "additionalProperties": false,
         "properties": {
           "count": {
-            "description": "Number of copies (default: 1)",
+            "description": "Number of copies, 1 or more (default: 1)",
             "type": "integer"
           },
           "destination_plate": {

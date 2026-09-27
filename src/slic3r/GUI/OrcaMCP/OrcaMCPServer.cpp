@@ -4750,7 +4750,7 @@ void OrcaMCPServer::register_builtin_tools()
                 }},
                 {"count", {
                     {"type", "integer"},
-                    {"description", "Number of copies (default: 1)"}
+                    {"description", "Number of copies, 1 or more (default: 1)"}
                 }},
                 {"duplicate", {
                     {"type", "boolean"},
@@ -4770,6 +4770,9 @@ void OrcaMCPServer::register_builtin_tools()
         [](const nlohmann::json& params) -> nlohmann::json {
             int object_id = params["object_id"];
             int count = params.value("count", 1);
+            // Refused before anything runs: a count below 1 made no copy but still rearranged the plate.
+            if (count < 1)
+                return error_response("count must be 1 or more: the number of copies to make");
             bool duplicate = params.value("duplicate", false);
             const int  destination_plate        = params.value("destination_plate", -1);  // -1 means current plate
             const bool destination_was_explicit = params.contains("destination_plate");

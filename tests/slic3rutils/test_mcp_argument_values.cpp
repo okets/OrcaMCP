@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "slic3r/GUI/OrcaMCP/OrcaMCPServer.hpp"
 
@@ -56,4 +57,11 @@ TEST_CASE("reset_object_config refuses an empty or malformed keys, which reset e
           "keys must be an array of setting names; omit it to reset every override but the filament");
     CHECK(refusal("reset_object_config", {{"object_id", 0}, {"keys", {"wall_loops", 3}}}) ==
           "keys must be an array of setting names; got 3");
+}
+
+TEST_CASE("clone_object refuses a count below 1, which made no copy but still rearranged the plate",
+          "[McpArgumentValues][orcamcp]")
+{
+    const int count = GENERATE(0, -2);
+    CHECK(refusal("clone_object", {{"object_id", 0}, {"count", count}}) == "count must be 1 or more: the number of copies to make");
 }

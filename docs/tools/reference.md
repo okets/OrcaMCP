@@ -826,7 +826,7 @@ Create copies of an object.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `object_id` | integer | Yes | Object index |
-| `count` | integer | No | Number of clones (default: 1) |
+| `count` | integer | No | Number of clones, 1 or more (default: 1). A count below 1 is refused before anything runs: it used to make no copy and still rearrange the plate |
 | `duplicate` | boolean | No | Independent copies (true) vs linked instances (false) |
 | `destination_plate` | integer | No | Target plate (default: current plate) |
 | `include_preview` | boolean | No | Include preview |
