@@ -1582,7 +1582,7 @@
             "type": "number"
           },
           "nozzles": {
-            "description": "set_temperature only: per-tool target temperatures. Tools not listed are left unchanged.",
+            "description": "set_temperature only: per-tool target temperatures. Tools not listed are left unchanged. set_temperature needs at least one of bed, chamber or a nozzle.",
             "items": {
               "additionalProperties": false,
               "properties": {

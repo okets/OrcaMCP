@@ -83,3 +83,15 @@ TEST_CASE("scale_object refuses uniform without x, whose y or z it ignored", "[M
     CHECK(refusal("scale_object", {{"object_id", 0}, {"uniform", true}, {"y", 2.0}}) == "uniform scales every axis by x: give x");
     CHECK(refusal("scale_object", {{"object_id", 0}, {"uniform", true}, {"z", 0.5}}) == "uniform scales every axis by x: give x");
 }
+
+TEST_CASE("printer_control refuses set_temperature with nothing to set, and sends the printer nothing",
+          "[McpArgumentValues][orcamcp]")
+{
+    // Refused before the printer is looked up: a call that got further would need the app, and no
+    // test here may reach a printer.
+    const std::string nothing_to_set = "set_temperature needs something to set: bed, chamber or nozzles ([{tool, temp}])";
+    CHECK(refusal("printer_control", {{"action", "set_temperature"}}) == nothing_to_set);
+    CHECK(refusal("printer_control", {{"action", "set_temperature"}, {"nozzles", json::array()}}) == nothing_to_set);
+    CHECK(refusal("printer_control", {{"action", "set_temperature"}, {"nozzles", {{"tool", 0}}}}) ==
+          "nozzles must be an array of {tool, temp}");
+}

@@ -2667,6 +2667,21 @@ body.
 
 ---
 
+### printer_control
+Pause, resume or cancel the Flashforge printer's current job, turn its light on or off, or set its
+target temperatures. It acts on real hardware.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `action` | string | Yes | `pause`, `resume`, `cancel`, `light_on`, `light_off` or `set_temperature` |
+| `bed`, `chamber` | number | No | `set_temperature` only: that heater's target, degrees C |
+| `nozzles` | array | No | `set_temperature` only: `[{tool, temp}]`, tool 0-3. Tools not listed are left unchanged |
+
+`set_temperature` needs something to set: with none of `bed`, `chamber` or a nozzle (or with an
+empty `nozzles`) it is refused and nothing is sent to the printer. It used to send "no change" for
+every heater and report success. A `nozzles` that is not a list is refused the same way.
+
 ### match_project_to_printer
 Make the project's filament slots say what the Flashforge material station holds: for each loaded
 slot, pick a filament preset of the reported material and set the slot's colour to the reported
