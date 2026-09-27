@@ -228,7 +228,6 @@ void record_slice_run(PartPlateList& plate_list, bool every_plate, int plate_at_
         plate_list.get_plate(i)->get_print(nullptr, nullptr, &print_index);
         s_slice_run_print_indexes.push_back(print_index);
     }
-    OrcaMCP::forget_slicing_stage();
 }
 
 // The last slice_all run's plates as they stand now.

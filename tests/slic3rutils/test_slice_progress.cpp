@@ -59,7 +59,7 @@ TEST_CASE("a status update without a percentage or text leaves the stage alone",
     forget_slicing_stage();
 }
 
-TEST_CASE("slice_all forgets the previous run's stage", "[orcamcp][SliceProgress]")
+TEST_CASE("a slice that starts forgets the previous slice's stage", "[orcamcp][SliceProgress]")
 {
     note_slicing_status(80, "Exporting G-code");
     forget_slicing_stage();

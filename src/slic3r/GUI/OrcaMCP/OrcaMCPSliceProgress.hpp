@@ -31,7 +31,9 @@ inline void note_slicing_status(int percent, const std::string& text)
         slicing_stage_text() = text.substr(first, text.find_last_not_of(' ') - first + 1);
 }
 
-// slice_all forgets the last run's stage, so a new run never reports the one before it.
+// Every slice forgets the one before's stage when it starts (BackgroundSlicingProcess::start, which
+// the GUI's Slice button, background processing and each plate of a Slice All run all go through), so
+// a new slice never reports the last one's stage.
 inline void forget_slicing_stage() { slicing_stage_text().clear(); }
 
 // A plate's PartPlate::get_slicing_percent as get_slicing_status reports it: a whole percentage,
