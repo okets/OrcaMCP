@@ -63,8 +63,10 @@ gave were wrong; the prompts carry the corrected facts.
 | 06c | (no prompt file; 06b's agent) | 06b | `slice_all`'s refusal reason across plates; `transform_objects` all-or-nothing | merged and pushed 2026-09-27 (merge 871ff5a60a, three commits; Build all 36320742400 green on every platform, also covers 06b) |
 | 07b | [Over-height check on non-Bambu printers](07b-height-check.md) | 06c | GCodeProcessor `;Z:` parsing, the 0-means-no-limit rule, MCP send/export gating | merged and pushed 2026-09-27 (four rounds, 10 commits; merge a726b9ca52); probe Y (six counts) |
 | 07c | [A misspelled or missing argument is refused](07c-unknown-arguments.md) | 07b | `handle_tools_call` (`OrcaMCPToolArguments`), the bridge's own tools | merged and pushed 2026-09-28 (two rounds, 6 commits; merge 0021515d7e) |
-| 07d | (no prompt file; 07c's agent) | 07c | nine per-tool argument bugs from 07c's audit: rotate relative, one-bound range delete, empty reset keys, flatten's plate-wide orient, clone count, cut keep, config-key category, uniform scale, empty set_temperature | implementing |
-| 08 | [Server instructions and hints](08-instructions-and-hints.md) | 01–07d | `initialize`, descriptions, result hints | not started |
+| 07d | (no prompt file; 07c's agent) | 07c | nine per-tool argument bugs from 07c's audit: rotate relative, one-bound range delete, empty reset keys, flatten's plate-wide orient, clone count, cut keep, config-key category, uniform scale, empty set_temperature | merged and pushed 2026-09-28 (three rounds, 14 commits; merge 85ae40e7fa) |
+| 07e | (no prompt file; 07c's agent) | 07d | arrange_objects / auto_orient / flatten_object wait for their job and return the final placement; get_slicing_status reports a running job | found in the 07d acceptance pass; design in progress |
+| 07f | (no prompt file; 07c's agent) | 07e | an object whose instances sit on two plates: a 3MF round trip loses the second plate; on_bed measured over both instances | found by 07d's agent; queued |
+| 08 | [Server instructions and hints](08-instructions-and-hints.md) | 01–07f | `initialize`, descriptions, result hints | design done 2026-09-28; the instructions text and decisions A–E are with the user |
 | 09 | [Several instances, switch between them](09-second-instance-crash.md) | 01–08 | port fallback, instance registry (with open file), bridge `list_instances` / `select_instance` | added 2026-09-26 by the user; design goes to the user; starts after all other coding |
 | 10 | [Flashforge print options](../2026-09-27-flashforge-print-options.md) (flow calibration, leveling, time-lapse) | 01–09 | `FlashforgeApi::PrintOptions`, the send dialog, `send_to_printer`, `print_printer_file`, `get_printer_status` | written 2026-09-27 in another session; the user decided 2026-09-28 it runs last, after all other work and right before the version bump. Its live printer steps start real prints: they run only with the user present and on their word at that moment |
 
@@ -119,6 +121,8 @@ roadmap; nothing ships half-done.
   (5) A Type 1 prime tower on a non-Bambu printer drops its top tool-change layer's block, because an unset
   extruder height (0) reads as a limit (probe Y's sixth count, found in 07b). 07b's agent recommends offering (2)
   with (5) and the PrintObject companion as one issue: treat 0 as no limit everywhere a height is compared.
+  (6) OrientJob's finalize can write to an instance a delete freed after process() returned (07d review; the GUI
+  too). 07e closes it for MCP.
 - ~~**Sequencing the Flashforge print-options plan.**~~ Decided 2026-09-28: it runs last (row 10), right before the
   version bump.
 
