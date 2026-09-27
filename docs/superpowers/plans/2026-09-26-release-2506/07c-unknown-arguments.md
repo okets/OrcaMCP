@@ -1,4 +1,4 @@
-# 07c — A misspelled argument is refused, not silently ignored
+# 07c — A misspelled or missing argument is refused, not silently ignored
 
 You are working on OrcaMCP: a fork of OrcaSlicer with an embedded MCP server, so AI agents can drive
 the slicer. Repo: `/Users/hanan/Projects/OrcaMCP`, default branch `mcp`. Read CLAUDE.md first,
@@ -26,9 +26,19 @@ Prompts 01–07, 06b and 07b are merged.
    it is dead. Check the bridge too: does it add, rename or pass through any argument (Windows path
    normalization only rewrites values)? Do MCP clients put anything else inside `arguments`
    (`_meta` belongs to `params`, not `arguments`; check the spec version the server declares)?
+   In the same pass, list every read of a key that may be absent through `operator[]` on a **const**
+   json (`params["x"]` where `params` is `const nlohmann::json&`). In the bundled nlohmann that is only a
+   `JSON_ASSERT` and then a dereference of `find()`'s end iterator: undefined behaviour in the release
+   build when the caller left the key out. 06c found and fixed one (`transform_objects {}` read
+   `params["transforms"]`). The required-argument check below covers required keys; an optional key
+   read that way must use `value()` / `contains()` instead.
 2. **Design the check, and keep it small.** One function, in one place, before the handler runs:
    - Refuse a top-level argument the schema doesn't declare, when its schema says
      `additionalProperties: false`.
+   - Refuse a call that leaves out an argument the schema lists as `required`, naming it (and nested
+     `required` keys inside items, e.g. a `settings` item without `value`, if the same walk covers it).
+     Check the audit first: a tool whose handler really treats a "required" argument as optional has a
+     wrong schema, and that gets fixed in the schema, not by skipping the check.
    - Also check a nested object when its own schema says `additionalProperties: false` (the `settings`
      items `{key, value}`, `configs`), if that stays a small walk over `properties` and `items`.
    - Not a JSON Schema validator: no type, range or enum checks in this prompt.
@@ -45,7 +55,8 @@ Prompts 01–07, 06b and 07b are merged.
 4. **Tests.**
    - A test over the whole registry: for every app tool, a call with an extra argument
      (`"not_an_argument_of_this_tool": 1`) is refused with -32602 and the handler never runs. No app
-     needed: the check comes before the handler.
+     needed: the check comes before the handler. Likewise for every tool with a `required` list, a call
+     that leaves one out is refused, naming it.
    - A nested case (`set_object_config` with a `settings` item carrying an extra key), a non-object
      `arguments`, and a call with only declared arguments that reaches the handler.
    - Python: the bridge refuses an unknown argument to `wait_for_slice`, and still accepts `timeout_s`.
@@ -133,13 +144,16 @@ report back.
 
 ## Done when
 
-- Every tool refuses an argument it doesn't take, naming it and the arguments it does take.
+- Every tool refuses an argument it doesn't take, naming it and the arguments it does take, and a
+  call that leaves out a required argument, naming it.
+- No handler reads an absent key through a const `operator[]`.
 - No tool loses an argument it really reads: the audit shows every read is declared.
 - The check lives in one place for the app, and the bridge's two tools use the same schemas.
 
 ## Report back
 
-- **Audit:** hidden parameters found and what you did with each; what the bridge and clients send.
+- **Audit:** hidden parameters found and what you did with each; what the bridge and clients send;
+  every const `operator[]` read of a key that may be absent, and what you did with it.
 - **The check** and where it lives.
 - **Related occurrences** (item 3), not fixed.
 - **Tests** and **live result.**
