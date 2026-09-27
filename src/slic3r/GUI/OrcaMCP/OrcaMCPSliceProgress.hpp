@@ -428,6 +428,8 @@ struct ExportStart
     bool                       already_exporting = false; // BackgroundSlicingProcess::is_export_scheduled() before asking
     std::optional<std::string> validation_error;          // the selected plate's validation failure, in the app's words
     std::optional<std::string> failure;                   // what the update before the export threw
+    bool                       checked = true;            // the plate has a slice result, whose G-code the slice checked
+    std::optional<std::string> gcode_check_refusal;       // what that check found (OrcaMCPGcodeCheck.hpp)
     std::optional<bool>        scheduled;                 // after asking; nullopt: not asked (yet)
 };
 
@@ -444,6 +446,13 @@ inline std::optional<std::string> export_not_started(const ExportStart& attempt)
         return std::nullopt;
     if (attempt.validation_error)
         return "The export did not start: the plate failed validation: " + *attempt.validation_error;
+    // The app writes a plate's G-code only once it passed the check its slice ran, as its Export button
+    // does; an unsliced plate would be sliced and written unchecked.
+    if (!attempt.checked)
+        return std::string("The export did not start: the plate has no slice result, so its G-code has not been checked: "
+                           "slice_all, then wait_for_slice, first.");
+    if (attempt.gcode_check_refusal)
+        return "The export did not start: " + *attempt.gcode_check_refusal;
     if (attempt.scheduled.has_value())
         return std::string("The app did not start the export; active_warnings may say why.");
     return std::nullopt;

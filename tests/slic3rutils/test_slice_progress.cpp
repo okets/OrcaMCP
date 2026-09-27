@@ -568,3 +568,22 @@ TEST_CASE("an export is refused before it is asked for, for the first reason tha
     // Nothing refused and not asked for yet: no verdict.
     CHECK_FALSE(export_not_started(ExportStart{}).has_value());
 }
+
+TEST_CASE("an export of a plate its slice's G-code check failed, or never checked, is refused", "[orcamcp][SliceProgress][GcodeCheck]")
+{
+    ExportStart unchecked;
+    unchecked.checked = false;
+    REQUIRE(export_not_started(unchecked).has_value());
+    CHECK(export_not_started(unchecked)->find("has not been checked") != std::string::npos);
+
+    ExportStart failed_check;
+    failed_check.gcode_check_refusal = "plate_index 0 failed the app's check of its sliced G-code";
+    REQUIRE(export_not_started(failed_check).has_value());
+    CHECK(*export_not_started(failed_check) == "The export did not start: plate_index 0 failed the app's check of its sliced G-code");
+
+    // A plate that failed validation has no result either: its validation failure is the reason given.
+    ExportStart invalid;
+    invalid.checked          = false;
+    invalid.validation_error = "Prime Tower is partially outside the printable area";
+    CHECK(export_not_started(invalid)->find("Prime Tower") != std::string::npos);
+}
