@@ -2704,8 +2704,9 @@ when that is less (30 s at 40 s, 7.5 s at 10 s). While it waits the bridge answe
 stdio loop is single-threaded: no ping, no cancel), so the wait always stays under the longest time a
 user has said one call may take. A longer `timeout_s` is cut to the cap and the response says
 `timeout_capped: true`. Below an `ORCAMCP_TIMEOUT` of 2 s there is no room to wait, and the call is
-refused. A slice that outlasts the cap needs another call; each poll's own HTTP request is bounded by
-what is left of the wait, so no poll carries it past the deadline.
+refused. A slice that outlasts the cap needs another call. A poll gets at least 1 s to be answered, and
+the last one starts 1 s before the deadline, so a slice that ends just before it is still seen and the
+wait still ends by it.
 
 **Example:**
 ```json
@@ -2733,11 +2734,12 @@ what is left of the wait, so no poll carries it past the deadline.
 | `incomplete` | The run is over and some of its plates have no result, or no longer exist (a plate-list change cancels Slice All); `message` names them |
 | `not_slicing` | Nothing was slicing and the selected plate has no result: `slice_all` was never called, or could not start |
 | `timed_out` | Still slicing at the timeout (`timed_out: true`); call it again |
-| `app_gone` | The app quit or crashed during the wait: it answered that it is quitting, or stopped listening after it had answered. The slice did not finish; `start_orca`, then `slice_all` again |
+| `app_gone` | The app quit or crashed during the wait: it answered that it is quitting, or refused every connection for a second or more after it had been there. The slice did not finish; `start_orca`, then `slice_all` again |
 
 `slicing_status` is `get_slicing_status`'s last answer (`null` if the app answered no poll in
-time). A poll the app is too busy to answer, or whose connection closes under the reply, does not
-end the wait. An app that is not running when the wait starts, or that fails the status call, ends
+time). A poll the app is too busy to answer, whose connection closes under the reply, whose reply is
+cut short (once the app has answered cleanly), or a refusal shorter than a second, does not end the
+wait. An app that is not running when the wait starts, or that fails the status call, ends
 it with an error.
 
 ### Tool list freshness

@@ -48,6 +48,8 @@ class FakeApp(http.server.BaseHTTPRequestHandler):
     rpc_error = None
     rpc_error_from_call = 1   # the first call that gets rpc_error
     drop_calls = set()        # calls answered by closing the connection, as an app that dies mid-reply
+    garble_calls = set()      # calls answered with a body cut short: complete HTTP, invalid JSON
+    done_at = None            # a monotonic time: answer DONE from then on, whatever the script says
     on_answered = None        # called with the call number after each answer
 
     def do_GET(self):
@@ -64,6 +66,13 @@ class FakeApp(http.server.BaseHTTPRequestHandler):
         if call in FakeApp.drop_calls:
             self.close_connection = True  # no reply at all: the bridge sees the connection close
             return
+        if call in FakeApp.garble_calls:
+            self._send_raw(b'{"jsonrpc": "2.0", "id": "get_slicing_status", "result": {"conte')
+            return
+        if FakeApp.done_at is not None and time.monotonic() >= FakeApp.done_at:
+            self._send({"jsonrpc": "2.0", "id": request.get("id"),
+                        "result": {"content": [{"type": "text", "text": json.dumps(DONE)}]}})
+            return
         if FakeApp.rpc_error is not None and call >= FakeApp.rpc_error_from_call:
             self._send({"jsonrpc": "2.0", "id": request.get("id"), "error": FakeApp.rpc_error})
             return
@@ -74,7 +83,9 @@ class FakeApp(http.server.BaseHTTPRequestHandler):
             FakeApp.on_answered(call)
 
     def _send(self, body):
-        payload = json.dumps(body).encode()
+        self._send_raw(json.dumps(body).encode())
+
+    def _send_raw(self, payload):
         try:
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -92,15 +103,30 @@ class WaitForSliceTest(unittest.TestCase):
     def setUp(self):
         FakeApp.script, FakeApp.calls, FakeApp.delay_first_s, FakeApp.rpc_error = [DONE], [], 0.0, None
         FakeApp.delay_every_s, FakeApp.rpc_error_from_call, FakeApp.drop_calls, FakeApp.on_answered = 0.0, 1, set(), None
-        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeApp)
-        self.server.daemon_threads = True
-        threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True).start()
+        FakeApp.garble_calls, FakeApp.done_at = set(), None
+        self.server = None
+        self.start_app(0)
         self.bridge = load_bridge()
-        self.bridge.ORCAMCP_URL = f"http://127.0.0.1:{self.server.server_address[1]}/mcp"
+        self.bridge.ORCAMCP_URL = f"http://127.0.0.1:{self.port}/mcp"
         self.bridge.WAIT_FOR_SLICE_POLL_S = 0.01
 
     def tearDown(self):
         self.stop_app()
+
+    def start_app(self, port):
+        """Listen as the app, on `port` (0: any free one)."""
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", port), FakeApp)
+        self.server.daemon_threads = True
+        self.port = self.server.server_address[1]
+        threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True).start()
+
+    def restart_app_after(self, seconds):
+        """Stop listening now and listen again on the same port after `seconds`, as a moment in which
+        a connection is refused and the app is still there."""
+        self.stop_app()
+        timer = threading.Timer(seconds, self.start_app, args=(self.port,))
+        timer.daemon = True
+        timer.start()
 
     def stop_app(self):
         """Close the fake app's listening socket, so a connection is refused, as after a quit."""
@@ -134,13 +160,23 @@ class WaitForSliceTest(unittest.TestCase):
     def test_a_slice_still_running_at_the_timeout_is_reported_as_timed_out(self):
         FakeApp.script = [SLICING]
         started = time.monotonic()
-        _, report = self.call({"timeout_s": 1})
+        _, report = self.call({"timeout_s": 3})
         elapsed = time.monotonic() - started
         self.assertEqual(report["outcome"], "timed_out")
         self.assertTrue(report["timed_out"])
         self.assertEqual(report["slicing_status"], SLICING)
-        self.assertGreaterEqual(elapsed, 1.0)
-        self.assertLess(elapsed, 3.0)
+        # The last poll starts a full poll timeout before the deadline, so the wait ends by it.
+        self.assertGreaterEqual(elapsed, 3.0 - self.bridge.WAIT_FOR_SLICE_MIN_POLL_TIMEOUT_S)
+        self.assertLessEqual(elapsed, 3.1)
+
+    def test_a_slice_that_ends_just_before_the_deadline_is_done_even_when_the_app_answers_slowly(self):
+        self.bridge.WAIT_FOR_SLICE_POLL_S = 1.5
+        FakeApp.delay_every_s = 0.3
+        FakeApp.script = [SLICING]
+        FakeApp.done_at = time.monotonic() + 0.5
+        _, report = self.call({"timeout_s": 2})
+        self.assertEqual(report["outcome"], "done")
+        self.assertFalse(report["timed_out"])
 
     def test_the_cap_stays_fifteen_seconds_under_a_request_timeout_of_a_minute_or_more(self):
         for request_timeout, cap in ((120, 105), (300, 285), (60, 45)):
@@ -221,6 +257,7 @@ class WaitForSliceTest(unittest.TestCase):
 
     def test_a_status_poll_the_app_is_too_busy_to_answer_does_not_end_the_wait(self):
         self.bridge.WAIT_FOR_SLICE_MAX_POLL_TIMEOUT_S = 0.05
+        self.bridge.WAIT_FOR_SLICE_MIN_POLL_TIMEOUT_S = 0.05
         FakeApp.delay_first_s = 0.3
         FakeApp.script = [DONE]
         result, report = self.call({"timeout_s": 2})
@@ -269,6 +306,34 @@ class WaitForSliceTest(unittest.TestCase):
         result, report = self.call({"timeout_s": 5})
         self.assertFalse(result["isError"])
         self.assertEqual(report["outcome"], "app_gone")
+
+    def test_a_refusal_that_does_not_last_a_second_is_the_app_being_busy_not_gone(self):
+        FakeApp.script = [SLICING, DONE]
+        FakeApp.on_answered = lambda call: call == 1 and threading.Thread(target=self.restart_app_after, args=(0.3,)).start()
+        result, report = self.call({"timeout_s": 5})
+        self.assertFalse(result["isError"])
+        self.assertEqual(report["outcome"], "done")
+
+    def test_the_app_is_gone_only_once_refusals_have_lasted_a_second(self):
+        FakeApp.script = [SLICING]
+        FakeApp.on_answered = lambda call: threading.Thread(target=self.stop_app).start()
+        started = time.monotonic()
+        _, report = self.call({"timeout_s": 5})
+        self.assertEqual(report["outcome"], "app_gone")
+        self.assertGreaterEqual(time.monotonic() - started, 1.0)
+
+    def test_a_reply_cut_short_after_the_app_has_answered_is_a_dropped_poll(self):
+        FakeApp.script = [SLICING, SLICING, DONE]
+        FakeApp.garble_calls = {2}
+        result, report = self.call({"timeout_s": 5})
+        self.assertFalse(result["isError"])
+        self.assertEqual(report["outcome"], "done")
+
+    def test_a_first_reply_that_is_not_json_is_an_error(self):
+        FakeApp.garble_calls = {1}
+        result, text = self.call({"timeout_s": 5})
+        self.assertTrue(result["isError"])
+        self.assertIn("Invalid JSON", text)
 
     def test_a_request_the_bridge_fails_on_is_answered_under_its_own_id(self):
         line = json.dumps({"jsonrpc": "2.0", "id": 42, "method": "tools/call",

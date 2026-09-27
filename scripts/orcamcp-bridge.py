@@ -500,7 +500,9 @@ WAIT_FOR_SLICE_HEADROOM_S = 15           # the cap sits this far below ORCAMCP_T
 WAIT_FOR_SLICE_HEADROOM_SHARE = 0.25     # or this share of it when that is less (ORCAMCP_TIMEOUT < 60 s)
 WAIT_FOR_SLICE_MIN_S = 1                 # the shortest wait; a cap below it leaves no room to wait
 WAIT_FOR_SLICE_POLL_S = 1.5              # between two get_slicing_status calls
-WAIT_FOR_SLICE_MAX_POLL_TIMEOUT_S = 10.0  # one poll's own HTTP timeout, at most; at least what is left
+WAIT_FOR_SLICE_MIN_POLL_TIMEOUT_S = 1.0   # one poll's own HTTP timeout: at least this, so it can be answered,
+WAIT_FOR_SLICE_MAX_POLL_TIMEOUT_S = 10.0  # and at most this; the last poll starts this long before the deadline
+WAIT_FOR_SLICE_GONE_AFTER_S = 1.0         # refusals must last this long before the app counts as gone
 # The outcomes the app's get_slicing_status reports in slice_run.outcome once a run is over.
 FINISHED_SLICE_OUTCOMES = ("done", "ended_early", "incomplete")
 # JSON-RPC error the app answers with while it quits (OrcaMCPJsonRpcError.hpp, McpShuttingDown).
@@ -513,7 +515,18 @@ class AppBusy(Exception):
 
 
 class AppDown(Exception):
-    """Nothing listens at ORCAMCP_URL, or the app answered that it is quitting."""
+    """Nothing listens at ORCAMCP_URL, or the app answered that it is quitting (`quitting`)."""
+
+    def __init__(self, quitting: bool = False):
+        super().__init__()
+        self.quitting = quitting
+
+
+class AppGarbled(Exception):
+    """A reply that is not JSON: a body cut short, as an app that dies mid-reply leaves it."""
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
 
 
 class AppUnavailable(Exception):
@@ -564,14 +577,14 @@ def call_app_tool(name: str, arguments: dict, timeout: float) -> dict:
             raise AppDown()
         raise AppBusy()
     except json.JSONDecodeError as e:
-        raise AppUnavailable(f"Invalid JSON response from OrcaSlicer: {e}")
+        raise AppGarbled(f"Invalid JSON response from OrcaSlicer: {e}")
     except (http.client.HTTPException, OSError):
         # The connection closed under the reply (RemoteDisconnected, a reset, an IncompleteRead): an app
         # that is going away does this, and so does one whose request thread dropped the socket.
         raise AppBusy()
     if "error" in reply:
         if reply["error"].get("code") == APP_QUITTING_ERROR:
-            raise AppDown()
+            raise AppDown(quitting=True)
         raise AppUnavailable(f"{name} failed: {reply['error'].get('message', reply['error'])}")
     try:
         return json.loads(reply["result"]["content"][0]["text"])
@@ -580,9 +593,20 @@ def call_app_tool(name: str, arguments: dict, timeout: float) -> dict:
 
 
 def poll_timeout(remaining: float) -> float:
-    """One status poll's HTTP timeout: what is left of the wait, up to WAIT_FOR_SLICE_MAX_POLL_TIMEOUT_S,
-    so no poll carries the wait past its deadline."""
-    return max(0.05, min(WAIT_FOR_SLICE_MAX_POLL_TIMEOUT_S, remaining))
+    """One status poll's HTTP timeout: what is left of the wait, within the least a poll needs to be
+    answered and WAIT_FOR_SLICE_MAX_POLL_TIMEOUT_S. The wait never starts a poll with less than the least
+    left (next_poll_delay), so no poll carries it past its deadline."""
+    return min(WAIT_FOR_SLICE_MAX_POLL_TIMEOUT_S, max(WAIT_FOR_SLICE_MIN_POLL_TIMEOUT_S, remaining))
+
+
+def next_poll_delay(remaining: float):
+    """How long to sleep before the next poll, or None when there is no time left for one: the last
+    poll starts a full WAIT_FOR_SLICE_MIN_POLL_TIMEOUT_S before the deadline, so it can be answered and
+    the wait still ends by then. A slice that ends just before the deadline is caught by that poll."""
+    spare = remaining - WAIT_FOR_SLICE_MIN_POLL_TIMEOUT_S
+    if spare < 0:
+        return None
+    return min(WAIT_FOR_SLICE_POLL_S, spare)
 
 
 def slice_outcome(status: dict) -> tuple:
@@ -608,28 +632,59 @@ APP_GONE_MESSAGE = ("OrcaSlicer stopped answering during the wait: it quit or cr
                     "finish. Call start_orca, then slice_all again.")
 
 
+class PollHistory:
+    """What the polls so far say about the app. A refusal can be a moment in which the app is busy
+    elsewhere, so the app counts as gone only when refusals have lasted WAIT_FOR_SLICE_GONE_AFTER_S,
+    or when it answered that it is quitting."""
+
+    def __init__(self):
+        self.answered = False        # it gave a clean answer
+        self.seen = False            # something accepted a connection: a clean answer or a busy poll
+        self.refused_since = None    # when the current run of refusals began
+
+    def answer(self):
+        self.answered = self.seen = True
+        self.refused_since = None
+
+    def busy(self):
+        self.seen = True
+        self.refused_since = None
+
+    def refused(self, now: float) -> bool:
+        """Records a refusal; True once the app counts as gone."""
+        if self.refused_since is None:
+            self.refused_since = now
+        return now - self.refused_since >= WAIT_FOR_SLICE_GONE_AFTER_S
+
+
 def run_wait_for_slice(timeout_s: float) -> dict:
     """Poll get_slicing_status until nothing is slicing, the app goes away, or timeout_s has passed, and
     report which. Raises AppUnavailable for an app that was never there, or that failed the call."""
     started = time.monotonic()
     deadline = started + timeout_s
-    status, polls, app_seen, gone = None, 0, False, False
+    status, polls, history, gone = None, 0, PollHistory(), False
     while True:
         try:
             status = call_app_tool("get_slicing_status", {}, poll_timeout(deadline - time.monotonic()))
             polls += 1
-            app_seen = True
+            history.answer()
         except AppBusy:
-            app_seen = True  # something accepted the connection
-        except AppDown:
-            if not app_seen:
+            history.busy()
+        except AppGarbled as e:
+            # A reply cut short after the app had answered is the app dropping the connection; before
+            # it had, it is a reply this bridge cannot read.
+            if not history.answered:
+                raise AppUnavailable(str(e))
+            history.busy()
+        except AppDown as e:
+            if not history.seen:
                 raise AppUnavailable(NOT_RUNNING_MESSAGE)
-            gone = True
-        finished = gone or (status is not None and not status.get("is_slicing", False))
-        remaining = deadline - time.monotonic()
-        if finished or remaining <= 0:
+            gone = e.quitting or history.refused(time.monotonic())
+        finished = gone or (status is not None and not status.get("is_slicing", False) and history.refused_since is None)
+        delay = next_poll_delay(deadline - time.monotonic())
+        if finished or delay is None:
             break
-        time.sleep(min(WAIT_FOR_SLICE_POLL_S, remaining))
+        time.sleep(delay)
 
     if gone:
         outcome, message = "app_gone", APP_GONE_MESSAGE
