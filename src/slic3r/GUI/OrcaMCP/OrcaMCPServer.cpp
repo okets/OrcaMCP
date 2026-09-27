@@ -21,6 +21,7 @@
 #include "slic3r/GUI/BackgroundSlicingProcess.hpp"
 #include "slic3r/GUI/MainFrame.hpp"
 #include "slic3r/GUI/GUI_ObjectList.hpp"
+#include "slic3r/GUI/Tab.hpp"
 #include "slic3r/GUI/DeviceManager.hpp"
 #include "slic3r/GUI/DeviceCore/DevManager.h"
 #include "slic3r/GUI/GLCanvas3D.hpp"
@@ -2043,7 +2044,8 @@ void OrcaMCPServer::register_builtin_tools()
                 }},
                 {"keys", {
                     {"type", "array"},
-                    {"description", "Keys to reset. If omitted, resets all overrides."},
+                    {"description", "Keys to reset. If omitted, resets every setting the GUI's object settings edit; "
+                                    "the object's filament (extruder) stays, as the GUI's reset leaves it."},
                     {"items", {{"type", "string"}}}
                 }}
             }},
@@ -2069,10 +2071,12 @@ void OrcaMCPServer::register_builtin_tools()
                 int reset_count = 0;
 
                 if (keys.empty()) {
-                    // Reset all overrides
-                    const auto all_keys = obj->config.get().keys();
-                    reset_count = all_keys.size();
-                    for (const auto& key : all_keys) {
+                    // Reset all overrides the GUI's object tab resets: the object keeps its filament.
+                    auto* object_tab = dynamic_cast<TabPrintModel*>(wxGetApp().get_model_tab());
+                    const auto resettable = [object_tab](const std::string& key) { return object_tab != nullptr && object_tab->has_key(key); };
+                    const auto reset_keys = object_overrides_to_reset(obj->config.get().keys(), resettable);
+                    reset_count = int(reset_keys.size());
+                    for (const auto& key : reset_keys) {
                         obj->config.erase(key);
                     }
                 } else {

@@ -1479,7 +1479,7 @@ Clear per-object configuration overrides.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `object_id` | integer | Yes | Object index |
-| `keys` | array | No | Specific keys to reset (omit for all) |
+| `keys` | array | No | Specific keys to reset. Omitted: every setting the GUI's object settings edit, as the object list's reset clears them; the object's filament (`extruder`) stays |
 
 ---
 

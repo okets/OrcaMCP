@@ -1854,7 +1854,7 @@
         "additionalProperties": false,
         "properties": {
           "keys": {
-            "description": "Keys to reset. If omitted, resets all overrides.",
+            "description": "Keys to reset. If omitted, resets every setting the GUI's object settings edit; the object's filament (extruder) stays, as the GUI's reset leaves it.",
             "items": {
               "type": "string"
             },

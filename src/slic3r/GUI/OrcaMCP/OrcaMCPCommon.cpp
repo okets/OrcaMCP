@@ -10,7 +10,9 @@
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Geometry.hpp"
 
+#include <algorithm>
 #include <cctype>
+#include <iterator>
 #include <cmath>
 #include <cstdlib>
 #include <limits>
@@ -379,6 +381,14 @@ InstancesOnPlate instances_on_plate(const ModelObject& object, int object_index,
 BoundingBoxf3 plate_box_of(const ModelObject& object, const InstancesOnPlate& here)
 {
     return here.box.defined ? here.box : object_world_box(object);
+}
+
+std::vector<std::string> object_overrides_to_reset(const std::vector<std::string>& object_keys,
+                                                   const std::function<bool(const std::string&)>& resettable)
+{
+    std::vector<std::string> reset;
+    std::copy_if(object_keys.begin(), object_keys.end(), std::back_inserter(reset), resettable);
+    return reset;
 }
 
 void mark_object_plates_unsliced(PartPlateList& plates, int object_index)
