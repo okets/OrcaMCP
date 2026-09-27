@@ -894,8 +894,9 @@ echo "S the logout handler ends dialogs with wxID_ABORT (rel2506/04c):    $(U sr
 echo "V the object list's mesh-error text lives inside ObjectList / its first icon reads mesh().stats() / ObjectList::get_repaired_errors_count exists (rel2506/05): $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^MeshErrorsInfo ObjectList::get_mesh_errors_info\(const int obj_idx/{f=1} f&&/_L_PLURAL/{print "yes"; exit} f&&/^}/{print "no"; exit}') / $(U src/slic3r/GUI/GUI_ObjectList.cpp | grep -c 'get_warning_icon_name(model_object->mesh().stats())') / $(U src/slic3r/GUI/GUI_ObjectList.cpp | grep -c '^int ObjectList::get_repaired_errors_count')"
 echo "X upstream's slic3rutils tests get no Windows-first force-include (rel2506/ci-fixes; 0 = bug): $(U tests/slic3rutils/CMakeLists.txt | grep -c 'win_platform.hpp')"
 echo "Z reslice refuses on a validation failure a settings fix removed until the 0.5 s timer runs / show_error defers its dialog (rel2506/06b): $(U src/slic3r/GUI/Plater.cpp | grep -c 'process_completed_with_error, return directly') / $(U src/slic3r/GUI/GUI.cpp | awk '/^void show_error\(wxWindow\* parent, const wxString/{f=1} f&&/CallAfter/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
-echo "AA a layer range without a layer_height crashes the slice / the adaptive profile (rel2506/06b): $(U src/libslic3r/Slicing.cpp | grep -c 'it_range->second.option("layer_height")->getFloat()') / $(U src/libslic3r/Slicing.cpp | awk '/print_z >= range.first && print_z <= range.second/{getline; print (index($0, "height = options.opt_float") ? "yes" : "no"); exit}')"
+echo "AA upstream's slicer reads a layer range's layer_height unchecked, and a file can carry a range without one (rel2506/06b): $(U src/libslic3r/Slicing.cpp | grep -c 'it_range->second.option("layer_height")->getFloat()')"
 echo "AB Print::apply copies a new object name without invalidating the G-code (rel2506/06b): $(U src/libslic3r/PrintApply.cpp | awk '/model_object.name       = model_object_new.name;/{print (prev ~ /invalidate_step\(psGCodeExport\)/ ? "no" : "yes"); exit} {prev=$0}')"
+echo "AC ObjectList::get_default_layer_config reads the preset's float \"extruder\" (rel2506/06b): $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^DynamicPrintConfig ObjectList::get_default_layer_config/{f=1} f&&/opt_float\("extruder"\)/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -1003,13 +1004,23 @@ suppression on the GUI thread (`mcp_captures_error`). On "no", upstream shows it
 `MsgDialog::ShowModal` then catches it, and the capture can go -- keep the error channel
 (`add_mcp_suppressed_error`) by tagging `ErrorDialog` instead.
 
-Item AA: upstream's `layer_height_profile_from_ranges` and `layer_height_profile_adaptive` read a
-layer range's `layer_height` without checking it is there. The GUI's object list always gives a range
-one, but a 3MF can carry a range without it (the importers copy whatever options the file lists, and
-MCP's `set_object_layer_range` wrote such ranges until rel2506/06b), and the next slice or adaptive
-profile dereferenced null and crashed the app. Ours prints such a range at the object's layer height
-(and leaves the adaptive height alone). On 0 / no, take upstream's lines and re-run
-`fff_print_tests "[LayerRanges]"`.
+Item AA: upstream's slicer (`layer_height_profile_from_ranges`, `layer_height_profile_adaptive`),
+`Print::apply`'s range comparison and the object list all read a layer range's `layer_height`
+without checking it is there. The object list always gives a range one, but a file can carry a
+range without it (the importers copy whatever options it lists; MCP's `set_object_layer_range`
+wrote such ranges until rel2506/06b), and the next slice dereferenced null and crashed the app.
+Ours completes every range when a file is loaded (`complete_layer_ranges`, Model.cpp, at the end of
+`Model::read_from_file` and `read_from_archive`): the object's own layer height, else the file's,
+else the default, and extruder 0. The slicer is left as upstream's. On 0, upstream checks the
+option itself: the completion can stay (it matches what the object list gives a range) or go;
+re-run `libslic3r_tests "[LayerRanges]"` and `fff_print_tests "[LayerRanges]"` either way.
+
+Item AC: upstream's `ObjectList::get_default_layer_config` (the defaults "Add height range" gives a
+new range) also read the object's extruder, unused, falling back to the process preset's float
+`extruder`, which it does not have: on an object without an extruder of its own it dereferenced
+null and crashed the app. Ours returns `layer_range_defaults` (Model.cpp), the same defaults a
+loaded file's ranges are completed with, which MCP's `set_object_layer_range` uses too. On "no",
+take upstream's and re-check "Add height range" on an object whose config has no `extruder`.
 
 Item AB: an object's name is in its G-code (the `; printing object` labels, `EXCLUDE_OBJECT` names,
 `{first_object_name}`), but upstream's `Print::apply` copies a new name over without invalidating

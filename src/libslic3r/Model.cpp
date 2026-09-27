@@ -444,6 +444,9 @@ Model Model::read_from_file(const std::string&                                  
     for (auto& plate_gcodes : model.plates_custom_gcodes)
         CustomGCode::check_mode_for_custom_gcode_per_print_z(plate_gcodes.second);
 
+    // Orca: a range the file left without a layer height would crash the next slice.
+    complete_layer_ranges(model, *config);
+
     sort_remove_duplicates(config_substitutions->substitutions);
     return model;
 }
@@ -532,6 +535,9 @@ Model Model::read_from_archive(const std::string& input_file, DynamicPrintConfig
     }
 
     handle_legacy_sla(*config);
+
+    // Orca: a range the file left without a layer height would crash the next slice.
+    complete_layer_ranges(model, *config);
 
     return model;
 }
@@ -3869,6 +3875,35 @@ bool model_has_advanced_features(const Model &model)
             	return true;
     }
     return false;
+}
+
+DynamicPrintConfig layer_range_defaults(const ModelObject &object, const DynamicPrintConfig &print_config)
+{
+    const double layer_height = object.config.has("layer_height") ? object.config.opt_float("layer_height")
+                              : print_config.has("layer_height") ? print_config.opt_float("layer_height")
+                                                                 : print_config_def.get("layer_height")->get_default_value<ConfigOptionFloat>()->value;
+    DynamicPrintConfig defaults;
+    defaults.set_key_value("layer_height", new ConfigOptionFloat(layer_height));
+    defaults.set_key_value("extruder", new ConfigOptionInt(0));
+    return defaults;
+}
+
+void complete_layer_range(ModelConfig &range, const DynamicPrintConfig &defaults)
+{
+    for (const std::string &key : defaults.keys())
+        if (!range.has(key))
+            range.set_key_value(key, defaults.option(key)->clone());
+}
+
+void complete_layer_ranges(Model &model, const DynamicPrintConfig &print_config)
+{
+    for (ModelObject *object : model.objects) {
+        if (object->layer_config_ranges.empty())
+            continue;
+        const DynamicPrintConfig defaults = layer_range_defaults(*object, print_config);
+        for (auto &[range, config] : object->layer_config_ranges)
+            complete_layer_range(config, defaults);
+    }
 }
 
 void remap_model_filament_slots(Model &model, const std::map<int, int> &slot_relocations)

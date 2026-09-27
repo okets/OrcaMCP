@@ -2384,11 +2384,11 @@ void OrcaMCPServer::register_builtin_tools()
 
                 if (!applied_keys.empty()) {
                     // Every range has a layer height and an extruder, the object's unless given, as the
-                    // object list gives a new range them (OrcaMCP::complete_layer_range): the slicer reads
-                    // a range's layer height unconditionally.
+                    // object list gives a new range them (its get_default_layer_config): the slicer
+                    // reads a range's layer height unconditionally.
                     ModelConfig& layer_cfg = obj->layer_config_ranges[range];
                     layer_cfg.apply(written);
-                    complete_layer_range(layer_cfg, default_layer_config(*obj, wxGetApp().preset_bundle->prints.get_edited_preset().config));
+                    Slic3r::complete_layer_range(layer_cfg, wxGetApp().obj_list()->get_default_layer_config(object_id));
 
                     // Notify UI of changes
                     wxGetApp().obj_list()->changed_object(object_id);

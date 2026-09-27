@@ -5,27 +5,9 @@
 #include <iomanip>
 #include <sstream>
 
-#include "libslic3r/Model.hpp"
 #include "libslic3r/PrintConfig.hpp"
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
-
-void complete_layer_range(ModelConfig& range, const DynamicPrintConfig& defaults)
-{
-    for (const std::string& key : defaults.keys())
-        if (!range.has(key))
-            range.set_key_value(key, defaults.option(key)->clone());
-}
-
-DynamicPrintConfig default_layer_config(const ModelObject& object, const DynamicPrintConfig& print_preset)
-{
-    const double layer_height = object.config.has("layer_height") ? object.config.opt_float("layer_height")
-                                                                   : print_preset.opt_float("layer_height");
-    DynamicPrintConfig config;
-    config.set_key_value("layer_height", new ConfigOptionFloat(layer_height));
-    config.set_key_value("extruder", new ConfigOptionInt(0));
-    return config;
-}
 
 namespace {
 

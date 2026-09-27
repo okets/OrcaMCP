@@ -1801,6 +1801,19 @@ bool model_has_advanced_features(const Model &model);
 // entries are applied simultaneously (no chained lookups), untouched slots keep everything.
 void remap_model_filament_slots(Model &model, const std::map<int, int> &slot_relocations);
 
+// Orca: every layer range must carry a layer_height -- the slicer reads it unchecked
+// (layer_height_profile_from_ranges), and so do the object list and Print::apply's range comparison.
+// What a new range starts with, as the object list's "Add height range" gives it
+// (ObjectList::get_default_layer_config): the object's own layer height, else `print_config`'s, else
+// the setting's default, and extruder 0 (the object's).
+DynamicPrintConfig layer_range_defaults(const ModelObject &object, const DynamicPrintConfig &print_config);
+// Orca: gives `range` each of `defaults` it lacks, keeping what it has.
+void complete_layer_range(ModelConfig &range, const DynamicPrintConfig &defaults);
+// Orca: completes every layer range of `model`'s objects with layer_range_defaults. A file can carry a
+// range without a layer height (the importers copy whatever options it lists), so Model::read_from_file
+// and read_from_archive run this with the file's print settings.
+void complete_layer_ranges(Model &model, const DynamicPrintConfig &print_config);
+
 #ifndef NDEBUG
 // Verify whether the IDs of Model / ModelObject / ModelVolume / ModelInstance / ModelMaterial are valid and unique.
 void check_model_ids_validity(const Model &model);
