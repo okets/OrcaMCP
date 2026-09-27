@@ -260,6 +260,22 @@ TEST_CASE("The wait ends as soon as the job has ended", "[McpUiJob][orcamcp]")
     CHECK(took < 2s);
 }
 
+TEST_CASE("The wait nudges the main thread while it waits, so a finalize nothing else wakes is delivered",
+          "[McpUiJob][orcamcp]")
+{
+    // The worker queues a finalize after the last wake-up of the job's own process: in an app no one
+    // touches, the main thread's idle handler, which delivers it, then ran only when something else
+    // happened. The wait's nudge is that something (wxWakeUpIdle in the app).
+    UiJobOutcome outcome(UiJobKind::orient);
+    int          nudges = 0;
+    const UiJobWait waited = wait_for_ui_job(outcome, 5s, 1ms, [&outcome, &nudges] {
+        if (++nudges == 3)
+            outcome.end(State::finished); // as the finalize this nudge let run would
+    });
+    CHECK(waited == UiJobWait::finished);
+    CHECK(nudges == 3);
+}
+
 TEST_CASE("The wait reports how the job ended", "[McpUiJob][orcamcp]")
 {
     const auto [state, expected] = GENERATE(table<State, UiJobWait>({{State::finished, UiJobWait::finished},

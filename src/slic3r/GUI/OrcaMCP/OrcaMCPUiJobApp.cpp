@@ -99,7 +99,7 @@ nlohmann::json placement_after_job(const ObjectTransforms& before)
 nlohmann::json answer_after_ui_job(const UiJobOutcome& outcome, const std::function<nlohmann::json()>& report)
 {
     const auto      started = std::chrono::steady_clock::now();
-    const UiJobWait waited  = wait_for_ui_job(outcome, tool_wait_cap());
+    const UiJobWait waited  = wait_for_ui_job(outcome, tool_wait_cap(), std::chrono::milliseconds(50), [] { wxWakeUpIdle(); });
     const double    seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
     if (waited != UiJobWait::finished)
         return ui_job_unfinished_json(outcome.kind(), waited, seconds, outcome.error());

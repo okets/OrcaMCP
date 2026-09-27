@@ -83,10 +83,13 @@ private:
 enum class UiJobWait { finished, cancelled, failed, dropped, timed_out, quitting };
 
 // HTTP thread. Waits until `outcome` has ended, `cap` has passed, or the app quits, polling every
-// `poll`. Never touches the main thread.
-UiJobWait wait_for_ui_job(const UiJobOutcome&       outcome,
-                          std::chrono::milliseconds cap,
-                          std::chrono::milliseconds poll = std::chrono::milliseconds(50));
+// `poll` and calling `nudge` each turn. Never runs anything on the main thread; the app's nudge wakes
+// its idle handler (wxWakeUpIdle), which delivers the finalize: the worker queues it after the last
+// wake-up the job's own process gave, so in an app nobody touches nothing else would deliver it.
+UiJobWait wait_for_ui_job(const UiJobOutcome&          outcome,
+                          std::chrono::milliseconds    cap,
+                          std::chrono::milliseconds    poll  = std::chrono::milliseconds(50),
+                          const std::function<void()>& nudge = {});
 
 // A tool's answer when its job did not finish: cancelled or dropped (nothing moved), failed (why),
 // still running past the cap after `waited_s` seconds (how to tell when it has ended), or cut short

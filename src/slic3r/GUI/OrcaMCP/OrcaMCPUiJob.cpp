@@ -80,7 +80,10 @@ void ReportingJob::finalize(bool canceled, std::exception_ptr& eptr)
                    error);
 }
 
-UiJobWait wait_for_ui_job(const UiJobOutcome& outcome, std::chrono::milliseconds cap, std::chrono::milliseconds poll)
+UiJobWait wait_for_ui_job(const UiJobOutcome&          outcome,
+                          std::chrono::milliseconds    cap,
+                          std::chrono::milliseconds    poll,
+                          const std::function<void()>& nudge)
 {
     const auto deadline = std::chrono::steady_clock::now() + cap;
     for (;;) {
@@ -96,6 +99,8 @@ UiJobWait wait_for_ui_job(const UiJobOutcome& outcome, std::chrono::milliseconds
         const auto now = std::chrono::steady_clock::now();
         if (now >= deadline)
             return UiJobWait::timed_out;
+        if (nudge)
+            nudge();
         std::this_thread::sleep_for(std::min<std::chrono::steady_clock::duration>(poll, deadline - now));
     }
 }
