@@ -37,9 +37,10 @@ bool is_main_thread_active();
 // Naming threads is only supported on newer Windows 10.
 std::optional<std::string> get_current_thread_name();
 
-// To be called somewhere before the TBB threads are spinned for the first time, to
-// give them names recognizible in the debugger.
-// Also it sets locale of the worker threads to "C" for the G-code generator to produce "." as a decimal separator.
+// Orca: from now on, names each TBB worker that enters the calling thread's arena slic3r_tbb_<n>, to be
+// recognizable in the debugger, and sets its locale to "C" for the G-code generator to produce "." as a
+// decimal separator, before the worker runs a task there. Returns at once, waiting for no worker.
+// Once per thread; call it before the thread's first TBB work.
 void name_tbb_thread_pool_threads_set_locale();
 
 template<class Fn>

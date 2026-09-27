@@ -1225,6 +1225,9 @@ int CLI::run(int argc, char **argv)
     set_current_thread_name("orcaslicer_main");
     // Save the thread ID of the main thread.
     save_main_thread_id();
+    // Orca: name the TBB workers that join the main thread's arena and set their "C" locale, from before
+    // the first TBB work here. The slicing thread prepares its own arena.
+    name_tbb_thread_pool_threads_set_locale();
 
 #ifdef __WXGTK__
     // ------------------------------------------------------------------

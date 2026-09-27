@@ -995,6 +995,7 @@ echo "AD reload_scene recycles a GLVolume without its instance's printable flag 
 echo "AE cancel_all leaves a job whose process has returned to finalize as not cancelled (0 = bug) / a late finalize runs in ~priv with Plater::p null (rel2506/07e): $(U src/slic3r/GUI/Jobs/BoostThreadWorker.hpp | grep -c 'cancel_all_count') / $(U src/slic3r/GUI/Plater.cpp | grep -c '^Plater::~Plater() = default;')"
 echo "AF a cancelled or failed arrange keeps prepare_all's plates locked, its running flag and its notification (rel2506/07e): $(U src/slic3r/GUI/Jobs/ArrangeJob.cpp | awk '/^void ArrangeJob::finalize/{f=1} f&&/lock\(false\)|end_arrange_run/{print "no"; exit} f&&/if \(canceled \|\| eptr\)/{print "yes"; exit}')"
 echo "AG an object added to the scene has only its first instance on a plate (rel2506/07f): $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^void ObjectList::add_object_to_list\(/{f=1} f&&/notify_instance_update\(obj_idx, 0, true\)/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
+echo "AH the first slice waits for every TBB worker at once to name them (rel2506/07g): $(U src/libslic3r/Thread.cpp | awk '/^void name_tbb_thread_pool_threads_set_locale/{f=1} f&&/cv\.wait\(/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -1227,6 +1228,22 @@ since those settings are object-wide and a copy's user may have declined them wh
 the app, so it stays green with the line in `add_object_to_list` reverted. On "no", take upstream's
 and confirm it by opening a project with an object on two plates: MCP's `export_3mf` then
 `load_project`, each instance on its plate in `get_scene_info`, or the same in the GUI.
+
+Item AH: upstream's `name_tbb_thread_pool_threads_set_locale` (`Thread.cpp`), run by the first slice
+of a session, names the TBB workers `slic3r_tbb_<n>` and sets their "C" locale (G-code and config
+numbers are printed on them, and the GUI's locale can print "0,2") with a barrier: a `parallel_for`
+over `max_concurrency()` one-element ranges whose tasks each wait until all of them run at once. TBB
+never promises that many threads at once. On 2026-09-28 one worker stayed asleep, every other one and
+the slicing thread waited for it, and so did the GUI thread in `BackgroundSlicingProcess::start`: the
+app hung for good. Ours has no barrier: the call installs a `tbb::task_scheduler_observer` on the
+calling thread's arena (oneTBB gives every thread an arena of its own), once per thread, which prepares
+each worker as it enters, before it runs a task there, and waits for nothing. The observers are never
+deleted: TBB still writes to one when it frees its arena. `CLI::run` (`OrcaSlicer.cpp`) also calls it
+right after naming the main thread, so the main thread's arena is covered from startup, as the barrier
+covered every worker once it had run; keep that fork-only call through a merge. macOS reads a thread's
+name back like the other posix systems (`get_current_thread_name`). On "no", upstream dropped the
+barrier: compare its replacement with ours, keep whichever prepares a worker that joins later, and
+re-run `libslic3r_tests "[Thread]"` (on the barrier, the busy-pool test fails at its 30 s deadline).
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices
