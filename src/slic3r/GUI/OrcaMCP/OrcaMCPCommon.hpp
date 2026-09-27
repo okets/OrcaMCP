@@ -10,6 +10,7 @@
 #include "OrcaMCPMainThreadGate.hpp"
 
 namespace Slic3r {
+class Model;
 class ModelObject;
 namespace GUI {
 class PartPlate;
@@ -41,6 +42,14 @@ bool parse_boolean_param(const nlohmann::json& value, bool& out);
 // reason: std::stod reads "0x10" as 16 and "0x1p4" as 16 too, and a coordinate nobody meant to write
 // in base 16 is a caller mistake worth reporting rather than silently giving a different number.
 bool parse_double_param(const nlohmann::json& value, double& out);
+
+// {"status": "error", "message": message}: what a tool returns for a call it refuses.
+nlohmann::json error_response(const std::string& message);
+
+// The object params["object_id"] names in `model`, with its index in `object_id`, or nullptr and
+// `error` saying why: missing, not a whole number, or out of range. Every tool that takes an
+// object_id reads it here, so all of them refuse a bad one with the same words.
+ModelObject* resolve_object_id(const nlohmann::json& params, Model& model, int& object_id, std::string& error);
 
 // True for "#RRGGBB" -- and, with allow_alpha, also "#RRGGBBAA". Upstream's parsers are lenient in
 // ways that turn a typo into a wrong colour rather than an error: can_decode_color only checks the

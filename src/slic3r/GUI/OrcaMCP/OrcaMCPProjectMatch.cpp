@@ -437,11 +437,6 @@ std::vector<StationSlot> to_station_slots(const std::vector<FlashforgeApi::Mater
     return out;
 }
 
-nlohmann::json error_json(const std::string& message)
-{
-    return {{"status", "error"}, {"message", message}};
-}
-
 } // namespace
 
 nlohmann::json match_project_to_printer(const std::vector<FlashforgeApi::MaterialSlot>& station,
@@ -450,15 +445,15 @@ nlohmann::json match_project_to_printer(const std::vector<FlashforgeApi::Materia
 {
     PresetBundle* bundle = wxGetApp().preset_bundle;
     if (bundle == nullptr)
-        return error_json("Preset bundle not available");
+        return error_response("Preset bundle not available");
     if (station.empty())
-        return error_json("The printer reports no material station, so there is nothing to match against.");
+        return error_response("The printer reports no material station, so there is nothing to match against.");
 
     for (int slot : requested_slots) {
         const bool known = std::any_of(station.begin(), station.end(),
                                        [slot](const FlashforgeApi::MaterialSlot& s) { return s.slot_id == slot; });
         if (!known)
-            return error_json("slot " + std::to_string(slot) + " is not a material-station slot on this printer");
+            return error_response("slot " + std::to_string(slot) + " is not a material-station slot on this printer");
     }
 
     const std::vector<ProjectSlot>    project    = gather_project_slots(*bundle);

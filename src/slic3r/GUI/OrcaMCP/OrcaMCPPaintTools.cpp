@@ -86,24 +86,10 @@ bool resolve_paint_target(const nlohmann::json&  params,
                           std::string&           error,
                           const PaintTargetNeeds needs = {})
 {
-    Plater*        plater = wxGetApp().plater();
-    Slic3r::Model& model  = plater->model();
-
-    // Told apart from a bad one: defaulting a missing object_id to -1 and falling into the range
-    // check below would report "Invalid object_id -1", which reads as a value the caller chose.
-    if (!params.contains("object_id")) {
-        error = "object_id is required: pass the 0-based index of the object to paint";
-        return false;
-    }
     int object_id = -1;
-    if (!parse_integer_field(params, "object_id", -1, object_id, error))
+    out.object    = resolve_object_id(params, wxGetApp().plater()->model(), object_id, error);
+    if (out.object == nullptr)
         return false;
-    if (object_id < 0 || object_id >= int(model.objects.size())) {
-        error = "Invalid object_id " + std::to_string(object_id) + ": the scene has " +
-                std::to_string(model.objects.size()) + " objects";
-        return false;
-    }
-    out.object    = model.objects[std::size_t(object_id)];
     out.object_id = object_id;
 
     if (needs.instance) {

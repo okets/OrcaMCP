@@ -32,11 +32,6 @@ const std::vector<std::string> kSupportedHostTypes = {
     "flashforge", "moonraker", "octoprint", "prusalink", "duet", "repetier", "mks", "elegoolink", "crealityprint"
 };
 
-nlohmann::json error_response(const std::string& message)
-{
-    return {{"status", "error"}, {"message", message}};
-}
-
 // Absent when the caller did not send the key, so it can be told apart from an explicit "".
 std::optional<std::string> optional_string(const nlohmann::json& params, const std::string& key)
 {

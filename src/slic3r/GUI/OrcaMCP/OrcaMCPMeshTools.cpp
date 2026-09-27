@@ -12,35 +12,6 @@
 using namespace Slic3r::GUI;
 using namespace Slic3r::GUI::OrcaMCP;
 
-namespace {
-
-nlohmann::json error_json(const std::string& message)
-{
-    return {{"status", "error"}, {"message", message}};
-}
-
-// Main thread only: the object `params` names, or an error saying why there is none.
-const Slic3r::ModelObject* resolve_object(const nlohmann::json& params, int& object_id, std::string& error)
-{
-    const Slic3r::Model& model = wxGetApp().plater()->model();
-    if (!params.contains("object_id")) {
-        error = "object_id is required: the 0-based object_index get_scene_info reports";
-        return nullptr;
-    }
-    if (!parse_integer_param(params["object_id"], object_id)) {
-        error = "object_id must be a whole number";
-        return nullptr;
-    }
-    if (object_id < 0 || object_id >= int(model.objects.size())) {
-        error = "Invalid object_id " + std::to_string(object_id) + ": the scene has " +
-                std::to_string(model.objects.size()) + " objects";
-        return nullptr;
-    }
-    return model.objects[std::size_t(object_id)];
-}
-
-} // namespace
-
 void OrcaMCPServer::register_mesh_tools()
 {
     register_tool({
@@ -72,9 +43,9 @@ void OrcaMCPServer::register_mesh_tools()
             nlohmann::json   gate = run_on_main_thread([&params, &report]() -> nlohmann::json {
                 int         object_id = -1;
                 std::string error;
-                const Slic3r::ModelObject* object = resolve_object(params, object_id, error);
+                const Slic3r::ModelObject* object = resolve_object_id(params, wxGetApp().plater()->model(), object_id, error);
                 if (object == nullptr)
-                    return error_json(error);
+                    return error_response(error);
                 report = mesh_health_report(*object, object_id);
                 return {{"status", "success"}};
             });

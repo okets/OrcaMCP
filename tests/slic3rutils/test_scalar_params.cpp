@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "slic3r/GUI/OrcaMCP/OrcaMCPCommon.hpp"
+#include "libslic3r/Model.hpp"
 
 // The scalar guards every MCP tool reads its parameters through. They exist because a client whose
 // cached tool schema predates a parameter sends it as a string, and because the standard library's
@@ -9,6 +10,8 @@
 
 using Slic3r::GUI::OrcaMCP::parse_double_param;
 using Slic3r::GUI::OrcaMCP::parse_integer_param;
+using Slic3r::GUI::OrcaMCP::resolve_object_id;
+using Slic3r::GUI::OrcaMCP::error_response;
 
 TEST_CASE("parse_double_param takes a JSON number or its string spelling", "[orcamcp][params]")
 {
@@ -111,4 +114,36 @@ TEST_CASE("parse_integer_param refuses what is not a number at all", "[orcamcp][
     CHECK_FALSE(parse_integer_param(nlohmann::json(nullptr), out));
     CHECK_FALSE(parse_integer_param(nlohmann::json::array({1}), out));
     CHECK_FALSE(parse_integer_param(nlohmann::json::object(), out));
+}
+
+// The one place a tool turns object_id into an object, so every tool refuses a missing, mistyped or
+// out-of-range id with the same three messages.
+TEST_CASE("resolve_object_id finds the object an object_id names, or says why it cannot", "[orcamcp][params]")
+{
+    Slic3r::Model model;
+    model.add_object()->name = "first";
+    model.add_object()->name = "second";
+
+    int         object_id = -1;
+    std::string error;
+    Slic3r::ModelObject* found = resolve_object_id(nlohmann::json{{"object_id", "1"}}, model, object_id, error);
+    REQUIRE(found == model.objects[1]);
+    CHECK(object_id == 1);
+    CHECK(error.empty());
+
+    CHECK(resolve_object_id(nlohmann::json::object(), model, object_id, error) == nullptr);
+    CHECK(error == "object_id is required: the 0-based object_index get_scene_info reports");
+
+    CHECK(resolve_object_id(nlohmann::json{{"object_id", 1.5}}, model, object_id, error) == nullptr);
+    CHECK(error == "object_id must be a whole number");
+
+    CHECK(resolve_object_id(nlohmann::json{{"object_id", 2}}, model, object_id, error) == nullptr);
+    CHECK(error == "Invalid object_id 2: the scene has 2 objects");
+    CHECK(resolve_object_id(nlohmann::json{{"object_id", -1}}, model, object_id, error) == nullptr);
+    CHECK(error == "Invalid object_id -1: the scene has 2 objects");
+}
+
+TEST_CASE("error_response is the status and message every refusal carries", "[orcamcp][params]")
+{
+    CHECK(error_response("no") == nlohmann::json{{"status", "error"}, {"message", "no"}});
 }

@@ -142,6 +142,31 @@ bool parse_boolean_param(const nlohmann::json& value, bool& out)
     return false;
 }
 
+nlohmann::json error_response(const std::string& message)
+{
+    return {{"status", "error"}, {"message", message}};
+}
+
+ModelObject* resolve_object_id(const nlohmann::json& params, Model& model, int& object_id, std::string& error)
+{
+    // Told apart from a bad one: defaulting a missing object_id to -1 and falling into the range
+    // check below would report "Invalid object_id -1", which reads as a value the caller chose.
+    if (!params.contains("object_id")) {
+        error = "object_id is required: the 0-based object_index get_scene_info reports";
+        return nullptr;
+    }
+    if (!parse_integer_param(params["object_id"], object_id)) {
+        error = "object_id must be a whole number";
+        return nullptr;
+    }
+    if (object_id < 0 || object_id >= int(model.objects.size())) {
+        error = "Invalid object_id " + std::to_string(object_id) + ": the scene has " +
+                std::to_string(model.objects.size()) + " objects";
+        return nullptr;
+    }
+    return model.objects[std::size_t(object_id)];
+}
+
 bool object_within_plate(const BoundingBoxf3& object_bbox, const BoundingBoxf3& plate_box, double z_tolerance)
 {
     return object_bbox.min.x() >= plate_box.min.x() &&
