@@ -10,6 +10,8 @@
 #include "libslic3r/Model.hpp"
 #include "libslic3r/TriangleSelector.hpp"
 
+#include <nlohmann/json.hpp>
+
 #include "OrcaMCPPaintGeometry.hpp"
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
@@ -146,6 +148,12 @@ Vec3d brim_point_to_plate(const ModelObject& obj, const Vec3f& local_pos, std::s
 // object-local frame brim_points are stored in. Round-trips with brim_point_to_plate for the
 // same instance.
 Vec3f brim_point_to_object(const ModelObject& obj, double plate_x, double plate_y, std::size_t instance_idx);
+
+// The brim ears on an object as set_brim_ears and get_object_paint report them: {x, y, z, radius}
+// per ear, in plate millimetres through brim_point_to_plate, which set_brim_ears's write path
+// inverts. set_brim_ears takes the list back as its points (z is accepted and ignored there), which
+// is how an agent removes or moves one ear.
+nlohmann::json brim_ears_json(const ModelObject& obj, std::size_t instance_idx);
 
 // One state present on one volume.
 struct PaintedStateInfo

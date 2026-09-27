@@ -19,6 +19,11 @@ finished slice stays finished. The object and scene tools say which it was with 
 `set_prime_tower_position`, `set_mixed_filament`), the painting tools with `annotation_changed`, the
 resets with their counts.
 
+**A call is held to the tool's schema.** An argument a tool does not take, a required one left out,
+or arguments that are not an object are refused before the tool runs, with JSON-RPC error -32602
+naming the problem and what the tool takes -- never ignored, so a misspelled argument cannot turn
+into a call that reports success and changes nothing. See [Error Handling](#error-handling).
+
 ## Quick Reference Table
 
 | Category | Tools |
@@ -378,7 +383,10 @@ Save the current project.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `output_path` | string | No | Path of the `.3mf` to save to. **Required while the project has no file name.** Also acts as Save As. |
-| `save_as` | boolean | No | Legacy, ignored - use `output_path` |
+
+The old `save_as` flag is gone: it was ignored, so `save_as: true` without `output_path` saved in
+place over the current file. It is now refused like any argument the tool does not take (see
+[Error Handling](#error-handling)); pass `output_path` to save under a new name.
 
 A project that already has a file name (it was loaded with `load_project`, or named by a previous
 `export_3mf` / `save_project`) is saved in place when `output_path` is omitted. A project with no
@@ -2461,7 +2469,7 @@ Place the small brim tabs at chosen points. Brim ears are **not** facet paint â€
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `object_id` | integer | Yes | Object index (0-based). No `volume_id`: ears are object-level, and the object need not have a model part |
-| `points` | array | Yes | `[{x, y, radius?}]` in plate mm. An empty array removes every ear, when `append` is left `false` |
+| `points` | array | Yes | `[{x, y, radius?}]` in plate mm. An empty array removes every ear, when `append` is left `false`. A point may also carry `z`, which is ignored, so the `brim_ears` a response lists can be sent back as they are |
 | `radius` | number | No | Default ear radius for points without one (default 5.0 mm, range 0.1-100) |
 | `append` | boolean | No | `false` (default) replaces the object's ears; `true` adds to them |
 | `instance_id` | integer | No | Must be `0` (the default) â€” `set_brim_ears` rejects any other value |
@@ -2469,6 +2477,10 @@ Place the small brim tabs at chosen points. Brim ears are **not** facet paint â€
 Only `x` and `y` matter: an ear always sits on the underside of the object. Ears produce
 brim only when `brim_type` is `painted`; the response says so in `info_messages` when it
 is not.
+
+No tool removes or moves a single ear. To edit them, take the `brim_ears` this tool or
+`get_object_paint` returned, change the list, and send it back as `points` with `append` left
+`false`; their `z` is accepted and ignored.
 
 Brim ears are object-level data, not per-instance: `Brim.cpp` resolves stored ears through
 instance 0 only when slicing, so writing through any other instance's frame would store a
@@ -2717,7 +2729,9 @@ read the first free slot of the family is used, as before.
 | `color_delta_e` | number \| null | Perceptual distance between the project filament's colour and the slot's. `0` is an exact match, ~2.3 is a just-noticeable difference, and anything above ~10 is a visibly different colour â€” worth warning the user about before printing. `null` when either colour is missing or is not a `#RRGGBB` value. |
 
 `color_delta_e` is reported for explicitly requested mappings too, so a hand-picked slot can be
-checked the same way.
+checked the same way. A reported list can be passed back as `material_mappings` as it is, for
+example to `print_printer_file` after an upload with `start_print: false`: `color_delta_e` is
+accepted there and ignored.
 
 ---
 
@@ -2803,22 +2817,53 @@ Many tools return an `active_warnings` section in their response, providing visi
 
 ## Error Handling
 
-All tools return errors in JSON-RPC format:
+A tool that ran and could not do what it was asked answers normally, with `"status": "error"` and a
+`message` in its result. A call that never reached the tool is a JSON-RPC error instead.
+
+**Arguments the tool's schema does not allow** are refused before the tool runs, with -32602. The
+message names the tool, what is wrong, and every argument (or, inside a nested object, every key)
+it takes, required ones first:
+
 ```json
-{
-  "error": {
-    "code": -32602,
-    "message": "Invalid params: object_id is required"
-  }
-}
+{"jsonrpc": "2.0", "id": 7, "error": {"code": -32602,
+ "message": "scale_object has no argument \"scale\". Its arguments: object_id, include_preview, preview_resolution, preview_views, uniform, x, y, z."}}
 ```
 
-Common error codes:
+| The call | The message |
+|----------|-------------|
+| An argument the tool does not take | `scale_object has no argument "scale". Its arguments: ...` |
+| A required argument left out | `get_object_info is missing its required argument "object_id". Its arguments: object_id.` |
+| A misspelled required argument (both at once) | `scale_object has no argument "objectid" and is missing its required argument "object_id". Its arguments: ...` |
+| A tool that takes no arguments | `get_slicing_status has no argument "plate". It takes no arguments.` |
+| A key a nested object does not take | `set_object_config: settings[0] has no key "unit". Its keys: key, value.` |
+| A nested object's required key left out | `apply_config: settings[0] is missing its required key "type". Its keys: type, key, value.` |
+| `arguments` that is not an object | `get_server_info's arguments must be a JSON object of named arguments; got array.` |
+
+Absent and `null` `arguments` both mean no arguments. Nested objects are checked where their schema
+says `additionalProperties: false`: `set_object_config`'s items, `set_object_layer_range`'s
+`settings` items, `transform_objects`' entries and their `position`/`rotation`/`scale`,
+`apply_config`'s `settings` items, `set_brim_ears`' `points`, `printer_control`'s `nozzles`,
+`send_to_printer`'s and `print_printer_file`'s `material_mappings`, `paint_object`'s `box` and
+`sphere`, and `pick_facet`'s `ray`. What a tool returns in the shape one of these takes is accepted
+back: `brim_ears` as `set_brim_ears`' `points` (their `z` is ignored), a send's reported
+`material_mappings` (their `color_delta_e` is ignored), and an object's `position`,
+`rotation_degrees` and `scale` as `transform_objects`' `position`, `rotation` and `scale`. Other
+nested objects take any key: a render's `views` and a paint call's `bands` may be passed back with
+the extra fields the response carried.
+Types, ranges and enum values are not checked here; the tool reports those itself. The bridge's own
+tools (`start_orca`, `wait_for_slice`) are held to their schemas the same way.
+
+JSON-RPC error codes:
 | Code | Meaning |
 |------|---------|
-| -32602 | Invalid parameters |
-| -32603 | Internal error |
-| -32601 | Unknown tool |
+| -32700 | The request is not valid JSON |
+| -32600 | Not a JSON-RPC 2.0 request, or not a POST |
+| -32601 | Unknown JSON-RPC method (not a tool: an unknown tool is -32602) |
+| -32602 | Invalid params: an unknown or bridge-only tool, or arguments the tool's schema refuses (above) |
+| -32603 | Internal error: the tool failed unexpectedly; the message names it |
+| -32001 | OrcaMCP is still starting up; retry in a few seconds |
+| -32002 | OrcaMCP is quitting, so the call was not run; `start_orca` starts it again |
+| -32003 | Refused: the request came from a web page (`Origin`) or named another host (`Host`) |
 
 ---
 

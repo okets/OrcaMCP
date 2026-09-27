@@ -778,6 +778,68 @@ BRIDGE_HANDLERS = {
 }
 
 
+# JSON-RPC's invalid-params error, which a tool call the tool's schema refuses gets, as in the app.
+INVALID_PARAMS_ERROR = -32602
+
+
+def json_type_name(value) -> str:
+    """The JSON name of a decoded value's type, as the app's messages spell it."""
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, (int, float)):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    return "array" if isinstance(value, list) else "object"
+
+
+def _named(names: list, noun: str, quoted: bool) -> str:
+    listed = ", ".join(f'"{n}"' if quoted else n for n in names)
+    return f"{noun}{'s' if len(names) != 1 else ''} {listed}"
+
+
+def argument_error(name: str, schema: dict, arguments) -> str | None:
+    """Why a call to one of the bridge's own tools does not fit its schema, the inputSchema from
+    orcamcp_tools.json, worded as the app words it for its tools (OrcaMCPToolArguments.cpp): arguments
+    that are not an object, an argument the schema does not declare, or a required one left out.
+
+    Only the top level is checked: no bridge tool takes a nested object (scripts/tests holds that), so
+    the app's walk through nested objects has nothing to look at here. None when the call fits."""
+    if not isinstance(arguments, dict):
+        return f"{name}'s arguments must be a JSON object of named arguments; got {json_type_name(arguments)}."
+    declared = schema.get("properties") or {}
+    required = [r for r in schema.get("required") or [] if isinstance(r, str)]
+    unknown = sorted(k for k in arguments if k not in declared) if schema.get("additionalProperties") is False else []
+    missing = [r for r in required if r not in arguments]
+    if not unknown and not missing:
+        return None
+    parts = []
+    if unknown:
+        parts.append("has no " + _named(unknown, "argument", quoted=True))
+    if missing:
+        parts.append("is missing its required " + _named(missing, "argument", quoted=True))
+    taken = required + sorted(k for k in declared if k not in required)
+    listed = f"Its arguments: {', '.join(taken)}." if taken else "It takes no arguments."
+    return f"{name} {' and '.join(parts)}. {listed}"
+
+
+def bridge_tool_schema(name: str) -> dict:
+    """The inputSchema orcamcp_tools.json gives one of the bridge's own tools."""
+    return next((t["inputSchema"] for t in BRIDGE_TOOLS if t["name"] == name), {})
+
+
+def call_bridge_tool(request_id, name: str, handler, arguments) -> dict:
+    """One of the bridge's own tools, once its arguments fit its schema; absent and null mean none."""
+    arguments = {} if arguments is None else arguments
+    error = argument_error(name, bridge_tool_schema(name), arguments)
+    if error:
+        log_debug(f"{name} refused: {error}")
+        return make_error_response(request_id, INVALID_PARAMS_ERROR, error)
+    return handler(request_id, arguments)
+
+
 def handle_local_request(request: dict) -> dict | None:
     """
     Handle requests locally when OrcaSlicer isn't available.
@@ -815,9 +877,10 @@ def handle_local_request(request: dict) -> dict | None:
 
     # The bridge's own tools are always answered here, whether the app runs or not
     if method == "tools/call":
-        handler = BRIDGE_HANDLERS.get(params.get("name", ""))
+        name = params.get("name", "")
+        handler = BRIDGE_HANDLERS.get(name)
         if handler is not None:
-            return handler(request_id, params.get("arguments", {}))
+            return call_bridge_tool(request_id, name, handler, params.get("arguments"))
 
     # Optimization: For tools/list during initial startup (no cached tools),
     # return minimal list immediately without slow connection check
@@ -867,9 +930,11 @@ def normalize_paths_for_windows(request: dict) -> dict:
     if request.get("method") != "tools/call":
         return request
 
-    params = request.get("params", {})
-    arguments = params.get("arguments", {})
-    if not arguments:
+    # Only named arguments carry paths. Anything else (a string or a list where the object belongs) is
+    # forwarded untouched, so the app refuses it as invalid params (-32602) rather than this raising.
+    params = request.get("params")
+    arguments = params.get("arguments") if isinstance(params, dict) else None
+    if not isinstance(arguments, dict) or not arguments:
         return request
 
     # Path parameter names used by OrcaMCP tools

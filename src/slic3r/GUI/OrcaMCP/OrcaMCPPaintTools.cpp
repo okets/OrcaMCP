@@ -224,23 +224,6 @@ nlohmann::json painted_json(const Slic3r::ModelVolume& mv, PaintMode mode)
     return painted_json(mode, read_volume_paint(mv, mode));
 }
 
-// The brim ears on an object, converted back into the plate coordinates the API speaks.
-// brim_points are stored object-local (Model.hpp:390); the actual object-local -> plate
-// transform is brim_point_to_plate (OrcaMCPPaintModel), which is what set_brim_ears's write
-// path inverts, so this and that call cannot drift into different frames.
-nlohmann::json brim_ears_json(const Slic3r::ModelObject& obj, std::size_t instance_idx)
-{
-    nlohmann::json ears = nlohmann::json::array();
-    for (const Slic3r::BrimPoint& point : obj.brim_points) {
-        const Slic3r::Vec3d plate_pos = brim_point_to_plate(obj, point.pos, instance_idx);
-        ears.push_back({{"x", plate_pos.x()},
-                        {"y", plate_pos.y()},
-                        {"z", plate_pos.z()},
-                        {"radius", double(point.head_front_radius)}});
-    }
-    return ears;
-}
-
 // The GUI bookkeeping a paint write owes. It lives here, once, because every tool that writes
 // paint owes exactly the same and a copy per tool is how the four modes drift apart.
 // GLGizmoMmuSegmentation::update_model_object does the same three things after its
@@ -859,6 +842,7 @@ void OrcaMCPServer::register_paint_tools()
                         {"min", {{"type", "array"}, {"items", {{"type", "number"}}}}},
                         {"max", {{"type", "array"}, {"items", {{"type", "number"}}}}}
                     }},
+                    {"additionalProperties", false},
                     {"description", "Axis-aligned box in plate mm (selection=box)"}
                 }},
                 {"sphere", {
@@ -867,6 +851,7 @@ void OrcaMCPServer::register_paint_tools()
                         {"center", {{"type", "array"}, {"items", {{"type", "number"}}}}},
                         {"radius", {{"type", "number"}}}
                     }},
+                    {"additionalProperties", false},
                     {"description", "Sphere in plate mm (selection=sphere)"}
                 }},
                 {"filament", {
@@ -1547,9 +1532,13 @@ void OrcaMCPServer::register_paint_tools()
                         {"properties", {
                             {"x", {{"type", "number"}}},
                             {"y", {{"type", "number"}}},
+                            {"z", {{"type", "number"},
+                                   {"description", "Accepted and ignored: an ear always sits on the object's underside. "
+                                                   "Here so the brim_ears a response lists can be sent back as they are."}}},
                             {"radius", {{"type", "number"}, {"description", "Ear radius in mm, 0.1 to 100"}}}
                         }},
-                        {"required", {"x", "y"}}
+                        {"required", {"x", "y"}},
+                        {"additionalProperties", false}
                     }},
                     {"description", "Ear positions in plate mm. An empty array removes every ear, "
                                     "when append is left false."}
@@ -1593,11 +1582,8 @@ void OrcaMCPServer::register_paint_tools()
                                                       "instance 0, so only instance_id: 0 is "
                                                       "meaningful here"}};
 
-                // params["points"] would be UB on a missing key (const operator[] asserts
-                // find != end(), and NDEBUG compiles that assert out in every non-Debug config
-                // this project ships) rather than throwing something the dispatcher could catch.
-                // Nothing validates `required` server-side, so this guard is load-bearing, not
-                // belt-and-suspenders.
+                // tools/call refuses a call without points (it is required), but not one whose points
+                // is not an array, which the loop below could not read.
                 if (!params.contains("points") || !params["points"].is_array())
                     return nlohmann::json{{"status", "error"},
                                           {"message", "points must be an array of {x, y, radius?}"}};
@@ -1904,6 +1890,7 @@ void OrcaMCPServer::register_paint_tools()
                 {"ray", {{"type", "object"},
                          {"properties", {{"origin", {{"type", "array"}, {"items", {{"type", "number"}}}}},
                                          {"direction", {{"type", "array"}, {"items", {{"type", "number"}}}}}}},
+                         {"additionalProperties", false},
                          {"description", "Plate mm; the first surface along the ray is picked"}}},
                 {"pixel", {{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 2}, {"maxItems", 2},
                            {"description", "[u, v] in the render's pixels, (0,0) top-left; needs `camera`"}}},

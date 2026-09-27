@@ -51,6 +51,7 @@ add_executable(${_TEST_NAME}_tests
     test_layer_plan.cpp
     test_filament_model.cpp
     test_mcp_tool_list.cpp
+    test_mcp_tool_arguments.cpp
     test_mcp_model_load.cpp
     test_mcp_suppression.cpp
     test_mcp_shutdown.cpp

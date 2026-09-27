@@ -132,11 +132,14 @@ bridge on the machine that runs OrcaMCP; `ORCAMCP_HOST` is `localhost` or `127.0
 2. **Wrong plate selected**
    - Use `get_scene_info` to see all plates and their objects
 
-### "file_path is required"
+### "… is missing its required argument …" / "… has no argument …"
+
+A JSON-RPC error -32602: the call does not fit the tool's schema, so it was not run. The message
+names the tool, what is wrong, and every argument the tool takes.
 
 **Causes & Solutions:**
 
-1. **Missing parameter**
+1. **Missing parameter**: `load_model is missing its required argument "file_path". Its arguments: file_path, include_preview, multipart.`
    ```json
    // Wrong
    {"name": "load_model", "arguments": {}}
@@ -145,8 +148,12 @@ bridge on the machine that runs OrcaMCP; `ORCAMCP_HOST` is `localhost` or `127.0
    {"name": "load_model", "arguments": {"file_path": "/path/to/model.stl"}}
    ```
 
-2. **Typo in parameter name**
-   - Check exact parameter names in docs/tools/reference.md
+2. **Typo in parameter name, or one the tool does not take**: `scale_object has no argument "scale". Its arguments: object_id, include_preview, preview_resolution, preview_views, uniform, x, y, z.`
+   - Use a name from the list the message ends with; docs/tools/reference.md describes each one.
+   - Inside a nested object the message gives its path: `set_object_config: settings[0] has no key "unit". Its keys: key, value.`
+
+3. **Arguments sent as something other than an object** (a list, or a JSON string):
+   `get_server_info's arguments must be a JSON object of named arguments; got array.`
 
 ### "File not found"
 
