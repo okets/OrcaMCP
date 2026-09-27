@@ -638,6 +638,20 @@ nlohmann::json listed_input_schema(const nlohmann::json& input_schema)
     return schema;
 }
 
+// The values an argument takes one of: its schema's enum, and what its refusal lists.
+const std::vector<std::string> k_cut_keep_values{"below", "above", "both"};
+
+// The refusal of a value `values` does not hold, or nothing when it does.
+std::optional<std::string> not_one_of(const char* name, const std::vector<std::string>& values, const std::string& given)
+{
+    if (std::find(values.begin(), values.end(), given) != values.end())
+        return std::nullopt;
+    std::string listed;
+    for (const std::string& value : values)
+        listed += (listed.empty() ? "" : ", ") + value;
+    return std::string(name) + " must be one of " + listed + "; got \"" + given + "\"";
+}
+
 } // namespace
 
 nlohmann::json OrcaMCPServer::tool_list_entry(const ToolDefinition& tool)
@@ -5285,7 +5299,7 @@ void OrcaMCPServer::register_builtin_tools()
                 }},
                 {"keep", {
                     {"type", "string"},
-                    {"enum", nlohmann::json::array({"below", "above", "both"})},
+                    {"enum", k_cut_keep_values},
                     {"description", "below (default), above, or both"}
                 }},
                 {"include_preview", {
@@ -5302,6 +5316,9 @@ void OrcaMCPServer::register_builtin_tools()
                 return nlohmann::json{{"status", "error"},
                                       {"message", "z_height must be a finite number, in plate millimetres"}};
             std::string keep = params.value("keep", "below");
+            // Anything else used to be cut as below.
+            if (const auto refusal = not_one_of("keep", k_cut_keep_values, keep))
+                return error_response(*refusal);
             bool include_preview = params.value("include_preview", false);
             return run_on_main_thread([object_id, z_height, keep, include_preview]() {
                 Plater* plater = wxGetApp().plater();

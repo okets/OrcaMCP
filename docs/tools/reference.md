@@ -846,7 +846,7 @@ Cut an object at a specified Z height.
 |-----------|------|----------|-------------|
 | `object_id` | integer | Yes | Object index |
 | `z_height` | number | Yes | Cut height in plate mm, measured from the bed |
-| `keep` | string | No | "below", "above", or "both" (default: "both") |
+| `keep` | string | No | "below" (the default), "above", or "both". Any other value is refused, listing these: it used to be cut as "below" |
 
 **Example:**
 ```json

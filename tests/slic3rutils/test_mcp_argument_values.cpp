@@ -65,3 +65,9 @@ TEST_CASE("clone_object refuses a count below 1, which made no copy but still re
     const int count = GENERATE(0, -2);
     CHECK(refusal("clone_object", {{"object_id", 0}, {"count", count}}) == "count must be 1 or more: the number of copies to make");
 }
+
+TEST_CASE("cut_object refuses a keep it does not know, which it cut as below", "[McpArgumentValues][orcamcp]")
+{
+    CHECK(refusal("cut_object", {{"object_id", 0}, {"z_height", 5.0}, {"keep", "top"}}) ==
+          "keep must be one of below, above, both; got \"top\"");
+}
