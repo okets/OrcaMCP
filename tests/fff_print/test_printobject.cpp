@@ -655,3 +655,36 @@ TEST_CASE("Body centering survives islands merging and splitting between layers"
         }
     }
 }
+
+TEST_CASE("An extruder without a printable height of its own can print every filament at any height", "[PrintObject][PrintableHeight]")
+{
+    // extruder_printable_height per extruder; 0 is the default of every profile that sets none.
+    // The cube is 20 mm tall and its walls print with filament 2 (id 1), so only an extruder
+    // limited below 20 mm cannot print them.
+    const auto [heights, limited] = GENERATE(table<std::string, std::vector<bool>>({
+        { "0,0",     { false, false } },
+        { "10,0",    { true,  false } },
+        { "0,10",    { false, true  } },
+        { "250,250", { false, false } },
+    }));
+    DYNAMIC_SECTION("extruder heights " << heights) {
+        const DynamicPrintConfig config = multifilament_config(2, {
+            { "nozzle_diameter",                "0.4,0.4" },
+            { "printer_extruder_id",            "1,2" },
+            { "printer_extruder_variant",       "Direct Drive Standard,Direct Drive Standard" },
+            { "extruder_printable_height",      heights },
+            { "single_extruder_multi_material", 0 },
+            { "outer_wall_filament_id",         2 },
+            { "inner_wall_filament_id",         2 },
+        });
+        Slic3r::Print print;
+        init_and_process_print({ cube(20) }, print, config);
+
+        const std::vector<std::set<int>> unprintables = print.get_geometric_unprintable_filaments();
+        REQUIRE(unprintables.size() == 2);
+        for (size_t extruder = 0; extruder < unprintables.size(); ++extruder) {
+            INFO("extruder " << extruder + 1);
+            CHECK(unprintables[extruder].count(1) == (limited[extruder] ? 1u : 0u));
+        }
+    }
+}

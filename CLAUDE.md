@@ -893,7 +893,7 @@ echo "Q restore prompt closed by a quit deletes the backup (rel2506/04c):  $(U s
 echo "S the logout handler ends dialogs with wxID_ABORT (rel2506/04c):    $(U src/slic3r/GUI/GUI_App.cpp | grep -c 'EndModal(wxID_ABORT)')"
 echo "V the object list's mesh-error text lives inside ObjectList / its first icon reads mesh().stats() / ObjectList::get_repaired_errors_count exists (rel2506/05): $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^MeshErrorsInfo ObjectList::get_mesh_errors_info\(const int obj_idx/{f=1} f&&/_L_PLURAL/{print "yes"; exit} f&&/^}/{print "no"; exit}') / $(U src/slic3r/GUI/GUI_ObjectList.cpp | grep -c 'get_warning_icon_name(model_object->mesh().stats())') / $(U src/slic3r/GUI/GUI_ObjectList.cpp | grep -c '^int ObjectList::get_repaired_errors_count')"
 echo "X upstream's slic3rutils tests get no Windows-first force-include (rel2506/ci-fixes; 0 = bug): $(U tests/slic3rutils/CMakeLists.txt | grep -c 'win_platform.hpp')"
-echo "Y the processor reads print_z only from Bambu's Z tag / the G-code check takes an unset extruder height for 0 mm (rel2506/07b): $(U src/libslic3r/GCode/GCodeProcessor.cpp | grep -c 'if (boost::starts_with(comment, " Z_HEIGHT:")) {') / $(U src/libslic3r/GCode/GCodeProcessor.cpp | grep -c '(extruder_id < printable_heights.size()) && (iter->second.max_print_z > printable_heights\[extruder_id\])')"
+echo "Y the processor reads print_z only from Bambu's Z tag / the G-code check and / the filament grouping take an unset extruder height for 0 mm (rel2506/07b): $(U src/libslic3r/GCode/GCodeProcessor.cpp | grep -c 'if (boost::starts_with(comment, " Z_HEIGHT:")) {') / $(U src/libslic3r/GCode/GCodeProcessor.cpp | grep -c '(extruder_id < printable_heights.size()) && (iter->second.max_print_z > printable_heights\[extruder_id\])') / $(U src/libslic3r/PrintObject.cpp | awk '/double printable_height = printable_height_per_extruder\[extruder_id\];/{getline; print ($0 ~ /for \(/ ? "yes" : "no"); exit}')"
 echo "Z reslice refuses on a validation failure a settings fix removed until the 0.5 s timer runs / show_error defers its dialog (rel2506/06b): $(U src/slic3r/GUI/Plater.cpp | grep -c 'process_completed_with_error, return directly') / $(U src/slic3r/GUI/GUI.cpp | awk '/^void show_error\(wxWindow\* parent, const wxString/{f=1} f&&/CallAfter/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
 echo "AA upstream's slicer reads a layer range's layer_height unchecked, and a file can carry a range without one (rel2506/06b): $(U src/libslic3r/Slicing.cpp | grep -c 'it_range->second.option("layer_height")->getFloat()')"
 echo "AB Print::apply copies a new object name without invalidating the G-code (rel2506/06b): $(U src/libslic3r/PrintApply.cpp | awk '/model_object.name       = model_object_new.name;/{print (prev ~ /invalidate_step\(psGCodeExport\)/ ? "no" : "yes"); exit} {prev=$0}')"
@@ -1000,9 +1000,13 @@ a toolpath above the printable height. It can be there: the pre-slice height che
 object without its raft. Ours reads both tags (`is_layer_z_tag`). That alone would have failed every
 slice on the 155 non-Bambu multi-extruder profiles: none sets `extruder_printable_height`, whose 0
 default the per-extruder check took for a 0 mm limit. So an unset height limits nothing
-(`limits_extruder_height`, `ExtruderPrintableHeight.hpp`).
+(`limits_extruder_height`, `ExtruderPrintableHeight.hpp`), there and in
+`PrintObject::detect_extruder_geometric_unprintables`, where the same 0 marked every filament with a
+per-feature assignment unprintable on that extruder and cancelled another extruder's real limit in the
+filament grouping.
 `print_z` has no other reader: the viewer, libvgcode, `custom_gcode_per_print_z` and MCP's layer plan
-use move positions. For each 0, take upstream's code and re-run `fff_print_tests "[GCodeHeightCheck]"`.
+use move positions. For each 0 or "no", take upstream's code and re-run `fff_print_tests
+"[GCodeHeightCheck],[PrintableHeight]"`.
 
 Item Z: a settings change reaches the slicer only when `background_process_timer` fires, 0.5 s later
 (`Plater::priv::schedule_background_process`); until then upstream's `reslice()` returns early on the
