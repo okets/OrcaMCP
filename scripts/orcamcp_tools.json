@@ -1021,7 +1021,16 @@
         "additionalProperties": false,
         "properties": {
           "category": {
-            "description": "per_object, print, filament, printer, toolchanger, project, or all",
+            "description": "per_object (default), print, filament, printer, toolchanger, project, or all",
+            "enum": [
+              "per_object",
+              "print",
+              "filament",
+              "printer",
+              "toolchanger",
+              "project",
+              "all"
+            ],
             "type": "string"
           },
           "include_descriptions": {

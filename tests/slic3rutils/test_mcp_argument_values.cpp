@@ -71,3 +71,9 @@ TEST_CASE("cut_object refuses a keep it does not know, which it cut as below", "
     CHECK(refusal("cut_object", {{"object_id", 0}, {"z_height", 5.0}, {"keep", "top"}}) ==
           "keep must be one of below, above, both; got \"top\"");
 }
+
+TEST_CASE("get_valid_config_keys refuses a category it does not know, which listed no keys", "[McpArgumentValues][orcamcp]")
+{
+    CHECK(refusal("get_valid_config_keys", {{"category", "speed"}}) ==
+          "category must be one of per_object, print, filament, printer, toolchanger, project, all; got \"speed\"");
+}

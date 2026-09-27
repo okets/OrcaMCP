@@ -1408,7 +1408,8 @@ List valid configuration keys for a category.
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `category` | string | Yes | "per_object", "print", "filament", or "printer" |
+| `category` | string | No | "per_object" (the default), "print", "filament", "printer", "toolchanger", "project", or "all". Any other value is refused, listing these: it used to return no keys |
+| `include_descriptions` | boolean | No | Add each key's description |
 
 ---
 

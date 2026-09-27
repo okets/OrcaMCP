@@ -640,6 +640,7 @@ nlohmann::json listed_input_schema(const nlohmann::json& input_schema)
 
 // The values an argument takes one of: its schema's enum, and what its refusal lists.
 const std::vector<std::string> k_cut_keep_values{"below", "above", "both"};
+const std::vector<std::string> k_config_key_categories{"per_object", "print", "filament", "printer", "toolchanger", "project", "all"};
 
 // The refusal of a value `values` does not hold, or nothing when it does.
 std::optional<std::string> not_one_of(const char* name, const std::vector<std::string>& values, const std::string& given)
@@ -2179,7 +2180,8 @@ void OrcaMCPServer::register_builtin_tools()
             {"properties", {
                 {"category", {
                     {"type", "string"},
-                    {"description", "per_object, print, filament, printer, toolchanger, project, or all"}
+                    {"enum", k_config_key_categories},
+                    {"description", "per_object (default), print, filament, printer, toolchanger, project, or all"}
                 }},
                 {"include_descriptions", {
                     {"type", "boolean"},
@@ -2189,6 +2191,9 @@ void OrcaMCPServer::register_builtin_tools()
         },
         [](const nlohmann::json& params) -> nlohmann::json {
             std::string category = params.value("category", "per_object");
+            // Anything else used to list no keys, with success.
+            if (const auto refusal = not_one_of("category", k_config_key_categories, category))
+                return error_response(*refusal);
             bool include_descriptions = params.value("include_descriptions", false);
 
             return run_on_main_thread([category, include_descriptions]() {
