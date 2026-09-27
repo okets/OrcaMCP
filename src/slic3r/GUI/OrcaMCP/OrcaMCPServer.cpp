@@ -5146,7 +5146,8 @@ void OrcaMCPServer::register_bridge_tools()
         "slice_all. It returns when the run ends, or after timeout_s. outcome is done (every plate the "
         "run sliced has a result), ended_early or incomplete (slicing_status.slice_run.message says "
         "which plates and why), not_slicing (nothing was running and the selected plate has no result), "
-        "or timed_out (still slicing: call it again). slicing_status is get_slicing_status's final "
+        "timed_out (still slicing: call it again), or app_gone (the app quit or crashed during the wait). "
+        "slicing_status is get_slicing_status's final "
         "answer, with each plate's percent. The wait is capped at ORCAMCP_TIMEOUT minus 15 s (105 s at "
         "the default 120 s), because the bridge answers nothing else while it waits; timeout_cap_s "
         "reports the cap applied.",

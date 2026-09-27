@@ -2728,9 +2728,12 @@ app is too busy to answer does not end it.
 | `incomplete` | The run is over and some of its plates have no result, or no longer exist (a plate-list change cancels Slice All); `message` names them |
 | `not_slicing` | Nothing was slicing and the selected plate has no result: `slice_all` was never called, or could not start |
 | `timed_out` | Still slicing at the timeout (`timed_out: true`); call it again |
+| `app_gone` | The app quit or crashed during the wait: it answered that it is quitting, or stopped listening after it had answered. The slice did not finish; `start_orca`, then `slice_all` again |
 
 `slicing_status` is `get_slicing_status`'s last answer (`null` if the app answered no poll in
-time). An app that is not running, or that fails the status call, ends the wait with an error.
+time). A poll the app is too busy to answer, or whose connection closes under the reply, does not
+end the wait. An app that is not running when the wait starts, or that fails the status call, ends
+it with an error.
 
 ### Tool list freshness
 

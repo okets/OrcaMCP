@@ -5,7 +5,9 @@ a scripted sequence of statuses, one per call, repeating the last. The poll inte
 a whole wait takes milliseconds.
 """
 
+import contextlib
 import http.server
+import io
 import json
 import os
 import socket
@@ -13,6 +15,7 @@ import sys
 import threading
 import time
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(__file__))
 from bridge_test_support import load_bridge  # noqa: E402
@@ -41,7 +44,11 @@ class FakeApp(http.server.BaseHTTPRequestHandler):
     script = []
     calls = []
     delay_first_s = 0.0
+    delay_every_s = 0.0
     rpc_error = None
+    rpc_error_from_call = 1   # the first call that gets rpc_error
+    drop_calls = set()        # calls answered by closing the connection, as an app that dies mid-reply
+    on_answered = None        # called with the call number after each answer
 
     def do_GET(self):
         self._send({"name": "orca-slicer"})
@@ -49,14 +56,22 @@ class FakeApp(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         request = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
         FakeApp.calls.append(request["params"]["name"])
-        if len(FakeApp.calls) == 1 and FakeApp.delay_first_s:
+        call = len(FakeApp.calls)
+        if call == 1 and FakeApp.delay_first_s:
             time.sleep(FakeApp.delay_first_s)
-        if FakeApp.rpc_error is not None:
+        if FakeApp.delay_every_s:
+            time.sleep(FakeApp.delay_every_s)
+        if call in FakeApp.drop_calls:
+            self.close_connection = True  # no reply at all: the bridge sees the connection close
+            return
+        if FakeApp.rpc_error is not None and call >= FakeApp.rpc_error_from_call:
             self._send({"jsonrpc": "2.0", "id": request.get("id"), "error": FakeApp.rpc_error})
             return
-        answer = FakeApp.script[min(len(FakeApp.calls), len(FakeApp.script)) - 1]
+        answer = FakeApp.script[min(call, len(FakeApp.script)) - 1]
         self._send({"jsonrpc": "2.0", "id": request.get("id"),
                     "result": {"content": [{"type": "text", "text": json.dumps(answer)}]}})
+        if FakeApp.on_answered is not None:
+            FakeApp.on_answered(call)
 
     def _send(self, body):
         payload = json.dumps(body).encode()
@@ -76,6 +91,7 @@ class FakeApp(http.server.BaseHTTPRequestHandler):
 class WaitForSliceTest(unittest.TestCase):
     def setUp(self):
         FakeApp.script, FakeApp.calls, FakeApp.delay_first_s, FakeApp.rpc_error = [DONE], [], 0.0, None
+        FakeApp.delay_every_s, FakeApp.rpc_error_from_call, FakeApp.drop_calls, FakeApp.on_answered = 0.0, 1, set(), None
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeApp)
         self.server.daemon_threads = True
         threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True).start()
@@ -84,8 +100,14 @@ class WaitForSliceTest(unittest.TestCase):
         self.bridge.WAIT_FOR_SLICE_POLL_S = 0.01
 
     def tearDown(self):
-        self.server.shutdown()
-        self.server.server_close()
+        self.stop_app()
+
+    def stop_app(self):
+        """Close the fake app's listening socket, so a connection is refused, as after a quit."""
+        if self.server is not None:
+            self.server.shutdown()
+            self.server.server_close()
+            self.server = None
 
     def call(self, arguments=None):
         """The tool call as a client makes it, and the result's decoded text."""
@@ -187,10 +209,49 @@ class WaitForSliceTest(unittest.TestCase):
         self.assertIn("start_orca", text)
 
     def test_an_error_from_the_app_ends_the_wait_with_it(self):
-        FakeApp.rpc_error = {"code": -32002, "message": "OrcaMCP is quitting"}
+        FakeApp.rpc_error = {"code": -32603, "message": "Tool 'get_slicing_status' failed: boom"}
         result, text = self.call()
         self.assertTrue(result["isError"])
-        self.assertIn("quitting", text)
+        self.assertIn("boom", text)
+
+    def test_a_connection_dropped_mid_poll_does_not_end_the_wait(self):
+        FakeApp.drop_calls = {1}
+        FakeApp.script = [DONE]
+        result, report = self.call({"timeout_s": 5})
+        self.assertFalse(result["isError"])
+        self.assertEqual(report["outcome"], "done")
+        self.assertEqual(len(FakeApp.calls), 2)
+
+    def test_an_app_that_quits_mid_wait_ends_it_as_app_gone(self):
+        FakeApp.script = [SLICING]
+        FakeApp.rpc_error = {"code": -32002, "message": "OrcaMCP is quitting: the call was not run"}
+        FakeApp.rpc_error_from_call = 2
+        result, report = self.call({"timeout_s": 5})
+        self.assertFalse(result["isError"])
+        self.assertEqual(report["outcome"], "app_gone")
+        self.assertFalse(report["timed_out"])
+        self.assertIn("start_orca", report["message"])
+        self.assertEqual(report["slicing_status"], SLICING)
+
+    def test_an_app_that_stops_listening_mid_wait_ends_it_as_app_gone(self):
+        FakeApp.script = [SLICING]
+        FakeApp.drop_calls = {2}  # the reply cut short as the app goes, then nothing listens
+        FakeApp.on_answered = lambda call: threading.Thread(target=self.stop_app).start()
+        result, report = self.call({"timeout_s": 5})
+        self.assertFalse(result["isError"])
+        self.assertEqual(report["outcome"], "app_gone")
+
+    def test_a_request_the_bridge_fails_on_is_answered_under_its_own_id(self):
+        line = json.dumps({"jsonrpc": "2.0", "id": 42, "method": "tools/call",
+                           "params": {"name": "wait_for_slice", "arguments": {}}})
+        out = io.StringIO()
+        with mock.patch.object(self.bridge, "handle_local_request", side_effect=RuntimeError("unexpected")), \
+                mock.patch.object(self.bridge.sys, "stdin", io.StringIO(line + "\n")), \
+                contextlib.redirect_stdout(out):
+            self.bridge.main()
+        reply = json.loads(out.getvalue().splitlines()[0])
+        self.assertEqual(reply["id"], 42)
+        self.assertIn("unexpected", reply["error"]["message"])
 
     def test_a_timeout_that_is_not_a_number_of_seconds_is_refused_before_waiting(self):
         for bad in ("soon", 0, -3, 0.5, True, [5], float("nan")):

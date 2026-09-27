@@ -28,6 +28,7 @@ Configuration (Claude Code):
 """
 
 import sys
+import http.client
 import json
 import math
 import os
@@ -501,14 +502,21 @@ WAIT_FOR_SLICE_POLL_S = 1.5                  # between two get_slicing_status ca
 WAIT_FOR_SLICE_POLL_TIMEOUT_S = (1.0, 10.0)  # one poll's own HTTP timeout: (least, most)
 # The outcomes the app's get_slicing_status reports in slice_run.outcome once a run is over.
 FINISHED_SLICE_OUTCOMES = ("done", "ended_early", "incomplete")
+# JSON-RPC error the app answers with while it quits (OrcaMCPJsonRpcError.hpp, McpShuttingDown).
+APP_QUITTING_ERROR = -32002
 
 
 class AppBusy(Exception):
-    """A poll the app did not answer in time. It serves one request at a time, so the wait goes on."""
+    """A poll the app did not answer: too busy to within its timeout (it serves one request at a
+    time), or the connection closed under the reply. Either way the wait goes on."""
+
+
+class AppDown(Exception):
+    """Nothing listens at ORCAMCP_URL, or the app answered that it is quitting."""
 
 
 class AppUnavailable(Exception):
-    """A call that ends a wait: the app is down, refused the call, or answered something unreadable."""
+    """A call that ends a wait with an error: the app refused it, or answered something unreadable."""
 
 
 def wait_for_slice_cap() -> float:
@@ -536,8 +544,8 @@ def parse_wait_timeout(value, cap: float) -> tuple:
 
 
 def call_app_tool(name: str, arguments: dict, timeout: float) -> dict:
-    """One tools/call to the app, and its decoded result. Raises AppBusy for a call it did not answer
-    within `timeout`, and AppUnavailable for everything that ends a wait."""
+    """One tools/call to the app, and its decoded result. Raises AppBusy for a call it did not answer,
+    AppDown when nothing listens or the app is quitting, and AppUnavailable for the rest."""
     request = {"jsonrpc": "2.0", "id": name, "method": "tools/call",
                "params": {"name": name, "arguments": arguments}}
     try:
@@ -548,11 +556,17 @@ def call_app_tool(name: str, arguments: dict, timeout: float) -> dict:
         raise AppBusy()
     except urllib.error.URLError as e:
         if _verdict_for_exception(e) == DOWN:
-            raise AppUnavailable(NOT_RUNNING_MESSAGE)
+            raise AppDown()
         raise AppBusy()
     except json.JSONDecodeError as e:
         raise AppUnavailable(f"Invalid JSON response from OrcaSlicer: {e}")
+    except (http.client.HTTPException, OSError):
+        # The connection closed under the reply (RemoteDisconnected, a reset, an IncompleteRead): an app
+        # that is going away does this, and so does one whose request thread dropped the socket.
+        raise AppBusy()
     if "error" in reply:
+        if reply["error"].get("code") == APP_QUITTING_ERROR:
+            raise AppDown()
         raise AppUnavailable(f"{name} failed: {reply['error'].get('message', reply['error'])}")
     try:
         return json.loads(reply["result"]["content"][0]["text"])
@@ -585,25 +599,40 @@ def timed_out_message(timeout_s: float, status) -> str:
     return f"Still slicing after {timeout_s:g} s. Call wait_for_slice again to keep waiting."
 
 
+APP_GONE_MESSAGE = ("OrcaSlicer stopped answering during the wait: it quit or crashed, so the slice did not "
+                    "finish. Call start_orca, then slice_all again.")
+
+
 def run_wait_for_slice(timeout_s: float) -> dict:
-    """Poll get_slicing_status until nothing is slicing or timeout_s has passed, and report which."""
+    """Poll get_slicing_status until nothing is slicing, the app goes away, or timeout_s has passed, and
+    report which. Raises AppUnavailable for an app that was never there, or that failed the call."""
     started = time.monotonic()
     deadline = started + timeout_s
-    status, polls = None, 0
+    status, polls, app_seen, gone = None, 0, False, False
     while True:
         try:
             status = call_app_tool("get_slicing_status", {}, poll_timeout(deadline - time.monotonic()))
             polls += 1
+            app_seen = True
         except AppBusy:
-            pass
-        finished = status is not None and not status.get("is_slicing", False)
+            app_seen = True  # something accepted the connection
+        except AppDown:
+            if not app_seen:
+                raise AppUnavailable(NOT_RUNNING_MESSAGE)
+            gone = True
+        finished = gone or (status is not None and not status.get("is_slicing", False))
         remaining = deadline - time.monotonic()
         if finished or remaining <= 0:
             break
         time.sleep(min(WAIT_FOR_SLICE_POLL_S, remaining))
 
-    outcome, message = slice_outcome(status) if finished else ("timed_out", timed_out_message(timeout_s, status))
-    report = {"status": "success", "outcome": outcome, "timed_out": not finished}
+    if gone:
+        outcome, message = "app_gone", APP_GONE_MESSAGE
+    elif finished:
+        outcome, message = slice_outcome(status)
+    else:
+        outcome, message = "timed_out", timed_out_message(timeout_s, status)
+    report = {"status": "success", "outcome": outcome, "timed_out": outcome == "timed_out"}
     if message:
         report["message"] = message
     report.update(waited_s=round(time.monotonic() - started, 1), polls=polls, slicing_status=status)
@@ -835,6 +864,7 @@ def main():
 
     # Read JSON-RPC messages from stdin (one per line)
     for line in sys.stdin:
+        request = None
         try:
             line = line.strip()
             if not line:
@@ -879,9 +909,10 @@ def main():
             # Catch any unexpected errors to prevent server crash
             log_debug(f"Error processing request: {e}")
             print(f"Error in main loop: {e}", file=sys.stderr)
-            # Try to send an error response
+            # Try to send an error response, under the request's own id: a client waits for that id
             try:
-                error_response = make_error_response(0, -32603, f"Internal error: {str(e)}")
+                request_id = request.get("id") if isinstance(request, dict) else None
+                error_response = make_error_response(request_id, -32603, f"Internal error: {str(e)}")
                 print(json.dumps(error_response), flush=True)
             except Exception:
                 pass  # If we can't even send an error, just continue
