@@ -1,14 +1,19 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "slic3r/GUI/Jobs/ArrangeJob.hpp"
 #include "slic3r/GUI/Jobs/BoostThreadWorker.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPUiJob.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
+#include "slic3r/Utils/ThreadCancel.hpp"
 #include "libslic3r/Model.hpp"
 
 #include <atomic>
 #include <chrono>
 #include <future>
 #include <memory>
+#include <stdexcept>
+#include <string>
 #include <thread>
 
 // The UI worker's jobs -- an arrange, an orient -- as MCP starts them and waits for them. A real
@@ -19,6 +24,8 @@ using namespace std::chrono_literals;
 using Slic3r::GUI::BoostThreadWorker;
 using Slic3r::GUI::Job;
 using Slic3r::GUI::Worker;
+using namespace Slic3r::GUI::OrcaMCP;
+using State = UiJobOutcome::State;
 
 namespace {
 
@@ -127,4 +134,225 @@ TEST_CASE("An arrange's run is undone however it ends: the plates it locked, its
     CHECK_FALSE(plates.get_plate(0)->is_locked());
     CHECK_FALSE(arrange_running.load());
     CHECK(notification_closed);
+}
+
+// ==================== THE JOB MCP STARTS, AND ITS OUTCOME ====================
+
+namespace {
+
+// Finalize is told what the worker decided; this records it, and can throw from process.
+struct FakeJob : Job
+{
+    bool* finalized_canceled = nullptr;
+    bool  throws             = false;
+    void  process(Ctl&) override
+    {
+        if (throws)
+            throw std::runtime_error("no room on the plate");
+    }
+    void finalize(bool canceled, std::exception_ptr&) override
+    {
+        if (finalized_canceled != nullptr)
+            *finalized_canceled = canceled;
+    }
+};
+
+std::shared_ptr<ReportingJob> reporting(std::shared_ptr<UiJobOutcome> outcome, bool* finalized_canceled = nullptr)
+{
+    auto job                = std::make_unique<FakeJob>();
+    job->finalized_canceled = finalized_canceled;
+    return std::make_shared<ReportingJob>(std::move(job), std::move(outcome));
+}
+
+} // namespace
+
+TEST_CASE("A reported job's finalize says whether it finished or was cancelled, and passes the verdict on",
+          "[McpUiJob][orcamcp]")
+{
+    const bool canceled = GENERATE(false, true);
+    auto       outcome  = std::make_shared<UiJobOutcome>(UiJobKind::arrange);
+    bool       told     = !canceled;
+    {
+        auto               job = reporting(outcome, &told);
+        std::exception_ptr none;
+        job->finalize(canceled, none);
+    }
+    CHECK(told == canceled);
+    CHECK(outcome->state() == (canceled ? State::cancelled : State::finished));
+}
+
+TEST_CASE("A reported job that failed says why", "[McpUiJob][orcamcp]")
+{
+    auto outcome = std::make_shared<UiJobOutcome>(UiJobKind::orient);
+    {
+        auto               job  = reporting(outcome);
+        std::exception_ptr eptr = std::make_exception_ptr(std::runtime_error("no room on the plate"));
+        job->finalize(false, eptr);
+    }
+    CHECK(outcome->state() == State::failed);
+    CHECK(outcome->error() == "no room on the plate");
+}
+
+TEST_CASE("A reported job dropped before it ran is reported dropped", "[McpUiJob][orcamcp]")
+{
+    auto outcome = std::make_shared<UiJobOutcome>(UiJobKind::arrange);
+    reporting(outcome).reset(); // what cancel_all's clearing of the queue does to it
+    CHECK(outcome->state() == State::dropped);
+}
+
+TEST_CASE("On the worker, a reported job ends finished, cancelled or dropped as the worker ran it", "[McpUiJob][orcamcp]")
+{
+    BoostThreadWorker worker{nullptr, "test"};
+
+    SECTION("left to run")
+    {
+        auto outcome = std::make_shared<UiJobOutcome>(UiJobKind::arrange);
+        worker.push(reporting(outcome));
+        REQUIRE(pump_until_idle(worker, 5s));
+        CHECK(outcome->state() == State::finished);
+    }
+    SECTION("failing in process")
+    {
+        auto outcome  = std::make_shared<UiJobOutcome>(UiJobKind::orient);
+        auto job      = std::make_unique<FakeJob>();
+        job->throws   = true;
+        worker.push(std::make_shared<ReportingJob>(std::move(job), outcome));
+        // The worker rethrows a finalize's unhandled exception on the thread that delivers it.
+        const auto deadline = std::chrono::steady_clock::now() + 5s;
+        while (!worker.is_idle() && std::chrono::steady_clock::now() < deadline) {
+            try {
+                worker.process_events();
+            } catch (const std::exception&) {}
+            std::this_thread::sleep_for(2ms);
+        }
+        CHECK(outcome->state() == State::failed);
+        CHECK(outcome->error() == "no room on the plate");
+    }
+    SECTION("cancelled while it runs, or cleared from the queue before it starts")
+    {
+        auto blocker = std::make_shared<RecordingJob>();
+        blocker->hold.store(true);
+        worker.push(blocker);
+        auto outcome = std::make_shared<UiJobOutcome>(UiJobKind::arrange);
+        worker.push(reporting(outcome));
+        std::this_thread::sleep_for(50ms);
+        worker.cancel_all();
+        REQUIRE(pump_until_idle(worker, 5s));
+        CHECK(blocker->finalized_canceled);
+        CHECK(outcome->state() == State::dropped);
+    }
+}
+
+// ==================== WAITING FOR IT ====================
+
+TEST_CASE("The wait ends as soon as the job has ended", "[McpUiJob][orcamcp]")
+{
+    UiJobOutcome outcome(UiJobKind::orient);
+    std::thread  finalize([&outcome] {
+        std::this_thread::sleep_for(100ms);
+        outcome.end(State::finished);
+    });
+    const auto started = std::chrono::steady_clock::now();
+    const UiJobWait waited  = wait_for_ui_job(outcome, 5s);
+    const auto      took    = std::chrono::steady_clock::now() - started;
+    finalize.join();
+    CHECK(waited == UiJobWait::finished);
+    CHECK(took < 2s);
+}
+
+TEST_CASE("The wait reports how the job ended", "[McpUiJob][orcamcp]")
+{
+    const auto [state, expected] = GENERATE(table<State, UiJobWait>({{State::finished, UiJobWait::finished},
+                                                                     {State::cancelled, UiJobWait::cancelled},
+                                                                     {State::failed, UiJobWait::failed},
+                                                                     {State::dropped, UiJobWait::dropped}}));
+    UiJobOutcome outcome(UiJobKind::arrange);
+    outcome.end(state);
+    CHECK(wait_for_ui_job(outcome, 1s) == expected);
+}
+
+TEST_CASE("The wait gives up at its cap", "[McpUiJob][orcamcp]")
+{
+    UiJobOutcome outcome(UiJobKind::arrange);
+    const auto   started = std::chrono::steady_clock::now();
+    CHECK(wait_for_ui_job(outcome, 200ms) == UiJobWait::timed_out);
+    CHECK(std::chrono::steady_clock::now() - started < 2s);
+    CHECK(wait_for_ui_job(outcome, 0ms) == UiJobWait::timed_out);
+}
+
+TEST_CASE("The wait lets go at once when the app quits", "[McpUiJob][orcamcp]")
+{
+    // The request's cancel check is the gate: OrcaMCPServer::shut_down closes it when the app quits.
+    std::atomic<bool>                     quitting{false};
+    const Slic3r::ScopedThreadCancelCheck check([&quitting] { return quitting.load(); });
+    UiJobOutcome                          outcome(UiJobKind::arrange);
+    std::thread                           quit([&quitting] {
+        std::this_thread::sleep_for(100ms);
+        quitting.store(true);
+    });
+    const auto      started = std::chrono::steady_clock::now();
+    const UiJobWait waited  = wait_for_ui_job(outcome, 60s);
+    const auto      took    = std::chrono::steady_clock::now() - started;
+    quit.join();
+    CHECK(waited == UiJobWait::quitting);
+    CHECK(took < 2s);
+}
+
+// ==================== WHAT THE TOOL ANSWERS ====================
+
+TEST_CASE("A job that did not finish is answered with what stopped it and what to do", "[McpUiJob][orcamcp]")
+{
+    CHECK(ui_job_unfinished_json(UiJobKind::arrange, UiJobWait::cancelled, 1.0, "") ==
+          nlohmann::json{{"status", "cancelled"},
+                         {"message", "The app cancelled the arrange before applying it (another job, a deleted object or a "
+                                     "new project cancels it), so nothing moved; its undo step restores nothing."}});
+    CHECK(ui_job_unfinished_json(UiJobKind::orient, UiJobWait::dropped, 0.0, "") ==
+          nlohmann::json{{"status", "cancelled"},
+                         {"message", "The orient was replaced by another job before it started, so nothing moved; its undo "
+                                     "step restores nothing."}});
+    CHECK(ui_job_unfinished_json(UiJobKind::arrange, UiJobWait::failed, 2.0, "no room on the plate") ==
+          nlohmann::json{{"status", "error"}, {"message", "The arrange failed: no room on the plate"}});
+    CHECK(ui_job_unfinished_json(UiJobKind::orient, UiJobWait::timed_out, 105.04, "") ==
+          nlohmann::json{{"status", "orient_started"},
+                         {"finished", false},
+                         {"ui_job", "orienting"},
+                         {"message", "Still orienting after 105.0 s: get_slicing_status's ui_job stays \"orienting\" until "
+                                     "it has finished; then get_scene_info reads the result."}});
+    CHECK(ui_job_unfinished_json(UiJobKind::arrange, UiJobWait::quitting, 3.0, "") ==
+          nlohmann::json{{"status", "arrange_started"},
+                         {"finished", false},
+                         {"message", "OrcaMCP began quitting while the arrange ran, so it may not have finished."}});
+}
+
+TEST_CASE("A tool asked to start a job while another runs says how to tell when it has ended", "[McpUiJob][orcamcp]")
+{
+    CHECK(ui_job_busy_message("auto_orient") ==
+          "another job (an arrange or an orient) is running: poll get_slicing_status until ui_job is null, then call "
+          "auto_orient again");
+}
+
+TEST_CASE("get_slicing_status names the UI job that is running", "[McpUiJob][orcamcp]")
+{
+    UiJobOutcome arranging(UiJobKind::arrange);
+    UiJobOutcome ended(UiJobKind::orient);
+    ended.end(State::finished);
+    CHECK(ui_job_json(/*worker_idle=*/true, &arranging).is_null());
+    CHECK(ui_job_json(false, &arranging) == "arranging");
+    CHECK(ui_job_json(false, &ended) == "other");   // the worker holds a job MCP did not start
+    CHECK(ui_job_json(false, nullptr) == "other");
+}
+
+TEST_CASE("The wait's cap is what the bridge sends, 105 s without it", "[McpUiJob][orcamcp]")
+{
+    using std::chrono::milliseconds;
+    CHECK(tool_wait_cap_from(nlohmann::json::object()) == milliseconds(105000));
+    CHECK(tool_wait_cap_from({{"_meta", {{"orcamcp/wait_cap_s", 30}}}}) == milliseconds(30000));
+    CHECK(tool_wait_cap_from({{"_meta", {{"orcamcp/wait_cap_s", 1.5}}}}) == milliseconds(1500));
+    CHECK(tool_wait_cap_from({{"_meta", {{"orcamcp/wait_cap_s", 0}}}}) == milliseconds(0));
+    CHECK(tool_wait_cap_from({{"_meta", {{"orcamcp/wait_cap_s", -3}}}}) == milliseconds(105000));
+    CHECK(tool_wait_cap_from({{"_meta", {{"orcamcp/wait_cap_s", "30"}}}}) == milliseconds(105000));
+    CHECK(tool_wait_cap_from({{"_meta", {{"progressToken", 7}}}}) == milliseconds(105000));
+
+    const ScopedToolWaitCap scoped({{"_meta", {{"orcamcp/wait_cap_s", 12}}}});
+    CHECK(tool_wait_cap() == milliseconds(12000));
 }

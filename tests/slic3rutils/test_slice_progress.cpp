@@ -356,6 +356,8 @@ TEST_CASE("a slice the UI worker blocks did not start, and names the job", "[orc
     const SliceStartReport report = judge_slice_start(signals);
     CHECK(report.status == SliceStart::not_started);
     CHECK(report.reason == "busy_job");
+    // Where to see when it has finished: get_slicing_status's ui_job.
+    CHECK(report.message.find("poll get_slicing_status until ui_job is null") != std::string::npos);
 }
 
 TEST_CASE("plates with nothing printable on them give nothing to slice", "[orcamcp][SliceProgress]")

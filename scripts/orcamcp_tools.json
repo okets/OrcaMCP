@@ -186,12 +186,12 @@
     },
     {
       "category": "Models",
-      "description": "Automatically arrange all objects on the build plate",
+      "description": "Arrange every object on the current plate, as the plate's Arrange does, and answer once the arrange has been applied: status success with objects, each one's placement (position, rotation_degrees, scale, changed, plate_index, on_bed). The arrange runs in the background while this waits, up to the bridge's cap (15 s below ORCAMCP_TIMEOUT); still running then, status arrange_started with finished false, and get_slicing_status's ui_job says when it has finished. status cancelled when the app cancelled it (nothing moved); refused while another job runs.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
           "include_preview": {
-            "description": "Return turntable preview path",
+            "description": "Return turntable preview path, drawn once the arrange has been applied",
             "type": "boolean"
           }
         },
@@ -199,7 +199,7 @@
         "type": "object"
       },
       "name": "arrange_objects",
-      "summary": "Auto-arrange objects on the plates"
+      "summary": "Arrange the current plate's objects"
     },
     {
       "category": "Filaments & colour",
@@ -215,12 +215,12 @@
     },
     {
       "category": "Models",
-      "description": "Automatically orient all objects for optimal printing",
+      "description": "Orient every object on the current plate for printing, as the plate's Auto Rotate does, and answer once the orient has been applied: status success with objects, each one's placement (position, rotation_degrees, scale, changed, plate_index, on_bed). The orient runs in the background while this waits, up to the bridge's cap (15 s below ORCAMCP_TIMEOUT); still running then, status orient_started with finished false, and get_slicing_status's ui_job says when it has finished. status cancelled when the app cancelled it (nothing moved); refused while another job runs.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
           "include_preview": {
-            "description": "Return turntable preview path",
+            "description": "Return turntable preview path, drawn once the orient has been applied",
             "type": "boolean"
           }
         },
@@ -228,7 +228,7 @@
         "type": "object"
       },
       "name": "auto_orient",
-      "summary": "Auto-orient all objects for printing"
+      "summary": "Orient the current plate's objects"
     },
     {
       "category": "Adaptive",
@@ -294,7 +294,7 @@
     },
     {
       "category": "Transforms",
-      "description": "Clone object. duplicate=true for independent copies.",
+      "description": "Clone object. duplicate=true for independent copies. The copies are placed by an arrange of the destination plate, and the answer comes once it has been applied: objects lists every object on that plate with its placement. Past the bridge's cap the arrange is still running (status arrange_started, finished false; get_slicing_status's ui_job says when it has finished); refused, with nothing copied, while another job runs.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -570,7 +570,7 @@
     },
     {
       "category": "Transforms",
-      "description": "Orient one object to lay flat on its best face for printing, the way the GUI's Orient does for a selection: the object replaces the current selection and is turned, and no other object moves. An object with an instance on a locked plate is refused. It runs in the background (status orient_started); get_object_info shows the result once it has finished.",
+      "description": "Orient one object to lay flat on its best face for printing, the way the GUI's Orient does for a selection: the object replaces the current selection and is turned, and no other object moves. An object with an instance on a locked plate is refused. Answered once the orient has been applied, with the object's placement as rotate_object reports it; the orient runs in the background while this waits, up to the bridge's cap (15 s below ORCAMCP_TIMEOUT). Still running then: status orient_started with finished false, and get_slicing_status's ui_job says when it has finished. status cancelled when the app cancelled it (nothing moved).",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -992,7 +992,7 @@
     },
     {
       "category": "Slicing",
-      "description": "Get the current slicing state: slicing (in progress), done (the last slice_all run is done -- every plate it asked for that has something on it is sliced -- and the selected plate is sliced or empty; before any slice_all, or once none of its plates exists (a new project), the selected plate is sliced) or idle (anything else); a plate deleted after the run does not undo it. Poll until state is done, then get_print_estimate. The plates array reports every plate's slice result and percent (0-100; null for a plate with no result that is not slicing), so a slice_all run can be followed plate by plate; stage is the app's progress text for the running slice (\"Generating support\", in the app's language; null when idle). busy says whether the slicing pipeline is busy, and busy_reason with what: slicing, exporting, uploading, or stopping (the last slice's completion is not taken in yet); slice_all starts nothing while it is, and wait_for_slice waits it out. slice_run says how the last slice_all run stands: scope, the plates it asked for, skipped (those of them with nothing on them to slice), and outcome running, done, ended_early or incomplete (also when no plate had anything to slice), judged by its plates still there (null once none is, after new_project or load_project), with a message saying which plates and why when it is not done. When a slice_all run over every plate ends, this restores the plate that was selected when slice_all was called and reports it as restored_selected_plate. Each plate's gcode_check is the check its slice ran on its own G-code (null without a result): {ok: true}, or ok false with problems -- outside_bed, above_printable_height, above_extruder_height, outside_extruder_area, in_wrapping_area, over_printed_mass, toolpath_outside, filament_bed_conflict -- and a message; above_printable_height also gives highest_layer_z_mm and printable_height_mm, and a hint at the usual cause. The GUI keeps a failed plate's Print and Export buttons off, and export_gcode and send_to_printer refuse it.",
+      "description": "Get the current slicing state: slicing (in progress), done (the last slice_all run is done -- every plate it asked for that has something on it is sliced -- and the selected plate is sliced or empty; before any slice_all, or once none of its plates exists (a new project), the selected plate is sliced) or idle (anything else); a plate deleted after the run does not undo it. Poll until state is done, then get_print_estimate. The plates array reports every plate's slice result and percent (0-100; null for a plate with no result that is not slicing), so a slice_all run can be followed plate by plate; stage is the app's progress text for the running slice (\"Generating support\", in the app's language; null when idle). busy says whether the slicing pipeline is busy, and busy_reason with what: slicing, exporting, uploading, or stopping (the last slice's completion is not taken in yet); slice_all starts nothing while it is, and wait_for_slice waits it out. ui_job names a job holding the app apart from slicing: arranging or orienting (one a tool started and is past its wait), other (one the GUI started), or null; slice_all's busy_job means one. slice_run says how the last slice_all run stands: scope, the plates it asked for, skipped (those of them with nothing on them to slice), and outcome running, done, ended_early or incomplete (also when no plate had anything to slice), judged by its plates still there (null once none is, after new_project or load_project), with a message saying which plates and why when it is not done. When a slice_all run over every plate ends, this restores the plate that was selected when slice_all was called and reports it as restored_selected_plate. Each plate's gcode_check is the check its slice ran on its own G-code (null without a result): {ok: true}, or ok false with problems -- outside_bed, above_printable_height, above_extruder_height, outside_extruder_area, in_wrapping_area, over_printed_mass, toolpath_outside, filament_bed_conflict -- and a message; above_printable_height also gives highest_layer_z_mm and printable_height_mm, and a hint at the usual cause. The GUI keeps a failed plate's Print and Export buttons off, and export_gcode and send_to_printer refuse it.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {},
@@ -2610,7 +2610,7 @@
     },
     {
       "category": "Slicing",
-      "description": "Slice every plate in the project, the way the GUI's Slice All button does: one plate at a time until all are sliced. Pass all_plates=false to slice only the plate that is currently selected. status says what happened: slicing_started, or not_started with a reason and a message: busy_slicing (the pipeline is busy -- get_slicing_status's busy: a slice or Slice All run, an export, an upload, or the last slice still stopping; nothing is started -- call wait_for_slice, then slice_all again), already_sliced (nothing to do), busy_job, invalid (the app refuses the plate as it stands -- its validation, an object partly off the plate, a filament check, missing plugins, a broken mixed filament, or a last slice that failed; message says which, in the app's words for a validation failure), nothing_to_slice (no printable object fully on the plates -- one partly off its plate or too tall for the printer does not count -- and no refusal the app gives words for) or unknown. Then call wait_for_slice, or poll get_slicing_status until state is \"done\"; its plates array says which plates have a result. The plate selection walks from the first plate to the last while the run is in progress, and get_slicing_status puts back the plate that was selected here once it ends.",
+      "description": "Slice every plate in the project, the way the GUI's Slice All button does: one plate at a time until all are sliced. Pass all_plates=false to slice only the plate that is currently selected. status says what happened: slicing_started, or not_started with a reason and a message: busy_slicing (the pipeline is busy -- get_slicing_status's busy: a slice or Slice All run, an export, an upload, or the last slice still stopping; nothing is started -- call wait_for_slice, then slice_all again), already_sliced (nothing to do), busy_job (an arrange or an orient holds the app: poll get_slicing_status until ui_job is null, then slice_all again), invalid (the app refuses the plate as it stands -- its validation, an object partly off the plate, a filament check, missing plugins, a broken mixed filament, or a last slice that failed; message says which, in the app's words for a validation failure), nothing_to_slice (no printable object fully on the plates -- one partly off its plate or too tall for the printer does not count -- and no refusal the app gives words for) or unknown. Then call wait_for_slice, or poll get_slicing_status until state is \"done\"; its plates array says which plates have a result. The plate selection walks from the first plate to the last while the run is in progress, and get_slicing_status puts back the plate that was selected here once it ends.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
