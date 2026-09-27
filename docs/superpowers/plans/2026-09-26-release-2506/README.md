@@ -57,10 +57,10 @@ gave were wrong; the prompts carry the corrected facts.
 | 04d | [Leftover "Loading..." windows](04d-loading-windows.md) | 04c | `Plater::priv::load_files` progress dialog | closed 2026-09-27: with the screen unlocked, 5 loads left 0 ghosts (checked with the user present). A locked-screen artefact; fix not shipped, noted in the roadmap |
 | ci | CI fixes (no prompt file; 04b's agent) | 04c | Windows test force-include of win_platform.hpp; the Linux login-route test race | fixed and pushed 2026-09-27; Build all green on every platform (run 36282514718) |
 | 05 | [Mesh health](05-mesh-health.md) | 01, 03 | new tool, `active_warnings`, `get_scene_info` | merged and pushed 2026-09-27; Build all green (run 36282514718) |
-| 06 | [Workflow tools](06-workflow-tools.md) | 01, 03 | bridge, slicing status, preset reads, paint remap, estimate breakdown | merged and pushed 2026-09-27 (live checks passed); follow-up 06b (stale 'invalid' just after a fix) queued after 07 |
-| 07 | [Sliced layer plan](07-layer-plan.md) | 01, 03 | `OrcaMCPFirstLayerPlan.cpp`, `render_plate_view` | merged and pushed 2026-09-27 (overhang facts, not verdicts) |
-| 06b | [Slicing and loading follow-ups](06b-slicing-followups.md) | 07 | `slice_all`, slicing status, OrcaMCPCommon, load errors | implementing (fresh agent) |
-| 07b | [Over-height check on non-Bambu printers](07b-height-check.md) | 06b | GCodeProcessor `;Z:` parsing | queued after 06b; needs a careful side-effect audit |
+| 06 | [Workflow tools](06-workflow-tools.md) | 01, 03 | bridge, slicing status, preset reads, paint remap, estimate breakdown | merged and pushed 2026-09-27 (live checks passed); Build all green (run 36292935184) |
+| 07 | [Sliced layer plan](07-layer-plan.md) | 01, 03 | `OrcaMCPFirstLayerPlan.cpp`, `render_plate_view` | merged and pushed 2026-09-27 (overhang facts, not verdicts); Build all green (run 36302057792) |
+| 06b | [Slicing and loading follow-ups](06b-slicing-followups.md) | 07 | `slice_all`, slicing status, OrcaMCPCommon, load errors | implemented 2026-09-27 (three rounds, 25 commits); orchestrator verification, review and acceptance in progress |
+| 07b | [Over-height check on non-Bambu printers](07b-height-check.md) | 06b | GCodeProcessor `;Z:` parsing, MCP send/export gating | audit and design approved 2026-09-27; queued after 06b |
 | 08 | [Server instructions and hints](08-instructions-and-hints.md) | 01–07 | `initialize`, descriptions, result hints | not started |
 | 09 | [Several instances, switch between them](09-second-instance-crash.md) | 01–08 | port fallback, instance registry (with open file), bridge `list_instances` / `select_instance` | added 2026-09-26 by the user; design goes to the user; starts after all other coding |
 
@@ -109,7 +109,8 @@ roadmap; nothing ships half-done.
 - **09: the multi-instance design.** It goes to the user once all other coding is done.
 - **Optional: upstream issues.** The user decides whether to file any. (1) Closing many upstream Yes/No
   dialogs with the close box takes the "proceed" branch (roadmap). (2) The G-code over-height check never
-  fires on non-Bambu printers (07b). (3) STL repair counts are thrown away (roadmap).
+  fires on non-Bambu printers (07b). Warn upstream that parsing `;Z:` alone breaks every non-Bambu
+  multi-extruder preset, because their unset per-nozzle height reads as 0 mm, so the guard is needed. (3) STL repair counts are thrown away (roadmap).
 
 ## Shared traps (also inside every prompt)
 
@@ -127,6 +128,19 @@ roadmap; nothing ships half-done.
 - **Never call `send_to_printer`**: on Flashforge it uploads and starts the print.
 - **The local build tree is stale.** `libslic3r_version.h` says 2.5.0.4-dev while `version.inc`
   says 2.5.0.5-dev, so the first build reconfigures and takes longer.
+
+## After the tag: an upstream review with the user
+
+The user asked on 2026-09-27: once the release is tagged, go through every issue this release found that
+belongs upstream, and decide together which to offer. Prepare one list from:
+
+- CLAUDE.md's "Carried upstream fixes" probe block: every letter J–AC and later, with what each fixes and
+  whether upstream still has it (run the probes against `upstream/main`);
+- docs/roadmap.md's "left as upstream has them" items;
+- the README's "Optional: upstream issues" notes, e.g. the non-Bambu over-height check and its trap.
+
+For each item, note its severity, how easy it is to reproduce on upstream, and whether it's a clean small
+patch. The user decides; nothing is filed without their word.
 
 ## Release checklist (orchestrator)
 

@@ -158,6 +158,12 @@ These all come from a session on 2026-09-26. The transcript is
   `CMakeLists.txt:742-750`), so slicing, especially tree supports, runs 20-70x slower than the release.
   For live checks, slice small models without tree support. Never read a slow slice as a stall or a
   regression without first timing the same case on `/Applications/OrcaMCP.app` on a data-dir copy.
+- **Before any live check: check who holds the port.** Run `lsof -nP -iTCP:13618 -sTCP:LISTEN`. If
+  ANYTHING listens, even `*:13618` from `/Applications/OrcaMCP.app`, stop and tell the orchestrator. After
+  launching, confirm your own pid is the ONLY listener, and that your calls appear in YOUR build's log,
+  before any scene-changing call. The user's release binds all interfaces and a dev build binds 127.0.0.1,
+  and macOS lets both listen at once. On 2026-09-27 an agent's new_project reached the user's open app
+  this way and discarded their scene.
 - **Test MCP behaviour through the `mcp__orca-slicer__*` tools**, not curl.
 - **Never call `send_to_printer`**: on Flashforge it uploads *and starts* the print. Never call
   `printer_control` or `print_printer_file`.

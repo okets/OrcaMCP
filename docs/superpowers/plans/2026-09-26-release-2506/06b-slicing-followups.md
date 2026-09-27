@@ -97,6 +97,12 @@ before writing tests. Prompts 01–07 are merged: slicing tools, busy states and
 - **Scratch space.** Use a scratch folder named after your prompt, e.g. `/private/tmp/claude-501/rel2506-<id>/`.
   Never read from or copy out of another agent's folder. On 2026-09-27 an agent copied 29 stale files out of a
   shared `final/` folder over the working tree; it was caught and undone.
+- **Before any live check: check who holds the port.** Run `lsof -nP -iTCP:13618 -sTCP:LISTEN`. If
+  ANYTHING listens, even `*:13618` from `/Applications/OrcaMCP.app`, stop and tell the orchestrator. After
+  launching, confirm your own pid is the ONLY listener, and that your calls appear in YOUR build's log,
+  before any scene-changing call. The user's release binds all interfaces and a dev build binds 127.0.0.1,
+  and macOS lets both listen at once. On 2026-09-27 an agent's new_project reached the user's open app
+  this way and discarded their scene.
 - **Test MCP behaviour through the `mcp__orca-slicer__*` tools**, not curl.
 - **Never call `send_to_printer`**: on Flashforge it uploads *and starts* the print. Never call
   `printer_control` or `print_printer_file`.

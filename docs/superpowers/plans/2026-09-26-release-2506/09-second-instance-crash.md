@@ -49,6 +49,22 @@ instances?", "also have it list the open file."
   presets when they quit, and the last writer wins. This is upstream behaviour; the design must at
   least not make it worse, and must say what it does about it.
 
+
+## Must-fix found on 2026-09-27: silent co-binding
+
+The release app (v2.5.0.5 and earlier) binds `*:13618`; builds with prompt 04b bind `127.0.0.1:13618`.
+macOS lets both listen at once, so a second instance doesn't fail. It co-exists, and a client's calls can
+land in either one. An agent's `new_project` reached the user's open app this way and discarded their
+scene.
+
+Your port logic must detect ANY existing listener on the port, on any address, including an older OrcaMCP
+that binds the wildcard. For example: try to connect to 127.0.0.1 and to the machine's addresses before
+binding, and check the socket error of a wildcard probe bind without SO_REUSEADDR. Then treat the port as
+taken, and move to the next free port, or run without MCP.
+
+The bridge must confirm the instance's identity (pid, executable) before any scene-changing call, and
+report a mismatch.
+
 ## Your task (design first)
 
 1. **No crash.**
@@ -138,6 +154,19 @@ instances?", "also have it list the open file."
 - **Scratch space.** Use a scratch folder named after your prompt, e.g. `/private/tmp/claude-501/rel2506-<id>/`.
   Never read from or copy out of another agent's folder. On 2026-09-27 an agent copied 29 stale files out of a
   shared `final/` folder over the working tree; it was caught and undone.
+- **Before any live check: check who holds the port.** Run `lsof -nP -iTCP:13618 -sTCP:LISTEN`. If
+  ANYTHING listens, even `*:13618` from `/Applications/OrcaMCP.app`, stop and tell the orchestrator. After
+  launching, confirm your own pid is the ONLY listener, and that your calls appear in YOUR build's log,
+  before any scene-changing call. The user's release binds all interfaces and a dev build binds 127.0.0.1,
+  and macOS lets both listen at once. On 2026-09-27 an agent's new_project reached the user's open app
+  this way and discarded their scene.
+- **Never launch the default app, and prove you're on a data copy.** Never `open <file>` or anything else
+  that makes macOS start `/Applications/OrcaMCP.app` (that's the user's app, on their real data). Always
+  `open -a <absolute path of YOUR build> --env ORCAMCP_SKIP_CLOUD_LOGIN=1 --args --datadir <fresh copy>`,
+  and load files through MCP. After launch, your build's startup log must appear under `<copy>/log/`, not
+  `~/Library/Application Support/OrcaMCP/log/`; if it doesn't, quit it and stop. (2026-09-27: test builds
+  ran on the user's real data dir three times, and a test file opened with the default app launched the
+  user's OrcaSlicer.)
 - **Test MCP behaviour through the `mcp__orca-slicer__*` tools**, not curl.
 - **Never call `send_to_printer`**: on Flashforge it uploads *and starts* the print. Never call
   `printer_control` or `print_printer_file`.
