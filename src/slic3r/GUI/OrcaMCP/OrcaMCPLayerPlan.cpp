@@ -134,6 +134,8 @@ nlohmann::json layer_ref_json(const std::optional<PrintedLayerRef>& ref)
     return {{"number", ref->number}, {"print_z", round_to(ref->print_z, 4)}, {"height", round_to(ref->height, 4)}};
 }
 
+nlohmann::json optional_z_json(const std::optional<double>& z) { return z ? nlohmann::json(round_to(*z, 4)) : nlohmann::json(nullptr); }
+
 nlohmann::json overhang_json(const std::optional<Overhang>& o)
 {
     if (!o)
@@ -141,7 +143,9 @@ nlohmann::json overhang_json(const std::optional<Overhang>& o)
     return {{"area_mm2", round_to(o->area_mm2, 2)},
             {"under_support_mm2", round_to(o->under_support_mm2, 2)},
             {"under_interface_mm2", round_to(o->under_interface_mm2, 2)},
-            {"support_z", o->support_z ? nlohmann::json(round_to(*o->support_z, 4)) : nlohmann::json(nullptr)},
+            {"support_z", optional_z_json(o->support_z)},
+            {"nearest_support_z", optional_z_json(o->nearest_support_z)},
+            {"contact_z", round_to(o->contact_z, 4)},
             {"tolerance_mm", round_to(o->tolerance_mm, 4)}};
 }
 
@@ -182,20 +186,43 @@ bool lies_under(const PrintObject& object, const BoundingBox& shape, const Bound
     return false;
 }
 
-// The band a support layer's lines cover, all of them or the interface alone, in object coordinates.
-void support_bands(const SupportLayer& layer, ExPolygons& all, ExPolygons& interface)
+// Whether any of `layer`'s support lines run over `hang` (object coordinates): the cheap test, on the
+// lines themselves, before any band is built.
+bool support_lines_over(const SupportLayer& layer, const ExPolygons& hang, const BoundingBox& hang_box)
 {
-    Polygons all_lines, interface_lines;
-    const float epsilon = float(scale_(0.05));
-    const ExtrusionEntityCollection lines = layer.support_fills.flatten();
-    for (const ExtrusionEntity* e : lines.entities) {
-        const Polygons band = e->polygons_covered_by_width(epsilon);
-        append(all_lines, band);
-        if (e->role() == erSupportMaterialInterface)
-            append(interface_lines, band);
+    Points points;
+    layer.support_fills.collect_points(points);
+    if (points.empty() || !BoundingBox(points).overlap(hang_box))
+        return false;
+    Polylines lines;
+    layer.support_fills.collect_polylines(lines);
+    return !intersection_pl(lines, hang).empty();
+}
+
+// Adds `shape` (object coordinates) to `frame` (bed mm) at each of `object`'s instances.
+void merge_on_bed(BoundingBoxf& frame, const PrintObject& object, const BoundingBox& shape)
+{
+    if (!shape.defined)
+        return;
+    for (const PrintInstance& inst : object.instances())
+        for (const Point& corner : {Point(shape.min + inst.shift), Point(shape.max + inst.shift)})
+            frame.merge(Vec2d(unscale<double>(corner.x()), unscale<double>(corner.y())));
+}
+
+void merge_mm(BoundingBoxf& frame, const BoundingBox& bed_shape)
+{
+    if (bed_shape.defined) {
+        frame.merge(Vec2d(unscale<double>(bed_shape.min.x()), unscale<double>(bed_shape.min.y())));
+        frame.merge(Vec2d(unscale<double>(bed_shape.max.x()), unscale<double>(bed_shape.max.y())));
     }
-    all       = union_ex(all_lines);
-    interface = union_ex(interface_lines);
+}
+
+const PrintObject* print_object_of(const Print& print, const Model& model, int object_index)
+{
+    for (const PrintObject* po : print.objects())
+        if (model_object_index(model, po->model_object()) == object_index)
+            return po;
+    return nullptr;
 }
 
 // The legend box in the image's top-right corner: a swatch and a label per entry.
@@ -446,7 +473,32 @@ std::optional<size_t> layer_index_at_height(const std::vector<double>& print_zs,
     return best;
 }
 
-std::optional<Overhang> overhang_of(const PrintObject& object, size_t layer_index, double tolerance_mm)
+double support_contact_z(const PrintObject& object, const Layer& layer)
+{
+    const SlicingParameters& sp = object.slicing_parameters();
+    // No gap for a zero-gap interface (a soluble one, say); the configured gap otherwise, which every
+    // generator keeps clear: the normal one trims what its layer sync leaves inside it
+    // (trim_support_layers_by_object), and the trees end their tips there.
+    const double z = layer.bottom_z() - (sp.zero_gap_interface_top ? 0. : sp.gap_support_object);
+    // A contact too close to the bed or the raft is printed on it (SupportMaterial.cpp, new_contact_layer).
+    const double lowest = sp.raft_layers() > 1 ? sp.raft_contact_top_z : sp.first_print_layer_height;
+    return z < lowest + sp.min_layer_height ? lowest : z;
+}
+
+double overhang_tolerance(const Layer& layer)
+{
+    // PrintRegion::flow's own lookup: the nozzle of the filament slot the outer wall is printed with.
+    const ConfigOptionFloats& nozzles = layer.object()->print()->config().nozzle_diameter;
+    double                    nozzle  = 0.;
+    for (const LayerRegion* region : layer.regions())
+        if (!region->slices.empty()) {
+            const double d = nozzles.get_at(region->region().extruder(frExternalPerimeter) - 1);
+            nozzle         = nozzle > 0. ? std::min(nozzle, d) : d;
+        }
+    return (nozzle > 0. ? nozzle : nozzles.get_at(0)) / 2.;
+}
+
+std::optional<Overhang> overhang_of(const PrintObject& object, size_t layer_index)
 {
     const auto& layers = object.layers();
     if (layer_index == 0 || layer_index >= layers.size())
@@ -455,31 +507,35 @@ std::optional<Overhang> overhang_of(const PrintObject& object, size_t layer_inde
     const Layer& below = *layers[layer_index - 1];
 
     Overhang o;
-    o.tolerance_mm        = tolerance_mm;
-    const ExPolygons hang = diff_ex(layer.lslices, offset_ex(below.lslices, float(scale_(tolerance_mm))));
+    o.tolerance_mm        = overhang_tolerance(layer);
+    const ExPolygons hang = diff_ex(layer.lslices, offset_ex(below.lslices, float(scale_(o.tolerance_mm))));
     o.area_mm2            = area_mm2(hang);
-
-    // The support that holds this layer up ends one top gap below it (none for a zero-gap interface,
-    // a whole number of layers when support shares the object's heights): the highest support layer
-    // there. The ones between print under higher overhangs, clear of this layer.
-    const double        top   = layer.bottom_z() - object.slicing_parameters().gap_support_object;
-    const SupportLayer* under = nullptr;
-    for (const SupportLayer* s : object.support_layers()) {
-        if (s->print_z > top + k_gcode_height_tolerance)
-            break;
-        under = s;
-    }
-    if (under == nullptr || hang.empty())
+    o.contact_z           = support_contact_z(object, layer);
+    if (hang.empty())
         return o;
-    o.support_z = under->print_z;
-    ExPolygons all, interface;
-    support_bands(*under, all, interface);
-    o.under_support_mm2   = area_mm2(intersection_ex(hang, all));
-    o.under_interface_mm2 = area_mm2(intersection_ex(hang, interface));
+
+    // Down from the highest support layer at or below the contact height, to the first with lines under
+    // the overhang: the contact when it is within one of its own layers of that height (variable layers
+    // and merged contacts end it up to a layer lower), else only the nearest support under it.
+    const BoundingBox hang_box = get_extents(hang);
+    const auto&       supports = object.support_layers();
+    for (size_t i = supports.size(); i > 0; --i) {
+        const SupportLayer& s = *supports[i - 1];
+        if (s.print_z > o.contact_z + k_gcode_height_tolerance || !support_lines_over(s, hang, hang_box))
+            continue;
+        if (s.print_z < o.contact_z - s.height - k_gcode_height_tolerance) {
+            o.nearest_support_z = s.print_z;
+            break;
+        }
+        o.support_z           = s.print_z;
+        o.under_support_mm2   = area_mm2(intersection_ex(hang, support_covered(s)));
+        o.under_interface_mm2 = area_mm2(intersection_ex(hang, support_covered(s, Point(0, 0), erSupportMaterialInterface)));
+        break;
+    }
     return o;
 }
 
-std::vector<ObjectAtHeight> objects_at_height(const Print& print, const Model& model, double z, const BoundingBoxf& extent, double nozzle_mm)
+std::vector<ObjectAtHeight> objects_at_height(const Print& print, const Model& model, double z, const BoundingBoxf& extent)
 {
     const bool                  by_object = print.config().print_sequence == PrintSequence::ByObject;
     std::vector<ObjectAtHeight> out;
@@ -500,7 +556,7 @@ std::vector<ObjectAtHeight> objects_at_height(const Print& print, const Model& m
         o.name         = po->model_object() != nullptr ? po->model_object()->name : std::string();
         if (oi) {
             o.object_layer = ref_of(*po->layers()[*oi], *oi);
-            o.overhang     = overhang_of(*po, *oi, nozzle_mm / 2.);
+            o.overhang     = overhang_of(*po, *oi);
         }
         if (si)
             o.support_layer = ref_of(*po->support_layers()[*si], *si);
@@ -618,7 +674,7 @@ wxImage draw_layer_plan(const std::vector<ToolpathRun>&   runs,
             gc.StrokePath(path);
         }
     });
-    draw_overlays(image, plan_camera(mapping), plate, excluded_areas, labels, overlays);
+    draw_overlays(image, plan_camera(mapping), plate, excluded_areas, labels, overlays, plan_background());
     if (overlays.labels && !legend.empty())
         draw_legend(image, legend);
     return image;

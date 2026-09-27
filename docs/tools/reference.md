@@ -1859,7 +1859,7 @@ flushing into infill and mixed filaments show as they print. The entry adds:
     "object_layer": {"number": 51, "print_z": 10.25, "height": 0.2},
     "support_layer": null,
     "overhang": {"area_mm2": 829.44, "under_support_mm2": 742.31, "under_interface_mm2": 742.31,
-                 "support_z": 9.85, "tolerance_mm": 0.2}
+                 "support_z": 9.85, "nearest_support_z": null, "contact_z": 9.85, "tolerance_mm": 0.2}
   }],
   "drawn": {"features": ["support", "support_interface"], "filaments": "all", "color_by": "feature"},
   "legend": [],
@@ -1888,12 +1888,18 @@ cap's first layer has no support in it (the 0.2 mm gap is layer 50, the interfac
   `object_layer` is `null`: nothing of the object prints there, and its layer spanning this height
   is one number up or down. Layer numbers here count from 1 within the object.
 - `overhang` (on an object layer with one below it) is polygon arithmetic on the sliced layers, not
-  pixels: `area_mm2` is the part of this layer more than `tolerance_mm` (half the nozzle) beyond the
-  layer below, and `under_support_mm2` / `under_interface_mm2` how much of it has support lines /
-  interface lines under it, on the support layer that holds it up: the highest one at or below this
-  layer's bottom less the support's top gap (`support_top_z_distance`, 0 for a zero-gap interface),
-  at `support_z`. They are ribbon areas: sparse support covers only the part its lines run under,
-  while a dense interface should come close to `area_mm2`.
+  pixels. `area_mm2` is the part of this layer more than `tolerance_mm` beyond the layer below:
+  half the nozzle printing this object's outer walls on this layer, so it differs per object and per
+  nozzle. `under_support_mm2` and `under_interface_mm2` say how much of it has support lines, and
+  interface lines, under it on the support layer that holds it up (`support_z`). That layer ends one
+  top gap below the layer's bottom, at `contact_z`, or up to one of its own layers lower, which is
+  where variable layer heights end it. The gap is `support_top_z_distance`, rounded to the layer
+  height unless support has heights of its own, and 0 for a zero-gap interface.
+  - Support that ends lower holds nothing up: a raft under a part with no support, or organic
+    support that stops short on variable layers. Then `support_z` is `null`, both cover areas are
+    0, and `nearest_support_z` says where the support under the overhang does end.
+  - They are ribbon areas: sparse support covers only the part its lines run under, while a dense
+    interface should come close to `area_mm2`.
 - `legend` has one entry per colour in the picture, with the area it drew; the image shows the same
   legend in its top-right corner unless `overlays.labels` is off. `nothing_drawn: true` means the
   filter matched no line on this layer, and `hint` says what the layer does print.

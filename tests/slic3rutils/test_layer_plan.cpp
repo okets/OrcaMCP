@@ -424,7 +424,7 @@ TEST_CASE("the plan's layers are the G-code's printed layers, and each is an obj
     size_t support_only = 0;
     for (const GcodeLayer& layer : layers) {
         const LayerExtrusion              e       = layer_extrusion(cap.result.moves, layer);
-        const std::vector<ObjectAtHeight> objects = objects_at_height(cap.print, cap.model, layer.z, e.extent, 0.4);
+        const std::vector<ObjectAtHeight> objects = objects_at_height(cap.print, cap.model, layer.z, e.extent);
         REQUIRE(objects.size() == 1);
         const ObjectAtHeight& cap_here = objects.front();
         CHECK(cap_here.object_index == 0);
@@ -457,12 +457,13 @@ TEST_CASE("the cap's underside is an overhang with interface lines under it", "[
         ++cap_layer;
     REQUIRE(cap_layer < object.layers().size());
 
-    const double            tolerance = 0.2;
-    const std::optional<Overhang> hang = overhang_of(object, cap_layer, tolerance);
+    const double            tolerance = 0.2;  // half the 0.4 mm nozzle printing its walls
+    const std::optional<Overhang> hang = overhang_of(object, cap_layer);
     REQUIRE(hang.has_value());
     // The 30 x 30 mm cap less the 8 x 8 mm stem grown by the tolerance.
     const double expected = 900. - area_mm2(offset_ex(object.layers()[cap_layer - 1]->lslices, float(scale_(tolerance))));
     CHECK_THAT(hang->area_mm2, WithinRel(expected, 0.02));
+    CHECK_THAT(hang->tolerance_mm, WithinAbs(tolerance, 1e-9));
     REQUIRE(hang->support_z.has_value());
     CHECK(*hang->support_z <= object.layers()[cap_layer]->bottom_z() + k_gcode_height_tolerance);
     CHECK(hang->under_interface_mm2 > 0.8 * hang->area_mm2);
@@ -470,10 +471,10 @@ TEST_CASE("the cap's underside is an overhang with interface lines under it", "[
     CHECK(hang->under_support_mm2 <= hang->area_mm2 + 1e-6);
 
     // Half way up the stem nothing overhangs, and the first layer has nothing under it to compare.
-    const std::optional<Overhang> stem = overhang_of(object, cap_layer / 2, tolerance);
+    const std::optional<Overhang> stem = overhang_of(object, cap_layer / 2);
     REQUIRE(stem.has_value());
     CHECK(stem->area_mm2 < 1.0);
-    CHECK_FALSE(overhang_of(object, 0, tolerance).has_value());
+    CHECK_FALSE(overhang_of(object, 0).has_value());
 }
 
 TEST_CASE("an overhang is measured against the support that holds it, one top gap down", "[orcamcp][LayerPlan]")
@@ -508,11 +509,185 @@ TEST_CASE("an overhang is measured against the support that holds it, one top ga
         support_at_bottom = support_at_bottom || (std::abs(layer->print_z - bottom) < 1e-6 && !layer->support_fills.empty());
     REQUIRE(support_at_bottom);
 
-    const std::optional<Overhang> hang = overhang_of(object, cap_layer, 0.2);
+    const std::optional<Overhang> hang = overhang_of(object, cap_layer);
     REQUIRE(hang.has_value());
     REQUIRE(hang->support_z.has_value());
     CHECK_THAT(*hang->support_z, WithinAbs(bottom - gap, k_gcode_height_tolerance));
     CHECK(hang->under_interface_mm2 > 0.8 * hang->area_mm2);
+}
+
+namespace {
+
+// The first layer of the cap: the first one as wide as the cap.
+size_t cap_layer_of(const PrintObject& object)
+{
+    size_t index = 0;
+    while (index < object.layers().size() && area_mm2(object.layers()[index]->lslices) < 800.)
+        ++index;
+    REQUIRE(index < object.layers().size());
+    return index;
+}
+
+// The highest support layer below `layer` with lines under `hang`: where the support that holds it
+// up really ends, as the generator made it.
+std::optional<double> highest_support_under(const PrintObject& object, const Layer& layer, const ExPolygons& hang)
+{
+    std::optional<double> z;
+    for (const SupportLayer* s : object.support_layers()) {
+        if (s->print_z > layer.bottom_z() + 1e-6)
+            break;
+        Polylines lines;
+        s->support_fills.collect_polylines(lines);
+        if (!intersection_pl(lines, hang).empty())
+            z = s->print_z;
+    }
+    return z;
+}
+
+} // namespace
+
+TEST_CASE("support that ends far below an overhang does not hold it up", "[orcamcp][LayerPlan]")
+{
+    // A raft and no support: the only support layers are the raft's, 10 mm under the cap. The raft
+    // reaches past the stem, under the cap's overhang, but nothing holds the cap there.
+    Print print;
+    Model model;
+    Test::init_print({mcp_test::supported_cap()}, print, model, {
+        {"enable_support", 0},
+        {"raft_layers", 2},
+        {"layer_height", 0.2},
+        {"initial_layer_print_height", 0.2},
+    });
+    print.process();
+    const PrintObject& object = *print.objects().front();
+    REQUIRE_FALSE(object.support_layers().empty());
+    const double raft_top = object.support_layers().back()->print_z;
+    REQUIRE(raft_top < 2.0);
+
+    const std::optional<Overhang> hang = overhang_of(object, cap_layer_of(object));
+    REQUIRE(hang.has_value());
+    CHECK(hang->area_mm2 > 800.);
+    CHECK_FALSE(hang->support_z.has_value());
+    CHECK_THAT(hang->under_support_mm2, WithinAbs(0., 1e-9));
+    CHECK_THAT(hang->under_interface_mm2, WithinAbs(0., 1e-9));
+    // It says where the nearest support under it is instead: the raft.
+    REQUIRE(hang->nearest_support_z.has_value());
+    CHECK_THAT(*hang->nearest_support_z, WithinAbs(raft_top, 1e-6));
+    CHECK(hang->contact_z > raft_top + 5.);
+}
+
+namespace {
+
+// The cap sliced with 0.28 mm layers from 7.2 mm up, on a 0.2 mm base, so no layer ends at the
+// configured top gap below it.
+void slice_cap_on_variable_layers(Print& print, Model& model, std::initializer_list<ConfigBase::SetDeserializeItem> items)
+{
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_deserialize_strict(items);
+    config.set_deserialize_strict({{"layer_height", 0.2}, {"initial_layer_print_height", 0.2}});
+    Test::init_print({mcp_test::supported_cap()}, print, model, config);
+    model.objects.front()->layer_height_profile.set({0.0, 0.2, 7.0, 0.2, 7.2, 0.28, 12.0, 0.28});
+    print.apply(model, config);
+    print.process();
+}
+
+ExPolygons overhang_shape(const Layer& layer)
+{
+    return diff_ex(layer.lslices, offset_ex(layer.lower_layer->lslices, float(scale_(0.2))));
+}
+
+} // namespace
+
+TEST_CASE("on variable layers the contact that ends a layer lower still holds the overhang up", "[orcamcp][LayerPlan]")
+{
+    // A 0.4 mm top gap over 0.28 mm layers: the generator syncs the gap to 0.28, finds that inside the
+    // gap and trims it away (trim_support_layers_by_object), so the support ends 0.56 below the cap --
+    // lower than the gap, by less than one of its layers.
+    Print print;
+    Model model;
+    slice_cap_on_variable_layers(print, model, {
+        {"enable_support", 1},
+        {"support_type", "normal(auto)"},
+        {"independent_support_layer_height", 0},
+        {"support_top_z_distance", 0.4},
+        {"support_interface_spacing", 0},
+    });
+    const PrintObject& object = *print.objects().front();
+    const size_t       cap    = cap_layer_of(object);
+    const Layer&       layer  = *object.layers()[cap];
+    REQUIRE_THAT(layer.lower_layer->height, WithinAbs(0.28, 0.01));  // the variable heights took
+
+    const std::optional<double> contact = highest_support_under(object, layer, overhang_shape(layer));
+    REQUIRE(contact.has_value());
+    const double gap_z = layer.bottom_z() - object.slicing_parameters().gap_support_object;
+    REQUIRE(*contact < gap_z - 0.01);                       // below the plain gap...
+    REQUIRE(*contact > gap_z - layer.lower_layer->height);  // ...by less than a layer
+
+    const std::optional<Overhang> hang = overhang_of(object, cap);
+    REQUIRE(hang.has_value());
+    CHECK_THAT(hang->contact_z, WithinAbs(gap_z, 1e-6));
+    REQUIRE(hang->support_z.has_value());
+    CHECK_THAT(*hang->support_z, WithinAbs(*contact, 1e-6));
+    // What holds it is reported as it prints: the trimmed layer took the interface with it, so the
+    // cap sits on base support lines alone.
+    CHECK(hang->under_support_mm2 > 0.);
+    CHECK(hang->under_support_mm2 <= hang->area_mm2 + 1e-6);
+    CHECK_THAT(hang->under_interface_mm2, WithinAbs(0., 1e-9));
+}
+
+TEST_CASE("organic support that stops short on variable layers is reported as holding nothing", "[orcamcp][LayerPlan]")
+{
+    // Organic trees on variable layers keep their own 0.2 mm grid and, here, end 1.2 mm under the cap:
+    // support is there below it, but none reaches it. The old reading counted it as cover.
+    Print print;
+    Model model;
+    slice_cap_on_variable_layers(print, model, {
+        {"enable_support", 1},
+        {"support_type", "tree(auto)"},
+        {"support_style", "organic"},
+        {"independent_support_layer_height", 0},
+        {"support_top_z_distance", 0.4},
+    });
+    const PrintObject&          object  = *print.objects().front();
+    const size_t                cap     = cap_layer_of(object);
+    const Layer&                layer   = *object.layers()[cap];
+    const std::optional<double> contact = highest_support_under(object, layer, overhang_shape(layer));
+    REQUIRE(contact.has_value());
+    const double gap_z = layer.bottom_z() - object.slicing_parameters().gap_support_object;
+    if (*contact > gap_z - 0.3)
+        SKIP("organic support now reaches the cap on variable layers (it ended at " << *contact << ")");
+
+    const std::optional<Overhang> hang = overhang_of(object, cap);
+    REQUIRE(hang.has_value());
+    CHECK_FALSE(hang->support_z.has_value());
+    CHECK_THAT(hang->under_support_mm2, WithinAbs(0., 1e-9));
+    REQUIRE(hang->nearest_support_z.has_value());
+    CHECK_THAT(*hang->nearest_support_z, WithinAbs(*contact, 1e-6));
+}
+
+TEST_CASE("the overhang tolerance is half the nozzle that prints the object's walls", "[orcamcp][LayerPlan]")
+{
+    // Two nozzles, 0.4 and 0.8 mm, the walls on the second.
+    Print print;
+    Model model;
+    Test::init_print({mcp_test::supported_cap()}, print, model,
+                     Test::multifilament_config(2, {
+                         {"nozzle_diameter", "0.4,0.8"},
+                         {"printer_extruder_id", "1,2"},
+                         {"printer_extruder_variant", "Direct Drive Standard,Direct Drive Standard"},
+                         {"extruder_printable_height", "0,0"},
+                         {"single_extruder_multi_material", 0},
+                         {"outer_wall_filament_id", 2},
+                         {"inner_wall_filament_id", 2},
+                         {"enable_prime_tower", 0},
+                         {"layer_height", 0.2},
+                         {"initial_layer_print_height", 0.2},
+                     }));
+    print.process();
+    const PrintObject&            object = *print.objects().front();
+    const std::optional<Overhang> hang   = overhang_of(object, cap_layer_of(object));
+    REQUIRE(hang.has_value());
+    CHECK_THAT(hang->tolerance_mm, WithinAbs(0.4, 1e-9));
 }
 
 TEST_CASE("an object's footprint comes from the sliced object, where the model puts it", "[orcamcp][LayerPlan]")

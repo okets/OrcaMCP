@@ -21,6 +21,7 @@
 #include "libslic3r/BoundingBox.hpp"
 #include "libslic3r/Color.hpp"
 #include "libslic3r/ExPolygon.hpp"
+#include "libslic3r/ExtrusionEntity.hpp"
 #include "libslic3r/Polygon.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPRenderMath.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPRenderOverlay.hpp"
@@ -31,6 +32,7 @@ namespace Slic3r {
 class DynamicPrintConfig;
 class Model;
 class Print;
+class SupportLayer;
 namespace GUI {
 class PartPlate;
 namespace OrcaMCP {
@@ -82,6 +84,15 @@ struct FootprintInput
     double        brim_extent_mm = 0.;
 };
 FirstLayerPlan plan_from_footprints(const std::vector<FootprintInput>& footprints);
+
+// The height a sliced `print` prints first: the lowest first layer among its objects' object and
+// support layers. With a raft that is the raft's base; the object's own first layer sits on top of it.
+double first_print_height(const Print& print);
+
+// The band a support layer's lines cover (their width, a hair wider so neighbours merge), moved by
+// `shift` onto an instance's place on the bed; only the lines of `role` when one is given.
+ExPolygons support_covered(const SupportLayer& layer, const Point& shift = Point(0, 0),
+                           std::optional<ExtrusionRole> role = std::nullopt);
 
 // The first layer of a sliced `print`: what prints at its lowest height. An object's own first layer
 // is drawn only when it is printed there, so a raft is drawn in its place, and support that starts

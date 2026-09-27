@@ -9,6 +9,7 @@
 #include <wx/graphics.h>
 
 #include "libslic3r/ClipperUtils.hpp"
+#include "libslic3r/ExtrusionEntityCollection.hpp"
 #include "libslic3r/Layer.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Print.hpp"
@@ -104,9 +105,7 @@ std::vector<OverlayLabel> plan_labels(const FirstLayerPlan& plan)
 // The Print works on its own copy of the model, so pointers never match the plater's objects;
 // ObjectIDs survive the copy and do, which is what OrcaMCP::model_object_index matches by.
 
-// The height the plate prints first: the lowest first layer among its objects' object and support
-// layers. With a raft that is the raft's base; the object's own first layer sits on top of it.
-static double first_print_height(const Print& print)
+double first_print_height(const Print& print)
 {
     double z = std::numeric_limits<double>::max();
     for (const PrintObject* po : print.objects()) {
@@ -120,13 +119,21 @@ static double first_print_height(const Print& print)
 
 static bool prints_at(const Layer* layer, double z) { return layer != nullptr && std::abs(layer->print_z - z) < EPSILON; }
 
-// The band a support layer's extrusions cover, moved to one instance's place on the bed.
-static ExPolygons support_covered(const SupportLayer& layer, const Point& shift)
+ExPolygons support_covered(const SupportLayer& layer, const Point& shift, std::optional<ExtrusionRole> role)
 {
-    Polygons fills = layer.support_fills.polygons_covered_by_width(float(scale_(0.05)));
-    for (Polygon& p : fills)
+    const float epsilon = float(scale_(0.05));
+    Polygons    bands;
+    if (!role) {
+        bands = layer.support_fills.polygons_covered_by_width(epsilon);
+    } else {
+        const ExtrusionEntityCollection lines = layer.support_fills.flatten();
+        for (const ExtrusionEntity* line : lines.entities)
+            if (line->role() == *role)
+                line->polygons_covered_by_width(bands, epsilon);
+    }
+    for (Polygon& p : bands)
         p.translate(shift);
-    return union_ex(fills);
+    return union_ex(bands);
 }
 
 FirstLayerPlan plan_from_print(const Print& print, const Model& model)
@@ -317,7 +324,7 @@ wxImage draw_first_layer_plan(const FirstLayerPlan&             plan,
             fill_expolygons(gc, union_ex(plan.loose_brim), m, wxBrush(wxColour(80, 80, 80, 90)), wxPen(wxColour(80, 80, 80, 200), 1));
     });
 
-    draw_overlays(image, plan_camera(m), plate, excluded_areas, plan_labels(plan), overlays);
+    draw_overlays(image, plan_camera(m), plate, excluded_areas, plan_labels(plan), overlays, plan_background());
     return image;
 }
 

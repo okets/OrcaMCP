@@ -364,8 +364,7 @@ static nlohmann::json render_sliced_layer_view(PartPlate& plate, int plate_index
     std::vector<OrcaMCP::ObjectAtHeight> objects;
     std::vector<OrcaMCP::PrintFootprint> footprints;
     if (const Print* print = plate.fff_print(); print != nullptr && !print->objects().empty()) {
-        objects    = OrcaMCP::objects_at_height(*print, wxGetApp().model(), layer.z, extrusion.extent,
-                                                print->config().nozzle_diameter.get_at(0));
+        objects    = OrcaMCP::objects_at_height(*print, wxGetApp().model(), layer.z, extrusion.extent);
         footprints = OrcaMCP::print_footprints(*print, wxGetApp().model());
     }
 

@@ -31,6 +31,7 @@
 #include "slic3r/GUI/OrcaMCP/OrcaMCPRenderOverlay.hpp"
 
 namespace Slic3r {
+class Layer;
 class Model;
 class Print;
 class PrintObject;
@@ -148,17 +149,24 @@ struct PrintedLayerRef
 };
 
 // How much of an object layer hangs over nothing: the parts of it more than `tolerance_mm` beyond the
-// layer below (half a nozzle: a wall can lean that far on its own), and how much of that has support
-// lines, and interface lines, under it -- on the support layer that holds it up, the highest one at
-// or below this layer's bottom less the support's top gap (SlicingParameters::gap_support_object),
-// whose height is support_z. Ribbon areas, like every other area here: sparse support covers only
-// the part of the overhang its lines run under.
+// layer below (half the nozzle printing its walls: a wall can lean that far on its own), and how much
+// of that has support lines, and interface lines, under it.
+//
+// Only the support that holds the layer up counts: its contact layer, one top gap below the layer's
+// bottom, at contact_z (support_contact_z) or up to one of its own layers lower -- where variable layer
+// heights and merged contacts end it. support_z is the highest support layer in that reach with lines
+// under the overhang. Support that ends lower -- a raft, or support stopping short -- holds nothing up:
+// the overhang then has no support_z and no cover, and nearest_support_z says where the support under
+// it does end. Ribbon areas, like every other area here: sparse support covers only the part its
+// lines run under.
 struct Overhang
 {
     double                area_mm2            = 0.;
     double                under_support_mm2   = 0.;
     double                under_interface_mm2 = 0.;
     std::optional<double> support_z;
+    std::optional<double> nearest_support_z;  // when there is no support_z
+    double                contact_z           = 0.;
     double                tolerance_mm        = 0.;
 };
 
@@ -179,12 +187,21 @@ constexpr double k_gcode_height_tolerance = 0.002;
 
 // Every object of `print` with an object or support layer printed at `z`. A by-object print prints
 // each object in its own pass, so there only the objects whose layer at `z` lies under `extent` (the
-// G-code layer's own lines) are listed. `nozzle_mm` sets the overhang tolerance (half of it).
+// G-code layer's own lines) are listed.
 std::vector<ObjectAtHeight> objects_at_height(const Print& print, const Model& model, double z,
-                                              const BoundingBoxf& extent, double nozzle_mm);
+                                              const BoundingBoxf& extent);
 
 // The overhang of `object`'s layer `layer_index`, or none on its first layer.
-std::optional<Overhang> overhang_of(const PrintObject& object, size_t layer_index, double tolerance_mm);
+std::optional<Overhang> overhang_of(const PrintObject& object, size_t layer_index);
+
+// The height, in mm, the support holding `layer` up ends at: its bottom less the top gap (none for a
+// zero-gap interface), or the first layer or raft top when that is lower still, as the support
+// generator places it. `layer` is one of `object`'s.
+double support_contact_z(const PrintObject& object, const Layer& layer);
+
+// Half the smallest nozzle printing `layer`'s outer walls: how far a wall can lean past the layer
+// below on its own. The nozzle is the one the slicer sizes those walls for (PrintRegion::flow).
+double overhang_tolerance(const Layer& layer);
 
 nlohmann::json objects_at_height_json(const std::vector<ObjectAtHeight>& objects);
 
