@@ -171,11 +171,15 @@ a handler that cannot do what a value asks answers with its own error (`{"status
 "message"}` naming what to send instead), before it changes anything or takes an undo step:
 `rotate_object relative: false`, one bound of `delete_object_layer_range`, an empty or malformed
 `reset_object_config keys`, `clone_object count < 1`, an unknown `cut_object keep` or
-`get_valid_config_keys category`, `scale_object uniform` without `x`, `printer_control
-set_temperature` with nothing to set, and a `flatten_object` the orient job would not scope to the
-object (`tests/slic3rutils/test_mcp_argument_values.cpp`, `[McpArgumentValues]`). A call that
-changes nothing because nothing was asked -- no axes, an empty list -- stays a success with
-`changed: false` or a zero count.
+`get_valid_config_keys category`, `scale_object uniform` without `x`, and `printer_control
+set_temperature` with nothing to set (`tests/slic3rutils/test_mcp_argument_values.cpp`,
+`[McpArgumentValues]`); and a `flatten_object` the orient job would not scope to the object
+(`flatten_refusal`, `flatten_selection_refusal`; `tests/slic3rutils/test_transform_frames.cpp`,
+`[orcamcp][transform_frames]`). A call that asks for no change stays a success with `changed: false`
+or a zero count: a transform with no axes, `apply_config` / `set_object_config` with no settings, the
+adaptive tools with no `object_ids`. An empty list that would be read as something else is refused
+instead: `reset_object_config`'s `keys: []` (which meant every override) and `set_temperature`'s
+`nozzles: []` (a command with nothing in it).
 
 **Anything a tool returns in the shape a request takes must be accepted back**: an agent edits a
 list by sending back the one a response gave it. So a strict nested object declares, as accepted and
