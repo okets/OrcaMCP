@@ -11,6 +11,7 @@
 using Slic3r::GUI::OrcaMCP::parse_double_param;
 using Slic3r::GUI::OrcaMCP::parse_integer_param;
 using Slic3r::GUI::OrcaMCP::parse_object_param;
+using Slic3r::GUI::OrcaMCP::parse_settings_param;
 using Slic3r::GUI::OrcaMCP::resolve_object_id;
 using Slic3r::GUI::OrcaMCP::error_response;
 
@@ -170,4 +171,49 @@ TEST_CASE("resolve_object_id finds the object an object_id names, or says why it
 TEST_CASE("error_response is the status and message every refusal carries", "[orcamcp][params]")
 {
     CHECK(error_response("no") == nlohmann::json{{"status", "error"}, {"message", "no"}});
+}
+
+// set_object_config, set_object_layer_range and apply_config take `settings` as a list of
+// {key, value} (apply_config's items also carry a type). A caller that sent an object instead --
+// {"wall_loops": 3} -- got "Internal error: ... type_error.305" out of the JSON library rather than
+// a word about what the tool takes.
+TEST_CASE("parse_settings_param takes a list of {key, value}, or its JSON text", "[orcamcp][params]")
+{
+    nlohmann::json out;
+    std::string    error;
+    const nlohmann::json list = nlohmann::json::array({{{"key", "wall_loops"}, {"value", 3}}});
+    REQUIRE(parse_settings_param(list, out, error));
+    CHECK(out == list);
+    REQUIRE(parse_settings_param(nlohmann::json(list.dump()), out, error));
+    CHECK(out == list);
+    REQUIRE(parse_settings_param(nlohmann::json::array(), out, error));
+    CHECK(out.empty());
+}
+
+TEST_CASE("parse_settings_param says what a malformed settings list is", "[orcamcp][params]")
+{
+    nlohmann::json out = "untouched";
+    std::string    error;
+    CHECK_FALSE(parse_settings_param({{"wall_loops", 3}}, out, error));
+    CHECK(error.find("list of {key, value}") != std::string::npos);
+    CHECK(out == "untouched");
+
+    CHECK_FALSE(parse_settings_param(nlohmann::json::array({{{"key", "wall_loops"}}}), out, error));
+    CHECK(error.find("settings[0]") != std::string::npos);
+    CHECK(error.find("value") != std::string::npos);
+
+    CHECK_FALSE(parse_settings_param(nlohmann::json::array({{{"key", 7}, {"value", 3}}}), out, error));
+    CHECK(error.find("key") != std::string::npos);
+
+    CHECK_FALSE(parse_settings_param(nlohmann::json::array({"wall_loops"}), out, error));
+    CHECK_FALSE(parse_settings_param(nlohmann::json("not json"), out, error));
+}
+
+TEST_CASE("parse_settings_param can require each setting's type too", "[orcamcp][params]")
+{
+    nlohmann::json out;
+    std::string    error;
+    CHECK_FALSE(parse_settings_param(nlohmann::json::array({{{"key", "wall_loops"}, {"value", 3}}}), out, error, /*with_type=*/true));
+    CHECK(error.find("type") != std::string::npos);
+    CHECK(parse_settings_param(nlohmann::json::array({{{"type", "print"}, {"key", "wall_loops"}, {"value", 3}}}), out, error, true));
 }

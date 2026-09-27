@@ -1338,7 +1338,10 @@ void OrcaMCPServer::register_builtin_tools()
             {"required", {"settings"}}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
-            nlohmann::json settings = params["settings"];
+            nlohmann::json settings;
+            std::string    settings_error;
+            if (!parse_settings_param(params.value("settings", nlohmann::json()), settings, settings_error, /*with_type=*/true))
+                return error_response(settings_error);
             return run_on_main_thread([settings]() {
                 McpDialogSuppressionGuard suppression_guard;
 
@@ -1878,12 +1881,34 @@ void OrcaMCPServer::register_builtin_tools()
             // Build list of configs to process
             std::vector<std::pair<int, nlohmann::json>> config_list;
 
-            if (params.contains("configs") && params["configs"].is_array()) {
-                for (const auto& cfg : params["configs"]) {
-                    config_list.push_back({cfg["object_id"].get<int>(), cfg["settings"]});
+            // One object's settings, read the way every tool reads them (parse_integer_param,
+            // parse_settings_param): a malformed one is refused with what is wrong, not the JSON
+            // library's type_error.
+            std::string read_error;
+            const auto  read_config = [&config_list, &read_error](const nlohmann::json& item, const std::string& at) {
+                int            object_id = -1;
+                nlohmann::json settings;
+                if (!item.contains("object_id") || !parse_integer_param(item["object_id"], object_id)) {
+                    read_error = at + "object_id must be an integer";
+                    return false;
                 }
+                if (!parse_settings_param(item.value("settings", nlohmann::json()), settings, read_error)) {
+                    read_error = at + read_error;
+                    return false;
+                }
+                config_list.push_back({object_id, settings});
+                return true;
+            };
+            if (params.contains("configs")) {
+                if (!params["configs"].is_array())
+                    return error_response("configs must be a list of {object_id, settings}");
+                for (size_t i = 0; i < params["configs"].size(); ++i)
+                    if (!params["configs"][i].is_object() || !read_config(params["configs"][i], "configs[" + std::to_string(i) + "]: "))
+                        return error_response(read_error.empty() ? "configs[" + std::to_string(i) + "] must be an object {object_id, settings}"
+                                                                 : read_error);
             } else if (params.contains("object_id") && params.contains("settings")) {
-                config_list.push_back({params["object_id"].get<int>(), params["settings"]});
+                if (!read_config(params, ""))
+                    return error_response(read_error);
             } else {
                 return nlohmann::json{
                     {"status", "error"},
@@ -2304,14 +2329,20 @@ void OrcaMCPServer::register_builtin_tools()
             {"required", {"object_id", "z_min", "z_max", "settings"}}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
-            int object_id = params["object_id"];
+            int object_id = -1;
+            if (!parse_integer_param(params.value("object_id", nlohmann::json()), object_id))
+                return error_response("object_id must be an integer");
             // Through parse_double_param, not get<double>(): the bridge delivered "1.4" as a string
             // on 2026-09-22 and the bare conversion threw past the handler as an "Internal error".
             double z_min = 0.0, z_max = 0.0;
-            if (!parse_double_param(params["z_min"], z_min) || !parse_double_param(params["z_max"], z_max))
+            if (!parse_double_param(params.value("z_min", nlohmann::json()), z_min) ||
+                !parse_double_param(params.value("z_max", nlohmann::json()), z_max))
                 return nlohmann::json{{"status", "error"},
                                       {"message", "z_min and z_max must be finite numbers, in millimetres above the object's base"}};
-            nlohmann::json settings = params["settings"];
+            nlohmann::json settings;
+            std::string    settings_error;
+            if (!parse_settings_param(params.value("settings", nlohmann::json()), settings, settings_error))
+                return error_response(settings_error);
             return run_on_main_thread([object_id, z_min, z_max, settings]() {
                 Plater* plater = wxGetApp().plater();
                 Model& model = plater->model();

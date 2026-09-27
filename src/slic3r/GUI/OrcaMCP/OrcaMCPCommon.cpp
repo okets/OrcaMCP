@@ -131,6 +131,39 @@ bool parse_object_param(const nlohmann::json& value, nlohmann::json& out)
     return true;
 }
 
+bool parse_settings_param(const nlohmann::json& value, nlohmann::json& out, std::string& error, bool with_type)
+{
+    const std::string shape = with_type ? "a list of {type, key, value}" : "a list of {key, value}";
+    const nlohmann::json list = value.is_string() ? nlohmann::json::parse(value.get<std::string>(), nullptr, /*allow_exceptions=*/false)
+                                                  : value;
+    if (!list.is_array()) {
+        error = "settings must be " + shape + ", e.g. [{\"key\": \"wall_loops\", \"value\": 3}]; got " + value.dump();
+        return false;
+    }
+    for (size_t i = 0; i < list.size(); ++i) {
+        const nlohmann::json& item = list[i];
+        const std::string     at   = "settings[" + std::to_string(i) + "]";
+        if (!item.is_object()) {
+            error = at + " must be an object {key, value}; got " + item.dump();
+            return false;
+        }
+        if (with_type && !(item.contains("type") && item["type"].is_string())) {
+            error = at + " needs a string type (print, filament, printer or project)";
+            return false;
+        }
+        if (!(item.contains("key") && item["key"].is_string())) {
+            error = at + " needs a string key";
+            return false;
+        }
+        if (!item.contains("value")) {
+            error = at + " (" + item["key"].get<std::string>() + ") needs a value";
+            return false;
+        }
+    }
+    out = list;
+    return true;
+}
+
 bool parse_boolean_param(const nlohmann::json& value, bool& out)
 {
     if (value.is_boolean()) {

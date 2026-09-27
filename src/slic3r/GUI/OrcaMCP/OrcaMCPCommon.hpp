@@ -52,6 +52,14 @@ bool parse_double_param(const nlohmann::json& value, double& out);
 // a string that is not an object's text, returns false without touching `out`.
 bool parse_object_param(const nlohmann::json& value, nlohmann::json& out);
 
+// A `settings` parameter: a list of {key, value} objects (each with a string type too when
+// `with_type`, as apply_config takes them), or a string holding the JSON text of one, for the same
+// reason as above. Returns false with `error` saying what is wrong -- not a list, or which item
+// lacks what -- without touching `out`. What set_object_config, set_object_layer_range and
+// apply_config read their settings through: a caller that sent an object got the JSON library's
+// type_error instead.
+bool parse_settings_param(const nlohmann::json& value, nlohmann::json& out, std::string& error, bool with_type = false);
+
 // {"status": "error", "message": message}: what a tool returns for a call it refuses.
 nlohmann::json error_response(const std::string& message);
 
