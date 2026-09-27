@@ -3157,7 +3157,8 @@ void OrcaMCPServer::register_builtin_tools()
         "Slicing state per plate; poll this",
         "Get the current slicing state: slicing (in progress), done (the last slice_all run is done -- "
         "every plate it asked for that has something on it is sliced -- and the selected plate is sliced "
-        "or empty; before any slice_all, the selected plate is sliced) or idle (anything else). Poll "
+        "or empty; before any slice_all, or once none of its plates exists (a new project), the selected "
+        "plate is sliced) or idle (anything else). Poll "
         "until state is done, then get_print_estimate. "
         "The plates array reports every plate's slice result and percent (0-100; null for a plate "
         "with no result that is not slicing), so a slice_all run can be followed plate by plate; "
@@ -3231,8 +3232,8 @@ void OrcaMCPServer::register_builtin_tools()
                 // The state is the last slice_all run's, not the selected plate's alone (OrcaMCP::slice_state).
                 const OrcaMCP::SliceRunJudgement judged = judge_last_run(*plater, plate_list, is_running);
                 result["is_slicing"]         = is_running;
-                result["state"]              = OrcaMCP::slice_state_name(OrcaMCP::slice_state(is_running, judged.outcome,
-                                                                                              selected_plate_state(plate_list)));
+                const OrcaMCP::SliceRunOutcome   run    = OrcaMCP::outcome_for_state(judged.outcome, slice_run_plates(plate_list));
+                result["state"]              = OrcaMCP::slice_state_name(OrcaMCP::slice_state(is_running, run, selected_plate_state(plate_list)));
                 result["status"]             = is_running ? "slicing" : "idle";  // kept for older callers
                 result["plate_index"]        = plate_list.get_curr_plate_index();
                 result["slice_result_valid"] = has_result;

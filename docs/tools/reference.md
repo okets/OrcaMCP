@@ -285,7 +285,7 @@ Check slicing progress, for the selected plate and for every plate.
 
 | Field | Meaning |
 |-------|---------|
-| `state` | `slicing` (in progress); `done` when the last `slice_all` run is done (`slice_run.outcome`) and the selected plate is sliced or empty -- before any `slice_all`, when the selected plate is sliced; `idle` otherwise (never sliced, an edit invalidated a result, or the run is not done) |
+| `state` | `slicing` (in progress); `done` when the last `slice_all` run is done (`slice_run.outcome`) and the selected plate is sliced or empty -- before any `slice_all`, or once none of its plates exists (a new project), when the selected plate is sliced; `idle` otherwise (never sliced, an edit invalidated a result, or the run is not done) |
 | `is_slicing` | Background process running right now. During a `slice_all` run over every plate it stays true from the first plate to the last |
 | `status` | Legacy field, `slicing` or `idle` only - use `state` |
 | `slice_result_valid` | The current plate's own slice-result flag, the same one the GUI's Print/Export buttons use |

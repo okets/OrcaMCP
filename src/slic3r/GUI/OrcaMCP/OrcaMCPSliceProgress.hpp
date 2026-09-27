@@ -182,6 +182,15 @@ inline const char* slice_state_name(SliceState state)
     return "idle";
 }
 
+// The run outcome the state goes by: none when no plate of the run exists any more. new_project and
+// load_project replace every plate while the run's record stays, and slice_run still reports it, but
+// the new project's state is its selected plate's.
+inline SliceRunOutcome outcome_for_state(SliceRunOutcome run, const std::vector<SliceRunPlate>& plates)
+{
+    const bool any_left = std::any_of(plates.begin(), plates.end(), [](const SliceRunPlate& p) { return p.exists; });
+    return any_left ? run : SliceRunOutcome::none;
+}
+
 // The state from how the last slice_all run stands (`run`, judge_slice_run's outcome) and the selected
 // plate, rather than from the selected plate alone: with an empty plate selected that stayed idle
 // after a run that sliced every other plate. A selected plate with objects and no result is idle
