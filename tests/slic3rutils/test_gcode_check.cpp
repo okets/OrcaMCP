@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 
+#include <cmath>
 #include <optional>
 #include <string>
 #include <vector>
@@ -104,4 +105,65 @@ TEST_CASE("the check is read from the slice result's own fields", "[orcamcp][Gco
     CHECK(check.toolpath_outside);
     CHECK(check.error_code == (1 << 3));
     CHECK(check.bed_conflict_filaments == std::vector<int>{4});
+}
+
+TEST_CASE("a toolpath above the printable height is refused with the heights that make it, and the usual cause", "[orcamcp][GcodeCheck]")
+{
+    GcodeCheckInput check;
+    check.error_code       = 1 << 3;
+    check.highest_layer_z  = 20.5000004; // print_z is a float
+    check.printable_height = 20.;
+    const std::vector<GcodeCheckProblem> problems = gcode_check_problems(check);
+    REQUIRE(codes(problems) == std::vector<std::string>{"above_printable_height"});
+    CHECK(problems.front().words.find("the highest layer prints at 20.5 mm") != std::string::npos);
+    CHECK(problems.front().words.find("the printable height is 20 mm") != std::string::npos);
+
+    const nlohmann::json summary = gcode_check_json(problems);
+    CHECK(summary["highest_layer_z_mm"] == 20.5);
+    CHECK(summary["printable_height_mm"] == 20.);
+    REQUIRE(summary.contains("hint"));
+    CHECK(summary["hint"].get<std::string>().find("raft_layers") != std::string::npos);
+
+    const std::optional<std::string> refusal = gcode_check_refusal(0, problems);
+    REQUIRE(refusal.has_value());
+    CHECK(refusal->find("20.5 mm") != std::string::npos);
+    CHECK(refusal->find(summary["hint"].get<std::string>()) != std::string::npos);
+}
+
+TEST_CASE("without the heights, a toolpath above the printable height is refused with the cause alone", "[orcamcp][GcodeCheck]")
+{
+    GcodeCheckInput check;
+    check.error_code = 1 << 3;
+    const std::vector<GcodeCheckProblem> problems = gcode_check_problems(check);
+    REQUIRE(problems.size() == 1);
+    CHECK(problems.front().words.find(" mm") == std::string::npos);
+
+    const nlohmann::json summary = gcode_check_json(problems);
+    CHECK_FALSE(summary.contains("highest_layer_z_mm"));
+    CHECK(summary.contains("hint"));
+}
+
+TEST_CASE("the highest layer is read from the result's extrusions, and only when the height check failed", "[orcamcp][GcodeCheck]")
+{
+    Slic3r::GCodeProcessorResult result;
+    result.reset();
+    result.printable_height = 20.f;
+    const auto add_move = [&result](Slic3r::EMoveType type, Slic3r::ExtrusionRole role, float print_z) {
+        Slic3r::GCodeProcessorResult::MoveVertex move;
+        move.type           = type;
+        move.extrusion_role = role;
+        move.print_z        = print_z;
+        result.moves.push_back(move);
+    };
+    add_move(Slic3r::EMoveType::Extrude, Slic3r::erExternalPerimeter, 20.5f);
+    add_move(Slic3r::EMoveType::Extrude, Slic3r::erCustom, 30.f);    // the end G-code's extrusion is not a layer
+    add_move(Slic3r::EMoveType::Travel, Slic3r::erExternalPerimeter, 40.f); // nor is a travel
+
+    CHECK_FALSE(gcode_check_input(result).highest_layer_z.has_value());
+
+    result.gcode_check_result.error_code = 1 << 3;
+    const GcodeCheckInput check = gcode_check_input(result);
+    REQUIRE(check.highest_layer_z.has_value());
+    CHECK(std::abs(*check.highest_layer_z - 20.5) < 1e-6);
+    CHECK(check.printable_height == 20.);
 }

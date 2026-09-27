@@ -3257,7 +3257,8 @@ void OrcaMCPServer::register_builtin_tools()
         "restored_selected_plate. Each plate's gcode_check is the check its slice ran on its own G-code "
         "(null without a result): {ok: true}, or ok false with problems -- outside_bed, "
         "above_printable_height, above_extruder_height, outside_extruder_area, in_wrapping_area, "
-        "over_printed_mass, toolpath_outside, filament_bed_conflict -- and a message. The GUI keeps a "
+        "over_printed_mass, toolpath_outside, filament_bed_conflict -- and a message; above_printable_height "
+        "also gives highest_layer_z_mm and printable_height_mm, and a hint at the usual cause. The GUI keeps a "
         "failed plate's Print and Export buttons off, and export_gcode and send_to_printer refuse it.",
         {
             {"type", "object"},

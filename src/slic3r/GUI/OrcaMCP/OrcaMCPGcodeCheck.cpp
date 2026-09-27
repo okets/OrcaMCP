@@ -2,7 +2,9 @@
 #include "OrcaMCPGcodeCheck.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <iterator>
+#include <sstream>
 
 #include "libslic3r/GCode/GCodeProcessor.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
@@ -10,6 +12,8 @@
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
 namespace {
+
+constexpr int above_printable_height_bit = 3;
 
 struct CheckBit
 {
@@ -37,6 +41,42 @@ GcodeCheckProblem problem_of_bit(int bit)
     return {"check_bit_" + std::to_string(bit), "the check failed with error bit " + std::to_string(bit)};
 }
 
+double rounded_mm(double value) { return std::round(value * 1000.) / 1000.; }
+
+std::string mm(double value)
+{
+    std::ostringstream out;
+    out << rounded_mm(value) << " mm";
+    return out.str();
+}
+
+// The problem, with the heights that make it when the result had them. The likeliest cause is a raft:
+// the check before slicing (Print::validate) measures each object without its raft and refuses one
+// whose own top layer is above the printable height, so what reaches this check is lifted by a raft.
+GcodeCheckProblem above_printable_height_problem(const GcodeCheckInput& check)
+{
+    GcodeCheckProblem problem = problem_of_bit(above_printable_height_bit);
+    if (check.highest_layer_z) {
+        problem.words += " (the highest layer prints at " + mm(*check.highest_layer_z) + "; the printable height is " +
+                         mm(check.printable_height) + ")";
+        problem.facts = {{"highest_layer_z_mm", rounded_mm(*check.highest_layer_z)}, {"printable_height_mm", rounded_mm(check.printable_height)}};
+    }
+    problem.hint = "The app's check before slicing measures each object without its raft, so a raft lifts an object that fits "
+                   "by the raft's thickness; fewer raft_layers, or a lower object, keeps its top layer within the printable height.";
+    return problem;
+}
+
+// The highest layer an extrusion prints at, custom G-code's (start and end G-code) aside, as the check
+// measures it; nullopt without one.
+std::optional<double> highest_extrusion_layer_z(const GCodeProcessorResult& result)
+{
+    std::optional<double> highest;
+    for (const GCodeProcessorResult::MoveVertex& move : result.moves)
+        if (move.type == EMoveType::Extrude && move.extrusion_role != erCustom && (!highest || move.print_z > *highest))
+            highest = move.print_z;
+    return highest;
+}
+
 GcodeCheckProblem bed_conflict_problem(const std::vector<int>& filaments)
 {
     std::string ids;
@@ -56,11 +96,26 @@ std::string joined_words(const std::vector<GcodeCheckProblem>& problems)
     return words;
 }
 
+std::string joined_hints(const std::vector<GcodeCheckProblem>& problems)
+{
+    std::string hints;
+    for (const GcodeCheckProblem& problem : problems)
+        if (!problem.hint.empty())
+            hints += (hints.empty() ? "" : " ") + problem.hint;
+    return hints;
+}
+
 } // namespace
 
 GcodeCheckInput gcode_check_input(const GCodeProcessorResult& result)
 {
-    return {result.toolpath_outside, result.gcode_check_result.error_code, result.filament_printable_reuslt.conflict_filament};
+    GcodeCheckInput input{result.toolpath_outside, result.gcode_check_result.error_code, result.filament_printable_reuslt.conflict_filament};
+    // Walking the moves costs, so only for a plate the height check failed.
+    if (input.error_code & (1 << above_printable_height_bit)) {
+        input.highest_layer_z  = highest_extrusion_layer_z(result);
+        input.printable_height = result.printable_height;
+    }
+    return input;
 }
 
 std::vector<GcodeCheckProblem> gcode_check_problems(const GcodeCheckInput& check)
@@ -68,7 +123,7 @@ std::vector<GcodeCheckProblem> gcode_check_problems(const GcodeCheckInput& check
     std::vector<GcodeCheckProblem> problems;
     for (int bit = 0; bit < 31; ++bit)
         if (check.error_code & (1 << bit))
-            problems.push_back(problem_of_bit(bit));
+            problems.push_back(bit == above_printable_height_bit ? above_printable_height_problem(check) : problem_of_bit(bit));
     if (check.toolpath_outside)
         problems.push_back({"toolpath_outside", "a toolpath is outside the printable volume"});
     if (!check.bed_conflict_filaments.empty())
@@ -80,19 +135,25 @@ nlohmann::json gcode_check_json(const std::vector<GcodeCheckProblem>& problems)
 {
     if (problems.empty())
         return {{"ok", true}};
-    nlohmann::json codes = nlohmann::json::array();
-    for (const GcodeCheckProblem& problem : problems)
-        codes.push_back(problem.code);
-    return {{"ok", false}, {"problems", codes}, {"message", joined_words(problems)}};
+    nlohmann::json summary = {{"ok", false}, {"problems", nlohmann::json::array()}, {"message", joined_words(problems)}};
+    for (const GcodeCheckProblem& problem : problems) {
+        summary["problems"].push_back(problem.code);
+        summary.update(problem.facts);
+    }
+    if (const std::string hints = joined_hints(problems); !hints.empty())
+        summary["hint"] = hints;
+    return summary;
 }
 
 std::optional<std::string> gcode_check_refusal(int plate_index, const std::vector<GcodeCheckProblem>& problems)
 {
     if (problems.empty())
         return std::nullopt;
+    const std::string hints = joined_hints(problems);
     return "plate_index " + std::to_string(plate_index) +
            " failed the app's check of its sliced G-code, which keeps its Print and Export buttons off too: " +
-           joined_words(problems) + ". Fix that and slice again; get_slicing_status's gcode_check says what is left.";
+           joined_words(problems) + "." + (hints.empty() ? "" : " " + hints) +
+           " Fix that and slice again; get_slicing_status's gcode_check says what is left.";
 }
 
 bool plate_gcode_checked(PartPlate& plate) { return plate.is_slice_result_valid() && plate.get_slice_result() != nullptr; }
