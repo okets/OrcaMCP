@@ -807,13 +807,23 @@ object registered on its old plate, which sliced it onto the wrong plate with no
 ---
 
 ### flatten_object
-Flatten object to the bed (place flat side down).
+Orient one object to lay flat on its best face, the way the GUI's **Orient** does for a selection.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `object_id` | integer | Yes | Object index |
 | `include_preview` | boolean | No | Include preview |
+
+The object is selected and turned (every instance of it); no other object moves. Before v2.5.0.6
+this oriented every object on the current plate. The orient runs in the background: the response
+is `"status": "orient_started"`, and `get_object_info` shows the result once it has finished. One
+`undo` puts the object back.
+
+Refused, with nothing selected or changed, when the job would not orient this object alone: another
+job (an arrange or an orient) is still running; the object is marked not printable, which the orient
+job leaves out (and, finding nothing selected, would orient every other object instead); or every
+instance of it is on a locked plate. Each message says what to do instead.
 
 ---
 

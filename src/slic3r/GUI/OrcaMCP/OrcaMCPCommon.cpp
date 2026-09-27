@@ -263,6 +263,21 @@ void report_placement(nlohmann::json& result, int object_id)
         result.erase("placement_warning");
 }
 
+std::optional<std::string> flatten_refusal(int object_id, bool printable, size_t instances, size_t instances_on_locked_plates,
+                                           bool job_running)
+{
+    const std::string object = "object " + std::to_string(object_id);
+    if (job_running)
+        return std::string("another job (an arrange or an orient) is running: call flatten_object again once it has finished");
+    if (!printable)
+        return object + " is marked not printable, and only printable objects are oriented: turn it with rotate_object instead";
+    if (instances == 0)
+        return object + " has no instance to orient";
+    if (instances_on_locked_plates == instances)
+        return object + " is on a locked plate, which is never oriented: unlock the plate, or turn it with rotate_object";
+    return std::nullopt;
+}
+
 bool valid_scale_factors(const Vec3d& factors)
 {
     return std::all_of(factors.data(), factors.data() + 3, [](double f) { return std::isfinite(f) && f > 0.0; });

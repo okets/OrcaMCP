@@ -152,6 +152,13 @@ bool should_drop_to_bed(double min_z_before, double min_z_after);
 // uniform 1.49x scale about the centre of a 99 mm figurine put its feet 24 mm under the bed.
 void transform_instances_on_bed(ModelObject& object, const Transform3d& world_transform);
 
+// Why flatten_object cannot orient object `object_id` now, or nothing. It orients through the orient
+// job's selection path (the toolbar's Orient), which leaves out an object marked not printable
+// (ModelObject::printable) and every instance on a locked plate -- and, left with an empty selection,
+// orients every object instead -- and which Plater::orient does not start while another job runs.
+std::optional<std::string> flatten_refusal(int object_id, bool printable, size_t instances, size_t instances_on_locked_plates,
+                                           bool job_running);
+
 // A scale the transform tools accept: every factor positive and finite. A zero factor makes the
 // instance matrix singular, and a negative one is a mirror under a scale's name (mirror_object says so).
 bool valid_scale_factors(const Vec3d& factors);

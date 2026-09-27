@@ -5230,7 +5230,9 @@ void OrcaMCPServer::register_builtin_tools()
         "flatten_object",
         ToolCategory::Transforms,
         "Lay an object flat on its best face",
-        "Automatically orient an object to lay flat on its best face for printing",
+        "Orient one object to lay flat on its best face for printing, the way the GUI's Orient does for a "
+        "selection: the object is selected and turned, and no other object moves. It runs in the "
+        "background (status orient_started); get_object_info shows the result once it has finished.",
         {
             {"type", "object"},
             {"properties", {
@@ -5266,8 +5268,28 @@ void OrcaMCPServer::register_builtin_tools()
                     throw std::runtime_error("Invalid object_id: " + std::to_string(object_id));
                 }
 
-                // Use the orient function which auto-orients for optimal printing
-                plater->set_prepare_state(Job::PREPARE_STATE_MENU);
+                const ModelObject* object = model.objects[object_id];
+                PartPlateList&     plates = plater->get_partplate_list();
+                size_t             on_locked_plates = 0;
+                for (size_t i = 0; i < object->instances.size(); ++i) {
+                    const int plate = plates.find_instance(object_id, int(i));
+                    if (plate >= 0 && plate < plates.get_plate_count() && plates.is_locked(plate))
+                        ++on_locked_plates;
+                }
+                if (const auto refusal = flatten_refusal(object_id, object->printable, object->instances.size(), on_locked_plates,
+                                                         !plater->get_ui_job_worker().is_idle()))
+                    return error_response(*refusal);
+
+                // This object alone: the orient job orients the selection (PREPARE_STATE_DEFAULT), as the
+                // toolbar's Orient does. PREPARE_STATE_MENU is the whole current plate, which is what this
+                // used to orient.
+                {
+                    // Selecting it is not an edit: otherwise an undo step of its own, before Orient's.
+                    Plater::SuppressSnapshots selection_is_not_an_edit(plater);
+                    plater->get_view3D_canvas3D()->get_selection().add_object(unsigned(object_id), /*as_single_selection=*/true);
+                    wxGetApp().obj_list()->update_selections();
+                }
+                plater->set_prepare_state(Job::PREPARE_STATE_DEFAULT);
                 plater->orient();
 
                 nlohmann::json result = {

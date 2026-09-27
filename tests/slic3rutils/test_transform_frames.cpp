@@ -576,3 +576,19 @@ TEST_CASE("a scale is valid only with positive, finite factors", "[orcamcp][tran
     CHECK_FALSE(valid_scale_factors(Vec3d(1, 1, std::nan(""))));
     CHECK_FALSE(valid_scale_factors(Vec3d(INFINITY, 1, 1)));
 }
+
+TEST_CASE("flatten_object orients an object only when the orient job would orient that object alone",
+          "[orcamcp][transform_frames]")
+{
+    // The job orients the selection, and an empty selection orients every object: an object it leaves
+    // out of the selection would have every other object turned in its place.
+    using Slic3r::GUI::OrcaMCP::flatten_refusal;
+    CHECK_FALSE(flatten_refusal(2, /*printable=*/true, /*instances=*/2, /*on_locked_plates=*/1, /*job_running=*/false).has_value());
+    CHECK(flatten_refusal(2, true, 1, 0, /*job_running=*/true) ==
+          "another job (an arrange or an orient) is running: call flatten_object again once it has finished");
+    CHECK(flatten_refusal(2, /*printable=*/false, 1, 0, false) ==
+          "object 2 is marked not printable, and only printable objects are oriented: turn it with rotate_object instead");
+    CHECK(flatten_refusal(2, true, /*instances=*/0, 0, false) == "object 2 has no instance to orient");
+    CHECK(flatten_refusal(2, true, /*instances=*/2, /*on_locked_plates=*/2, false) ==
+          "object 2 is on a locked plate, which is never oriented: unlock the plate, or turn it with rotate_object");
+}
