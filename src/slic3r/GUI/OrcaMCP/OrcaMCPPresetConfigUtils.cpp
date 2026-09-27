@@ -477,7 +477,7 @@ ApplyConfigResult OrcaMCPPresetConfigUtils::ApplyConfig(const nlohmann::json& it
     return result;
 }
 
-void OrcaMCPPresetConfigUtils::RefreshAfterProjectConfigChange() {
+void OrcaMCPPresetConfigUtils::RefreshAfterProjectConfigChange(int only_plate) {
     Plater* plater = wxGetApp().plater();
     // The plater's own reaction to a colour change -- the 3D scene, the object list's colours, both
     // filament lists -- runs only for keys that differ from its config, so it comes first: the line
@@ -494,6 +494,10 @@ void OrcaMCPPresetConfigUtils::RefreshAfterProjectConfigChange() {
     // snapshot; see the header. Without this, an MCP write of a filament colour or a flush volume
     // is forgotten the next time OrcaSlicer starts.
     PersistProjectSnapshot();
+    if (only_plate >= 0)
+        OrcaMCP::mark_plate_unsliced(plater->get_partplate_list(), only_plate);
+    else
+        plater->get_partplate_list().invalid_all_slice_result();
     wxPostEvent(&wxGetApp().sidebar(), SimpleEvent(EVT_SCHEDULE_BACKGROUND_PROCESS, &wxGetApp().sidebar()));
 }
 

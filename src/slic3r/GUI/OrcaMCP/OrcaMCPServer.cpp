@@ -1963,6 +1963,7 @@ void OrcaMCPServer::register_builtin_tools()
 
                     if (!applied_keys.empty()) {
                         wxGetApp().obj_list()->changed_object(object_id);
+                        mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
                         any_changes = true;
                     }
 
@@ -2060,6 +2061,7 @@ void OrcaMCPServer::register_builtin_tools()
 
                 // Notify UI of changes
                 wxGetApp().obj_list()->changed_object(object_id);
+                mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
                 plater->update();
 
                 return nlohmann::json{
@@ -2436,6 +2438,7 @@ void OrcaMCPServer::register_builtin_tools()
 
                 // Notify UI of changes
                 wxGetApp().obj_list()->changed_object(object_id);
+                mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
                 plater->update();
 
                 return nlohmann::json{
@@ -2538,6 +2541,7 @@ void OrcaMCPServer::register_builtin_tools()
 
                     // Notify UI of changes
                     wxGetApp().obj_list()->update_info_items(object_id);
+                    mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
 
                     // Calculate profile statistics
                     double min_layer_height = slicing_params.max_layer_height;
@@ -2669,6 +2673,7 @@ void OrcaMCPServer::register_builtin_tools()
                     bool had_vlh = !obj->layer_height_profile.get().empty();
                     obj->layer_height_profile.clear();
                     wxGetApp().obj_list()->update_info_items(object_id);
+                    mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
 
                     obj_result["status"] = "success";
                     obj_result["object_name"] = obj->name;
@@ -3799,7 +3804,7 @@ void OrcaMCPServer::register_builtin_tools()
                 x_opt->set_at(&new_x, index, 0);
                 y_opt->set_at(&new_y, index, 0);
 
-                OrcaMCPPresetConfigUtils::RefreshAfterProjectConfigChange();
+                OrcaMCPPresetConfigUtils::RefreshAfterProjectConfigChange(/*only_plate=*/index);
                 plater->update();
 
                 const PrimeTowerState after = OrcaMCPPlateUtils::GetPrimeTowerState(index);
@@ -4879,8 +4884,10 @@ void OrcaMCPServer::register_builtin_tools()
                 std::string old_name = model.objects[object_id]->name;
                 model.objects[object_id]->name = new_name;
 
-                // Update the object list UI to reflect the new name
+                // Update the object list UI to reflect the new name. The name is in the G-code (its
+                // object labels), so the plates holding it no longer have its result.
                 wxGetApp().obj_list()->update_name_for_items();
+                mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
 
                 return nlohmann::json{
                     {"status", "success"},
@@ -4987,6 +4994,7 @@ void OrcaMCPServer::register_builtin_tools()
                 // whichever canvas is showing, and the Preview canvas holds no model volumes, so from
                 // the Preview tab the 3D view -- and every render drawn from it -- kept the old state.
                 plater->get_view3D_canvas3D()->update_instance_printable_state_for_object(static_cast<size_t>(object_id));
+                mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
                 plater->update();
 
                 return nlohmann::json{

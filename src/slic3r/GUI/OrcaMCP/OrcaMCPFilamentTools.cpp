@@ -9,6 +9,7 @@
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/PresetComboBoxes.hpp"
 #include "slic3r/GUI/Plater.hpp"
+#include "slic3r/GUI/PartPlate.hpp"
 #include "libslic3r/ColorDecomposeRecipe.hpp"
 
 #include <algorithm>
@@ -114,6 +115,8 @@ void OrcaMCPServer::register_filament_tools()
                 }
                 int idx = wxGetApp().sidebar().apply_mixed_filament(req, edit_idx, error);
                 if (idx < 0) return nlohmann::json{{"status", "error"}, {"message", error}};
+                // A filament slot changed for every plate: none keeps a result made without it.
+                wxGetApp().plater()->get_partplate_list().invalid_all_slice_result();
                 return with_filaments({{"status", "success"}, {"slot", idx + 1}});
             });
         }
@@ -144,6 +147,8 @@ void OrcaMCPServer::register_filament_tools()
                     return nlohmann::json{{"status", "error"}, {"message", "slot is not a mixed filament"}};
 
                 wxGetApp().sidebar().delete_mixed_filament_at(size_t(it - mixed.begin()));
+                // A filament slot changed for every plate: none keeps a result made with it.
+                wxGetApp().plater()->get_partplate_list().invalid_all_slice_result();
                 return with_filaments({{"status", "success"}});
             });
         }

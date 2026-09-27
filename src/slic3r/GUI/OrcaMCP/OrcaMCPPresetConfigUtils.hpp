@@ -151,7 +151,11 @@ public:
     // project this whole area exists to prevent. Every GUI path that writes one of those keys
     // (the filament colour picker, the wipe-tower dialog, Sidebar::auto_calc_flushing_volumes)
     // calls export_selections, so every MCP path must too.
-    static void RefreshAfterProjectConfigChange();
+    //
+    // The change reaches a plate's Print only when that plate is next applied, so the plates it
+    // touches are marked not sliced (OrcaMCP::mark_object_plates_unsliced says why): every plate, or
+    // only `only_plate` for a key that is one plate's own (its prime tower position).
+    static void RefreshAfterProjectConfigChange(int only_plate = -1);
 
     // Saves that per-printer snapshot (PresetBundle::export_selections) for the selected printer: the
     // one place every MCP write of those keys persists them. It is also where a printer switch takes

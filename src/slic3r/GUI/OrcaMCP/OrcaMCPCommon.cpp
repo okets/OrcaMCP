@@ -346,6 +346,28 @@ BoundingBoxf3 plate_box_of(const ModelObject& object, const InstancesOnPlate& he
     return here.box.defined ? here.box : object_world_box(object);
 }
 
+void mark_object_plates_unsliced(PartPlateList& plates, int object_index)
+{
+    const Model& model = wxGetApp().model();
+    if (object_index < 0 || size_t(object_index) >= model.objects.size())
+        return;
+    const size_t instances = model.objects[size_t(object_index)]->instances.size();
+    for (int p = 0; p < plates.get_plate_count(); ++p) {
+        PartPlate* plate = plates.get_plate(p);
+        for (size_t i = 0; plate != nullptr && i < instances; ++i)
+            if (plate->contain_instance(object_index, int(i))) {
+                plate->update_slice_result_valid_state(false);
+                break;
+            }
+    }
+}
+
+void mark_plate_unsliced(PartPlateList& plates, int plate_index)
+{
+    if (PartPlate* plate = plate_index >= 0 && plate_index < plates.get_plate_count() ? plates.get_plate(plate_index) : nullptr)
+        plate->update_slice_result_valid_state(false);
+}
+
 int model_object_index(const ModelObject* object)
 {
     return model_object_index(wxGetApp().model(), object);

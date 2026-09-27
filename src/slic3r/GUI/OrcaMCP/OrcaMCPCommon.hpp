@@ -14,6 +14,7 @@ class Model;
 class ModelObject;
 namespace GUI {
 class PartPlate;
+class PartPlateList;
 class Plater;
 namespace OrcaMCP {
 struct MeshHealth;
@@ -167,6 +168,18 @@ BoundingBoxf3 plate_box_of(const ModelObject& object, const InstancesOnPlate& he
 int model_object_index(const ModelObject* object);
 // The same in `model`, for code that reads a Print without the app (a unit test's Print and Model).
 int model_object_index(const Model& model, const ModelObject* object);
+
+// A change to what a plate prints reaches the plate's Print only when the plate is next applied --
+// selected, or reached by Slice All -- so until then an unselected plate reported its old result as
+// valid: get_slicing_status's plates, get_print_estimate(plate_index) and the run's outcome all went
+// by it. A tool that changes an object's settings, layers, name or filaments without moving it (a move
+// re-homes the instance, and the plate list marks the plates itself) marks every plate holding one of
+// its instances not sliced, as Tab::on_presets_changed marks every plate after a preset edit. The
+// Print is left as it is: one the change did not reach is still finished, and the next slice takes
+// its result back without slicing it again (PlateNotStarted::already_sliced).
+void mark_object_plates_unsliced(PartPlateList& plates, int object_index);
+// The same for one plate, by index: a change to that plate's own settings (its prime tower).
+void mark_plate_unsliced(PartPlateList& plates, int plate_index);
 
 // One model object as every MCP response describes it: id, name, object_index (the index other
 // tools take), instance_count, volume_count, position (bounding-box centre), rotation_degrees and

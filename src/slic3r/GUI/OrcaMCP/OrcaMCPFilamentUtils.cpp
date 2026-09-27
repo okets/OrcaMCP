@@ -177,6 +177,7 @@ bool set_object_filament(int object_id, int volume_id, int slot, bool include_mo
     // The rows keep their old number until told otherwise; changed_object does not tell them.
     wxGetApp().obj_list()->sync_filament_rows_from_model(object_id);
     wxGetApp().obj_list()->changed_object(object_id);
+    mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
     plater->update();
     return true;
 }
