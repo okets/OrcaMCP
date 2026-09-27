@@ -65,8 +65,9 @@ gave were wrong; the prompts carry the corrected facts.
 | 07c | [A misspelled or missing argument is refused](07c-unknown-arguments.md) | 07b | `handle_tools_call` (`OrcaMCPToolArguments`), the bridge's own tools | merged and pushed 2026-09-28 (two rounds, 6 commits; merge 0021515d7e) |
 | 07d | (no prompt file; 07c's agent) | 07c | nine per-tool argument bugs from 07c's audit: rotate relative, one-bound range delete, empty reset keys, flatten's plate-wide orient, clone count, cut keep, config-key category, uniform scale, empty set_temperature | merged and pushed 2026-09-28 (three rounds, 14 commits; merge 85ae40e7fa; Build all green) |
 | 07e | (no prompt file; 07c's agent) | 07d | arrange_objects / auto_orient / flatten_object wait for their job and return the final placement; get_slicing_status reports a running job | merged and pushed 2026-09-28 (three rounds, 9 commits; merge 6b3491f94c); probes AE and AF |
-| 07f | (no prompt file; 07c's agent) | 07e | an object whose instances sit on two plates: a 3MF round trip loses the second plate; on_bed measured over both instances | implementing |
-| 08 | [Server instructions and hints](08-instructions-and-hints.md) | 01–07f | `initialize`, descriptions, result hints | design done 2026-09-28; the instructions text and decisions A–E are with the user |
+| 07f | (no prompt file; 07c's agent) | 07e | an object whose instances sit on two plates: a 3MF round trip loses the second plate; on_bed measured over both instances | merged and pushed 2026-09-28 (two rounds, 4 commits; merge e9431bd0c4); probe AG |
+| 07g | [The first slice can hang the app](07g-tbb-thread-naming.md) | 07f | `name_tbb_thread_pool_threads_set_locale` (Thread.cpp): a barrier across the TBB pool | found by 07f's agent 2026-09-28 (stack sample); design approved; implementing |
+| 08 | [Server instructions and hints](08-instructions-and-hints.md) | 01–07g | `initialize`, descriptions, result hints | design done 2026-09-28; the instructions text and decisions A–E are with the user |
 | 09 | [Several instances, switch between them](09-second-instance-crash.md) | 01–08 | port fallback, instance registry (with open file), bridge `list_instances` / `select_instance` | added 2026-09-26 by the user; design goes to the user; starts after all other coding |
 | 10 | [Flashforge print options](../2026-09-27-flashforge-print-options.md) (flow calibration, leveling, time-lapse) | 01–09 | `FlashforgeApi::PrintOptions`, the send dialog, `send_to_printer`, `print_printer_file`, `get_printer_status` | written 2026-09-27 in another session; the user decided 2026-09-28 it runs last, after all other work and right before the version bump. Its live printer steps start real prints: they run only with the user present and on their word at that moment |
 
@@ -124,7 +125,9 @@ roadmap; nothing ships half-done.
   (6) OrientJob's finalize can write to an instance a delete freed after process() returned (07d review; the GUI
   too). Carried as probe AE (07e). (7) A cancelled or failed arrange leaves plates locked and the arrange button dead
   (probe AF, 07e). (8) The plate's own arrange button can leave m_arrange_running stuck when the UI worker is busy
-  at the click (select_plate_by_hover_id, action 3; not fixed).
+  at the click (select_plate_by_hover_id, action 3; not fixed). (9) Opening a 3MF places only an object's first
+  instance on a plate (probe AG, 07f). (10) The first slice's thread-naming barrier can hang the app for good (probe
+  AH, 07g; from PrusaSlicer, whose #5661 was an earlier hang in the same barrier).
 - ~~**Sequencing the Flashforge print-options plan.**~~ Decided 2026-09-28: it runs last (row 10), right before the
   version bump.
 
