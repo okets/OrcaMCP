@@ -160,6 +160,15 @@ upstream issue if the user wants one filed.
 - **Slow cancel in organic tree supports.** They check for cancel only between phases (47 s on the
   -O0 dev build). This is upstream algorithm code.
 
+- **`TriangleMeshStats::merge` repair counts.** It keeps only the last mesh's `repaired_errors`
+  (upstream). A correct fix must distinguish volumes from instances: `ModelObject::mesh()` merges
+  `raw_mesh()` once per instance, so summing overcounts. Prompt 05 tried a fix and reverted it on
+  2026-09-27.
+- **Repair counts from STL files.** Upstream's STL loader repairs meshes but throws away the repair
+  counts (`TriangleMesh.cpp`, `#if 0`), so the GUI never flags a repaired STL.
+- **`object_id` validation.** About 20 MCP tools still validate `object_id` their own way; move them
+  onto the shared `resolve_object_id` (prompt 05) in a follow-up.
+
 ### 3D toolpath render
 
 **What:** render the sliced G-code from any camera, coloured by feature, speed or tool, with a layer

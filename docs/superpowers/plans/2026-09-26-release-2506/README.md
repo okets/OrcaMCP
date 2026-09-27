@@ -54,8 +54,9 @@ gave were wrong; the prompts carry the corrected facts.
 | 04 | [Printer match and slot colours](04-printer-and-colours.md) | 01 | printer tools, Flashforge, preset utils | merged 2026-09-26; pushed as batch 1 with 02-03; Build all green after the Windows include fix (run 36247216022) |
 | 04b | [Quit deadlock, busy-port crash](04b-shutdown-and-port.md) | 01–04 | `HttpServer`, `GUI_App` shutdown, `run_on_main_thread` | merged and pushed 2026-09-26 (batch 1b); Build all green (run 36253659676) |
 | 04c | [Crashes quitting around a slice](04c-quit-crashes.md) | 04b | `Plater` reset/teardown order, quit with open dialogs | merged and pushed 2026-09-27 (batch 1c): stop-before-free, quit with dialogs, print-index slice credit, safety net |
-| 04d | [Leftover "Loading..." windows](04d-loading-windows.md) | 04c | `Plater::priv::load_files` progress dialog | added 2026-09-27 (pre-existing in the release); design in progress |
-| 05 | [Mesh health](05-mesh-health.md) | 01, 03 | new tool, `active_warnings`, `get_scene_info` | design approved 2026-09-26; queued behind 04 |
+| 04d | [Leftover "Loading..." windows](04d-loading-windows.md) | 04c | `Plater::priv::load_files` progress dialog | diagnosed: ghost windows only seen with the screen LOCKED (AppKit hide animation); fix ready (disable the animation for ProgressDialog, probe U); WAITING for a 1-minute unlocked-screen check with the user |
+| ci | CI fixes (no prompt file; 04b's agent) | 04c | Windows test force-include of win_platform.hpp; the Linux login-route test race | mcp CI red since 04c (Windows test build, flaky Linux test); implementing now |
+| 05 | [Mesh health](05-mesh-health.md) | 01, 03 | new tool, `active_warnings`, `get_scene_info` | merged locally 2026-09-27; push with the CI fixes |
 | 06 | [Workflow tools](06-workflow-tools.md) | 01, 03 | bridge, slicing status, preset reads, paint remap, estimate breakdown | design approved 2026-09-26; queued |
 | 07 | [Sliced layer plan](07-layer-plan.md) | 01, 03 | `OrcaMCPFirstLayerPlan.cpp`, `render_plate_view` | design approved 2026-09-26; queued |
 | 08 | [Server instructions and hints](08-instructions-and-hints.md) | 01–07 | `initialize`, descriptions, result hints | not started |
@@ -96,6 +97,16 @@ roadmap; nothing ships half-done.
   what happened, a missing next step). Friction goes into the owning prompt, or into 08 if it is
   discoverability. Unit tests and code review come on top of this, not instead of it.
 - **Status:** update the table above as prompts move through design → approved → implementing → merged.
+
+## Waiting for the user
+
+- **04d: a one-minute unlocked-screen check.** With the screen unlocked, the orchestrator runs five
+  `load_model` calls while the user watches OrcaSlicer, and the user says whether small "Loading..."
+  windows pile up next to the main window. If they don't, the ghosts are a locked-screen artefact, and
+  the fix (turning off the progress-dialog fade on macOS) is optional. If they do, ship the fix.
+- **09: the multi-instance design.** It goes to the user once all other coding is done.
+- **Optional: an upstream issue.** Closing many upstream Yes/No dialogs with the close box takes the
+  "proceed" branch (roadmap). The user decides whether to file it.
 
 ## Shared traps (also inside every prompt)
 
