@@ -335,12 +335,54 @@ class WaitForSliceTest(unittest.TestCase):
         self.assertTrue(result["isError"])
         self.assertIn("Invalid JSON", text)
 
-    def test_a_slice_waiting_for_the_previous_one_to_stop_is_waited_for(self):
-        starting = status(False, outcome="starting", message="A slice was in progress: it is being cancelled")
-        FakeApp.script = [starting, SLICING, DONE]
-        _, report = self.call({"timeout_s": 5})
+    def stop_app_at(self, seconds_from_now):
+        """Stop listening `seconds_from_now` from now, as an app that quits then."""
+        timer = threading.Timer(seconds_from_now, self.stop_app)
+        timer.daemon = True
+        timer.start()
+
+    def test_a_refusal_just_before_the_deadline_is_confirmed_before_the_wait_ends(self):
+        # Polls run until half a second before the deadline; the app stops 0.8 s before it.
+        self.bridge.WAIT_FOR_SLICE_MIN_POLL_TIMEOUT_S = 0.5
+        self.bridge.WAIT_FOR_SLICE_POLL_S = 0.05
+        FakeApp.script = [SLICING]
+        self.stop_app_at(1.2)
+        _, report = self.call({"timeout_s": 2})
+        self.assertEqual(report["outcome"], "app_gone")
+        self.assertNotIn("Still slicing", report["message"])
+
+    def test_the_confirming_poll_stays_within_the_request_timeout(self):
+        self.bridge.TIMEOUT = 3  # cap 2.25 s, 0.75 s of headroom
+        self.bridge.WAIT_FOR_SLICE_MIN_POLL_TIMEOUT_S = 0.5
+        self.bridge.WAIT_FOR_SLICE_POLL_S = 0.05
+        FakeApp.script = [SLICING]
+        self.stop_app_at(1.2)
+        started = time.monotonic()
+        _, report = self.call({"timeout_s": 2})
+        self.assertEqual(report["outcome"], "app_gone")
+        self.assertLess(time.monotonic() - started, 3.0)
+
+    def test_refusals_that_cannot_be_confirmed_in_time_say_the_app_stopped_answering(self):
+        self.bridge.WAIT_FOR_SLICE_GONE_AFTER_S = 30  # longer than any confirming poll can wait
+        self.bridge.WAIT_FOR_SLICE_MIN_POLL_TIMEOUT_S = 0.5
+        self.bridge.WAIT_FOR_SLICE_POLL_S = 0.05
+        FakeApp.script = [SLICING]
+        self.stop_app_at(1.2)
+        _, report = self.call({"timeout_s": 2})
+        self.assertEqual(report["outcome"], "timed_out")
+        self.assertIn("stopped answering", report["message"])
+        self.assertNotIn("Still slicing", report["message"])
+
+    def test_an_app_back_for_the_confirming_poll_is_judged_by_its_answer(self):
+        self.bridge.WAIT_FOR_SLICE_MIN_POLL_TIMEOUT_S = 0.5
+        self.bridge.WAIT_FOR_SLICE_POLL_S = 0.05
+        FakeApp.script = [SLICING]
+        FakeApp.done_at = time.monotonic() + 1.3
+        timer = threading.Timer(1.2, self.restart_app_after, args=(0.5,))
+        timer.daemon = True
+        timer.start()
+        _, report = self.call({"timeout_s": 2})
         self.assertEqual(report["outcome"], "done")
-        self.assertEqual(report["polls"], 3)
 
     def test_a_request_the_bridge_fails_on_is_answered_under_its_own_id(self):
         line = json.dumps({"jsonrpc": "2.0", "id": 42, "method": "tools/call",

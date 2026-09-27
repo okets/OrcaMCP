@@ -525,9 +525,6 @@ class AppDown(Exception):
 class AppGarbled(Exception):
     """A reply that is not JSON: a body cut short, as an app that dies mid-reply leaves it."""
 
-    def __init__(self, reason: str):
-        super().__init__(reason)
-
 
 class AppUnavailable(Exception):
     """A call that ends a wait with an error: the app refused it, or answered something unreadable."""
@@ -610,11 +607,8 @@ def next_poll_delay(remaining: float):
 
 
 def slice_over(status) -> bool:
-    """Whether a status says the slice is over: nothing slicing, and no slice waiting to start while the
-    one it cancelled stops (slice_run.outcome "starting")."""
-    if status is None or status.get("is_slicing", False):
-        return False
-    return (status.get("slice_run") or {}).get("outcome") not in ("running", "starting")
+    """Whether a status says the slice is over."""
+    return status is not None and not status.get("is_slicing", False)
 
 
 def slice_outcome(status: dict) -> tuple:
@@ -629,7 +623,12 @@ def slice_outcome(status: dict) -> tuple:
                            "to start a slice.")
 
 
-def timed_out_message(timeout_s: float, status) -> str:
+def timed_out_message(timeout_s: float, status, refused_at=None) -> str:
+    """Why a wait ran out. `refused_at`, seconds into the wait, when its last polls were refused: the
+    status then predates them, so it says nothing about now."""
+    if refused_at is not None:
+        return (f"OrcaSlicer stopped answering {refused_at:.1f} s into the wait (its connections were refused): "
+                f"it may have quit or crashed. Call wait_for_slice again; it reports app_gone once that is certain.")
     if status is None:
         return (f"OrcaSlicer answered no status poll within {timeout_s:g} s: it serves one request at a "
                 f"time and was busy. Call wait_for_slice again.")
@@ -665,45 +664,79 @@ class PollHistory:
         return now - self.refused_since >= WAIT_FOR_SLICE_GONE_AFTER_S
 
 
+class WaitState:
+    """What one wait has learned so far."""
+
+    def __init__(self):
+        self.status = None   # the last status the app answered
+        self.polls = 0       # polls it answered
+        self.history = PollHistory()
+        self.gone = False
+
+    def poll(self, timeout: float):
+        """One get_slicing_status poll with this HTTP timeout. Raises AppUnavailable for an app that was
+        never there, or that failed the call."""
+        try:
+            self.status = call_app_tool("get_slicing_status", {}, timeout)
+            self.polls += 1
+            self.history.answer()
+        except AppBusy:
+            self.history.busy()
+        except AppGarbled as e:
+            # A reply cut short after the app had answered is the app dropping the connection; before
+            # it had, it is a reply this bridge cannot read.
+            if not self.history.answered:
+                raise AppUnavailable(str(e))
+            self.history.busy()
+        except AppDown as e:
+            if not self.history.seen:
+                raise AppUnavailable(NOT_RUNNING_MESSAGE)
+            self.gone = e.quitting or self.history.refused(time.monotonic())
+
+    def finished(self) -> bool:
+        return self.gone or (self.history.refused_since is None and slice_over(self.status))
+
+
+def confirm_refusals(state: WaitState, deadline: float):
+    """A wait whose last polls were refused ends with one more poll, WAIT_FOR_SLICE_GONE_AFTER_S after
+    the first refusal, so it can say app_gone -- or read the app's answer if it is back -- rather than
+    report a status from before the refusals. That poll may run past the deadline into half the cap's
+    headroom below ORCAMCP_TIMEOUT, never further; when it cannot fit there, it is not made."""
+    headroom_end = deadline + (TIMEOUT - wait_for_slice_cap()) / 2
+    confirm_at = state.history.refused_since + WAIT_FOR_SLICE_GONE_AFTER_S
+    if confirm_at > headroom_end - 0.05:
+        return
+    time.sleep(max(0.0, confirm_at - time.monotonic()))
+    state.poll(timeout=max(0.05, headroom_end - time.monotonic()))
+
+
 def run_wait_for_slice(timeout_s: float) -> dict:
     """Poll get_slicing_status until nothing is slicing, the app goes away, or timeout_s has passed, and
     report which. Raises AppUnavailable for an app that was never there, or that failed the call."""
     started = time.monotonic()
     deadline = started + timeout_s
-    status, polls, history, gone = None, 0, PollHistory(), False
+    state = WaitState()
     while True:
-        try:
-            status = call_app_tool("get_slicing_status", {}, poll_timeout(deadline - time.monotonic()))
-            polls += 1
-            history.answer()
-        except AppBusy:
-            history.busy()
-        except AppGarbled as e:
-            # A reply cut short after the app had answered is the app dropping the connection; before
-            # it had, it is a reply this bridge cannot read.
-            if not history.answered:
-                raise AppUnavailable(str(e))
-            history.busy()
-        except AppDown as e:
-            if not history.seen:
-                raise AppUnavailable(NOT_RUNNING_MESSAGE)
-            gone = e.quitting or history.refused(time.monotonic())
-        finished = gone or (history.refused_since is None and slice_over(status))
+        state.poll(timeout=poll_timeout(deadline - time.monotonic()))
         delay = next_poll_delay(deadline - time.monotonic())
-        if finished or delay is None:
+        if state.finished() or delay is None:
             break
         time.sleep(delay)
+    if not state.finished() and state.history.refused_since is not None:
+        confirm_refusals(state, deadline)
 
-    if gone:
+    refused_at = state.history.refused_since
+    if state.gone:
         outcome, message = "app_gone", APP_GONE_MESSAGE
-    elif finished:
-        outcome, message = slice_outcome(status)
+    elif state.finished():
+        outcome, message = slice_outcome(state.status)
     else:
-        outcome, message = "timed_out", timed_out_message(timeout_s, status)
+        outcome, message = "timed_out", timed_out_message(timeout_s, state.status,
+                                                          None if refused_at is None else refused_at - started)
     report = {"status": "success", "outcome": outcome, "timed_out": outcome == "timed_out"}
     if message:
         report["message"] = message
-    report.update(waited_s=round(time.monotonic() - started, 1), polls=polls, slicing_status=status)
+    report.update(waited_s=round(time.monotonic() - started, 1), polls=state.polls, slicing_status=state.status)
     return report
 
 
