@@ -215,5 +215,8 @@ TEST_CASE("parse_settings_param can require each setting's type too", "[orcamcp]
     std::string    error;
     CHECK_FALSE(parse_settings_param(nlohmann::json::array({{{"key", "wall_loops"}, {"value", 3}}}), out, error, /*with_type=*/true));
     CHECK(error.find("type") != std::string::npos);
+    CHECK_FALSE(parse_settings_param({{"layer_height", 0.2}}, out, error, /*with_type=*/true));
+    CHECK(error.find("{type, key, value}") != std::string::npos);
+    CHECK(error.find("\"type\": \"print\"") != std::string::npos);
     CHECK(parse_settings_param(nlohmann::json::array({{{"type", "print"}, {"key", "wall_loops"}, {"value", 3}}}), out, error, true));
 }

@@ -135,11 +135,13 @@ bool parse_object_param(const nlohmann::json& value, nlohmann::json& out)
 
 bool parse_settings_param(const nlohmann::json& value, nlohmann::json& out, std::string& error, bool with_type)
 {
-    const std::string shape = with_type ? "a list of {type, key, value}" : "a list of {key, value}";
+    const std::string shape   = with_type ? "a list of {type, key, value}" : "a list of {key, value}";
+    const std::string example = with_type ? "[{\"type\": \"print\", \"key\": \"wall_loops\", \"value\": 3}]"
+                                          : "[{\"key\": \"wall_loops\", \"value\": 3}]";
     const nlohmann::json list = value.is_string() ? nlohmann::json::parse(value.get<std::string>(), nullptr, /*allow_exceptions=*/false)
                                                   : value;
     if (!list.is_array()) {
-        error = "settings must be " + shape + ", e.g. [{\"key\": \"wall_loops\", \"value\": 3}]; got " + value.dump();
+        error = "settings must be " + shape + ", e.g. " + example + "; got " + value.dump();
         return false;
     }
     for (size_t i = 0; i < list.size(); ++i) {
