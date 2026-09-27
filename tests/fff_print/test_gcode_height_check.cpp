@@ -141,6 +141,20 @@ TEST_CASE("A toolpath above the printable height fails the G-code check on any p
     }
 }
 
+TEST_CASE("A printable height of 0 sets no height limit on any printer", "[GCodeHeightCheck]")
+{
+    // printable_height 0 is an allowed value, and the build volume takes it for no height limit
+    // (BuildVolume::object_state). The layer at 20.4 mm is above any positive limit set below it.
+    const bool bambu = GENERATE(false, true);
+    DYNAMIC_SECTION((bambu ? "Bambu printer" : "other printer")) {
+        GCodeProcessor processor;
+        process_gcode(processor, bambu, two_layer_gcode(bambu, 20.4));
+
+        CHECK((check_error_code(processor, 0., {}) & OVER_PRINTABLE_HEIGHT) == 0);
+        CHECK((check_error_code(processor, 20., {}) & OVER_PRINTABLE_HEIGHT) != 0);
+    }
+}
+
 TEST_CASE("An extruder with no printable height of its own sets no height limit", "[GCodeHeightCheck]")
 {
     // The filament prints on extruder 1 at 10 mm, well inside the 250 mm bed. Only a height set on
@@ -207,3 +221,4 @@ TEST_CASE("A normal slice on a multi-extruder printer without extruder heights p
     CHECK((*lowest)->print_z > 0.f);
     CHECK_THAT((*highest)->print_z, WithinAbs(top_z, 1e-4));
 }
+

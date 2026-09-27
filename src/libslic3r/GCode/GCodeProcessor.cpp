@@ -4,7 +4,7 @@
 #include "libslic3r/libslic3r.h"
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/Print.hpp"
-#include "libslic3r/ExtruderPrintableHeight.hpp"
+#include "libslic3r/PrintableHeightLimit.hpp"
 #include "libslic3r/ClipperUtils.hpp"
 #include "libslic3r/LocalesUtils.hpp"
 #include "libslic3r/format.hpp"
@@ -2843,7 +2843,7 @@ bool GCodeProcessor::check_multi_extruder_gcode_valid(const int                 
                     valid = false;
                 }
             }
-            if ( iter->second.max_print_z > plate_printable_height ) { //over height
+            if (is_height_limit(plate_printable_height) && iter->second.max_print_z > plate_printable_height) { //over height; Orca: 0 is none
                 m_result.gcode_check_result.error_code |= (1 << 3);
                 std::pair<int, int> filament_to_object_id;
                 filament_to_object_id.first  = iter->first;
@@ -2884,7 +2884,7 @@ bool GCodeProcessor::check_multi_extruder_gcode_valid(const int                 
                     }
 
                 // check printable height. Orca: only an extruder with a height of its own limits it.
-                const bool has_extruder_height = extruder_id < printable_heights.size() && limits_extruder_height(printable_heights[extruder_id]);
+                const bool has_extruder_height = extruder_id < printable_heights.size() && is_height_limit(printable_heights[extruder_id]);
                 if (has_extruder_height && (iter->second.max_print_z > printable_heights[extruder_id])) {
                     m_result.gcode_check_result.error_code |= (1 << 1);
                     std::pair<int, int> filament_to_object_id;

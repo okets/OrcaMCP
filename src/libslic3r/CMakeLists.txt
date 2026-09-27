@@ -124,7 +124,6 @@ set(lisbslic3r_sources
     ExPolygonsIndex.hpp
     Extruder.cpp
     Extruder.hpp
-    ExtruderPrintableHeight.hpp
     ExtrusionEntityCollection.cpp
     ExtrusionEntityCollection.hpp
     ExtrusionEntity.cpp
@@ -380,6 +379,7 @@ set(lisbslic3r_sources
     PublishSettings.cpp
     PublishSettings.hpp
     PrintApply.cpp
+    PrintableHeightLimit.hpp
     PrintBase.cpp
     PrintBase.hpp
     MaterialType.cpp
