@@ -291,7 +291,7 @@ Check slicing progress, for the selected plate and for every plate.
 | `stage` | While slicing: the app's progress text for the running slice ("Generating walls", "Generating support", ...), in the app's language. `null` when nothing is slicing |
 | `plates_sliced` / `plates_total` | How many of the plates have a valid result |
 | `restored_selected_plate` | Present only on the poll that ends a `slice_all` run over every plate: the plate that was selected when `slice_all` was called has been selected again |
-| `slice_run` | How the last `slice_all` run stands. `scope` (`all_plates`, `current_plate`, or `null` before the first `slice_all`) and `plates`: the current indexes of the plates it asked for that still exist. `outcome`: `running`, `done` (every one of them has a result), `ended_early`, `incomplete` (the run is over and some have no result, or were deleted or rebuilt: a plate-list change cancels Slice All), or `null` with no run; `message` says which plates and why when it is `ended_early` or `incomplete`. `ended_early: true`, with `stopped_at_plate` and `reason`, when the last Slice All run stopped before its last plate because another job (an arrange, an orient) was running; that plate and the ones after it are not sliced. `active_warnings` carries a `SliceAllEndedEarly` warning then too. Cleared when the next Slice All starts; call `slice_all` again. `wait_for_slice` ends its wait on this |
+| `slice_run` | How the last `slice_all` run stands. `scope` (`all_plates`, `current_plate`, or `null` before the first `slice_all`) and `plates`: the current indexes of the plates it asked for that still exist. `outcome`: `running`, `starting` (waiting for the slice it cancelled to stop; `is_slicing` is `true` meanwhile), `done` (every one of them has a result), `ended_early`, `incomplete` (the run is over and some have no result, or were deleted or rebuilt: a plate-list change cancels Slice All), or `null` with no run; `message` says which plates and why when it is `ended_early` or `incomplete`. `ended_early: true`, with `stopped_at_plate` and `reason`, when the last Slice All run stopped before its last plate because another job (an arrange, an orient) was running; that plate and the ones after it are not sliced. `active_warnings` carries a `SliceAllEndedEarly` warning then too. Cleared when the next Slice All starts; call `slice_all` again. `wait_for_slice` ends its wait on this |
 
 **Usage:** After `slice_all`, call `wait_for_slice` (it polls this for you), or poll every 2-3
 seconds until `slice_run.outcome` is no longer `running`, then call `get_print_estimate`. `is_slicing: false` on its own does **not** mean the slice finished - it is
@@ -1564,8 +1564,16 @@ Slice every plate in the project, one after another, exactly as the GUI's **Slic
 }
 ```
 
-**Note:** Async operation. Poll `get_slicing_status` until `state` is `done` (or until
-`plates_sliced` equals `plates_total` for a multi-plate run).
+**`status`** says what actually happened:
+
+| `status` | Meaning |
+|----------|---------|
+| `slicing_started` | A slice is running (for every plate: the run is under way) |
+| `starting` | A slice was already in progress. It is cancelled first, and this one starts on its own as soon as it has stopped (`reason: cancelling_previous`). Meanwhile `get_slicing_status` reports `is_slicing: true` and `slice_run.outcome: starting`, so `wait_for_slice` follows it through. Started at once, the new slice was stopped by the old one's completion, and nothing sliced |
+| `not_started` | Nothing is slicing. `reason`: `already_sliced` (every plate asked for already has a valid result: nothing to do, and `wait_for_slice` reports `done`), `busy_job` (an arrange or orient holds the app), `nothing_to_slice` (no printable object on the plates), `invalid` (validation failed: see `active_warnings`) or `unknown`; `message` says what to do |
+
+**Note:** Async operation. Call `wait_for_slice`, or poll `get_slicing_status` until `state` is
+`done` (or until `plates_sliced` equals `plates_total` for a multi-plate run).
 
 **Plate selection.** Slicing every plate is driven by the slicer's own per-plate chaining, which
 selects each plate in turn, so the selection moves while the run is in progress. The first

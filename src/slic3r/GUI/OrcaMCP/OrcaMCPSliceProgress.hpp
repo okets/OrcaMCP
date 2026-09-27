@@ -77,6 +77,7 @@ enum class SliceRunOutcome
 {
     none,        // no slice_all since the app started, and nothing is slicing
     running,     // a slice is in progress
+    starting,    // the previous slice is being cancelled, and this run starts once it has stopped
     done,        // every plate the run asked for has a slice result
     ended_early, // Slice All stopped before its last plate (Plater::slice_all_ended_early)
     incomplete,  // the run is over and some of its plates have no slice result, or are gone
@@ -87,6 +88,7 @@ inline const char* slice_run_outcome_name(SliceRunOutcome outcome)
     switch (outcome) {
     case SliceRunOutcome::none: return "none";
     case SliceRunOutcome::running: return "running";
+    case SliceRunOutcome::starting: return "starting";
     case SliceRunOutcome::done: return "done";
     case SliceRunOutcome::ended_early: return "ended_early";
     case SliceRunOutcome::incomplete: return "incomplete";
@@ -109,15 +111,24 @@ inline std::string plate_index_list(const std::vector<int>& indexes)
     return list;
 }
 
+// The message a run waiting on the previous slice carries, in slice_all's answer and after it.
+inline constexpr const char* k_cancelling_previous_message =
+    "A slice was in progress: it is being cancelled, and this one starts as soon as it has stopped. wait_for_slice "
+    "follows it through.";
+
 // How the last slice_all run stands. `run_known` is false before the first slice_all; `plates` are
 // the plates it asked for; `ended_early_text` is Plater's report of a Slice All run that stopped early
-// (slice_all_ended_early_text). A run in progress is running whatever else holds, and a run that
-// ended early says so rather than listing the plates that stop left unsliced.
+// (slice_all_ended_early_text); `start_pending`, that the run waits for the previous slice to stop.
+// A run in progress is running whatever else holds, and a run that ended early says so rather than
+// listing the plates that stop left unsliced.
 inline SliceRunJudgement judge_slice_run(bool                              run_known,
                                          bool                              slicing,
                                          const std::vector<SliceRunPlate>& plates,
-                                         const std::optional<std::string>& ended_early_text)
+                                         const std::optional<std::string>& ended_early_text,
+                                         bool                              start_pending = false)
 {
+    if (start_pending)
+        return {SliceRunOutcome::starting, k_cancelling_previous_message};
     if (slicing)
         return {SliceRunOutcome::running, {}};
     if (ended_early_text)
@@ -143,6 +154,74 @@ inline SliceRunJudgement judge_slice_run(bool                              run_k
         message += (message.empty() ? "" : "; ") + std::string("plate_index ") + plate_index_list(unsliced) + " has no slice result" +
                    (gone > 0 ? "" : ": its slice failed (active_warnings says why), was cancelled, or an edit since invalidated it");
     return {SliceRunOutcome::incomplete, message + "; call slice_all again"};
+}
+
+// ---- What slice_all reports once it has asked for a slice ----------------------------------------
+
+enum class SliceStart
+{
+    started,     // a slice is running (or a Slice All run is under way)
+    starting,    // the previous slice is being cancelled; this one starts once it has stopped
+    not_started, // nothing is slicing: see the reason
+};
+
+inline const char* slice_start_status_name(SliceStart status)
+{
+    switch (status) {
+    case SliceStart::started: return "slicing_started";
+    case SliceStart::starting: return "starting";
+    case SliceStart::not_started: return "not_started";
+    }
+    return "not_started";
+}
+
+// One plate slice_all asked for, right after it asked.
+struct PlateToSlice
+{
+    bool sliced    = false; // it has a valid slice result
+    bool printable = false; // it has a printable object on it
+};
+
+// What the app shows right after slice_all dispatched its slice.
+struct SliceStartSignals
+{
+    bool                      slicing          = false; // Plater::is_background_process_slicing()
+    bool                      after_cancel     = false; // a slice was running: it is cancelled first
+    bool                      ui_job_running   = false; // an arrange or an orient holds the UI worker
+    bool                      validation_error = false; // active_warnings carries an error
+    std::vector<PlateToSlice> plates;
+};
+
+struct SliceStartReport
+{
+    SliceStart  status = SliceStart::not_started;
+    std::string reason;  // for starting and not_started: a code an agent can branch on
+    std::string message; // what happened, and what to do about it
+};
+
+// slice_all's answer. A plate already sliced is not sliced again, which is not a failure: nothing
+// needed doing (wait_for_slice then reports done). Otherwise the first cause the signals show.
+inline SliceStartReport judge_slice_start(const SliceStartSignals& signals)
+{
+    if (signals.after_cancel)
+        return {SliceStart::starting, "cancelling_previous", k_cancelling_previous_message};
+    if (signals.slicing)
+        return {SliceStart::started, {}, {}};
+    const bool all_sliced = !signals.plates.empty() &&
+                            std::all_of(signals.plates.begin(), signals.plates.end(), [](const PlateToSlice& p) { return p.sliced; });
+    if (all_sliced)
+        return {SliceStart::not_started, "already_sliced",
+                "Every plate it was asked for already has a valid slice result, so there was nothing to slice: "
+                "get_print_estimate reads it."};
+    if (signals.ui_job_running)
+        return {SliceStart::not_started, "busy_job",
+                "Another job (an arrange or an orient) is running, so the slice could not start: call slice_all again "
+                "once it has finished."};
+    if (std::none_of(signals.plates.begin(), signals.plates.end(), [](const PlateToSlice& p) { return p.printable; }))
+        return {SliceStart::not_started, "nothing_to_slice", "No plate it was asked for has a printable object on it."};
+    if (signals.validation_error)
+        return {SliceStart::not_started, "invalid", "The slice failed validation: active_warnings says why."};
+    return {SliceStart::not_started, "unknown", "The app did not start a slice; active_warnings may say why."};
 }
 
 }}} // namespace Slic3r::GUI::OrcaMCP

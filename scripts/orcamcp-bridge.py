@@ -609,6 +609,14 @@ def next_poll_delay(remaining: float):
     return min(WAIT_FOR_SLICE_POLL_S, spare)
 
 
+def slice_over(status) -> bool:
+    """Whether a status says the slice is over: nothing slicing, and no slice waiting to start while the
+    one it cancelled stops (slice_run.outcome "starting")."""
+    if status is None or status.get("is_slicing", False):
+        return False
+    return (status.get("slice_run") or {}).get("outcome") not in ("running", "starting")
+
+
 def slice_outcome(status: dict) -> tuple:
     """(outcome, message) for a status that says nothing is slicing. The app judges a slice_all run
     itself (slice_run.outcome); without one, the selected plate's result is all there is to go on."""
@@ -680,7 +688,7 @@ def run_wait_for_slice(timeout_s: float) -> dict:
             if not history.seen:
                 raise AppUnavailable(NOT_RUNNING_MESSAGE)
             gone = e.quitting or history.refused(time.monotonic())
-        finished = gone or (status is not None and not status.get("is_slicing", False) and history.refused_since is None)
+        finished = gone or (history.refused_since is None and slice_over(status))
         delay = next_poll_delay(deadline - time.monotonic())
         if finished or delay is None:
             break

@@ -849,6 +849,10 @@ public:
     int slice_all_plate_in_progress() const;
     // Orca: a slice the safety net cancelled, told once: taking it clears it.
     std::optional<std::string> take_slice_cancelled_by_free();
+    // Orca MCP: cancel the slice in progress and call `start` once its completion has been handled. A
+    // slice started before that is stopped by it: on_process_completed stops the background process.
+    // With nothing slicing, `start` is called next.
+    void start_after_slice_stops(std::function<void()> start);
     //BBS: update slicing context
     void update_slicing_context_to_current_partplate();
     //BBS: show object info

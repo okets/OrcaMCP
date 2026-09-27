@@ -991,7 +991,7 @@
     },
     {
       "category": "Slicing",
-      "description": "Get the current slicing state: idle (not sliced), slicing (in progress) or done (the current plate has a valid slice result). Poll until state is done, then get_print_estimate. The plates array reports every plate's slice result and percent (0-100; null for a plate with no result that is not slicing), so a slice_all run can be followed plate by plate; stage is the app's progress text for the running slice (\"Generating support\", in the app's language; null when idle). slice_run says how the last slice_all run stands: scope, the plates it asked for, and outcome running, done, ended_early or incomplete, with a message saying which plates and why when it is not done. When a slice_all run over every plate ends, this restores the plate that was selected when slice_all was called and reports it as restored_selected_plate.",
+      "description": "Get the current slicing state: idle (not sliced), slicing (in progress) or done (the current plate has a valid slice result). Poll until state is done, then get_print_estimate. The plates array reports every plate's slice result and percent (0-100; null for a plate with no result that is not slicing), so a slice_all run can be followed plate by plate; stage is the app's progress text for the running slice (\"Generating support\", in the app's language; null when idle). slice_run says how the last slice_all run stands: scope, the plates it asked for, and outcome running, starting (waiting for the slice it cancelled to stop; is_slicing is true meanwhile), done, ended_early or incomplete, with a message saying which plates and why when it is not done. When a slice_all run over every plate ends, this restores the plate that was selected when slice_all was called and reports it as restored_selected_plate.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {},
@@ -2535,7 +2535,7 @@
     },
     {
       "category": "Slicing",
-      "description": "Slice every plate in the project, the way the GUI's Slice All button does: one plate at a time until all are sliced. Pass all_plates=false to slice only the plate that is currently selected. Poll get_slicing_status until state is \"done\"; its plates array says which plates have a result. The plate selection walks from the first plate to the last while the run is in progress, and get_slicing_status puts back the plate that was selected here once it ends.",
+      "description": "Slice every plate in the project, the way the GUI's Slice All button does: one plate at a time until all are sliced. Pass all_plates=false to slice only the plate that is currently selected. status says what happened: slicing_started; starting (a slice was in progress: it is cancelled first, and this one starts as soon as it has stopped); or not_started, with a reason (already_sliced, busy_job, nothing_to_slice, invalid, unknown) and a message. Poll get_slicing_status until state is \"done\"; its plates array says which plates have a result. The plate selection walks from the first plate to the last while the run is in progress, and get_slicing_status puts back the plate that was selected here once it ends.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {

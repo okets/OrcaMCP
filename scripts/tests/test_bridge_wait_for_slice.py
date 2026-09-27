@@ -335,6 +335,13 @@ class WaitForSliceTest(unittest.TestCase):
         self.assertTrue(result["isError"])
         self.assertIn("Invalid JSON", text)
 
+    def test_a_slice_waiting_for_the_previous_one_to_stop_is_waited_for(self):
+        starting = status(False, outcome="starting", message="A slice was in progress: it is being cancelled")
+        FakeApp.script = [starting, SLICING, DONE]
+        _, report = self.call({"timeout_s": 5})
+        self.assertEqual(report["outcome"], "done")
+        self.assertEqual(report["polls"], 3)
+
     def test_a_request_the_bridge_fails_on_is_answered_under_its_own_id(self):
         line = json.dumps({"jsonrpc": "2.0", "id": 42, "method": "tools/call",
                            "params": {"name": "wait_for_slice", "arguments": {}}})

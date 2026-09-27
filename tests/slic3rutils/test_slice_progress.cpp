@@ -154,3 +154,86 @@ TEST_CASE("every outcome has the name get_slicing_status reports", "[orcamcp][Sl
     CHECK(std::string(slice_run_outcome_name(SliceRunOutcome::ended_early)) == "ended_early");
     CHECK(std::string(slice_run_outcome_name(SliceRunOutcome::incomplete)) == "incomplete");
 }
+
+// ---- what slice_all reports once it has asked for a slice ----------------------------------------
+//
+// slice_all used to say slicing_started whatever happened: with the previous slice still in progress
+// the new one was started and then stopped by the old one's completion, and nothing sliced.
+
+namespace {
+SliceStartSignals signals_with(std::vector<PlateToSlice> plates)
+{
+    SliceStartSignals signals;
+    signals.plates = std::move(plates);
+    return signals;
+}
+PlateToSlice unsliced_printable() { return {/*sliced=*/false, /*printable=*/true}; }
+} // namespace
+
+TEST_CASE("a slice that is running after the dispatch has started", "[orcamcp][SliceProgress]")
+{
+    SliceStartSignals signals = signals_with({unsliced_printable()});
+    signals.slicing           = true;
+    const SliceStartReport report = judge_slice_start(signals);
+    CHECK(report.status == SliceStart::started);
+    CHECK(std::string(slice_start_status_name(report.status)) == "slicing_started");
+}
+
+TEST_CASE("a slice waiting for the previous one to stop is starting, and says so", "[orcamcp][SliceProgress]")
+{
+    SliceStartSignals signals = signals_with({unsliced_printable()});
+    signals.after_cancel      = true;
+    const SliceStartReport report = judge_slice_start(signals);
+    CHECK(report.status == SliceStart::starting);
+    CHECK(report.reason == "cancelling_previous");
+    CHECK(report.message.find("wait_for_slice") != std::string::npos);
+}
+
+TEST_CASE("plates that already have a result need no slice, which is not a failure to start", "[orcamcp][SliceProgress]")
+{
+    const SliceStartReport report = judge_slice_start(signals_with({{true, true}, {true, true}}));
+    CHECK(report.status == SliceStart::not_started);
+    CHECK(report.reason == "already_sliced");
+}
+
+TEST_CASE("a slice the UI worker blocks did not start, and names the job", "[orcamcp][SliceProgress]")
+{
+    SliceStartSignals signals = signals_with({unsliced_printable()});
+    signals.ui_job_running    = true;
+    const SliceStartReport report = judge_slice_start(signals);
+    CHECK(report.status == SliceStart::not_started);
+    CHECK(report.reason == "busy_job");
+}
+
+TEST_CASE("plates with nothing printable on them give nothing to slice", "[orcamcp][SliceProgress]")
+{
+    const SliceStartReport report = judge_slice_start(signals_with({{false, false}}));
+    CHECK(report.status == SliceStart::not_started);
+    CHECK(report.reason == "nothing_to_slice");
+}
+
+TEST_CASE("a slice stopped by validation points at active_warnings", "[orcamcp][SliceProgress]")
+{
+    SliceStartSignals signals = signals_with({unsliced_printable()});
+    signals.validation_error  = true;
+    const SliceStartReport report = judge_slice_start(signals);
+    CHECK(report.status == SliceStart::not_started);
+    CHECK(report.reason == "invalid");
+    CHECK(report.message.find("active_warnings") != std::string::npos);
+}
+
+TEST_CASE("a slice that did not start for a reason no signal shows says it did not start", "[orcamcp][SliceProgress]")
+{
+    const SliceStartReport report = judge_slice_start(signals_with({unsliced_printable()}));
+    CHECK(report.status == SliceStart::not_started);
+    CHECK(report.reason == "unknown");
+    CHECK(std::string(slice_start_status_name(report.status)) == "not_started");
+}
+
+TEST_CASE("a run waiting to start once the previous slice stops is starting, not over", "[orcamcp][SliceProgress]")
+{
+    const SliceRunJudgement judged =
+        judge_slice_run(/*run_known=*/true, /*slicing=*/false, {unsliced_plate(0)}, std::nullopt, /*start_pending=*/true);
+    CHECK(judged.outcome == SliceRunOutcome::starting);
+    CHECK(std::string(slice_run_outcome_name(judged.outcome)) == "starting");
+}
