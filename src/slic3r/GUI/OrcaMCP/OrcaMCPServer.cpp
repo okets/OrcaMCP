@@ -273,6 +273,16 @@ OrcaMCP::PipelineState pipeline_state(Plater& plater, int plate_count)
             plate_count};
 }
 
+// Applies a settings change the background timer has not taken in yet, while the pipeline is idle
+// (OrcaMCP::should_apply_pending_update), so what the caller does next -- slice, report a slice,
+// export one -- goes by the settings as they are now.
+void apply_pending_settings(Plater& plater)
+{
+    const OrcaMCP::PipelineState state = pipeline_state(plater, plater.get_partplate_list().get_plate_count());
+    if (OrcaMCP::should_apply_pending_update(state, plater.is_background_process_update_scheduled()))
+        plater.apply_pending_background_update();
+}
+
 // Why the app's own validation refused a plate the run asked for, or nullopt when none failed it.
 // The verdict is the plate's (PartPlate::is_apply_result_invalid, which update_background_process sets
 // as it validates); the words are the app's validation of the current plate, whose Print the process
@@ -2755,6 +2765,9 @@ void OrcaMCPServer::register_builtin_tools()
                     answer(*refusal, get_active_warnings_json(plater));
                     return result;
                 }
+                // A settings change made just before this call has not reached the slicer yet; until it
+                // does, the slice is refused on the failure the change may have fixed.
+                apply_pending_settings(*plater);
 
                 // Plater::reslice() slices the *current* plate and nothing else, which is what
                 // this tool used to do under the name slice_all: with four plates and plate 4
@@ -2803,6 +2816,9 @@ void OrcaMCPServer::register_builtin_tools()
             std::string output_path = params.value("output_path", "");
             return run_on_main_thread([output_path]() {
                 Plater* plater = wxGetApp().plater();
+                // A settings change made just before this call has not reached the slicer yet: until it
+                // does, the export is refused on the failure the change may have fixed.
+                apply_pending_settings(*plater);
                 if (plater->is_background_process_slicing()) {
                     return nlohmann::json{{"status", "error"}, {"message", "Slicing still in progress"}};
                 }
@@ -3103,6 +3119,8 @@ void OrcaMCPServer::register_builtin_tools()
             return run_on_main_thread([]() {
                 Plater*        plater     = wxGetApp().plater();
                 PartPlateList& plate_list = plater->get_partplate_list();
+                // A settings change made just before this call still leaves the plate its old result.
+                apply_pending_settings(*plater);
                 const bool     is_running = plater->is_background_process_slicing();
 
                 nlohmann::json result;
@@ -3218,6 +3236,8 @@ void OrcaMCPServer::register_builtin_tools()
             }
             return run_on_main_thread([requested_plate, wanted_plate]() -> nlohmann::json {
                 Plater* plater = wxGetApp().plater();
+                // A settings change made just before this call still leaves the plate its old result.
+                apply_pending_settings(*plater);
 
                 // Check if slicing is actively running
                 if (plater->is_background_process_slicing()) {

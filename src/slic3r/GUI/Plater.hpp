@@ -591,6 +591,9 @@ public:
     void changed_objects(const std::vector<size_t>& object_idxs);
     void schedule_background_process(bool schedule = true);
     bool is_background_process_update_scheduled() const;
+    // Orca: runs now what the background timer runs when it fires, if it is due (see
+    // apply_pending_background_update in Plater.cpp). Returns whether an update was pending.
+    bool apply_pending_background_update();
     void suppress_background_process(const bool stop_background_process) ;
     // Expose the slicing process so the device GUI can read the current
     // GCodeProcessorResult (e.g. the nozzle grouping for print-dispatch mapping).

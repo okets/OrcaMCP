@@ -21130,6 +21130,19 @@ bool Plater::is_background_process_update_scheduled() const
     return this->p->background_process_timer.IsRunning();
 }
 
+// Orca: a settings change reaches the slicer when background_process_timer fires, 0.5 s after it.
+// Until then reslice() still refuses on the validation failure the change may have fixed
+// (process_completed_with_error), so MCP's slice_all, called right after an agent fixed a setting,
+// reported the old failure. This runs what the timer's handler runs, only when it would run it.
+bool Plater::apply_pending_background_update()
+{
+    if (!p->background_process_timer.IsRunning() || p->suppressed_backround_processing_update)
+        return false;
+    p->background_process_timer.Stop();
+    p->update_restart_background_process(false, false);
+    return true;
+}
+
 void Plater::suppress_background_process(const bool stop_background_process)
 {
     if (stop_background_process)

@@ -1580,7 +1580,7 @@ Slice every plate in the project, one after another, exactly as the GUI's **Slic
 | `already_sliced` | Every plate asked for already has a valid result: nothing to do, and `wait_for_slice` reports `done` |
 | `busy_job` | An arrange or orient holds the app; call `slice_all` again when it is done |
 | `nothing_to_slice` | No printable object on the plates asked for |
-| `invalid` | The app's own validation refused a plate it was asked for (the plate's validation result, not a guess from `active_warnings`); `message` gives the app's words, e.g. "Prime Tower is partially outside the printable area" |
+| `invalid` | The app's own validation refused a plate it was asked for (the plate's validation result, not a guess from `active_warnings`); `message` gives the app's words, e.g. "Prime Tower is partially outside the printable area". A setting fixed just before the call counts: the app takes in a settings change 0.5 s after it, and `slice_all` applies one still waiting first (so do `get_slicing_status`, `get_print_estimate` and `export_gcode`), so it is not refused on the failure the fix removed |
 | `unknown` | No signal explains it; `active_warnings` may |
 
 **Note:** Async operation. Call `wait_for_slice`, or poll `get_slicing_status` until `state` is

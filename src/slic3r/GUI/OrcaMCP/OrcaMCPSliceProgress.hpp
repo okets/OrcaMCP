@@ -234,6 +234,17 @@ inline std::string pipeline_busy_text(const PipelineState& state)
     return "nothing is slicing";
 }
 
+// A settings change reaches the slicer only when its background timer fires, 0.5 s after the change
+// (Plater::priv::schedule_background_process). Until then the plate keeps its last result and its last
+// validation failure, so slice_all was refused on a failure the change had just fixed. A tool that is
+// about to slice, report a slice or export one applies the change first, as the timer would
+// (Plater::apply_pending_background_update) -- but only while the pipeline is idle: a busy one is left
+// alone, as slice_all leaves it (refuse_while_busy).
+inline bool should_apply_pending_update(const PipelineState& state, bool update_scheduled)
+{
+    return update_scheduled && pipeline_busy(state) == PipelineBusy::idle;
+}
+
 // slice_all while the pipeline is busy starts nothing: a slice started then is stopped by the
 // previous one's completion (Plater::priv::on_process_completed stops the process), so it would never
 // slice. The answer says what is going on and what to do. nullopt: the pipeline is idle.

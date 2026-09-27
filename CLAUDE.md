@@ -888,6 +888,7 @@ echo "Q restore prompt closed by a quit deletes the backup (rel2506/04c):  $(U s
 echo "S the logout handler ends dialogs with wxID_ABORT (rel2506/04c):    $(U src/slic3r/GUI/GUI_App.cpp | grep -c 'EndModal(wxID_ABORT)')"
 echo "V the object list's mesh-error text lives inside ObjectList / its first icon reads mesh().stats() / ObjectList::get_repaired_errors_count exists (rel2506/05): $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^MeshErrorsInfo ObjectList::get_mesh_errors_info\(const int obj_idx/{f=1} f&&/_L_PLURAL/{print "yes"; exit} f&&/^}/{print "no"; exit}') / $(U src/slic3r/GUI/GUI_ObjectList.cpp | grep -c 'get_warning_icon_name(model_object->mesh().stats())') / $(U src/slic3r/GUI/GUI_ObjectList.cpp | grep -c '^int ObjectList::get_repaired_errors_count')"
 echo "X upstream's slic3rutils tests get no Windows-first force-include (rel2506/ci-fixes; 0 = bug): $(U tests/slic3rutils/CMakeLists.txt | grep -c 'win_platform.hpp')"
+echo "Z reslice refuses on a validation failure a settings fix removed until the 0.5 s timer runs (rel2506/06b): $(U src/slic3r/GUI/Plater.cpp | grep -c 'process_completed_with_error, return directly')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -981,6 +982,14 @@ icon from `mesh().stats()`, which merges the model parts only and keeps only the
 repairs, while every later icon update and the tooltip read `get_object_stl_stats()`; a modifier's hole
 or an earlier part's repairs left the icon off under a tooltip listing them. Ours reads
 `get_object_stl_stats()` there too. On 0, take upstream's line.
+
+Item Z: a settings change reaches the slicer only when `background_process_timer` fires, 0.5 s later
+(`Plater::priv::schedule_background_process`); until then upstream's `reslice()` returns early on the
+last validation failure (`process_completed_with_error`), so a `slice_all` right after an agent fixed a
+bad setting reported the old failure. Ours adds `Plater::apply_pending_background_update()`, which runs
+what the timer's handler runs, only when it would run it; MCP calls it before slicing, reporting or
+exporting, and only while the pipeline is idle (`OrcaMCP::should_apply_pending_update`). On 0, upstream
+dropped the early return: re-check that a fixed setting then slices at once, and remove the hook if so.
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices

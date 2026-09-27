@@ -283,3 +283,23 @@ TEST_CASE("a slice that did not start for a reason no signal shows says it did n
     CHECK(report.reason == "unknown");
     CHECK(std::string(slice_start_status_name(report.status)) == "not_started");
 }
+
+// ---- a settings change the background timer has not taken in yet --------------------------------
+//
+// The slicer takes in a settings change only when its background timer fires, 0.5 s later. Until then
+// slice_all was refused on the last validation failure the change had fixed, and a read of the plate
+// could report the result the change had made stale.
+
+TEST_CASE("a pending settings change is applied first only while the pipeline is idle", "[orcamcp][SliceProgress]")
+{
+    for (int bits = 0; bits < 32; ++bits)
+        for (int slice_all_plate : {-1, 2})
+            for (bool scheduled : {false, true}) {
+                const PipelineState state = pipeline(bits & 1, bits & 2, bits & 4, bits & 8, bits & 16, slice_all_plate);
+                DYNAMIC_SECTION("state " << bits << " on plate " << slice_all_plate << (scheduled ? ", scheduled" : ""))
+                {
+                    const bool idle = pipeline_busy(state) == PipelineBusy::idle;
+                    CHECK(should_apply_pending_update(state, scheduled) == (scheduled && idle));
+                }
+            }
+}
