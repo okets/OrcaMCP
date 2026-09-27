@@ -3,10 +3,6 @@
 
 #include <string>
 
-// OrcaMCPCommon.hpp first: it pulls in GUI_App.hpp -> HttpServer.hpp -> boost/asio, and on Windows
-// asio has to see <windows.h> before the libslic3r headers below. In the other order both Windows
-// CI builds failed with "use of undeclared identifier 'CP_ACP'" in asio's socket_ops.ipp (Build all
-// run 36243478905). OrcaMCPModelLoad.cpp includes the same headers in this order and builds there.
 #include "slic3r/GUI/OrcaMCP/OrcaMCPCommon.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPModelLoad.hpp"
 #include "libslic3r/AppConfig.hpp"
