@@ -1,5 +1,6 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPSliceEstimate.cpp
 #include "OrcaMCPSliceEstimate.hpp"
+#include "OrcaMCPExtrusionFeatures.hpp"
 #include "libslic3r/Layer.hpp"
 #include "libslic3r/Print.hpp"
 #include "libslic3r/Slicing.hpp"
@@ -158,6 +159,54 @@ std::optional<size_t> count_profile_layers(const SlicingParameters& params, cons
     if (!precise_z || layers.empty())
         return layers.size() / 2;
     return generate_object_layers(params, profile, true).size() / 2;
+}
+
+namespace {
+
+// The time_by_feature key one move's time is counted under.
+const char* time_feature_key(EMoveType type, ExtrusionRole role)
+{
+    switch (type) {
+    case EMoveType::Travel: return "travel";
+    case EMoveType::Tool_change: return "tool_changes";
+    case EMoveType::Extrude: break;
+    default: return "other";
+    }
+    if (const char* wall = wall_key(role))
+        return wall;
+    return extrusion_feature_key(extrusion_feature_of(role));
+}
+
+} // namespace
+
+std::map<std::string, double> compute_time_by_feature(const std::vector<GCodeProcessorResult::MoveVertex>& moves,
+                                                      PrintEstimatedStatistics::ETimeMode       mode,
+                                                      double                                    total_seconds)
+{
+    std::map<std::string, double> seconds;
+    for (const char* key : {"outer_wall", "inner_wall", "overhang_wall", "gap_fill", "travel", "tool_changes", "unattributed"})
+        seconds[key] = 0.0;
+    for (ExtrusionFeature feature : {ExtrusionFeature::infill, ExtrusionFeature::support, ExtrusionFeature::support_interface,
+                                     ExtrusionFeature::brim, ExtrusionFeature::skirt, ExtrusionFeature::prime_tower,
+                                     ExtrusionFeature::other})
+        seconds[extrusion_feature_key(feature)] = 0.0;
+
+    double attributed = 0.0;
+    for (const GCodeProcessorResult::MoveVertex& move : moves) {
+        const double time = move.time[static_cast<size_t>(mode)];
+        seconds[time_feature_key(move.type, move.extrusion_role)] += time;
+        attributed += time;
+    }
+    seconds["unattributed"] = total_seconds - attributed;
+    return seconds;
+}
+
+nlohmann::json time_by_feature_json(const std::map<std::string, double>& seconds_by_feature)
+{
+    nlohmann::json out = nlohmann::json::object();
+    for (const auto& [feature, seconds] : seconds_by_feature)
+        out[feature] = std::round(seconds * 10.0) / 10.0;
+    return out;
 }
 
 }}} // namespace Slic3r::GUI::OrcaMCP

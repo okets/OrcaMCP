@@ -8,6 +8,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include "libslic3r/GCode/GCodeProcessor.hpp"
+
 namespace Slic3r {
 class Print;
 struct SlicingParameters;
@@ -77,6 +79,22 @@ LayerCounts count_print_layers(const Print& print);
 // points: generate_object_layers asserts against an empty one, and with `precise_z` it reads the
 // last of the layers it cut, of which there may be none.
 std::optional<size_t> count_profile_layers(const SlicingParameters& params, const std::vector<double>& profile, bool precise_z);
+
+// get_print_estimate's time_by_feature: where a plate's estimated print time goes, in seconds of one
+// time mode. The features are OrcaMCPExtrusionFeatures.hpp's, perimeters split into outer_wall,
+// inner_wall, overhang_wall and gap_fill; then travel; tool_changes, the time filament and tool
+// changes cost, which the processor puts on their Tool_change moves; other (retracts, wipes, seams,
+// pauses, custom G-code, custom extrusions); and unattributed, `total_seconds` less every move's
+// time -- what the processor adds to its total without a move. So the values sum to total_seconds.
+// Every key is present, 0 when a plate has none of it, so two slices compare key by key. The
+// per-move times are the ones the preview legend sums by feature (libvgcode ViewerImpl::load), a
+// dwell's included: the processor adds it to the move after it (GCodeProcessor::TimeMachine::calculate_time).
+std::map<std::string, double> compute_time_by_feature(const std::vector<GCodeProcessorResult::MoveVertex>& moves,
+                                                      PrintEstimatedStatistics::ETimeMode       mode,
+                                                      double                                    total_seconds);
+
+// time_by_feature as the response carries it: each value in seconds, to a tenth.
+nlohmann::json time_by_feature_json(const std::map<std::string, double>& seconds_by_feature);
 
 }} // namespace GUI::OrcaMCP
 } // namespace Slic3r

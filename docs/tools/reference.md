@@ -1638,6 +1638,11 @@ against what was asked for.
   },
   "filament_changes": 0,
   "extruder_changes": 128,
+  "time_by_feature": {
+    "outer_wall": 402.1, "inner_wall": 511.8, "overhang_wall": 12.4, "gap_fill": 20.3,
+    "infill": 716.0, "support": 188.2, "support_interface": 41.7, "brim": 18.9, "skirt": 0.0,
+    "prime_tower": 96.5, "travel": 204.6, "tool_changes": 71.3, "other": 22.4, "unattributed": 0.2
+  },
   "active_warnings": {"count": 0, "warnings": []}
 }
 ```
@@ -1660,6 +1665,25 @@ no sliced objects.
 printed layers too (`0` when there are none to count). This is a correction: before v2.5.0.6 it was
 the tallest object's layer count *plus* its support layer count, so a 70 mm part at 0.2 mm with
 support read 649 layers instead of 350.
+
+**Time by feature.** `time_by_feature` splits `estimated_time_seconds` (normal mode) into seconds
+per feature, to a tenth: the same per-move times the preview legend sums by line type.
+
+| Key | Time spent on |
+|-----|---------------|
+| `outer_wall`, `inner_wall`, `overhang_wall`, `gap_fill` | The walls; together, the layer plan's `perimeters` |
+| `infill` | Sparse and internal solid infill, top and bottom surfaces, bridges, ironing |
+| `support`, `support_interface` | Support (with its transition layers), and its interface |
+| `brim`, `skirt`, `prime_tower` | Those extrusions |
+| `travel` | Moves without extrusion |
+| `tool_changes` | What the `filament_changes` / `extruder_changes` below cost: load, unload and tool-change time |
+| `other` | Retracts, wipes, seams, pauses, custom G-code and custom extrusions |
+| `unattributed` | The total less every move's time: what the processor adds to its total without a move (a trailing filament change), and rounding |
+
+Every key is always present (`0` when unused), and the parts add up to the total. **To explain why
+two slices differ**, read `time_by_feature` after each and subtract key by key: the keys whose
+seconds changed account for the difference. A dwell (G4) or wait in custom G-code is counted with the
+move after it, as the preview's legend counts it.
 
 **Tool changes are two counters, not one.** They are the same pair the G-code preview's legend
 shows, and they mean different things:

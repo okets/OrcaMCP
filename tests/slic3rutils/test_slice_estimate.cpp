@@ -7,6 +7,7 @@
 #include "libslic3r/Print.hpp"
 #include "libslic3r/Slicing.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <map>
 #include <optional>
@@ -20,6 +21,7 @@
 // the ones a caller compares against those comments.
 
 using namespace Slic3r::GUI::OrcaMCP;
+using Catch::Matchers::WithinAbs;
 using Catch::Matchers::WithinRel;
 
 namespace {
@@ -260,4 +262,115 @@ TEST_CASE("the estimate's layer fields keep layer_count an integer", "[orcamcp][
     CHECK(unsliced["support_layers"].is_null());
     CHECK(unsliced["layer_count"].is_number_integer());
     CHECK(unsliced["layer_count"] == 0);
+}
+
+// ==================== time_by_feature ====================
+//
+// An estimate that moved from 17h20m to 17h32m could not be explained: the tool had no breakdown.
+// time_by_feature splits the total by feature, from the per-move times the preview legend sums, and
+// its parts add up to the total, so two slices compare key by key.
+
+namespace {
+
+using Slic3r::EMoveType;
+using Move = Slic3r::GCodeProcessorResult::MoveVertex;
+constexpr auto k_normal  = Slic3r::PrintEstimatedStatistics::ETimeMode::Normal;
+constexpr auto k_stealth = Slic3r::PrintEstimatedStatistics::ETimeMode::Stealth;
+
+Move move(EMoveType type, Slic3r::ExtrusionRole role, float normal_s, float stealth_s = 0.0f)
+{
+    Move m;
+    m.type           = type;
+    m.extrusion_role = role;
+    m.time           = {normal_s, stealth_s};
+    return m;
+}
+
+Move extrusion(Slic3r::ExtrusionRole role, float seconds) { return move(EMoveType::Extrude, role, seconds); }
+
+const std::vector<std::string> k_feature_keys = {"outer_wall", "inner_wall",   "overhang_wall", "gap_fill", "infill",
+                                                 "support",    "support_interface", "brim",    "skirt",    "prime_tower",
+                                                 "travel",     "tool_changes", "other",         "unattributed"};
+
+} // namespace
+
+TEST_CASE("time_by_feature names every feature, at zero when a plate has none of it", "[orcamcp][estimate]")
+{
+    const std::map<std::string, double> times = compute_time_by_feature({}, k_normal, /*total_seconds=*/0.0);
+    std::vector<std::string>            keys;
+    for (const auto& [key, seconds] : times)
+        keys.push_back(key);
+    std::vector<std::string> expected = k_feature_keys;
+    std::sort(expected.begin(), expected.end());
+    CHECK(keys == expected);
+}
+
+TEST_CASE("the walls are split into outer, inner, overhang and gap fill", "[orcamcp][estimate]")
+{
+    const std::vector<Move> moves = {extrusion(Slic3r::erExternalPerimeter, 10.0f), extrusion(Slic3r::erPerimeter, 20.0f),
+                                     extrusion(Slic3r::erOverhangPerimeter, 3.0f), extrusion(Slic3r::erGapFill, 1.0f)};
+    const auto              times = compute_time_by_feature(moves, k_normal, 34.0);
+    CHECK_THAT(times.at("outer_wall"), WithinRel(10.0, 1e-6));
+    CHECK_THAT(times.at("inner_wall"), WithinRel(20.0, 1e-6));
+    CHECK_THAT(times.at("overhang_wall"), WithinRel(3.0, 1e-6));
+    CHECK_THAT(times.at("gap_fill"), WithinRel(1.0, 1e-6));
+}
+
+TEST_CASE("sparse, solid, surface, bridge and ironing time all count as infill", "[orcamcp][estimate]")
+{
+    const std::vector<Move> moves = {extrusion(Slic3r::erInternalInfill, 1.0f), extrusion(Slic3r::erSolidInfill, 1.0f),
+                                     extrusion(Slic3r::erTopSolidInfill, 1.0f), extrusion(Slic3r::erBottomSurface, 1.0f),
+                                     extrusion(Slic3r::erBridgeInfill, 1.0f),   extrusion(Slic3r::erInternalBridgeInfill, 1.0f),
+                                     extrusion(Slic3r::erIroning, 1.0f)};
+    CHECK_THAT(compute_time_by_feature(moves, k_normal, 7.0).at("infill"), WithinRel(7.0, 1e-6));
+}
+
+TEST_CASE("support, its interface, the prime tower, brim and skirt each have their own time", "[orcamcp][estimate]")
+{
+    const std::vector<Move> moves = {extrusion(Slic3r::erSupportMaterial, 5.0f), extrusion(Slic3r::erSupportTransition, 1.0f),
+                                     extrusion(Slic3r::erSupportMaterialInterface, 2.0f), extrusion(Slic3r::erWipeTower, 4.0f),
+                                     extrusion(Slic3r::erBrim, 1.5f), extrusion(Slic3r::erSkirt, 0.5f)};
+    const auto              times = compute_time_by_feature(moves, k_normal, 14.0);
+    CHECK_THAT(times.at("support"), WithinRel(6.0, 1e-6));
+    CHECK_THAT(times.at("support_interface"), WithinRel(2.0, 1e-6));
+    CHECK_THAT(times.at("prime_tower"), WithinRel(4.0, 1e-6));
+    CHECK_THAT(times.at("brim"), WithinRel(1.5, 1e-6));
+    CHECK_THAT(times.at("skirt"), WithinRel(0.5, 1e-6));
+}
+
+TEST_CASE("travel and tool changes are timed apart, and everything else is other", "[orcamcp][estimate]")
+{
+    const std::vector<Move> moves = {move(EMoveType::Travel, Slic3r::erNone, 8.0f), move(EMoveType::Tool_change, Slic3r::erNone, 30.0f),
+                                     move(EMoveType::Retract, Slic3r::erNone, 0.5f), move(EMoveType::Wipe, Slic3r::erNone, 0.25f),
+                                     move(EMoveType::Custom_GCode, Slic3r::erNone, 2.0f), extrusion(Slic3r::erCustom, 0.25f)};
+    const auto              times = compute_time_by_feature(moves, k_normal, 41.0);
+    CHECK_THAT(times.at("travel"), WithinRel(8.0, 1e-6));
+    CHECK_THAT(times.at("tool_changes"), WithinRel(30.0, 1e-6));
+    CHECK_THAT(times.at("other"), WithinRel(3.0, 1e-6));
+}
+
+TEST_CASE("the parts add up to the total, with the processor's unattributed remainder", "[orcamcp][estimate]")
+{
+    const std::vector<Move> moves = {extrusion(Slic3r::erExternalPerimeter, 100.0f), extrusion(Slic3r::erInternalInfill, 250.0f),
+                                     move(EMoveType::Travel, Slic3r::erNone, 40.0f)};
+    const double            total = 400.0; // 10 s the processor added to the total without a move
+    const auto              times = compute_time_by_feature(moves, k_normal, total);
+    double                  sum   = 0.0;
+    for (const auto& [key, seconds] : times)
+        sum += seconds;
+    CHECK_THAT(sum, WithinRel(total, 1e-9));
+    CHECK_THAT(times.at("unattributed"), WithinAbs(10.0, 1e-6));
+}
+
+TEST_CASE("the breakdown reads the time mode it is asked for", "[orcamcp][estimate]")
+{
+    const std::vector<Move> moves = {move(EMoveType::Extrude, Slic3r::erPerimeter, /*normal_s=*/10.0f, /*stealth_s=*/25.0f)};
+    CHECK_THAT(compute_time_by_feature(moves, k_stealth, 25.0).at("inner_wall"), WithinRel(25.0, 1e-6));
+}
+
+TEST_CASE("the breakdown is reported to a tenth of a second", "[orcamcp][estimate]")
+{
+    const nlohmann::json json = time_by_feature_json({{"inner_wall", 12.3456}, {"travel", 0.04}});
+    CHECK_THAT(json.at("inner_wall").get<double>(), WithinAbs(12.3, 1e-9));
+    CHECK_THAT(json.at("travel").get<double>(), WithinAbs(0.0, 1e-9));
 }

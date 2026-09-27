@@ -3075,7 +3075,12 @@ void OrcaMCPServer::register_builtin_tools()
         "Tool/filament changes are reported as two separate counters: "
         "extruder_changes (the printer switched physical extruder/tool head) and filament_changes (a "
         "nozzle was loaded with a different filament). A toolchanger reports the former, a "
-        "single-nozzle AMS/MMU printer the latter.",
+        "single-nozzle AMS/MMU printer the latter. time_by_feature splits estimated_time_seconds (normal "
+        "mode) into seconds per feature: outer_wall, inner_wall, overhang_wall, gap_fill, infill, "
+        "support, support_interface, brim, skirt, prime_tower, travel, tool_changes (the time the "
+        "changes above cost), other (retracts, wipes, pauses, custom G-code) and unattributed; the parts "
+        "add up to the total. To explain why two slices differ, read it after each and compare key by "
+        "key: the keys whose seconds changed account for the difference.",
         {
             {"type", "object"},
             {"properties", {
@@ -3206,6 +3211,8 @@ void OrcaMCPServer::register_builtin_tools()
                     // PETG interface was told it made no tool changes at all.
                     {"filament_changes", ps.total_filament_changes},
                     {"extruder_changes", ps.total_extruder_changes},
+                    {"time_by_feature", time_by_feature_json(compute_time_by_feature(
+                                            slice_result->moves, PrintEstimatedStatistics::ETimeMode::Normal, normal_time))},
                     {"active_warnings", get_active_warnings_json(plater)}
                 };
                 estimate_json.update(layer_counts_json(layers));
