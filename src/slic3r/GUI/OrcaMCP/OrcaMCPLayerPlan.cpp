@@ -459,10 +459,13 @@ std::optional<Overhang> overhang_of(const PrintObject& object, size_t layer_inde
     const ExPolygons hang = diff_ex(layer.lslices, offset_ex(below.lslices, float(scale_(tolerance_mm))));
     o.area_mm2            = area_mm2(hang);
 
-    // The support that holds this layer up: the highest support layer at or below its bottom.
+    // The support that holds this layer up ends one top gap below it (none for a zero-gap interface,
+    // a whole number of layers when support shares the object's heights): the highest support layer
+    // there. The ones between print under higher overhangs, clear of this layer.
+    const double        top   = layer.bottom_z() - object.slicing_parameters().gap_support_object;
     const SupportLayer* under = nullptr;
     for (const SupportLayer* s : object.support_layers()) {
-        if (s->print_z > layer.bottom_z() + k_gcode_height_tolerance)
+        if (s->print_z > top + k_gcode_height_tolerance)
             break;
         under = s;
     }

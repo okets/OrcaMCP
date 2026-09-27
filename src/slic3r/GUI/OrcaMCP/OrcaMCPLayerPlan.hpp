@@ -149,9 +149,10 @@ struct PrintedLayerRef
 
 // How much of an object layer hangs over nothing: the parts of it more than `tolerance_mm` beyond the
 // layer below (half a nozzle: a wall can lean that far on its own), and how much of that has support
-// lines, and interface lines, directly under it -- on the highest support layer at or below this
-// layer's bottom, whose height is support_z. Ribbon areas, like every other area here: sparse support
-// covers only the part of the overhang its lines run under.
+// lines, and interface lines, under it -- on the support layer that holds it up, the highest one at
+// or below this layer's bottom less the support's top gap (SlicingParameters::gap_support_object),
+// whose height is support_z. Ribbon areas, like every other area here: sparse support covers only
+// the part of the overhang its lines run under.
 struct Overhang
 {
     double                area_mm2            = 0.;

@@ -476,6 +476,45 @@ TEST_CASE("the cap's underside is an overhang with interface lines under it", "[
     CHECK_FALSE(overhang_of(object, 0, tolerance).has_value());
 }
 
+TEST_CASE("an overhang is measured against the support that holds it, one top gap down", "[orcamcp][LayerPlan]")
+{
+    // The support right under the cap's bottom holds the ledge up, one layer higher; the cap's own
+    // support ends a top gap lower. Measuring the cap against the ledge's support read it as bare.
+    Print print;
+    Model model;
+    Test::init_print({mcp_test::cap_with_higher_ledge()}, print, model, {
+        {"enable_support", 1},
+        {"support_type", "normal(auto)"},
+        {"independent_support_layer_height", 0},
+        {"support_top_z_distance", 0.2},
+        {"support_interface_spacing", 0},
+        {"layer_height", 0.2},
+        {"initial_layer_print_height", 0.2},
+    });
+    print.process();
+    const PrintObject& object = *print.objects().front();
+    const double       gap    = object.slicing_parameters().gap_support_object;
+    REQUIRE_THAT(gap, WithinAbs(0.2, 1e-6));
+
+    size_t cap_layer = 0;  // the cap's first layer: prints at 10.2, its bottom at 10.0
+    while (cap_layer < object.layers().size() && area_mm2(object.layers()[cap_layer]->lslices) < 800.)
+        ++cap_layer;
+    REQUIRE(cap_layer < object.layers().size());
+    const double bottom = object.layers()[cap_layer]->bottom_z();
+    REQUIRE_THAT(bottom, WithinAbs(10.0, 1e-6));
+    // The ledge's support does end at the cap's bottom: the trap this test is about.
+    bool support_at_bottom = false;
+    for (const SupportLayer* layer : object.support_layers())
+        support_at_bottom = support_at_bottom || (std::abs(layer->print_z - bottom) < 1e-6 && !layer->support_fills.empty());
+    REQUIRE(support_at_bottom);
+
+    const std::optional<Overhang> hang = overhang_of(object, cap_layer, 0.2);
+    REQUIRE(hang.has_value());
+    REQUIRE(hang->support_z.has_value());
+    CHECK_THAT(*hang->support_z, WithinAbs(bottom - gap, k_gcode_height_tolerance));
+    CHECK(hang->under_interface_mm2 > 0.8 * hang->area_mm2);
+}
+
 TEST_CASE("an object's footprint comes from the sliced object, where the model puts it", "[orcamcp][LayerPlan]")
 {
     SlicedCap cap;

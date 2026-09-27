@@ -1890,8 +1890,9 @@ cap's first layer has no support in it (the 0.2 mm gap is layer 50, the interfac
 - `overhang` (on an object layer with one below it) is polygon arithmetic on the sliced layers, not
   pixels: `area_mm2` is the part of this layer more than `tolerance_mm` (half the nozzle) beyond the
   layer below, and `under_support_mm2` / `under_interface_mm2` how much of it has support lines /
-  interface lines directly under it, on the highest support layer at or below this layer's bottom
-  (`support_z`). They are ribbon areas: sparse support covers only the part its lines run under,
+  interface lines under it, on the support layer that holds it up: the highest one at or below this
+  layer's bottom less the support's top gap (`support_top_z_distance`, 0 for a zero-gap interface),
+  at `support_z`. They are ribbon areas: sparse support covers only the part its lines run under,
   while a dense interface should come close to `area_mm2`.
 - `legend` has one entry per colour in the picture, with the area it drew; the image shows the same
   legend in its top-right corner unless `overlays.labels` is off. `nothing_drawn: true` means the
