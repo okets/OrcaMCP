@@ -381,12 +381,16 @@ bool parse_state_param(const nlohmann::json& params, PaintMode mode, const State
             error = key + " must be a whole number: a 1-based slot, or 0 for unpainted";
             return false;
         }
-        if (param.must_be_a_slot)
-            error = color_slot_error(value, slot_count);
-        else if (value < 0 || value > max_paint_state())
-            error = key + " " + std::to_string(value) + " is not a state a facet can hold (0.." + std::to_string(max_paint_state()) + ")";
-        if (!error.empty())
+        // Judged by this call's own finding, never by what `error` held on entry.
+        const std::string refusal =
+            param.must_be_a_slot ? color_slot_error(value, slot_count)
+            : value < 0 || value > max_paint_state()
+                ? key + " " + std::to_string(value) + " is not a state a facet can hold (0.." + std::to_string(max_paint_state()) + ")"
+                : std::string();
+        if (!refusal.empty()) {
+            error = refusal;
             return false;
+        }
         out = value;
         return true;
     }

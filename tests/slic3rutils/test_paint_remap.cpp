@@ -245,3 +245,13 @@ TEST_CASE("outside colour mode the state is a name, read the same way for either
     CHECK_FALSE(parse_state_param(nlohmann::json{{"state", 1}}, PaintMode::Support, k_paint_with, 4, state, error));
     CHECK(error.find("needs state") != std::string::npos);
 }
+
+TEST_CASE("a valid state is accepted whatever the error string held before the call", "[orcamcp][PaintRemap]")
+{
+    int         state = -1;
+    std::string error = "left over from an earlier check";
+    CHECK(parse_state_param(nlohmann::json{{"match_filament", 2}}, PaintMode::Color, k_repaint_from, 4, state, error));
+    CHECK(state == 2);
+    error = "left over from an earlier check";
+    CHECK(parse_state_param(nlohmann::json{{"filament", 2}}, PaintMode::Color, k_paint_with, 4, state, error));
+}
