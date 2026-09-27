@@ -45,13 +45,13 @@ wxImage thumbnail_to_wximage(const ThumbnailData& thumbnail_data)
     return image;
 }
 
-namespace {
-
-wxColour to_wx(const ColorRGBA& c, unsigned char alpha = 255)
+wxColour to_wx_colour(const ColorRGBA& c, unsigned char alpha)
 {
     return wxColour(static_cast<unsigned char>(c.r() * 255.f), static_cast<unsigned char>(c.g() * 255.f),
                     static_cast<unsigned char>(c.b() * 255.f), alpha);
 }
+
+namespace {
 
 // Everything below draws through one context; `project` turns bed mm into image pixels and says
 // when a point has no pixel (behind the camera), so a line with a missing end is simply skipped.
@@ -239,9 +239,9 @@ void draw_overlays(wxImage&                          image,
             // A dark pill keeps the label legible on any background; the text carries the object's
             // colour so number and shape can be matched at a glance.
             gc->SetBrush(wxBrush(wxColour(30, 30, 30, 210)));
-            gc->SetPen(wxPen(to_wx(label.color), 1));
+            gc->SetPen(wxPen(to_wx_colour(label.color), 1));
             gc->DrawRoundedRectangle(p.m_x - w / 2. - pad, p.m_y - h / 2. - pad / 2., w + 2. * pad, h + pad, 4.);
-            paint.text_centred(text, p, to_wx(label.color));
+            paint.text_centred(text, p, to_wx_colour(label.color));
         }
     }
 

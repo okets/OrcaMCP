@@ -78,6 +78,23 @@ ColorRGBA object_palette_color(int object_index)
 
 ColorRGBA wipe_tower_color() { return ColorRGBA(0.75f, 0.76f, 0.80f, 1.0f); }
 
+ColorRGBA extrusion_feature_color(ExtrusionFeature feature)
+{
+    // libvgcode/src/ViewerImpl.cpp, DEFAULT_EXTRUSION_ROLES_COLORS.
+    auto rgb = [](int r, int g, int b) { return ColorRGBA(r / 255.f, g / 255.f, b / 255.f, 1.f); };
+    switch (feature) {
+    case ExtrusionFeature::perimeters: return rgb(255, 125, 56);         // ExternalPerimeter
+    case ExtrusionFeature::infill: return rgb(176, 48, 41);              // InternalInfill
+    case ExtrusionFeature::support: return rgb(0, 255, 0);               // SupportMaterial
+    case ExtrusionFeature::support_interface: return rgb(0, 128, 0);     // SupportMaterialInterface
+    case ExtrusionFeature::brim: return rgb(0, 59, 110);                 // Brim
+    case ExtrusionFeature::skirt: return rgb(0, 135, 110);               // Skirt
+    case ExtrusionFeature::prime_tower: return rgb(179, 227, 171);       // WipeTower
+    case ExtrusionFeature::other: break;
+    }
+    return rgb(128, 128, 128);                                           // Mixed
+}
+
 bool camera_preset_from_string(const std::string& name, CameraPreset& out)
 {
     static const std::pair<const char*, CameraPreset> k_names[] = {

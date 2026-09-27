@@ -13,6 +13,7 @@
 #include "libslic3r/BoundingBox.hpp"
 #include "libslic3r/Color.hpp"
 #include "libslic3r/Point.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPExtrusionFeatures.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPPaintSelect.hpp"  // CameraFrame
 
 namespace Slic3r { namespace GUI {
@@ -42,6 +43,11 @@ bool is_uniform_rgba(const std::vector<unsigned char>& pixels, unsigned int widt
 ColorRGBA object_palette_color(int object_index);
 // The wipe tower's fixed grey, never returned by the palette.
 ColorRGBA wipe_tower_color();
+
+// The colour the G-code Preview gives a feature by default (libvgcode's role colours), taken from
+// the role the feature is mostly made of: outer wall, sparse infill, support, support interface,
+// brim, skirt, wipe tower. So a layer plan coloured by feature reads like the Preview.
+ColorRGBA extrusion_feature_color(ExtrusionFeature feature);
 
 enum class CameraPreset { Iso, Top, Front, Back, Left, Right, Low };
 

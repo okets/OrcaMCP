@@ -46,6 +46,9 @@ struct OverlayLabel
 // The render buffer as a top-down wxImage with alpha: GL rows are bottom-up, images top-down.
 wxImage thumbnail_to_wximage(const ThumbnailData& thumbnail_data);
 
+// A colour as wx draws it, with `alpha` in place of its own.
+wxColour to_wx_colour(const ColorRGBA& color, unsigned char alpha = 255);
+
 // Draws the requested overlays onto `image` in place. `plate_box` and `excluded_areas` are bed mm.
 void draw_overlays(wxImage&                          image,
                    const CameraFrame&                camera,

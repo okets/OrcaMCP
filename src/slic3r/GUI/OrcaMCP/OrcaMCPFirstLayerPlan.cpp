@@ -223,12 +223,6 @@ FirstLayerPlan collect_first_layer(PartPlate& plate, const DynamicPrintConfig& f
 
 namespace {
 
-wxColour to_wx(const ColorRGBA& c, unsigned char alpha)
-{
-    return wxColour(static_cast<unsigned char>(c.r() * 255.f), static_cast<unsigned char>(c.g() * 255.f),
-                    static_cast<unsigned char>(c.b() * 255.f), alpha);
-}
-
 wxColour darker(const ColorRGBA& c, unsigned char alpha)
 {
     return wxColour(static_cast<unsigned char>(c.r() * 160.f), static_cast<unsigned char>(c.g() * 160.f),
@@ -310,14 +304,14 @@ wxImage draw_first_layer_plan(const FirstLayerPlan&             plan,
             fill_expolygons(gc, o.raft, m, support_brush, wxPen(darker(o.color, 255), 1));
         if (plan.wipe_tower.has_value()) {
             const ColorRGBA grey = wipe_tower_color();
-            fill_expolygons(gc, {ExPolygon(*plan.wipe_tower)}, m, wxBrush(to_wx(grey, 200)), wxPen(darker(grey, 255), 1));
+            fill_expolygons(gc, {ExPolygon(*plan.wipe_tower)}, m, wxBrush(to_wx_colour(grey, 200)), wxPen(darker(grey, 255), 1));
         }
         // Brim as the band it covers, in a translucent darker shade of the owner's colour; the
         // individual loops are too dense to read as lines at plan scale.
         for (const PlanObject& o : plan.objects) {
             if (!o.brim.empty())
                 fill_expolygons(gc, union_ex(o.brim), m, wxBrush(darker(o.color, 90)), wxPen(darker(o.color, 200), 1));
-            fill_expolygons(gc, o.body, m, wxBrush(to_wx(o.color, 165)), wxPen(darker(o.color, 255), 1));
+            fill_expolygons(gc, o.body, m, wxBrush(to_wx_colour(o.color, 165)), wxPen(darker(o.color, 255), 1));
         }
         if (!plan.loose_brim.empty())
             fill_expolygons(gc, union_ex(plan.loose_brim), m, wxBrush(wxColour(80, 80, 80, 90)), wxPen(wxColour(80, 80, 80, 200), 1));
