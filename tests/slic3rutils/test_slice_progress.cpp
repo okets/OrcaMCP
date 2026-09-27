@@ -392,8 +392,9 @@ TEST_CASE("a pending settings change is applied first only while the pipeline is
                 const PipelineState state = pipeline(bits & 1, bits & 2, bits & 4, bits & 8, bits & 16, slice_all_plate);
                 DYNAMIC_SECTION("state " << bits << " on plate " << slice_all_plate << (scheduled ? ", scheduled" : ""))
                 {
-                    const bool idle = pipeline_busy(state) == PipelineBusy::idle;
-                    CHECK(should_apply_pending_update(state, scheduled) == (scheduled && idle));
+                    const bool idle     = pipeline_busy(state) == PipelineBusy::idle;
+                    const bool expected = scheduled ? idle : false;
+                    CHECK(should_apply_pending_update(state, scheduled) == expected);
                 }
             }
 }
