@@ -3127,10 +3127,10 @@ void OrcaMCPServer::register_builtin_tools()
                         info_messages.insert(info_messages.begin(), done);
                     add_turntable_preview_if_requested(response, include_preview);
                 } else {
-                    response = load_failure_json(load_failure_message(kind, loaded), suppression_guard.errors());
+                    response = {{"status", "error"}, {"message", load_failure_message(kind, loaded)}};
                 }
-                if (const auto errors = suppression_guard.errors(); !errors.empty())
-                    response["error_messages"] = errors;
+                // A load the app answered with an error dialog failed, with its words.
+                response = suppression_guard.fail_on_errors(std::move(response));
 
                 report_filaments_added(response, info_messages, filaments_before,
                                        wxGetApp().preset_bundle->filament_presets.size());
@@ -3490,10 +3490,10 @@ void OrcaMCPServer::register_builtin_tools()
 
                 nlohmann::json response =
                     result ? nlohmann::json{{"status", "success"}}
-                           : load_failure_json("No objects were loaded from " + file_path + ".", suppression_guard.errors());
+                           : nlohmann::json{{"status", "error"}, {"message", "No objects were loaded from " + file_path + "."}};
                 response["file"] = file_path;
-                if (const auto errors = suppression_guard.errors(); !errors.empty())
-                    response["error_messages"] = errors;
+                // A load the app answered with an error dialog failed, with its words.
+                response = suppression_guard.fail_on_errors(std::move(response));
 
                 // Say so: from here on save_project and the GUI's Save write back to this file.
                 if (result) {

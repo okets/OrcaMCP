@@ -189,6 +189,23 @@ TEST_CASE("a response the app answered with an error fails with the error's word
     CHECK(failed["error_messages"] == nlohmann::json::array({"Another export job is running."}));
 }
 
+// load_model, load_project and new_project fail the same way: a failed load says what the app's
+// error said -- an STL the reader cannot parse, G-code the processor cannot read -- rather than only
+// "Failed to load model file", and one with no error dialog keeps its own words.
+TEST_CASE("a failure with several error dialogs says all of them, one per line", "[McpSuppression][orcamcp][suppression]")
+{
+    Slic3r::GUI::OrcaMCP::McpDialogSuppressionGuard guard;
+    const nlohmann::json own_words = guard.fail_on_errors({{"status", "error"}, {"message", "Failed to load model file"}});
+    CHECK(own_words["message"] == "Failed to load model file");
+    CHECK_FALSE(own_words.contains("error_messages"));
+
+    add_mcp_suppressed_error("first");
+    add_mcp_suppressed_error("second");
+    const nlohmann::json failed = guard.fail_on_errors({{"status", "error"}, {"message", "Failed to load model file"}});
+    CHECK(failed["message"] == "first\nsecond");
+    CHECK(failed["error_messages"] == nlohmann::json::array({"first", "second"}));
+}
+
 // A settings change the slicer has not taken in yet is applied by the tool about to slice, report or
 // export (OrcaMCP::apply_pending_update). That update can raise an error dialog, and one raised with
 // no suppression open is a modal that blocks every later call: the helper takes the caller's guard,

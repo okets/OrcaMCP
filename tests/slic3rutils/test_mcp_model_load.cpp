@@ -220,23 +220,3 @@ TEST_CASE("a load that added nothing reports no loaded objects", "[McpModelLoad]
     CHECK(loaded_objects_json(model, object_ids(model)).empty());
     CHECK(loaded_objects_json(Model(), {}).empty());
 }
-
-// A load the slicer failed with an error dialog (an STL admesh cannot read, G-code the processor
-// cannot parse) said only "Failed to load model file", and left the dialog open. It now fails with
-// the dialog's words.
-TEST_CASE("a failed load says what the app's error said", "[McpModelLoad][orcamcp][load]")
-{
-    using Slic3r::GUI::OrcaMCP::load_failure_json;
-    const nlohmann::json failed = load_failure_json("Failed to load model file", {"Loading of a model file failed."});
-    CHECK(failed["status"] == "error");
-    CHECK(failed["message"] == "Loading of a model file failed.");
-    CHECK(failed["error_messages"] == nlohmann::json::array({"Loading of a model file failed."}));
-
-    const nlohmann::json two = load_failure_json("Failed to load model file", {"first", "second"});
-    CHECK(two["message"] == "first\nsecond");
-
-    const nlohmann::json silent = load_failure_json("Failed to load model file", {});
-    CHECK(silent["status"] == "error");
-    CHECK(silent["message"] == "Failed to load model file");
-    CHECK_FALSE(silent.contains("error_messages"));
-}

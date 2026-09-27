@@ -69,14 +69,6 @@ std::string threemf_import_message(bool carries_presets)
            "applied, and the project name is unchanged. Use load_project to open it as a project.";
 }
 
-nlohmann::json load_failure_json(const std::string& fallback, const std::vector<std::string>& errors)
-{
-    nlohmann::json failed = {{"status", "error"}, {"message", errors.empty() ? fallback : join_lines(errors)}};
-    if (!errors.empty())
-        failed["error_messages"] = errors;
-    return failed;
-}
-
 std::set<ObjectID> object_ids(const Model& model)
 {
     std::set<ObjectID> ids;
