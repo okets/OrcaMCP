@@ -59,8 +59,8 @@ gave were wrong; the prompts carry the corrected facts.
 | 05 | [Mesh health](05-mesh-health.md) | 01, 03 | new tool, `active_warnings`, `get_scene_info` | merged and pushed 2026-09-27; Build all green (run 36282514718) |
 | 06 | [Workflow tools](06-workflow-tools.md) | 01, 03 | bridge, slicing status, preset reads, paint remap, estimate breakdown | merged and pushed 2026-09-27 (live checks passed); follow-up 06b (stale 'invalid' just after a fix) queued after 07 |
 | 07 | [Sliced layer plan](07-layer-plan.md) | 01, 03 | `OrcaMCPFirstLayerPlan.cpp`, `render_plate_view` | merged and pushed 2026-09-27 (overhang facts, not verdicts) |
-| 06b | Stale 'invalid' after a fix; empty plates in Slice All; slow instances_on_plate (no prompt file; 06's agent) | 07 | `slice_all`, slicing status, OrcaMCPCommon, load errors | implementing (fresh agent) |
-| 07b | G-code over-height check never fires on non-Bambu printers (upstream bug; no prompt file) | 06b | GCodeProcessor `;Z:` parsing | queued after 06b; needs a careful side-effect audit |
+| 06b | [Slicing and loading follow-ups](06b-slicing-followups.md) | 07 | `slice_all`, slicing status, OrcaMCPCommon, load errors | implementing (fresh agent) |
+| 07b | [Over-height check on non-Bambu printers](07b-height-check.md) | 06b | GCodeProcessor `;Z:` parsing | queued after 06b; needs a careful side-effect audit |
 | 08 | [Server instructions and hints](08-instructions-and-hints.md) | 01–07 | `initialize`, descriptions, result hints | not started |
 | 09 | [Several instances, switch between them](09-second-instance-crash.md) | 01–08 | port fallback, instance registry (with open file), bridge `list_instances` / `select_instance` | added 2026-09-26 by the user; design goes to the user; starts after all other coding |
 
