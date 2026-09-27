@@ -1,7 +1,5 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPRequestGuard.hpp
 #pragma once
-// HttpServer.hpp first: it pulls in boost/asio, which on Windows must see <windows.h> before other
-// headers do.
 #include "slic3r/GUI/HttpServer.hpp"
 #include <functional>
 #include <optional>

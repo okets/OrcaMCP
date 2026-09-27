@@ -1,5 +1,3 @@
-// HttpServer.hpp first: it pulls in boost/asio, which on Windows must see <windows.h> before the
-// libslic3r headers do.
 #include "slic3r/GUI/HttpServer.hpp"
 #include "slic3r/Utils/Http.hpp"
 #include "slic3r/Utils/TCPConsole.hpp"

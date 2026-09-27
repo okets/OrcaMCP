@@ -3,8 +3,6 @@
 #include <string>
 #include <vector>
 
-// slic3r/GUI headers first: on Windows they must see <windows.h> (via wx) before the libslic3r
-// headers do; scripts/tests/test_gui_include_order.py checks it.
 #include "slic3r/GUI/OrcaMCP/OrcaMCPSliceCredit.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
 #include "libslic3r/Model.hpp"

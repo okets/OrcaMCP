@@ -1,5 +1,3 @@
-// HttpServer.hpp first: it pulls in boost/asio, which on Windows must see <windows.h> before the
-// libslic3r headers do (test_mcp_model_load.cpp, Build all run 36243478905).
 #include "slic3r/GUI/HttpServer.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPLoginServer.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPMainThreadGate.hpp"

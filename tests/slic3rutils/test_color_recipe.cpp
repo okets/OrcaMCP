@@ -3,8 +3,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
-// slic3r/GUI headers first: on Windows they must see <windows.h> (via wx) before the libslic3r
-// headers do; scripts/tests/test_gui_include_order.py checks it.
 #include "slic3r/GUI/OrcaMCP/OrcaMCPColorRecipe.hpp"
 #include "libslic3r/FilamentMixer.hpp"
 

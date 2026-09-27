@@ -1,5 +1,3 @@
-// OrcaMCPRequestGuard.hpp first: it pulls in HttpServer.hpp -> boost/asio, which on Windows must see
-// <windows.h> before the libslic3r headers do.
 #include "slic3r/GUI/OrcaMCP/OrcaMCPRequestGuard.hpp"
 
 #include <catch2/catch_test_macros.hpp>

@@ -60,6 +60,11 @@ add_executable(${_TEST_NAME}_tests
 
 if (MSVC)
     target_link_libraries(${_TEST_NAME}_tests Setupapi.lib)
+    # Every test starts as every libslic3r_gui source does, with the Windows headers first: the GUI
+    # library gets them from its PCH, or this same force-include with the PCH off
+    # (src/slic3r/CMakeLists.txt). Without it, a test that reaches wx after libslic3r headers (as
+    # PartPlate.hpp does) fails in wx/msw/private.h and asio.
+    target_compile_options(${_TEST_NAME}_tests PRIVATE "/FIslic3r/win_platform.hpp")
 endif ()
 
 target_link_libraries(${_TEST_NAME}_tests test_common libslic3r_gui libslic3r pybind11::embed Catch2::Catch2WithMain)
