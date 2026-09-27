@@ -2757,7 +2757,10 @@ wait still ends by it.
 `slicing_status` is `get_slicing_status`'s last answer (`null` if the app answered no poll in
 time). A poll the app is too busy to answer, whose connection closes under the reply, whose reply is
 cut short (once the app has answered cleanly), or a refusal shorter than a second, does not end the
-wait. An app that is not running when the wait starts, or that fails the status call, ends
+wait. When the last polls before the deadline were refused, one more poll a second after the first
+refusal (inside the headroom below `ORCAMCP_TIMEOUT`) decides: still refused is `app_gone`, an answer
+is judged as usual; if it cannot fit, `timed_out` says the app stopped answering, never that it is
+still slicing. An app that is not running when the wait starts, or that fails the status call, ends
 it with an error.
 
 ### Tool list freshness
