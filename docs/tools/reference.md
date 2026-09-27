@@ -1859,7 +1859,8 @@ flushing into infill and mixed filaments show as they print. The entry adds:
     "object_layer": {"number": 51, "print_z": 10.25, "height": 0.2},
     "support_layer": null,
     "overhang": {"area_mm2": 829.44, "tolerance_mm": 0.2,
-                 "support_below": {"z": 9.85, "gap_mm": 0.2, "support_mm2": 742.31, "interface_mm2": 742.31}}
+                 "support_below": {"z": 9.85, "gap_mm": 0.2, "support_mm2": 742.31, "interface_mm2": 742.31,
+                                   "searched_to_mm": null}}
   }],
   "drawn": {"features": ["support", "support_interface"], "filaments": "all", "color_by": "feature"},
   "legend": [],
@@ -1892,14 +1893,20 @@ cap's first layer has no support in it (the 0.2 mm gap is layer 50, the interfac
   - `area_mm2` is the part of this layer more than `tolerance_mm` beyond the layer below.
     `tolerance_mm` is half the nozzle printing this object's outer walls on this layer, so it
     differs per object and per nozzle.
-  - `support_below` is the support layer directly beneath: the highest one at or below this layer's
-    bottom. It gives that layer's height `z`, `gap_mm` from it up to the overhang, and how much of the
-    overhang its support lines (`support_mm2`) and its interface lines alone (`interface_mm2`) lie
-    under, measured with the lines' width.
-  - `gap_mm` is what to read first. A gap near the configured top Z distance
-    (`support_top_z_distance`; 0 for a zero-gap interface) means this is the contact layer holding
-    the overhang up. A large gap, such as a raft 10 mm down, means nothing touches the overhang
-    there, whatever the areas say.
+  - `support_below` is the support under this overhang. Support layers belong to the whole object,
+    so the one right at the overhang's bottom may have been built for another overhang elsewhere.
+    The search goes down from the overhang's bottom, at most 2 mm, and stops at the first support
+    layer whose lines lie under this overhang (more than 0.01 mm² of it).
+    - It gives that layer's height `z`, `gap_mm` from it up to the overhang, and how much of the
+      overhang its support lines (`support_mm2`) and its interface lines alone (`interface_mm2`) lie
+      under, measured with the lines' width.
+    - `gap_mm` is what to read first. A gap near the configured top Z distance
+      (`support_top_z_distance`; 0 for a zero-gap interface) means this is the contact layer holding
+      the overhang up.
+  - When no support layer within those 2 mm has lines under the overhang, `support_below` is the
+    nearest support layer below, such as a raft 10 mm down. It has its `z` and `gap_mm`, both areas 0,
+    and `searched_to_mm: 2`: nothing touches the overhang. `searched_to_mm` is `null` whenever
+    something was found.
   - `support_below` is `null` when there is no support layer below at all.
   - The areas are ribbon areas: sparse support covers only the part its lines run under, while a
     dense interface should come close to `area_mm2`.

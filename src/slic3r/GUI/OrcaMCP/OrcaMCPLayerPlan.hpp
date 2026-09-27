@@ -160,21 +160,33 @@ struct PrintedLayerRef
     double height  = 0.;
 };
 
-// The support layer directly beneath an overhang, as plain facts: its height, how far below the
-// overhang's bottom it is, and how much of the overhang its support lines -- and its interface lines
-// alone -- lie under (the bands support_covered builds, line width included). A gap near the configured
-// top Z distance means it is the contact layer; a large one means nothing touches the overhang there.
+// How far below an overhang the search for its support goes: well past any top Z distance a profile
+// uses, and a bounded number of layers to look at.
+constexpr double k_support_search_mm = 2.0;
+
+// The support under an overhang, as plain facts. Support layers belong to the whole object, so the one
+// right at an overhang's bottom may have been built for another overhang elsewhere; this is the first
+// support layer, going down from the overhang's bottom, whose lines lie under this overhang (more than
+// 0.01 mm2 of it): its height z, gap_mm from it up to the overhang, and how much of the overhang its
+// support lines -- and its interface lines alone -- lie under (the bands support_covered builds, line
+// width included). A gap near the configured top Z distance means it is the contact layer.
+//
+// When no support layer within k_support_search_mm below has lines under the overhang, it is the
+// nearest support layer below instead, with no area, and searched_to_mm says how deep the search went:
+// nothing touches the overhang there.
 struct SupportBelow
 {
-    double z             = 0.;
-    double gap_mm        = 0.;
-    double support_mm2   = 0.;
-    double interface_mm2 = 0.;
+    double                z             = 0.;
+    double                gap_mm        = 0.;
+    double                support_mm2   = 0.;
+    double                interface_mm2 = 0.;
+    std::optional<double> searched_to_mm;       // set only when nothing was found under the overhang
+    size_t                layers_visited = 0;   // support layers the search measured (not reported)
 };
 
 // How much of an object layer hangs over nothing -- the parts of it more than `tolerance_mm` beyond the
 // layer below (half the nozzle printing its walls: a wall can lean that far on its own) -- and the
-// support layer beneath it, none when there is no support layer below at all.
+// support under it (SupportBelow), none when there is no support layer below at all.
 struct Overhang
 {
     double                      area_mm2     = 0.;

@@ -370,7 +370,7 @@ TEST_CASE("heights and areas are reported as the numbers they are, not float noi
     o.object_layer = PrintedLayerRef{30, 6.0500000000000007, 0.2};
     Overhang hang;
     hang.area_mm2      = 858.4200000000001;
-    hang.support_below = SupportBelow{9.8500000000000014, 0.40000000000000036, 742.3100000000001, 0.};
+    hang.support_below = SupportBelow{9.8500000000000014, 0.40000000000000036, 742.3100000000001, 0., std::nullopt};
     o.overhang         = hang;
     const nlohmann::json json = objects_at_height_json({o})[0];
     CHECK(json["object_layer"]["print_z"].dump() == "6.05");
@@ -378,6 +378,7 @@ TEST_CASE("heights and areas are reported as the numbers they are, not float noi
     CHECK(json["overhang"]["support_below"]["z"].dump() == "9.85");
     CHECK(json["overhang"]["support_below"]["gap_mm"].dump() == "0.4");
     CHECK(json["overhang"]["support_below"]["support_mm2"].dump() == "742.31");
+    CHECK(json["overhang"]["support_below"]["searched_to_mm"].is_null());  // found within the search
     CHECK(json["support_layer"].is_null());
 
     hang.support_below.reset();  // no support layer below at all
@@ -519,6 +520,7 @@ TEST_CASE("the cap's underside is an overhang with interface lines under it", "[
     CHECK(below.interface_mm2 > 0.8 * hang->area_mm2);
     CHECK(below.support_mm2 >= below.interface_mm2 - 1e-6);
     CHECK(below.support_mm2 <= hang->area_mm2 + 1e-6);
+    CHECK_FALSE(below.searched_to_mm.has_value());
 
     // Half way up the stem nothing overhangs, and the first layer has nothing under it to compare.
     const std::optional<Overhang> stem = overhang_of(object, cap_layer / 2);
@@ -541,10 +543,10 @@ size_t cap_layer_of(const PrintObject& object)
 
 } // namespace
 
-TEST_CASE("support far below an overhang is reported with its gap", "[orcamcp][LayerPlan]")
+TEST_CASE("support far below an overhang is reported with its gap, and nothing under it", "[orcamcp][LayerPlan]")
 {
-    // A raft and no support: the support layer beneath the cap is the raft's top, 10 mm down. The
-    // raft reaches past the stem, under part of the overhang, and the gap says it touches none of it.
+    // A raft and no support: the nearest support layer beneath the cap is the raft's top, 10 mm down,
+    // past the search: its gap is given, no area, and how deep the search went.
     Print print;
     Model model;
     Test::init_print({mcp_test::supported_cap()}, print, model, {
@@ -567,6 +569,87 @@ TEST_CASE("support far below an overhang is reported with its gap", "[orcamcp][L
     CHECK_THAT(hang->support_below->z, WithinAbs(raft_top, 1e-6));
     CHECK_THAT(hang->support_below->gap_mm, WithinAbs(object.layers()[cap]->bottom_z() - raft_top, 1e-6));
     CHECK(hang->support_below->gap_mm > 8.);
+    CHECK_THAT(hang->support_below->support_mm2, WithinAbs(0., 1e-9));
+    CHECK_THAT(hang->support_below->interface_mm2, WithinAbs(0., 1e-9));
+    REQUIRE(hang->support_below->searched_to_mm.has_value());
+    CHECK_THAT(*hang->support_below->searched_to_mm, WithinAbs(k_support_search_mm, 1e-9));
+}
+
+namespace {
+
+// The first layer of the lower ledge (bottom at z 10): the first layer from 10 mm up.
+size_t lower_ledge_layer_of(const PrintObject& object)
+{
+    size_t index = 0;
+    while (index < object.layers().size() && object.layers()[index]->bottom_z() < 10.0 - 1e-6)
+        ++index;
+    REQUIRE(index < object.layers().size());
+    REQUIRE_THAT(object.layers()[index]->bottom_z(), WithinAbs(10.0, 1e-6));
+    return index;
+}
+
+} // namespace
+
+TEST_CASE("an overhang is measured against its own support, not a layer built for another", "[orcamcp][LayerPlan]")
+{
+    // The upper ledge's support column rises past the lower ledge, so the support layer right at the
+    // lower ledge's bottom exists, under the other ledge. The lower ledge's own contact is 0.2 lower.
+    Print print;
+    Model model;
+    Test::init_print({mcp_test::column_with_two_ledges()}, print, model, {
+        {"enable_support", 1},
+        {"support_type", "normal(auto)"},
+        {"independent_support_layer_height", 0},
+        {"support_top_z_distance", 0.2},
+        {"support_interface_spacing", 0},
+        {"layer_height", 0.2},
+        {"initial_layer_print_height", 0.2},
+    });
+    print.process();
+    const PrintObject& object = *print.objects().front();
+    const size_t       ledge  = lower_ledge_layer_of(object);
+    const double       bottom = object.layers()[ledge]->bottom_z();
+    bool               layer_at_bottom = false;  // the trap: a support layer right at the ledge's bottom
+    for (const SupportLayer* s : object.support_layers())
+        layer_at_bottom = layer_at_bottom || (std::abs(s->print_z - bottom) < 1e-6 && !s->support_fills.empty());
+    REQUIRE(layer_at_bottom);
+
+    const std::optional<Overhang> hang = overhang_of(object, ledge);
+    REQUIRE(hang.has_value());
+    CHECK(hang->area_mm2 > 50.);  // the ledge's 10 x 8 mm, less the tolerance
+    REQUIRE(hang->support_below.has_value());
+    CHECK_THAT(hang->support_below->gap_mm, WithinAbs(0.2, 1e-6));
+    CHECK(hang->support_below->interface_mm2 > 0.8 * hang->area_mm2);
+    CHECK_FALSE(hang->support_below->searched_to_mm.has_value());
+}
+
+TEST_CASE("the search under an overhang visits at most its depth of support layers", "[orcamcp][LayerPlan]")
+{
+    // Support on the build plate only: the lower ledge, over the base, gets none, while support layers
+    // for the upper ledge run past it all the way up. The search looks k_support_search_mm down, no further.
+    Print print;
+    Model model;
+    const double layer_height = 0.2;
+    Test::init_print({mcp_test::ledges_over_base()}, print, model, {
+        {"enable_support", 1},
+        {"support_type", "normal(auto)"},
+        {"support_on_build_plate_only", 1},
+        {"independent_support_layer_height", 0},
+        {"layer_height", layer_height},
+        {"initial_layer_print_height", layer_height},
+    });
+    print.process();
+    const PrintObject& object = *print.objects().front();
+    REQUIRE(object.support_layer_count() > size_t(20. / layer_height));  // support all the way up
+
+    const std::optional<Overhang> hang = overhang_of(object, lower_ledge_layer_of(object));
+    REQUIRE(hang.has_value());
+    CHECK(hang->area_mm2 > 50.);
+    REQUIRE(hang->support_below.has_value());
+    CHECK_THAT(hang->support_below->support_mm2, WithinAbs(0., 1e-9));
+    REQUIRE(hang->support_below->searched_to_mm.has_value());
+    CHECK(hang->support_below->layers_visited > 1);
+    CHECK(hang->support_below->layers_visited <= size_t(std::lround(k_support_search_mm / layer_height)) + 1);
 }
 
 TEST_CASE("tree support's interface sits one top gap under the cap", "[orcamcp][LayerPlan]")
@@ -588,6 +671,7 @@ TEST_CASE("tree support's interface sits one top gap under the cap", "[orcamcp][
     CHECK_THAT(hang->support_below->gap_mm, WithinAbs(0.2, 1e-6));
     CHECK(hang->support_below->interface_mm2 > 0.);
     CHECK(hang->support_below->support_mm2 >= hang->support_below->interface_mm2 - 1e-6);
+    CHECK_FALSE(hang->support_below->searched_to_mm.has_value());
 }
 
 TEST_CASE("an overhang with no support layer below it says so", "[orcamcp][LayerPlan]")

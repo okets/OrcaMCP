@@ -140,7 +140,8 @@ nlohmann::json support_below_json(const std::optional<SupportBelow>& below)
     return {{"z", round_to(below->z, 4)},
             {"gap_mm", round_to(below->gap_mm, 4)},
             {"support_mm2", round_to(below->support_mm2, 2)},
-            {"interface_mm2", round_to(below->interface_mm2, 2)}};
+            {"interface_mm2", round_to(below->interface_mm2, 2)},
+            {"searched_to_mm", below->searched_to_mm ? nlohmann::json(round_to(*below->searched_to_mm, 4)) : nlohmann::json(nullptr)}};
 }
 
 nlohmann::json overhang_json(const std::optional<Overhang>& o)
@@ -187,6 +188,15 @@ bool lies_under(const PrintObject& object, const BoundingBox& shape, const Bound
             return true;
     }
     return false;
+}
+
+// Whether any of `layer`'s support lines come within `reach` (object coordinates): the cheap test, on
+// the lines' points, before any band is built.
+bool support_lines_near(const SupportLayer& layer, const BoundingBox& reach)
+{
+    Points points;
+    layer.support_fills.collect_points(points);
+    return !points.empty() && BoundingBox(points).overlap(reach);
 }
 
 // Adds `shape` (object coordinates) to `frame` (bed mm) at each of `object`'s instances.
@@ -520,21 +530,43 @@ std::optional<Overhang> overhang_of(const PrintObject& object, size_t layer_inde
     const ExPolygons hang = diff_ex(layer.lslices, offset_ex(below.lslices, float(scale_(o.tolerance_mm))));
     o.area_mm2            = area_mm2(hang);
 
-    // The support layer directly beneath: the highest at or below this layer's bottom.
+    // Down from the support layer at or below this layer's bottom, k_support_search_mm deep at most, to
+    // the first whose lines lie under this overhang.
     const auto& supports = object.support_layers();
     const auto  above    = std::upper_bound(supports.begin(), supports.end(), layer.bottom_z() + EPSILON,
                                             [](double z, const SupportLayer* s) { return z < s->print_z; });
     if (above == supports.begin())
         return o;
-    const SupportLayer& s = **std::prev(above);
-    SupportBelow        support;
-    support.z      = s.print_z;
-    support.gap_mm = layer.bottom_z() - s.print_z;
-    if (!hang.empty()) {
-        support.support_mm2   = area_mm2(intersection_ex(hang, support_covered(s)));
-        support.interface_mm2 = area_mm2(intersection_ex(hang, support_covered(s, Point(0, 0), erSupportMaterialInterface)));
+    const SupportLayer& nearest = **std::prev(above);
+    SupportBelow        found;
+    found.z      = nearest.print_z;
+    found.gap_mm = layer.bottom_z() - nearest.print_z;
+    if (hang.empty()) {
+        o.support_below = found;
+        return o;
     }
-    o.support_below = support;
+    BoundingBox reach = get_extents(hang);
+    reach.offset(scale_(1.));  // a line whose width reaches under the overhang
+    for (auto it = above; it != supports.begin();) {
+        const SupportLayer& s   = **--it;
+        const double        gap = layer.bottom_z() - s.print_z;
+        if (gap > k_support_search_mm + EPSILON)
+            break;
+        ++found.layers_visited;
+        if (!support_lines_near(s, reach))
+            continue;
+        const double support = area_mm2(intersection_ex(hang, support_covered(s)));
+        if (support <= 0.01)
+            continue;
+        found.z             = s.print_z;
+        found.gap_mm        = gap;
+        found.support_mm2   = support;
+        found.interface_mm2 = area_mm2(intersection_ex(hang, support_covered(s, Point(0, 0), erSupportMaterialInterface)));
+        o.support_below     = found;
+        return o;
+    }
+    found.searched_to_mm = k_support_search_mm;
+    o.support_below      = found;
     return o;
 }
 
