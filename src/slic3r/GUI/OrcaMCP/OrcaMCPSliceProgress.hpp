@@ -77,11 +77,11 @@ struct SliceRunPlate
 
 enum class SliceRunOutcome
 {
-    none,        // no slice_all since the app started, and nothing is slicing
+    none,        // no slice_all since the app started, or none of its plates is left, and nothing is slicing
     running,     // a slice is in progress
     done,        // every plate the run asked for has a slice result
     ended_early, // Slice All stopped before its last plate (Plater::slice_all_ended_early)
-    incomplete,  // the run is over and some of its plates have no slice result, or are gone
+    incomplete,  // the run is over and some of its plates still there have no slice result
 };
 
 inline const char* slice_run_outcome_name(SliceRunOutcome outcome)
@@ -130,7 +130,11 @@ inline SliceRunJudgement judge_slice_run(bool                              run_k
     if (!run_known)
         return {SliceRunOutcome::none, {}, {}};
 
+    // Judged by the plates still there: a plate deleted since leaves nothing unsliced, and a run none
+    // of whose plates are left (new_project, load_project) has nothing to judge.
     const auto       gone = std::count_if(plates.begin(), plates.end(), [](const SliceRunPlate& p) { return !p.exists; });
+    if (size_t(gone) == plates.size())
+        return {SliceRunOutcome::none, {}, {}};
     std::vector<int> unsliced, skipped;
     bool             any_sliced = false;
     for (const SliceRunPlate& plate : plates) {
@@ -144,7 +148,7 @@ inline SliceRunJudgement judge_slice_run(bool                              run_k
             unsliced.push_back(plate.index);
     }
 
-    if (gone == 0 && unsliced.empty()) {
+    if (unsliced.empty()) {
         if (any_sliced)
             return {SliceRunOutcome::done, {}, skipped};
         return {SliceRunOutcome::incomplete,
@@ -153,14 +157,15 @@ inline SliceRunJudgement judge_slice_run(bool                              run_k
                 skipped};
     }
 
+    // A plate that went during the run is the likely reason the others were left: the plate-list
+    // change cancelled Slice All.
     std::string message;
     if (gone > 0)
         message = std::to_string(gone) + " of the run's " + std::to_string(plates.size()) +
                   " plate(s) no longer exist: the plate list changed (a plate was deleted, or an undo, redo or project "
-                  "load rebuilt the list), which cancels Slice All";
-    if (!unsliced.empty())
-        message += (message.empty() ? "" : "; ") + std::string("plate_index ") + plate_index_list(unsliced) + " has no slice result" +
-                   (gone > 0 ? "" : ": its slice failed (active_warnings says why), was cancelled, or an edit since invalidated it");
+                  "load rebuilt the list), which cancels Slice All; ";
+    message += std::string("plate_index ") + plate_index_list(unsliced) + " has no slice result" +
+               (gone > 0 ? "" : ": its slice failed (active_warnings says why), was cancelled, or an edit since invalidated it");
     return {SliceRunOutcome::incomplete, message + "; call slice_all again", skipped};
 }
 
@@ -180,15 +185,6 @@ inline const char* slice_state_name(SliceState state)
     case SliceState::done: return "done";
     }
     return "idle";
-}
-
-// The run outcome the state goes by: none when no plate of the run exists any more. new_project and
-// load_project replace every plate while the run's record stays, and slice_run still reports it, but
-// the new project's state is its selected plate's.
-inline SliceRunOutcome outcome_for_state(SliceRunOutcome run, const std::vector<SliceRunPlate>& plates)
-{
-    const bool any_left = std::any_of(plates.begin(), plates.end(), [](const SliceRunPlate& p) { return p.exists; });
-    return any_left ? run : SliceRunOutcome::none;
 }
 
 // The state from how the last slice_all run stands (`run`, judge_slice_run's outcome) and the selected

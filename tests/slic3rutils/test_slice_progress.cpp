@@ -130,13 +130,26 @@ TEST_CASE("a run that left plates unsliced is incomplete and names them", "[orca
     CHECK(judged.message.find("plate_index 1, 3 ") != std::string::npos);
 }
 
-TEST_CASE("a run whose plates were deleted or rebuilt since is incomplete, and says the plate list changed", "[orcamcp][SliceProgress]")
+// A plate deleted after the run left nothing unsliced: the run is judged by the plates there now.
+// Judging a deleted plate as a failure left get_slicing_status's state idle for good after a run
+// that sliced everything, once any plate was deleted.
+TEST_CASE("a run is judged by the plates still there, so deleting one after it does not undo it", "[orcamcp][SliceProgress]")
 {
     const SliceRunJudgement judged =
         judge_slice_run(/*run_known=*/true, /*slicing=*/false, {sliced_plate(0), gone_plate(), gone_plate()}, std::nullopt);
-    CHECK(judged.outcome == SliceRunOutcome::incomplete);
-    CHECK(judged.message.find("2 of the run's 3 plate(s)") != std::string::npos);
-    CHECK(judged.message.find("plate list changed") != std::string::npos);
+    CHECK(judged.outcome == SliceRunOutcome::done);
+    CHECK(judged.message.empty());
+    CHECK(slice_state(false, judged.outcome, sliced_plate(0)) == SliceState::done);
+}
+
+// new_project and load_project replace every plate: nothing the run asked for is left to judge, and
+// the state is the new project's selected plate's (wait_for_slice then goes by it too).
+TEST_CASE("a run none of whose plates are left has nothing to judge", "[orcamcp][SliceProgress]")
+{
+    const SliceRunJudgement judged = judge_slice_run(/*run_known=*/true, /*slicing=*/false, {gone_plate(), gone_plate()}, std::nullopt);
+    CHECK(judged.outcome == SliceRunOutcome::none);
+    CHECK(slice_state(false, judged.outcome, sliced_plate(0)) == SliceState::done);
+    CHECK(slice_state(false, judged.outcome, unsliced_plate(0)) == SliceState::idle);
 }
 
 TEST_CASE("a run cancelled by a plate-list change also names the plates it left unsliced", "[orcamcp][SliceProgress]")
@@ -213,20 +226,6 @@ TEST_CASE("before any slice_all the state is the selected plate's, as before", "
     CHECK(slice_state(false, SliceRunOutcome::none, sliced_plate(0)) == SliceState::done);
     CHECK(slice_state(false, SliceRunOutcome::none, unsliced_plate(0)) == SliceState::idle);
     CHECK(slice_state(false, SliceRunOutcome::none, empty_plate(0)) == SliceState::idle);
-}
-
-// new_project and load_project replace every plate, and the run's record stays (slice_run still says
-// the plate list changed). The state is then the new project's selected plate's: a slice the new
-// project made outside slice_all (export_gcode slices first) read idle.
-TEST_CASE("a run none of whose plates exist any more leaves the state to the selected plate", "[orcamcp][SliceProgress]")
-{
-    const std::vector<SliceRunPlate> gone_run = {gone_plate(), gone_plate()};
-    CHECK(outcome_for_state(SliceRunOutcome::incomplete, gone_run) == SliceRunOutcome::none);
-    CHECK(slice_state(false, outcome_for_state(SliceRunOutcome::incomplete, gone_run), sliced_plate(0)) == SliceState::done);
-
-    const std::vector<SliceRunPlate> half_gone = {sliced_plate(0), gone_plate()};
-    CHECK(outcome_for_state(SliceRunOutcome::incomplete, half_gone) == SliceRunOutcome::incomplete);
-    CHECK(outcome_for_state(SliceRunOutcome::done, {sliced_plate(0)}) == SliceRunOutcome::done);
 }
 
 TEST_CASE("every state has the name get_slicing_status reports", "[orcamcp][SliceProgress]")
