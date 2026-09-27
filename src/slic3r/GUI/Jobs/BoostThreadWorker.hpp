@@ -73,6 +73,7 @@ class BoostThreadWorker : public Worker, private Job::Ctl
     boost::thread                      m_thread;
     std::atomic<bool>                  m_running{false}, m_canceled{false};
     std::atomic<unsigned>              m_cancel_all_count{0};
+    bool                               m_delivering = true; // Orca: main thread only, see stop_delivering
     std::shared_ptr<ProgressIndicator> m_progress;
     JobQueue     m_input_queue;  // from main thread to worker
     MessageQueue m_output_queue; // form worker to main thread
@@ -139,6 +140,12 @@ public:
         m_cancel_all_count.fetch_add(1);
         cancel();
     }
+
+    // Orca: main thread. From now on the worker's messages are dropped, not delivered: no status, no
+    // main-thread call (a job waiting on one is let go, with a broken promise), no finalize. For an
+    // owner being torn down once it has drained the worker (~Plater): what a job that ignored the
+    // cancel sends later would reach an owner half destroyed.
+    void stop_delivering() { m_delivering = false; }
 
     ProgressIndicator * get_pri() { return m_progress.get(); }
     const ProgressIndicator * get_pri() const  { return m_progress.get(); }

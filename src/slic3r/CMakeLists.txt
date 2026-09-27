@@ -333,6 +333,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/Jobs/UpgradeNetworkJob.cpp
     GUI/Jobs/UpgradeNetworkJob.hpp
     GUI/Jobs/Worker.hpp
+    GUI/Jobs/WorkerDrain.cpp
+    GUI/Jobs/WorkerDrain.hpp
     GUI/KBShortcutsDialog.cpp
     GUI/KBShortcutsDialog.hpp
     GUI/LibVGCode/LibVGCodeWrapper.hpp

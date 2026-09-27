@@ -3,6 +3,8 @@
 
 #include "slic3r/GUI/Jobs/ArrangeJob.hpp"
 #include "slic3r/GUI/Jobs/BoostThreadWorker.hpp"
+#include "slic3r/GUI/Jobs/ProgressIndicator.hpp"
+#include "slic3r/GUI/Jobs/WorkerDrain.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPUiJob.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/Utils/ThreadCancel.hpp"
@@ -16,6 +18,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 
 // The UI worker's jobs -- an arrange, an orient -- as MCP starts them and waits for them. A real
 // BoostThreadWorker runs here with this test's thread standing in for the main thread: it delivers
@@ -142,6 +145,133 @@ TEST_CASE("An arrange's run is undone however it ends: the plates it locked, its
     CHECK_FALSE(plates.get_plate(0)->is_locked());
     CHECK_FALSE(arrange_running.load());
     CHECK(notification_closed);
+}
+
+// ==================== WHEN THE PLATER GOES ====================
+// ~Plater cancels the UI worker's jobs and delivers their last messages while it is whole
+// (drain_worker), then has the worker deliver nothing more (stop_delivering): whatever a job that
+// ignored the cancel sends later would reach a plater half destroyed.
+
+namespace {
+
+// A job whose finalize leaves its error set, as one that met something other than a std::exception
+// does (PlaterJob clears only those): the worker rethrows it on the thread that delivers it.
+struct LeavesErrorJob : Job
+{
+    bool std_exception;
+    explicit LeavesErrorJob(bool std_exception) : std_exception(std_exception) {}
+
+    void process(Ctl&) override {}
+    void finalize(bool, std::exception_ptr& eptr) override
+    {
+        eptr = std_exception ? std::make_exception_ptr(std::runtime_error("left set")) : std::make_exception_ptr(7);
+    }
+};
+
+// A job that ignores its cancel, reporting as it runs, until it is released.
+struct StubbornJob : Job
+{
+    std::promise<void> started;
+    std::atomic<bool>  released{false};
+
+    void process(Ctl& ctl) override
+    {
+        started.set_value();
+        while (!released.load()) {
+            ctl.update_status(50, "still going");
+            std::this_thread::sleep_for(1ms);
+        }
+    }
+};
+
+// A job that sends one of each message a job sends: a status, a main-thread call it waits on, its
+// finalize.
+struct TalkativeJob : Job
+{
+    std::promise<void> processed;
+    bool               main_thread_call_ran = false;
+    bool               finalized            = false;
+
+    void process(Ctl& ctl) override
+    {
+        ctl.update_status(50, "half way");
+        ctl.call_on_main_thread([this] { main_thread_call_ran = true; }).wait();
+        processed.set_value();
+    }
+    void finalize(bool, std::exception_ptr&) override { finalized = true; }
+};
+
+struct CountingProgress : Slic3r::ProgressIndicator
+{
+    int updates = 0;
+
+    void clear_percent() override {}
+    void show_error_info(wxString, int, wxString, wxString) override {}
+    void set_range(int) override {}
+    void set_cancel_callback(CancelFn) override {}
+    void set_progress(int) override { ++updates; }
+    void set_status_text(const char*) override { ++updates; }
+    int  get_range() const override { return 100; }
+};
+
+} // namespace
+
+TEST_CASE("A drain delivers every job's last message, and what one throws is logged, never let out", "[McpUiJob][orcamcp]")
+{
+    STATIC_REQUIRE(noexcept(Slic3r::GUI::drain_worker(std::declval<Worker&>(), std::declval<std::chrono::milliseconds>(),
+                                                      std::declval<const char*>())));
+    const bool        std_exception = GENERATE(true, false);
+    BoostThreadWorker worker{nullptr, "test"};
+    auto              after     = std::make_shared<RecordingJob>();
+    auto              processed = after->processed.get_future();
+    worker.push(std::make_shared<LeavesErrorJob>(std_exception));
+    worker.push(after);
+    REQUIRE(processed.wait_for(k_bound) == std::future_status::ready); // both have run their process
+    const Slic3r::GUI::WorkerDrain drained = Slic3r::GUI::drain_worker(worker, k_bound, "test");
+    CHECK(drained.idle);
+    REQUIRE(drained.escaped.size() == 1);
+    CHECK(drained.escaped.front() == (std_exception ? "left set" : "an exception that is not a std::exception"));
+    CHECK(after->finalized); // the drain went on past the escape
+    CHECK(after->finalized_canceled);
+}
+
+TEST_CASE("A drain gives up at its deadline, however often a job that ignores its cancel reports", "[McpUiJob][orcamcp]")
+{
+    // A wait that ends only after a stretch with no message never ends while such a job runs.
+    BoostThreadWorker worker{nullptr, "test"};
+    auto              job     = std::make_shared<StubbornJob>();
+    auto              started = job->started.get_future();
+    worker.push(job);
+    REQUIRE(started.wait_for(k_bound) == std::future_status::ready);
+    // A drain that waited on would end only once this lets the job go, and then idle: the check below
+    // fails, the test does not hang.
+    std::promise<void> drain_returned;
+    std::thread releaser([&job, returned = drain_returned.get_future()] {
+        returned.wait_for(k_bound);
+        job->released.store(true);
+    });
+    const Slic3r::GUI::WorkerDrain drained = Slic3r::GUI::drain_worker(worker, 100ms, "test");
+    drain_returned.set_value();
+    releaser.join();
+    CHECK_FALSE(drained.idle);
+    CHECK(drained.escaped.empty());
+    REQUIRE(pump_until_idle(worker, k_bound));
+}
+
+TEST_CASE("A worker that stopped delivering drops what its jobs send: no status, no main-thread call, no finalize",
+          "[McpUiJob][orcamcp]")
+{
+    auto              progress = std::make_shared<CountingProgress>();
+    BoostThreadWorker worker{progress, "test"};
+    worker.stop_delivering();
+    auto job       = std::make_shared<TalkativeJob>();
+    auto processed = job->processed.get_future();
+    worker.push(job);
+    REQUIRE(pump_until_idle(worker, k_bound));
+    CHECK(processed.wait_for(0s) == std::future_status::ready); // the call it waited on let it go
+    CHECK(progress->updates == 0);
+    CHECK_FALSE(job->main_thread_call_ran);
+    CHECK_FALSE(job->finalized);
 }
 
 // ==================== THE JOB MCP STARTS, AND ITS OUTCOME ====================

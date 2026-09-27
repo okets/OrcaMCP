@@ -1173,13 +1173,27 @@ objects stay where they were. That is what `cancel_all` means -- "delete the que
 the current one" -- and every finalize already handles `canceled` by applying nothing. On a
 non-zero, take upstream's and re-run `slic3rutils_tests "[McpUiJob]"`. The second count: the worker is
 a member of `Plater::priv`, and upstream's `~Plater() = default` left a job's last messages -- its
-finalize, and a main-thread call its process waits on (an arrange's or orient's `prepare`) -- to the
-worker's own destructor, which delivers them inside `~priv`, where `Plater::p` is already null: a
-quit while an arrange's process ran crashed there. Ours drains the worker in `~Plater`'s body, while
-the plater is whole (`stop_queue`, the destructor's own 10 s): every one of them is delivered as
-cancelled, and every job's finalize (arrange, orient, fill bed, rotation optimize, SLA import, print,
-send, bind, emboss) returns on `canceled` before it touches anything, so none reaches the teardown.
-On 0, upstream drains it itself: take upstream's and drop ours.
+finalize, a main-thread call its process waits on (an arrange's or orient's `prepare`), a status --
+to the worker's own destructor, which delivers them inside `~priv`, where `Plater::p` is already null
+(libc++; a priv half destroyed elsewhere): a quit while an arrange's process ran crashed there. Ours
+drains the worker in `~Plater`'s body, while the plater is whole (`drain_worker`,
+`Jobs/WorkerDrain.cpp`): it cancels every job and delivers what they send until the worker is idle,
+for at most 10 s however often they send. Every finalize is then delivered as cancelled; every job's
+finalize (arrange, orient, fill bed, rotation optimize, SLA import, print, send, bind, emboss) returns
+on `canceled` before it touches the scene, and the arrange's cleanup (Item AF) runs on a whole
+plater. A delivery that throws -- a finalize that left its error set (`PlaterJob` clears only a
+`std::exception`), a main-thread call's own -- is logged and the drain goes on: a destructor must not
+throw. Then `stop_delivering`: what a job that ignored the cancel for those 10 s sends later, which
+the worker's destructor would deliver inside `~priv` (its status reached the canvas through `p`), is
+dropped: no status, no main-thread call (the job waiting on one is let go), no finalize, so no
+cleanup of a plater that is going. Not covered: a job still running once the worker's destructor has
+given up too (upstream's: its wait ends 10 s after the last message, then a 10 s join); a dropped
+`wxEndBusyCursor` from such a job leaves the busy cursor on after a GUI rebuild; and a job whose
+process threw a `std::exception` during the drain still has its error shown through `show_error`,
+which defers an `ErrorDialog` parented to the plater (upstream's path, unchanged). The cost: a job
+that ignores its cancel holds a quit, or a GUI rebuild, up to 10 s longer than upstream -- the
+drain's 10 s come before the worker destructor's own waits. On 0, upstream drains it itself: take
+upstream's and drop ours.
 
 Item AF: upstream's `ArrangeJob::finalize` returns early for a cancelled or failed arrange, before
 it undoes what the run set up: the plates `prepare_all` locked because their print sequence differs
@@ -1188,9 +1202,11 @@ from the global one stayed locked (a lock icon the user never set; every later a
 arrange button, `last_arrange_job_is_finished`, did nothing again until an arrange was applied), and
 "Arranging..." stayed up until it timed out. Item AE makes a cancel in the post-process window a
 cancelled finalize too. Ours undoes all three however the finalize returns (`end_arrange_run`, from a
-`ScopeGuard` at its top), without reaching through the plater: the job takes the plate list, the
-notification manager and the flag when it is made, all of which outlive the worker, so even a
-finalize ~Plater's drain did not see through is safe. It unlocks the plates it locked by identity
+`ScopeGuard` at its top). The job takes the plate list, the notification manager and the flag when
+it is made, not through `Plater::p`, but closing the notification asks the plater for its canvas
+(`PopNotification::close`), so the cleanup is safe only on a whole plater. Item AE sees to that at
+teardown: `~Plater`'s drain delivers it while the plater is whole, and after the drain the worker
+delivers nothing, so a late one never runs. It unlocks the plates it locked by identity
 (`ObjectID`), never by index: an arrange a new or opened project cancelled meets a new plate list,
 where the same index is another plate, maybe one the user saved locked. On "no", take upstream's and
 re-run `slic3rutils_tests "[McpUiJob]"`.

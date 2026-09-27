@@ -6,6 +6,9 @@ namespace Slic3r { namespace GUI {
 
 void BoostThreadWorker::WorkerMessage::deliver(BoostThreadWorker &runner)
 {
+    if (!runner.m_delivering) // Orca: see stop_delivering
+        return;
+
     switch(MsgType(get_type())) {
     case Empty: break;
     case Status: {

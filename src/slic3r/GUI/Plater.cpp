@@ -112,6 +112,7 @@
 #include "Jobs/NotificationProgressIndicator.hpp"
 #include "Jobs/PlaterWorker.hpp"
 #include "Jobs/BoostThreadWorker.hpp"
+#include "Jobs/WorkerDrain.hpp"
 #include "BackgroundSlicingProcess.hpp"
 #include "SelectMachine.hpp"
 #include "SendMultiMachinePage.hpp"
@@ -7325,14 +7326,17 @@ private:
     bool show_warning_dialog { false };
 };
 
-// Orca: every job's last messages -- its finalize, a main-thread call its process waits on -- are
-// delivered here, while the plater is whole. Left to the worker's own destructor, they ran inside
-// ~priv, where p is already null, and a finalize or a prepare that reached through it crashed (an
-// arrange cancelled by a quit). cancel_all first, so each is delivered as cancelled (see
-// BoostThreadWorker::cancel_all) and applies nothing; the wait is the worker destructor's own.
+// Orca: every job's last messages -- its finalize, a main-thread call its process waits on, a status
+// -- are delivered here, while the plater is whole. Left to the worker's own destructor, they ran
+// inside ~priv, where p is already null (libc++) or half destroyed, and whatever reached through it
+// crashed: an arrange cancelled by a quit, closing its notification, which asks the plater for its
+// canvas. The drain cancels first, so each finalize is delivered as cancelled (see
+// BoostThreadWorker::cancel_all) and applies nothing; it never throws, and gives up after 10 s. What
+// a job that ignored the cancel sends after that is dropped, never delivered.
 Plater::~Plater()
 {
-    stop_queue(p->m_worker, 10000);
+    drain_worker(p->m_worker, std::chrono::seconds(10), "ui_worker");
+    p->m_worker.stop_delivering();
 }
 
 const std::regex Plater::priv::pattern_bundle(".*[.](amf|amf[.]xml|zip[.]amf|3mf)", std::regex::icase);

@@ -151,6 +151,8 @@ public:
     {
         return m_w.wait_for_idle(timeout_ms);
     }
+    // Orca: see BoostThreadWorker::stop_delivering
+    void stop_delivering() { m_w.stop_delivering(); }
 };
 
 }} // namespace Slic3r::GUI
