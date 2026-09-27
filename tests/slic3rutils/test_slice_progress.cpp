@@ -551,18 +551,22 @@ TEST_CASE("an export is refused before it is asked for, for the first reason tha
     ExportStart empty_scene;
     empty_scene.has_objects       = false;
     empty_scene.already_exporting = true;
+    REQUIRE(export_not_started(empty_scene).has_value());
     CHECK(export_not_started(empty_scene)->find("no objects") != std::string::npos);
 
     ExportStart busy;
     busy.already_exporting = true;
+    REQUIRE(export_not_started(busy).has_value());
     CHECK(*export_not_started(busy) == "Another export job is running.");
 
     ExportStart invalid;
     invalid.validation_error = "Prime Tower is partially outside the printable area";
+    REQUIRE(export_not_started(invalid).has_value());
     CHECK(export_not_started(invalid)->find("Prime Tower is partially outside the printable area") != std::string::npos);
 
     ExportStart failed;
     failed.failure = "PlaceholderParserError: unknown variable";
+    REQUIRE(export_not_started(failed).has_value());
     CHECK(export_not_started(failed)->find("unknown variable") != std::string::npos);
 
     // Nothing refused and not asked for yet: no verdict.
@@ -585,5 +589,6 @@ TEST_CASE("an export of a plate its slice's G-code check failed, or never checke
     ExportStart invalid;
     invalid.checked          = false;
     invalid.validation_error = "Prime Tower is partially outside the printable area";
+    REQUIRE(export_not_started(invalid).has_value());
     CHECK(export_not_started(invalid)->find("Prime Tower") != std::string::npos);
 }
