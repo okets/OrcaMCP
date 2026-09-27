@@ -65,6 +65,7 @@ gave were wrong; the prompts carry the corrected facts.
 | 07c | [A misspelled or missing argument is refused](07c-unknown-arguments.md) | 07b | `handle_tools_call`, the bridge's own tools | added 2026-09-27 by the orchestrator (`scale_object {"scale": 0.5}` said success and did nothing); audit and design in progress (read-only) since 2026-09-27 23:20 |
 | 08 | [Server instructions and hints](08-instructions-and-hints.md) | 01–07c | `initialize`, descriptions, result hints | not started |
 | 09 | [Several instances, switch between them](09-second-instance-crash.md) | 01–08 | port fallback, instance registry (with open file), bridge `list_instances` / `select_instance` | added 2026-09-26 by the user; design goes to the user; starts after all other coding |
+| 10 | [Flashforge print options](../2026-09-27-flashforge-print-options.md) (flow calibration, leveling, time-lapse) | 01–09 | `FlashforgeApi::PrintOptions`, the send dialog, `send_to_printer`, `print_printer_file`, `get_printer_status` | written 2026-09-27 in another session; the user decided 2026-09-28 it runs last, after all other work and right before the version bump. Its live printer steps start real prints: they run only with the user present and on their word at that moment |
 
 If time runs short, the priority is 01, 02, 03, 04b, 05, 08, 04, 06, 07. Anything unfinished moves to the
 roadmap; nothing ships half-done.
@@ -117,10 +118,8 @@ roadmap; nothing ships half-done.
   (5) A Type 1 prime tower on a non-Bambu printer drops its top tool-change layer's block, because an unset
   extruder height (0) reads as a limit (probe Y's sixth count, found in 07b). 07b's agent recommends offering (2)
   with (5) and the PrintObject companion as one issue: treat 0 as no limit everywhere a height is compared.
-- **Sequencing the Flashforge print-options plan.** Another session wrote
-  `docs/superpowers/plans/2026-09-27-flashforge-print-options.md` (untracked; not this release's
-  orchestrator). Its first step waits for 06b's merge, which also releases 06c, 07b, 07c and 08 here, and
-  only one agent can build at a time. The user decides the order.
+- ~~**Sequencing the Flashforge print-options plan.**~~ Decided 2026-09-28: it runs last (row 10), right before the
+  version bump.
 
 ## Shared traps (also inside every prompt)
 
