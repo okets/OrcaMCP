@@ -18,7 +18,9 @@ void BoostThreadWorker::WorkerMessage::deliver(BoostThreadWorker &runner)
     }
     case Finalize: {
         auto& entry = boost::get<JobEntry>(m_data);
-        entry.job->finalize(entry.canceled, entry.eptr);
+        // Orca: a cancel_all since the job was pushed cancels it, whenever it came.
+        const bool canceled = entry.canceled || entry.cancel_all_count != runner.m_cancel_all_count.load();
+        entry.job->finalize(canceled, entry.eptr);
 
         // Unhandled exceptions are rethrown without mercy.
         if (entry.eptr)
@@ -175,7 +177,9 @@ bool BoostThreadWorker::push(std::shared_ptr<Job> job)
     if (!job)
         return false;
 
-    m_input_queue.push(JobEntry{std::move(job)});
+    JobEntry entry{std::move(job)};
+    entry.cancel_all_count = m_cancel_all_count.load();
+    m_input_queue.push(std::move(entry));
     return true;
 }
 

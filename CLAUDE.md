@@ -960,6 +960,7 @@ echo "AA upstream's slicer reads a layer range's layer_height unchecked, and a f
 echo "AB Print::apply copies a new object name without invalidating the G-code (rel2506/06b): $(U src/libslic3r/PrintApply.cpp | awk '/model_object.name       = model_object_new.name;/{print (prev ~ /invalidate_step\(psGCodeExport\)/ ? "no" : "yes"); exit} {prev=$0}')"
 echo "AC ObjectList::get_default_layer_config reads the preset's float \"extruder\" (rel2506/06b): $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^DynamicPrintConfig ObjectList::get_default_layer_config/{f=1} f&&/opt_float\("extruder"\)/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
 echo "AD reload_scene recycles a GLVolume without its instance's printable flag (rel2506/06b): $(U src/slic3r/GUI/GLCanvas3D.cpp | awk '/^void GLCanvas3D::reload_scene/{f=1} f&&/[.>]printable *= /{print "no"; exit} f&&/^}/{print "yes"; exit}')"
+echo "AE cancel_all leaves a job whose process has returned to finalize as not cancelled (rel2506/07e; 0 = bug): $(U src/slic3r/GUI/Jobs/BoostThreadWorker.hpp | grep -c 'cancel_all_count')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -1125,6 +1126,19 @@ nothing on it, was marked not ready to slice, and the next background update set
 Ours sets every volume's flag from its instance in `reload_scene`, as it sets the instance's
 transformation. On "no", take upstream's and re-check `set_object_printable` false, `undo`,
 `slice_all`.
+
+Item AE: upstream's `BoostThreadWorker` records whether a job was cancelled when its `process()`
+returns, and delivers the finalize with that verdict later, on the main thread's next idle. A
+`cancel_all` in between -- which `Plater::priv::remove`, `delete_object_from_model`, `reset` (a new or
+loaded project) and `remove_selected` call just before freeing the model's objects -- was lost, and
+the arrange's or orient's finalize then wrote to instances that had just been freed. Ours counts
+`cancel_all` calls: a job pushed before one is finalized as cancelled, whenever it came
+(`cancel_all_count`). So in that window the GUI now drops the result of an arrange or an orient
+where upstream applied it: a delete, a new project, or a reslice's `stop_queue` (cancel_all, then
+wait) that lands after the job computed its result and before it was applied cancels it, and the
+objects stay where they were. That is what `cancel_all` means -- "delete the queued jobs and cancel
+the current one" -- and every finalize already handles `canceled` by applying nothing. On a
+non-zero, take upstream's and re-run `slic3rutils_tests "[McpUiJob]"`.
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices
