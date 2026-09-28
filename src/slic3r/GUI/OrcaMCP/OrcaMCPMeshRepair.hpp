@@ -24,9 +24,9 @@ namespace GUI { namespace OrcaMCP {
 // progress dialog lets calls through while it works out its plan.
 std::optional<std::string> repair_refusal(const PipelineState& pipeline, bool ui_job_running, bool repair_dialog_running);
 
-// What is wrong with `volume_id` for object `object_id` of `volumes` volumes, or nothing. -1: none
-// given, the whole object.
-std::optional<std::string> repair_volume_error(int object_id, std::size_t volumes, int volume_id);
+// What is wrong with `volume_id` for object `object_id` of `volumes` volumes, or nothing: any value
+// outside 0 to volumes - 1, negative ones included. None given: the whole object.
+std::optional<std::string> repair_volume_error(int object_id, std::size_t volumes, std::optional<int> volume_id);
 
 // What a plan leads to once its object is found as it was captured. Only `apply` changes the object,
 // and only it takes an undo snapshot.

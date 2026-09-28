@@ -966,6 +966,9 @@ public:
     void                center_geometry_after_creation(bool update_source_offset = true);
 
     void                calculate_convex_hull();
+    // OrcaMCP: a convex hull worked out elsewhere -- calculate_convex_hull's, by the mesh repair's plan
+    // off the main thread (FixModelByCgal.cpp) -- for the mesh this volume holds.
+    void                set_convex_hull(TriangleMesh &&convex_hull) { m_convex_hull = std::make_shared<const TriangleMesh>(std::move(convex_hull)); }
     const TriangleMesh& get_convex_hull() const;
     const std::shared_ptr<const TriangleMesh>& get_convex_hull_shared_ptr() const { return m_convex_hull; }
     //BBS: add convex_hell_2d related logic

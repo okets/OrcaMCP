@@ -6193,33 +6193,34 @@ void ObjectList::fix_through_cgal()
 
     // OrcaMCP: the repair in two phases (FixModelByCgal.hpp). Under the progress dialog each object is
     // only planned, which changes nothing; the dialog lets other work through meanwhile (an MCP call),
-    // and that takes its own undo steps. Then, the dialog closed, one snapshot and every change, on the
-    // main thread. Upstream took the snapshot before the dialog, so the work the dialog let through went
-    // into the repair's undo step, and changed the objects on the dialog's worker thread. The objects are
-    // held by pointer, not index: the work the dialog lets through can delete one and move the rest.
+    // and that takes its own undo steps. Then one snapshot and every change, on the main thread, with the
+    // dialog still shown but no longer letting anything through: no other work lands in the repair's undo
+    // step. Upstream took the snapshot before the dialog, so the work the dialog let through went into the
+    // repair's undo step, and changed the objects on the dialog's worker thread. Every object and volume
+    // is captured before the first dialog, by pointer and id: the work a dialog lets through can delete an
+    // object, move the rest, or (an undo) put other volumes behind the same indices. The plan also remaps
+    // kept painting, the slow part, so the changes are only assigned.
+    const bool keep_painting = GUI::wxGetApp().app_config->get_bool("keep_painting");
     struct PlannedRepair
     {
-        int            vol_idx;
         std::string    model_name;
         CgalRepairPlan plan;
     };
+    std::vector<CgalRepairInput> to_plan;
+    if (vol_idxs.empty()) {
+        for (int obj_idx : obj_idxs) {
+            if (object(obj_idx)) // as model_names lists them
+                to_plan.push_back(capture_cgal_repair(*object(obj_idx), -1, keep_painting));
+        }
+    }
+    else if (ModelObject* obj = object(obj_idxs.front())) {
+        for (int vol_idx : vol_idxs)
+            to_plan.push_back(capture_cgal_repair(*obj, vol_idx, keep_painting));
+    }
+
     std::vector<PlannedRepair> planned;
-    std::vector<ModelObject*>  selected;
-    for (int obj_idx : obj_idxs)
-        selected.push_back(object(obj_idx));
-    auto index_of = [this](const ModelObject* model_object) {
-        const auto it = std::find(m_objects->begin(), m_objects->end(), model_object);
-        return it == m_objects->end() ? -1 : int(it - m_objects->begin());
-    };
-
-    auto plan_and_update_progress = [this, &planned, &index_of, model_names](const ModelObject* model_object, const int vol_idx,
-                                          int model_idx,
-                                          ProgressDialog& progress_dlg)
+    auto plan_and_update_progress = [&planned, &to_plan, model_names](int model_idx, ProgressDialog& progress_dlg)
     {
-        const int obj_idx = index_of(model_object);
-        if (obj_idx < 0 || !object(obj_idx))
-            return true; // gone meanwhile: nothing to repair
-
         const std::string& model_name = model_names[model_idx];
         wxString msg = _L("Repairing model object");
         if (model_names.size() == 1)
@@ -6231,14 +6232,14 @@ void ObjectList::fix_through_cgal()
             msg += "\n";
         }
 
-        CgalRepairPlan plan = plan_cgal_repair_with_dialog(capture_cgal_repair(*object(obj_idx), vol_idx), progress_dlg, msg);
+        CgalRepairPlan plan = plan_cgal_repair_with_dialog(std::move(to_plan[model_idx]), progress_dlg, msg);
         if (plan.canceled)
             return false;
-        planned.push_back({vol_idx, model_name, std::move(plan)});
+        planned.push_back({model_name, std::move(plan)});
         return true;
     };
 
-    auto fix_and_update = [this, plater](PlannedRepair& repair,
+    auto fix_and_update = [this, plater, keep_painting](PlannedRepair& repair,
                                           std::vector<std::string>& succes_models,
                                           std::vector<std::pair<std::string, std::string>>& failed_models)
     {
@@ -6249,7 +6250,6 @@ void ObjectList::fix_through_cgal()
             return;
         }
 
-        const bool keep_painting = GUI::wxGetApp().app_config->get_bool("keep_painting");
         if (!keep_painting) {
             plater->clear_before_change_mesh(obj_idx);
         }
@@ -6271,7 +6271,7 @@ void ObjectList::fix_through_cgal()
         else
             failed_models.push_back({ repair.model_name, result.error });
 
-        update_item_error_icon(obj_idx, repair.vol_idx < 0 ? -1 : result.first_volume);
+        update_item_error_icon(obj_idx, repair.plan.input().whole_object ? -1 : result.first_volume);
         update_info_items(obj_idx);
     };
 
@@ -6279,36 +6279,19 @@ void ObjectList::fix_through_cgal()
         // Open a progress dialog.
         ProgressDialog progress_dlg(_L("Repairing model object"), "", 100, find_toplevel_parent(plater),
                                         wxPD_AUTO_HIDE | wxPD_APP_MODAL | wxPD_CAN_ABORT, true);
-        int model_idx{ 0 };
-        if (vol_idxs.empty()) {
-            int vol_idx{ -1 };
-            for (ModelObject* model_object : selected) {
-#if !FIX_THROUGH_CGAL_ALWAYS
-                if (model_object->get_repaired_errors_count(vol_idx) == 0)
-                    continue;
-#endif // FIX_THROUGH_CGAL_ALWAYS
-                if (!plan_and_update_progress(model_object, vol_idx, model_idx, progress_dlg))
-                    break;
-                model_idx++;
-            }
-        }
-        else {
-            ModelObject* model_object = selected.front();
-            for (int vol_idx : vol_idxs) {
-                if (!plan_and_update_progress(model_object, vol_idx, model_idx, progress_dlg))
-                    break;
-                model_idx++;
-            }
+        for (int model_idx = 0; model_idx < int(to_plan.size()) && model_idx < int(model_names.size()); ++model_idx)
+            if (!plan_and_update_progress(model_idx, progress_dlg))
+                break;
+
+        // Nothing below updates the dialog, so nothing else runs until the snapshot's scope ends.
+        if (!planned.empty()) {
+            wxBusyCursor wait;
+            Plater::TakeSnapshot snapshot(plater, _u8L("Repairing model object"));
+            for (PlannedRepair& repair : planned)
+                fix_and_update(repair, succes_models, failed_models);
         }
         // Close the progress dialog
         progress_dlg.Update(100, "");
-    }
-
-    if (!planned.empty()) {
-        wxBusyCursor wait;
-        Plater::TakeSnapshot snapshot(plater, _u8L("Repairing model object"));
-        for (PlannedRepair& repair : planned)
-            fix_and_update(repair, succes_models, failed_models);
     }
 
     // Show info notification

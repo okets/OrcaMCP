@@ -37,7 +37,6 @@ struct RepairRequest
     int             volume_id           = -1; // none given: the whole object
     bool            keep_painting       = false;
     bool            keep_painting_given = false;
-    std::string     closed_tool;
     nlohmann::json  before;
     CgalRepairInput input;
 };
@@ -52,7 +51,9 @@ std::optional<std::string> app_repair_refusal(Plater& plater)
 // Closes the toolbar tool (gizmo) open in the 3D view, as the user closes it, and says which it was;
 // "" when none was open. The object list's Repair refuses while one is open -- its undo snapshot would
 // land in the tool's own undo stack -- and an agent does what the user would: close it. New Project
-// closes them the same way (Plater::priv::reset).
+// closes them the same way (Plater::priv::reset). Closing a painting tool (and cut, measure, brim ears,
+// text, SVG) records its own undo step, as when the user closes it, so it is closed only for a repair
+// that is about to be applied.
 std::string close_open_toolbar_tool(Plater& plater)
 {
     GLCanvas3D*      canvas = plater.get_view3D_canvas3D();
@@ -70,20 +71,25 @@ bool toolbar_tool_open(Plater& plater)
     return plater.get_view3D_canvas3D()->get_gizmos_manager().get_current_type() != GLGizmosManager::Undefined;
 }
 
-// Main thread, the first step: the call read and checked, an open toolbar tool closed, and what the
-// repair reads captured. Null to go on, else the answer.
+// Main thread, the first step: the call read and checked, and what the repair reads captured. Null to
+// go on, else the answer.
 nlohmann::json start_repair(const nlohmann::json& params, RepairRequest& request)
 {
-    Plater*                   plater = wxGetApp().plater();
-    McpDialogSuppressionGuard guard;
-    std::string               error;
-    ModelObject*              object = resolve_object_id(params, plater->model(), request.object_id, error);
+    Plater*      plater = wxGetApp().plater();
+    std::string  error;
+    ModelObject* object = resolve_object_id(params, plater->model(), request.object_id, error);
     if (object == nullptr)
         return error_response(error);
-    if (params.contains("volume_id") && !parse_integer_param(params.at("volume_id"), request.volume_id))
-        return error_response("volume_id must be a whole number");
-    if (const auto volume_error = repair_volume_error(request.object_id, object->volumes.size(), request.volume_id))
+    std::optional<int> volume_id;
+    if (params.contains("volume_id")) {
+        int given = -1;
+        if (!parse_integer_param(params.at("volume_id"), given))
+            return error_response("volume_id must be a whole number");
+        volume_id = given;
+    }
+    if (const auto volume_error = repair_volume_error(request.object_id, object->volumes.size(), volume_id))
         return error_response(*volume_error);
+    request.volume_id           = volume_id.value_or(-1);
     request.keep_painting_given = params.contains("keep_painting");
     if (request.keep_painting_given && !parse_boolean_param(params.at("keep_painting"), request.keep_painting))
         return error_response("keep_painting must be true or false");
@@ -92,13 +98,8 @@ nlohmann::json start_repair(const nlohmann::json& params, RepairRequest& request
     if (const auto refusal = app_repair_refusal(*plater))
         return error_response(*refusal);
 
-    request.closed_tool = close_open_toolbar_tool(*plater);
-    if (toolbar_tool_open(*plater))
-        return error_response("The toolbar tool " + request.closed_tool + " is open in the app and did not close, so nothing was repaired");
-
-    object         = plater->model().objects[std::size_t(request.object_id)];
     request.before = repair_facts_json(*object);
-    request.input  = Slic3r::capture_cgal_repair(*object, request.volume_id);
+    request.input  = Slic3r::capture_cgal_repair(*object, request.volume_id, request.keep_painting);
     return nullptr;
 }
 
@@ -120,9 +121,11 @@ void update_after_repair(Plater& plater, int object_id, int volume_id, std::size
     list->update_info_items(std::size_t(object_id));
 }
 
-std::string joined_tools(const std::string& first, const std::string& second)
+nlohmann::json with_closed_tool(nlohmann::json answer, const std::string& closed_tool)
 {
-    return first.empty() ? second : second.empty() ? first : first + ", " + second;
+    if (!closed_tool.empty())
+        answer["closed_toolbar_tool"] = closed_tool;
+    return answer;
 }
 
 // Main thread, the last step: the plan applied, if the object is still as captured and the plan
@@ -142,47 +145,59 @@ nlohmann::json finish_repair(RepairRequest& request, CgalRepairPlan& plan, bool 
                               " was deleted in the app while it was being repaired, so nothing was changed");
     if (const auto refusal = app_repair_refusal(*plater))
         return error_response(*refusal);
-    request.closed_tool = joined_tools(request.closed_tool, close_open_toolbar_tool(*plater));
-    ModelObject& object = *plater->model().objects[std::size_t(object_id)];
-    if (toolbar_tool_open(*plater) || !plan.applies_to(object))
+    ModelObject* object = plater->model().objects[std::size_t(object_id)];
+    if (!plan.applies_to(*object))
         return error_response("Object " + std::to_string(object_id) +
                               " changed in the app while it was being repaired, so nothing was changed: call repair_mesh again");
+    // The volume's index now, which an object changed meanwhile may have moved.
+    const int volume_id = plan.input().whole_object ? -1 : plan.volume_index_in(*object);
 
     if (step == RepairStep::nothing_to_repair) {
-        nlohmann::json answer = {{"status", "success"}, {"changed", false}, {"object_id", object_id}, {"object_name", object.name}};
-        if (request.volume_id >= 0)
-            answer["volume_id"] = request.volume_id;
-        answer["message"] = repair_step_message(step, plan, object_id, request.volume_id, wait_cap_s, request.before);
+        nlohmann::json answer = {{"status", "success"}, {"changed", false}, {"object_id", object_id}, {"object_name", object->name}};
+        if (volume_id >= 0)
+            answer["volume_id"] = volume_id;
+        answer["message"] = repair_step_message(step, plan, object_id, volume_id, wait_cap_s, request.before);
         answer["before"]  = request.before;
         report_placement(answer, object_id);
-        if (!request.closed_tool.empty())
-            answer["closed_toolbar_tool"] = request.closed_tool;
         return guard.report(answer);
     }
     if (step != RepairStep::apply)
-        return error_response(repair_step_message(step, plan, object_id, request.volume_id, wait_cap_s, request.before));
+        return error_response(repair_step_message(step, plan, object_id, volume_id, wait_cap_s, request.before));
 
-    // The object list's own undo step, and the only one: nothing above changed the object.
+    // A repair to apply: only now is an open toolbar tool closed, as the Repair needs.
+    const std::string closed_tool = close_open_toolbar_tool(*plater);
+    if (!closed_tool.empty()) {
+        const int still_there = Slic3r::cgal_repair_object_index(plater->model(), plan);
+        if (toolbar_tool_open(*plater))
+            return guard.report(with_closed_tool(error_response("The toolbar tool " + closed_tool +
+                                                                " is open in the app and did not close, so nothing was repaired"),
+                                                 closed_tool));
+        if (still_there < 0 || !plan.applies_to(*plater->model().objects[std::size_t(still_there)]))
+            return guard.report(with_closed_tool(error_response("Closing the toolbar tool " + closed_tool + " changed object " +
+                                                                std::to_string(object_id) +
+                                                                ", so nothing was repaired: call repair_mesh again"),
+                                                 closed_tool));
+    }
+
+    // The object list's own undo step: nothing above changed the object.
     Plater::TakeSnapshot snapshot(plater, _u8L("Repairing model object"));
     if (!request.keep_painting)
         plater->clear_before_change_mesh(object_id);
-    const std::size_t      volumes_before = object.volumes.size();
-    const CgalRepairResult result         = Slic3r::apply_cgal_repair(object, request.keep_painting, plan);
+    const std::size_t      volumes_before = object->volumes.size();
+    const CgalRepairResult result         = Slic3r::apply_cgal_repair(*object, request.keep_painting, plan);
     nlohmann::json         placement      = nlohmann::json::object();
-    update_after_repair(*plater, object_id, request.volume_id < 0 ? -1 : result.first_volume, volumes_before, placement);
+    update_after_repair(*plater, object_id, volume_id < 0 ? -1 : result.first_volume, volumes_before, placement);
 
-    nlohmann::json answer = repair_answer_json(object_id, object.name, request.volume_id, request.keep_painting,
-                                               request.keep_painting_given, request.before, repair_facts_json(object), plan);
+    nlohmann::json answer = repair_answer_json(object_id, object->name, volume_id, request.keep_painting,
+                                               request.keep_painting_given, request.before, repair_facts_json(*object), plan);
     answer.update(placement);
-    answer["volumes"] = mesh_volume_rows_json(object);
-    if (request.volume_id >= 0) {
+    answer["volumes"] = mesh_volume_rows_json(*object);
+    if (volume_id >= 0) {
         nlohmann::json became = nlohmann::json::array();
         for (int i = result.first_volume; i >= 0 && i <= result.last_volume; ++i)
             became.push_back(i);
         answer["volume_ids_after"] = std::move(became);
     }
-    if (!request.closed_tool.empty())
-        answer["closed_toolbar_tool"] = request.closed_tool;
     if (!result.error.empty()) {
         // A part the plan had not foreseen failed here: what the loop changed before it stays.
         answer["status"]  = "error";
@@ -190,7 +205,7 @@ nlohmann::json finish_repair(RepairRequest& request, CgalRepairPlan& plan, bool 
                             " What it changed before that stays; undo reverts the whole repair.";
     }
     answer["active_warnings"] = get_active_warnings_json(plater);
-    return guard.report(answer);
+    return guard.report(with_closed_tool(std::move(answer), closed_tool));
 }
 
 // repair_mesh: capture on the main thread, the CGAL work on this (the HTTP) thread, apply on the main
@@ -273,8 +288,10 @@ void OrcaMCPServer::register_mesh_tools()
         "one volume per shell; shells with no volume (flat or empty) are deleted; every shell with open edges "
         "has its holes closed. A closed stray shell is not deleted: it becomes a volume of its own "
         "(get_object_components lists shells). The object is then dropped onto the bed. Painting is cleared "
-        "unless keep_painting keeps it. An open toolbar tool (gizmo) is closed first, as the Repair needs; the "
-        "answer names it. One undo step. Nothing changes when there is nothing to repair, when the call is "
+        "unless keep_painting keeps it. One undo step. When there is a repair to apply, an open toolbar tool "
+        "(gizmo) is closed first, as the Repair needs, and the answer names it (closed_toolbar_tool); closing "
+        "a painting tool records its own undo step, as when the user closes it. Nothing changes when there "
+        "is nothing to repair, when the call is "
         "refused or fails, or when the repair takes longer than this call may wait (a little under the "
         "bridge's ORCAMCP_TIMEOUT). The answer: get_mesh_health's numbers before and after, the volumes before "
         "and after, the parts split, dropped and repaired, whether painting was kept, and the object's "

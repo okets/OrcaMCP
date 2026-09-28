@@ -88,13 +88,14 @@ std::optional<std::string> repair_refusal(const PipelineState& pipeline, bool ui
     return std::nullopt;
 }
 
-std::optional<std::string> repair_volume_error(int object_id, std::size_t volumes, int volume_id)
+std::optional<std::string> repair_volume_error(int object_id, std::size_t volumes, std::optional<int> volume_id)
 {
-    if (volume_id < 0 || std::size_t(volume_id) < volumes)
+    if (!volume_id || (*volume_id >= 0 && std::size_t(*volume_id) < volumes))
         return std::nullopt;
     const std::string range = volumes == 1 ? "1 volume, volume_id 0" :
                                              std::to_string(volumes) + " volumes, volume_id 0 to " + std::to_string(volumes - 1);
-    return "volume_id " + std::to_string(volume_id) + " is out of range: " + object_label(object_id) + " has " + range;
+    return "volume_id " + std::to_string(*volume_id) + " is out of range: " + object_label(object_id) + " has " + range +
+           "; leave volume_id out to repair every volume";
 }
 
 RepairStep repair_step(const CgalRepairPlan& plan, bool past_wait_cap)

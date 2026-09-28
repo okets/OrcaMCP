@@ -719,11 +719,16 @@ What it does, as the object list's Repair does:
 It changes nothing when there is nothing to repair (`changed: false` and a `message`), when it is
 refused, when a part's repair fails, when it would leave the object no part to print, or when the
 repair takes longer than this call may wait (a little under the bridge's `ORCAMCP_TIMEOUT`). Otherwise
-it is one undo step, "Repairing model object". An open toolbar tool (gizmo) is closed first, as the
-Repair needs, and named in `closed_toolbar_tool`.
+it is one undo step, "Repairing model object". When there is a repair to apply, an open toolbar tool
+(gizmo) is closed first, as the Repair needs, and named in `closed_toolbar_tool`; closing a painting
+tool records its own undo step, as when the user closes it. A `volume_id` the object does not have,
+negative included, is refused.
 
-The CGAL work runs off the app's main thread, so the app stays responsive. On the unoptimised dev
-build a 20,000-facet sphere with a hole took 0.8 s, 100,000 facets 3.9 s, 500,000 facets 28 s.
+The CGAL work, the remap of kept painting and the repaired parts' convex hulls run off the app's main
+thread, so the app stays responsive; the main thread only applies the result (the split, with a
+convex hull per new part). On the unoptimised dev build a 20,000-facet sphere with a hole took 0.8 s,
+100,000 facets 3.9 s, 500,000 facets 28 s, of which 0.2 s on the main thread. Keeping painting is slow:
+about 12 minutes for 10,000 painted facets on that build, all of it off the main thread.
 
 Refused while a slice, an export or an upload runs (`wait_for_slice` first), while an arrange or orient
 runs, and while the app's own Repair runs.

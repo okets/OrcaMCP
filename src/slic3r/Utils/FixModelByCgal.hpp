@@ -4,11 +4,13 @@
 #include <cstddef>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "libslic3r/ObjectID.hpp"
 #include "libslic3r/TriangleMesh.hpp"
+#include "libslic3r/TriangleSelector.hpp"
 #include "../GUI/Widgets/ProgressDialog.hpp"
 
 namespace Slic3r {
@@ -28,6 +30,12 @@ class Print;
 // Repair (ObjectList::fix_through_cgal), the cut gizmo (fix_model_with_cgal_gui) and MCP's
 // repair_mesh all run these steps: capture, plan, apply.
 
+// A volume's painting of every kind, as ModelVolume::save_painting keeps it, without the mesh.
+struct CgalRepairPainting
+{
+    TriangleSelector::TriangleSplittingData supported, seam, mmu, fuzzy;
+};
+
 // One volume the repair reads, as captured on the main thread.
 struct CgalRepairVolume
 {
@@ -36,6 +44,7 @@ struct CgalRepairVolume
     std::shared_ptr<const TriangleMesh> mesh;      // immutable once shared: safe to read on any thread
     bool                                splittable = false;
     bool                                model_part = false;
+    std::optional<CgalRepairPainting>   painting;  // captured to keep: a painted model part
 };
 
 // What repairing an object reads: every volume, or the one volume asked for.
@@ -48,17 +57,22 @@ struct CgalRepairInput
     size_t                        volume_count = 0;
     std::vector<CgalRepairVolume> targets;              // the volumes repaired, in volume order
     size_t                        other_model_parts = 0; // model parts the repair leaves alone
+    bool                          keep_painting = false; // the painting is captured, and the plan remaps it
 };
 
-// Main thread.
-CgalRepairInput capture_cgal_repair(const ModelObject& object, int volume_idx);
+// Main thread. With `keep_painting`, each painted model part's painting is captured too, so the plan
+// can remap it (TriangleSelector::remap_painting, which takes minutes on a large painted mesh) off
+// the main thread.
+CgalRepairInput capture_cgal_repair(const ModelObject& object, int volume_idx, bool keep_painting = false);
 
 // The Repair dialog's progress: a message (a msgid, translated where it is shown) and a percent.
 using CgalRepairProgress = std::function<void(const std::string& message, unsigned percent)>;
 
 // What the repair will do to the captured volumes, worked out on the meshes alone: each splittable
 // volume split into the parts ModelVolume::split makes, the parts with no volume dropped, and every
-// other part with open edges repaired by MeshBoolean::cgal::repair. Applying it makes those changes.
+// other part with open edges repaired by MeshBoolean::cgal::repair, with its painting remapped when it
+// is kept. Applying it makes those changes, taking each part's verdicts, repaired mesh and painting
+// from here rather than working them out on the main thread.
 class CgalRepairPlan
 {
 public:
@@ -91,28 +105,45 @@ public:
     // The index in `object` of the one volume planned for; -1 for a whole-object plan.
     int volume_index_in(const ModelObject& object) const;
 
-    // The part as planned: replaced by its repaired mesh (planned), its repair's failure (failed), or
-    // a part the plan did not foresee (unplanned), which the caller repairs itself.
-    enum class Part { planned, failed, unplanned };
-    Part take_repaired(TriangleMesh& part);
+    // One part as the loop will find it -- a volume's mesh whole, or one ModelVolume::split made of it
+    // -- and what the plan worked out for it.
+    struct PlannedPart
+    {
+        indexed_triangle_set              its;
+        bool                              dropped = false; // no volume: the loop deletes it
+        bool                              open    = false; // open edges: the loop repairs it
+        bool                              failed  = false; // its repair failed (`error`)
+        std::optional<CgalRepairPainting> painting;        // kept painting, as the split leaves it on the part
+        TriangleMesh                      repaired;
+        TriangleMesh                      repaired_hull;   // calculate_convex_hull's, for the repaired mesh
+        std::optional<CgalRepairPainting> repaired_painting;
+        bool                              taken          = false;
+        bool                              painting_taken = false;
+    };
+    void add_part(PlannedPart part);
+    // The planned part with this mesh, or nullptr: one the plan did not foresee.
+    const PlannedPart* find_part(const indexed_triangle_set& its) const;
+    // The painting the split leaves on the part with this mesh, from the first such planned part not yet
+    // asked (parts with the same mesh, whose painting differs, keep their order); nullptr for a part the
+    // plan did not foresee.
+    const std::optional<CgalRepairPainting>* take_split_painting(const indexed_triangle_set& its);
 
-    void add_repaired(indexed_triangle_set input, TriangleMesh repaired);
-    void set_failed(indexed_triangle_set input, int volume, std::string error);
+    // The part as planned: replaced by its repaired mesh, with its convex hull and the painting to give
+    // it (planned), its repair's failure (failed), or a part the plan did not foresee (unplanned), which
+    // the caller repairs itself.
+    enum class Part { planned, failed, unplanned };
+    Part take_repaired(TriangleMesh& part, TriangleMesh& hull, std::optional<CgalRepairPainting>& painting);
+
     // The error is a part's repair failing, rather than the plan itself.
-    bool has_failed_part() const { return m_has_failed_part; }
+    bool has_failed_part() const;
 
 private:
-    struct RepairedPart
-    {
-        indexed_triangle_set input;
-        TriangleMesh         repaired;
-        bool                 taken = false;
-    };
-    CgalRepairInput           m_input;
-    bool                      m_planned = false;
-    std::vector<RepairedPart> m_repaired;
-    indexed_triangle_set      m_failed_part;
-    bool                      m_has_failed_part = false;
+    CgalRepairInput          m_input;
+    bool                     m_planned = false;
+    std::vector<PlannedPart> m_parts;
+    // Each part's mesh hashed, so a search compares whole meshes only where the hash matches: two
+    // hundred shells of the same size have the same triangles and differ only a little in their points.
+    std::vector<size_t>      m_hashes;
 };
 
 // Any thread: the expensive half. Reads only `input`'s meshes, never a Model, a ModelVolume or wx.

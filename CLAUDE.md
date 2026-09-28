@@ -114,7 +114,7 @@ grep -hA1 -E '^\s*register_(bridge_)?tool\(\{' src/slic3r/GUI/OrcaMCP/*.cpp | gr
 | Category | Tools |
 |----------|-------|
 | **Scene** | `get_scene_info` (plates, each with `plate_index` and `is_current` (the plate per-plate tools act on; `index` kept), objects, each with `object_id` (the index every tool takes; `object_index` the same, kept; `internal_id` the app's ObjectID, stable while the app runs, taken by no tool -- it was `id`, which an agent passed as the object_id), `filaments_used` — read that, not `extruder_id` — and `mesh_warning` (the object list's warning icon, with its reason; `with_model_object_features` adds the mesh-health numbers), and each plate's full occupancy: object footprints with brim, the prime tower, excluded bed areas; `unplaced_objects`: every object with an instance on no plate, and which (`unplaced_instances`); `open_dialogs` / `system_dialog_open` / `untracked_modal_loop`: a dialog waiting for the user), `new_project`, `load_project` (both cancel a running slice; refused while the startup restore prompt waits), `save_project`, `export_3mf` |
-| **Models** | `load_model` (a 3MF is always geometry only: never its presets, never a rename; `.gcode` / `.gcode.3mf` only onto an empty scene, as a preview; returns `loaded_objects` in `get_scene_info`'s object shape, `filaments_added`; `multipart: merge\|separate`), `auto_orient` / `arrange_objects` (the current plate's objects; answered once the job has been applied, with `objects`, each one's placement, or `finished: false` past the wait's cap, `status: cancelled` when the app cancelled it; see "Waiting for a UI job"), `get_object_info` (incl. every volume with its type and filament), `get_mesh_health` (mesh errors behind the object list's warning icon: the icon state, its tooltip less the GUI's "click the icon" line, open edges, recorded repairs, shells, per object and per volume; an object with open edges gets `next_steps` to `repair_mesh`), `repair_mesh` (the object list's own Repair, CGAL, on every platform: each volume of several shells split into one volume per shell, shells with no volume deleted, the holes of every shell with open edges closed, the object dropped onto the bed; `volume_id` for one volume, `keep_painting` (default: the app's setting, stated as `keep_painting_from`); an open gizmo is closed first (`closed_toolbar_tool`); one undo step, none for nothing to repair; answers `before` / `after` (`get_mesh_health`'s numbers, `volumes`, `painted`, `position`), `parts` {split, dropped, repaired} and the placement; refused while the pipeline is busy, a job runs or the app's own Repair runs; nothing applied past the call's wait cap, or when a part fails; see "Mesh repair"), `get_object_components` (loose parts, stray shells: every shell of each model part), `rename_object`, `set_object_printable` |
+| **Models** | `load_model` (a 3MF is always geometry only: never its presets, never a rename; `.gcode` / `.gcode.3mf` only onto an empty scene, as a preview; returns `loaded_objects` in `get_scene_info`'s object shape, `filaments_added`; `multipart: merge\|separate`), `auto_orient` / `arrange_objects` (the current plate's objects; answered once the job has been applied, with `objects`, each one's placement, or `finished: false` past the wait's cap, `status: cancelled` when the app cancelled it; see "Waiting for a UI job"), `get_object_info` (incl. every volume with its type and filament), `get_mesh_health` (mesh errors behind the object list's warning icon: the icon state, its tooltip less the GUI's "click the icon" line, open edges, recorded repairs, shells, per object and per volume; an object with open edges gets `next_steps` to `repair_mesh`), `repair_mesh` (the object list's own Repair, CGAL, on every platform: each volume of several shells split into one volume per shell, shells with no volume deleted, the holes of every shell with open edges closed, the object dropped onto the bed; `volume_id` for one volume, `keep_painting` (default: the app's setting, stated as `keep_painting_from`); an open gizmo is closed only when there is a repair to apply (`closed_toolbar_tool`; closing a painting gizmo records its own undo step, as for the user); one undo step, none for nothing to repair; a negative or out-of-range `volume_id` is refused; answers `before` / `after` (`get_mesh_health`'s numbers, `volumes`, `painted`, `position`), `parts` {split, dropped, repaired} and the placement; refused while the pipeline is busy, a job runs or the app's own Repair runs; nothing applied past the call's wait cap, or when a part fails; see "Mesh repair"), `get_object_components` (loose parts, stray shells: every shell of each model part), `rename_object`, `set_object_printable` |
 | **Transforms** | Every transform, and `get_object_info`, reports each instance's placement (`instance_placement`: its plate and whether it is inside it), `plate_index` (instance 0's plate), `plate_indices` and `on_bed` (every instance inside the plate it is on). `move_object`, `rotate_object` (a change in degrees; `relative: false` is refused), `scale_object`, `mirror_object`, `flatten_object` (the named object only, which replaces the selection, as the GUI's Orient does for a selection; an object with an instance on a locked plate is refused; answered once its orient has been applied), `clone_object` (answered once its arrange has been applied, with `objects`), `cut_object`, `delete_object`, `transform_objects` (rotate, scale, mirror and transform drop a resting object back onto the bed like the GUI; an explicit Z is kept) |
 | **Plates** | `add_plate`, `select_plate`, `delete_plate`, `set_prime_tower_position` |
 | **Config** | `get_presets`, `get_edited_presets` (25-48 KB), `get_config_values` (no arguments: the selected printer, print and per-slot filament presets with dirty flags, ~400 B; `keys`: just those settings, grouped by `apply_config` type, with `dirty` saved values; `dirty_only`), `select_preset` (`type: printer` returns the resulting `filaments`, each with its observed `color_source`: `unchanged`/`remembered`/`default`/`other`), `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset`, `get_valid_config_keys` |
@@ -621,22 +621,34 @@ once it has been applied, with the placement it left (`OrcaMCPUiJob.hpp`, the ap
 (`OrcaMCPMeshTools.cpp`, its decisions in `OrcaMCPMeshRepair.cpp`):
 
 - **Capture, main thread.** The call is checked (refused while the pipeline is busy, a UI job runs or
-  the app's own Repair dialog runs), an open gizmo is closed as the user would close it (the Repair
-  needs it closed: its undo snapshot would land in the gizmo's own stack), and the meshes and ids the
-  repair reads are captured (`capture_cgal_repair`).
+  the app's own Repair dialog runs; a `volume_id` outside the object's volumes, negative included, is
+  refused), and the meshes, ids and, with `keep_painting`, painting the repair reads are captured
+  (`capture_cgal_repair`).
 - **Plan, HTTP thread.** `plan_cgal_repair` is pure mesh work on those meshes, never a `Model`, a
-  `ModelVolume` or wx: the parts `ModelVolume::split` will make, the ones it drops, and CGAL's repair
-  of each part with open edges. The main thread stays free. It stops between parts once
-  `this_thread_cancelled()` (a quit) or the call's wait cap (`tool_wait_cap`, the bridge's) says so; a
-  part CGAL is repairing runs to its end (see "Shutdown").
+  `ModelVolume` or wx: the parts `ModelVolume::split` will make, which it drops, which have open edges,
+  CGAL's repair of those, and the kept painting remapped as `ModelVolume::split` and `restore_painting`
+  remap it (`TriangleSelector::remap_painting`: minutes per 10,000 painted facets on the -O0 build). The
+  main thread stays free. It stops between parts once `this_thread_cancelled()` (a quit) or the call's
+  wait cap (`tool_wait_cap`, the bridge's) says so; a part CGAL is repairing runs to its end (see
+  "Shutdown").
 - **Apply, main thread.** The object is found again by pointer and id and checked unchanged
   (`CgalRepairPlan::applies_to`); only a plan that changes something, has no failure, leaves the object
-  a part to print and finished within the cap is applied, under one "Repairing model object" snapshot,
-  followed by what the object list's Repair does after (`ensure_on_bed`, `changed_mesh`, the list), with
-  every instance re-homed as MCP's transforms do. Anything else changes nothing and says why.
+  a part to print and finished within the cap is applied. Only then is an open gizmo closed, as the
+  user would close it (the Repair needs it closed: its undo snapshot would land in the gizmo's own
+  stack; closing a painting gizmo records its own undo step, as when the user closes it). Then one
+  "Repairing model object" snapshot, upstream's loop taking each part's verdicts, repaired mesh and
+  painting from the plan, and what the object list's Repair does after (`ensure_on_bed`, `changed_mesh`,
+  the list), with every instance re-homed as MCP's transforms do. Anything else changes nothing and
+  says why. The plan also works out each repaired part's convex hull, which apply sets
+  (`ModelVolume::set_convex_hull`, a setter ours adds to upstream's `Model.hpp`). What stays on the main
+  thread is `ModelVolume::split`, with a convex hull per new part. On the -O0 build, apply took 0.2 s
+  for a 500,000-facet sphere with a hole (2.7 s before the plan took the verdicts and the hull) and
+  1.1 s for 200 small shells, each with a hole, most of it the split.
 
-The object list's Repair runs the same steps (plan under its dialog, then one snapshot and the apply),
-and a test holds the plan to upstream's in-place loop (probe AI).
+The object list's Repair runs the same steps: every selected object or volume captured before its
+first dialog, each planned under the dialog, then, the dialog still shown but no longer updated (so it
+lets nothing through), one snapshot and the apply. A test holds the plan to upstream's in-place loop,
+painting included (probe AI).
 
 ### Shutdown: never wait on something that waits on the main thread
 
@@ -1077,7 +1089,7 @@ echo "AE cancel_all leaves a job whose process has returned to finalize as not c
 echo "AF a cancelled or failed arrange keeps prepare_all's plates locked, its running flag and its notification (rel2506/07e): $(U src/slic3r/GUI/Jobs/ArrangeJob.cpp | awk '/^void ArrangeJob::finalize/{f=1} f&&/lock\(false\)|end_arrange_run/{print "no"; exit} f&&/if \(canceled \|\| eptr\)/{print "yes"; exit}')"
 echo "AG an object added to the scene has only its first instance on a plate (rel2506/07f): $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^void ObjectList::add_object_to_list\(/{f=1} f&&/notify_instance_update\(obj_idx, 0, true\)/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
 echo "AH the first slice waits for every TBB worker at once to name them (rel2506/07g): $(U src/libslic3r/Thread.cpp | awk '/^void name_tbb_thread_pool_threads_set_locale/{f=1} f&&/cv\.wait\(/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
-echo "AI the Repair's worker changes the object itself, off the main thread / a first volume dropped whole skips the next / a repair can delete an object's last part / the Repair's snapshot is taken before its dialog (rel2506/08b): $(U src/slic3r/Utils/FixModelByCgal.cpp | grep -c 'std::thread(\[&model_object') / $(U src/slic3r/Utils/FixModelByCgal.cpp | awk '/removed_parts >= parts_count/{f=1} f&&/ivolume = part_end;/{print "yes"; exit} f&&/continue;/{print "no"; exit}') / $(U src/slic3r/Utils/FixModelByCgal.cpp | awk '/is_not_3dimensional_part\(part_volume->mesh\(\)\)/{f=1} f&&/parts_count\(\)|is_model_part/{print "no"; exit} f&&/delete_volume\(part_idx\)/{print "yes"; exit}') / $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^void ObjectList::fix_through_cgal/{f=1} f&&/TakeSnapshot/{print "yes"; exit} f&&/ProgressDialog progress_dlg/{print "no"; exit}')"
+echo "AI the Repair's worker changes the object itself, off the main thread / a first volume dropped whole skips the next / a repair can delete an object's last part / the Repair's snapshot is taken before its dialog / ModelVolume has a hull setter (0 = no, keep ours) (rel2506/08b): $(U src/slic3r/Utils/FixModelByCgal.cpp | grep -c 'std::thread(\[&model_object') / $(U src/slic3r/Utils/FixModelByCgal.cpp | awk '/removed_parts >= parts_count/{f=1} f&&/ivolume = part_end;/{print "yes"; exit} f&&/continue;/{print "no"; exit}') / $(U src/slic3r/Utils/FixModelByCgal.cpp | awk '/is_not_3dimensional_part\(part_volume->mesh\(\)\)/{f=1} f&&/parts_count\(\)|is_model_part/{print "no"; exit} f&&/delete_volume\(part_idx\)/{print "yes"; exit}') / $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^void ObjectList::fix_through_cgal/{f=1} f&&/TakeSnapshot/{print "yes"; exit} f&&/ProgressDialog progress_dlg/{print "no"; exit}') / $(U src/libslic3r/Model.hpp | grep -c 'set_convex_hull')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -1345,8 +1357,11 @@ Ours splits the repair in three (`capture_cgal_repair`, `plan_cgal_repair`: pure
 thread, predicting the parts `ModelVolume::split` makes; `apply_cgal_repair`: upstream's loop on the
 main thread, taking each part's repaired mesh from the plan), which the object list's Repair, the cut
 gizmo and MCP's `repair_mesh` all run. The loop skips nothing and never deletes the last model part;
-the list plans every object under its dialog, then takes one snapshot and applies them, finding objects
-and volumes by pointer and id. On a "no" or 0, upstream fixed that part: take its version, keep the
+the list captures every selected object or volume before its first dialog, plans each under it, then,
+the dialog no longer updated, takes one snapshot and applies them, finding objects and volumes by
+pointer and id; kept painting is remapped, and each repaired part's convex hull worked out, in the plan,
+the hull set through `ModelVolume::set_convex_hull`, which ours adds to `Model.hpp` (additive: the fifth
+count is upstream's own, 0 while it has none; on a non-zero, take upstream's and drop ours). On a "no" or 0, upstream fixed that part: take its version, keep the
 plan/apply split around it, and re-run `slic3rutils_tests "[MeshRepair]"`, whose "planned repair builds
 the same object as the repair done in place" test holds the plan to upstream's loop.
 
