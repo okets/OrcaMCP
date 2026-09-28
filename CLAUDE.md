@@ -497,6 +497,24 @@ Physical printers (print host, serial, API key) live in `user/default/machine/<n
 there — `C5P.json` for the Creator 5 Pro. Searching the `OrcaSlicer` directory instead finds
 nothing and looks like the printer was never saved.
 
+### Where `~/.orcamcp` comes from, and why a test launch never touches it
+
+`~/.orcamcp` (`%USERPROFILE%\.orcamcp` on Windows) holds the bridge the user's own agent sessions run:
+the "Connect" buttons in Preferences point clients at `~/.orcamcp/orcamcp-bridge.py`, and so may a
+user's `~/.claude.json`. The app puts its own bridge and tool list (`orcamcp_tools.json`, which the
+bridge cannot work without) there at startup, both together, and only when either differs **in content**
+(`MCPClientConfig::refresh_shared_bridge_at_startup`): launching the installed app leaves it matching that
+app. Until 2026-09-28 it copied by file date, so every dev-build launch -- every agent's live check --
+replaced the user's bridge, and the installed app, older by date, never put its own back.
+
+A test launch never touches it: one with a data folder of its own (`--datadir`) or an agent's launch
+(`ORCAMCP_SKIP_CLOUD_LOGIN`, `GUI::is_agent_launch()`), whatever the build. The log says, at info, which
+it did and why ("MCP bridge: ~/.orcamcp left as it is: ..." or "... copied ..."). An installed app that
+an agent launches with `start_orca` leaves it alone too; the next launch by hand brings it up to date.
+Connecting a client in Preferences copies by content as well. The instance registry
+(`~/.orcamcp/instances`) is the one thing a test launch writes there, unless `ORCAMCP_INSTANCES_DIR`
+points elsewhere, as the live checks do.
+
 ### Running the live printer test
 
 `tests/slic3rutils/test_flashforge_live.cpp` talks to a real Flashforge over the LAN. It skips
@@ -1083,7 +1101,7 @@ The `count` field is always present (even when 0) to help confirm issues have be
 | `ORCAMCP_INSTANCES_DIR` | `~/.orcamcp/instances` | Read by the app and the bridge: where each instance publishes its entry. For tests |
 | `ORCAMCP_TIMEOUT` | `120` | Request timeout in seconds. It also bounds how long a tool waits for its arrange or orient: the bridge sends `wait_for_slice`'s cap with every tool call, as `params._meta["orcamcp/wait_cap_s"]` (see "Waiting for a UI job") |
 | `ORCAMCP_DEBUG` | (unset) | Enable debug logging to stderr |
-| `ORCAMCP_SKIP_CLOUD_LOGIN` | (set by `start_orca`) | App-side: marks an agent launch (`GUI::is_agent_launch()`), so startup waits on nothing a person must answer. It skips the Orca cloud silent sign-in, which reads the keychain synchronously on the GUI thread (on macOS a permission prompt per freshly built binary), and the recent-project thumbnails, which open every recent 3MF on the GUI thread (for projects in `~/Documents`, a macOS privacy prompt per fresh binary). Home then shows the projects listed before the launch without thumbnails; projects saved or opened during the session get theirs. Either prompt, unanswered, blocks the app before the MCP server starts. Set it yourself when launching the app for an agent. |
+| `ORCAMCP_SKIP_CLOUD_LOGIN` | (set by `start_orca`) | App-side: marks an agent launch (`GUI::is_agent_launch()`), so startup waits on nothing a person must answer, and leaves `~/.orcamcp`'s bridge alone (see "Where `~/.orcamcp` comes from"). It skips the Orca cloud silent sign-in, which reads the keychain synchronously on the GUI thread (on macOS a permission prompt per freshly built binary), and the recent-project thumbnails, which open every recent 3MF on the GUI thread (for projects in `~/Documents`, a macOS privacy prompt per fresh binary). Home then shows the projects listed before the launch without thumbnails; projects saved or opened during the session get theirs. Either prompt, unanswered, blocks the app before the MCP server starts. Set it yourself when launching the app for an agent. |
 
 ---
 

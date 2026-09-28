@@ -1,6 +1,7 @@
 #include "MCPClientConfig.hpp"
 
 #include <boost/filesystem.hpp>
+#include <boost/log/trivial.hpp>
 #include <boost/nowide/fstream.hpp>
 #include <boost/algorithm/string.hpp>
 #include <wx/stdpaths.h>
@@ -237,30 +238,49 @@ std::string MCPClientConfig::get_shared_scripts_dir()
     return shared_dir.string();
 }
 
-// Ensure bridge script is copied from app bundle to shared location
-// Helper: copy file if newer than destination
-static bool copy_file_if_newer(const boost::filesystem::path& src,
-                               const boost::filesystem::path& dst,
-                               std::string& error)
+namespace {
+
+// The bridge script and the tool list it reads: they go to ~/.orcamcp together, since the bridge
+// cannot serve a single tool, start_orca included, without its list.
+const std::vector<std::string>& bridge_file_names()
 {
-    if (!boost::filesystem::exists(src)) {
-        error = "File not found: " + src.string();
-        return false;
-    }
-
-    bool should_copy = !boost::filesystem::exists(dst);
-    if (!should_copy) {
-        should_copy = (boost::filesystem::last_write_time(src) >
-                       boost::filesystem::last_write_time(dst));
-    }
-
-    if (should_copy) {
-        boost::filesystem::copy_file(src, dst,
-            boost::filesystem::copy_option::overwrite_if_exists);
-    }
-    return true;
+    static const std::vector<std::string> names{"orcamcp-bridge.py", "orcamcp_tools.json"};
+    return names;
 }
 
+std::string read_whole_file(const boost::filesystem::path& path)
+{
+    boost::nowide::ifstream in(path.string(), std::ios::binary);
+    std::ostringstream      content;
+    content << in.rdbuf();
+    return content.str();
+}
+
+} // namespace
+
+bool MCPClientConfig::file_content_differs(const std::string& original, const std::string& copy)
+{
+    if (!boost::filesystem::exists(copy))
+        return true;
+    return read_whole_file(original) != read_whole_file(copy);
+}
+
+MCPClientConfig::BridgeCopyDecision MCPClientConfig::bridge_copy_decision(bool own_data_folder, bool agent_launch,
+                                                                          bool content_differs)
+{
+    if (own_data_folder)
+        return {false, "it runs on a data folder of its own (--datadir): a test launch leaves ~/.orcamcp to the "
+                       "installed app, whose bridge the user's own agent sessions run"};
+    if (agent_launch)
+        return {false, "an agent launched it (ORCAMCP_SKIP_CLOUD_LOGIN): an agent's launch leaves ~/.orcamcp to "
+                       "the installed app, whose bridge the user's own agent sessions run"};
+    if (!content_differs)
+        return {false, "~/.orcamcp already holds this app's bridge and tool list"};
+    return {true, "~/.orcamcp's bridge or tool list differs from this app's"};
+}
+
+// Copies the app's bridge and tool list over ~/.orcamcp's when either differs, both together. By
+// content, not by date: an installed app older by date than a dev build's copy puts its own back.
 bool MCPClientConfig::ensure_bridge_script_copied(std::string& error)
 {
     try {
@@ -278,22 +298,50 @@ bool MCPClientConfig::ensure_bridge_script_copied(std::string& error)
         boost::filesystem::path src_dir =
             boost::filesystem::path(resources_dir()) / "scripts";
 
-        // Copy the bridge script and the tool list it reads (orcamcp_tools.json): the bridge
-        // cannot serve a single tool, start_orca included, without it
-        if (!copy_file_if_newer(src_dir / "orcamcp-bridge.py",
-                                dst_dir / "orcamcp-bridge.py", error))
-            return false;
-
-        if (!copy_file_if_newer(src_dir / "orcamcp_tools.json",
-                                dst_dir / "orcamcp_tools.json", error))
-            return false;
-
+        for (const std::string& name : bridge_file_names()) {
+            if (!boost::filesystem::exists(src_dir / name)) {
+                error = "File not found: " + (src_dir / name).string();
+                return false;
+            }
+        }
+        if (!shared_bridge_differs())
+            return true;
+        for (const std::string& name : bridge_file_names())
+            boost::filesystem::copy_file(src_dir / name, dst_dir / name, boost::filesystem::copy_option::overwrite_if_exists);
         return true;
     }
     catch (const std::exception& e) {
         error = "Failed to copy bridge scripts: " + std::string(e.what());
         return false;
     }
+}
+
+bool MCPClientConfig::shared_bridge_differs()
+{
+    const std::string shared_dir = get_shared_scripts_dir();
+    if (shared_dir.empty())
+        return false;
+    const boost::filesystem::path src_dir = boost::filesystem::path(resources_dir()) / "scripts";
+    for (const std::string& name : bridge_file_names())
+        if (file_content_differs((src_dir / name).string(), (boost::filesystem::path(shared_dir) / name).string()))
+            return true;
+    return false;
+}
+
+void MCPClientConfig::refresh_shared_bridge_at_startup(bool own_data_folder, bool agent_launch)
+{
+    // Content is read only when it can decide anything: a test launch never looks.
+    const bool                differs  = !own_data_folder && !agent_launch && shared_bridge_differs();
+    const BridgeCopyDecision decision = bridge_copy_decision(own_data_folder, agent_launch, differs);
+    if (!decision.copy) {
+        BOOST_LOG_TRIVIAL(info) << "MCP bridge: ~/.orcamcp left as it is: " << decision.reason;
+        return;
+    }
+    std::string error;
+    if (ensure_bridge_script_copied(error))
+        BOOST_LOG_TRIVIAL(info) << "MCP bridge: copied this app's bridge and tool list to ~/.orcamcp: " << decision.reason;
+    else
+        BOOST_LOG_TRIVIAL(warning) << "MCP bridge: could not copy this app's bridge to ~/.orcamcp: " << error;
 }
 
 // Get the bridge script path (shared location)

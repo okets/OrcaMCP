@@ -882,7 +882,9 @@ App Bundle (dev or prod)                    Shared Location
 - Bridge script path is written to MCP client configs
 - Different builds have different bundle paths
 - Shared `~/.orcamcp/` works regardless of which OrcaSlicer version runs
-- Script auto-updates if app bundle version is newer
+- At startup the app copies its bridge and tool list there when either differs in content, so it
+  matches the app the user runs; a test launch (`--datadir`, or an agent's launch) never touches it
+  (see CLAUDE.md, "Where `~/.orcamcp` comes from")
 
 ### C++ Implementation Files
 
@@ -898,8 +900,11 @@ src/slic3r/GUI/OrcaMCP/
 // Get shared scripts directory (~/.orcamcp)
 static std::string get_shared_scripts_dir();
 
-// Copy bridge script from app bundle to shared location
+// Copy the bridge script and its tool list from the app bundle when either differs in content
 static bool ensure_bridge_script_copied(std::string& error);
+
+// At startup: the same copy, except from a test launch (own --datadir, or an agent's launch); logged
+static void refresh_shared_bridge_at_startup(bool own_data_folder, bool agent_launch);
 
 // Get path to bridge script (in shared location)
 static std::string get_bridge_script_path();
