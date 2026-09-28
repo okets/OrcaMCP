@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <optional>
 #include <string>
@@ -47,7 +48,7 @@ TEST_CASE("a pause goes at the start of the layer, at its height, with the plate
     CHECK(change.changed);
     REQUIRE(info.gcodes.size() == 1);
     CHECK(info.gcodes[0].type == CustomGCode::PausePrint);
-    CHECK(info.gcodes[0].print_z == 1.0);
+    CHECK_THAT(info.gcodes[0].print_z, Catch::Matchers::WithinAbs(1.0, 1e-9));
     // IMSlider's max(1, m_only_extruder): the one filament the plate prints with.
     CHECK(info.gcodes[0].extruder == 2);
     CHECK(info.gcodes[0].color.empty());
@@ -196,7 +197,7 @@ TEST_CASE("an item is described by layer number, height, type and what it carrie
     const CustomGCode::Item change{0.6, CustomGCode::ToolChange, 2, "#00FF00", ""};
     const nlohmann::json    json = layer_gcode_json(change, &k_layers);
     CHECK(json.at("layer") == 3);
-    CHECK(json.at("z_mm") == 0.6);
+    CHECK_THAT(json.at("z_mm").get<double>(), Catch::Matchers::WithinAbs(0.6, 1e-9));
     CHECK(json.at("type") == "filament_change");
     CHECK(json.at("filament") == 2);
     CHECK(layer_gcode_json(change, nullptr).at("layer").is_null());
