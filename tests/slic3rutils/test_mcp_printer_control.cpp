@@ -1,5 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include <cmath>
 #include <nlohmann/json.hpp>
 #include <string>
 
@@ -17,6 +19,7 @@ using json = nlohmann::json;
 using namespace Slic3r;
 using namespace Slic3r::GUI::OrcaMCP;
 using Slic3r::GUI::OrcaMCPServer;
+using Catch::Matchers::WithinAbs;
 
 namespace {
 
@@ -46,7 +49,10 @@ json control_body(const json& arguments, const FlashforgeApi::PrinterStatus& pri
     PrinterControlRequest request;
     if (const auto refusal = printer_control_request(arguments, request))
         return {{"refused", *refusal}};
-    const json  snapshot = request.reads_status ? GUI::console_snapshot(printer) : json::object();
+    const json snapshot = request.reads_status ? GUI::console_snapshot(printer) : json::object();
+    if (request.reads_status)
+        if (const auto missing = status_refusal(request, snapshot))
+            return {{"refused", *missing}};
     json        operation;
     std::string error;
     if (!GUI::build_console_operation(request.console_params, snapshot, operation, error))
@@ -61,6 +67,23 @@ json printer_ctl_body(const json& args)
     return {{"serialNumber", "SN-TEST"}, {"checkCode", "CC-TEST"}, {"payload", {{"cmd", "printerCtl_cmd"}, {"args", args}}}};
 }
 
+// Whether `body` is `expected`: every string and integer the same, every other number within 1e-9 (a
+// Z offset or a fan speed read back from the printer's JSON).
+bool same_body(const json& body, const json& expected)
+{
+    if (body.is_object() && expected.is_object()) {
+        if (body.size() != expected.size())
+            return false;
+        for (const auto& [key, value] : expected.items())
+            if (!body.contains(key) || !same_body(body.at(key), value))
+                return false;
+        return true;
+    }
+    if (body.is_number_float() || expected.is_number_float())
+        return body.is_number() && expected.is_number() && std::abs(body.get<double>() - expected.get<double>()) < 1e-9;
+    return body == expected;
+}
+
 std::string refusal_of(const json& body) { return body.value("refused", std::string()); }
 
 bool mentions(const std::string& text, const std::string& part) { return text.find(part) != std::string::npos; }
@@ -71,22 +94,22 @@ TEST_CASE("each new printer control sends the Device page's own command", "[McpP
 {
     SECTION("set_print_speed changes the running job's speed and carries the rest as the printer reports it")
     {
-        CHECK(control_body({{"action", "set_print_speed"}, {"speed", 125}}, printing_printer()) ==
-              printer_ctl_body({{"zAxisCompensation", 0.05}, {"speed", 125}, {"chamberFan", 30}, {"coolingFan", 70}}));
+        CHECK(same_body(control_body({{"action", "set_print_speed"}, {"speed", 125}}, printing_printer()),
+                        printer_ctl_body({{"zAxisCompensation", 0.05}, {"speed", 125}, {"chamberFan", 30}, {"coolingFan", 70}})));
     }
 
     SECTION("set_z_offset on an idle printer sends 100 % for the speed an idle printer reports as 0")
     {
-        CHECK(control_body({{"action", "set_z_offset"}, {"z_offset", -0.075}}, idle_printer()) ==
-              printer_ctl_body({{"zAxisCompensation", -0.075}, {"speed", 100}, {"chamberFan", 30}, {"coolingFan", 70}}));
+        CHECK(same_body(control_body({{"action", "set_z_offset"}, {"z_offset", -0.075}}, idle_printer()),
+                        printer_ctl_body({{"zAxisCompensation", -0.075}, {"speed", 100}, {"chamberFan", 30}, {"coolingFan", 70}})));
     }
 
     SECTION("set_fans changes only the fans it names")
     {
-        CHECK(control_body({{"action", "set_fans"}, {"chamber_fan", 50}}, idle_printer()) ==
-              printer_ctl_body({{"zAxisCompensation", 0.05}, {"speed", 100}, {"chamberFan", 50}, {"coolingFan", 70}}));
-        CHECK(control_body({{"action", "set_fans"}, {"chamber_fan", 0}, {"cooling_fan", 100}}, idle_printer()) ==
-              printer_ctl_body({{"zAxisCompensation", 0.05}, {"speed", 100}, {"chamberFan", 0}, {"coolingFan", 100}}));
+        CHECK(same_body(control_body({{"action", "set_fans"}, {"chamber_fan", 50}}, idle_printer()),
+                        printer_ctl_body({{"zAxisCompensation", 0.05}, {"speed", 100}, {"chamberFan", 50}, {"coolingFan", 70}})));
+        CHECK(same_body(control_body({{"action", "set_fans"}, {"chamber_fan", 0}, {"cooling_fan", 100}}, idle_printer()),
+                        printer_ctl_body({{"zAxisCompensation", 0.05}, {"speed", 100}, {"chamberFan", 0}, {"coolingFan", 100}})));
     }
 
     SECTION("set_filtration switches one fan and keeps the other as it is")
@@ -108,10 +131,17 @@ TEST_CASE("the job, light and temperature actions build what the Device page bui
     CHECK(control_body({{"action", "cancel"}}, printer)["operation"] == json{{"kind", "job"}, {"action", "stop"}});
     CHECK(control_body({{"action", "light_on"}}, printer)["operation"] == json{{"kind", "light"}, {"on", true}});
     CHECK(control_body({{"action", "light_off"}}, printer)["operation"] == json{{"kind", "light"}, {"on", false}});
-    CHECK(control_body({{"action", "set_temperature"}, {"bed", 60}, {"nozzles", {{{"tool", 1}, {"temp", 210}}}}}, printer)["operation"] ==
-          json{{"kind", "temperature"}, {"bed", 60}, {"chamber", nullptr}, {"nozzles", {nullptr, 210, nullptr, nullptr}}});
+    const json temperature = control_body({{"action", "set_temperature"}, {"bed", 60}, {"nozzles", {{{"tool", 1}, {"temp", 210}}}}}, printer)["operation"];
+    CHECK(temperature["kind"] == "temperature");
+    CHECK(temperature["chamber"].is_null());
+    CHECK_THAT(temperature["bed"].get<double>(), WithinAbs(60.0, 1e-9));
+    REQUIRE(temperature["nozzles"].size() == 4);
+    CHECK(temperature["nozzles"][0].is_null());
+    CHECK_THAT(temperature["nozzles"][1].get<double>(), WithinAbs(210.0, 1e-9));
+    CHECK(temperature["nozzles"][2].is_null());
+    CHECK(temperature["nozzles"][3].is_null());
     // 0 is an instruction to switch off, never "leave alone".
-    CHECK(control_body({{"action", "set_temperature"}, {"chamber", 0}}, printer)["operation"]["chamber"] == 0);
+    CHECK_THAT(control_body({{"action", "set_temperature"}, {"chamber", 0}}, printer)["operation"]["chamber"].get<double>(), WithinAbs(0.0, 1e-9));
 }
 
 TEST_CASE("printer_control refuses what the printer cannot or should not do, before sending anything", "[McpPrinterControl][orcamcp]")
@@ -128,6 +158,42 @@ TEST_CASE("printer_control refuses what the printer cannot or should not do, bef
         CHECK(mentions(refusal_of(control_body({{"action", "set_temperature"}, {"bed", 200}}, idle)), "Bed target"));
         CHECK(mentions(refusal_of(control_body({{"action", "set_temperature"}, {"nozzles", {{{"tool", 0}, {"temp", 400}}}}}, idle)),
                        "Nozzle target"));
+    }
+
+    SECTION("a Z offset off the printer's 0.025 mm steps, which an agent never needs")
+    {
+        CHECK(mentions(refusal_of(control_body({{"action", "set_z_offset"}, {"z_offset", 0.013}}, idle)), "0.025"));
+        CHECK_FALSE(control_body({{"action", "set_z_offset"}, {"z_offset", 0.025}}, idle).contains("refused"));
+    }
+
+    SECTION("a status that lacks a field the command sends back, which would go out as 0")
+    {
+        // A reply that parsed without a detail object: no Z offset, no fans. Sent on, a Z nudge would stop
+        // the part-cooling fan and the chamber fan.
+        FlashforgeApi::PrinterStatus bare = idle;
+        bare.raw                          = json{{"code", 0}};
+        const std::string refusal         = refusal_of(control_body({{"action", "set_z_offset"}, {"z_offset", 0.05}}, bare));
+        CHECK(mentions(refusal, "coolingFanSpeed"));
+        CHECK(mentions(refusal, "Nothing was sent"));
+
+        FlashforgeApi::PrinterStatus no_cooling = idle;
+        no_cooling.raw.erase("coolingFanSpeed");
+        CHECK(mentions(refusal_of(control_body({{"action", "set_fans"}, {"chamber_fan", 20}}, no_cooling)), "coolingFanSpeed"));
+
+        // The Pro (pid 41) has a chamber fan, so its speed is one to send back; a printer without one sends 0,
+        // as the page does.
+        FlashforgeApi::PrinterStatus pro_without_chamber = idle;
+        pro_without_chamber.pid                          = 41;
+        pro_without_chamber.raw.erase("chamberFanSpeed");
+        CHECK(mentions(refusal_of(control_body({{"action", "set_z_offset"}, {"z_offset", 0.05}}, pro_without_chamber)), "chamberFanSpeed"));
+        FlashforgeApi::PrinterStatus no_chamber = idle;
+        no_chamber.raw.erase("chamberFanSpeed");
+        CHECK_FALSE(control_body({{"action", "set_z_offset"}, {"z_offset", 0.05}}, no_chamber).contains("refused"));
+
+        // One filtration fan reported and not the other: the other would go out as "close".
+        FlashforgeApi::PrinterStatus one_fan = idle;
+        one_fan.raw.erase("externalFanStatus");
+        CHECK(mentions(refusal_of(control_body({{"action", "set_filtration"}, {"recirculation", true}}, one_fan)), "externalFanStatus"));
     }
 
     SECTION("what the printer's status says it cannot do now")
@@ -168,12 +234,12 @@ TEST_CASE("printer_control refuses what the printer cannot or should not do, bef
 TEST_CASE("a status names the controls printer_control changes", "[McpPrinterControl][orcamcp]")
 {
     const json controls = printer_controls_json(GUI::console_raw_detail(idle_printer().raw));
-    CHECK(controls == json{{"print_speed_percent", nullptr}, // an idle printer reports 0
+    CHECK(same_body(controls, json{{"print_speed_percent", nullptr}, // an idle printer reports 0
                            {"z_offset_mm", 0.05},
                            {"chamber_fan_percent", 30},
                            {"cooling_fan_percent", 70},
                            {"recirculation", false},
-                           {"exhaust", true}});
+                           {"exhaust", true}}));
 
     CHECK(printer_controls_json(printing_printer().raw)["print_speed_percent"] == 100);
 

@@ -3611,7 +3611,13 @@ reports. The printer takes a moment to apply a command.
 
 Refused, with nothing sent to the printer:
 - a value the page never sends: a speed that is not one of the four, a Z offset past 1 mm or off the
-  0.025 mm steps, a fan speed outside 0-100, a temperature past its range;
+  0.025 mm steps, a fan speed outside 0-100, a temperature past its range. (The steps are printer_control's
+  rule for the offset an agent names: the page nudges the printer's own offset by 0.025 mm, whatever it
+  is, and its buttons work from an offset off the steps.);
+- a status that lacks a field the command sends back as the printer reports it -- the Z offset, print
+  speed or part-cooling fan for `printerCtl_cmd` (the chamber fan too on the Pro), the other filtration
+  fan for `circulateCtl_cmd` -- which would go out as 0 or `close` (a reply without a detail object parses
+  as an empty status). The Device page still sends it as it always has;
 - a print speed while nothing prints (the page's speed buttons are off then: the printer applies a speed
   only to a running job);
 - filtration on a printer that reports no filtration fans, a chamber fan on one that reports none, a

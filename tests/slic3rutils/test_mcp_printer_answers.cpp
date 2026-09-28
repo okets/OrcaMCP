@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <nlohmann/json.hpp>
 #include <string>
@@ -12,6 +13,7 @@
 using json = nlohmann::json;
 using namespace Slic3r;
 using namespace Slic3r::GUI::OrcaMCP;
+using Catch::Matchers::WithinAbs;
 
 // What the printer tools answer with, built from everything a printer or a print host preset holds. Every
 // secret below carries the same marker, so one search of the answer's text finds any of them.
@@ -82,7 +84,7 @@ TEST_CASE("a printer's status reaches an agent without its credentials or identi
         CHECK_FALSE(carries_a_secret(printer));
         // Still what the page and a control need: the allowlist is what decides, not a list of secrets.
         CHECK(printer["raw"]["internalFanStatus"] == "open");
-        CHECK(printer["raw"]["zAxisCompensation"] == 0.025);
+        CHECK_THAT(printer["raw"]["zAxisCompensation"].get<double>(), WithinAbs(0.025, 1e-9));
         CHECK(printer["material_station"]["slots"].size() == 2);
     }
 

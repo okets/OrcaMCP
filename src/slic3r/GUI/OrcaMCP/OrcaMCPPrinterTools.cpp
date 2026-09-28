@@ -802,8 +802,8 @@ void OrcaMCPServer::register_printer_tools()
         "printer. The set_* actions change only what they name: the printer's other settings are read first "
         "and sent back as it reports them; the answer gives what was sent and the printer's values before, and "
         "get_printer_status's printer.controls reads them back. Refused, sending nothing: a print speed while "
-        "nothing prints, a fan or filtration the printer does not report, a value out of range, and an "
-        "argument of another action.",
+        "nothing prints, a fan or filtration the printer does not report, a status lacking a field the command "
+        "sends back (it would go out as 0), a value out of range, and an argument of another action.",
         {
             {"type", "object"},
             {"properties", {
@@ -890,6 +890,8 @@ void OrcaMCPServer::register_printer_tools()
                     return error_response("Nothing was sent: the printer's current settings could not be read. " +
                                           (msg.empty() ? std::string("Failed to fetch printer status") : to_std(msg)));
                 snapshot = console_snapshot(status);
+                if (const auto missing = status_refusal(request, snapshot))
+                    return error_response(*missing);
             }
 
             nlohmann::json operation;

@@ -67,7 +67,7 @@ nlohmann::json console_raw_detail(const nlohmann::json& detail);
 /// fields cannot be filled in because no status has arrived yet, and for one the printer, by its
 /// status, cannot act on: a print speed while nothing prints (the page's speed buttons are off then),
 /// filtration or a chamber or left cooling fan it does not report. Fan speeds are 0-100 %, and a Z
-/// offset sent is within ±1 mm on the vendor's 0.025 mm steps.
+/// offset within ±1 mm: the page nudges the printer's own offset by 0.025 mm, whatever that offset is.
 ///
 /// MCP's printer_control shapes every action into these same params, so the page and the tool build
 /// the same commands with the same limits.

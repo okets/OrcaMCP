@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <nlohmann/json.hpp>
 #include <string>
@@ -10,6 +11,7 @@
 
 using json = nlohmann::json;
 using Slic3r::GUI::build_console_operation;
+using Catch::Matchers::WithinAbs;
 
 namespace {
 
@@ -127,7 +129,7 @@ TEST_CASE("Flashforge console commands map onto printer calls", "[flashforge][fl
         const json op = build({{"name", "printer_ctl"}, {"speed", 125}}, printing_snapshot(), error);
         CHECK(op["cmd"] == "printerCtl_cmd");
         CHECK(op["args"]["speed"] == 125);
-        CHECK(op["args"]["zAxisCompensation"] == 0.05); // the printer's own value, untouched
+        CHECK_THAT(op["args"]["zAxisCompensation"].get<double>(), WithinAbs(0.05, 1e-9)); // the printer's own value, untouched
         CHECK(op["args"]["chamberFan"] == 30);
         CHECK(op["args"]["coolingFan"] == 70);
         // This machine reports no left cooling fan, so it is never told what to do with one:
@@ -137,7 +139,7 @@ TEST_CASE("Flashforge console commands map onto printer calls", "[flashforge][fl
         // Nudging Z leaves the fans alone, and does not send back the 0 % speed an idle printer
         // reports - which the machine would read as "stop moving".
         const json z = build({{"name", "printer_ctl"}, {"zAxisCompensation", 0.075}}, idle_snapshot(), error);
-        CHECK(z["args"]["zAxisCompensation"] == 0.075);
+        CHECK_THAT(z["args"]["zAxisCompensation"].get<double>(), WithinAbs(0.075, 1e-9));
         CHECK(z["args"]["speed"] == 100);
         CHECK(z["args"]["chamberFan"] == 30);
         CHECK(z["args"]["coolingFan"] == 70);
@@ -315,22 +317,29 @@ TEST_CASE("a print speed is sent only while the printer runs a job", "[flashforg
     CHECK_FALSE(build({{"name", "printer_ctl"}, {"coolingFan", 20}}, idle_snapshot(), error).is_null());
 }
 
-TEST_CASE("a Z offset is sent only on the printer's 0.025 mm steps", "[flashforge][flashforge-console]")
+TEST_CASE("a Z nudge goes out as the page sends it, on the printer's steps or not", "[flashforge][flashforge-console]")
 {
     std::string error;
+    auto        z_sent = [](const json& op) { return op["args"]["zAxisCompensation"].get<double>(); };
 
-    CHECK(build({{"name", "printer_ctl"}, {"zAxisCompensation", -0.075}}, idle_snapshot(), error)["args"]["zAxisCompensation"] == -0.075);
-    CHECK(build({{"name", "printer_ctl"}, {"zAxisCompensation", 1}}, idle_snapshot(), error)["args"]["zAxisCompensation"] == 1);
-
-    CHECK(build({{"name", "printer_ctl"}, {"zAxisCompensation", 0.03}}, idle_snapshot(), error).is_null());
-    CHECK(error.find("0.025") != std::string::npos);
-    CHECK(build({{"name", "printer_ctl"}, {"zAxisCompensation", 1.025}}, idle_snapshot(), error).is_null());
-
-    // The printer's own value is carried as it reports it, on a step or not: only a value sent is held
-    // to the steps.
+    // The page nudges from the printer's own offset by 0.025 mm (round3(current +/- Z_STEP)): from an
+    // offset off the steps, 0.013 (a printer's screen can leave one), the nudge is off them too, and the
+    // page's buttons must keep working. The steps are printer_control's rule for what an agent asks.
     json snapshot                                   = idle_snapshot();
     snapshot["printer"]["raw"]["zAxisCompensation"] = 0.013;
-    CHECK(build({{"name", "printer_ctl"}, {"coolingFan", 50}}, snapshot, error)["args"]["zAxisCompensation"] == 0.013);
+    CHECK_THAT(z_sent(build({{"name", "printer_ctl"}, {"zAxisCompensation", 0.038}}, snapshot, error)), WithinAbs(0.038, 1e-9));
+    CHECK_THAT(z_sent(build({{"name", "printer_ctl"}, {"zAxisCompensation", -0.012}}, snapshot, error)), WithinAbs(-0.012, 1e-9));
+    // The page's own sample data, 0.02.
+    snapshot["printer"]["raw"]["zAxisCompensation"] = 0.02;
+    CHECK_THAT(z_sent(build({{"name", "printer_ctl"}, {"zAxisCompensation", 0.045}}, snapshot, error)), WithinAbs(0.045, 1e-9));
+
+    // The printer's own value is carried as it reports it when another field changes.
+    CHECK_THAT(z_sent(build({{"name", "printer_ctl"}, {"coolingFan", 50}}, snapshot, error)), WithinAbs(0.02, 1e-9));
+
+    // Past a millimetre is refused, as the page's buttons stop there.
+    CHECK(build({{"name", "printer_ctl"}, {"zAxisCompensation", 1.025}}, idle_snapshot(), error).is_null());
+    CHECK(error.find("1 mm") != std::string::npos);
+    CHECK_THAT(z_sent(build({{"name", "printer_ctl"}, {"zAxisCompensation", -1}}, idle_snapshot(), error)), WithinAbs(-1.0, 1e-9));
 }
 
 TEST_CASE("a fan speed is a percentage, for a fan the printer reports", "[flashforge][flashforge-console]")

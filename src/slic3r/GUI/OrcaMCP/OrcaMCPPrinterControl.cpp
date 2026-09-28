@@ -3,6 +3,7 @@
 #include "OrcaMCPCommon.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <map>
 #include <vector>
 
@@ -144,6 +145,28 @@ std::optional<std::string> single_control(const json& params, const char* argume
     return std::nullopt;
 }
 
+// The printer's own Z compensation step, the one its screen and the Device page nudge by.
+constexpr double Z_OFFSET_STEP = 0.025;
+
+// An agent names the offset it wants, so it names one on the printer's steps. (The page nudges from
+// whatever offset the printer reports, which need not be on them: the steps are not the page's rule.)
+std::optional<std::string> z_offset_step_refusal(const json& console_params)
+{
+    const auto it = console_params.find("zAxisCompensation");
+    if (it == console_params.end() || !it->is_number())
+        return std::nullopt;
+    const double steps = it->get<double>() / Z_OFFSET_STEP;
+    if (std::abs(steps - std::round(steps)) < 1e-6)
+        return std::nullopt;
+    return std::string("z_offset must be a multiple of 0.025 mm, the printer's own step (e.g. 0.05 or -0.075)");
+}
+
+bool reports(const json& raw, const char* key, bool as_number)
+{
+    const auto it = raw.find(key);
+    return it != raw.end() && (as_number ? it->is_number() : it->is_string());
+}
+
 json number_or_null(const json& raw, const char* key)
 {
     const auto it = raw.find(key);
@@ -188,8 +211,41 @@ std::optional<std::string> printer_control_request(const json& params, PrinterCo
         return fan_params(params, out.console_params);
     if (action == "set_print_speed")
         return single_control(params, "speed", "speed", "a print speed in percent, one of 50, 100, 125 or 166", out.console_params);
-    return single_control(params, "z_offset", "zAxisCompensation", "the Z offset in mm, within -1 to 1 in 0.025 mm steps",
-                          out.console_params);
+    if (auto error = single_control(params, "z_offset", "zAxisCompensation", "the Z offset in mm, within -1 to 1 in 0.025 mm steps",
+                                    out.console_params))
+        return error;
+    return z_offset_step_refusal(out.console_params);
+}
+
+std::optional<std::string> status_refusal(const PrinterControlRequest& request, const json& snapshot)
+{
+    if (!request.reads_status)
+        return std::nullopt;
+    const json& printer = snapshot.contains("printer") && snapshot["printer"].is_object() ? snapshot["printer"] : json::object();
+    const json& raw     = printer.contains("raw") && printer["raw"].is_object() ? printer["raw"] : json::object();
+    std::vector<std::string> missing;
+    const std::string        name = request.console_params.value("name", std::string());
+    if (name == "printer_ctl") {
+        for (const char* key : {"zAxisCompensation", "printSpeedAdjust", "coolingFanSpeed"})
+            if (!reports(raw, key, true))
+                missing.push_back(key);
+        // The Pro has a chamber fan (the page's own test for it, pid 41): its speed goes back as reported.
+        if (printer.value("pid", 0) == 41 && !reports(raw, "chamberFanSpeed", true))
+            missing.push_back("chamberFanSpeed");
+    } else if (name == "filtration") {
+        // Neither reported: a printer without filtration, which build_console_operation says so.
+        const bool internal = reports(raw, "internalFanStatus", false), external = reports(raw, "externalFanStatus", false);
+        if (internal != external)
+            missing.push_back(internal ? "externalFanStatus" : "internalFanStatus");
+    }
+    if (missing.empty())
+        return std::nullopt;
+    std::string fields;
+    for (std::size_t i = 0; i < missing.size(); ++i)
+        fields += (i == 0 ? "" : i + 1 == missing.size() ? " and " : ", ") + missing[i];
+    return "The printer's status lacks " + fields + ", which " + request.action +
+           " sends back as the printer reports it: sent without it, it would reset it. Nothing was sent; "
+           "get_printer_status shows what the printer reports";
 }
 
 json printer_controls_json(const json& raw)

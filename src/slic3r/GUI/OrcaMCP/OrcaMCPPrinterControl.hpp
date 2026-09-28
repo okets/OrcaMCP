@@ -28,6 +28,12 @@ struct PrinterControlRequest
 // sent to the printer before this has passed.
 std::optional<std::string> printer_control_request(const nlohmann::json& params, PrinterControlRequest& out);
 
+// Why a status-reading action (reads_status) must not go out on `snapshot` (console_snapshot's): it lacks
+// a field the command sends back as the printer reports it, which build_console_operation would send as 0
+// (or "close") -- a Z offset, a print speed, the part-cooling fan, the Pro's chamber fan, the other
+// filtration fan. The Device page sends those as it does; an agent's call is refused, naming them.
+std::optional<std::string> status_refusal(const PrinterControlRequest& request, const nlohmann::json& snapshot);
+
 // The live controls a Flashforge status reports, from its `raw` (status_to_json's allowlist), named as
 // printer_control takes them: print_speed_percent (null while no job runs: the printer reports 0),
 // z_offset_mm, chamber_fan_percent, cooling_fan_percent, cooling_left_fan_percent (only on a printer

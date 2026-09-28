@@ -103,8 +103,6 @@ constexpr double MAX_NOZZLE_TEMP = 350, MAX_BED_TEMP = 150, MAX_CHAMBER_TEMP = 1
 /// Z compensation is an offset, nudged one step at a time; a whole millimetre is already far more
 /// than a first layer.
 constexpr double MAX_Z_COMPENSATION = 1.0;
-/// The vendor's own Z compensation step, the one the printer's screen and this page nudge by.
-constexpr double Z_COMPENSATION_STEP = 0.025;
 /// A fan speed is a percentage.
 constexpr double MAX_FAN_SPEED = 100;
 
@@ -226,13 +224,6 @@ bool job_running(const json& snapshot)
     if (state == "printing" || state == "paused")
         return true;
     return (state == "heating" || state == "busy") && !printer.value("print_file", std::string()).empty();
-}
-
-/// A Z offset on the vendor's own 0.025 mm steps.
-bool on_z_step(double z)
-{
-    const double steps = z / Z_COMPENSATION_STEP;
-    return std::abs(steps - std::round(steps)) < 1e-6;
 }
 
 /// One run of the poll loop, and everything that outlives the thread it runs on.
@@ -872,10 +863,6 @@ bool build_console_operation(const json& params, const json& snapshot, json& ope
         }
         if (std::abs(z) > MAX_Z_COMPENSATION) {
             error = _u8L("Z offset must be within \u00b11 mm.");
-            return false;
-        }
-        if (caller_sets(params, "zAxisCompensation") && !on_z_step(z)) {
-            error = _u8L("Z offset must be a multiple of 0.025 mm, the printer's own step.");
             return false;
         }
         if (caller_sets(params, "chamberFan") && !has_number(*raw, "chamberFanSpeed")) {
