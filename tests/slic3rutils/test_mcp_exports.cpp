@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <set>
 #include <string>
@@ -78,13 +79,45 @@ TEST_CASE("export_gcode past its wait still says the export started, and how to 
     const nlohmann::json late = gcode_export_answer(pending, GcodeExportWait::timed_out, "/tmp/out/box.gcode", std::nullopt, 105.0);
     CHECK(late.at("status") == "export_started");
     CHECK(late.at("finished") == false);
-    CHECK(late.at("waited_s") == 105.0);
+    CHECK_THAT(late.at("waited_s").get<double>(), Catch::Matchers::WithinAbs(105.0, 1e-9));
     REQUIRE(late.contains("next_steps"));
     CHECK(late.at("next_steps").at(0).at("tool") == "wait_for_slice");
 
     const nlohmann::json quitting = gcode_export_answer(pending, GcodeExportWait::quitting, "/tmp/out/box.gcode", std::nullopt, 2.0);
     CHECK(quitting.at("finished") == false);
     CHECK(contains(quitting.at("message").get<std::string>(), "quitting"));
+}
+
+// The app captured the error dialog of every export MCP started, even once export_gcode had stopped waiting and
+// answered export_started: a write that failed then said nothing to anyone. The completion now hands the export's end
+// to the call only while it waits, which the call claims back when it stops; past that the app shows its dialog, as
+// for its own exports.
+TEST_CASE("an export's end goes to the call only while it waits", "[McpExports][orcamcp]")
+{
+    GcodeExportOutcome waited;
+    CHECK(waited.hand_to_waiting_call()); // the completion, while the call waits: the call answers it
+    CHECK(waited.stop_waiting());         // and the call, stopping, learns it must
+
+    GcodeExportOutcome gone;
+    CHECK_FALSE(gone.stop_waiting());          // the call stopped first (its cap)
+    CHECK_FALSE(gone.hand_to_waiting_call()); // then the completion: the app shows its dialog
+}
+
+// An agent that got export_started learns how the export ended from get_slicing_status (and so wait_for_slice).
+TEST_CASE("the last export MCP started says how it ended", "[McpExports][orcamcp]")
+{
+    using State = GcodeExportOutcome::State;
+    GcodeExportOutcome writing;
+    CHECK(gcode_export_state_json(writing, "/tmp/out/box.gcode").at("state") == "writing");
+    GcodeExportOutcome failed;
+    failed.end(State::failed, "Copying of the temporary G-code to the output G-code failed.");
+    const nlohmann::json broke = gcode_export_state_json(failed, "/nope/box.gcode");
+    CHECK(broke.at("state") == "failed");
+    CHECK(broke.at("output_path") == "/nope/box.gcode");
+    CHECK(contains(broke.at("error").get<std::string>(), "Copying"));
+    GcodeExportOutcome written;
+    written.end(State::written);
+    CHECK_FALSE(gcode_export_state_json(written, "/tmp/out/box.gcode").contains("error"));
 }
 
 TEST_CASE("export_gcode refuses a path it would write as something else, before looking at the plates", "[McpExports][orcamcp]")

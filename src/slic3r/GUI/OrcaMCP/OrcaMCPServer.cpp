@@ -3525,6 +3525,7 @@ void OrcaMCPServer::register_builtin_tools()
 
                 if (!not_started) {
                     result["status"] = "export_started";
+                    OrcaMCP::note_started_gcode_export(outcome, output_path);
                 } else {
                     result["status"] = "error";
                     result["message"] = *not_started;
@@ -3793,7 +3794,9 @@ void OrcaMCPServer::register_builtin_tools()
         "above_printable_height, above_extruder_height, outside_extruder_area, in_wrapping_area, "
         "over_printed_mass, toolpath_outside, filament_bed_conflict -- and a message; above_printable_height "
         "also gives highest_layer_z_mm and printable_height_mm, and a hint at the usual cause. The GUI keeps a "
-        "failed plate's Print and Export buttons off, and export_gcode and send_to_printer refuse it.",
+        "failed plate's Print and Export buttons off, and export_gcode and send_to_printer refuse it. last_export "
+        "is the plain G-code export export_gcode started last (null before any): output_path and state writing, "
+        "written, failed (with the app's error), cancelled or dropped -- how one it answered export_started for ended.",
         {
             {"type", "object"},
             {"properties", nlohmann::json::object()}
@@ -3844,6 +3847,9 @@ void OrcaMCPServer::register_builtin_tools()
                 // refusal and wait_for_slice go by.
                 const std::shared_ptr<UiJobOutcome> last_job = last_started_ui_job();
                 result["ui_job"] = ui_job_json(plater->get_ui_job_worker().is_idle(), last_job.get());
+                // How the plain G-code export export_gcode started last is going, or ended: for an agent answered
+                // export_started, past the call's wait.
+                result["last_export"] = OrcaMCP::last_gcode_export_json();
                 // The state is the last slice_all run's, not the selected plate's alone (OrcaMCP::slice_state).
                 const OrcaMCP::SliceRunJudgement judged = judge_last_run(*plater, plate_list, is_running);
                 result["is_slicing"]         = is_running;

@@ -1,6 +1,7 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPExportTools.hpp
 #pragma once
 
+#include <memory>
 #include <string>
 
 #include <nlohmann/json.hpp>
@@ -26,5 +27,11 @@ class GcodeExportOutcome;
 // (tool_wait_cap) has passed, or the app quits (this_thread_cancelled), then answers gcode_export_answer's, with
 // `started`'s info_messages and the active warnings. HTTP thread.
 nlohmann::json wait_for_gcode_export(GcodeExportOutcome& outcome, const std::string& output_path, const nlohmann::json& started);
+
+// The plain G-code export MCP started last, kept for get_slicing_status's last_export (gcode_export_state_json, null
+// before any): an agent that was answered export_started learns there, and in wait_for_slice's slicing_status, how it
+// ended. Main thread.
+void           note_started_gcode_export(const std::shared_ptr<GcodeExportOutcome>& outcome, const std::string& output_path);
+nlohmann::json last_gcode_export_json();
 
 }}} // namespace Slic3r::GUI::OrcaMCP

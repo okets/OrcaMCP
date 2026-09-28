@@ -83,11 +83,25 @@ public:
     std::string error() const;
     void        end(State state, const std::string& error = {});
 
+    // The call that started the export waits for it. While it does, the app's completion hands it the export's end
+    // (and captures the app's error dialog, whose words the call answers); once the call has stopped waiting, the app
+    // shows its dialog as for its own exports. Main thread, at the completion: whether the call still waits, and so
+    // answers the end.
+    bool hand_to_waiting_call();
+    // HTTP thread, when the call stops waiting: whether the completion was handed to it (then it answers the export's
+    // end, which the main thread records next); after this, none is.
+    bool stop_waiting();
+
 private:
     std::atomic<State> m_state{State::pending};
     mutable std::mutex m_mutex;
     std::string        m_error;
+    bool               m_call_waiting = true;
+    bool               m_handed       = false;
 };
+
+// get_slicing_status's last_export: {output_path, state: writing, written, failed, cancelled or dropped, error when failed}.
+nlohmann::json gcode_export_state_json(const GcodeExportOutcome& outcome, const std::string& output_path);
 
 // How export_gcode's wait for its export ended: the export ended, the call's wait cap passed first, or the app began quitting.
 enum class GcodeExportWait { ended, timed_out, quitting };

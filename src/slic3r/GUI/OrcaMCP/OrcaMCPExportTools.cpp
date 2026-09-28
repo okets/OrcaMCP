@@ -15,10 +15,12 @@
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/Selection.hpp"
 #include "libslic3r/Model.hpp"
+#include "slic3r/Utils/ThreadCancel.hpp"
 
 #include <boost/filesystem.hpp>
 
 #include <chrono>
+#include <thread>
 #include <cmath>
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
@@ -76,6 +78,22 @@ nlohmann::json export_sliced_file(Plater& plater, McpDialogSuppressionGuard& gua
     return guard.fail_on_errors(guard.report(answer));
 }
 
+namespace {
+std::shared_ptr<GcodeExportOutcome> s_last_export;
+std::string                         s_last_export_path;
+} // namespace
+
+void note_started_gcode_export(const std::shared_ptr<GcodeExportOutcome>& outcome, const std::string& output_path)
+{
+    s_last_export      = outcome;
+    s_last_export_path = output_path;
+}
+
+nlohmann::json last_gcode_export_json()
+{
+    return s_last_export ? gcode_export_state_json(*s_last_export, s_last_export_path) : nlohmann::json(nullptr);
+}
+
 nlohmann::json wait_for_gcode_export(GcodeExportOutcome& outcome, const std::string& output_path, const nlohmann::json& started)
 {
     const auto started_at = std::chrono::steady_clock::now();
@@ -94,7 +112,23 @@ nlohmann::json wait_for_gcode_export(GcodeExportOutcome& outcome, const std::str
             outcome.end(GcodeExportOutcome::State::dropped);
         return !still_scheduled;
     };
-    const UiJobWait waited = wait_until(ended, tool_wait_cap(), std::chrono::milliseconds(50), [] { wxWakeUpIdle(); });
+    UiJobWait waited = UiJobWait::timed_out;
+    try {
+        waited = wait_until(ended, tool_wait_cap(), std::chrono::milliseconds(50), [] { wxWakeUpIdle(); });
+    } catch (...) {
+        outcome.stop_waiting();
+        throw;
+    }
+    // Stopping: from now on the app shows the export's error dialog itself. A completion handed to this call in the
+    // meantime is answered: its end is being recorded on the main thread, right after it was handed over.
+    if (outcome.stop_waiting() && waited == UiJobWait::timed_out) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (outcome.state() == GcodeExportOutcome::State::pending && std::chrono::steady_clock::now() < deadline &&
+               !this_thread_cancelled())
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        if (outcome.state() != GcodeExportOutcome::State::pending)
+            waited = UiJobWait::finished;
+    }
     const double    waited_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - started_at).count();
     const GcodeExportWait wait = waited == UiJobWait::finished  ? GcodeExportWait::ended :
                                  waited == UiJobWait::quitting  ? GcodeExportWait::quitting :

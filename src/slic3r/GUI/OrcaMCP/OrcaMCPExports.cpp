@@ -48,6 +48,38 @@ void GcodeExportOutcome::end(State state, const std::string& error)
     m_state.store(state, std::memory_order_release);
 }
 
+bool GcodeExportOutcome::hand_to_waiting_call()
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_handed = m_call_waiting;
+    return m_handed;
+}
+
+bool GcodeExportOutcome::stop_waiting()
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_call_waiting = false;
+    return m_handed;
+}
+
+nlohmann::json gcode_export_state_json(const GcodeExportOutcome& outcome, const std::string& output_path)
+{
+    const auto state_name = [](GcodeExportOutcome::State state) {
+        switch (state) {
+        case GcodeExportOutcome::State::pending: return "writing";
+        case GcodeExportOutcome::State::written: return "written";
+        case GcodeExportOutcome::State::failed: return "failed";
+        case GcodeExportOutcome::State::cancelled: return "cancelled";
+        case GcodeExportOutcome::State::dropped: return "dropped";
+        }
+        return "writing";
+    };
+    nlohmann::json json = {{"output_path", output_path}, {"state", state_name(outcome.state())}};
+    if (outcome.state() == GcodeExportOutcome::State::failed)
+        json["error"] = outcome.error();
+    return json;
+}
+
 nlohmann::json gcode_export_answer(const GcodeExportOutcome& outcome, GcodeExportWait wait, const std::string& output_path,
                                    std::optional<std::uintmax_t> bytes, double waited_s)
 {
