@@ -646,7 +646,8 @@ def describe_instance(instance: dict) -> str:
                 f"it tells neither its pid nor its project)")
     project = instance.get("project") or {}
     unsaved = ", unsaved changes" if project.get("unsaved") else ""
-    return (f"pid {instance['pid']} on port {instance['port']}, project \"{project.get('name', '')}\"{unsaved}, "
+    name = f"project \"{project['name']}\"" if project.get("name") else "no project yet"
+    return (f"pid {instance['pid']} on port {instance['port']}, {name}{unsaved}, "
             f"program {instance.get('executable', '')}, data folder {instance.get('data_dir', '')}")
 
 
@@ -677,11 +678,14 @@ def next_step(tool: str, why: str, arguments: dict = None) -> dict:
 
 
 def choose_steps(instances: list, why: str) -> list:
-    """Choosing one of `instances`: select_instance naming the first, and list_instances for them all."""
-    first = instances[0]
-    arguments = {"port": first["port"]} if first.get("legacy") else {"pid": first["pid"]}
-    return [next_step("select_instance", why, arguments),
-            next_step("list_instances", "every running instance, with its open project")]
+    """Choosing one of `instances`: select_instance naming the first that tells who it is, and
+    list_instances for them all. An older OrcaMCP is never suggested: it cannot say whose window it is,
+    and on 2026-09-27 the one on 13618 was the user's own."""
+    steps = [next_step("list_instances", "every running instance, with its open project")]
+    first = next((instance for instance in instances if not instance.get("legacy")), None)
+    if first is not None:
+        steps.insert(0, next_step("select_instance", why, {"pid": first["pid"]}))
+    return steps
 
 
 def tool_report(request_id, report: dict, is_error: bool = False) -> dict:
@@ -771,9 +775,9 @@ def lost_instance_answer(request_id, what: str) -> dict:
     if len(successors) == 1:
         choose_instance(successors[0])
         return instance_error(request_id,
-                              f"The OrcaMCP instance this session used ({describe_instance(lost)}) {what}, and has "
-                              f"restarted: this session now uses {describe_instance(successors[0])}. This call was "
-                              f"not run, since the scene is now the restarted instance's: look at it, then call again.",
+                              f"The OrcaMCP instance this session used ({describe_instance(lost)}) has restarted: "
+                              f"this session now uses {describe_instance(successors[0])}. This call was not run, since "
+                              f"the scene is now the restarted instance's: look at it, then call again.",
                               instances, [next_step("get_scene_info", "the restarted instance's scene")])
     if not instances:
         return instance_error(request_id,

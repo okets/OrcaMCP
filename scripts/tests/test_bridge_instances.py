@@ -301,6 +301,25 @@ class ChoosingTests(InstancesTest):
             with self.subTest(arguments=arguments):
                 self.assertEqual(self.call("select_instance", arguments)["rpc_error"]["code"], -32602)
 
+    def test_the_suggested_choice_is_an_instance_that_tells_who_it_is(self):
+        older = self.start(0, registered=False, legacy=True)
+        self.start(40002)
+        self.bridge.ORCAMCP_URL = older.url
+        report = self.call("list_instances")
+        self.assertEqual(report["next_steps"][0], {"tool": "select_instance", "arguments": {"pid": 40002},
+                                                   "why": "several instances run and this session has not chosen one"})
+
+    def test_an_older_orcamcp_is_never_suggested(self):
+        older = self.start(0, registered=False, legacy=True)
+        chosen = self.start(40001)
+        self.bridge.ORCAMCP_URL = older.url
+        self.call("select_instance", {"pid": 40001})
+        chosen.stop()
+        self.instances.remove(chosen)
+        report = self.call("get_scene_info")
+        self.assertNotIn("select_instance", [step["tool"] for step in report["next_steps"]])
+        self.assertEqual([i["port"] for i in report["instances"]], [older.port])
+
     def test_an_older_orcamcp_can_be_chosen_by_its_port(self):
         older = self.start(0, registered=False, legacy=True)
         self.start(40002)

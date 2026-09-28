@@ -3157,7 +3157,7 @@ nothing to suggest has no `next_steps`.
 | `render_plate_view`, on each view whose `uniform_image` is true (beside its `hint`) | `get_scene_info` | nothing printable on that plate was drawn |
 | | `render_plate_view` with `{plate_index, save_to_file: true}` | the plate's objects were drawn but the camera looked elsewhere: no views gives a contact sheet fitted to the plate |
 | `paint_object` with `mode: support` | `set_object_config` for that object: `enable_support` `"1"` and `support_type` `normal(manual)` (or `tree(manual)` when its type is a tree one), for support only where painted | the object has painted enforcers and `enable_support` is off for it, so they do nothing (`info_messages` says so too). Not for blockers alone or erased paint: turning support on is the opposite of what a blocker asks; and not with an `(auto)` type, which would also support every other overhang |
-| The bridge's own answers (`list_instances`, `start_orca`, and a tool call it did not forward) | `select_instance` with the first instance's `pid` (`port` for an older OrcaMCP), and `list_instances` | several instances run and this session has not chosen one, or the one it used is gone |
+| The bridge's own answers (`list_instances`, `start_orca`, and a tool call it did not forward) | `select_instance` with the `pid` of the first instance that tells who it is (never an older OrcaMCP, which cannot), and `list_instances` | several instances run and this session has not chosen one, or the one it used is gone |
 | | `start_orca` (with `new_instance: true` when others run) | no instance runs, or the one this session used is gone |
 | | `get_scene_info` | the instance this session used restarted, and the session now uses the restarted one: its scene is new |
 
