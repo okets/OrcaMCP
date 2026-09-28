@@ -777,6 +777,16 @@ std::vector<std::string> OrcaMCPPresetConfigUtils::UnsavedPresetChanges()
     return unsaved;
 }
 
+std::vector<std::string> OrcaMCPPresetConfigUtils::ProjectEmbeddedPresets()
+{
+    std::vector<std::string> embedded;
+    for (const Preset* preset : wxGetApp().preset_bundle->get_current_project_embedded_presets()) {
+        const char* what = preset->type == Preset::TYPE_PRINTER ? "printer" : preset->type == Preset::TYPE_FILAMENT ? "filament" : "print";
+        embedded.push_back(std::string("the ") + what + " preset '" + preset->name + "'");
+    }
+    return embedded;
+}
+
 nlohmann::json OrcaMCPPresetConfigUtils::InstallPresets(const OrcaMCP::PresetInstallPlan& plan)
 {
     GUI_App&      app    = wxGetApp();
@@ -788,6 +798,7 @@ nlohmann::json OrcaMCPPresetConfigUtils::InstallPresets(const OrcaMCP::PresetIns
     };
 
     const std::string                        printer_before   = bundle.printers.get_selected_preset_name();
+    const std::string                        print_before     = bundle.prints.get_selected_preset_name();
     const std::vector<std::string>           slots_before     = bundle.filament_presets;
     const DynamicPrintConfig                 project_before   = bundle.project_config;
     const std::map<std::string, std::string> filaments_before = filament_section();
@@ -802,6 +813,8 @@ nlohmann::json OrcaMCPPresetConfigUtils::InstallPresets(const OrcaMCP::PresetIns
     if (!bundle.apply_vendor_config(plan.vendors, plan.filaments, &config, /*overwrite=*/false))
         return {{"status", "error"},
                 {"message", "The app could not lay a vendor's profiles into its data folder (its log says why); nothing was installed"}};
+    // The reload gave every slot extruder 1 (load_selections): the project's own maps go back.
+    const std::vector<std::string> maps_restored = OrcaMCP::restore_filament_maps(project_before, bundle.project_config);
     // What the Setup Wizard's Finish runs after (GUI_App::run_wizard), and the save the cloud sync makes.
     app.load_current_presets();
     app.update_publish_status();
@@ -828,7 +841,9 @@ nlohmann::json OrcaMCPPresetConfigUtils::InstallPresets(const OrcaMCP::PresetIns
                              {"filaments_enabled", filaments_enabled},
                              {"selected_printer", bundle.printers.get_selected_preset_name()},
                              {"selection_kept", printer_before == bundle.printers.get_selected_preset_name() &&
+                                                    print_before == bundle.prints.get_selected_preset_name() &&
                                                     slots_before == bundle.filament_presets},
+                             {"filament_maps_restored", maps_restored},
                              {"project_settings_changed", project_before.diff(bundle.project_config)},
                              {"filaments", OrcaMCP::describe_filaments()["filaments"]}};
     std::vector<std::string> printer_names;

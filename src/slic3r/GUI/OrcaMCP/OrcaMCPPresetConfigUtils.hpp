@@ -232,6 +232,8 @@ public:
     static bool SelectFilamentSlotPreset(int slot, const std::string& presetName, std::string& error);
     // The presets with unsaved changes, one line each: "the print preset '0.20mm Standard' (layer_height, ...)".
     static std::vector<std::string> UnsavedPresetChanges();
+    // The presets the project carries of its own (a 3MF's), one line each: "the printer preset 'X'".
+    static std::vector<std::string> ProjectEmbeddedPresets();
     // Installs `plan` as the Setup Wizard's Finish does (PresetBundle::apply_vendor_config, in the merge mode
     // the cloud sync uses, then what GUI_App::run_wizard runs after it) and answers install_presets. Call only
     // after install_refusal passed. Main thread.

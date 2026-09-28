@@ -44,6 +44,15 @@ template<class Entry, class Name> const Entry* find_by_name(const std::vector<En
     return it == entries.end() ? nullptr : &*it;
 }
 
+// "a", "a and b", "a, b and c"
+std::string listed(const std::vector<std::string>& items)
+{
+    std::string text;
+    for (std::size_t i = 0; i < items.size(); ++i)
+        text += (i == 0 ? "" : i + 1 == items.size() ? " and " : ", ") + items[i];
+    return text;
+}
+
 std::string quoted_list(const std::vector<std::string>& names)
 {
     std::string text;
@@ -175,21 +184,40 @@ std::optional<std::string> plan_preset_install(const std::vector<std::string>& p
     return message;
 }
 
-std::optional<std::string> install_refusal(const PipelineState& pipeline, bool ui_job_running, const std::vector<std::string>& unsaved)
+std::optional<std::string> install_refusal(const PipelineState& pipeline, bool ui_job_running, const std::vector<std::string>& unsaved,
+                                           const std::vector<std::string>& embedded)
 {
     if (pipeline_busy(pipeline) != PipelineBusy::idle)
         return pipeline_busy_text(pipeline) + ", so nothing was installed: call wait_for_slice, then install_presets again";
     if (ui_job_running)
         return ui_job_busy_message("install_presets");
-    if (!unsaved.empty()) {
-        std::string presets;
-        for (std::size_t i = 0; i < unsaved.size(); ++i)
-            presets += (i == 0 ? "" : i + 1 == unsaved.size() ? " and " : ", ") + unsaved[i];
-        return "Installing reloads every preset, which drops unsaved changes, and " + presets +
-               (unsaved.size() == 1 ? " has some" : " have some") +
-               ": save_preset keeps them, reset_preset drops them. Nothing was installed";
-    }
+    if (!embedded.empty())
+        return "Installing reloads every preset, which drops the presets this project carries of its own: " + listed(embedded) +
+               ". Nothing was installed. save_project keeps them in the project file: save it, start a new project "
+               "(new_project), install, then load_project the file again, and they come back with it. (save_preset with a "
+               "name keeps one as your own preset too.)";
+    if (!unsaved.empty())
+        return "Installing reloads every preset, which drops unsaved changes, and " + listed(unsaved) +
+               (unsaved.size() == 1 ? " has some" : " have some") + ": save_preset keeps them, reset_preset drops them. Nothing was installed";
     return std::nullopt;
+}
+
+std::vector<std::string> restore_filament_maps(const DynamicPrintConfig& before, DynamicPrintConfig& after)
+{
+    std::vector<std::string> restored;
+    const auto* slots_before = before.option<ConfigOptionStrings>("filament_colour");
+    const auto* slots_after  = after.option<ConfigOptionStrings>("filament_colour");
+    if (slots_before == nullptr || slots_after == nullptr || slots_before->values.size() != slots_after->values.size())
+        return restored;
+    for (const char* key : {"filament_map", "filament_nozzle_map", "filament_volume_map"}) {
+        const auto* was = before.option<ConfigOptionInts>(key);
+        auto*       now = after.option<ConfigOptionInts>(key);
+        if (was == nullptr || now == nullptr || was->values == now->values || was->values.size() != slots_before->values.size())
+            continue;
+        now->values = was->values;
+        restored.push_back(key);
+    }
+    return restored;
 }
 
 json catalog_printer_json(const CatalogPrinter& printer)

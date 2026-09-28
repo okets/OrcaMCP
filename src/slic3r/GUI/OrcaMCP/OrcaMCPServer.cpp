@@ -1683,11 +1683,13 @@ void OrcaMCPServer::register_builtin_tools()
         "vendor profiles are laid into the app's data folder when its vendor is not installed yet, and its model "
         "and nozzle are enabled; a filament is enabled. Names as get_presets {installed: false} lists them; a printer "
         "of a vendor whose folder does not begin its name (Bambu Lab's is BBL) needs vendor. Every preset is reloaded "
-        "and the selected printer, filament slots and colours stay as they were (selection_kept); a printer is not "
+        "and the selected printer, print preset, filament slots and colours stay as they were (selection_kept), the "
+        "filament maps put back (filament_maps_restored); a printer is not "
         "selected: next_steps names select_preset. Answers installed, already_installed, vendors_added, "
         "filaments_enabled (the filaments the app enables with a new printer too) and project_settings_changed. "
-        "Refused while slicing, while a job runs, and over unsaved preset changes, which the reload would drop "
-        "(save_preset or reset_preset first). Not undoable: it writes the data folder.",
+        "Refused while slicing, while a job runs, over unsaved preset changes (save_preset or reset_preset first) and "
+        "while the project carries presets of its own (a 3MF's), which the reload would drop: save_project, new_project, "
+        "install, then load_project the file again. Not undoable: it writes the data folder.",
         {
             {"type", "object"},
             {"properties", {
@@ -1726,7 +1728,8 @@ void OrcaMCPServer::register_builtin_tools()
             auto read_app = [&]() {
                 Plater& plater  = *wxGetApp().plater();
                 refusal         = install_refusal(pipeline_state(plater, plater.get_partplate_list().get_plate_count()),
-                                                  !plater.get_ui_job_worker().is_idle(), OrcaMCPPresetConfigUtils::UnsavedPresetChanges());
+                                                  !plater.get_ui_job_worker().is_idle(), OrcaMCPPresetConfigUtils::UnsavedPresetChanges(),
+                                                  OrcaMCPPresetConfigUtils::ProjectEmbeddedPresets());
                 known_printers  = catalog_printers(*wxGetApp().preset_bundle);
                 known_filaments = catalog_filaments(*wxGetApp().preset_bundle);
                 return nlohmann::json();
@@ -1762,7 +1765,8 @@ void OrcaMCPServer::register_builtin_tools()
                 // Checked again where the install runs: the app may have started a slice or a job meanwhile.
                 Plater& plater = *wxGetApp().plater();
                 if (const auto refusal = install_refusal(pipeline_state(plater, plater.get_partplate_list().get_plate_count()),
-                                                         !plater.get_ui_job_worker().is_idle(), OrcaMCPPresetConfigUtils::UnsavedPresetChanges()))
+                                                         !plater.get_ui_job_worker().is_idle(), OrcaMCPPresetConfigUtils::UnsavedPresetChanges(),
+                                                  OrcaMCPPresetConfigUtils::ProjectEmbeddedPresets()))
                     return error_response(*refusal);
                 return guard.report(OrcaMCPPresetConfigUtils::InstallPresets(plan));
             });

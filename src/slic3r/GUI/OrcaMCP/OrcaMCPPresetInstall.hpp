@@ -20,6 +20,7 @@
 // too, whose merge mode adds to what is installed. get_presets {installed: false} and install_presets.
 
 namespace Slic3r {
+class DynamicPrintConfig;
 class PresetBundle;
 namespace GUI { namespace OrcaMCP {
 
@@ -84,11 +85,18 @@ std::optional<std::string> plan_preset_install(const std::vector<std::string>& p
                                                const std::vector<CatalogPrinter>& known_printers,
                                                const std::vector<CatalogFilament>& known_filaments, PresetInstallPlan& plan);
 
-// Why install_presets must not install now: slicing or exporting, a job (arrange, orient, bed fill), or
-// unsaved preset changes (`unsaved`, one line per preset, "the print preset 'X' (layer_height)"), which
-// the reload of every preset an install ends with would drop -- the Setup Wizard asks what to do with
-// them first.
-std::optional<std::string> install_refusal(const PipelineState& pipeline, bool ui_job_running, const std::vector<std::string>& unsaved);
+// Why install_presets must not install now: slicing or exporting, a job (arrange, orient, bed fill), unsaved
+// preset changes (`unsaved`, one line per preset, "the print preset 'X' (layer_height)"), or presets the
+// project carries of its own (`embedded`, "the printer preset 'X'": a 3MF's, PresetBundle::
+// get_current_project_embedded_presets) -- the reload of every preset an install ends with drops both
+// (PresetBundle::load_presets resets the collections). The Setup Wizard asks about unsaved changes first.
+std::optional<std::string> install_refusal(const PipelineState& pipeline, bool ui_job_running, const std::vector<std::string>& unsaved,
+                                           const std::vector<std::string>& embedded);
+
+// Puts back the project's filament maps (which extruder, nozzle and nozzle volume each slot prints with)
+// from `before` into `after` when the reload an install ends with reset them (PresetBundle::load_selections
+// gives every slot extruder 1) and the slots are the same in number. Returns the keys it put back.
+std::vector<std::string> restore_filament_maps(const DynamicPrintConfig& before, DynamicPrintConfig& after);
 
 // {name, vendor, vendor_id, printer_model, nozzle, installed} and {name, vendor, filament_type, installed},
 // as get_presets {installed: false} lists them.

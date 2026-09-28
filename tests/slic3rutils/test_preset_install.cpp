@@ -232,18 +232,69 @@ TEST_CASE("installing a filament keeps the filament slot 1 had", "[PresetInstall
 
 TEST_CASE("nothing is installed while slicing, while a job runs, or over unsaved preset changes", "[PresetInstall]")
 {
-    CHECK_FALSE(install_refusal(PipelineState{}, false, {}).has_value());
+    CHECK_FALSE(install_refusal(PipelineState{}, false, {}, {}).has_value());
 
     PipelineState slicing;
     slicing.is_slicing = true;
-    CHECK(install_refusal(slicing, false, {})->find("wait_for_slice") != std::string::npos);
-    CHECK(install_refusal(PipelineState{}, true, {})->find("install_presets again") != std::string::npos);
+    CHECK(install_refusal(slicing, false, {}, {})->find("wait_for_slice") != std::string::npos);
+    CHECK(install_refusal(PipelineState{}, true, {}, {})->find("install_presets again") != std::string::npos);
 
     const std::string unsaved = *install_refusal(PipelineState{}, false, {"the print preset '0.20mm Standard' (layer_height)",
-                                                                         "the filament preset 'Generic PLA' (nozzle_temperature)"});
+                                                                         "the filament preset 'Generic PLA' (nozzle_temperature)"}, {});
     CHECK(unsaved.find("the print preset '0.20mm Standard' (layer_height) and the filament preset") != std::string::npos);
     CHECK(unsaved.find("save_preset") != std::string::npos);
     CHECK(unsaved.find("reset_preset") != std::string::npos);
+}
+
+TEST_CASE("nothing is installed while the project carries presets of its own, which the reload would drop", "[PresetInstall]")
+{
+    // A 3MF's own presets (a project's embedded ones) live in the preset collections until the project
+    // closes: an install reloads every preset, and they would be gone from the project.
+    const auto refusal = install_refusal(PipelineState{}, false, {}, {"the printer preset 'Bambu Lab A1 0.4 nozzle(Kuromi head.3mf)'",
+                                                                      "the filament preset 'Bambu PLA Basic(Kuromi head.3mf)'"});
+    REQUIRE(refusal.has_value());
+    CHECK(refusal->find("'Bambu Lab A1 0.4 nozzle(Kuromi head.3mf)'") != std::string::npos);
+    CHECK(refusal->find("'Bambu PLA Basic(Kuromi head.3mf)'") != std::string::npos);
+    CHECK(refusal->find("save_project") != std::string::npos);
+    CHECK(refusal->find("new_project") != std::string::npos);
+    CHECK(refusal->find("load_project") != std::string::npos);
+    CHECK(refusal->find("Nothing was installed") != std::string::npos);
+}
+
+TEST_CASE("an install's reload resets the project's filament maps, and the install puts them back", "[PresetInstall]")
+{
+    InstallFolders folders;
+    AppConfig      app_config;
+    app_config.set_section(AppConfig::SECTION_FILAMENTS, {{"Generic PLA @System", "true"}});
+    PresetBundle bundle;
+    bundle.load_presets(app_config, ForwardCompatibilitySubstitutionRule::EnableSilent);
+    // The project's own filament-to-extruder map, as a two-extruder printer keeps it.
+    bundle.project_config.option<ConfigOptionInts>("filament_map")->values        = {2};
+    bundle.project_config.option<ConfigOptionInts>("filament_nozzle_map")->values = {1};
+    const DynamicPrintConfig before = bundle.project_config;
+
+    bundle.export_selections(app_config);
+    REQUIRE(bundle.apply_vendor_config({}, {{"Generic PETG @System", "true"}}, &app_config, /*overwrite=*/false));
+    // load_selections gives every slot extruder 1 again.
+    REQUIRE(bundle.project_config.option<ConfigOptionInts>("filament_map")->values == std::vector<int>{1});
+
+    CHECK(restore_filament_maps(before, bundle.project_config) == std::vector<std::string>{"filament_map", "filament_nozzle_map"});
+    CHECK(bundle.project_config.option<ConfigOptionInts>("filament_map")->values == std::vector<int>{2});
+    CHECK(bundle.project_config.option<ConfigOptionInts>("filament_nozzle_map")->values == std::vector<int>{1});
+    CHECK(restore_filament_maps(before, bundle.project_config).empty()); // nothing left to put back
+}
+
+TEST_CASE("filament maps of another slot count are not put back", "[PresetInstall]")
+{
+    DynamicPrintConfig before = DynamicPrintConfig::full_print_config();
+    before.option<ConfigOptionStrings>("filament_colour", true)->values = {"#FFFFFF", "#000000"};
+    before.option<ConfigOptionInts>("filament_map", true)->values      = {1, 2};
+    DynamicPrintConfig after = before;
+    after.option<ConfigOptionStrings>("filament_colour")->values = {"#FFFFFF"};
+    after.option<ConfigOptionInts>("filament_map")->values       = {1};
+
+    CHECK(restore_filament_maps(before, after).empty());
+    CHECK(after.option<ConfigOptionInts>("filament_map")->values == std::vector<int>{1});
 }
 
 TEST_CASE("get_presets lists what is not installed, printers and filaments apart", "[PresetInstall]")

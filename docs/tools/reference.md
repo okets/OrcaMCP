@@ -1781,6 +1781,7 @@ whose folder begins its name, or the one `vendor` names.
   "filaments_enabled": ["Generic PLA @System"],
   "selected_printer": "Flashforge Creator 5 Pro 0.4 nozzle",
   "selection_kept": true,
+  "filament_maps_restored": ["filament_map"],
   "project_settings_changed": [],
   "filaments": [...],
   "next_steps": [{"tool": "select_preset", "arguments": {"type": "printer", "name": "Anker M5 0.4 nozzle"},
@@ -1789,14 +1790,19 @@ whose folder begins its name, or the one `vendor` names.
 ```
 `filaments_enabled` is every filament the app enabled, the ones the app adds with a new printer (its
 default materials) too. The printer is not selected, unlike the wizard's Finish: a switch replaces the
-filament slots and their colours, so it is its own call (`next_steps`). `selection_kept` and
-`project_settings_changed` say whether the reload left the selection and the project's settings as they
-were. A call that names only what is installed changes nothing: `changed: false`, `already_installed`.
+filament slots and their colours, so it is its own call (`next_steps`). `selection_kept` says whether the
+reload left the printer, print preset and filament slots selected as they were. The reload gives every
+slot extruder 1 again (upstream's `load_selections`); the install puts the project's filament maps back
+(which extruder, nozzle and nozzle volume each slot prints with), and `filament_maps_restored` names them.
+`project_settings_changed` lists any other project setting the reload changed. A call that names only what is installed changes nothing: `changed: false`, `already_installed`.
 
 Refused, installing nothing: no names; a name no catalog has (the message says where to look); while
 slicing or exporting (`wait_for_slice` first) or while an arrange, orient or bed fill runs; over unsaved
 preset changes, which the reload would drop (the message names each preset and its changed settings:
-`save_preset` keeps them, `reset_preset` drops them) -- the wizard asks about them first. There is no
+`save_preset` keeps them, `reset_preset` drops them) -- the wizard asks about them first; and while the
+project carries presets of its own (a 3MF's embedded presets), which the reload would drop too (it resets
+every preset collection): the message names them, and the way through is `save_project`, `new_project`,
+`install_presets`, then `load_project` the file again, which brings them back. There is no
 undo: it writes the data folder. Creating a new printer or filament preset from a template (the
 sidebar's Create printer / Create filament) is not an MCP tool yet: `clone_preset`, `apply_config` and
 `save_preset` make a printer of one installed.
