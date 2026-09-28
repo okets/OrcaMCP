@@ -73,7 +73,8 @@ gave were wrong; the prompts carry the corrected facts.
 | 11 | [Parts and mesh edits](11-parts-and-mesh-edits.md) | 09 | split to objects/parts, add part/modifier/negative/support volumes, per-part settings and transforms, change type, delete, rename, merge; the get_server_info catalogue's growth | merged and pushed 2026-09-28 (11a + two rounds; merge 1769d93cd0; Build all green); probes AK, AL |
 | 12 | [Arrange, instances, plates](12-arrange-instances-plates.md) | 11 | arrange all plates and options, remove instance / instance count / fill bed, plate settings, the global bed type path | merged and pushed 2026-09-28 (two rounds, 8 commits; merge b876149c10; one racy bed-fill test failed on Linux and Windows, fixed in 13); probes AM, AN |
 | 13 | [Filaments and printers](13-filaments-and-printers.md) | 12 | add/delete filament slots, a slot's settings, installing printers/filaments, Flashforge fans / speed / Z offset (no live printer commands without the user) | merged and pushed 2026-09-28 (three rounds; merge 7c42ab06d4; Build all green, 12's race fixed); probes AO-AX |
-| 14 | [Slice, export, view](14-slice-export-view.md) | 13 | cancel a slice, export .gcode.3mf and STL, G-code at a layer, the user's tab and camera, reload from disk | design approved 2026-09-28; implementing (GO 2026-09-28, after 13's merge) |
+| 14 | [Slice, export, view](14-slice-export-view.md) | 13 | cancel a slice, export .gcode.3mf and STL, G-code at a layer, the user's tab and camera, reload from disk | merged and pushed 2026-09-29 (four rounds; merge 186abeec05; Windows ARM64 then failed on a test variable named `far`, an empty macro in windef.h, renamed in 67aa9d956c; Build all green); probes AY-BK |
+| 15 | Follow-ups (no prompt file; sent as messages) | 14 | 14's review leftovers (filament-change reports before a slice, the plate's build-volume test), binary STL read as ASCII (admesh), export_gcode waits for its .gcode | implementing, round 2 |
 | 10 | [Flashforge print options](../2026-09-27-flashforge-print-options.md) (flow calibration, leveling, time-lapse) | 01–14 | `FlashforgeApi::PrintOptions`, the send dialog, `send_to_printer`, `print_printer_file`, `get_printer_status` | written 2026-09-27 in another session; the user decided 2026-09-28 it runs last, after all other work and right before the version bump. Its live printer steps start real prints: they run only with the user present and on their word at that moment |
 
 If time runs short, the priority is 01, 02, 03, 04b, 05, 08, 04, 06, 07. Anything unfinished moves to the
@@ -112,7 +113,9 @@ roadmap; nothing ships half-done.
   discoverability. Unit tests and code review come on top of this, not instead of it.
 - **Status:** update the table above as prompts move through design → approved → implementing → merged.
 
-Order of work: 08, 08b, 11a, 09, 11, 12, 13, 14, then 10 (the Flashforge print options, last), then the version bump.
+Order of work: 08, 08b, 11a, 09, 11, 12, 13, 14, 15, then 10 (the Flashforge print options, last), then the version bump.
+
+Server instructions: decided 2026-09-29 by an A/B test (the user's call): 36 fresh `claude -p` agents, three texts (current 1,301 chars; +7 tool names; +10), six tasks needing tools the current text does not name. 12/12, 12/12, 11/12 (the miss warned first on purpose); same calls, searches and cost. Agents find tools by name in the deferred list, so the current text stays.
 The instructions text is the user's shorter version (2026-09-28); each prompt adds only its own tools to it.
 
 ## Waiting for the user
