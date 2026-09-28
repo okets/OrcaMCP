@@ -42,8 +42,9 @@ import urllib.error
 # against it by tests/slic3rutils/test_mcp_tool_list.cpp. The bridge serves its server_tools while
 # the app is not running, and takes its own tools (bridge_tools, e.g. start_orca) from it whether
 # the app runs or not, so a client sees the same names and descriptions before and after the app
-# starts. None of that text is written here; the one exception is the start_orca offered when the
-# file itself is unusable (fallback_bridge_tools).
+# starts. The server instructions initialize answers come from it too. None of that text is written
+# here; the one exception is the start_orca offered when the file itself is unusable
+# (fallback_bridge_tools).
 TOOLS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "orcamcp_tools.json")
 
 
@@ -81,25 +82,33 @@ def fallback_bridge_tools(error: str) -> list:
     }]
 
 
+def _instructions(manifest) -> str | None:
+    """The manifest's server instructions, or None when it has none: initialize then leaves them out."""
+    instructions = manifest.get("instructions")
+    return instructions if isinstance(instructions, str) and instructions else None
+
+
 def load_tools_manifest(path: str = TOOLS_FILE) -> tuple:
-    """Return (server_tools, bridge_tools, error), as tools/list entries.
+    """Return (server_tools, bridge_tools, instructions, error): tools/list entries, and the server
+    instructions (None when the file has none).
 
     Never raises: a bridge that dies lists nothing at all. An unreadable or malformed file gives no
-    app tools, the fallback start_orca, and the reason.
+    app tools, the fallback start_orca, no instructions, and the reason.
     """
     try:
         with open(path, encoding="utf-8") as f:
             manifest = json.load(f)
-        return _list_entries(manifest, "server_tools"), _list_entries(manifest, "bridge_tools"), None
+        return (_list_entries(manifest, "server_tools"), _list_entries(manifest, "bridge_tools"),
+                _instructions(manifest), None)
     except Exception as e:
         error = f"cannot read OrcaMCP's tool list {path}: {e}"
-        return [], fallback_bridge_tools(error), error
+        return [], fallback_bridge_tools(error), None, error
 
 
 def install_tools_manifest(path: str = TOOLS_FILE):
     """Read the tool list the bridge serves. Runs once at import; tests point it at other files."""
-    global OFFLINE_SERVER_TOOLS, BRIDGE_TOOLS, TOOLS_MANIFEST_ERROR
-    OFFLINE_SERVER_TOOLS, BRIDGE_TOOLS, TOOLS_MANIFEST_ERROR = load_tools_manifest(path)
+    global OFFLINE_SERVER_TOOLS, BRIDGE_TOOLS, SERVER_INSTRUCTIONS, TOOLS_MANIFEST_ERROR
+    OFFLINE_SERVER_TOOLS, BRIDGE_TOOLS, SERVER_INSTRUCTIONS, TOOLS_MANIFEST_ERROR = load_tools_manifest(path)
     if TOOLS_MANIFEST_ERROR:
         print(f"[orcamcp-bridge] {TOOLS_MANIFEST_ERROR}", file=sys.stderr)
 
@@ -840,6 +849,23 @@ def call_bridge_tool(request_id, name: str, handler, arguments) -> dict:
     return handler(request_id, arguments)
 
 
+def initialize_result(client_protocol: str) -> dict:
+    """What initialize answers, app or no app: the app's server instructions, from orcamcp_tools.json,
+    are the one text a client shows before any tool is loaded."""
+    result = {
+        "serverInfo": SERVER_INFO,
+        "capabilities": {
+            # The static list this bridge may serve first is not necessarily current, so the
+            # client must be willing to be told it changed.
+            "tools": {"listChanged": True}
+        },
+        "protocolVersion": client_protocol  # Echo client's version for compatibility
+    }
+    if SERVER_INSTRUCTIONS:
+        result["instructions"] = SERVER_INSTRUCTIONS
+    return result
+
+
 def handle_local_request(request: dict) -> dict | None:
     """
     Handle requests locally when OrcaSlicer isn't available.
@@ -857,15 +883,7 @@ def handle_local_request(request: dict) -> dict | None:
         # Store client's protocol version for potential use
         client_protocol = params.get("protocolVersion", "2024-11-05")
         log_debug(f"Initialize from client with protocol {client_protocol}")
-        return make_success_response(request_id, {
-            "serverInfo": SERVER_INFO,
-            "capabilities": {
-                # The static list this bridge may serve first is not necessarily current, so the
-                # client must be willing to be told it changed.
-                "tools": {"listChanged": True}
-            },
-            "protocolVersion": client_protocol  # Echo client's version for compatibility
-        })
+        return make_success_response(request_id, initialize_result(client_protocol))
 
     if method == "notifications/initialized":
         # This is a notification - no response needed but we must not block

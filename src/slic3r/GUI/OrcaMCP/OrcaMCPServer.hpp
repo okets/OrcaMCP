@@ -123,9 +123,11 @@ public:
     // summary, app tools and bridge-only tools in separate arrays, each sorted by name.
     static nlohmann::json tools_manifest();
 
-private:
-    // MCP protocol handlers
+    // initialize: the protocol version, the tools capability, the server's name and version, and the
+    // server instructions (OrcaMCP::server_instructions).
     static nlohmann::json handle_initialize(const nlohmann::json& params);
+
+private:
 
     // Tool-specific handlers
     static nlohmann::json handle_get_preview_base64(const nlohmann::json& params);

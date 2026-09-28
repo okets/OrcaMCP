@@ -141,6 +141,7 @@ generated from that registry:
 | `tools/list` while the app runs | `OrcaMCPServer::handle_tools_list` (bridge-only tools left out) |
 | `get_server_info`'s catalogue | `OrcaMCPServerInfo.cpp`, on every call |
 | The bridge's list while the app is down, and its own tools' text either way | `scripts/orcamcp_tools.json`, the golden file |
+| `initialize`'s `instructions` (the bridge always answers `initialize` itself, from the golden file's `instructions`; the app's copy is for direct HTTP clients) | `OrcaMCP::server_instructions()`, `OrcaMCPServerInfo.cpp` (see "Server instructions and next steps") |
 
 Regenerate the golden file with the command in "Adding New Tools", step 4, below.
 
@@ -208,7 +209,9 @@ What the tests enforce, with no app running:
   - `get_server_info`'s default response names every tool, bridge-only ones included, reports
     `SoftFever_VERSION`, stays under 6 KB, and its section index matches the sections;
   - every tool name `get_server_info` mentions, in structured fields or prose, is a real tool
-    (`tests/slic3rutils/mcp_tool_references.hpp`, reusable for other text).
+    (`tests/slic3rutils/mcp_tool_references.hpp`, reusable for other text);
+  - `initialize` answers the server instructions, which fit in 2048 ASCII characters, name only
+    real tools, and name the tools agents missed without them; the golden file's copy matches.
 - `scripts/tests/` (`python3 -m unittest discover -s scripts/tests -t scripts`, run by the fork's
   `Python tests` workflow on pushes to `mcp`): the bridge's offline and online lists are identical
   in names, descriptions and order; no bridge tool's text appears in the bridge; every
@@ -216,13 +219,35 @@ What the tests enforce, with no app running:
   stops the bridge, which then offers a fallback `start_orca` whose description names the file;
   `start_orca` and `wait_for_slice` refuse an argument their schema in the file does not declare,
   in the app's words, and no bridge tool takes a nested object; the Windows path rewrite forwards
-  arguments that are not an object untouched, for the app to refuse (`test_bridge_arguments.py`).
+  arguments that are not an object untouched, for the app to refuse (`test_bridge_arguments.py`);
+  `initialize` answers the file's instructions, app or no app, and still answers without them for a
+  file that has none (`test_bridge_instructions.py`).
 - CI: Build all also runs on a change to `scripts/orcamcp_tools.json` alone, since only its C++
   tests can compare the file with the registry.
 
 Adding a bridge-only tool: a `register_bridge_tool({...})` in `OrcaMCPServer::register_bridge_tools()`
 (same fields as any tool, no handler), its Python handler in `BRIDGE_HANDLERS` in
 `scripts/orcamcp-bridge.py`, then regenerate the golden file.
+
+### Server instructions and next steps
+
+Claude Code loads MCP tool schemas lazily: an agent sees only the tool **names** until it picks one,
+and a tool's description only after it chose that tool. The one text it sees before loading anything
+is the server's `instructions`, from `initialize`. In the 2026-09-26 session every tool an agent
+loaded was picked by exact name, and the ones nothing named (`get_mesh_health`,
+`get_object_components`, `paint_object`, `wait_for_slice`) were missed until the user pushed back.
+
+- **Where they live.** `OrcaMCP::server_instructions()` (`OrcaMCPServerInfo.cpp`) is the one copy:
+  `OrcaMCPServer::handle_initialize` answers it, and `tools_manifest()` writes it into the golden
+  file's `instructions`, which the bridge's `initialize` answers. The bridge answers `initialize`
+  itself even while the app runs, so what a client shows is always the golden file's copy; the
+  `[orcamcp][tools]` golden-file test keeps the two equal.
+- **The limit is 2048 characters.** Claude Code cuts a server's instructions there ("... [truncated]",
+  measured on another server's on 2026-09-28), so they are ASCII (characters = bytes), at most 2048,
+  most important lines first: one line per job naming its key tools, the canonical workflow, the
+  footguns (`send_to_printer` starts the print, `save_project` without a path overwrites, `load_project`
+  and `new_project` discard), and `get_server_info` for the rest. A test enforces the limit and checks
+  every snake_case name in them.
 
 ---
 

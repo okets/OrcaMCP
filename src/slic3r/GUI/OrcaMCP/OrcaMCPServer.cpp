@@ -614,7 +614,8 @@ nlohmann::json OrcaMCPServer::handle_initialize(const nlohmann::json& params)
         {"serverInfo", {
             {"name", "orca-slicer"},
             {"version", version()}
-        }}
+        }},
+        {"instructions", server_instructions()}
     };
 }
 
@@ -689,6 +690,7 @@ nlohmann::json OrcaMCPServer::tools_manifest()
     return {
         {"generated_from", "The MCP tool registry in src/slic3r/GUI/OrcaMCP. Do not edit by hand: see CLAUDE.md, "
                            "\"Tool list\", for how to regenerate it."},
+        {"instructions", server_instructions()},
         {"server_tools", server_tools},
         {"bridge_tools", bridge_tools}
     };
