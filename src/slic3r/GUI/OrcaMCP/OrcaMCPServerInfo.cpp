@@ -23,15 +23,16 @@ json quick_start()
 {
     return json{
         {"first_steps", {
-            "1. Call get_scene_info to understand current project state",
-            "2. Use render_plate_view with save_to_file=true to visualize",
-            "3. For more, call get_server_info with a section from the sections list below"
+            "1. get_scene_info: plates, objects and their object_id",
+            "2. get_mesh_health, get_object_components: holes, open edges, loose parts",
+            "3. render_plate_view save_to_file=true, then Read the PNG",
+            "4. get_server_info section=<one of sections> for more"
         }},
         {"common_tasks", {
-            {"load_and_slice", "load_model -> arrange_objects -> slice_all -> poll get_slicing_status -> export_gcode"},
-            {"change_settings", "apply_config with settings array"},
-            {"modify_object", "get_scene_info (get object_id) -> transform tools"},
-            {"visualize", "render_plate_view with save_to_file=true (omit views for a 3-view contact sheet), then Read the PNG; check uniform_image first"}
+            {"load_and_slice", "load_model -> slice_all -> wait_for_slice -> get_print_estimate -> export_gcode"},
+            {"supports", "apply_config enable_support, support_type (set_object_config: one object); paint_object mode support; render_plate_view layer_view"},
+            {"modify_object", "get_scene_info (object_id) -> transform tools"},
+            {"visualize", "render_plate_view save_to_file=true; check uniform_image first"}
         }}
     };
 }
@@ -52,9 +53,9 @@ json suggested_flows()
                 {"next2", "3. Start slicing"},
                 {"tool3", "slice_all"},
                 {"example3", "{}"},
-                {"next3", "4. Wait for completion (poll every 2-3 seconds)"},
-                {"tool4", "get_slicing_status"},
-                {"example4", "{} -> repeat until is_slicing=false"},
+                {"next3", "4. Wait for completion: it returns once the run is over"},
+                {"tool4", "wait_for_slice"},
+                {"example4", "{} -> outcome done"},
                 {"next4", "5. Export G-code"},
                 {"tool5", "export_gcode"},
                 {"example5", R"({"output_path": "/path/to/output.gcode"})"}
@@ -137,8 +138,8 @@ json suggested_flows()
                 {"step2", "2. Slice the project"},
                 {"tool2", "slice_all"},
                 {"step3", "3. Wait for slicing to complete"},
-                {"tool3", "get_slicing_status"},
-                {"note2", "Poll every 2-3 seconds until is_slicing=false"},
+                {"tool3", "wait_for_slice"},
+                {"note2", "It returns once the run is over; call it again on timed_out"},
                 {"step4", "4. Send to printer"},
                 {"tool4", "send_to_printer"},
                 {"example4", R"({"start_print": false})"},
@@ -280,7 +281,7 @@ json concepts()
         }},
         {"slicing", {
             {"description", "Slicing converts 3D models into G-code layer by layer. It's an async operation."},
-            {"workflow", "1) Load model 2) Configure settings 3) Call slice_all 4) Poll get_slicing_status until complete 5) Export G-code"}
+            {"workflow", "1) Load model 2) Configure settings 3) Call slice_all 4) Call wait_for_slice, which returns once it is over 5) Export G-code"}
         }},
         {"object_ids", {
             {"description", "Every object description (get_scene_info's model_objects and unplaced_objects, load_model's loaded_objects) carries object_id: the 0-based index every tool's object_id parameter takes. object_index is the same number, kept for older readers."},
@@ -371,7 +372,7 @@ json warnings_and_best_practices()
                 {"get_scene_info", "Use with_model_object_features=false unless you need every object's mesh-health numbers."}
             }},
             {"prefer_light_tools", {
-                "get_slicing_status - tiny response, safe for polling",
+                "wait_for_slice - one call waits a slice out, instead of polling get_slicing_status",
                 "apply_config - small response",
                 "undo/redo - minimal response",
                 "All transform tools (move, rotate, scale, etc.) - minimal responses"
@@ -379,7 +380,7 @@ json warnings_and_best_practices()
         }},
         {"common_pitfalls", {
             {"object_id_shifts", "After a delete, object_id values shift. Re-read get_scene_info; internal_id finds the same object again."},
-            {"async_operations", "slice_all, auto_orient, arrange_objects are async. Poll or wait before next step."},
+            {"async_operations", "slice_all and export_gcode run in the background: call wait_for_slice. arrange_objects, auto_orient, flatten_object and clone_object answer once their job is applied (finished: false past the bridge's cap: then get_slicing_status's ui_job)."},
             {"cut_object_caution", "Cut removes original and creates new object(s). Use undo if result is wrong."},
             {"settings_not_saved", "apply_config creates dirty values. User must save preset in UI to persist."},
             {"undo_limits", "Undo history is limited. Save project before destructive operations."},
@@ -389,7 +390,7 @@ json warnings_and_best_practices()
             "Batch settings: put multiple items in one apply_config call",
             "Re-read object_id from get_scene_info after a delete, not before every call",
             "Use render_plate_view before and after transforms to verify",
-            "Poll get_slicing_status every 2-3 seconds, not faster"
+            "Call wait_for_slice after slice_all rather than polling get_slicing_status"
         }},
         {"visual_preview", {
             {"description", "Many tools support include_preview=true to return a turntable preview image path alongside results."},

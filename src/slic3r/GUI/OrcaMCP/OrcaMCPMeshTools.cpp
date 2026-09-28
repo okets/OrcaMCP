@@ -17,9 +17,10 @@ void OrcaMCPServer::register_mesh_tools()
     register_tool({
         "get_mesh_health",
         ToolCategory::Models,
-        "Mesh errors, shells, the warning icon",
-        "Mesh errors behind the object list's warning icon: open edges (holes, non-manifold), "
-        "repaired facets, and loose parts or stray shells, for one object and each of its volumes. "
+        "Mesh errors: holes, open edges, repairs",
+        "Check an object's mesh for problems: holes and open edges (non-manifold), repaired facets, and "
+        "loose parts or stray shells, for one object and each of its volumes -- the errors behind the "
+        "object list's warning icon. "
         "Every row -- the object and each volume -- has mesh_warning (whether the icon shows) and, only "
         "when it is true, `tooltip` (the icon's tooltip, exactly as the GUI shows it, in the app's "
         "language; its last line is the GUI's \"click the icon\") and mesh_warning_reason (the "

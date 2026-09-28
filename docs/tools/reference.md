@@ -29,14 +29,14 @@ into a call that reports success and changes nothing. See [Error Handling](#erro
 | Category | Tools |
 |----------|-------|
 | **Scene** | `get_scene_info`, `new_project`, `load_project`, `save_project`, `export_3mf` |
-| **Models** | `load_model`, `auto_orient`, `arrange_objects`, `get_object_info`, `get_mesh_health`, `rename_object`, `set_object_printable` |
+| **Models** | `load_model`, `auto_orient`, `arrange_objects`, `get_object_info`, `get_mesh_health`, `get_object_components`, `rename_object`, `set_object_printable` |
 | **Transforms** | `move_object`, `rotate_object`, `scale_object`, `mirror_object`, `flatten_object`, `clone_object`, `cut_object`, `delete_object`, `transform_objects` |
 | **Plates** | `add_plate`, `select_plate`, `delete_plate`, `set_prime_tower_position` |
 | **Config** | `get_presets`, `get_edited_presets`, `get_config_values`, `select_preset`, `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset`, `get_valid_config_keys` |
 | **Per-Object** | `get_object_config`, `set_object_config`, `reset_object_config` |
 | **Layer Ranges** | `get_object_layer_ranges`, `set_object_layer_range`, `delete_object_layer_range` |
 | **Filaments & colour** | `get_filaments`, `set_object_filament`, `set_mixed_filament`, `delete_mixed_filament`, `set_filament_color`, `get_flush_volumes`, `set_flush_volumes`, `auto_calc_flush_volumes`, `get_toolchanger_config`, `suggest_color_mix`, `get_color_palette` |
-| **Painting** | `paint_object`, `remap_paint`, `get_object_paint`, `clear_object_paint`, `set_brim_ears`, `get_object_components`, `pick_facet` |
+| **Painting** | `paint_object`, `remap_paint`, `get_object_paint`, `clear_object_paint`, `set_brim_ears`, `pick_facet` |
 | **Slicing** | `slice_all`, `wait_for_slice` (bridge-only), `get_slicing_status`, `export_gcode`, `get_print_estimate` |
 | **Visualization** | `render_plate_view`, `get_preview_base64`, `set_gcode_view_type` |
 | **Printers** | `get_printers`, `select_printer`, `add_physical_printer`, `discover_printers`, `send_to_printer`, `get_printer_status`, `printer_control`, `list_printer_files`, `print_printer_file`, `match_project_to_printer` |
@@ -296,7 +296,8 @@ the filament map). Such a dialog waits for the user; tool calls still run while 
 ---
 
 ### get_slicing_status
-Check slicing progress, for the selected plate and for every plate.
+Check slicing progress, for the selected plate and for every plate. To wait for a slice to finish,
+call `wait_for_slice` rather than polling this.
 
 **Parameters:** None
 
@@ -352,7 +353,7 @@ the end of it reads `done`; `plates_sliced` / `plates` say which plates have a r
 ## Project Tools
 
 ### new_project
-Create a new empty project. A running slice is cancelled first (see `quit_app` for how long that can
+Create a new empty project. Unsaved project changes are discarded without asking. A running slice is cancelled first (see `quit_app` for how long that can
 take). Refused while the startup "restore unsaved items?" prompt waits (`get_scene_info`'s
 `open_dialogs`): the new project would take over the app's record of the backup that prompt offers,
 and a later launch would not offer it again. Answer the prompt, or `quit_app`, which keeps it. An
@@ -369,7 +370,9 @@ the new project was started.
 ---
 
 ### load_project
-Load a project file (.3mf), replacing the current project. A running slice is cancelled first.
+Open a project file (.3mf) as the project: its objects, plates **and presets** replace the scene and
+the current settings, and unsaved project changes are discarded without asking. To add a model's
+geometry without changing any setting, use `load_model`. A running slice is cancelled first.
 Refused while the startup "restore unsaved items?" prompt waits, as `new_project` is.
 
 **Parameters:**
@@ -406,7 +409,9 @@ it - `project_renamed_to` says which file that is.
 ---
 
 ### save_project
-Save the current project.
+Save the current project. Without `output_path` it **overwrites the file the project is named after**
+(the last `load_project`, `export_3mf` or `save_project` path); with it, it saves there and names the
+project after it, as `export_3mf` does.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
@@ -464,7 +469,10 @@ and a Cmd-S in the GUI overwrite that file.
 ## Model Tools
 
 ### load_model
-Import a 3D model file, adding its objects to the scene.
+Import a 3D model file, adding its objects to the scene and **keeping the current presets**: this is
+how to re-import a model without losing settings. To open a 3MF as the project, with its presets, use
+`load_project`. `next_steps` names `get_mesh_health` for a loaded object with the mesh warning icon and
+`get_object_components` for one with a part made of several shells (see [Next Steps](#next-steps)).
 
 A 3MF is always imported as geometry only, whatever the app's "load behaviour" setting says and
 whether the scene is empty or not: its printer, filament and process presets are not applied, your
@@ -584,8 +592,9 @@ auto_orient again".
 ---
 
 ### get_mesh_health
-Mesh errors behind the object list's warning icon: open edges (holes, non-manifold), repaired
-facets, and loose parts or stray shells, for one object and each of its volumes.
+Check an object's mesh for problems: holes and open edges (non-manifold), repaired facets, and loose
+parts or stray shells, for one object and each of its volumes -- the errors behind the object list's
+warning icon.
 
 The icon state and its tooltip come from the object list's own code (`mesh_errors_info` in
 `GUI_ObjectList.cpp`), so this reports exactly what the GUI shows: the icon appears when a mesh has
@@ -1203,7 +1212,8 @@ them, so material searches do not need the full config.
 ---
 
 ### get_edited_presets
-Get currently active presets with dirty options.
+Every setting of the selected printer, print and filament presets, unsaved ones marked: 25-48 KB. For
+a few settings, or which presets are selected, use `get_config_values` (under 1 KB).
 
 **Parameters:** None
 
@@ -1269,7 +1279,7 @@ A dozen keys cost well under 1 KB. An unknown key is an error naming it, in `unk
 ---
 
 ### select_preset
-Switch to a different preset.
+Switch to a different preset. To change individual settings, use `apply_config`.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
@@ -1302,7 +1312,10 @@ save the colours for the selected printer, so a switch away and back returns the
 ---
 
 ### apply_config
-Modify configuration settings.
+Change settings of the selected print, filament or printer preset, or of the project, several in one
+call. The change stays unsaved in the preset until `save_preset`. To switch presets, use
+`select_preset`; for one object only, `set_object_config`; for a slot's colour on the plate,
+`set_filament_color`.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
@@ -1511,7 +1524,8 @@ Discard all unsaved changes to the current preset and revert to the last saved s
 ---
 
 ### get_valid_config_keys
-List valid configuration keys for a category.
+List the setting keys of a category, to find the key for a setting (`support_type`,
+`sparse_infill_density`, ...).
 
 **Parameters:**
 | Parameter | Type | Required | Description |
@@ -1524,7 +1538,9 @@ List valid configuration keys for a category.
 ## Per-Object Config Tools
 
 ### get_object_info
-Get detailed information about an object.
+One object's position, rotation, scale, bounding box, placement, and every volume (part, modifier,
+negative volume, support blocker) with its type and filament. It does not check the mesh:
+`get_mesh_health` reports holes and open edges, `get_object_components` loose parts and stray shells.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
@@ -1599,7 +1615,8 @@ Get per-object configuration overrides.
 ---
 
 ### set_object_config
-Set per-object configuration overrides.
+Override settings for one object only (supports, infill, walls, layer height, ...), leaving the
+presets and the other objects alone.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
@@ -2123,7 +2140,8 @@ cap's first layer has no support in it (the 0.2 mm gap is layer 50, the interfac
 ---
 
 ### get_preview_base64
-Convert a preview image file to base64 data URI for remote/containerized clients.
+Read an image file OrcaMCP wrote (`render_plate_view`, `include_preview`) back as a base64 data URI,
+for remote or containerized clients. It renders nothing: call `render_plate_view` first.
 
 **When to use:** Only use this tool if you do NOT have direct filesystem access to read the `preview_path`. Agents with local filesystem access (like Claude Code CLI) should use the Read tool instead.
 
@@ -2194,7 +2212,8 @@ Disable adaptive layer height.
 ## Filament & Colour Tools
 
 ### set_object_filament
-Assign a filament slot to a whole object, or to one volume of it.
+Assign a filament slot to a whole object, or to one volume of it. To colour only part of a surface,
+paint it: `paint_object` with `mode: color`.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
@@ -2359,7 +2378,11 @@ state's `facet_count` can exceed `original_facets` and the two must never be div
 the other.
 
 ### paint_object
-Write per-triangle paint — the same data the GUI paint gizmos write.
+Paint an object's surface as the GUI's paint tools do: filament colours for a multi-colour print,
+support enforcers and blockers, the seam, or fuzzy skin -- per-triangle paint, the same data the paint
+gizmos write. To put a whole object or volume on one filament, use `set_object_filament`. Support paint
+does nothing while `enable_support` is off; `next_steps` then names the `set_object_config` call that
+turns it on.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
@@ -2638,7 +2661,7 @@ and shape `paint_object` and `get_object_paint` use), `brim_ear_count`, `brim_ea
 ---
 
 ### get_object_components
-List the connected shells of each **model part**'s mesh — the pieces `paint_object
+Find loose parts, stray shells and mesh fragments: the connected shells of each **model part**'s mesh — the pieces `paint_object
 {selection: "component"}` can paint individually. A generated or assembled model often has a
 feature (a bag, a wheel) as its own shell.
 

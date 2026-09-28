@@ -754,7 +754,9 @@ void OrcaMCPServer::register_paint_tools()
         "paint_object",
         ToolCategory::Painting,
         "Paint color, support, seam, fuzzy skin",
-        "Paint per-triangle annotations on an object, the same data the GUI paint gizmos write. "
+        "Paint an object's surface as the GUI's paint tools do: filament colours for a multi-colour "
+        "print, support enforcers and blockers, the seam, or fuzzy skin -- per-triangle data, the same "
+        "the paint gizmos write. To put a whole object or volume on one filament, use set_object_filament. "
         "mode selects which: color (multi-material / MMU segmentation), support, seam or "
         "fuzzy_skin. selection selects where: bands along a plate axis (an even split across a "
         "list of filaments, or explicit ranges), a box, a sphere, or the whole volume. "
@@ -772,7 +774,9 @@ void OrcaMCPServer::register_paint_tools()
         "which is instance_id's alone, only when the object has one instance. A facet "
         "belongs to the band or region containing its centroid. Paint lives on the volume, so it "
         "applies to every instance; instance_id only says whose transform reads your "
-        "coordinates. Verify with get_object_paint, undo with undo, reset with clear_object_paint.",
+        "coordinates. Verify with get_object_paint, undo with undo, reset with clear_object_paint. Support "
+        "paint does nothing while enable_support is off: next_steps then names the set_object_config call "
+        "that turns it on.",
         {
             {"type", "object"},
             {"properties", {
@@ -1825,9 +1829,10 @@ void OrcaMCPServer::register_paint_tools()
 
     register_tool({
         "get_object_components",
-        ToolCategory::Painting,
-        "List a part's connected mesh shells",
-        "List the connected shells of each MODEL PART's mesh -- component id, facet count, area and a "
+        ToolCategory::Models,
+        "Loose parts and stray shells of a mesh",
+        "Find loose parts, stray shells and mesh fragments: the connected shells of each MODEL PART's mesh "
+        "-- component id, facet count, area and a "
         "plate-frame bounding box. Parts only: modifiers, negative volumes and support blockers are "
         "not listed here, so this is not a census of the object's volumes; get_object_info's `volumes` "
         "is, with each volume's type and filament. A generated or assembled model often has a feature (a bag, a "
