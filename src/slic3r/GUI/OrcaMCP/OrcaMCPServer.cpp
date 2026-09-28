@@ -1858,13 +1858,10 @@ void OrcaMCPServer::register_builtin_tools()
         },
         [](const nlohmann::json& params) -> nlohmann::json {
             int object_id = params["object_id"];
-            std::optional<int> volume_id;
-            if (params.contains("volume_id")) {
-                int given = -1;
-                if (!parse_integer_param(params["volume_id"], given))
-                    return error_response("volume_id must be a whole number, as get_object_info lists the volumes");
-                volume_id = given;
-            }
+            std::string              volume_error;
+            const std::optional<int> volume_id = OrcaMCP::read_volume_id(params, volume_error);
+            if (!volume_error.empty())
+                return error_response(volume_error);
             return run_on_main_thread([object_id, volume_id]() {
                 Plater* plater = wxGetApp().plater();
                 Model& model = plater->model();
@@ -1991,13 +1988,11 @@ void OrcaMCPServer::register_builtin_tools()
                     read_error = at + "object_id must be an integer";
                     return false;
                 }
-                if (item.contains("volume_id")) {
-                    int given = -1;
-                    if (!parse_integer_param(item["volume_id"], given)) {
-                        read_error = at + "volume_id must be an integer";
-                        return false;
-                    }
-                    volume_id = given;
+                std::string volume_error;
+                volume_id = OrcaMCP::read_volume_id(item, volume_error);
+                if (!volume_error.empty()) {
+                    read_error = at + volume_error;
+                    return false;
                 }
                 if (!parse_settings_param(item.value("settings", nlohmann::json()), settings, read_error)) {
                     read_error = at + read_error;
@@ -2225,13 +2220,10 @@ void OrcaMCPServer::register_builtin_tools()
                     keys.push_back(key.get<std::string>());
                 }
             }
-            std::optional<int> volume_id;
-            if (params.contains("volume_id")) {
-                int given = -1;
-                if (!parse_integer_param(params["volume_id"], given))
-                    return error_response("volume_id must be a whole number, as get_object_info lists the volumes");
-                volume_id = given;
-            }
+            std::string              volume_error;
+            const std::optional<int> volume_id = OrcaMCP::read_volume_id(params, volume_error);
+            if (!volume_error.empty())
+                return error_response(volume_error);
             return run_on_main_thread([object_id, keys, volume_id]() {
                 Plater* plater = wxGetApp().plater();
                 Model& model = plater->model();
@@ -4254,8 +4246,10 @@ void OrcaMCPServer::register_builtin_tools()
             {"required", {"object_id"}}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
-            if (params.contains("volume_id"))
-                return OrcaMCP::transform_volume(params, OrcaMCP::VolumeTransformKind::move);
+            // Routed on the value given: a volume_id given as null or anything but a volume index is refused,
+            // never read as the whole object.
+            if (std::string volume_error; OrcaMCP::read_volume_id(params, volume_error) || !volume_error.empty())
+                return volume_error.empty() ? OrcaMCP::transform_volume(params, OrcaMCP::VolumeTransformKind::move) : error_response(volume_error);
             int object_id = params["object_id"];
             PlateAxes axes;
             if (const auto error = read_plate_axes(params, "", axes))
@@ -4409,8 +4403,10 @@ void OrcaMCPServer::register_builtin_tools()
             {"required", {"object_id"}}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
-            if (params.contains("volume_id"))
-                return OrcaMCP::transform_volume(params, OrcaMCP::VolumeTransformKind::rotate);
+            // Routed on the value given: a volume_id given as null or anything but a volume index is refused,
+            // never read as the whole object.
+            if (std::string volume_error; OrcaMCP::read_volume_id(params, volume_error) || !volume_error.empty())
+                return volume_error.empty() ? OrcaMCP::transform_volume(params, OrcaMCP::VolumeTransformKind::rotate) : error_response(volume_error);
             int object_id = params["object_id"];
             PlateAxes axes;
             if (const auto error = read_plate_axes(params, "", axes))
@@ -4550,8 +4546,10 @@ void OrcaMCPServer::register_builtin_tools()
             {"required", {"object_id"}}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
-            if (params.contains("volume_id"))
-                return OrcaMCP::transform_volume(params, OrcaMCP::VolumeTransformKind::scale);
+            // Routed on the value given: a volume_id given as null or anything but a volume index is refused,
+            // never read as the whole object.
+            if (std::string volume_error; OrcaMCP::read_volume_id(params, volume_error) || !volume_error.empty())
+                return volume_error.empty() ? OrcaMCP::transform_volume(params, OrcaMCP::VolumeTransformKind::scale) : error_response(volume_error);
             int object_id = params["object_id"];
             PlateAxes axes;
             if (const auto error = read_plate_axes(params, "", axes))
@@ -4866,8 +4864,10 @@ void OrcaMCPServer::register_builtin_tools()
             {"required", {"object_id", "axis"}}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
-            if (params.contains("volume_id"))
-                return OrcaMCP::transform_volume(params, OrcaMCP::VolumeTransformKind::mirror);
+            // Routed on the value given: a volume_id given as null or anything but a volume index is refused,
+            // never read as the whole object.
+            if (std::string volume_error; OrcaMCP::read_volume_id(params, volume_error) || !volume_error.empty())
+                return volume_error.empty() ? OrcaMCP::transform_volume(params, OrcaMCP::VolumeTransformKind::mirror) : error_response(volume_error);
             int object_id = params["object_id"];
             std::string axis_str = params["axis"];
             bool include_preview = params.value("include_preview", false);
@@ -5474,7 +5474,8 @@ void OrcaMCPServer::register_builtin_tools()
         "get_object_info reports -- the object's own rotation is accounted for. keep: below, above, "
         "or both. The app's own cut: the pieces are the last objects afterwards (new_object_ids), each on "
         "the plate, and the original's index is free, so every object after it moves down by one. One undo "
-        "step.",
+        "step. Refused while an arrange or orient runs; an open toolbar tool is closed first "
+        "(closed_toolbar_tool).",
         {
             {"type", "object"},
             {"properties", {
@@ -5518,6 +5519,16 @@ void OrcaMCPServer::register_builtin_tools()
                 }
 
                 ModelObject* obj = model.objects[object_id];
+
+                // An arrange or orient finalizes through the instances it started on: the cut deletes this object
+                // (apply_cut_object_to_model, which cancels no job), so it waits until the job is done.
+                if (const auto refusal = OrcaMCP::edit_job_refusal(!plater->get_ui_job_worker().is_idle(), "cut_object"))
+                    return error_response(*refusal);
+                // An open toolbar tool (gizmo) is closed first, as for every object edit.
+                const std::string closed_tool = close_open_toolbar_tool(*plater);
+                if (!closed_tool.empty() && toolbar_tool_open(*plater))
+                    return with_closed_tool(error_response("The toolbar tool " + closed_tool + " is open in the app and did not close, so nothing was cut"),
+                                            closed_tool);
 
                 // Set attributes based on what to keep
                 // PlaceOnCut flips the piece so the cut face becomes the new bottom
@@ -5568,7 +5579,7 @@ void OrcaMCPServer::register_builtin_tools()
                 // Add turntable preview if requested
                 add_turntable_preview_if_requested(result, include_preview);
 
-                return result;
+                return with_closed_tool(std::move(result), closed_tool);
             });
         }
     });

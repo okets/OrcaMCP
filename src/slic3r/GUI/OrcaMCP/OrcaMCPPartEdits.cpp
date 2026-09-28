@@ -5,11 +5,14 @@
 #include "OrcaMCPFilamentModel.hpp"
 #include "OrcaMCPNextSteps.hpp"
 #include "OrcaMCPPaintSelect.hpp"
+#include "OrcaMCPUiJob.hpp"
 
 #include "slic3r/GUI/Plater.hpp"
 #include "libslic3r/Geometry.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/PrintConfig.hpp"
+
+#include <boost/algorithm/string/predicate.hpp>
 
 #include <algorithm>
 #include <limits>
@@ -79,6 +82,51 @@ const std::set<std::string>& object_setting_keys()
 
 } // namespace
 
+// ---- Reading a call ----
+
+std::optional<std::string> edit_job_refusal(bool ui_job_running, const std::string& tool)
+{
+    if (ui_job_running)
+        return ui_job_busy_message(tool);
+    return std::nullopt;
+}
+
+std::optional<int> read_volume_id(const nlohmann::json& params, std::string& error)
+{
+    if (!params.contains("volume_id"))
+        return std::nullopt;
+    int volume_id = -1;
+    if (!parse_integer_param(params.at("volume_id"), volume_id) || volume_id < 0) {
+        error = "volume_id must be a whole number 0 or more, as get_object_info lists the volumes; got " + params.at("volume_id").dump() +
+                ": omit volume_id for the whole object";
+        return std::nullopt;
+    }
+    return volume_id;
+}
+
+std::optional<bool> read_flag(const nlohmann::json& params, const std::string& key, std::string& error)
+{
+    if (!params.contains(key))
+        return std::nullopt;
+    bool value = false;
+    if (!parse_boolean_param(params.at(key), value)) {
+        error = key + " must be true or false; got " + params.at(key).dump() + ": omit " + key + " for its default";
+        return std::nullopt;
+    }
+    return value;
+}
+
+std::optional<std::string> read_text(const nlohmann::json& params, const std::string& key, std::string& error)
+{
+    if (!params.contains(key))
+        return std::nullopt;
+    if (!params.at(key).is_string()) {
+        error = key + " must be text; got " + params.at(key).dump();
+        return std::nullopt;
+    }
+    return params.at(key).get<std::string>();
+}
+
 // ---- Volumes ----
 
 const std::vector<std::string>& volume_type_names()
@@ -111,6 +159,39 @@ std::optional<std::string> volume_id_error(int object_id, const ModelObject& obj
 std::size_t model_part_count(const ModelObject& object)
 {
     return std::size_t(std::count_if(object.volumes.begin(), object.volumes.end(), [](const ModelVolume* v) { return v->is_model_part(); }));
+}
+
+bool volume_listed_in_object_list(const ModelObject& object, int volume_idx)
+{
+    if (object.volumes.size() < 2 || volume_idx < 0 || std::size_t(volume_idx) >= object.volumes.size())
+        return false;
+    return !(object.is_cut() && object.volumes[std::size_t(volume_idx)]->is_cut_connector());
+}
+
+std::optional<std::string> model_file_load_error(const std::string& path, const StepDeflection& step)
+{
+    try {
+        Model model;
+        if (boost::iends_with(path, ".stp") || boost::iends_with(path, ".step")) {
+            model = Model::read_from_step(
+                path, LoadStrategy::LoadModel, nullptr, nullptr,
+                [&step](Slic3r::Step&, double& linear, double& angle, bool& split) -> int {
+                    linear = step.linear;
+                    angle  = step.angle;
+                    split  = step.split_compound;
+                    return 1;
+                },
+                step.linear, step.angle, step.split_compound);
+        } else {
+            model = Model::read_from_file(path, nullptr, nullptr, LoadStrategy::LoadModel);
+        }
+        model.add_default_instances(); // as the list's loader does before it takes the mesh
+        if (model.objects.empty() || model.mesh().empty())
+            return "the app could not read a mesh from " + path + ": the file has none, so nothing was added";
+    } catch (const std::exception& e) {
+        return "the app could not read " + path + " (" + e.what() + "), so nothing was added";
+    }
+    return std::nullopt;
 }
 
 BoundingBoxf3 volume_world_box(const ModelObject& object, std::size_t volume_idx, std::size_t instance_idx)
@@ -194,7 +275,7 @@ std::optional<int> split_volume_of(const ModelObject& object, std::optional<int>
 }
 
 std::optional<std::string> split_refusal(int object_id, const ModelObject& object, SplitTarget target,
-                                         std::optional<int> volume_id, bool keep_height_given)
+                                         std::optional<int> volume_id, bool keep_height_given, const std::vector<int>& cut_siblings)
 {
     if (target == SplitTarget::objects) {
         if (volume_id)
@@ -210,6 +291,8 @@ std::optional<std::string> split_refusal(int object_id, const ModelObject& objec
     if (keep_height_given)
         return std::string("keep_height answers the question a split to objects asks about floating pieces; a split to parts "
                            "keeps every piece where it is: leave keep_height out");
+    if (!cut_siblings.empty())
+        return cut_refusal(object_id, cut_siblings, "its volumes are not split to parts on their own");
     const std::optional<int> volume = split_volume_of(object, volume_id);
     if (!volume)
         return object_text(object_id) + " has " + std::to_string(object.volumes.size()) +
@@ -223,10 +306,13 @@ std::optional<std::string> split_refusal(int object_id, const ModelObject& objec
 
 // ---- set_volume_type ----
 
-std::optional<std::string> volume_type_change_refusal(int object_id, const ModelObject& object, int volume_id, ModelVolumeType to)
+std::optional<std::string> volume_type_change_refusal(int object_id, const ModelObject& object, int volume_id, ModelVolumeType to,
+                                                      const std::vector<int>& cut_siblings)
 {
     if (const auto error = volume_id_error(object_id, object, volume_id))
         return error;
+    if (!cut_siblings.empty())
+        return cut_refusal(object_id, cut_siblings, "its volumes keep their types");
     const ModelVolume& volume = *object.volumes[std::size_t(volume_id)];
     if (to != ModelVolumeType::MODEL_PART && volume.is_model_part() && model_part_count(object) == 1)
         return volume_text(object_id, volume_id) + " is the object's last solid part, whose type cannot be changed (the object "

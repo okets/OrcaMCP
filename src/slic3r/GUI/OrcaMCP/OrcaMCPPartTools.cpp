@@ -22,6 +22,7 @@
 #include "libslic3r/AppConfig.hpp"
 #include "libslic3r/Format/bbs_3mf.hpp"
 #include "libslic3r/Geometry.hpp"
+#include "libslic3r/LocalesUtils.hpp"
 #include "libslic3r/Model.hpp"
 
 #include <boost/filesystem.hpp>
@@ -38,42 +39,19 @@ using namespace Slic3r::GUI::OrcaMCP;
 namespace {
 
 // ---- Reading a call ----
+// (read_volume_id, read_flag and read_text, which never read a value given as left out, are in
+// OrcaMCPPartEdits.)
 
-// The volume_id a call gives, or nothing when it gives none; `error` says what is wrong with one given.
-std::optional<int> read_volume_id(const nlohmann::json& params, std::string& error)
+// A text argument `key`, or "" when the call leaves it out; `error` says what is wrong with one given.
+std::string string_arg(const nlohmann::json& params, const std::string& key, std::string& error)
 {
-    if (!params.contains("volume_id") || params.at("volume_id").is_null())
-        return std::nullopt;
-    int volume_id = -1;
-    if (!parse_integer_param(params.at("volume_id"), volume_id))
-        error = "volume_id must be a whole number, as get_object_info lists the volumes";
-    return volume_id;
+    return read_text(params, key, error).value_or(std::string());
 }
 
-// A string argument `key`, or "" when the call leaves it out or gives something else.
-std::string string_arg(const nlohmann::json& params, const std::string& key)
-{
-    return params.contains(key) && params.at(key).is_string() ? params.at(key).get<std::string>() : std::string();
-}
-
-// A boolean argument `key`, or nothing when the call leaves it out; `error` says what is wrong with one given.
-std::optional<bool> read_flag(const nlohmann::json& params, const std::string& key, std::string& error)
-{
-    if (!params.contains(key) || params.at(key).is_null())
-        return std::nullopt;
-    bool value = false;
-    if (!parse_boolean_param(params.at(key), value))
-        error = key + " must be true or false";
-    return value;
-}
-
-// Why an edit must wait: an arrange or orient job holds the object list's objects, and the list's own
-// edits cancel it (Plater::priv::remove).
+// Why an edit must wait (edit_job_refusal): an arrange or orient job runs.
 std::optional<std::string> ui_job_refusal(Plater& plater, const std::string& tool)
 {
-    if (!plater.get_ui_job_worker().is_idle())
-        return ui_job_busy_message(tool);
-    return std::nullopt;
+    return edit_job_refusal(!plater.get_ui_job_worker().is_idle(), tool);
 }
 
 // keep_painting as the call gives it, else the app's "Keep painted feature after mesh change" setting,
@@ -119,6 +97,12 @@ private:
 
 // ---- Selecting as a click does ----
 
+int index_of(const ModelObject& object, const ModelVolume* volume)
+{
+    const auto it = std::find(object.volumes.begin(), object.volumes.end(), volume);
+    return it == object.volumes.end() ? -1 : int(it - object.volumes.begin());
+}
+
 // The canvas the object list selects in: the Assemble view's when it shows, else the 3D view's
 // (ObjectList::update_selections_on_canvas).
 GLCanvas3D* list_canvas(Plater& plater)
@@ -128,24 +112,57 @@ GLCanvas3D* list_canvas(Plater& plater)
                                                                                                                plater.get_view3D_canvas3D();
 }
 
+// The object list's row of volume `volume_idx` of object `object_id`, as the list maps its rows to volumes
+// (a cut object's connectors have no row, so a row's index is not always its volume's), or an empty item
+// for a volume without a row of its own.
+wxDataViewItem volume_row(ObjectDataViewModel& rows, int object_id, int volume_idx)
+{
+    const wxDataViewItem item = rows.GetItemByVolumeId(object_id, rows.get_real_volume_index_in_ui(object_id, volume_idx));
+    return item.IsOk() && (rows.GetItemType(item) & itVolume) ? item : wxDataViewItem();
+}
+
+// The volume the object list's selected row stands for, mapped as the list's Change Type maps it
+// (ObjectList::set_volume_type), or -1 when no volume row is selected.
+int selected_volume(ObjectList& list, int object_id)
+{
+    const wxDataViewItem  item = list.GetSelection();
+    ObjectDataViewModel& rows = *list.GetModel();
+    if (!item.IsOk() || !(rows.GetItemType(item) & itVolume))
+        return -1;
+    return rows.get_real_volume_index_in_3d(object_id, rows.GetVolumeIdByItem(item));
+}
+
 // Selects object `object_id` -- or its volume `volume` -- in the object list, and so in the 3D view, as a
-// click on its row does, for the list's action that reads the selection. Selecting is not an edit: no
-// undo step. The 3D view is brought up to date first: one that postponed its reload has no volumes to
-// select. Why the selection could not be made, or nothing.
+// click on its row does, for the list's action that reads the selection. A volume without a row of its
+// own (the one volume of a one-volume object) is selected by its object's row, as in the list. Selecting
+// is not an edit: no undo step. The 3D view is brought up to date first: one that postponed its reload
+// has no volumes to select. Why the selection could not be made, or nothing.
 std::optional<std::string> select_in_object_list(Plater& plater, int object_id, ModelVolume* volume = nullptr)
 {
     Plater::SuppressSnapshots not_an_edit(&plater);
     bool                      scene_current = false;
     OrcaMCPPlateUtils::SceneCanvas(scene_current);
-    ModelObject* object = plater.model().objects[std::size_t(object_id)];
-    ObjectList*  list   = wxGetApp().obj_list();
-    list->select_item(ObjectVolumeID{object, volume});
+    ModelObject* object     = plater.model().objects[std::size_t(object_id)];
+    ObjectList*  list       = wxGetApp().obj_list();
+    const int    volume_idx = volume != nullptr ? index_of(*object, volume) : -1;
+    bool         volume_selected = true;
+    if (volume_idx >= 0 && volume_listed_in_object_list(*object, volume_idx)) {
+        const wxDataViewItem row = volume_row(*list->GetModel(), object_id, volume_idx);
+        wxDataViewItemArray  rows;
+        if (row.IsOk())
+            rows.Add(row);
+        list->select_items(rows);
+        list->selection_changed();
+        volume_selected = selected_volume(*list, object_id) == volume_idx;
+    } else {
+        list->select_item(ObjectVolumeID{object, nullptr});
+    }
     const bool object_selected = list->get_selected_obj_idx() == object_id;
-    const bool volume_selected = volume == nullptr || object->volumes.size() == 1 || list->get_selected_model_volume() == volume;
     const bool scene_selected  = list_canvas(plater)->get_selection().get_object_idx() == object_id;
     if (object_selected && volume_selected && scene_selected)
         return std::nullopt;
-    return "the app could not select object " + std::to_string(object_id) + " in its object list and 3D view (" +
+    return "the app could not select object " + std::to_string(object_id) + (volume_idx >= 0 ? " volume " + std::to_string(volume_idx) : "") +
+           " in its object list and 3D view (" +
            (scene_current ? "the list did not take the selection" : "the 3D view could not be brought up to date") +
            "), so nothing was changed";
 }
@@ -209,12 +226,6 @@ void after_volume_change(Plater& plater, int object_id, nlohmann::json& answer)
     plater.update();
 }
 
-int index_of(const ModelObject& object, const ModelVolume* volume)
-{
-    const auto it = std::find(object.volumes.begin(), object.volumes.end(), volume);
-    return it == object.volumes.end() ? -1 : int(it - object.volumes.begin());
-}
-
 // ---- move, rotate, scale, mirror of one volume ----
 
 struct VolumeTransformRequest
@@ -230,7 +241,8 @@ std::optional<nlohmann::json> read_volume_transform(const nlohmann::json& params
                                                     VolumeTransformRequest& out)
 {
     if (kind == VolumeTransformKind::mirror) {
-        const std::string axis = string_arg(params, "axis");
+        std::string       error;
+        const std::string axis = string_arg(params, "axis", error);
         const int         index = axis == "x" || axis == "X" ? 0 : axis == "y" || axis == "Y" ? 1 : axis == "z" || axis == "Z" ? 2 : -1;
         if (index < 0)
             return error_response("axis must be x, y or z");
@@ -294,8 +306,8 @@ nlohmann::json transform_volume_on_main_thread(const nlohmann::json& params, Vol
     if (object == nullptr)
         return error_response(error);
     const std::optional<int> volume_id = read_volume_id(params, error);
-    if (!error.empty())
-        return error_response(error);
+    if (!error.empty() || !volume_id)
+        return error_response(error.empty() ? "volume_id is required here: the volume to transform" : error);
     if (const auto refusal = volume_transform_refusal(object_id, *object, *volume_id, cut_siblings(plater->model(), object_id)))
         return error_response(*refusal);
     const std::size_t   volume = std::size_t(*volume_id);
@@ -452,13 +464,15 @@ nlohmann::json rename_on_main_thread(const nlohmann::json& params)
         answer.update({{"volume_id", *volume_id}, {"old_name", old_name}, {"new_name", new_name}, {"changed", old_name != new_name}});
         if (old_name == new_name)
             return answer;
-        // ObjectList::update_name_in_model's part branch, with the part found by its own index: the list's
-        // row index skips a cut object's connectors, and update_name_in_model reads it as the volume's.
+        // ObjectList::update_name_in_model's part branch, with the part found by itself: the list's row index
+        // skips a cut object's connectors, and update_name_in_model reads it as the volume's. The volume's own
+        // row is renamed when it has one; a one-volume object's part has none, and the row the list gives for
+        // it is the object's, which keeps the object's name.
         plater->take_snapshot(_u8L("Rename Part"));
         volume.name = new_name;
-        const int row = rows->get_real_volume_index_in_ui(object_id, *volume_id);
-        if (const wxDataViewItem item = rows->GetItemByVolumeId(object_id, row); item.IsOk())
-            rows->SetName(from_u8(new_name), item);
+        if (volume_listed_in_object_list(*object, *volume_id))
+            if (const wxDataViewItem item = volume_row(*rows, object_id, *volume_id); item.IsOk())
+                rows->SetName(from_u8(new_name), item);
         return answer;
     }
     const std::string old_name = object->name;
@@ -632,7 +646,7 @@ nlohmann::json split_object_on_main_thread(const nlohmann::json& params)
     ModelObject* object = resolve_object_id(params, plater->model(), object_id, error);
     if (object == nullptr)
         return error_response(error);
-    const std::string to = string_arg(params, "to");
+    const std::string to = string_arg(params, "to", error);
     if (to != "objects" && to != "parts")
         return error_response("to must be \"objects\" (one object per solid part, or per shell of a one-part object) or \"parts\" (one "
                               "part per shell of a volume)");
@@ -642,7 +656,7 @@ nlohmann::json split_object_on_main_thread(const nlohmann::json& params)
     const KeepPainting         keep        = error.empty() ? read_keep_painting(params, error) : KeepPainting{};
     if (!error.empty())
         return error_response(error);
-    if (const auto refusal = split_refusal(object_id, *object, target, volume_id, keep_height.has_value()))
+    if (const auto refusal = split_refusal(object_id, *object, target, volume_id, keep_height.has_value(), cut_siblings(plater->model(), object_id)))
         return error_response(*refusal);
     if (const auto refusal = ui_job_refusal(*plater, "split_object"))
         return error_response(*refusal);
@@ -669,6 +683,19 @@ nlohmann::json split_object_on_main_thread(const nlohmann::json& params)
 }
 
 // ---- add_volume ----
+
+// The STEP tessellation the object list's part loader uses (ObjectList::load_modifier): the app's
+// settings, with its fallbacks.
+StepDeflection step_deflection()
+{
+    StepDeflection step;
+    const double linear = string_to_double_decimal_point(wxGetApp().app_config->get("linear_deflection"));
+    const double angle  = string_to_double_decimal_point(wxGetApp().app_config->get("angle_deflection"));
+    step.linear         = linear > 0 ? linear : 0.003;
+    step.angle          = angle > 0 ? angle : 0.5;
+    step.split_compound = wxGetApp().app_config->get_bool("is_split_compound");
+    return step;
+}
 
 const std::vector<std::pair<std::string, std::string>>& primitive_shapes()
 {
@@ -715,27 +742,34 @@ nlohmann::json add_volume_on_main_thread(const nlohmann::json& params)
     ModelObject* object = resolve_object_id(params, plater->model(), object_id, error);
     if (object == nullptr)
         return error_response(error);
-    const std::string                    type_name = string_arg(params, "type");
+    const std::string                    type_name = string_arg(params, "type", error);
     const std::optional<ModelVolumeType> type      = volume_type_from_name(type_name);
     if (!type)
         return error_response("type must be one of: part, negative_volume, modifier, support_blocker, support_enforcer");
-    const bool has_shape = params.contains("shape") && !params.at("shape").is_null();
-    const bool has_file  = params.contains("file_path") && !params.at("file_path").is_null();
+    const std::optional<std::string> shape = error.empty() ? read_text(params, "shape", error) : std::nullopt;
+    const std::optional<std::string> file  = error.empty() ? read_text(params, "file_path", error) : std::nullopt;
+    if (!error.empty())
+        return error_response(error);
+    const bool has_shape = shape.has_value();
+    const bool has_file  = file.has_value();
     if (has_shape == has_file)
         return error_response("give exactly one of shape (a primitive: cube, cylinder, sphere, cone, disc, torus) or file_path (a model file)");
     std::string menu_shape, file_path;
     if (has_shape) {
-        const std::string shape = params.at("shape").is_string() ? params.at("shape").get<std::string>() : std::string();
         for (const auto& [name, menu_name] : primitive_shapes())
-            if (name == shape)
+            if (name == *shape)
                 menu_shape = menu_name;
         if (menu_shape.empty())
             return error_response("shape must be one of: cube, cylinder, sphere, cone, disc, torus");
     } else {
-        file_path = params.at("file_path").is_string() ? params.at("file_path").get<std::string>() : std::string();
+        file_path = *file;
         boost::system::error_code ec;
         if (file_path.empty() || !boost::filesystem::is_regular_file(file_path, ec))
             return error_response("file_path " + file_path + " is not a file that can be read");
+        // The object list's Load... records its undo step before it reads the file: read it first, so a file
+        // the app cannot read changes nothing.
+        if (const auto unreadable = model_file_load_error(file_path, step_deflection()))
+            return error_response(*unreadable);
     }
     if (const auto refusal = ui_job_refusal(*plater, "add_volume"))
         return error_response(*refusal);
@@ -791,7 +825,7 @@ nlohmann::json set_volume_type_on_main_thread(const nlohmann::json& params)
         return error_response(error.empty() ? "volume_id is required: the volume whose type changes" : error);
     if (const auto volume_error = volume_id_error(object_id, *object, *volume_id))
         return error_response(*volume_error);
-    const std::string                    type_name = string_arg(params, "type");
+    const std::string                    type_name = string_arg(params, "type", error);
     const std::optional<ModelVolumeType> to        = volume_type_from_name(type_name);
     if (!to)
         return error_response("type must be one of: part, negative_volume, modifier, support_blocker, support_enforcer");
@@ -803,7 +837,7 @@ nlohmann::json set_volume_type_on_main_thread(const nlohmann::json& params)
         answer.update({{"volume_id", *volume_id}, {"type", type_name}, {"changed", false}, {"volumes", volume_rows_json(*object)}});
         return answer;
     }
-    if (const auto refusal = volume_type_change_refusal(object_id, *object, *volume_id, *to))
+    if (const auto refusal = volume_type_change_refusal(object_id, *object, *volume_id, *to, cut_siblings(plater->model(), object_id)))
         return error_response(*refusal);
     if (const auto refusal = ui_job_refusal(*plater, "set_volume_type"))
         return error_response(*refusal);

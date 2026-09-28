@@ -477,7 +477,7 @@
     },
     {
       "category": "Transforms",
-      "description": "Cut object at a Z height measured in plate mm (height above the bed), the same frame get_object_info reports -- the object's own rotation is accounted for. keep: below, above, or both. The app's own cut: the pieces are the last objects afterwards (new_object_ids), each on the plate, and the original's index is free, so every object after it moves down by one. One undo step.",
+      "description": "Cut object at a Z height measured in plate mm (height above the bed), the same frame get_object_info reports -- the object's own rotation is accounted for. keep: below, above, or both. The app's own cut: the pieces are the last objects afterwards (new_object_ids), each on the plate, and the original's index is free, so every object after it moves down by one. One undo step. Refused while an arrange or orient runs; an open toolbar tool is closed first (closed_toolbar_tool).",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {

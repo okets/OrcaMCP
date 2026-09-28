@@ -829,7 +829,10 @@ negative volumes and support volumes are not carried (`dropped_volumes`). `float
 `volume_id` then deletes.
 
 Refused before anything changes: a split that would leave one piece (one shell), `volume_id` or
-`keep_height` with the other target, and any call while an arrange or orient runs. One undo step. An
+`keep_height` with the other target, a split to parts of a cut object's volume (`invalidate_cut_info`
+first: the list reads a cut object's rows as volume indices there), and any call while an arrange or
+orient runs. `floating_pieces` is read from the prompt's key, not its text, so it holds in every
+language. One undo step. An
 open toolbar tool is closed first (`closed_toolbar_tool`).
 
 ```json
@@ -869,8 +872,9 @@ Support Blocker / Add Support Enforcer does.
 
 The answer: `volume` (its `volume_id`, `bounding_box` and `position` in plate mm) and every volume.
 One undo step. An open toolbar tool is closed first (`closed_toolbar_tool`); refused while an arrange
-or orient runs. A file the app cannot read fails with its error (`error_messages`); the object list
-records its undo step before reading the file, so that one undo step changes nothing.
+or orient runs. The file is read first, as the list reads it: one the app cannot read, or with no mesh,
+is refused with why, and nothing changes (the list's own Load... records its undo step before it reads
+the file).
 
 ```json
 {"name": "add_volume", "arguments": {"object_id": 0, "type": "modifier", "shape": "cube"}}
@@ -891,8 +895,10 @@ Change a volume's type, as the object list's Change Type does.
 
 The object list keeps volumes sorted by type (parts first), so the volume's index can change:
 `volume_id` in the answer is the new one, `previous_volume_id` the old, with `type`, `previous_type`
-and every volume. Refused: the object's last solid part to anything but a part, and a text or SVG
-volume to a support blocker or enforcer (both refused by the list). The same type is a change of
+and every volume. Refused: the object's last solid part to anything but a part, a text or SVG volume to
+a support blocker or enforcer (both refused by the list), and any volume of a cut object
+(`invalidate_cut_info` first). The volume is selected by its own row, as the list maps rows to volumes
+(probe AL fixes that map). The same type is a change of
 nothing (`changed: false`, no undo step). A change marks the object's plates not sliced. One undo step;
 an open toolbar tool is closed first; refused while an arrange or orient runs.
 
@@ -1209,6 +1215,12 @@ for a part selected in the object list in World coordinates:
   along plate axes that shears a turned part, and the object's placement fields. One undo step; a
   change of nothing (a move by zero, a scale of 1) takes none, with `changed: false`.
 
+`volume_id` given as `null`, text that is not a whole number, a fraction or a negative number is refused
+("omit volume_id for the whole object"): it is never read as the whole object. The same holds for
+`delete_object`, `rename_object` and the settings tools, and for every true-or-false and text argument of
+the part tools (`keep_height`, `keep_painting`, `shape`, `file_path`, ...): given `null`, it is refused
+rather than read as left out.
+
 Refused: a one-volume object (its only volume moves with the object: omit `volume_id`), a cut object's
 solid parts and connectors (the object list does not move them on their own: `invalidate_cut_info`
 first), and any call while an arrange or orient runs. An open toolbar tool is closed first
@@ -1300,7 +1312,8 @@ tool's does (`Plater::apply_cut_object_to_model`): the pieces are the last objec
 every object after it moves down by one. One undo step ("Cut by Plane"). Before v2.5.0.6 the pieces
 were added to the model alone -- on no plate, `get_scene_info` listed them under `unplaced_objects`,
 and missing from the object list -- and the cut took no undo step, so an undo after it also undid the
-call before it.
+call before it. Refused while an arrange or orient runs (the job finalizes through the object the cut
+deletes); an open toolbar tool is closed first (`closed_toolbar_tool`).
 
 ---
 
@@ -1341,7 +1354,9 @@ writes their G-code again with the new name.
 | `new_name` | string | Yes | New name |
 | `volume_id` | integer | No | Rename this volume instead of the object |
 
-It is the object list's rename: a one-part object's part takes the object's new name too, an empty
+It is the object list's rename: a one-part object's part takes the object's new name too, and
+renaming a one-part object's part (`volume_id` 0) renames that part alone -- the list shows no row for
+it, and the object keeps its name. An empty
 name or one with a character the list refuses (`<>:/\|?*"`) is refused, and the same name again
 changes nothing (`changed: false`, no undo step). A volume's name is not in the G-code, so renaming a
 volume leaves the plates' results as they are.

@@ -25,6 +25,24 @@ class ModelVolume;
 enum class ModelVolumeType : int;
 namespace GUI { namespace OrcaMCP {
 
+// ---- Reading a call ----
+
+// Why an edit must wait, or nothing: while an arrange or orient runs (`ui_job_running`) the job finalizes
+// through the objects it started on, and an edit that deletes one leaves it a freed instance.
+std::optional<std::string> edit_job_refusal(bool ui_job_running, const std::string& tool);
+
+// The volume_id a call gives: nothing when it leaves volume_id out (the whole object), else a whole number
+// 0 or more, read as every integer argument is (parse_integer_param). Given as anything else -- null,
+// text, a fraction, a negative number -- `error` says so: it is never read as the whole object.
+std::optional<int> read_volume_id(const nlohmann::json& params, std::string& error);
+
+// A true-or-false argument `key`: nothing when left out; given null or as anything but a boolean,
+// `error` says so, rather than reading it as left out.
+std::optional<bool> read_flag(const nlohmann::json& params, const std::string& key, std::string& error);
+
+// A text argument `key`: nothing when left out; given null or as anything but text, `error` says so.
+std::optional<std::string> read_text(const nlohmann::json& params, const std::string& key, std::string& error);
+
 // ---- Volumes ----
 
 // The type names the part tools take, as get_object_info reports them: "part", "negative_volume",
@@ -38,6 +56,21 @@ std::optional<std::string> volume_id_error(int object_id, const ModelObject& obj
 
 // How many of the object's volumes are model parts (solid parts, cut connectors included).
 std::size_t model_part_count(const ModelObject& object);
+
+// Whether the object list shows volume `volume_idx` in a row of its own: only a multi-volume object's
+// volumes have rows, and a cut object's connectors none (ObjectList::add_volumes_to_object_in_list).
+bool volume_listed_in_object_list(const ModelObject& object, int volume_idx);
+
+// Why add_volume cannot load `path` as a volume, or nothing: the object list's Load... reads it only after
+// recording its undo step, so a file it cannot read left an undo step that changed nothing. Read here as
+// the list reads it (ObjectList::load_modifier): a STEP file tessellated with `step`.
+struct StepDeflection
+{
+    double linear         = 0.003;
+    double angle          = 0.5;
+    bool   split_compound = false;
+};
+std::optional<std::string> model_file_load_error(const std::string& path, const StepDeflection& step);
 
 // The world box of volume `volume_idx` on instance `instance_idx`, in plate millimetres.
 BoundingBoxf3 volume_world_box(const ModelObject& object, std::size_t volume_idx, std::size_t instance_idx = 0);
@@ -75,16 +108,20 @@ std::vector<int> volumes_dropped_by_split_to_objects(const ModelObject& object);
 // Nothing when a multi-volume object names none.
 std::optional<int> split_volume_of(const ModelObject& object, std::optional<int> volume_id);
 
-// Why split_object must not split object `object_id` so, or nothing.
+// Why split_object must not split object `object_id` so, or nothing. A cut object's volumes are not
+// split to parts (`cut_siblings`: its cut's pieces): the object list reads a cut object's rows as volume
+// indices there, which its hidden connectors make another volume's.
 std::optional<std::string> split_refusal(int object_id, const ModelObject& object, SplitTarget target,
-                                         std::optional<int> volume_id, bool keep_height_given);
+                                         std::optional<int> volume_id, bool keep_height_given, const std::vector<int>& cut_siblings);
 
 // ---- set_volume_type ----
 
 // Why volume `volume_id` cannot become `to`, or nothing (the same type is a change of nothing, not a
 // refusal): the object's last solid part stays a part, and a text or SVG volume never becomes a
-// support blocker or enforcer (ObjectList::set_volume_type).
-std::optional<std::string> volume_type_change_refusal(int object_id, const ModelObject& object, int volume_id, ModelVolumeType to);
+// support blocker or enforcer (ObjectList::set_volume_type). A cut object's volumes keep their types
+// until invalidate_cut_info (`cut_siblings`), as its parts are not moved or deleted on their own.
+std::optional<std::string> volume_type_change_refusal(int object_id, const ModelObject& object, int volume_id, ModelVolumeType to,
+                                                      const std::vector<int>& cut_siblings);
 
 // ---- delete_object with volume_id ----
 

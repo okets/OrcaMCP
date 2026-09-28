@@ -10,6 +10,7 @@
 #include "libslic3r/TriangleMesh.hpp"
 
 #include <algorithm>
+#include <fstream>
 #include <map>
 #include <cmath>
 #include <optional>
@@ -144,7 +145,7 @@ TEST_CASE("A split to objects needs more than one piece", "[PartEdits][orcamcp]"
     ModelObject& with_modifier = two_part_object(model);
     with_modifier.volumes[1]->set_type(ModelVolumeType::PARAMETER_MODIFIER);
     CHECK_FALSE(splits_to_several_objects(with_modifier));
-    CHECK(mentions(split_refusal(3, with_modifier, SplitTarget::objects, std::nullopt, false), "one"));
+    CHECK(mentions(split_refusal(3, with_modifier, SplitTarget::objects, std::nullopt, false, {}), "one"));
 }
 
 TEST_CASE("A split to objects leaves the object's modifiers, negative and support volumes behind", "[PartEdits][orcamcp]")
@@ -162,17 +163,17 @@ TEST_CASE("A split to parts splits the named volume, which needs several shells"
     Model        model;
     ModelObject& shells = one_part_object(model, mesh_fixtures::separate_cubes(3));
     CHECK(split_volume_of(shells, std::nullopt) == 0);
-    CHECK_FALSE(split_refusal(0, shells, SplitTarget::parts, std::nullopt, false));
+    CHECK_FALSE(split_refusal(0, shells, SplitTarget::parts, std::nullopt, false, {}));
 
     // A multi-part object names the part, as the object list splits the selected part.
     ModelObject& pair = two_part_object(model);
     CHECK_FALSE(split_volume_of(pair, std::nullopt));
-    CHECK(mentions(split_refusal(1, pair, SplitTarget::parts, std::nullopt, false), "volume_id"));
+    CHECK(mentions(split_refusal(1, pair, SplitTarget::parts, std::nullopt, false, {}), "volume_id"));
     // Each of its parts is one shell: nothing to split.
-    CHECK(mentions(split_refusal(1, pair, SplitTarget::parts, 1, false), "one shell"));
+    CHECK(mentions(split_refusal(1, pair, SplitTarget::parts, 1, false, {}), "one shell"));
 
     ModelObject& cube = one_part_object(model, its_make_cube(10., 10., 10.));
-    CHECK(mentions(split_refusal(2, cube, SplitTarget::parts, std::nullopt, false), "one shell"));
+    CHECK(mentions(split_refusal(2, cube, SplitTarget::parts, std::nullopt, false, {}), "one shell"));
 }
 
 TEST_CASE("A split takes each argument only for the target it applies to", "[PartEdits][orcamcp]")
@@ -180,10 +181,10 @@ TEST_CASE("A split takes each argument only for the target it applies to", "[Par
     Model        model;
     ModelObject& shells = one_part_object(model, mesh_fixtures::separate_cubes(2));
     // keep_height answers the floating-pieces prompt of a split to objects only.
-    CHECK(mentions(split_refusal(0, shells, SplitTarget::parts, std::nullopt, /*keep_height_given=*/true), "keep_height"));
+    CHECK(mentions(split_refusal(0, shells, SplitTarget::parts, std::nullopt, /*keep_height_given=*/true, {}), "keep_height"));
     // A split to objects splits the whole object, as the object list's does.
-    CHECK(mentions(split_refusal(0, shells, SplitTarget::objects, 0, false), "volume_id"));
-    CHECK_FALSE(split_refusal(0, shells, SplitTarget::objects, std::nullopt, true));
+    CHECK(mentions(split_refusal(0, shells, SplitTarget::objects, 0, false, {}), "volume_id"));
+    CHECK_FALSE(split_refusal(0, shells, SplitTarget::objects, std::nullopt, true, {}));
 }
 
 // ---- set_volume_type ----
@@ -192,17 +193,17 @@ TEST_CASE("The last solid part keeps its type, and a text volume never becomes a
 {
     Model        model;
     ModelObject& pair = two_part_object(model);
-    CHECK_FALSE(volume_type_change_refusal(0, pair, 1, ModelVolumeType::PARAMETER_MODIFIER));
+    CHECK_FALSE(volume_type_change_refusal(0, pair, 1, ModelVolumeType::PARAMETER_MODIFIER, {}));
     pair.volumes[1]->set_type(ModelVolumeType::PARAMETER_MODIFIER);
-    CHECK(mentions(volume_type_change_refusal(0, pair, 0, ModelVolumeType::NEGATIVE_VOLUME), "last solid part"));
+    CHECK(mentions(volume_type_change_refusal(0, pair, 0, ModelVolumeType::NEGATIVE_VOLUME, {}), "last solid part"));
     // Back to a part is always allowed, and the same type changes nothing (not a refusal).
-    CHECK_FALSE(volume_type_change_refusal(0, pair, 1, ModelVolumeType::MODEL_PART));
-    CHECK_FALSE(volume_type_change_refusal(0, pair, 0, ModelVolumeType::MODEL_PART));
+    CHECK_FALSE(volume_type_change_refusal(0, pair, 1, ModelVolumeType::MODEL_PART, {}));
+    CHECK_FALSE(volume_type_change_refusal(0, pair, 0, ModelVolumeType::MODEL_PART, {}));
 
     pair.volumes[1]->text_configuration.emplace();
-    CHECK(mentions(volume_type_change_refusal(0, pair, 1, ModelVolumeType::SUPPORT_BLOCKER), "text"));
-    CHECK(mentions(volume_type_change_refusal(0, pair, 1, ModelVolumeType::SUPPORT_ENFORCER), "text"));
-    CHECK_FALSE(volume_type_change_refusal(0, pair, 1, ModelVolumeType::NEGATIVE_VOLUME));
+    CHECK(mentions(volume_type_change_refusal(0, pair, 1, ModelVolumeType::SUPPORT_BLOCKER, {}), "text"));
+    CHECK(mentions(volume_type_change_refusal(0, pair, 1, ModelVolumeType::SUPPORT_ENFORCER, {}), "text"));
+    CHECK_FALSE(volume_type_change_refusal(0, pair, 1, ModelVolumeType::NEGATIVE_VOLUME, {}));
 }
 
 // ---- delete_object with volume_id ----
@@ -454,6 +455,95 @@ TEST_CASE("Moving the instance's transform into the volumes keeps every copy of 
     check_vec(object.instances[0]->get_offset(), Vec3d(128, 144, 0));
 }
 
+// ---- Round 2 (review): what reaches an edit, and what the object list holds ----
+
+// A UI job (arrange, orient) finalizes through the objects it was started on: an edit that deletes one
+// under it (cut_object's apply, the list's own delete) left it a freed ModelInstance.
+TEST_CASE("An edit waits while an arrange or orient runs, naming the tool", "[PartEdits][orcamcp]")
+{
+    CHECK(mentions(edit_job_refusal(/*ui_job_running=*/true, "cut_object"), "cut_object"));
+    CHECK(mentions(edit_job_refusal(true, "cut_object"), "get_slicing_status"));
+    CHECK_FALSE(edit_job_refusal(false, "cut_object"));
+}
+
+// {"volume_id": null} on move_object dereferenced an empty value, and on delete_object deleted the whole
+// object. A value given is read as what it is or refused, never as the whole object.
+TEST_CASE("A volume_id given is a whole number 0 or more, never read as the whole object", "[PartEdits][orcamcp]")
+{
+    std::string error;
+    CHECK_FALSE(read_volume_id(nlohmann::json::object(), error));
+    CHECK(error.empty());
+    CHECK(read_volume_id({{"volume_id", 2}}, error) == 2);
+    CHECK(error.empty());
+    // Every integer argument takes an exact whole number sent as text or 2.0 (parse_integer_param).
+    CHECK(read_volume_id({{"volume_id", "2"}}, error) == 2);
+    for (const nlohmann::json& bad : {nlohmann::json(nullptr), nlohmann::json("two"), nlohmann::json(1.5), nlohmann::json(-1),
+                                      nlohmann::json::array({1})}) {
+        INFO("volume_id " << bad.dump());
+        error.clear();
+        CHECK_FALSE(read_volume_id({{"volume_id", bad}}, error));
+        CHECK(error.find("omit volume_id") != std::string::npos);
+    }
+}
+
+TEST_CASE("A true or false argument given null, or as anything else, is refused rather than read as left out", "[PartEdits][orcamcp]")
+{
+    std::string error;
+    CHECK_FALSE(read_flag(nlohmann::json::object(), "keep_height", error));
+    CHECK(error.empty());
+    CHECK(read_flag({{"keep_height", false}}, "keep_height", error) == false);
+    for (const nlohmann::json& bad : {nlohmann::json(nullptr), nlohmann::json("maybe"), nlohmann::json(2)}) {
+        INFO("keep_height " << bad.dump());
+        error.clear();
+        CHECK_FALSE(read_flag({{"keep_height", bad}}, "keep_height", error));
+        CHECK(error.find("keep_height") != std::string::npos);
+    }
+}
+
+TEST_CASE("A text argument given null, or as anything but text, is refused rather than read as left out", "[PartEdits][orcamcp]")
+{
+    std::string error;
+    CHECK_FALSE(read_text(nlohmann::json::object(), "shape", error));
+    CHECK(error.empty());
+    CHECK(read_text({{"shape", "cube"}}, "shape", error) == std::string("cube"));
+    for (const nlohmann::json& bad : {nlohmann::json(nullptr), nlohmann::json(3)}) {
+        error.clear();
+        CHECK_FALSE(read_text({{"shape", bad}}, "shape", error));
+        CHECK(error.find("shape") != std::string::npos);
+    }
+}
+
+// The object list hides a cut object's connectors, so its row of a volume is not the volume's index, and
+// its own actions read the row two ways (set_volume_type maps it, split reads it as the index): a cut
+// object's volumes are not retyped or split to parts on their own, as they are not moved or deleted.
+TEST_CASE("A cut object's volumes keep their types and are not split to parts", "[PartEdits][orcamcp]")
+{
+    Model        model;
+    ModelObject& cut = two_part_object(model);
+    cut.volumes[1]->set_type(ModelVolumeType::PARAMETER_MODIFIER);
+    cut.cut_id.init();
+    CHECK(mentions(volume_type_change_refusal(0, cut, 1, ModelVolumeType::MODEL_PART, {0, 1}), "invalidate_cut_info"));
+    CHECK(mentions(volume_type_change_refusal(0, cut, 0, ModelVolumeType::MODEL_PART, {0, 1}), "invalidate_cut_info"));
+
+    ModelObject& shells = one_part_object(model, mesh_fixtures::separate_cubes(2));
+    shells.cut_id.init();
+    CHECK(mentions(split_refusal(1, shells, SplitTarget::parts, std::nullopt, false, {1, 2}), "invalidate_cut_info"));
+}
+
+TEST_CASE("The object list gives a volume a row of its own only in a multi-volume object, and never a cut object's connector",
+          "[PartEdits][orcamcp]")
+{
+    Model model;
+    CHECK_FALSE(volume_listed_in_object_list(one_part_object(model, its_make_cube(10., 10., 10.)), 0));
+    ModelObject& pair = two_part_object(model);
+    CHECK(volume_listed_in_object_list(pair, 0));
+    CHECK(volume_listed_in_object_list(pair, 1));
+    pair.cut_id.init();
+    pair.volumes[1]->cut_info.is_connector = true;
+    CHECK_FALSE(volume_listed_in_object_list(pair, 1));
+    CHECK(volume_listed_in_object_list(pair, 0));
+}
+
 // The list keeps, per object index, which volume each of its rows stands for. Deleting an object left its
 // map under its index, so the next object took it over: after deleting a cut object whose connectors were
 // hidden, the list's Change Type on the object behind it retyped another volume, or none.
@@ -507,4 +597,24 @@ TEST_CASE("Moving the instance's transform into the volumes keeps every copy whe
         check_vec(assembled_box(i).min, before[i].min, 1e-4);
         check_vec(assembled_box(i).max, before[i].max, 1e-4);
     }
+}
+
+// The object list's Load... records its undo step before it reads the file, so a file it cannot read
+// left an undo step that changed nothing. add_volume reads the file first and refuses it.
+TEST_CASE("A model file add_volume cannot read is refused before anything changes", "[PartEdits][orcamcp]")
+{
+    const std::string dir = std::string(TEST_DATA_DIR);
+    const std::optional<std::string> good = model_file_load_error(dir + "/20mm_cube.obj", {});
+    INFO(good.value_or(""));
+    CHECK_FALSE(good);
+
+    const boost::filesystem::path empty = boost::filesystem::temp_directory_path() / boost::filesystem::unique_path("empty-%%%%.stl");
+    { std::ofstream(empty.string()); }
+    CHECK(mentions(model_file_load_error(empty.string(), {}), "could not read"));
+    boost::filesystem::remove(empty);
+
+    const boost::filesystem::path text = boost::filesystem::temp_directory_path() / boost::filesystem::unique_path("notes-%%%%.txt");
+    { std::ofstream(text.string()) << "not a model"; }
+    CHECK(mentions(model_file_load_error(text.string(), {}), "could not read"));
+    boost::filesystem::remove(text);
 }
