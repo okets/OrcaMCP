@@ -49,12 +49,16 @@ void write_library(const fs::path& dir)
     write(dir / (lib + ".json"),
           R"({"version":"1.0.0","name":")" + lib + R"(","filament_list":[)"
           R"({"name":"fdm_filament_common","sub_path":"filament/fdm_filament_common.json"},)"
-          R"({"name":"Generic PLA @System","sub_path":"filament/generic_pla.json"}]})");
+          R"({"name":"Generic PLA @System","sub_path":"filament/generic_pla.json"},)"
+          R"({"name":"Generic PETG @System","sub_path":"filament/generic_petg.json"}]})");
     write(dir / lib / "filament" / "fdm_filament_common.json",
           R"({"type":"filament","name":"fdm_filament_common","from":"system","instantiation":"false","filament_type":["PLA"]})");
     write(dir / lib / "filament" / "generic_pla.json",
           R"({"type":"filament","name":"Generic PLA @System","from":"system","instantiation":"true","inherits":"fdm_filament_common",)"
           R"("filament_id":"OGFL99","filament_vendor":["Generic"]})");
+    write(dir / lib / "filament" / "generic_petg.json",
+          R"({"type":"filament","name":"Generic PETG @System","from":"system","instantiation":"true","inherits":"fdm_filament_common",)"
+          R"("filament_id":"OGFG99","filament_type":["PETG"],"filament_vendor":["Generic"]})");
 }
 
 // Vendor Acme, not installed: one model, "Acme One", with a 0.4 and a 0.6 mm nozzle.
@@ -206,6 +210,24 @@ TEST_CASE("installing a printer lays its vendor into the data folder and enables
     // The shipped profiles are read, never written, and the vendor is no longer one to install.
     CHECK(slurp(folders.profiles / "Acme.json") == shipped_profile);
     CHECK(uninstalled_vendors().empty());
+}
+
+TEST_CASE("installing a filament keeps the filament slot 1 had", "[PresetInstall]")
+{
+    InstallFolders folders;
+    AppConfig      app_config;
+    app_config.set_section(AppConfig::SECTION_FILAMENTS, {{"Generic PLA @System", "true"}});
+    PresetBundle bundle;
+    bundle.load_presets(app_config, ForwardCompatibilitySubstitutionRule::EnableSilent);
+    REQUIRE(bundle.filament_presets.front() == "Generic PLA @System");
+
+    // The cloud sync's merge mode, which install_presets takes: it adds, and changes no selection. It used
+    // to switch slot 1 to the first filament it added, which it took for the wizard's whole choice.
+    REQUIRE(bundle.apply_vendor_config({}, {{"Generic PETG @System", "true"}}, &app_config, /*overwrite=*/false));
+
+    CHECK(bundle.filament_presets.front() == "Generic PLA @System");
+    CHECK(app_config.get_section(AppConfig::SECTION_FILAMENTS).count("Generic PETG @System") == 1);
+    CHECK(app_config.get_section(AppConfig::SECTION_FILAMENTS).count("Generic PLA @System") == 1);
 }
 
 TEST_CASE("nothing is installed while slicing, while a job runs, or over unsaved preset changes", "[PresetInstall]")

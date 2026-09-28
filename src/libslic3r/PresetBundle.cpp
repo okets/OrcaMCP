@@ -1558,7 +1558,10 @@ bool PresetBundle::apply_vendor_config(
     // If the active filament is not in the wizard-selected filaments, switch to the first
     // compatible wizard-selected filament. This handles the first-run case where load_presets
     // falls back to "Generic PLA" even though the user selected a different filament.
-    if (!supplemented_filaments.empty()) {
+    // Orca: only when `new_filaments` is the whole choice (the wizard's overwrite). A merge adds to what
+    // is enabled, so it is no choice of slot 1's filament: upstream switched slot 1 to the first filament
+    // a merge added (the cloud sync's pending ones, MCP's install_presets).
+    if (overwrite && !supplemented_filaments.empty()) {
         bool active_filament_selected = supplemented_filaments.count(this->filament_presets.front()) > 0;
         if (!active_filament_selected) {
             for (const auto& [filament_name, _] : supplemented_filaments) {

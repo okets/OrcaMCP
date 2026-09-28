@@ -1275,6 +1275,7 @@ echo "AO deleting a filament writes a volume's renumbered support filament into 
 echo "AP the physical filament's Merge with checks the menu's unresolved -2 for a mixed filament that lists it, so it never warns (rel2506/13): $(U src/slic3r/GUI/Plater.cpp | awk '/^void Sidebar::change_filament/{f=1} f&&/m_menu_filament_id/{print "no"; d=1; exit} f&&/is_mixed_filament\(from_id\)/{print "yes"; d=1; exit} END{if(!d) print "unknown"}')"
 echo "AQ deleting a filament renumbers the support filaments in the plater's copy of the config only, not in the print preset the slicer reads (rel2506/13): $(U src/slic3r/GUI/Plater.cpp | awk '/^void Plater::on_filaments_delete/{f=1} f&&/prints\.get_edited_preset\(\)/{print "no"; d=1; exit} f&&/^}/{print "yes"; d=1; exit} END{if(!d) print "unknown"}')"
 echo "AR a mixed filament slot cannot be deleted while one physical slot is left (rel2506/13): $(U src/slic3r/GUI/Plater.cpp | awk '/^void Sidebar::delete_filament\(/{f=1} f&&/if \(p->combos_filament.size\(\) <= 1\) return;/{print "yes"; d=1; exit} f&&/^}/{print "no"; d=1; exit} END{if(!d) print "unknown"}')"
+echo "AS a merge install switches filament slot 1 to the first filament it adds (rel2506/13): $(U src/libslic3r/PresetBundle.cpp | awk '/Ensure active filament compatibility/{f=1} f&&/if \(overwrite/{print "no"; d=1; exit} f&&/if \(!supplemented_filaments.empty\(\)\)/{print "yes"; d=1; exit} END{if(!d) print "unknown"}')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -1648,6 +1649,13 @@ through MCP. A mix whose other component was deleted is broken (the app will not
 and was left stuck in the project. Ours keeps the last physical slot and lets a mixed one go. MCP's
 `delete_mixed_filament` also checks that the slot went (the sidebar says nothing when it deletes nothing),
 as `delete_filament_slot` does. On "no", take upstream's and delete a mix with one physical slot left.
+
+Item AS: `PresetBundle::apply_vendor_config` ends by switching filament slot 1 to the first of the
+filaments it was given when slot 1's is not among them -- for the Setup Wizard, whose list is the user's
+whole choice (`overwrite`). Its merge mode, which adds to what is enabled (the cloud sync's
+`load_pending_vendors`, MCP's `install_presets`), passes only the filaments it adds, so slot 1 was
+switched to the first of those: installing one filament replaced the project's first filament. Ours
+switches only on an overwrite. On "no", take upstream's and re-run `slic3rutils_tests "[PresetInstall]"`.
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices
