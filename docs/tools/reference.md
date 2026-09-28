@@ -30,7 +30,7 @@ into a call that reports success and changes nothing. See [Error Handling](#erro
 | Category | Tools |
 |----------|-------|
 | **Scene** | `get_scene_info`, `new_project`, `load_project`, `save_project`, `export_3mf` |
-| **Models** | `load_model`, `auto_orient`, `arrange_objects`, `get_object_info`, `get_mesh_health`, `repair_mesh`, `get_object_components`, `rename_object`, `set_object_printable` |
+| **Models** | `load_model`, `auto_orient`, `arrange_objects`, `get_object_info`, `get_mesh_health`, `repair_mesh`, `get_object_components`, `rename_object`, `set_object_printable`, `split_object`, `add_volume`, `set_volume_type`, `assemble_objects`, `merge_parts`, `invalidate_cut_info` |
 | **Transforms** | `move_object`, `rotate_object`, `scale_object`, `mirror_object`, `flatten_object`, `clone_object`, `cut_object`, `delete_object`, `transform_objects` |
 | **Plates** | `add_plate`, `select_plate`, `delete_plate`, `set_prime_tower_position` |
 | **Config** | `get_presets`, `get_edited_presets`, `get_config_values`, `select_preset`, `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset`, `get_valid_config_keys` |
@@ -804,6 +804,160 @@ where it was -- `position` is the box centre, which the sheet had widened):
 
 ---
 
+### split_object
+Split an object as the object list's Split does: into objects, or one volume into parts.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `object_id` | integer | Yes | Object index |
+| `to` | string | Yes | `objects`: one object per solid part of a multi-part object, or per shell of a one-part object. `parts`: one part per shell of a volume |
+| `volume_id` | integer | No | `parts` only: the volume to split; needed when the object has more than one volume |
+| `keep_height` | boolean | No | `objects` only: the app's question when a piece would float and the object drops onto the bed -- keep each piece at its height (true, the default) or drop them onto the bed (false) |
+| `keep_painting` | boolean | No | Remap painting onto the pieces instead of clearing it. Left out: the app's "Keep painted feature after mesh change" setting (`keep_painting_from` says which) |
+
+**`to: "objects"`** (`Plater::split_object`): each piece keeps its place and is one of the last objects
+afterwards (`new_object_ids`, `new_objects` as `get_scene_info` describes them); the original's index is
+free, so every object after it moves down by one (`object_ids_shifted`). A multi-part object splits by
+solid part (a part of several shells stays one object: split it to parts first); its modifiers,
+negative volumes and support volumes are not carried (`dropped_volumes`). `floating_pieces` is
+`kept_height` or `dropped_to_bed` when the app asked about floating pieces, `null` when none floated.
+
+**`to: "parts"`** (`ObjectList::split`): the volume becomes one part per shell, named `<name>_1`, `_2`,
+..., each keeping its filament and place (`pieces`: their volume ids). `next_steps` points at
+`get_object_components`, which gives each part's size, to find a fragment that `delete_object` with
+`volume_id` then deletes.
+
+Refused before anything changes: a split that would leave one piece (one shell), `volume_id` or
+`keep_height` with the other target, a split to parts of a cut object's volume (`invalidate_cut_info`
+first: the list reads a cut object's rows as volume indices there), and any call while an arrange or
+orient runs. `floating_pieces` is read from the prompt's key, not its text, so it holds in every
+language. One undo step. An
+open toolbar tool is closed first (`closed_toolbar_tool`).
+
+```json
+{"name": "split_object", "arguments": {"object_id": 0, "to": "parts"}}
+{"name": "split_object", "arguments": {"object_id": 0, "to": "objects", "keep_height": false}}
+```
+
+The workflow an agent once had to hand to the user -- split to parts, delete the small piece, merge
+the rest -- is `split_object` `to: "parts"`, `get_object_components`, `delete_object` with `volume_id`,
+`merge_parts`.
+
+---
+
+### add_volume
+Add a volume to an object, as the object list's Add Part / Add Negative Part / Add Modifier / Add
+Support Blocker / Add Support Enforcer does.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `object_id` | integer | Yes | Object index |
+| `type` | string | Yes | `part`, `negative_volume`, `modifier`, `support_blocker` or `support_enforcer` |
+| `shape` | string | One of the two | A primitive: `cube`, `cylinder`, `sphere`, `cone`, `disc`, `torus` (`ObjectList::load_generic_subobject`) |
+| `file_path` | string | One of the two | A model file whose meshes become the volume (the list's Load..., `ObjectList::load_subobject`; its file chooser is answered with this path) |
+
+- **A primitive** is sized a tenth of the bed's longest side and stands beside the object at its
+  right-front corner, on the bed: `next_steps` points at `move_object` (and `scale_object`) with
+  `volume_id`. As the object list does, it moves the object's rotation and scale from its instance into
+  its volumes: `instance_transform_moved_to_volumes` says so when there were any, and `rotation_degrees`
+  and `scale` read 0 and 1 afterwards, the object looking the same. Before v2.5.0.6 this also moved
+  every other instance of the object by instance 0's offset and applied instance 0's rotation and scale
+  to it a second time (probe AK).
+- **A file's volume** keeps the position its file gives it, relative to the object's first volume. A
+  STEP file is tessellated with the configured deflection (its dialog is answered).
+- **A modifier** changes only the settings it is given: `next_steps` points at `set_object_config`
+  with `volume_id`.
+
+The answer: `volume` (its `volume_id`, `bounding_box` and `position` in plate mm) and every volume.
+One undo step. An open toolbar tool is closed first (`closed_toolbar_tool`); refused while an arrange
+or orient runs. The file is read first, as the list reads it: one the app cannot read, or with no mesh,
+is refused with why, and nothing changes (the list's own Load... records its undo step before it reads
+the file).
+
+```json
+{"name": "add_volume", "arguments": {"object_id": 0, "type": "modifier", "shape": "cube"}}
+{"name": "add_volume", "arguments": {"object_id": 0, "type": "part", "file_path": "/path/to/boss.stl"}}
+```
+
+---
+
+### set_volume_type
+Change a volume's type, as the object list's Change Type does.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `object_id` | integer | Yes | Object index |
+| `volume_id` | integer | Yes | The volume |
+| `type` | string | Yes | `part`, `negative_volume`, `modifier`, `support_blocker` or `support_enforcer` |
+
+The object list keeps volumes sorted by type (parts first), so the volume's index can change:
+`volume_id` in the answer is the new one, `previous_volume_id` the old, with `type`, `previous_type`
+and every volume. Refused: the object's last solid part to anything but a part, a text or SVG volume to
+a support blocker or enforcer (both refused by the list), and any volume of a cut object
+(`invalidate_cut_info` first). The volume is selected by its own row, as the list maps rows to volumes
+(probe AL fixes that map). The same type is a change of
+nothing (`changed: false`, no undo step). A change marks the object's plates not sliced. One undo step;
+an open toolbar tool is closed first; refused while an arrange or orient runs.
+
+---
+
+### assemble_objects
+Assemble two or more objects into one object with their volumes as its parts, as the object list's
+Assemble does.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `object_ids` | array | Yes | Two or more objects, by `object_id` |
+
+Each volume keeps its place, settings and filament; the new object, named Assembly, is the last object
+afterwards (`object_id`), and the objects after each assembled one move down (`object_ids_shifted`).
+It takes each object's first instance: `assembled_from` lists each object with how many of its
+instances were left out. Refused: fewer than two objects, one listed twice, a piece of a cut (the list
+does not assemble it; `invalidate_cut_info` first). One undo step ("Assemble"). `next_steps` points at
+`get_object_info` of the assembly.
+
+---
+
+### merge_parts
+Merge an object's parts into one part, as the object list's Mesh boolean does
+(`ObjectList::boolean`).
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `object_id` | integer | Yes | Object index |
+| `keep_painting` | boolean | No | Remap painting onto the merged mesh instead of clearing it; left out: the app's setting |
+
+The solid parts are joined by a union (`merged_volumes`) and the negative volumes subtracted
+(`subtracted_volumes`); the new object keeps the name and the object's settings, and is the last object
+afterwards. Not carried (`not_carried`): modifiers and support volumes, the parts' own settings and
+filaments (`part_settings` lists the keys), layer ranges and brim ears. Every instance of the object
+becomes part of one mesh in one instance (`instances_merged` says so for more than one). When the union
+fails, the parts are joined without it and `boolean` says so, with the app's notification. A piece of
+a cut: the app ends the cut's link for the others (`cut_info_invalidated_for`). Refused for one part
+with one shell (nothing to merge). One undo step; `next_steps` points at `get_mesh_health` or
+`get_object_components` when the result has open edges or several shells.
+
+---
+
+### invalidate_cut_info
+End the link the app keeps between the pieces of a cut, as the object list's Invalidate cut info does,
+for every piece of that cut (`objects`). Until then the object list does not move, rotate, scale,
+mirror or delete a piece's solid parts and connectors on their own, nor assemble its pieces, and the
+tools refuse them, naming this call. An object that is not part of a cut changes nothing
+(`changed: false`). One undo step.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `object_id` | integer | Yes | Any piece of the cut |
+
+---
+
 ## Transform Tools
 
 ### move_object
@@ -817,6 +971,7 @@ Move an object to a new position.
 | `y` | number | No | Plate Y position/offset (mm) |
 | `z` | number | No | Plate Z position/offset (mm), height above the bed |
 | `relative` | boolean | No | Relative move (default: true) |
+| `volume_id` | integer | No | Move this volume within the object instead of the whole object (see "A part's move, rotate, scale and mirror" below) |
 | `include_preview` | boolean | No | Include preview |
 
 **Coordinate frame.** `x`, `y` and `z` are plate millimetres along the *plate's* axes — the same
@@ -876,6 +1031,7 @@ Rotate an object.
 | `y` | number | No | Rotation about the plate's Y axis (degrees) |
 | `z` | number | No | Rotation about the plate's Z axis, the vertical (degrees) |
 | `relative` | boolean | No | `true` (the default): `x`, `y` and `z` are the change in degrees. `false` is refused: absolute rotation is not supported |
+| `volume_id` | integer | No | Rotate this volume within the object instead of the whole object (see "A part's move, rotate, scale and mirror" below) |
 | `include_preview` | boolean | No | Include preview |
 
 **Example:**
@@ -942,6 +1098,7 @@ Scale an object.
 | `y` | number | No | Scale factor along the plate's Y axis (must be > 0) |
 | `z` | number | No | Scale factor along the plate's Z axis, the vertical (must be > 0) |
 | `uniform` | boolean | No | Apply X scale to all axes. With `uniform`, give `x`: a `y` or `z` without it is refused ("uniform scales every axis by x: give x"), since it used to be ignored |
+| `volume_id` | integer | No | Scale this volume within the object instead of the whole object (see "A part's move, rotate, scale and mirror" below) |
 | `include_preview` | boolean | No | Include preview |
 
 **Examples:**
@@ -1002,6 +1159,7 @@ Mirror an object along an axis.
 |-----------|------|----------|-------------|
 | `object_id` | integer | Yes | Object index |
 | `axis` | string | Yes | Plate axis to mirror across: "x", "y", or "z" |
+| `volume_id` | integer | No | Mirror this volume within the object instead of the whole object (see "A part's move, rotate, scale and mirror" below) |
 | `include_preview` | boolean | No | Include preview |
 
 **Coordinate frame.** `x`, `y` and `z` are plate millimetres along the *plate's* axes — the same
@@ -1036,6 +1194,42 @@ plate 0".
 Before v2.3.2 `on_bed` was measured against whichever plate happened to be *selected*, so a correct
 move into another plate's area was reported as "outside printable area"; `move_object` also left the
 object registered on its old plate, which sliced it onto the wrong plate with no error.
+
+---
+
+### A part's move, rotate, scale and mirror (`volume_id`)
+`move_object`, `rotate_object`, `scale_object` and `mirror_object` with `volume_id` change that volume
+(a part, modifier, negative or support volume) within its object, as the object manipulation panel does
+for a part selected in the object list in World coordinates:
+
+- the same plate axes as for a whole object, on instance 0: a move's `x`, `y`, `z` are plate mm (the
+  volume's box centre with `relative: false`), a rotation and a scale turn and grow the volume about its
+  own box's centre, a mirror flips it across that centre. The volume is the object's, so every copy of
+  the object shows the change, each in its own frame;
+- then, as the GUI does after a part changed (`GLCanvas3D::do_move`, `do_rotate`, `do_scale`), an object
+  with auto-drop comes down onto the bed: after a move one that floats, after a rotation or scale one
+  that was resting, as for a whole object. `dropped_to_bed_mm` says how far (instance 0). Modifiers and
+  support volumes never stand on the bed: only solid parts count;
+- the answer: the volume's row as `get_object_info` lists it (`volume_id`, `name`, `type`,
+  `bounding_box`, `position`), `previous_position`, `dropped_to_bed_mm`, `skew_warning` for a scale
+  along plate axes that shears a turned part, and the object's placement fields. One undo step; a
+  change of nothing (a move by zero, a scale of 1) takes none, with `changed: false`.
+
+`volume_id` given as `null`, text that is not a whole number, a fraction or a negative number is refused
+("omit volume_id for the whole object"): it is never read as the whole object. The same holds for
+`delete_object`, `rename_object` and the settings tools, and for every true-or-false and text argument of
+the part tools (`keep_height`, `keep_painting`, `shape`, `file_path`, ...): given `null`, it is refused
+rather than read as left out.
+
+Refused: a one-volume object (its only volume moves with the object: omit `volume_id`), a cut object's
+solid parts and connectors (the object list does not move them on their own: `invalidate_cut_info`
+first), and any call while an arrange or orient runs. An open toolbar tool is closed first
+(`closed_toolbar_tool`).
+
+```json
+{"name": "move_object", "arguments": {"object_id": 0, "volume_id": 1, "x": 128, "y": 128, "z": 10, "relative": false}}
+{"name": "scale_object", "arguments": {"object_id": 0, "volume_id": 1, "x": 0.5, "uniform": true}}
+```
 
 ---
 
@@ -1110,17 +1304,41 @@ Cut an object at a specified Z height.
 `z_height` is in plate millimetres, the same frame `get_object_info` reports, and the object's own
 rotation is accounted for: `Cut` brings each mesh into the cut plane's frame with
 `get_matrix_no_offset()`, so the instance's rotation and scale are already applied there and the
-handler only has to subtract the instance's Z offset.
+handler only has to subtract the instance's offset.
+
+It is the app's own horizontal cut (`Plater::cut_horizontal`'s), and its result goes in as the cut
+tool's does (`Plater::apply_cut_object_to_model`): the pieces are the last objects afterwards
+(`new_object_ids`), each on the plate and in the object list, and the original's index is free, so
+every object after it moves down by one. One undo step ("Cut by Plane"). Before v2.5.0.6 the pieces
+were added to the model alone -- on no plate, `get_scene_info` listed them under `unplaced_objects`,
+and missing from the object list -- and the cut took no undo step, so an undo after it also undid the
+call before it. Refused while an arrange or orient runs (the job finalizes through the object the cut
+deletes); an open toolbar tool is closed first (`closed_toolbar_tool`).
 
 ---
 
 ### delete_object
-Remove an object from the project.
+Remove an object from the project, or with `volume_id` one of its volumes, as the object list's
+Delete does, in one undo step ("Delete Selected Objects"). Before v2.5.0.6 deleting an object took no
+undo step, so an undo after it also undid the call before it.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `object_id` | integer | Yes | Object index |
+| `volume_id` | integer | No | Delete this volume (a part, modifier, negative or support volume) instead of the object |
+| `include_preview` | boolean | No | Include preview |
+
+- **An object:** the objects after it move down by one. A piece of a cut asks, in the app, whether to
+  delete it and end the cut's link for the other pieces; MCP answers Delete, and
+  `cut_info_invalidated_for` lists those pieces (by their ids afterwards).
+- **A volume:** refused for the object's last solid part (delete the object) and for a cut object's
+  solid part, negative volume or connector (`invalidate_cut_info` first), as the object list refuses
+  them. When one volume is left, its own settings move to the object, as the list moves them
+  (`settings_moved_to_object`), and its transform moves into the instances. The answer lists the
+  deleted volume and the volumes left, with the object's placement.
+
+An open toolbar tool is closed first (`closed_toolbar_tool`); refused while an arrange or orient runs.
 
 ---
 
@@ -1134,6 +1352,14 @@ writes their G-code again with the new name.
 |-----------|------|----------|-------------|
 | `object_id` | integer | Yes | Object index |
 | `new_name` | string | Yes | New name |
+| `volume_id` | integer | No | Rename this volume instead of the object |
+
+It is the object list's rename: a one-part object's part takes the object's new name too, and
+renaming a one-part object's part (`volume_id` 0) renames that part alone -- the list shows no row for
+it, and the object keeps its name. An empty
+name or one with a character the list refuses (`<>:/\|?*"`) is refused, and the same name again
+changes nothing (`changed: false`, no undo step). A volume's name is not in the G-code, so renaming a
+volume leaves the plates' results as they are.
 
 ---
 
@@ -1729,10 +1955,15 @@ of the object, not just the printable parts `get_object_components` shows:
 "filament": 3,
 "filaments_used": [1, 3],
 "volumes": [
-  {"volume_id": 0, "name": "Base",          "type": "part",     "own_filament": null, "effective_filament": 3},
-  {"volume_id": 1, "name": "Base Modifier", "type": "modifier", "own_filament": 1,    "effective_filament": 1}
+  {"volume_id": 0, "name": "Base",          "type": "part",     "own_filament": null, "effective_filament": 3,
+   "bounding_box": {"min": {"x": 118, "y": 118, "z": 0}, "max": {"x": 138, "y": 138, "z": 20}}, "position": {"x": 128, "y": 128, "z": 10}},
+  {"volume_id": 1, "name": "Base Modifier", "type": "modifier", "own_filament": 1,    "effective_filament": 1,
+   "bounding_box": {"min": {"x": 123, "y": 123, "z": 5}, "max": {"x": 133, "y": 133, "z": 15}}, "position": {"x": 128, "y": 128, "z": 10}}
 ]
 ```
+
+Each volume's `bounding_box` and `position` (its centre) are plate millimetres on instance 0: where the
+volume is, which `move_object` and friends with `volume_id` read and write.
 
 `type` is one of `part`, `modifier`, `negative_volume`, `support_blocker`, `support_enforcer`.
 `own_filament` is `null` when the volume inherits the object's slot; `effective_filament` is what
@@ -1743,12 +1974,14 @@ this is where to look for the volume responsible — and `volume_id` here is the
 ---
 
 ### get_object_config
-Get per-object configuration overrides.
+Get per-object configuration overrides, or with `volume_id` those of one volume (the answer adds its
+`volume_id`, `volume_name` and `volume_type`).
 
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `object_id` | integer | Yes | Object index |
+| `volume_id` | integer | No | That volume's overrides instead of the object's |
 
 ---
 
@@ -1760,6 +1993,7 @@ presets and the other objects alone.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `object_id` | integer | Yes | Object index |
+| `volume_id` | integer | No | Set these on this part or modifier instead of the object (also on each `configs[]` entry) |
 | `settings` | array | Yes | Array of `{key, value}` pairs |
 
 **Example:**
@@ -1772,6 +2006,17 @@ presets and the other objects alone.
   ]
 }}
 ```
+
+**Which keys.** An object takes the settings its tab in the app offers: object and region settings
+(layer height, supports, walls, infill, ...) and its filament (`extruder`). A part or modifier
+(`volume_id`) takes region settings only (walls, infill, speeds, ...), as its tab in the app does, and a
+modifier changes only the settings it is given, inside it. Any other key -- a printer, filament or
+whole-print setting, which the slicer never reads per object -- is refused into `rejected_values`
+with the reason and where it belongs (`apply_config`), as is an object-only key such as
+`layer_height` on a part ("omit volume_id") and `extruder` on a part (`set_object_filament` with
+`volume_id`). A negative volume, support blocker or enforcer takes no settings: the slicer reads them
+from parts and modifiers only. Before v2.5.0.6 any key was stored on the object, and one never read
+there was reported applied. The object list's settings row follows each change.
 
 **Lists and failures:** identical to `apply_config` — a list-typed key takes a JSON array or the
 joined string, `unknown_keys` holds keys that do not exist, and `rejected_values` holds
@@ -1791,6 +2036,7 @@ Clear per-object configuration overrides.
 |-----------|------|----------|-------------|
 | `object_id` | integer | Yes | Object index |
 | `keys` | array | No | Specific keys to reset. Omitted: every override but the object's filament (`extruder`), which stays, as the GUI's reset leaves it. `reset_count` is how many were cleared; a reset that clears nothing takes no undo snapshot |
+| `volume_id` | integer | No | Reset this volume's overrides instead of the object's; its filament stays too |
 
 An empty `keys`, or one that is not a list of setting names, is refused: both used to reset every
 override. Leave `keys` out to reset them all.
@@ -3157,6 +3403,11 @@ nothing to suggest has no `next_steps`.
 | `render_plate_view`, on each view whose `uniform_image` is true (beside its `hint`) | `get_scene_info` | nothing printable on that plate was drawn |
 | | `render_plate_view` with `{plate_index, save_to_file: true}` | the plate's objects were drawn but the camera looked elsewhere: no views gives a contact sheet fitted to the plate |
 | `paint_object` with `mode: support` | `set_object_config` for that object: `enable_support` `"1"` and `support_type` `normal(manual)` (or `tree(manual)` when its type is a tree one), for support only where painted | the object has painted enforcers and `enable_support` is off for it, so they do nothing (`info_messages` says so too). Not for blockers alone or erased paint: turning support on is the opposite of what a blocker asks; and not with an `(auto)` type, which would also support every other overhang |
+| `split_object` `to: "parts"` | `get_object_components` for that object | the volume became two or more parts: their sizes, to find a fragment (`delete_object` with `volume_id` deletes one) |
+| `split_object` `to: "objects"`, `merge_parts` | `get_mesh_health`, `get_object_components` | as for `load_model`: a new object with the mesh warning icon, or a part of several shells |
+| `add_volume` | `move_object` with `object_id` and `volume_id` | a primitive: it stands beside the object |
+| `add_volume`, `set_volume_type` | `set_object_config` with `object_id` and `volume_id` | the volume is a modifier, which changes only the settings it is given |
+| `assemble_objects` | `get_object_info` of the assembly | always: its volumes, with their boxes |
 | The bridge's own answers (`list_instances`, `start_orca`, and a tool call it did not forward) | `select_instance` with the `pid` of the first instance that tells who it is (never an older OrcaMCP, which cannot), and `list_instances` | several instances run and this session has not chosen one, or the one it used is gone |
 | | `start_orca` (with `new_instance: true` when others run) | no instance runs, or the one this session used is gone |
 | | `get_scene_info` | the instance this session used restarted, and the session now uses the restarted one: its scene is new |

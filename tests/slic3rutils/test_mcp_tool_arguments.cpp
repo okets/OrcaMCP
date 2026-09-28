@@ -71,7 +71,7 @@ TEST_CASE("An argument a tool does not take is refused, naming it and every argu
 {
     CHECK(refusal("scale_object", {{"object_id", 0}, {"scale", 0.5}}) ==
           "scale_object has no argument \"scale\". Its arguments: object_id, include_preview, preview_resolution, "
-          "preview_views, uniform, x, y, z.");
+          "preview_views, uniform, volume_id, x, y, z.");
 }
 
 TEST_CASE("A required argument left out is refused, naming it", "[McpToolArguments][orcamcp][tools]")
@@ -84,7 +84,7 @@ TEST_CASE("A misspelled required argument is refused as both unknown and missing
 {
     CHECK(refusal("scale_object", {{"objectid", 0}, {"x", 2}}) ==
           "scale_object has no argument \"objectid\" and is missing its required argument \"object_id\". Its arguments: "
-          "object_id, include_preview, preview_resolution, preview_views, uniform, x, y, z.");
+          "object_id, include_preview, preview_resolution, preview_views, uniform, volume_id, x, y, z.");
 }
 
 TEST_CASE("Every unknown and every missing argument is named at once", "[McpToolArguments][orcamcp][tools]")

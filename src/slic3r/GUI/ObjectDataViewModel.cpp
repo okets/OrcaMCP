@@ -961,6 +961,33 @@ wxDataViewItem ObjectDataViewModel::DeletePlate(const int plate_idx)
     return ret_item;
 }
 
+void erase_object_from_volume_maps(std::map<int, std::map<int, int>>& maps, int obj_idx)
+{
+    std::map<int, std::map<int, int>> kept;
+    for (auto& [index, rows] : maps)
+        if (index != obj_idx)
+            kept.emplace(index > obj_idx ? index - 1 : index, std::move(rows));
+    maps = std::move(kept);
+}
+
+void move_object_in_volume_maps(std::map<int, std::map<int, int>>& maps, int from, int to)
+{
+    if (from == to)
+        return;
+    std::map<int, std::map<int, int>> moved;
+    for (auto& [index, rows] : maps) {
+        int now = index;
+        if (index == from)
+            now = to;
+        else if (from < to && index > from && index <= to)
+            now = index - 1;
+        else if (to < from && index >= to && index < from)
+            now = index + 1;
+        moved.emplace(now, std::move(rows));
+    }
+    maps = std::move(moved);
+}
+
 wxDataViewItem ObjectDataViewModel::Delete(const wxDataViewItem &item)
 {
 	auto ret_item = wxDataViewItem(0);
@@ -996,6 +1023,8 @@ wxDataViewItem ObjectDataViewModel::Delete(const wxDataViewItem &item)
                 Delete(wxDataViewItem((*it)->GetNthChild(i)));
                 i = (*it)->GetChildCount() - 1;
             }
+            // Orca: the later objects' row maps move down with them.
+            erase_object_from_volume_maps(m_ui_and_3d_volume_maps, int(it - m_objects.begin()));
             m_objects.erase(it);
             node_parent->GetChildren().Remove(node);
         }
@@ -1205,6 +1234,7 @@ void ObjectDataViewModel::ResetAll()
     m_plates.clear();
     m_plate_outside = nullptr;
     m_objects.clear();
+    m_ui_and_3d_volume_maps.clear(); // Orca: no object, no row map
 
     AddOutsidePlate();
 }
@@ -1958,6 +1988,7 @@ wxDataViewItem ObjectDataViewModel::ReorganizeObjects(  const int current_id, co
     ObjectDataViewModelNode* plate_node = deleted_node->m_parent;
 
     m_objects.erase(m_objects.begin() + current_id);
+    move_object_in_volume_maps(m_ui_and_3d_volume_maps, current_id, new_id); // Orca: the row map moves with it
     plate_node->GetChildren().Remove(deleted_node);
     ItemDeleted(wxDataViewItem(deleted_node->m_parent), wxDataViewItem(deleted_node));
 

@@ -239,6 +239,55 @@ This guide shows how to combine MCP tools for common 3D printing tasks.
 
 ---
 
+## Parts Workflow: Remove a Stray Fragment
+
+**Goal:** Delete a small loose piece from a mesh and join the rest into one part again, as the object
+list's Split, Delete and Mesh boolean do.
+
+```
+1. get_object_components   The part's shells: facets and box of each
+        ↓
+2. split_object            to: "parts" -- one part per shell (pieces: their volume ids)
+        ↓
+3. get_object_components   Each part's size: which one is the fragment
+        ↓
+4. delete_object           object_id and the fragment's volume_id
+        ↓
+5. merge_parts             The remaining parts unioned into one (optional)
+```
+
+Each step is one undo step. `split_object` `to: "objects"` makes one object per piece instead.
+
+---
+
+## Parts Workflow: A Modifier
+
+**Goal:** Different settings inside one region of an object (denser infill in a boss, more walls in a
+tab).
+
+```
+1. add_volume          type: "modifier", shape: "cube" -- stands beside the object
+        ↓
+2. move_object         with volume_id: the region's centre, relative: false
+3. scale_object        with volume_id: the region's size
+        ↓
+4. set_object_config   with volume_id: the settings inside it (region settings only)
+```
+
+**Example:**
+```json
+{"name": "add_volume", "arguments": {"object_id": 0, "type": "modifier", "shape": "cube"}}
+{"name": "move_object", "arguments": {"object_id": 0, "volume_id": 1, "x": 128, "y": 128, "z": 10, "relative": false}}
+{"name": "set_object_config", "arguments": {"object_id": 0, "volume_id": 1,
+  "settings": [{"key": "sparse_infill_density", "value": "80%"}]}}
+```
+
+`get_object_info` lists every volume with its box and position; `set_volume_type` turns a part into a
+modifier, negative volume or support volume, and `assemble_objects` puts several objects into one as
+its parts.
+
+---
+
 ## Multi-Plate Workflow
 
 **Goal:** Organize objects across multiple build plates.

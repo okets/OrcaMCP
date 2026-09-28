@@ -166,6 +166,13 @@ void rehome_and_report_placement(nlohmann::json& result, int object_id, bool mov
 // synchronize_unselected_instances does.
 void transform_instances_in_plate_frame(ModelObject& object, const Transform3d& world_transform);
 
+// The lowest point of one instance, read from the model parts' convex hulls as the GUI's drop reads
+// it (ModelObject::get_instance_min_z). That function visits every hull vertex once per facet it
+// belongs to, about six times over; this visits each once. A hull qhull could not build is empty,
+// and the mesh stands in for it, as it does there. An object with no model part has no lowest point:
+// the largest double.
+double instance_min_z(const ModelObject& object, size_t instance_idx);
+
 // Whether an instance whose lowest point was at `min_z_before` and is at `min_z_after` once a
 // transform is done goes back onto Z = 0. The GUI's own rule, from GLCanvas3D::do_scale, do_rotate
 // and do_mirror: an instance that was sinking stays sinking unless the transform lifted it clear of
@@ -341,8 +348,9 @@ inline std::string join_lines(const std::vector<std::string>& lines)
 
 // RAII: suppress modal dialogs for the lifetime of the guard and collect their messages.
 // Nest-safe: an inner guard keeps the outer guard's messages and restores its state.
-// answer_prompt chooses the answer for one keyed prompt (MsgDialog::set_mcp_prompt_key) until the
-// outermost guard ends, so no later call inherits it.
+// answer_prompt chooses the answer for one keyed prompt (MsgDialog::set_mcp_prompt_key), and
+// answer_file / answer_files / answer_folder the path a native file or folder dialog gets
+// (mcp_answer_path_dialog), until the outermost guard ends, so no later call inherits them.
 struct McpDialogSuppressionGuard
 {
     McpDialogSuppressionGuard() : m_was_enabled(is_mcp_dialog_suppression_enabled())
@@ -350,13 +358,16 @@ struct McpDialogSuppressionGuard
         if (!m_was_enabled) {
             clear_mcp_suppressed_messages();
             clear_mcp_prompt_answers();
+            clear_mcp_path_answers();
         }
         set_mcp_dialog_suppression(true);
     }
     ~McpDialogSuppressionGuard()
     {
-        if (!m_was_enabled)
+        if (!m_was_enabled) {
             clear_mcp_prompt_answers();
+            clear_mcp_path_answers();
+        }
         set_mcp_dialog_suppression(m_was_enabled);
     }
     // Everything the suppressed dialogs said, errors included.
@@ -399,6 +410,13 @@ struct McpDialogSuppressionGuard
     {
         set_mcp_prompt_answer(key, answer_id, note);
     }
+    // Whether the app asked the keyed prompt (MsgDialog::set_mcp_prompt_key) during this call.
+    bool prompt_asked(const std::string& key) const { return was_mcp_prompt_asked(key); }
+    // The path a native file or folder dialog of this call gets instead of opening
+    // (mcp_answer_path_dialog), until the outermost guard ends.
+    void answer_file(const std::string& path) { answer_files({path}); }
+    void answer_files(const std::vector<std::string>& paths) { set_mcp_path_answer(McpPathDialog::file, paths); }
+    void answer_folder(const std::string& path) { set_mcp_path_answer(McpPathDialog::folder, {path}); }
 
 private:
     bool m_was_enabled;
@@ -443,6 +461,19 @@ private:
 // What the app shows about its slicing pipeline, for pipeline_busy: plater's background process, its
 // Slice All run, and `plate_count` plates. Main thread.
 PipelineState pipeline_state(Plater& plater, int plate_count);
+
+// Closes the toolbar tool (gizmo) open in the 3D view, as the user closes it, and says which it was;
+// "" when none was open. The object list's Repair refuses while one is open -- its undo snapshot would
+// land in the tool's own undo stack -- and a painting tool's selectors belong to the volumes it was
+// opened on, so a tool that changes an object's mesh or volumes closes it first: an agent does what
+// the user would. New Project closes them the same way (Plater::priv::reset). Closing a painting tool
+// (and cut, measure, brim ears, text, SVG) records its own undo step, as when the user closes it, so it
+// is closed only right before a change that is about to be made. Main thread.
+std::string close_open_toolbar_tool(Plater& plater);
+bool        toolbar_tool_open(Plater& plater);
+
+// `answer` with closed_toolbar_tool naming the tool close_open_toolbar_tool closed, when it closed one.
+nlohmann::json with_closed_tool(nlohmann::json answer, const std::string& closed_tool);
 
 // Applies a settings change the slicer has not taken in yet (`apply`: Plater::apply_pending_background_update)
 // when should_apply_pending_update says so, and says whether it did. The update can raise an error

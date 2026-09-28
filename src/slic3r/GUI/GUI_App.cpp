@@ -4928,12 +4928,20 @@ void GUI_App::load_project(wxWindow *parent, wxString& input_file) const
 void GUI_App::import_model(wxWindow *parent, wxArrayString& input_files) const
 {
     input_files.Clear();
-    wxFileDialog dialog(parent ? parent : GetTopWindow(),
+    const wxString title =
 #ifdef __APPLE__
-        _L("Choose one or more files (3MF/STEP/STL/SVG/OBJ/AMF/USD*/ABC/PLY):"),
+        _L("Choose one or more files (3MF/STEP/STL/SVG/OBJ/AMF/USD*/ABC/PLY):");
 #else
-        _L("Choose one or more files (3MF/STEP/STL/SVG/OBJ/AMF):"),
+        _L("Choose one or more files (3MF/STEP/STL/SVG/OBJ/AMF):");
 #endif
+    // Orca MCP: under dialog suppression the tool call supplies the files; a native file dialog opened
+    // inside it would block the call for good.
+    if (std::vector<std::string> answered; mcp_answer_path_dialog(into_u8(title), McpPathDialog::file, answered)) {
+        for (const std::string& path : answered)
+            input_files.Add(from_u8(path));
+        return;
+    }
+    wxFileDialog dialog(parent ? parent : GetTopWindow(), title,
         from_u8(app_config->get_last_dir()), "",
         file_wildcards(FT_MODEL), wxFD_OPEN | wxFD_MULTIPLE | wxFD_FILE_MUST_EXIST);
 

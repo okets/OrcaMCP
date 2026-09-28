@@ -334,6 +334,15 @@ private:
 // custom message the model sends to associated control to notify a last volume deleted from the object:
 wxDECLARE_EVENT(wxCUSTOMEVT_LAST_VOLUME_IS_DELETED, wxCommandEvent);
 
+// Orca: the object list's row maps (ObjectDataViewModel::get_ui_and_3d_volume_map, which volume each row
+// of an object stands for: a cut object's connectors have no row) are kept by object index, so they move
+// with the objects. Upstream never moved or dropped them: after an object was deleted the next object
+// took over its map, and the list's Change Type retyped another of its volumes, or none.
+// The maps once object `obj_idx` is removed: its own dropped, every later object's moved down one.
+void erase_object_from_volume_maps(std::map<int, std::map<int, int>>& maps, int obj_idx);
+// The maps once object `from` moves to index `to`, the objects between shifting one place.
+void move_object_in_volume_maps(std::map<int, std::map<int, int>>& maps, int from, int to);
+
 class ObjectDataViewModel :public wxDataViewModel
 {
     std::vector<ObjectDataViewModelNode*>       m_plates;

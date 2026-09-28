@@ -54,6 +54,19 @@ std::vector<NextStep> mesh_next_steps(const Model& model, const std::vector<Mesh
 // leaves a closed one-shell mesh, and that record, as they are.
 std::vector<NextStep> mesh_repair_next_steps(const ModelObject& object, int object_id, const MeshHealth& health);
 
+// What split_object's split to parts of volume `volume_id` leads to: get_object_components, which gives
+// each of the `pieces` new parts' facets and box, to find a fragment (delete_object with volume_id
+// deletes one).
+std::vector<NextStep> split_parts_next_steps(int object_id, int volume_id, const std::vector<int>& pieces);
+
+// What a new or retyped volume `volume_id` of type `type_name` leads to: move_object with volume_id when
+// it stands `beside_object` (add_volume's primitive, at the object's right-front corner), and, for a
+// modifier, set_object_config with volume_id: a modifier changes only the settings it is given.
+std::vector<NextStep> new_volume_next_steps(int object_id, int volume_id, const std::string& type_name, bool beside_object);
+
+// What assemble_objects' answer leads to: get_object_info of the new object, its volumes listed.
+std::vector<NextStep> assembled_next_steps(int object_id);
+
 // What slice_all's answer leads to: wait_for_slice for a slice that started, or for a busy pipeline
 // (then slice_all again); get_slicing_status while an arrange or an orient holds the app (its ui_job;
 // wait_for_slice does not wait for those); get_print_estimate of `sliced_plate` for plates already
