@@ -1,12 +1,17 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <nlohmann/json.hpp>
 #include <string>
 
+#include "libslic3r/PrintConfig.hpp"
 #include "slic3r/GUI/FlashforgeConsoleHandler.hpp"
+#include "slic3r/Utils/Flashforge.hpp"
+#include "slic3r/Utils/FlashforgeApi.hpp"
 
 using json = nlohmann::json;
 using Slic3r::GUI::build_console_operation;
+using Catch::Matchers::WithinAbs;
 
 namespace {
 
@@ -26,6 +31,16 @@ json idle_snapshot()
                     {"printSpeedAdjust", 0.0},
                     {"chamberFanSpeed", 30},
                     {"coolingFanSpeed", 70}}}}}};
+}
+
+// The same printer mid-job, where a print speed applies.
+json printing_snapshot()
+{
+    json snapshot                          = idle_snapshot();
+    snapshot["printer"]["state"]           = "printing";
+    snapshot["printer"]["print_file"]      = "cube.gcode";
+    snapshot["printer"]["raw"]["printSpeedAdjust"] = 100;
+    return snapshot;
 }
 
 json build(const json& params, const json& snapshot, std::string& error)
@@ -111,10 +126,10 @@ TEST_CASE("Flashforge console commands map onto printer calls", "[flashforge][fl
 
     SECTION("printerCtl_cmd carries every field, so one control cannot clobber another")
     {
-        const json op = build({{"name", "printer_ctl"}, {"speed", 125}}, idle_snapshot(), error);
+        const json op = build({{"name", "printer_ctl"}, {"speed", 125}}, printing_snapshot(), error);
         CHECK(op["cmd"] == "printerCtl_cmd");
         CHECK(op["args"]["speed"] == 125);
-        CHECK(op["args"]["zAxisCompensation"] == 0.05); // the printer's own value, untouched
+        CHECK_THAT(op["args"]["zAxisCompensation"].get<double>(), WithinAbs(0.05, 1e-9)); // the printer's own value, untouched
         CHECK(op["args"]["chamberFan"] == 30);
         CHECK(op["args"]["coolingFan"] == 70);
         // This machine reports no left cooling fan, so it is never told what to do with one:
@@ -124,7 +139,7 @@ TEST_CASE("Flashforge console commands map onto printer calls", "[flashforge][fl
         // Nudging Z leaves the fans alone, and does not send back the 0 % speed an idle printer
         // reports - which the machine would read as "stop moving".
         const json z = build({{"name", "printer_ctl"}, {"zAxisCompensation", 0.075}}, idle_snapshot(), error);
-        CHECK(z["args"]["zAxisCompensation"] == 0.075);
+        CHECK_THAT(z["args"]["zAxisCompensation"].get<double>(), WithinAbs(0.075, 1e-9));
         CHECK(z["args"]["speed"] == 100);
         CHECK(z["args"]["chamberFan"] == 30);
         CHECK(z["args"]["coolingFan"] == 70);
@@ -273,4 +288,128 @@ TEST_CASE("only the fields the console reads leave the printer's detail object",
         CHECK(Slic3r::GUI::console_raw_detail(json()) == json::object());
         CHECK(Slic3r::GUI::console_raw_detail(json::array({1, 2})) == json::object());
     }
+}
+
+// ── The limits every console command is held to, the page's and printer_control's alike ─────────
+
+TEST_CASE("a print speed is sent only while the printer runs a job", "[flashforge][flashforge-console]")
+{
+    std::string error;
+
+    CHECK(build({{"name", "printer_ctl"}, {"speed", 125}}, idle_snapshot(), error).is_null());
+    CHECK(error.find("Nothing is printing") != std::string::npos);
+
+    CHECK(build({{"name", "printer_ctl"}, {"speed", 125}}, printing_snapshot(), error)["args"]["speed"] == 125);
+
+    json paused                        = printing_snapshot();
+    paused["printer"]["state"]         = "paused";
+    CHECK(build({{"name", "printer_ctl"}, {"speed", 50}}, paused, error)["args"]["speed"] == 50);
+
+    // Heating up for a job counts as the job, as on the page; heating with no file does not.
+    json heating                       = printing_snapshot();
+    heating["printer"]["state"]        = "heating";
+    CHECK_FALSE(build({{"name", "printer_ctl"}, {"speed", 166}}, heating, error).is_null());
+    heating["printer"]["print_file"]   = "";
+    CHECK(build({{"name", "printer_ctl"}, {"speed", 166}}, heating, error).is_null());
+
+    // The Z offset and the fans work on an idle printer, as the page offers them there.
+    CHECK_FALSE(build({{"name", "printer_ctl"}, {"zAxisCompensation", 0.05}}, idle_snapshot(), error).is_null());
+    CHECK_FALSE(build({{"name", "printer_ctl"}, {"coolingFan", 20}}, idle_snapshot(), error).is_null());
+}
+
+TEST_CASE("a Z nudge goes out as the page sends it, on the printer's steps or not", "[flashforge][flashforge-console]")
+{
+    std::string error;
+    auto        z_sent = [](const json& op) { return op["args"]["zAxisCompensation"].get<double>(); };
+
+    // The page nudges from the printer's own offset by 0.025 mm (round3(current +/- Z_STEP)): from an
+    // offset off the steps, 0.013 (a printer's screen can leave one), the nudge is off them too, and the
+    // page's buttons must keep working. The steps are printer_control's rule for what an agent asks.
+    json snapshot                                   = idle_snapshot();
+    snapshot["printer"]["raw"]["zAxisCompensation"] = 0.013;
+    CHECK_THAT(z_sent(build({{"name", "printer_ctl"}, {"zAxisCompensation", 0.038}}, snapshot, error)), WithinAbs(0.038, 1e-9));
+    CHECK_THAT(z_sent(build({{"name", "printer_ctl"}, {"zAxisCompensation", -0.012}}, snapshot, error)), WithinAbs(-0.012, 1e-9));
+    // The page's own sample data, 0.02.
+    snapshot["printer"]["raw"]["zAxisCompensation"] = 0.02;
+    CHECK_THAT(z_sent(build({{"name", "printer_ctl"}, {"zAxisCompensation", 0.045}}, snapshot, error)), WithinAbs(0.045, 1e-9));
+
+    // The printer's own value is carried as it reports it when another field changes.
+    CHECK_THAT(z_sent(build({{"name", "printer_ctl"}, {"coolingFan", 50}}, snapshot, error)), WithinAbs(0.02, 1e-9));
+
+    // Past a millimetre is refused, as the page's buttons stop there.
+    CHECK(build({{"name", "printer_ctl"}, {"zAxisCompensation", 1.025}}, idle_snapshot(), error).is_null());
+    CHECK(error.find("1 mm") != std::string::npos);
+    CHECK_THAT(z_sent(build({{"name", "printer_ctl"}, {"zAxisCompensation", -1}}, idle_snapshot(), error)), WithinAbs(-1.0, 1e-9));
+}
+
+TEST_CASE("a fan speed is a percentage, for a fan the printer reports", "[flashforge][flashforge-console]")
+{
+    std::string error;
+
+    const json op = build({{"name", "printer_ctl"}, {"chamberFan", 100}, {"coolingFan", 0}}, idle_snapshot(), error);
+    CHECK(op["args"]["chamberFan"] == 100);
+    CHECK(op["args"]["coolingFan"] == 0);
+
+    CHECK(build({{"name", "printer_ctl"}, {"chamberFan", 101}}, idle_snapshot(), error).is_null());
+    CHECK(error.find("chamberFan") != std::string::npos);
+    CHECK(build({{"name", "printer_ctl"}, {"coolingFan", -1}}, idle_snapshot(), error).is_null());
+
+    json no_chamber = idle_snapshot();
+    no_chamber["printer"]["raw"].erase("chamberFanSpeed");
+    CHECK(build({{"name", "printer_ctl"}, {"chamberFan", 30}}, no_chamber, error).is_null());
+    CHECK(error.find("chamber fan") != std::string::npos);
+
+    // A left cooling fan is set only on a printer that reports one.
+    CHECK(build({{"name", "printer_ctl"}, {"coolingLeftFan", 40}}, idle_snapshot(), error).is_null());
+    CHECK(error.find("left cooling fan") != std::string::npos);
+    json dual_head                                     = idle_snapshot();
+    dual_head["printer"]["raw"]["coolingLeftFanSpeed"] = 10;
+    CHECK(build({{"name", "printer_ctl"}, {"coolingLeftFan", 40}}, dual_head, error)["args"]["coolingLeftFan"] == 40);
+    CHECK(build({{"name", "printer_ctl"}, {"coolingLeftFan", 140}}, dual_head, error).is_null());
+}
+
+TEST_CASE("filtration is switched only on a printer that reports its filtration fans", "[flashforge][flashforge-console]")
+{
+    std::string error;
+    json        no_filtration = idle_snapshot();
+    no_filtration["printer"]["raw"].erase("internalFanStatus");
+    no_filtration["printer"]["raw"].erase("externalFanStatus");
+
+    CHECK(build({{"name", "filtration"}, {"internal", "open"}}, no_filtration, error).is_null());
+    CHECK(error.find("filtration") != std::string::npos);
+    CHECK_FALSE(build({{"name", "filtration"}, {"internal", "open"}}, idle_snapshot(), error).is_null());
+}
+
+TEST_CASE("the snapshot a status makes is the one the page's poller caches", "[flashforge][flashforge-console]")
+{
+    Slic3r::FlashforgeApi::PrinterStatus status;
+    status.state      = "printing";
+    status.print_file = "cube.gcode";
+    status.raw        = json{{"printSpeedAdjust", 100}, {"zAxisCompensation", 0.05}, {"chamberFanSpeed", 30},
+                             {"coolingFanSpeed", 70}, {"flashRegisterCode", "not for the page"}};
+
+    const json snapshot = Slic3r::GUI::console_snapshot(status);
+    CHECK(snapshot["connected"] == true);
+    CHECK(snapshot["printer"]["state"] == "printing");
+    CHECK_FALSE(snapshot["printer"]["raw"].contains("flashRegisterCode"));
+
+    // Enough to build a command that carries the printer's own values.
+    std::string error;
+    const json  op = build({{"name", "printer_ctl"}, {"speed", 125}}, snapshot, error);
+    CHECK(op["args"] == json{{"zAxisCompensation", 0.05}, {"speed", 125}, {"chamberFan", 30}, {"coolingFan", 70}});
+}
+
+TEST_CASE("an operation nobody built never reaches the printer", "[flashforge][flashforge-console]")
+{
+    // A host without the local API's credentials: a call that got as far as the network would fail on
+    // those first, with its own message.
+    Slic3r::DynamicPrintConfig config;
+    config.set_key_value("print_host", new Slic3r::ConfigOptionString("192.0.2.1"));
+    const Slic3r::Flashforge host(&config);
+
+    wxString msg;
+    CHECK_FALSE(Slic3r::GUI::run_console_operation(host, json{{"kind", "reboot"}}, msg));
+    CHECK(msg.ToStdString().find("Unknown command") != std::string::npos);
+    CHECK_FALSE(Slic3r::GUI::run_console_operation(host, json{{"kind", "job"}, {"action", "eject"}}, msg));
+    CHECK(msg.ToStdString().find("Unknown job action") != std::string::npos);
 }

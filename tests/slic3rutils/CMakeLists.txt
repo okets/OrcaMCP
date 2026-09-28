@@ -24,11 +24,14 @@ add_executable(${_TEST_NAME}_tests
     test_flashforge_console.cpp
     test_flashforge_live.cpp
     test_obico_link.cpp
+    test_mcp_printer_answers.cpp
+    test_mcp_printer_control.cpp
     test_print_host_keys.cpp
     test_send_dialog_routing.cpp
     test_project_match.cpp
     test_slice_estimate.cpp
     test_preset_query.cpp
+    test_preset_install.cpp
     test_printer_switch.cpp
     test_config_value_shape.cpp
     test_hex_color.cpp
@@ -51,6 +54,7 @@ add_executable(${_TEST_NAME}_tests
     test_object_settings.cpp
     test_layer_plan.cpp
     test_filament_model.cpp
+    test_filament_slots.cpp
     test_mcp_tool_list.cpp
     test_mcp_tool_arguments.cpp
     test_mcp_argument_values.cpp

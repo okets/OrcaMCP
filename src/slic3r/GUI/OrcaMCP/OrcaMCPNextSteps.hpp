@@ -117,5 +117,26 @@ std::vector<NextStep> uniform_image_next_steps(size_t model_volumes, size_t draw
 std::vector<NextStep> support_paint_next_steps(int object_id, bool support_enabled, bool enforcers_painted,
                                                const std::string& support_type);
 
+// What printer_control's answer to a set_* action (filtration, fans, print speed, Z offset) leads to:
+// get_printer_status, whose printer.controls reads back what the printer now reports -- it takes a moment
+// to apply a command, as the Device page shows by waiting for the next status.
+std::vector<NextStep> printer_control_next_steps();
+
+// What match_project_to_printer's answer leads to when the printer holds filament in material-station
+// slots the project has no filament slot for (`missing_slots`, 1-based): add_filament_slot, which adds one
+// slot per call, on a printer that takes more slots (`slots_can_be_added`); nothing on one whose slots
+// follow its extruders.
+// What install_presets' answer leads to when it installed printers (`printers`, their names): select_preset
+// of the first, since an install enables them without selecting one -- the Setup Wizard selects the new
+// printer, and a switch changes the filament slots and their colours, so it is left to its own call.
+std::vector<NextStep> installed_printer_next_steps(const std::vector<std::string>& printers);
+
+// What add_filament_slot's and delete_filament_slot's answers lead to when they renumbered slots or moved
+// objects (`renumbered`): get_scene_info, whose filaments_used shows each object's slots now -- and after any
+// undo, which would bring back the objects' old slot numbers without the slots (undo_warning).
+std::vector<NextStep> slot_change_next_steps(bool renumbered);
+
+std::vector<NextStep> missing_slot_next_steps(const std::vector<int>& missing_slots, bool slots_can_be_added);
+
 }} // namespace GUI::OrcaMCP
 } // namespace Slic3r

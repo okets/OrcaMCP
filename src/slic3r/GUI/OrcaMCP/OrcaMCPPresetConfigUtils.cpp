@@ -3,14 +3,19 @@
 #include "OrcaMCPConfigValues.hpp"
 #include "OrcaMCPFilamentUtils.hpp"
 #include "OrcaMCPPlateSettings.hpp"
+#include "OrcaMCPNextSteps.hpp"
+#include "OrcaMCPPresetInstall.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
+#include "slic3r/GUI/MainFrame.hpp"
 #include "slic3r/GUI/Tab.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/PresetComboBoxes.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/GUI/Jobs/OrientJob.hpp"
 #include "libslic3r/PrintConfig.hpp"
+#include "libslic3r/AppConfig.hpp"
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/Utils.hpp"
 
 #include <algorithm>
 #include <boost/algorithm/string/classification.hpp>
@@ -397,6 +402,26 @@ void OrcaMCPPresetConfigUtils::UpdatePresetTabs() {
     }
 }
 
+std::vector<ApplyConfigResult::RejectedValue> OrcaMCPPresetConfigUtils::ChangedAfterWrite(
+    const std::string& type, const std::vector<std::pair<std::string, std::string>>& written)
+{
+    std::vector<ApplyConfigResult::RejectedValue> changed;
+    if (written.empty()) // nothing written, or a type ApplyConfig refused
+        return changed;
+    Tab* tab = wxGetApp().get_tab(GetPresetTypeFromString(type));
+    const DynamicPrintConfig* config = tab != nullptr ? tab->get_config() : nullptr;
+    if (config == nullptr)
+        return changed;
+    for (const auto& [key, value] : written) {
+        const std::string now = config->has(key) ? config->opt_serialize(key) : std::string();
+        if (now != value)
+            changed.push_back({key, "written, then the " + type + " settings' own rules set it to \"" + now +
+                                        "\" (a value that does not go with the other settings as they are)",
+                               "a value that goes with the other " + type + " settings, or those changed first"});
+    }
+    return changed;
+}
+
 namespace {
 
 // Why apply_config cannot set the global bed type as `type` gives it, or nothing with `bed_type` set: it is
@@ -420,6 +445,19 @@ std::optional<ApplyConfigResult::RejectedValue> global_bed_type_refusal_for(cons
                                                 selectable ? "one of " + OrcaMCP::listed_bed_types(offered) : "\"" + OrcaMCP::bed_type_value(current) + "\""};
     bed_type = parsed;
     return std::nullopt;
+}
+
+// Why a print setting that names a filament slot must not take `value`, or nothing (OrcaMCP::filament_number_refusal).
+// Throws what reading the value throws.
+std::optional<std::string> print_filament_number_refusal(const std::string& type, const std::string& key, const std::string& value,
+                                                         ConfigSubstitutionContext& context)
+{
+    if (type != "print" || !OrcaMCP::names_filament_slot(key))
+        return std::nullopt;
+    DynamicPrintConfig written;
+    written.set_deserialize(key, value, context);
+    const auto refused = OrcaMCP::refused_filament_numbers(OrcaMCP::filament_slots_state(), written);
+    return refused.empty() ? std::nullopt : std::optional<std::string>(refused.front().second);
 }
 
 } // namespace
@@ -504,6 +542,14 @@ ApplyConfigResult OrcaMCPPresetConfigUtils::ApplyConfig(const nlohmann::json& it
         if (is_color && config->option(key) != nullptr)
             previous.reset(config->option(key)->clone());
         try {
+            // A filament slot the project does not have, or a mixed one for support and the wipe tower: the print
+            // settings' lists never offer it, and their own check (ConfigManipulation) would put back the default
+            // right after this reported it applied.
+            if (const auto refusal = print_filament_number_refusal(type, key, value_str, context)) {
+                result.invalid.push_back(key);
+                result.rejected.push_back({key, *refusal, OrcaMCP::filament_number_expected()});
+                continue;
+            }
             config->set_deserialize(key, value_str, context);
         } catch (const std::exception& e) {
             BOOST_LOG_TRIVIAL(error) << "ApplyConfig: '" << key << ":" << value_str << "' failed: " << e.what();
@@ -529,6 +575,8 @@ ApplyConfigResult OrcaMCPPresetConfigUtils::ApplyConfig(const nlohmann::json& it
             continue;
         }
         result.applied.push_back(key);
+        if (type != "project")
+            result.written.emplace_back(key, config->opt_serialize(key));
     }
 
     if (type == "project") {
@@ -751,6 +799,115 @@ nlohmann::json OrcaMCPPresetConfigUtils::SelectPrinterPreset(const std::string& 
             {"filaments", std::move(filaments)}};
 }
 
+std::vector<std::string> OrcaMCPPresetConfigUtils::UnsavedPresetChanges()
+{
+    PresetBundle&            bundle = *wxGetApp().preset_bundle;
+    std::vector<std::string> unsaved;
+    for (const auto& [what, presets] : {std::pair<const char*, PresetCollection*>{"print", &bundle.prints},
+                                        {"filament", &bundle.filaments},
+                                        {"printer", &bundle.printers}}) {
+        if (!presets->current_is_dirty())
+            continue;
+        const std::vector<std::string> keys = presets->current_dirty_options(presets->type() == Preset::TYPE_PRINTER);
+        std::string                    listed;
+        for (size_t i = 0; i < keys.size() && i < 6; ++i)
+            listed += (i == 0 ? "" : ", ") + keys[i];
+        if (keys.size() > 6)
+            listed += " and " + std::to_string(keys.size() - 6) + " more";
+        unsaved.push_back(std::string("the ") + what + " preset '" + presets->get_edited_preset().name + "'" +
+                          (listed.empty() ? std::string() : " (" + listed + ")"));
+    }
+    return unsaved;
+}
+
+std::vector<std::string> OrcaMCPPresetConfigUtils::ProjectEmbeddedPresets()
+{
+    return OrcaMCP::project_preset_names(*wxGetApp().preset_bundle);
+}
+
+nlohmann::json OrcaMCPPresetConfigUtils::InstallPresets(const OrcaMCP::PresetInstallPlan& plan)
+{
+    GUI_App&      app    = wxGetApp();
+    PresetBundle& bundle = *app.preset_bundle;
+    AppConfig&    config = *app.app_config;
+    auto filament_section = [&config]() {
+        return config.has_section(AppConfig::SECTION_FILAMENTS) ? config.get_section(AppConfig::SECTION_FILAMENTS)
+                                                                : std::map<std::string, std::string>();
+    };
+
+    const auto selection = [&bundle]() {
+        return OrcaMCP::PresetSelection{bundle.printers.get_selected_preset_name(), bundle.prints.get_selected_preset_name(),
+                                        bundle.filament_presets};
+    };
+    const OrcaMCP::PresetSelection           selection_before = selection();
+    const DynamicPrintConfig                 project_before   = bundle.project_config;
+    const std::map<std::string, std::string> filaments_before = filament_section();
+    std::vector<std::string>                 vendors_added;
+    for (const auto& [vendor, models] : plan.vendors)
+        if (!is_vendor_installed(vendor))
+            vendors_added.push_back(vendor);
+
+    // As the Setup Wizard does before it opens: the reload that ends the install restores the selections
+    // from the app config.
+    bundle.export_selections(config);
+    if (!bundle.apply_vendor_config(plan.vendors, plan.filaments, &config, /*overwrite=*/false))
+        return {{"status", "error"},
+                {"message", "The app could not lay a vendor's profiles into its data folder (its log says why); nothing was installed"}};
+    // The reload gave every slot extruder 1 (load_selections): the project's own maps go back.
+    const std::vector<std::string> maps_restored = OrcaMCP::restore_filament_maps(project_before, bundle.project_config);
+    // What the Setup Wizard's Finish runs after (GUI_App::run_wizard), and the save the cloud sync makes.
+    app.load_current_presets();
+    app.update_publish_status();
+    app.mainframe->refresh_plugin_tips();
+    config.save();
+
+    nlohmann::json printers = nlohmann::json::array();
+    for (const OrcaMCP::CatalogPrinter& printer : plan.printers) {
+        OrcaMCP::CatalogPrinter now = printer;
+        const Preset*           preset = bundle.printers.find_preset(printer.name, false);
+        now.installed                  = preset != nullptr && preset->is_visible;
+        printers.push_back(OrcaMCP::catalog_printer_json(now));
+    }
+    nlohmann::json filaments_enabled = nlohmann::json::array();
+    for (const auto& [name, value] : filament_section())
+        if (filaments_before.count(name) == 0)
+            filaments_enabled.push_back(name);
+
+    const nlohmann::json selection_changed = OrcaMCP::selection_changes(selection_before, selection());
+    nlohmann::json answer = {{"status", "success"},
+                             {"changed", true},
+                             {"installed", {{"printers", printers}, {"filaments", plan.filament_names}}},
+                             {"already_installed", plan.already_installed},
+                             {"vendors_added", vendors_added},
+                             {"filaments_enabled", filaments_enabled},
+                             {"selected_printer", bundle.printers.get_selected_preset_name()},
+                             {"selection_kept", selection_changed.empty()},
+                             {"filament_maps_restored", maps_restored},
+                             {"project_settings_changed", project_before.diff(bundle.project_config)},
+                             {"filaments", OrcaMCP::describe_filaments()["filaments"]}};
+    if (!selection_changed.empty())
+        answer["selection_changed"] = selection_changed;
+    std::vector<std::string> printer_names;
+    for (const OrcaMCP::CatalogPrinter& printer : plan.printers)
+        printer_names.push_back(printer.name);
+    OrcaMCP::add_next_steps(answer, OrcaMCP::installed_printer_next_steps(printer_names));
+    return answer;
+}
+
+std::string OrcaMCPPresetConfigUtils::FilamentSlotPresetError(const std::string& presetName)
+{
+    PresetBundle* bundle = wxGetApp().preset_bundle;
+    // Looking the name up in the filaments collection is what makes it "a filament preset";
+    // a print/printer preset name simply is not found here.
+    const Preset* preset = bundle->filaments.find_preset(presetName, false);
+    if (preset == nullptr)
+        return "Filament preset '" + presetName + "' not found";
+    if (!preset->is_compatible)
+        return "Filament preset '" + presetName + "' is not compatible with the selected printer '" +
+               bundle->printers.get_selected_preset_name() + "'";
+    return std::string();
+}
+
 bool OrcaMCPPresetConfigUtils::SelectFilamentSlotPreset(int slot, const std::string& presetName, std::string& error)
 {
     PresetBundle* bundle = wxGetApp().preset_bundle;
@@ -759,18 +916,9 @@ bool OrcaMCPPresetConfigUtils::SelectFilamentSlotPreset(int slot, const std::str
         error = "slot " + std::to_string(slot) + " out of range 1.." + std::to_string(slot_count);
         return false;
     }
-    // Looking the name up in the filaments collection is what makes it "a filament preset";
-    // a print/printer preset name simply is not found here.
-    const Preset* preset = bundle->filaments.find_preset(presetName, false);
-    if (preset == nullptr) {
-        error = "Filament preset '" + presetName + "' not found";
+    error = FilamentSlotPresetError(presetName);
+    if (!error.empty())
         return false;
-    }
-    if (!preset->is_compatible) {
-        error = "Filament preset '" + presetName + "' is not compatible with the selected printer '" +
-                bundle->printers.get_selected_preset_name() + "'";
-        return false;
-    }
 
     // Everything below mirrors the TYPE_FILAMENT branch of Plater::priv::on_select_preset(),
     // i.e. what picking the preset in the sidebar's filament combo does. Deliberately not the
@@ -880,7 +1028,7 @@ void OrcaMCPPresetConfigUtils::ClonePreset(const std::string& type, const std::s
     UpdatePresetTabs();
 }
 
-void OrcaMCPPresetConfigUtils::SavePreset(const std::string& type, const std::string& name) {
+std::string OrcaMCPPresetConfigUtils::SavePreset(const std::string& type, const std::string& name) {
     Preset::Type preset_type = GetPresetTypeFromString(type);
     Tab* tab = wxGetApp().get_tab(preset_type);
     if (!tab) {
@@ -903,10 +1051,17 @@ void OrcaMCPPresetConfigUtils::SavePreset(const std::string& type, const std::st
         throw std::runtime_error("Cannot overwrite system preset '" + save_name + "'. Use a different name.");
     }
 
-    // Save the preset
-    presets->save_current_preset(save_name, false, false);
-
-    UpdatePresetTabs();
+    // The settings tab's own Save with the name given (no name dialog): what saving from the GUI does after
+    // the file is written -- a filament preset saved from a system one made compatible with the selected
+    // printer only, every filament slot on the old preset moved to the new name, the plater's selectors and
+    // the dependent tabs refreshed. Writing the file alone left the slots on the old preset, which no longer
+    // carried the change.
+    const std::string before = edited.name;
+    tab->save_preset(save_name);
+    if (presets->find_preset(save_name, false) == nullptr || presets->get_edited_preset().name != save_name)
+        throw std::runtime_error("The app did not save the " + type + " preset as '" + save_name + "'" +
+                                 (before == save_name ? std::string() : " (still '" + before + "')"));
+    return save_name;
 }
 
 void OrcaMCPPresetConfigUtils::DeletePreset(const std::string& type, const std::string& name) {

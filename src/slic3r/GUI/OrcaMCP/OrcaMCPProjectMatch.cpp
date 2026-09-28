@@ -246,9 +246,11 @@ std::vector<SlotPlan> plan_project_match(const std::vector<StationSlot>&    stat
         if (found == project.end()) {
             // Reported when asked, but never a disagreement: a one-filament project on a machine
             // with four spools loaded is perfectly ordinary, and the console must not nag about
-            // something this cannot fix anyway - it does not add filament slots.
-            plan.matched = false;
-            plan.reason  = "The project has no filament slot " + std::to_string(slot.slot_id) + ".";
+            // something this does not fix - it does not add filament slots (MCP's answer points to
+            // add_filament_slot, which does).
+            plan.matched    = false;
+            plan.in_project = false;
+            plan.reason     = "The project has no filament slot " + std::to_string(slot.slot_id) + ".";
             plans.push_back(std::move(plan));
             continue;
         }
@@ -393,6 +395,7 @@ nlohmann::json slot_plan_json(const SlotPlan& plan)
             {"color_after", plan.color_after},
             {"changed", plan.changes()},
             {"matched", plan.matched},
+            {"in_project", plan.in_project},
             {"reason", plan.reason}};
 }
 

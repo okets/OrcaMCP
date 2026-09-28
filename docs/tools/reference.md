@@ -33,10 +33,10 @@ into a call that reports success and changes nothing. See [Error Handling](#erro
 | **Models** | `load_model`, `auto_orient`, `arrange_objects`, `get_object_info`, `get_mesh_health`, `repair_mesh`, `get_object_components`, `rename_object`, `set_object_printable`, `split_object`, `add_volume`, `set_volume_type`, `assemble_objects`, `merge_parts`, `invalidate_cut_info` |
 | **Transforms** | `move_object`, `rotate_object`, `scale_object`, `mirror_object`, `flatten_object`, `clone_object`, `set_instance_count`, `fill_bed_with_instances`, `cut_object`, `delete_object`, `transform_objects` |
 | **Plates** | `add_plate`, `select_plate`, `delete_plate`, `set_prime_tower_position`, `set_plate_settings` |
-| **Config** | `get_presets`, `get_edited_presets`, `get_config_values`, `select_preset`, `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset`, `get_valid_config_keys` |
+| **Config** | `get_presets`, `install_presets`, `get_edited_presets`, `get_config_values`, `select_preset`, `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset`, `get_valid_config_keys` |
 | **Per-Object** | `get_object_config`, `set_object_config`, `reset_object_config` |
 | **Layer Ranges** | `get_object_layer_ranges`, `set_object_layer_range`, `delete_object_layer_range` |
-| **Filaments & colour** | `get_filaments`, `set_object_filament`, `set_mixed_filament`, `delete_mixed_filament`, `set_filament_color`, `get_flush_volumes`, `set_flush_volumes`, `auto_calc_flush_volumes`, `get_toolchanger_config`, `suggest_color_mix`, `get_color_palette` |
+| **Filaments & colour** | `get_filaments`, `add_filament_slot`, `delete_filament_slot`, `set_object_filament`, `set_mixed_filament`, `delete_mixed_filament`, `set_filament_color`, `get_flush_volumes`, `set_flush_volumes`, `auto_calc_flush_volumes`, `get_toolchanger_config`, `suggest_color_mix`, `get_color_palette` |
 | **Painting** | `paint_object`, `remap_paint`, `get_object_paint`, `clear_object_paint`, `set_brim_ears`, `pick_facet` |
 | **Slicing** | `slice_all`, `wait_for_slice` (bridge-only), `get_slicing_status`, `export_gcode`, `get_print_estimate` |
 | **Visualization** | `render_plate_view`, `get_preview_base64`, `set_gcode_view_type` |
@@ -401,6 +401,11 @@ take). Refused while the startup "restore unsaved items?" prompt waits (`get_sce
 and a later launch would not offer it again. Answer the prompt, or `quit_app`, which keeps it. An
 error dialog the app raised on the way is listed in `error_messages`; the call is `success` whenever
 the new project was started.
+
+After a project that carried presets of its own (a 3MF's), those presets go, and a slot left on one takes
+the filament the printer prefers, else the one the Filament settings would pick for it, always one the
+printer lists (probe AX: upstream fell back on the library's Generic PLA, which a printer with its own
+Generic PLA does not list, and a multi-tool printer copied it to every slot).
 
 **Parameters:** None
 
@@ -1656,6 +1661,7 @@ boxes show: visible presets compatible with the current printer, system and user
 | `name_contains` | string | No | Only presets whose name contains this (case-insensitive) |
 | `summary` | boolean | No | Default `true`: identifying fields only. `false` adds every config key of every match. |
 | `limit` | integer | No | Max presets per type. Default 25 with `summary`, 5 without. `0` = no cap. |
+| `installed` | boolean | No | Default `true`: the presets installed. `false`: what is not installed yet, which `install_presets` installs (see below) |
 
 **Why it is capped and summarised:** the unfiltered full-config response is ~1.9 MB and the
 unfiltered `summary` response is still ~54,600 characters — both over an MCP client's per-result
@@ -1721,6 +1727,93 @@ them, so material searches do not need the full config.
   "hint": "Showing 25 of 318 filamentPresets. Narrow it with type, vendor or name_contains, raise limit, or pass limit: 0 for the whole list."
 }
 ```
+
+**Not installed (`installed: false`):** what the Setup Wizard's printer and filament pages offer, and
+`install_presets` installs:
+- printers of the vendors installed whose model and nozzle are not enabled;
+- printers of a vendor not installed at all, when `vendor` names it (its folder or its name, a part of
+  either): `vendors_not_installed` lists those vendors. Their profiles are read as shipped, off the
+  app's main thread, as the wizard reads them;
+- filaments of the vendors installed (the Orca filament library among them) not enabled that suit the
+  selected printer. A vendor's own filaments come with its printer.
+
+`type` is `printer`, `filament` or `all`; `summary: false` is refused (install one to read its
+settings). Each entry says what `install_presets` needs:
+
+```json
+{
+  "status": "success",
+  "printerPresets": [{"name": "Flashforge AD5X 0.6 nozzle", "vendor": "Flashforge", "vendor_id": "Flashforge",
+                      "printer_model": "Flashforge AD5X", "nozzle": "0.6", "installed": false}],
+  "vendors_not_installed": ["Anker", "Anycubic", "BBL", "..."],
+  "filamentPresets": [{"name": "Generic PETG HF @System", "vendor": "Generic", "filament_type": "PETG", "installed": false}],
+  "query": {"type": null, "installed": false, "vendor": "", "name_contains": "", "limit": 25,
+            "counts": {"printerPresets": 3, "filamentPresets": 41}, "returned": {"printerPresets": 3, "filamentPresets": 25},
+            "truncated": true},
+  "hint": "Showing 25 of 41 filamentPresets. ... Printers of a vendor not installed (vendors_not_installed) are listed when vendor names it. install_presets installs them by name."
+}
+```
+
+---
+
+### install_presets
+Install printer and filament presets the user has not installed, as the Setup Wizard does, without its
+window. A printer's vendor profiles are laid into the app's data folder (`system/<vendor>`) when its
+vendor is not installed yet, and its model and nozzle are enabled in the app config; a filament is
+enabled. The install is the wizard's own, `PresetBundle::apply_vendor_config`, in the merge mode the
+cloud sync uses (it adds to what is installed and removes nothing), followed by what the wizard's Finish
+runs: every preset reloaded, the preset tabs and selectors refreshed, the app config saved.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `printers` | string[] | No | Printer preset names, as `get_presets {installed: false}` lists them |
+| `filaments` | string[] | No | Filament preset names |
+| `vendor` | string | No | The vendor of printers not installed, when its folder does not begin their names (Bambu Lab's is `BBL`) |
+
+At least one name is needed. A printer of a vendor that is not installed is found among the vendors
+whose folder begins its name, or the one `vendor` names.
+
+**Returns:**
+```json
+{
+  "status": "success", "changed": true,
+  "installed": {"printers": [{"name": "Anker M5 0.4 nozzle", "vendor": "Anker", "vendor_id": "Anker",
+                              "printer_model": "Anker M5", "nozzle": "0.4", "installed": true}],
+                "filaments": []},
+  "already_installed": [],
+  "vendors_added": ["Anker"],
+  "filaments_enabled": ["Generic PLA @System"],
+  "selected_printer": "Flashforge Creator 5 Pro 0.4 nozzle",
+  "selection_kept": true,
+  "filament_maps_restored": ["filament_map"],
+  "project_settings_changed": [],
+  "filaments": [...],
+  "next_steps": [{"tool": "select_preset", "arguments": {"type": "printer", "name": "Anker M5 0.4 nozzle"},
+                  "why": "'Anker M5 0.4 nozzle' is installed, not selected: ..."}]
+}
+```
+`filaments_enabled` is every filament the app enabled, the ones the app adds with a new printer (its
+default materials) too. The printer is not selected, unlike the wizard's Finish: a switch replaces the
+filament slots and their colours, so it is its own call (`next_steps`). `selection_kept` says whether the
+reload left the printer, print preset and filament slots selected as they were. It keeps each preset the
+printer still shows and replaces one it does not (upstream's `load_selections`) -- a slot left on a
+preset the printer does not show, for instance -- and `selection_changed` names each: `{"preset": "printer" | "print" | "filament", "slot"
+(a filament's), "before", "after"}`. The reload gives every
+slot extruder 1 again (upstream's `load_selections`); the install puts the project's filament maps back
+(which extruder, nozzle and nozzle volume each slot prints with), and `filament_maps_restored` names them.
+`project_settings_changed` lists any other project setting the reload changed. A call that names only what is installed changes nothing: `changed: false`, `already_installed`.
+
+Refused, installing nothing: no names; a name no catalog has (the message says where to look); while
+slicing or exporting (`wait_for_slice` first) or while an arrange, orient or bed fill runs; over unsaved
+preset changes, which the reload would drop (the message names each preset and its changed settings:
+`save_preset` keeps them, `reset_preset` drops them) -- the wizard asks about them first; and while the
+project carries presets of its own (a 3MF's embedded presets), which the reload would drop too (it resets
+every preset collection): the message names them, and the way through is `save_project`, `new_project`,
+`install_presets`, then `load_project` the file again, which brings them back. There is no
+undo: it writes the data folder. Creating a new printer or filament preset from a template (the
+sidebar's Create printer / Create filament) is not an MCP tool yet: `clone_preset`, `apply_config` and
+`save_preset` make a printer of one installed.
 
 ---
 
@@ -1801,6 +1894,11 @@ Switch to a different preset. To change individual settings, use `apply_config`.
 | `name` | string | Yes | Preset name |
 | `slot` | integer | No | With `type: filament`: the 1-based filament slot to set, like the sidebar combo |
 
+**Behaviour change (2.5.0.6):** `type: filament` without `slot` is refused when the project has more
+than one physical slot. It switched the Filament settings alone, and no slot printed with the preset
+(the app changes a slot from the settings only while that slot's settings window is open). With one
+physical slot it still switches slot 1.
+
 **Returns (`type: printer`):** what the switch left in the filament slots, because upstream's
 *Remember printer configuration* (on by default) replaces every slot's colour on a printer switch:
 ```json
@@ -1834,6 +1932,8 @@ call. The change stays unsaved in the preset until `save_preset`. To switch pres
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `settings` | array | Yes | Array of setting changes |
+| `filament_slot` | integer | No | The filament slot (1-based) whose preset the `filament` settings change. Required with more than one physical slot |
+| `include_sharing_slots` | boolean | No | With `filament_slot`: change its preset even when other slots use it too (default false) |
 
 **Setting object format:**
 ```json
@@ -1870,6 +1970,29 @@ call. The change stays unsaved in the preset until `save_preset`. To switch pres
   "active_warnings": {"count": 0, "warnings": []}
 }
 ```
+
+**A slot's filament settings:** the Filament settings edit one filament preset at a time, and every slot
+using that preset prints with the change. `filament_slot` points them at that slot's preset first, as the
+slot's **Edit** in the sidebar does (without opening the settings), so the change goes where it is meant:
+
+```json
+{"name": "apply_config", "arguments": {
+  "filament_slot": 3,
+  "settings": [{"type": "filament", "key": "nozzle_temperature", "value": "235"}]
+}}
+```
+
+The answer says where it went: `"filament": {"slot": 3, "preset": "Generic PETG", "slots": [3]}`, the
+preset and every slot using it. Refused, changing nothing:
+- `filament_slot` on a mixed slot (it has no preset of its own: `set_mixed_filament`), or out of range;
+- a preset other slots share, unless `include_sharing_slots: true` -- the message names how to give the
+  slot its own: `clone_preset {type: filament, source_name, new_name}`, then
+  `select_preset {type: filament, name, slot}`;
+- switching the Filament settings to another slot's preset while they hold unsaved changes, which the
+  switch would discard: `save_preset` or `reset_preset` first;
+- **behaviour change (2.5.0.6):** `filament` settings without `filament_slot` when the project has more
+  than one physical slot. They went to whichever preset the Filament settings happened to show, which
+  may have been no slot's at all. With one physical slot they go to slot 1, as before.
 
 **Duplicates:** listing the same `type` + `key` twice in one call applies the **last** value (the
 same as two separate calls would). Each such key is reported in `duplicate_keys` as
@@ -1908,6 +2031,19 @@ each has its own field now:
 |---|---|
 | `unknown_keys` | No such config key. Check `get_valid_config_keys`. |
 | `rejected_values` | The key exists; this value was not accepted. Each entry is `{"key", "reason", "expected"}`, where `expected` names the shape that would have worked. |
+
+Two more refusals land in `rejected_values`:
+
+- **A filament slot the project cannot take there.** A setting that names a slot by its number
+  (`support_filament`, `support_interface_filament`, `wipe_tower_filament`, the per-feature
+  `*_filament_id` keys) takes 0 (the default) or a slot the project has; support and the wipe tower take
+  a physical slot only, as the Print settings' lists offer them (a mixed slot would reach the slicer
+  unresolved). `set_object_config` and `set_object_layer_range` refuse the same, and `extruder` there too.
+  Before v2.5.0.6 the objects and ranges stored any number, and `apply_config` reported a mixed support
+  filament applied while the Print settings put the default back.
+- **A value the settings' own rules changed right after it was written** (the rules the Print, Filament
+  and Printer settings apply as a user edits them, such as a support style the support type does not
+  have): the entry's `reason` says what the value is now, and the key is not in `applied_keys`.
 
 ```json
 {
@@ -1985,8 +2121,17 @@ Save current dirty changes to a preset. If name is provided, saves as a new pres
   "saved_preset": "My New Preset"
 }
 ```
+`saved_preset` is the name it was saved as, also when `name` is omitted. For `type: filament`, `slots`
+lists the filament slots now using it.
 
-**Note:** Cannot overwrite system presets. Use `clone_preset` first if you need to modify a system preset.
+It saves as the settings tab's Save button does (`Tab::save_preset`, with the name given instead of its
+name dialog). So a filament preset saved under a new name takes over every slot that used the old one,
+and one saved from a system preset is made compatible with the selected printer only, as in the GUI.
+Before 2.5.0.6 only the file was written: the slots stayed on the old preset, which no longer carried the
+change, and the new filament preset was compatible with every printer.
+
+**Note:** Cannot overwrite system presets: give a `name`. A preset for one slot alone: `clone_preset`,
+then `select_preset {type: filament, slot}`.
 
 ---
 
@@ -2754,6 +2899,102 @@ Disable adaptive layer height.
 
 ## Filament & Colour Tools
 
+### add_filament_slot
+Add a physical filament slot, as the sidebar's **+** button does (`Sidebar::add_custom_filament`).
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `color` | string | No | The slot's colour on the plate, `#RRGGBB`. Default: the sidebar's next colour, as the button takes |
+| `preset` | string | No | A filament preset for the slot (compatible with the selected printer). Default: the last slot's, as the button gives it |
+
+The new slot goes after the last physical slot: mixed slots, which sit at the end, move up one, and so
+does everything that names one -- objects, parts, painted facets, layer ranges, the per-feature filaments
+of objects, parts, layer ranges and the print preset, and every item of the layer list's custom G-code
+(probe AT: upstream moved the objects, parts and paint only), and the slot takes its place in each plate's
+own filament mapping as in the project's (probe AW: upstream appended it there, so on a plate mapped by
+hand the new slot took the first mixed slot's extruder). Only a printer that changes filaments on one extruder
+(`single_extruder_multi_material`) or a Bambu Lab printer takes more slots, as only those show the
+button; on any other printer each extruder holds one filament and the slots follow the extruders.
+
+**Returns:**
+```json
+{
+  "status": "success",
+  "slot": 3, "preset": "Generic PLA", "color": "#ED1C24",
+  "renumbered": [{"from": 3, "to": 4}],
+  "filaments": [...],
+  "active_warnings": {"count": 0, "warnings": []}
+}
+```
+Every plate loses its slice. Not an undo step, as in the app, and undo does not reverse it: the undo history
+holds the objects, not the slots, so an undo right after a change that renumbered mixed slots brings back
+the objects' old slot numbers while the slots stay as they are, putting objects on the wrong slots. When
+that applies, the answer carries `undo_warning` saying so, and `next_steps` names `get_scene_info`, whose
+`filaments_used` shows each object's slots. `delete_filament_slot` takes a slot away again.
+
+Refused, changing nothing: a printer whose slots follow its extruders (the message says how many, or
+that `single_extruder_multi_material` is off); 64 slots; a G-code preview on the plate (the app would
+close it and start a new project: `new_project` first); a `color` that is not `#RRGGBB`; an unknown or
+incompatible `preset`; while slicing or exporting (`wait_for_slice` first) or while an arrange, orient or
+bed fill runs.
+
+---
+
+### delete_filament_slot
+Delete a filament slot, physical or mixed, as its **Delete** in the sidebar does, or with `merge_into`
+as its **Merge with** does (`Sidebar::delete_filament`, `change_filament`).
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `slot` | integer | Yes | The slot to delete, 1-based |
+| `merge_into` | integer | No | Move its objects, parts and painted facets to this slot (1-based, numbered as before the delete). Default: slot 1, as Delete does |
+| `allow_breaking_mix` | boolean | No | Delete or merge a slot a mixed slot is made of anyway (default false) |
+
+The app renumbers everything after the deleted slot: objects, parts, painted facets, layer ranges,
+a plate's filament order, a tool change in the layer list, and every setting that names a slot by its
+number -- support, support interface, wipe tower and the per-feature filaments -- in each object, part
+and layer range and in the print preset, which is left with unsaved changes. One that named the deleted
+slot moves to `merge_into`, or without it becomes the default (0); support and the wipe tower take the
+default when `merge_into` is a mixed slot, since they print from a physical filament only (probes AO, AQ,
+AU: upstream renumbered only the plater's own copy, wrote a part's number into its object, and dropped a
+merged slot's support filaments instead of moving them).
+
+The layer list's custom G-code is renumbered the same way, every item of it, as an add renumbers them: a
+tool change or colour change to the deleted slot moves to `merge_into`; without it, it is dropped (its
+filament is gone, and upstream drops such a tool change too). A pause or custom G-code only records the
+filament printing there, so it stays, on `merge_into` or slot 1 (probe AV: upstream renumbered tool changes
+only, moved only the first to a merged slot, and numbered it twice, so it landed a slot too low).
+
+**Returns:**
+```json
+{
+  "status": "success",
+  "deleted_slot": 2, "merged_into": 4, "merged_into_now": 3,
+  "renumbered": [{"from": 3, "to": 2}, {"from": 4, "to": 3}],
+  "objects_changed": [{"object_id": 0, "filaments_before": [2], "filaments_after": [3]}],
+  "filaments": [...]
+}
+```
+`objects_changed` is every object that printed with the deleted slot (a part, a modifier or painted
+facets on it count): its effective filaments before, and after, numbered as they are then. An object on
+other slots only is renumbered, which `renumbered` says. Every plate loses its slice. Not an undo step, as
+in the app, and undo does not reverse it: an undo right after brings back the objects' old slot numbers
+(from before the delete) while the slots stay, putting objects on the wrong slots. The answer then
+carries `undo_warning` and a `get_scene_info` next step; `add_filament_slot` adds a slot back.
+
+Refused, changing nothing: a slot out of range, or `merge_into` out of range or the slot itself; the
+project's last physical slot; a physical slot of a printer whose slots follow its extruders; a slot a
+mixed slot is made of, which the delete breaks (the mix loses that component), unless
+`allow_breaking_mix: true` -- the app warns only when the slot is merged into that mix, in a box MCP
+answers, never opens (probe AP), and breaks it silently on a plain delete; deleting slot 1, or the only slot using the Filament
+settings' preset, while those settings have unsaved changes -- the app would re-select that preset and
+ask what to do with them -- `save_preset` or `reset_preset` first; a G-code preview on the plate; while
+slicing or while an arrange, orient or bed fill runs. `delete_mixed_filament` deletes a mixed slot too.
+
+---
+
 ### set_object_filament
 Assign a filament slot to a whole object, or to one volume of it. To colour only part of a surface,
 paint it: `paint_object` with `mode: color`.
@@ -3333,6 +3574,18 @@ Live status from the configured print host. Full detail for Flashforge hosts.
 ```
 `obico.configured` says whether the preset names an Obico server; the token is never included.
 
+`printer.controls` names what `printer_control`'s `set_*` actions change, as the printer reports them:
+`print_speed_percent` (null while no job runs), `z_offset_mm`, `chamber_fan_percent`,
+`cooling_fan_percent`, `cooling_left_fan_percent` (only on a printer with that fan), `recirculation`
+and `exhaust` (the filtration fans, on or off); null for what the printer does not report.
+
+`printer.raw` is the printer's own status object cut down to the fields the Device page reads (fan
+states, print speed, Z offset, fan speeds, the material station's progress, ...), the same allowlist the
+page gets. The rest never leaves the app: the printer's cloud register codes, its MAC address, and any
+field a later firmware adds. No printer tool answers with a credential: `get_printers` says only
+`has_credentials`, and `discover_printers`' `serial_number` is the one identifier a tool returns, since
+`add_physical_printer` needs it.
+
 **When the printer cannot be reached:** a connection that was never made is tried once more after
 500 ms (not on the GUI thread, which must not sleep). If that fails too, the error names the host
 and port and the next step, and `cached` carries the material station from the printer's last
@@ -3356,19 +3609,67 @@ body.
 ---
 
 ### printer_control
-Pause, resume or cancel the Flashforge printer's current job, turn its light on or off, or set its
-target temperatures. It acts on real hardware.
+Control the Flashforge printer as its Device page does: pause, resume or cancel the current job, turn
+its light on or off, set its target temperatures, switch its filtration fans, set its chamber and
+part-cooling fans, the running job's print speed, or its Z offset. It acts on real hardware.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `action` | string | Yes | `pause`, `resume`, `cancel`, `light_on`, `light_off` or `set_temperature` |
-| `bed`, `chamber` | number | No | `set_temperature` only: that heater's target, degrees C |
-| `nozzles` | array | No | `set_temperature` only: `[{tool, temp}]`, tool 0-3. Tools not listed are left unchanged |
+| `action` | string | Yes | `pause`, `resume`, `cancel`, `light_on`, `light_off`, `set_temperature`, `set_filtration`, `set_fans`, `set_print_speed` or `set_z_offset` |
+| `bed`, `chamber` | number | No | `set_temperature` only: that heater's target, degrees C (bed 0-150, chamber 0-100) |
+| `nozzles` | array | No | `set_temperature` only: `[{tool, temp}]`, tool 0-3, 0-350 C. Tools not listed are left unchanged |
+| `recirculation`, `exhaust` | boolean | No | `set_filtration` only: the internal (recirculation) and external (exhaust) filtration fans on or off |
+| `chamber_fan`, `cooling_fan`, `cooling_left_fan` | number | No | `set_fans` only: fan speed, 0-100 %. The left cooling fan only on a printer that reports one |
+| `speed` | integer | No | `set_print_speed` only, required there: 50, 100, 125 or 166 %, the printer's own steps |
+| `z_offset` | number | No | `set_z_offset` only, required there: mm, positive raises the nozzle, -1 to 1 in 0.025 mm steps |
 
-`set_temperature` needs something to set: with none of `bed`, `chamber` or a nozzle (or with an
-empty `nozzles`) it is refused and nothing is sent to the printer. It used to send "no change" for
-every heater and report success. A `nozzles` that is not a list is refused the same way.
+Every action is shaped into the Device page's own command and built by the page's code
+(`build_console_operation`), so the tool and the page send the same commands with the same limits.
+The printer's `/control` request gets, for example:
+
+| Call | Command sent |
+|------|--------------|
+| `set_print_speed {speed: 125}` | `printerCtl_cmd {zAxisCompensation, speed: 125, chamberFan, coolingFan}` |
+| `set_z_offset {z_offset: -0.05}` | `printerCtl_cmd {zAxisCompensation: -0.05, speed, chamberFan, coolingFan}` |
+| `set_fans {chamber_fan: 50}` | `printerCtl_cmd {zAxisCompensation, speed, chamberFan: 50, coolingFan}` |
+| `set_filtration {recirculation: true}` | `circulateCtl_cmd {internal: "open", external}` |
+
+`printerCtl_cmd` and `circulateCtl_cmd` carry every field they own, so a `set_*` action first reads
+the printer's status and sends the fields it does not change as the printer reports them (a speed of 0,
+what an idle printer reports, goes back as 100 %); `coolingLeftFan` only to a printer that reports that
+fan. The answer says what was sent and what the printer reported before:
+
+```json
+{
+  "status": "success",
+  "action": "set_z_offset",
+  "sent": {"cmd": "printerCtl_cmd", "args": {"zAxisCompensation": -0.05, "speed": 100, "chamberFan": 30, "coolingFan": 70}},
+  "before": {"print_speed_percent": null, "z_offset_mm": 0.0, "chamber_fan_percent": 30, "cooling_fan_percent": 70,
+             "recirculation": false, "exhaust": true},
+  "next_steps": [{"tool": "get_printer_status", "why": "the printer applies a command within a few seconds; ..."}]
+}
+```
+
+`get_printer_status`'s `printer.controls` has the same fields, so it reads back what the printer now
+reports. The printer takes a moment to apply a command.
+
+Refused, with nothing sent to the printer:
+- a value the page never sends: a speed that is not one of the four, a Z offset past 1 mm or off the
+  0.025 mm steps, a fan speed outside 0-100, a temperature past its range. (The steps are printer_control's
+  rule for the offset an agent names: the page nudges the printer's own offset by 0.025 mm, whatever it
+  is, and its buttons work from an offset off the steps.);
+- a status that lacks a field the command sends back as the printer reports it -- the Z offset, print
+  speed or part-cooling fan for `printerCtl_cmd` (the chamber fan too on the Pro), the other filtration
+  fan for `circulateCtl_cmd` -- which would go out as 0 or `close` (a reply without a detail object parses
+  as an empty status). The Device page still sends it as it always has;
+- a print speed while nothing prints (the page's speed buttons are off then: the printer applies a speed
+  only to a running job);
+- filtration on a printer that reports no filtration fans, a chamber fan on one that reports none, a
+  left cooling fan on one without it;
+- a call that sets nothing (`set_temperature` with none of `bed`, `chamber` or a nozzle, or with an empty
+  `nozzles`; `set_filtration` or `set_fans` with nothing given), and an argument of another action
+  (`speed` with `set_fans`, `bed` with `pause`): before, it was ignored and the call reported done.
 
 ### match_project_to_printer
 Make the project's filament slots say what the Flashforge material station holds: for each loaded
@@ -3383,7 +3684,9 @@ colour. Empty slots are left alone.
 | `allow_cached` | boolean | No | Apply a plan made from the printer's last known status when it cannot be read live (default false) |
 
 **Returns:** `{"status": "success"|"partial"|"not_applied", "dry_run": ..., "changed_count": N,
-"slots": [...], "filaments": [...], "source": "live"|"cached"}`.
+"slots": [...], "filaments": [...], "source": "live"|"cached"}`. A loaded station slot the project has
+no filament slot for has `in_project: false`; where the printer takes more slots, `next_steps` names
+`add_filament_slot`.
 
 When the printer cannot be reached but answered earlier in this session, the plan is made from
 that last status and the response says so: `"source": "cached"`, `age_s`, `live_error` and a `note`.
@@ -3572,6 +3875,10 @@ nothing to suggest has no `next_steps`.
 | `fill_bed_with_instances` | `arrange_objects` with `all_plates: true`, and `set_instance_count` (the last instances) or `delete_object` with the highest `instance_id` | the fill added instances its plate's arrange could not fit, which stand on no plate (`instances_on_no_plate`) |
 | `set_plate_settings` | `arrange_objects` with that `plate_index` | the plate now prints by object |
 | | `reset_object_config` with the first object and the vase settings it carries (`why` names every object) | the plate's spiral vase was on and is off, and objects on it still carry the vase's object settings |
+| `add_filament_slot`, `delete_filament_slot` | `get_scene_info` | the change renumbered slots or moved objects (`undo_warning`): `filaments_used` shows each object's slots now, and after any undo |
+| `install_presets` | `select_preset` with `type: printer` and the first printer it installed | it installed printers: an install selects none |
+| `match_project_to_printer` (live) | `add_filament_slot` | the printer holds filament in a station slot the project has no filament slot for, and the printer takes more slots |
+| `printer_control` with a `set_*` action | `get_printer_status` | always: the printer takes a moment to apply a command, and `printer.controls` reads back what it now reports |
 | The bridge's own answers (`list_instances`, `start_orca`, and a tool call it did not forward) | `select_instance` with the `pid` of the first instance that tells who it is (never an older OrcaMCP, which cannot), and `list_instances` | several instances run and this session has not chosen one, or the one it used is gone |
 | | `start_orca` (with `new_instance: true` when others run) | no instance runs, or the one this session used is gone |
 | | `get_scene_info` | the instance this session used restarted, and the session now uses the restarted one: its scene is new |

@@ -76,6 +76,13 @@ class PartPlateList;
 
 using GCodeResult = GCodeProcessorResult;
 
+// Orca: a plate's own filament maps (filament_map, filament_nozzle_map, filament_volume_map, those it keeps)
+// with a slot inserted at `slot` (0-based), on extruder 1, nozzle 0 and `volume_type`: where the project's
+// maps take it (Sidebar::add_custom_filament puts a physical slot before the mixed ones). Upstream's
+// PartPlate::on_filament_added appended it, so on a plate with its own mapping the new physical slot took
+// the first mixed slot's extruder, and every mixed slot the one before it.
+void insert_filament_into_plate_maps(DynamicPrintConfig& plate_config, size_t slot, int volume_type);
+
 class PartPlate : public ObjectBase
 {
 public:
@@ -552,7 +559,7 @@ public:
 
     void on_extruder_count_changed(int extruder_count);
     void set_filament_count(int filament_count);
-    void on_filament_added();
+    void on_filament_added(size_t slot);
     void on_filament_deleted(int filament_count, int filament_id);
 
     friend class cereal::access;
@@ -995,7 +1002,8 @@ public:
 
     void set_filament_count(int filament_count);
     void on_filament_deleted(int filament_count, int filament_id);
-    void on_filament_added(int filament_count);
+    // Orca: the new slot is `slot` (0-based), where the project's filament arrays took it.
+    void on_filament_added(int filament_count, size_t slot);
 
     std::map<int, bool> m_allow_bed_type_in_double_nozzle;
     BedTextureInfo bed_texture_info[btCount];

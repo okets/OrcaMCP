@@ -215,6 +215,20 @@ TEST_CASE("A slot nothing can be matched to keeps its preset and says why", "[Pr
     }
 }
 
+TEST_CASE("A loaded station slot the project has no slot for says so, as a fact to act on", "[ProjectMatch]")
+{
+    // A one-slot project on a station with two spools loaded.
+    const std::vector<StationSlot> station = {{1, true, "PLA", "#FFFFFF"}, {2, true, "PETG", "#B17C38"}};
+    const std::vector<ProjectSlot> project = {project_all_pla().front()};
+    const auto plan = plan_project_match(station, project, c5p_candidates(), "Flashforge", {});
+    REQUIRE(plan.size() == 2);
+    CHECK(slot(plan, 1)->in_project);
+    REQUIRE(slot(plan, 2) != nullptr);
+    CHECK_FALSE(slot(plan, 2)->in_project);
+    CHECK_FALSE(slot(plan, 2)->matched);
+    CHECK_FALSE(slot(plan, 2)->disagrees); // an ordinary project, not a disagreement
+}
+
 TEST_CASE("A slot the printer reports as empty is left alone", "[ProjectMatch]")
 {
     const auto plan = plan_project_match(station_petg_then_empty(), project_all_pla(), c5p_candidates(), "Flashforge", {});

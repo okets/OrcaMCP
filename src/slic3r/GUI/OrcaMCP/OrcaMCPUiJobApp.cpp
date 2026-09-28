@@ -137,13 +137,14 @@ nlohmann::json placement_after_job(const ObjectTransforms& before)
 
 namespace {
 
-// HTTP thread. The UI worker's going idle, asked on the main thread, within what is left of `cap`.
+// HTTP thread. The UI worker done -- the job a finalize started finalized too -- asked on the main thread,
+// within what is left of `cap`.
 UiJobWait wait_for_worker_idle(std::chrono::steady_clock::time_point started, std::chrono::milliseconds cap)
 {
     const auto left = cap - std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started);
     const auto idle = [] {
         try {
-            return run_on_main_thread([]() -> nlohmann::json { return wxGetApp().plater()->get_ui_job_worker().is_idle(); }).get<bool>();
+            return run_on_main_thread([]() -> nlohmann::json { return worker_done(wxGetApp().plater()->get_ui_job_worker()); }).get<bool>();
         } catch (const McpShuttingDown&) {
             return false; // the wait's own cancel check ends it
         }

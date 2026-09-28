@@ -391,6 +391,35 @@ TEST_CASE("Vase settings left on objects point at their reset, naming every obje
     CHECK(vase_settings_next_steps({}, {}).empty());
 }
 
+TEST_CASE("Station slots the project lacks point at add_filament_slot where the printer takes more", "[McpNextSteps][orcamcp]")
+{
+    const std::vector<NextStep> steps = missing_slot_next_steps({3, 4}, true);
+    REQUIRE(steps.size() == 1);
+    CHECK(steps[0].tool == "add_filament_slot");
+    CHECK(mentions(steps[0].why, "slots 3 and 4"));
+    CHECK(missing_slot_next_steps({3}, false).empty()); // its slots follow its extruders
+    CHECK(missing_slot_next_steps({}, true).empty());
+}
+
+TEST_CASE("Installed printers point at selecting the first, which the install leaves to its own call", "[McpNextSteps][orcamcp]")
+{
+    const std::vector<NextStep> steps = installed_printer_next_steps({"Acme One 0.4 nozzle", "Acme One 0.6 nozzle"});
+    REQUIRE(steps.size() == 1);
+    CHECK(steps[0].tool == "select_preset");
+    CHECK(steps[0].arguments == json{{"type", "printer"}, {"name", "Acme One 0.4 nozzle"}});
+    CHECK(mentions(steps[0].why, "'Acme One 0.4 nozzle' and 'Acme One 0.6 nozzle' are installed, not selected"));
+    CHECK(installed_printer_next_steps({}).empty());
+}
+
+TEST_CASE("A slot change that renumbered objects points at checking them, since an undo would not", "[McpNextSteps][orcamcp]")
+{
+    const std::vector<NextStep> steps = slot_change_next_steps(true);
+    REQUIRE(steps.size() == 1);
+    CHECK(steps[0].tool == "get_scene_info");
+    CHECK(mentions(steps[0].why, "filaments_used"));
+    CHECK(slot_change_next_steps(false).empty());
+}
+
 TEST_CASE("Every next step names a real tool, with arguments its schema accepts", "[McpNextSteps][orcamcp]")
 {
     std::vector<NextStep> steps = Scene({cube_missing_facet(), separate_cubes(2)}).steps();
@@ -424,7 +453,15 @@ TEST_CASE("Every next step names a real tool, with arguments its schema accepts"
         steps.push_back(std::move(step));
     for (NextStep& step : vase_settings_next_steps({0, 2}, {"sparse_infill_density", "wall_loops"}))
         steps.push_back(std::move(step));
-    REQUIRE(steps.size() == 23);
+    for (NextStep& step : printer_control_next_steps())
+        steps.push_back(std::move(step));
+    for (NextStep& step : missing_slot_next_steps({3, 4}, true))
+        steps.push_back(std::move(step));
+    for (NextStep& step : installed_printer_next_steps({"Flashforge AD5X 0.4 nozzle", "Flashforge AD5X 0.6 nozzle"}))
+        steps.push_back(std::move(step));
+    for (NextStep& step : slot_change_next_steps(true))
+        steps.push_back(std::move(step));
+    REQUIRE(steps.size() == 27);
 
     const mcp_tool_references::ToolNames names(OrcaMCPServer::registered_tools());
     json                                 response = json::object();

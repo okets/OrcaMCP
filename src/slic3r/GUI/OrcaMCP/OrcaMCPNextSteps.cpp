@@ -312,4 +312,41 @@ std::vector<NextStep> vase_settings_next_steps(const std::vector<int>& object_id
              {{"object_id", object_ids.front()}, {"keys", first_keys}}}};
 }
 
+std::vector<NextStep> installed_printer_next_steps(const std::vector<std::string>& printers)
+{
+    if (printers.empty())
+        return {};
+    std::string names;
+    for (size_t i = 0; i < printers.size(); ++i)
+        names += (i == 0 ? "'" : i + 1 == printers.size() ? " and '" : ", '") + printers[i] + "'";
+    return {{"select_preset",
+             names + (printers.size() == 1 ? " is" : " are") +
+                 " installed, not selected: this selects the first; its filament slots and colours come with it",
+             {{"type", "printer"}, {"name", printers.front()}}}};
+}
+
+std::vector<NextStep> slot_change_next_steps(bool renumbered)
+{
+    if (!renumbered)
+        return {};
+    return {{"get_scene_info",
+             "the slots were renumbered: each object's filaments_used shows the slots it prints with now; check it again "
+             "after any undo, which would bring back the objects' old slot numbers but not the slots"}};
+}
+
+std::vector<NextStep> missing_slot_next_steps(const std::vector<int>& missing_slots, bool slots_can_be_added)
+{
+    if (missing_slots.empty() || !slots_can_be_added)
+        return {};
+    return {{"add_filament_slot",
+             "the printer holds filament in " + named_ids("slot", missing_slots) +
+                 ", which the project has no filament slot for: this adds one per call, then match_project_to_printer again"}};
+}
+
+std::vector<NextStep> printer_control_next_steps()
+{
+    return {{"get_printer_status",
+             "the printer applies a command within a few seconds; printer.controls there reads back what it now reports"}};
+}
+
 }}} // namespace Slic3r::GUI::OrcaMCP

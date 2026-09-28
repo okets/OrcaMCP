@@ -81,6 +81,9 @@ struct SlotPlan
     // reported, or nothing compatible of that family). `reason` says which.
     bool        matched{true};
     std::string reason;
+    // False when the project has no filament slot of this number: add_filament_slot adds one (MCP's
+    // match_project_to_printer points to it where the printer takes more slots).
+    bool        in_project{true};
 
     bool changes() const { return preset_changes || color_changes; }
 };

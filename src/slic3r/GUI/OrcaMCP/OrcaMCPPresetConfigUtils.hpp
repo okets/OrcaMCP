@@ -31,6 +31,8 @@ private:
 // PlaterPresetComboBox::sync_colour_config).
 const std::vector<std::string>& filament_colour_keys();
 
+struct PresetInstallPlan;
+
 } // namespace OrcaMCP
 
 // What get_presets was asked for. The full preset list with every config key is ~1.9 MB, which no
@@ -144,6 +146,9 @@ struct ApplyConfigResult {
     };
     std::vector<std::string>   unknown;
     std::vector<RejectedValue> rejected;
+    // Each key written into a preset (types print, filament, printer), with its value as written: the
+    // settings' own rules (ConfigManipulation, run by UpdatePresetTabs) may change it right after.
+    std::vector<std::pair<std::string, std::string>> written;
 };
 
 class OrcaMCPPresetConfigUtils {
@@ -160,6 +165,10 @@ public:
     static nlohmann::json GetEditedPresetJson(Preset::Type type);
     static void DiscardCurrentPresetChanges();
     static void UpdatePresetTabs();
+    // After UpdatePresetTabs: the keys of `written` (ApplyConfigResult::written) whose value the settings'
+    // own rules changed since, each with what it is now. Main thread.
+    static std::vector<ApplyConfigResult::RejectedValue> ChangedAfterWrite(const std::string& type,
+                                                                            const std::vector<std::pair<std::string, std::string>>& written);
     // item = {"type": "print"|"filament"|"printer"|"project", "settings": {key: value, ...}}
     static ApplyConfigResult ApplyConfig(const nlohmann::json& item);
     // Refreshes derived UI/state after a direct write to preset_bundle->project_config
@@ -228,10 +237,23 @@ public:
     // and that the preset exists as a filament preset compatible with the selected printer;
     // returns false with `error` set and nothing changed otherwise. Main thread only.
     static bool SelectFilamentSlotPreset(int slot, const std::string& presetName, std::string& error);
+    // The presets with unsaved changes, one line each: "the print preset '0.20mm Standard' (layer_height, ...)".
+    static std::vector<std::string> UnsavedPresetChanges();
+    // The presets the project carries of its own (a 3MF's), one line each: "the printer preset 'X'".
+    static std::vector<std::string> ProjectEmbeddedPresets();
+    // Installs `plan` as the Setup Wizard's Finish does (PresetBundle::apply_vendor_config, in the merge mode
+    // the cloud sync uses, then what GUI_App::run_wizard runs after it) and answers install_presets. Call only
+    // after install_refusal passed. Main thread.
+    static nlohmann::json InstallPresets(const OrcaMCP::PresetInstallPlan& plan);
+    // Why `presetName` cannot go in a filament slot: no filament preset of that name, or one the selected
+    // printer does not take. Empty when it can.
+    static std::string FilamentSlotPresetError(const std::string& presetName);
 
     // Preset management tools
     static void ClonePreset(const std::string& type, const std::string& sourceName, const std::string& newName);
-    static void SavePreset(const std::string& type, const std::string& name = "");
+    // Saves the edited preset of `type` as the settings tab's Save does, under `name` or its own; returns the
+    // name it was saved as. Throws when it cannot.
+    static std::string SavePreset(const std::string& type, const std::string& name = "");
     static void DeletePreset(const std::string& type, const std::string& name);
     static void ResetPreset(const std::string& type);
 

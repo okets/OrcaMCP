@@ -87,6 +87,7 @@ class DailyTipsWindow;
 struct Camera;
 class GLToolbar;
 class PlaterPresetComboBox;
+struct FilamentRenumbering;
 class PartPlateList;
 struct MixedFilamentResult;
 class SyncNozzleAndAmsDialog;
@@ -263,6 +264,9 @@ public:
     void                    update_ui_from_settings();
 	bool                    show_object_list(bool show) const;
     void                    finish_param_edit();
+    // Orca: the slot the Filament settings edit (a slot's Edit sets it, closing the settings clears it: -1).
+    int                     editing_filament() const;
+    void                    set_editing_filament(int filament_idx);
 
     /**
      * @brief Automatically calculates flushing volumes
@@ -651,6 +655,10 @@ public:
     void on_filament_change(size_t filament_idx);
     void on_filament_count_change(size_t extruders_count);
     void on_filaments_delete(size_t extruders_count, size_t filament_id, int replace_filament_id = -1, const std::vector<unsigned char>& is_mixed_before_delete = {});
+    // Orca: the filament number settings (support, wipe tower, per-feature filaments) of the print preset the
+    // slicer reads and of the plater's own copy, renumbered after a slot is deleted or inserted; the print
+    // settings show it (unsaved).
+    void renumber_filament_settings(const FilamentRenumbering& change);
     std::vector<Slic3r::ColorRGBA> get_extruders_colors();
     // BBS
     void on_bed_type_change(BedType bed_type);

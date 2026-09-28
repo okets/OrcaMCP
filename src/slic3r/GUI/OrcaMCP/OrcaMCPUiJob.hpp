@@ -33,7 +33,7 @@
 // Unit-tested in tests/slic3rutils/test_mcp_ui_job.cpp.
 
 namespace Slic3r { class Model; class ModelObject; }
-namespace Slic3r { namespace GUI { class Plater; } }
+namespace Slic3r { namespace GUI { class Plater; class Worker; } }
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
@@ -98,6 +98,11 @@ UiJobWait wait_until(const std::function<bool()>& done,
                      std::chrono::milliseconds    cap,
                      std::chrono::milliseconds    poll  = std::chrono::milliseconds(50),
                      const std::function<void()>& nudge = {});
+
+// Main thread. Delivers what `worker` has sent -- a job's finalize among it, which may start another job,
+// as a bed fill's starts the plate's arrange -- and says whether it is done: nothing queued, running or
+// undelivered. A wait for a chained job asks this rather than the plater's idle handler to have run.
+bool worker_done(Worker& worker);
 
 // A tool's answer when its job did not finish: cancelled or dropped (nothing moved), failed (why),
 // still running past the cap after `waited_s` seconds (how to tell when it has ended), or cut short

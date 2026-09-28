@@ -5519,3 +5519,101 @@ TEST_CASE("Config import confines zip entries, preset names and bundle ids to th
         CHECK_FALSE(any_filename_contains(temp_dir.path(), "bundle-escape"));
     }
 }
+
+TEST_CASE("A filament a mixed filament lists is one whose delete breaks the mix", "[Preset][Bundle]")
+{
+    PresetBundle bundle;
+    // Three physical slots and a mixed slot 4 of slots 1 and 3.
+    bundle.project_config.option<ConfigOptionBools>("filament_is_mixed", true)->values           = {false, false, false, true};
+    bundle.project_config.option<ConfigOptionStrings>("filament_mixed_components", true)->values = {"", "", "", "1,3"};
+
+    CHECK(bundle.merge_breaks_mixed_filament(0, 3));
+    CHECK(bundle.merge_breaks_mixed_filament(2, 3));
+    CHECK_FALSE(bundle.merge_breaks_mixed_filament(1, 3)); // not a component
+    CHECK_FALSE(bundle.merge_breaks_mixed_filament(3, 0)); // a mixed filament merged away breaks nothing
+    CHECK_FALSE(bundle.merge_breaks_mixed_filament(0, 1)); // into a physical one
+
+    CHECK(bundle.mixed_filaments_using(0) == std::vector<size_t>{3});
+    CHECK(bundle.mixed_filaments_using(1).empty());
+    CHECK(bundle.mixed_filaments_using(3).empty()); // a mixed filament is no component
+}
+
+namespace {
+
+// The filament library installed in `system`: a base and two filaments a user can enable.
+void write_installed_library(const fs::path &system)
+{
+    const std::string lib(PresetBundle::ORCA_FILAMENT_LIBRARY);
+    fs::create_directories(system / lib / "filament");
+    std::ofstream((system / (lib + ".json")).string())
+        << R"({"version":"1.0.0","name":")" << lib << R"(","filament_list":[)"
+        << R"({"name":"fdm_filament_common","sub_path":"filament/fdm_filament_common.json"},)"
+        << R"({"name":"Generic PLA @System","sub_path":"filament/generic_pla.json"},)"
+        << R"({"name":"Generic PETG @System","sub_path":"filament/generic_petg.json"}]})";
+    std::ofstream((system / lib / "filament" / "fdm_filament_common.json").string())
+        << R"({"type":"filament","name":"fdm_filament_common","from":"system","instantiation":"false","filament_type":["PLA"]})";
+    std::ofstream((system / lib / "filament" / "generic_pla.json").string())
+        << R"({"type":"filament","name":"Generic PLA @System","from":"system","instantiation":"true","inherits":"fdm_filament_common",)"
+        << R"("filament_id":"OGFL99"})";
+    std::ofstream((system / lib / "filament" / "generic_petg.json").string())
+        << R"({"type":"filament","name":"Generic PETG @System","from":"system","instantiation":"true","inherits":"fdm_filament_common",)"
+        << R"("filament_id":"OGFG99","filament_type":["PETG"]})";
+}
+
+} // namespace
+
+TEST_CASE("Installing filaments by merge keeps the filament slot 1 had", "[Preset][Bundle][Regression]")
+{
+    ScopedTemporaryDir temp_dir;
+    const fs::path     data_root = temp_dir.path() / "datadir";
+    write_installed_library(data_root / PRESET_SYSTEM_DIR);
+    ScopedDataDir scoped_data_dir(data_root);
+
+    AppConfig app_config;
+    app_config.set_section(AppConfig::SECTION_FILAMENTS, {{"Generic PLA @System", "true"}});
+    PresetBundle bundle;
+    bundle.load_presets(app_config, ForwardCompatibilitySubstitutionRule::EnableSilent);
+    REQUIRE(bundle.filament_presets.front() == "Generic PLA @System");
+
+    // The merge mode (the cloud sync's pending presets, MCP's install_presets) adds and changes no
+    // selection. It used to switch slot 1 to the first filament it added, which it took for the wizard's
+    // whole choice.
+    REQUIRE(bundle.apply_vendor_config({}, {{"Generic PETG @System", "true"}}, &app_config, /*overwrite=*/false));
+
+    CHECK(bundle.filament_presets.front() == "Generic PLA @System");
+    CHECK(app_config.get_section(AppConfig::SECTION_FILAMENTS).count("Generic PETG @System") == 1);
+    CHECK(app_config.get_section(AppConfig::SECTION_FILAMENTS).count("Generic PLA @System") == 1);
+}
+
+TEST_CASE("A slot left on a project's own filament takes one the printer shows when the project goes", "[Preset][Bundle][Regression]")
+{
+    // Printer A shows its own Generic PLA, which shadows the library's; the filament it prefers is not
+    // installed. A new project after one that carried its own filament (a 3MF's) used to put the slot on the
+    // first visible library PLA -- "Generic PLA @System", which Printer A does not show -- and the extra slots
+    // of a multi-tool printer copied it.
+    MachineFilaments f;
+    f.add_filament(f.library, "Generic PLA @System", "Generic PLA", {});
+    f.add_filament(f.vendor, "Generic PLA @Printer A", "Generic PLA", {"Printer A 0.4 nozzle"});
+    f.bundle.filaments.find_preset("Generic PLA @System")->m_excluded_from.insert("Printer A 0.4 nozzle");
+    for (const char* abs : {"Generic ABS @System", "Generic ABS @Printer A", "FilAr ABS @System"})
+        f.bundle.filaments.find_preset(abs)->config.option<ConfigOptionStrings>("filament_type", true)->values = {"ABS"};
+    Preset* printer = f.bundle.printers.find_preset("Printer A 0.4 nozzle");
+    printer->config.option<ConfigOptionStrings>("default_filament_profile", true)->values = {"Vendor PLA @Not Installed"};
+    REQUIRE(f.bundle.printers.select_preset_by_name("Printer A 0.4 nozzle", true));
+    f.bundle.update_compatible(PresetSelectCompatibleType::Never);
+    REQUIRE_FALSE(f.bundle.filaments.find_preset("Generic PLA @System")->is_compatible);
+
+    // The project's own filament on slot 1, as a 3MF load adds it.
+    ScopedTemporaryDir     temp_dir;
+    const DynamicPrintConfig config = f.bundle.filaments.default_preset().config;
+    const auto [embedded, modified] = f.bundle.filaments.load_external_preset((temp_dir.path() / "fixture.3mf").string(), "fixture.3mf",
+                                                                               "Fixture PETG", config, {},
+                                                                               PresetCollection::LoadAndSelect::Always);
+    REQUIRE(embedded != nullptr);
+    REQUIRE(embedded->is_project_embedded);
+    f.bundle.filament_presets = {embedded->name};
+
+    f.bundle.reset_project_embedded_presets();
+
+    CHECK(f.bundle.filament_presets.front() == "Generic PLA @Printer A");
+}

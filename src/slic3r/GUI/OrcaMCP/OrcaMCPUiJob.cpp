@@ -1,5 +1,6 @@
 #include "OrcaMCPUiJob.hpp"
 
+#include "slic3r/GUI/Jobs/Worker.hpp"
 #include "slic3r/Utils/ThreadCancel.hpp"
 #include "libslic3r/Model.hpp"
 
@@ -195,6 +196,12 @@ nlohmann::json object_id_changes(const std::vector<ObjectID>& before, const Mode
             changes.push_back({{"object_id", int(now)}, {"previous_object_id", int(it - before.begin())}, {"name", model.objects[now]->name}});
     }
     return changes;
+}
+
+bool worker_done(Worker& worker)
+{
+    worker.process_events();
+    return worker.is_idle();
 }
 
 std::string ui_job_busy_message(const std::string& tool)

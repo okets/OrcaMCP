@@ -11,6 +11,8 @@
 #include "OrcaMCPConfigKeys.hpp"
 #include "OrcaMCPConfigValues.hpp"
 #include "OrcaMCPFilamentUtils.hpp"
+#include "OrcaMCPPresetInstall.hpp"
+#include "slic3r/Utils/ThreadCancel.hpp"
 #include "OrcaMCPGcodeCheck.hpp"
 #include "OrcaMCPLayerRanges.hpp"
 #include "OrcaMCPSliceEstimate.hpp"
@@ -431,8 +433,69 @@ void report_project_rename(nlohmann::json& response, std::vector<std::string>& i
 }
 
 // select_preset's work, success or failure alike; the caller adds what suppressed dialogs said.
+// The printers of `vendors` (not installed) as shipped, read on this thread as the Setup Wizard reads them
+// off the GUI thread; a vendor that cannot be read is left out, its error in `errors`.
+std::vector<CatalogPrinter> shipped_printers_of(const std::vector<std::string>& vendors, std::vector<std::string>& errors)
+{
+    std::vector<CatalogPrinter> printers;
+    for (const std::string& vendor : vendors) {
+        if (this_thread_cancelled())
+            break;
+        std::string error;
+        if (auto shipped = shipped_vendor_printers(vendor, error))
+            printers.insert(printers.end(), shipped->begin(), shipped->end());
+        else
+            errors.push_back(error);
+    }
+    return printers;
+}
+
+// get_presets {installed: false}: what the Setup Wizard offers and install_presets installs.
+nlohmann::json not_installed_presets(const nlohmann::json& params)
+{
+    PresetQuery query;
+    query.vendor        = params.value("vendor", std::string());
+    query.name_contains = params.value("name_contains", std::string());
+    if (params.contains("summary") && !parse_boolean_param(params["summary"], query.summary))
+        return error_response("summary must be a boolean");
+    if (!query.summary)
+        return error_response("summary: false lists the settings of installed presets; installed: false lists names only. "
+                              "Install one first (install_presets), then read its settings");
+    if (const std::string limit_error = parse_preset_limit_param(params, query.limit); !limit_error.empty())
+        return error_response(limit_error);
+    std::string type = params.value("type", std::string());
+    if (type == "all")
+        type.clear();
+    if (!type.empty() && type != "printer" && type != "filament")
+        return error_response("installed: false lists printers and filaments: type must be printer, filament or all");
+
+    std::vector<CatalogPrinter>  printers;
+    std::vector<CatalogFilament> filaments;
+    run_on_main_thread([&printers, &filaments]() {
+        printers  = catalog_printers(*wxGetApp().preset_bundle);
+        filaments = catalog_filaments(*wxGetApp().preset_bundle);
+        return nlohmann::json();
+    });
+    const std::vector<std::string> vendors = uninstalled_vendors();
+    std::vector<std::string>       errors;
+    if ((type.empty() || type == "printer") && !query.vendor.empty()) {
+        const std::vector<CatalogPrinter> shipped = shipped_printers_of(vendors_to_search(vendors, query.vendor, {}), errors);
+        printers.insert(printers.end(), shipped.begin(), shipped.end());
+    }
+    nlohmann::json result = not_installed_json(printers, filaments, vendors, type, query);
+    result["status"]      = "success";
+    if (!errors.empty())
+        result["errors"] = errors;
+    return result;
+}
+
 nlohmann::json select_preset_now(const std::string& type, const std::string& name, int slot, bool has_slot)
 {
+    // Without a slot, the Filament settings would switch alone: with several physical slots none of them
+    // would print with it (Sidebar::update_presets changes a slot only while its settings are open).
+    if (type == "filament" && !has_slot)
+        if (const auto refusal = slot_needed_refusal(filament_slots_state(), "slot"))
+            return {{"status", "error"}, {"message", *refusal + ". Nothing was selected."}};
     if (has_slot) {
         std::string error;
         if (!OrcaMCPPresetConfigUtils::SelectFilamentSlotPreset(slot, name, error))
@@ -1000,7 +1063,10 @@ void OrcaMCPServer::register_builtin_tools()
         "List presets; filter by type/vendor/name",
         "List the printer, filament and print presets available for the selected printer. "
         "Returns names and identifying fields only; pass summary:false for full configs. "
-        "Capped per type (default 25) -- narrow it with type/vendor/name_contains, or raise limit.",
+        "Capped per type (default 25) -- narrow it with type/vendor/name_contains, or raise limit. "
+        "installed: false lists instead what the Setup Wizard offers and install_presets installs: printers "
+        "(each a model and nozzle) of the installed vendors not yet installed, of a vendor not installed when "
+        "vendor names it (vendors_not_installed lists them), and filaments not installed that suit the selected printer.",
         {
             {"type", "object"},
             {"properties", {
@@ -1029,10 +1095,20 @@ void OrcaMCPServer::register_builtin_tools()
                     {"description", "Max presets per type. Default 25 with summary, 5 without. "
                                     "0 = no cap (the unfiltered summary list is ~54,600 characters "
                                     "and overflows most MCP clients)."}
+                }},
+                {"installed", {
+                    {"type", "boolean"},
+                    {"description", "true (default): the presets installed. false: printers and filaments not installed "
+                                    "yet, which install_presets installs (names only; type printer or filament)."}
                 }}
             }}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
+            bool installed = true;
+            if (params.contains("installed") && !parse_boolean_param(params["installed"], installed))
+                return error_response("installed must be a boolean");
+            if (!installed)
+                return not_installed_presets(params);
             PresetQuery query;
             query.vendor = params.value("vendor", std::string());
             query.name_contains = params.value("name_contains", std::string());
@@ -1325,8 +1401,9 @@ void OrcaMCPServer::register_builtin_tools()
         ToolCategory::Config,
         "Switch a preset, or one filament slot's",
         "Select a printer, filament, or print preset by name. With type 'filament', pass slot "
-        "(1-based) to set just that filament slot, like the sidebar filament combo; without slot "
-        "the filament tab switches whichever slot it is on and dirty preset changes are discarded. "
+        "(1-based) to set just that filament slot, like the sidebar filament combo; without slot, only "
+        "with one physical slot (since 2.5.0.6: with several it is refused, as it changed no slot), and "
+        "dirty preset changes are discarded. "
         "With type 'printer', the response lists the resulting filaments (slot, preset, colour, "
         "previous_color) and, per slot, color_source as observed across the switch: 'unchanged', "
         "'remembered' (the colour last saved for that printer, applied by Remember printer configuration, "
@@ -1390,10 +1467,25 @@ void OrcaMCPServer::register_builtin_tools()
         "on the plate, set_filament_color. The global bed type is project key curr_bed_type, set as the "
         "sidebar's bed-type list sets it (the plates that follow it lose their slice, and the printer "
         "remembers it); a bed type the printer does not offer is refused, and so is any change on a printer "
-        "with one bed type, where the sidebar greys the list out. A plate's own bed type: set_plate_settings.",
+        "with one bed type, where the sidebar greys the list out. A plate's own bed type: set_plate_settings. "
+        "Filament settings go to one slot's preset: filament_slot names it, as the slot's Edit does (required "
+        "with more than one physical slot, since 2.5.0.6), and the answer's filament says which preset and "
+        "slots it reached. A preset other slots share is refused unless include_sharing_slots; switching the "
+        "Filament settings to another slot's preset is refused while they hold unsaved changes (save_preset or "
+        "reset_preset first).",
         {
             {"type", "object"},
             {"properties", {
+                {"filament_slot", {
+                    {"type", "integer"},
+                    {"description", "The filament slot (1-based) whose preset the filament settings change; required with "
+                                    "more than one physical slot. A mixed slot has none: set_mixed_filament."}
+                }},
+                {"include_sharing_slots", {
+                    {"type", "boolean"},
+                    {"description", "With filament_slot: change its preset even when other slots use it too, which the "
+                                    "change reaches as well. Default false: refused, naming how to give the slot its own."}
+                }},
                 {"settings", {
                     {"type", "array"},
                     {"description", "Settings array"},
@@ -1427,8 +1519,41 @@ void OrcaMCPServer::register_builtin_tools()
             std::string    settings_error;
             if (!parse_settings_param(params.value("settings", nlohmann::json()), settings, settings_error, /*with_type=*/true))
                 return error_response(settings_error);
-            return run_on_main_thread([settings]() {
+            std::optional<int> filament_slot;
+            if (params.contains("filament_slot")) {
+                int slot = 0;
+                if (!parse_integer_param(params["filament_slot"], slot))
+                    return error_response("filament_slot must be an integer, 1-based");
+                filament_slot = slot;
+            }
+            bool include_sharing_slots = false;
+            if (params.contains("include_sharing_slots")) {
+                if (!parse_boolean_param(params["include_sharing_slots"], include_sharing_slots))
+                    return error_response("include_sharing_slots must be a boolean");
+                if (!filament_slot)
+                    return error_response("include_sharing_slots goes with filament_slot: name the slot whose preset to change");
+            }
+            const bool writes_filament = std::any_of(settings.begin(), settings.end(),
+                                                     [](const nlohmann::json& item) { return item.value("type", "") == "filament"; });
+            if (filament_slot && !writes_filament)
+                return error_response("filament_slot goes with filament settings (type filament), and this call has none");
+            return run_on_main_thread([settings, filament_slot, include_sharing_slots, writes_filament]() {
                 McpDialogSuppressionGuard suppression_guard;
+
+                // Which slot's preset the filament settings go to: the one filament_slot names, pointed at as
+                // its Edit does, or with one physical slot that one. Decided before anything is written.
+                if (writes_filament) {
+                    const FilamentSlotsState slots = filament_slots_state();
+                    if (filament_slot) {
+                        SlotEdit plan;
+                        if (const auto refusal = slot_edit_refusal(slots, *filament_slot, include_sharing_slots, plan))
+                            return error_response(*refusal);
+                        std::string error;
+                        if (!point_filament_settings_at(plan, error))
+                            return suppression_guard.report(error_response(error + ". Nothing was changed."));
+                    } else if (const auto refusal = slot_needed_refusal(slots, "filament_slot"))
+                        return error_response(*refusal + ". Nothing was changed.");
+                }
 
                 // The wire format is a flat list of {type, key, value} items (existing, published
                 // contract). OrcaMCPPresetConfigUtils::ApplyConfig operates on a batch of settings
@@ -1480,9 +1605,11 @@ void OrcaMCPServer::register_builtin_tools()
                 std::vector<int> flattened_slots;
                 std::vector<std::string> color_errors;
 
+                std::vector<std::pair<std::string, std::vector<std::pair<std::string, std::string>>>> written;
                 for (const auto& type : type_order) {
                     nlohmann::json config_item = {{"type", type}, {"settings", grouped_settings[type]}};
                     ApplyConfigResult result = OrcaMCPPresetConfigUtils::ApplyConfig(config_item);
+                    written.emplace_back(type, result.written);
                     if (!result.error.empty()) {
                         has_error = true;
                     }
@@ -1501,6 +1628,15 @@ void OrcaMCPServer::register_builtin_tools()
                     color_errors.insert(color_errors.end(), result.color_errors.begin(), result.color_errors.end());
                 }
                 OrcaMCPPresetConfigUtils::UpdatePresetTabs();
+                // A value the settings' own rules changed right after it was written did not take: it is
+                // reported with what it is now, not as applied.
+                for (const auto& [type, values] : written)
+                    for (const auto& changed : OrcaMCPPresetConfigUtils::ChangedAfterWrite(type, values)) {
+                        applied_keys.erase(std::remove(applied_keys.begin(), applied_keys.end(), changed.key), applied_keys.end());
+                        invalid_keys.push_back(changed.key);
+                        rejected_values.push_back({{"key", changed.key}, {"reason", changed.reason}, {"expected", changed.expected}});
+                        has_invalid = true;
+                    }
 
                 std::string status = has_error ? "error" : (has_invalid ? "partial" : "success");
 
@@ -1517,6 +1653,14 @@ void OrcaMCPServer::register_builtin_tools()
                     {"duplicate_keys", duplicate_keys},
                     {"active_warnings", get_active_warnings_json(plater)}
                 };
+                if (writes_filament) {
+                    // Where the filament settings went: the preset the Filament settings edit, and every slot
+                    // using it, which all print with the change.
+                    const FilamentSlotsState slots  = filament_slots_state();
+                    response["filament"] = {{"slot", filament_slot.value_or(1)},
+                                            {"preset", slots.edited_preset},
+                                            {"slots", slots_using(slots, slots.edited_preset)}};
+                }
                 auto info_messages = suppression_guard.messages();
                 if (!flattened_slots.empty()) {
                     response["flattened_gradient_slots"] = flattened_slots;
@@ -1537,6 +1681,106 @@ void OrcaMCPServer::register_builtin_tools()
                     response["info_messages"] = info_messages;
                 }
                 return response;
+            });
+        }
+    });
+
+    // install_presets - The Setup Wizard's install of printers and filaments not yet installed
+    register_tool({
+        "install_presets",
+        ToolCategory::Config,
+        "Install printer or filament presets",
+        "Install printer and filament presets the user has not installed, as the Setup Wizard does: a printer's "
+        "vendor profiles are laid into the app's data folder when its vendor is not installed yet, and its model "
+        "and nozzle are enabled; a filament is enabled. Names as get_presets {installed: false} lists them; a printer "
+        "of a vendor whose folder does not begin its name (Bambu Lab's is BBL) needs vendor. Every preset is reloaded "
+        "and the selected printer, print preset, filament slots and colours stay as they were (selection_kept) unless one "
+        "is no longer shown for the printer (selection_changed names each), the filament maps put back "
+        "(filament_maps_restored); a printer is not "
+        "selected: next_steps names select_preset. Answers installed, already_installed, vendors_added, "
+        "filaments_enabled (the filaments the app enables with a new printer too) and project_settings_changed. "
+        "Refused while slicing, while a job runs, over unsaved preset changes (save_preset or reset_preset first) and "
+        "while the project carries presets of its own (a 3MF's), which the reload would drop: save_project, new_project, "
+        "install, then load_project the file again. Not undoable: it writes the data folder.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"printers", {{"type", "array"}, {"items", {{"type", "string"}}}, {"description", "Printer preset names, e.g. \"Flashforge AD5X 0.4 nozzle\""}}},
+                {"filaments", {{"type", "array"}, {"items", {{"type", "string"}}}, {"description", "Filament preset names"}}},
+                {"vendor", {{"type", "string"}, {"description", "The vendor of printers not installed, when its folder does not begin their names (e.g. \"BBL\")"}}}
+            }}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            std::vector<std::string> printers, filaments;
+            for (const auto& [key, names] : {std::pair<const char*, std::vector<std::string>*>{"printers", &printers}, {"filaments", &filaments}}) {
+                if (!params.contains(key))
+                    continue;
+                if (!params[key].is_array())
+                    return error_response(std::string(key) + " must be an array of preset names");
+                for (const nlohmann::json& name : params[key]) {
+                    if (!name.is_string() || name.get<std::string>().empty())
+                        return error_response(std::string(key) + " must be an array of preset names; got " + name.dump());
+                    names->push_back(name.get<std::string>());
+                }
+            }
+            if (printers.empty() && filaments.empty())
+                return error_response("install_presets needs something to install: printers or filaments (preset names, as "
+                                      "get_presets {installed: false} lists them)");
+            std::optional<std::string> vendor;
+            if (params.contains("vendor")) {
+                if (!params["vendor"].is_string() || params["vendor"].get<std::string>().empty())
+                    return error_response("vendor must be a vendor's name or folder, e.g. \"BBL\"");
+                vendor = params["vendor"].get<std::string>();
+            }
+
+            // What is installed, and whether an install may go on, from the app.
+            std::optional<std::string>   refusal;
+            std::vector<CatalogPrinter>  known_printers;
+            std::vector<CatalogFilament> known_filaments;
+            auto read_app = [&]() {
+                Plater& plater  = *wxGetApp().plater();
+                refusal         = install_refusal(pipeline_state(plater, plater.get_partplate_list().get_plate_count()),
+                                                  !plater.get_ui_job_worker().is_idle(), OrcaMCPPresetConfigUtils::UnsavedPresetChanges(),
+                                                  OrcaMCPPresetConfigUtils::ProjectEmbeddedPresets());
+                known_printers  = catalog_printers(*wxGetApp().preset_bundle);
+                known_filaments = catalog_filaments(*wxGetApp().preset_bundle);
+                return nlohmann::json();
+            };
+            run_on_main_thread(read_app);
+            if (refusal)
+                return error_response(*refusal);
+
+            // Printers no installed vendor has: read the vendors the names (or vendor) point to as shipped, on
+            // this thread, as the Setup Wizard reads them off the GUI thread.
+            std::vector<std::string> unresolved;
+            for (const std::string& name : printers)
+                if (std::none_of(known_printers.begin(), known_printers.end(), [&name](const CatalogPrinter& p) { return p.name == name; }))
+                    unresolved.push_back(name);
+            std::vector<std::string> errors;
+            if (!unresolved.empty()) {
+                const std::vector<CatalogPrinter> shipped = shipped_printers_of(vendors_to_search(uninstalled_vendors(), vendor, unresolved), errors);
+                known_printers.insert(known_printers.end(), shipped.begin(), shipped.end());
+            }
+
+            PresetInstallPlan plan;
+            if (const auto unknown = plan_preset_install(printers, filaments, known_printers, known_filaments, plan)) {
+                nlohmann::json answer = error_response(*unknown);
+                if (!errors.empty())
+                    answer["errors"] = errors;
+                return answer;
+            }
+            if (!plan.installs_anything())
+                return {{"status", "success"}, {"changed", false}, {"already_installed", plan.already_installed}};
+
+            return run_on_main_thread([plan]() -> nlohmann::json {
+                McpDialogSuppressionGuard guard;
+                // Checked again where the install runs: the app may have started a slice or a job meanwhile.
+                Plater& plater = *wxGetApp().plater();
+                if (const auto refusal = install_refusal(pipeline_state(plater, plater.get_partplate_list().get_plate_count()),
+                                                         !plater.get_ui_job_worker().is_idle(), OrcaMCPPresetConfigUtils::UnsavedPresetChanges(),
+                                                  OrcaMCPPresetConfigUtils::ProjectEmbeddedPresets()))
+                    return error_response(*refusal);
+                return guard.report(OrcaMCPPresetConfigUtils::InstallPresets(plan));
             });
         }
     });
@@ -1601,7 +1845,10 @@ void OrcaMCPServer::register_builtin_tools()
         "save_preset",
         ToolCategory::Config,
         "Save edited settings to a preset",
-        "Save dirty changes to preset. Optionally save as new name.",
+        "Save the edited settings of the print, filament or printer preset, to that preset or with name as a new "
+        "one, as the settings tab's Save does. A filament preset saved under a new name takes over every slot that "
+        "used the old one (the answer's slots), and one saved from a system preset is made compatible with the "
+        "selected printer only. A system preset cannot be overwritten: give a name.",
         {
             {"type", "object"},
             {"properties", {
@@ -1623,14 +1870,15 @@ void OrcaMCPServer::register_builtin_tools()
             return run_on_main_thread([type, name]() {
                 McpDialogSuppressionGuard suppression_guard;
                 try {
-                    OrcaMCPPresetConfigUtils::SavePreset(type, name);
+                    const std::string saved_name = OrcaMCPPresetConfigUtils::SavePreset(type, name);
                     auto info_messages = suppression_guard.messages();
-                    std::string saved_name = name.empty() ? "current preset" : name;
                     nlohmann::json response = {
                         {"status", "success"},
                         {"message", "Preset saved successfully"},
                         {"saved_preset", saved_name}
                     };
+                    if (type == "filament")
+                        response["slots"] = slots_using(filament_slots_state(), saved_name);
                     if (!info_messages.empty()) {
                         response["info_messages"] = info_messages;
                     }
@@ -2113,6 +2361,13 @@ void OrcaMCPServer::register_builtin_tools()
                                                        {"expected", config_value_expected_shape(def->type)}});
                         }
                     }
+                    // A filament slot the project does not have, or a mixed one for support, as the app's lists
+                    // never offer it: the slicer would read it as it is.
+                    for (const auto& [key, reason] : refused_filament_numbers(filament_slots_state(), parsed)) {
+                        parsed.erase(key);
+                        invalid_keys.push_back(key);
+                        rejected_values.push_back({{"key", key}, {"reason", reason}, {"expected", filament_number_expected()}});
+                    }
 
                     bool changed = false;
                     for (const std::string& key : parsed.keys()) {
@@ -2580,6 +2835,13 @@ void OrcaMCPServer::register_builtin_tools()
                                                    {"reason", std::string("could not be read as a value: ") + e.what()},
                                                    {"expected", config_value_expected_shape(def->type)}});
                     }
+                }
+                // A filament slot the project does not have, or a mixed one for support (as set_object_config).
+                for (const auto& [key, reason] : refused_filament_numbers(filament_slots_state(), written)) {
+                    written.erase(key);
+                    applied_keys.erase(std::remove(applied_keys.begin(), applied_keys.end(), key), applied_keys.end());
+                    invalid_keys.push_back(key);
+                    rejected_values.push_back({{"key", key}, {"reason", reason}, {"expected", filament_number_expected()}});
                 }
 
                 // The range as it would be stored: what it has, this call's settings, and what it still

@@ -4794,7 +4794,8 @@ int Sidebar::apply_mixed_filament(const MixedFilamentResult& result,
             presets[slot_idx] = presets[result.components[0] - 1];
 
         size_t filament_count = wxGetApp().preset_bundle->filament_presets.size();
-        wxGetApp().plater()->get_partplate_list().on_filament_added(filament_count);
+        // Orca: a new mixed slot is the last one
+        wxGetApp().plater()->get_partplate_list().on_filament_added(filament_count, filament_count - 1);
         wxGetApp().plater()->on_filament_count_change(filament_count);
         wxGetApp().get_tab(Preset::TYPE_PRINT)->update();
         wxGetApp().preset_bundle->export_selections(*wxGetApp().app_config);
@@ -5408,7 +5409,10 @@ void Sidebar::add_filament() {
 
 void Sidebar::delete_filament(size_t filament_id, int replace_filament_id) {
     if (is_new_project_in_gcode3mf()) { return; }
-    if (p->combos_filament.size() <= 1) return;
+    // Orca: the last physical slot stays (below, once the slot is known); a mixed one goes however many
+    // physical slots are left. Upstream returned here with one physical slot, so a mix broken by the
+    // delete of its other component could not be deleted at all.
+    if (p->combos_filament.empty()) return;
 
     size_t filament_count = p->combos_filament.size() - 1;
     if (filament_id == size_t(-2)) {
@@ -5425,6 +5429,8 @@ void Sidebar::delete_filament(size_t filament_id, int replace_filament_id) {
         return;
 
     bool is_mixed = (filament_id >= p->combos_filament.size());
+    if (!is_mixed && p->combos_filament.size() <= 1)
+        return;
 
     if (!is_mixed) {
         if (wxGetApp().preset_bundle->is_the_only_edited_filament(filament_id) || (filament_id == 0)) {
@@ -5466,34 +5472,28 @@ void Sidebar::delete_filament(size_t filament_id, int replace_filament_id) {
 
 void Sidebar::change_filament(size_t from_id, size_t to_id)
 {
+    // Orca: the physical slot's "Merge with" menu passes -2 for the slot it was opened on, which
+    // delete_filament resolves; the check below must read that same slot, not -2.
+    if (from_id == size_t(-2))
+        from_id = p->m_menu_filament_id;
+
     // Merging a physical filament into a mixed one that lists it as a component would delete
     // the very filament the mix depends on, leaving it broken. Warn before doing so.
-    auto& pb = *wxGetApp().preset_bundle;
-    bool from_is_physical = !pb.is_mixed_filament(from_id);
-    bool to_is_mixed = pb.is_mixed_filament(to_id);
-
-    if (from_is_physical && to_is_mixed) {
-        auto* comp_opt = pb.project_config.option<ConfigOptionStrings>("filament_mixed_components");
-        if (comp_opt && to_id < comp_opt->values.size()) {
-            auto comps = Slic3r::parse_mixed_components(comp_opt->values[to_id]);
-            unsigned int from_1based = (unsigned int)from_id + 1;
-            bool target_uses_source = false;
-            for (unsigned int c : comps) {
-                if (c == from_1based) {
-                    target_uses_source = true;
-                    break;
-                }
-            }
-            if (target_uses_source) {
-                int ret = wxMessageBox(
-                    _L("The target mixed filament uses this physical filament as a component. "
-                       "Merging will remove this physical filament and may invalidate the mixed filament. Continue?"),
-                    _L("Warning"),
-                    wxOK | wxCANCEL | wxICON_WARNING);
-                if (ret != wxOK)
-                    return;
-            }
-        }
+    if (wxGetApp().preset_bundle->merge_breaks_mixed_filament(from_id, to_id)) {
+        const wxString message = _L("The target mixed filament uses this physical filament as a component. "
+                                    "Merging will remove this physical filament and may invalidate the mixed filament. Continue?");
+        int ret = wxCANCEL;
+        if (is_mcp_dialog_suppression_enabled()) {
+            // Orca MCP: a native box, which suppression does not catch: answered here, Cancel unless the
+            // tool chose OK (delete_filament_slot's allow_breaking_mix).
+            record_mcp_prompt_asked(MCP_PROMPT_MERGE_INTO_MIX);
+            const std::optional<McpAnswer> chosen = mcp_chosen_answer(MCP_PROMPT_MERGE_INTO_MIX);
+            add_mcp_suppressed_answer(into_u8(message), chosen ? chosen->text : mcp_answer_label(wxID_CANCEL));
+            ret = chosen && chosen->id == wxID_OK ? wxOK : wxCANCEL;
+        } else
+            ret = wxMessageBox(message, _L("Warning"), wxOK | wxCANCEL | wxICON_WARNING);
+        if (ret != wxOK)
+            return;
     }
 
     delete_filament(from_id, int(to_id));
@@ -5566,24 +5566,12 @@ void Sidebar::add_custom_filament(wxColour new_col, const std::string& preset_na
         if (ams_mc.size() > total)
             std::rotate(ams_mc.begin() + insert_pos, ams_mc.begin() + total, ams_mc.end());
 
-        // Remap object/volume extruder IDs and paint data: anything >= insert_pos+1 (1-based) shifts up by 1
-        int threshold_1based = (int)(insert_pos + 1);
-        auto ebt_threshold = EnforcerBlockerType(threshold_1based);
-        for (auto* obj : wxGetApp().plater()->model().objects) {
-            if (obj->config.has("extruder")) {
-                int ext = obj->config.extruder();
-                if (ext >= threshold_1based)
-                    obj->config.set("extruder", ext + 1);
-            }
-            for (auto* vol : obj->volumes) {
-                if (vol->config.has("extruder")) {
-                    int ext = vol->config.extruder();
-                    if (ext >= threshold_1based)
-                        vol->config.set("extruder", ext + 1);
-                }
-                vol->mmu_segmentation_facets.shift_states_above(*vol, ebt_threshold, +1);
-            }
-        }
+        // Remap everything that names a mixed slot by its number: anything >= insert_pos+1 (1-based) shifts up by 1.
+        // Orca: every object's, volume's and layer range's extruder and filament settings, paint, and custom
+        // G-code (renumber_filaments_after_insert), and the print preset's filament settings; upstream shifted
+        // the objects' and volumes' extruders and paint only.
+        renumber_filaments_after_insert(wxGetApp().plater()->model(), insert_pos);
+        wxGetApp().plater()->renumber_filament_settings(FilamentRenumbering::insertion(insert_pos));
     }
 
     if (!preset_name.empty() &&
@@ -5592,7 +5580,8 @@ void Sidebar::add_custom_filament(wxColour new_col, const std::string& preset_na
         wxGetApp().preset_bundle->filament_presets[insert_pos] = preset_name;
     }
 
-    wxGetApp().plater()->get_partplate_list().on_filament_added(filament_count);
+    // Orca: each plate's own maps take the slot where the project's did, before the mixed ones
+    wxGetApp().plater()->get_partplate_list().on_filament_added(filament_count, insert_pos);
     wxGetApp().plater()->on_filament_count_change(filament_count);
     wxGetApp().get_tab(Preset::TYPE_PRINT)->update();
     wxGetApp().preset_bundle->export_selections(*wxGetApp().app_config);
@@ -6405,6 +6394,8 @@ bool Sidebar::show_object_list(bool show) const
 }
 
 void Sidebar::finish_param_edit() { p->editing_filament = -1; }
+int  Sidebar::editing_filament() const { return p->editing_filament; }
+void Sidebar::set_editing_filament(int filament_idx) { p->editing_filament = filament_idx; }
 
 std::vector<PlaterPresetComboBox*>& Sidebar::combos_filament()
 {
@@ -20391,35 +20382,29 @@ void Plater::on_filaments_delete(size_t num_filaments, size_t filament_id, int r
     sidebar().obj_list()->update_objects_list_filament_column_when_delete_filament(filament_id, num_filaments, replace_filament_id);
 
     // update global support filament
-    static const char *keys[] = {"support_filament", "support_interface_filament"};
-    for (auto key : keys)
-        if (p->config->has(key)) {
-            if(p->config->opt_int(key) == filament_id + 1)
-                (*(p->config)).erase(key);
-            else {
-                int new_value = p->config->opt_int(key) > filament_id ? p->config->opt_int(key) - 1 : p->config->opt_int(key);
-                (*(p->config)).set_key_value(key, new ConfigOptionInt(new_value));
-            }
-        }
+    // Orca: every filament number setting, in the plater's copy of the config and in the print preset the
+    // slicer reads, which upstream left naming the old numbers; a merge's target takes the merged one's.
+    const FilamentRenumbering deletion = FilamentRenumbering::deletion(
+        filament_id, replace_filament_id, replace_filament_id >= 0 && wxGetApp().preset_bundle->is_mixed_filament(size_t(replace_filament_id)));
+    renumber_filament_settings(deletion);
 
     // update UI — runs after remap so update_mixed_filament_list() won't clip remapped extruder IDs
     sidebar().on_filaments_delete(filament_id);
 
     // update customize gcode
-    for (auto item = p->model.plates_custom_gcodes.begin(); item != p->model.plates_custom_gcodes.end(); ++item) {
-        auto iter = std::remove_if(item->second.gcodes.begin(), item->second.gcodes.end(), [filament_id](const Item& gcode_item) {
-            return (gcode_item.type == CustomGCode::Type::ToolChange && gcode_item.extruder == filament_id + 1);
-        });
-        if (replace_filament_id == -1)
-            item->second.gcodes.erase(iter, item->second.gcodes.end());
-        else if(iter != item->second.gcodes.end()) {
-            iter->extruder = replace_filament_id + 1;
-        }
+    // Orca: every item, as an add renumbers them (renumber_custom_gcodes). Upstream renumbered tool changes
+    // only: a merge's target, already numbered as after the delete, was moved down one more, only the first
+    // tool change to the merged slot moved there, and colour changes kept their old numbers.
+    GUI::renumber_custom_gcodes(p->model, deletion);
+}
 
-        for (auto& item : item->second.gcodes) {
-            if (item.type == CustomGCode::Type::ToolChange && item.extruder > filament_id)
-                item.extruder--;
-        }
+void Plater::renumber_filament_settings(const FilamentRenumbering& change)
+{
+    GUI::renumber_filament_settings(*p->config, change);
+    GUI::renumber_filament_settings(wxGetApp().preset_bundle->prints.get_edited_preset().config, change);
+    if (Tab* print_tab = wxGetApp().get_tab(Preset::TYPE_PRINT)) {
+        print_tab->reload_config();
+        print_tab->update_dirty();
     }
 }
 

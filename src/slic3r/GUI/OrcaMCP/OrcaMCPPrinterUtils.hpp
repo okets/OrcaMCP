@@ -9,6 +9,7 @@
 
 #include "libslic3r/PrintConfig.hpp"
 #include "slic3r/Utils/FlashforgeApi.hpp"
+#include "slic3r/Utils/FlashforgeLocalApi.hpp"
 
 namespace Slic3r {
 class PrintHost;
@@ -30,8 +31,23 @@ bool resolve_print_host_config(DynamicPrintConfig& out, std::string& host_type_n
 // Any thread. `cfg` must outlive the returned host.
 std::unique_ptr<PrintHost> make_print_host(const DynamicPrintConfig& cfg);
 
-// Any thread. Serializes a printer status into the `printer` object of get_printer_status.
+// Any thread. Serializes a printer status into the `printer` object of get_printer_status, which the
+// Device page reads too. Its `raw` is the printer's own `detail` cut down to the Device page's allowlist
+// (console_raw_detail): the whole object carries the printer's cloud register codes, and whatever a later
+// firmware adds would reach an agent's transcript by default.
 nlohmann::json status_to_json(const FlashforgeApi::PrinterStatus& s);
+
+// Any thread. get_printer_status's `cached` for a printer that could not be reached: the material station
+// from its last answer, and how old that is. Nothing else of the cached status.
+nlohmann::json cached_station_json(const FlashforgeLocalApi::CachedStatus& cached);
+
+// Any thread. One get_printers `physical_printers` entry: where the preset prints to and whether it has
+// credentials, never the credentials themselves (nor the Flashforge serial number that goes with one).
+nlohmann::json print_host_preset_json(const std::string& name, const DynamicPrintConfig& config, bool is_selected);
+
+// Any thread. The answer add_physical_printer and select_printer share, for printer preset `name`
+// with print-host config `config`: the same fields, no credential.
+nlohmann::json print_host_response_json(const std::string& name, const DynamicPrintConfig& config);
 
 // Any thread. The material_station.slots shape shared between status_to_json and a material-mapping
 // validation error's "slots" field.

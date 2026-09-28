@@ -6,16 +6,22 @@
 #include "OrcaMCPFilamentUtils.hpp"
 #include "OrcaMCPPresetConfigUtils.hpp"
 #include "OrcaMCPColorRecipe.hpp"
+#include "OrcaMCPFilamentModel.hpp"
+#include "OrcaMCPFilamentSlots.hpp"
+#include "OrcaMCPNextSteps.hpp"
+#include "OrcaMCPUiJob.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/PresetComboBoxes.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
 #include "libslic3r/ColorDecomposeRecipe.hpp"
+#include "libslic3r/FilamentMixer.hpp"
 
 #include <algorithm>
 #include <cstdio>
 #include <optional>
 
+using namespace Slic3r;
 using namespace Slic3r::GUI;
 using namespace Slic3r::GUI::OrcaMCP;
 
@@ -37,6 +43,116 @@ std::string format_one_decimal(double value)
     return std::string(buf);
 }
 
+PipelineState current_pipeline()
+{
+    Plater& plater = *wxGetApp().plater();
+    return pipeline_state(plater, plater.get_partplate_list().get_plate_count());
+}
+
+bool ui_job_running() { return !wxGetApp().plater()->get_ui_job_worker().is_idle(); }
+
+// Every object's effective filaments (painted facets, parts and modifiers, layer ranges), by object_id.
+std::vector<std::vector<int>> objects_filaments()
+{
+    std::vector<std::vector<int>> filaments;
+    for (const ModelObject* object : wxGetApp().plater()->model().objects)
+        filaments.push_back(effective_object_filaments(*object));
+    return filaments;
+}
+
+// A slot change's undo_warning and next step, when it renumbered slots or moved objects.
+void add_undo_warning(nlohmann::json& answer)
+{
+    const auto warning = slot_change_undo_warning(answer.value("renumbered", nlohmann::json::array()),
+                                                   answer.value("objects_changed", nlohmann::json::array()));
+    if (warning)
+        answer["undo_warning"] = *warning;
+    add_next_steps(answer, slot_change_next_steps(warning.has_value()));
+}
+
+// What the plates were sliced with changed for every plate: none keeps its result.
+void after_slot_count_change()
+{
+    wxGetApp().sidebar().update_filaments_counter();
+    wxGetApp().plater()->get_partplate_list().invalid_all_slice_result();
+}
+
+// add_filament_slot, on the main thread: the sidebar's "+" button, with the colour and preset given.
+nlohmann::json add_filament_slot(const std::optional<std::string>& color, const std::string& preset)
+{
+    McpDialogSuppressionGuard   guard;
+    const FilamentSlotsState    before = filament_slots_state();
+    if (const auto refusal = add_slot_refusal(before, current_pipeline(), ui_job_running()))
+        return error_response(*refusal);
+    if (!preset.empty())
+        if (const std::string error = OrcaMCPPresetConfigUtils::FilamentSlotPresetError(preset); !error.empty())
+            return error_response(error);
+
+    // The "+" button takes the sidebar's next colour; so does a call that names none.
+    const wxColour colour = color ? wxColour(from_u8(*color)) : Plater::get_next_color_for_filament();
+    wxGetApp().sidebar().add_custom_filament(colour, preset);
+    const FilamentSlotsState after = filament_slots_state();
+    if (after.slots() != before.slots() + 1)
+        return guard.report(error_response("The app did not add a filament slot."));
+    after_slot_count_change();
+
+    const size_t slot = before.physical_slots() + 1; // a physical slot goes before the mixed ones
+    nlohmann::json answer = {{"status", "success"},
+                             {"slot", int(slot)},
+                             {"preset", after.slot_presets[slot - 1]},
+                             {"color", colour.GetAsString(wxC2S_HTML_SYNTAX).ToStdString()},
+                             {"renumbered", renumbered_after_add(before)}};
+    add_undo_warning(answer);
+    return guard.report(with_filaments(std::move(answer)));
+}
+
+// delete_filament_slot, on the main thread: a slot's Delete, or with merge_into its Merge with.
+nlohmann::json delete_filament_slot(DeleteSlotRequest request)
+{
+    McpDialogSuppressionGuard guard;
+    const FilamentSlotsState  before = filament_slots_state();
+    PresetBundle&             bundle = *wxGetApp().preset_bundle;
+    if (request.slot >= 1 && size_t(request.slot) <= before.slots()) {
+        // A mix made of the slot breaks when it goes: the one it is merged into first, which the app asks about.
+        const size_t              from  = size_t(request.slot - 1);
+        const std::vector<size_t> mixes = bundle.mixed_filaments_using(from);
+        if (!mixes.empty()) {
+            size_t mix = mixes.front();
+            if (request.merge_into && *request.merge_into >= 1 && bundle.merge_breaks_mixed_filament(from, size_t(*request.merge_into - 1)))
+                mix = size_t(*request.merge_into - 1);
+            request.breaks_mix = int(mix + 1);
+            if (const auto* components = bundle.project_config.option<ConfigOptionStrings>("filament_mixed_components"))
+                request.mix_components = parse_mixed_components(components->get_at(mix));
+        }
+    }
+    if (const auto refusal = delete_slot_refusal(before, request, current_pipeline(), ui_job_running()))
+        return error_response(*refusal);
+
+    const std::vector<std::vector<int>> filaments_before = objects_filaments();
+    Sidebar&                            sidebar          = wxGetApp().sidebar();
+    if (request.merge_into) {
+        if (request.breaks_mix && request.allow_breaking_mix)
+            guard.answer_prompt(MCP_PROMPT_MERGE_INTO_MIX, wxID_OK, "allow_breaking_mix was true");
+        sidebar.change_filament(size_t(request.slot - 1), size_t(*request.merge_into - 1));
+    } else
+        sidebar.delete_filament(size_t(request.slot - 1), -1);
+    if (filament_slots_state().slots() != before.slots() - 1)
+        return guard.report(error_response("The app did not delete slot " + std::to_string(request.slot) + "."));
+    after_slot_count_change();
+
+    nlohmann::json answer = {{"status", "success"},
+                             {"deleted_slot", request.slot},
+                             {"renumbered", renumbered_after_delete(before.slots(), request.slot)},
+                             {"objects_changed", objects_changed(filaments_before, objects_filaments(), request.slot)}};
+    if (request.merge_into) {
+        answer["merged_into"]     = *request.merge_into;
+        // The slot it merged into, as numbered now.
+        answer["merged_into_now"] = *request.merge_into > request.slot ? *request.merge_into - 1 : *request.merge_into;
+    }
+    add_undo_warning(answer);
+    return guard.report(with_filaments(std::move(answer)));
+}
+
 } // namespace
 
 void OrcaMCPServer::register_filament_tools()
@@ -54,6 +170,86 @@ void OrcaMCPServer::register_filament_tools()
                 r["active_warnings"] = get_active_warnings_json(wxGetApp().plater());
                 return r;
             });
+        }
+    });
+
+    register_tool({
+        "add_filament_slot",
+        ToolCategory::FilamentsColour,
+        "Add a physical filament slot",
+        "Add a physical filament slot, as the sidebar's + button does: after the last physical slot (mixed slots move up "
+        "one, and so does everything that names one: objects, parts, paint, layer ranges, feature filaments, tool changes), with the preset the + button gives it (the last slot's) unless preset names another, and the "
+        "sidebar's next colour unless color gives one. Only a printer that changes filaments on one extruder, or a Bambu Lab "
+        "printer, takes more slots: a printer with one filament per extruder has as many slots as extruders. Answers slot "
+        "(the new slot's number), preset, color, renumbered ({from, to} for moved mixed slots) and filaments. Every plate "
+        "loses its slice. Not an undo step, as in the app, and undo does not reverse it: with mixed slots renumbered, an "
+        "undo right after brings back the objects' old slot numbers while the slots stay, putting objects on the wrong "
+        "slots (undo_warning says so when it applies; delete_filament_slot takes a slot away). Then give it "
+        "objects with set_object_filament or paint_object, or another preset with select_preset {type: filament, slot}. "
+        "Refused while slicing or while a job runs.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"color", {{"type", "string"}, {"description", "The slot's colour on the plate, #RRGGBB. Default: the sidebar's next colour."}}},
+                {"preset", {{"type", "string"}, {"description", "A filament preset for the slot (get_presets type filament). Default: the last slot's, as the + button gives it."}}}
+            }}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            std::optional<std::string> color;
+            if (params.contains("color")) {
+                if (!params["color"].is_string() || !is_hex_color(params["color"].get<std::string>()))
+                    return error_response("color must be \"#RRGGBB\"");
+                color = params["color"].get<std::string>();
+            }
+            std::string preset;
+            if (params.contains("preset")) {
+                if (!params["preset"].is_string() || params["preset"].get<std::string>().empty())
+                    return error_response("preset must be a filament preset's name; leave it out for the last physical slot's");
+                preset = params["preset"].get<std::string>();
+            }
+            return run_on_main_thread([color, preset]() { return add_filament_slot(color, preset); });
+        }
+    });
+
+    register_tool({
+        "delete_filament_slot",
+        ToolCategory::FilamentsColour,
+        "Delete a filament slot, or merge it",
+        "Delete a filament slot, physical or mixed, as its Delete in the sidebar does: its objects, parts and painted facets "
+        "move to slot 1, the settings that name it (support, feature filaments) to the default, and every later slot moves "
+        "down one (everything that names one with it). With merge_into, as its Merge with does: all of that moves to that "
+        "slot instead. Answers deleted_slot, renumbered ({from, to}), objects_changed "
+        "(each object that printed with the slot: its filaments before, and after, as numbered then), merged_into / "
+        "merged_into_now, and filaments. Every plate "
+        "loses its slice. Not an undo step, as in the app, and undo does not reverse it: an undo right after brings back the "
+        "objects' old slot numbers while the slots stay, putting objects on the wrong slots (undo_warning says so when it "
+        "applies; add_filament_slot adds a slot back). Refused: the last physical slot; a physical slot of a printer with "
+        "one filament per extruder; a slot a mixed slot is made of, which breaks the mix, unless allow_breaking_mix; deleting slot 1 "
+        "(or the only slot using the Filament settings' preset) while those settings have unsaved changes, which the app "
+        "would re-select (save_preset or reset_preset first); while slicing or while a job runs. delete_mixed_filament "
+        "deletes a mixed slot too.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"slot", {{"type", "integer"}, {"description", "The slot to delete, 1-based"}}},
+                {"merge_into", {{"type", "integer"}, {"description", "Move its objects and paint to this slot (1-based, numbered as before the delete) instead of slot 1"}}},
+                {"allow_breaking_mix", {{"type", "boolean"}, {"description", "Delete or merge a slot a mixed slot is made of anyway; the mix loses that component. Default false."}}}
+            }},
+            {"required", {"slot"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            DeleteSlotRequest request;
+            if (!parse_integer_param(params["slot"], request.slot))
+                return error_response("slot must be an integer, 1-based");
+            if (params.contains("merge_into")) {
+                int merge_into = 0;
+                if (!parse_integer_param(params["merge_into"], merge_into))
+                    return error_response("merge_into must be an integer, 1-based; leave it out to move the slot's objects to slot 1");
+                request.merge_into = merge_into;
+            }
+            if (params.contains("allow_breaking_mix") && !parse_boolean_param(params["allow_breaking_mix"], request.allow_breaking_mix))
+                return error_response("allow_breaking_mix must be a boolean");
+            return run_on_main_thread([request]() { return delete_filament_slot(request); });
         }
     });
 
@@ -155,7 +351,11 @@ void OrcaMCPServer::register_filament_tools()
                 if (it == mixed.end())
                     return nlohmann::json{{"status", "error"}, {"message", "slot is not a mixed filament"}};
 
+                const size_t slots_before = wxGetApp().preset_bundle->filament_presets.size();
                 wxGetApp().sidebar().delete_mixed_filament_at(size_t(it - mixed.begin()));
+                // The sidebar returns without a word when it deletes nothing: say so rather than succeed.
+                if (wxGetApp().preset_bundle->filament_presets.size() != slots_before - 1)
+                    return nlohmann::json{{"status", "error"}, {"message", "The app did not delete mixed slot " + std::to_string(slot) + "."}};
                 // A filament slot changed for every plate: none keeps a result made with it.
                 wxGetApp().plater()->get_partplate_list().invalid_all_slice_result();
                 return with_filaments({{"status", "success"}});

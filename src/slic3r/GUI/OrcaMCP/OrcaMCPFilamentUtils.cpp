@@ -7,6 +7,8 @@
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/GUI_ObjectList.hpp"
+#include "slic3r/GUI/PresetComboBoxes.hpp"
+#include "slic3r/GUI/Tab.hpp"
 #include "slic3r/GUI/I18N.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/PrintConfig.hpp"
@@ -74,6 +76,48 @@ nlohmann::json describe_filaments()
         {"filaments", list}
     };
     return out;
+}
+
+FilamentSlotsState filament_slots_state()
+{
+    const PresetBundle& bundle = *wxGetApp().preset_bundle;
+    FilamentSlotsState  state;
+    for (size_t i = 0; i < bundle.filament_presets.size(); ++i) {
+        state.is_mixed.push_back(bundle.is_mixed_filament(i));
+        state.slot_presets.push_back(bundle.filament_presets[i]);
+    }
+    state.multi_material = Sidebar::should_show_SEMM_buttons();
+    state.extruders      = size_t(std::max(1, bundle.get_printer_extruder_count()));
+    state.gcode_preview  = wxGetApp().plater()->using_exported_file();
+    state.edited_preset  = bundle.filaments.get_edited_preset().name;
+    state.edited_dirty   = bundle.filaments.current_is_dirty();
+    if (state.edited_dirty)
+        state.dirty_keys = bundle.filaments.current_dirty_options();
+    return state;
+}
+
+bool point_filament_settings_at(const SlotEdit& plan, std::string& error)
+{
+    Tab* tab = wxGetApp().get_tab(Preset::TYPE_FILAMENT);
+    if (tab == nullptr) {
+        error = "The Filament settings are not available";
+        return false;
+    }
+    // As the slot's Edit: nothing marks a slot as the one the settings edit while the tab switches, or the
+    // switch would write this slot's preset into that one (Sidebar::update_presets). Afterwards, settings a
+    // user has open edit this slot, whose preset they now show; closed settings edit none.
+    Sidebar&  sidebar  = wxGetApp().sidebar();
+    const int previous = sidebar.editing_filament();
+    sidebar.finish_param_edit();
+    if (plan.select_needed && (!tab->select_preset(plan.preset) || wxGetApp().preset_bundle->filaments.get_edited_preset().name != plan.preset)) {
+        sidebar.set_editing_filament(previous);
+        error = "The app did not open slot " + std::to_string(plan.index + 1) + "'s preset '" + plan.preset + "' in the Filament settings";
+        return false;
+    }
+    if (TabPresetComboBox* combo = tab->get_combo_box())
+        combo->set_filament_idx(int(plan.index));
+    sidebar.set_editing_filament(editing_slot_after_pointing(previous, plan.index));
+    return true;
 }
 
 bool mixed_result_from_params(const nlohmann::json& params, MixedFilamentResult& out, std::string& error)

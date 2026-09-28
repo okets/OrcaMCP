@@ -77,6 +77,27 @@
   "instructions": "OrcaMCP drives OrcaSlicer. Before deciding something cannot be done here, call get_server_info: it lists every tool by job.\n\nStart with get_scene_info (plates, objects, each object's object_id). Key tools:\n- Models: load_model (keeps the presets), load_project (replaces them), arrange_objects, auto_orient, move_object, rotate_object, scale_object, cut_object.\n- Mesh: get_mesh_health (holes, open edges), get_object_components (stray shells), repair_mesh.\n- Painting: paint_object (color, support, seam, fuzzy_skin).\n- Filaments and colour: get_filaments, set_object_filament, suggest_color_mix.\n- Settings: get_config_values, apply_config, set_object_config (one object), select_preset.\n- Slicing: slice_all, then wait_for_slice (no polling); get_print_estimate, export_gcode.\n- Seeing results: render_plate_view (its layer_view draws a sliced layer's toolpaths).\n- Printers: get_printer_status, send_to_printer.\n- Several OrcaMCP windows: list_instances, select_instance.\n\nResponses may carry next_steps: the tool to call next, and why.\n\nCareful:\n- send_to_printer uploads AND STARTS the print on a print host; start_print: false only uploads.\n- save_project without output_path overwrites the file the project is named after.\n- new_project and load_project discard unsaved changes without asking.",
   "server_tools": [
     {
+      "category": "Filaments & colour",
+      "description": "Add a physical filament slot, as the sidebar's + button does: after the last physical slot (mixed slots move up one, and so does everything that names one: objects, parts, paint, layer ranges, feature filaments, tool changes), with the preset the + button gives it (the last slot's) unless preset names another, and the sidebar's next colour unless color gives one. Only a printer that changes filaments on one extruder, or a Bambu Lab printer, takes more slots: a printer with one filament per extruder has as many slots as extruders. Answers slot (the new slot's number), preset, color, renumbered ({from, to} for moved mixed slots) and filaments. Every plate loses its slice. Not an undo step, as in the app, and undo does not reverse it: with mixed slots renumbered, an undo right after brings back the objects' old slot numbers while the slots stay, putting objects on the wrong slots (undo_warning says so when it applies; delete_filament_slot takes a slot away). Then give it objects with set_object_filament or paint_object, or another preset with select_preset {type: filament, slot}. Refused while slicing or while a job runs.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "color": {
+            "description": "The slot's colour on the plate, #RRGGBB. Default: the sidebar's next colour.",
+            "type": "string"
+          },
+          "preset": {
+            "description": "A filament preset for the slot (get_presets type filament). Default: the last slot's, as the + button gives it.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "add_filament_slot",
+      "summary": "Add a physical filament slot"
+    },
+    {
       "category": "Printers",
       "description": "Configure a print host on the current printer preset and save it as a user preset with this name.",
       "inputSchema": {
@@ -230,10 +251,18 @@
     },
     {
       "category": "Config",
-      "description": "Change settings of the selected print, filament or printer preset, or of the project -- layer height, supports, infill, walls, speeds, temperatures -- several in one call. Types: print | filament | printer | project. The change stays unsaved in the preset until save_preset. To switch to another preset, use select_preset; for one object only, set_object_config; for a slot's colour on the plate, set_filament_color. The global bed type is project key curr_bed_type, set as the sidebar's bed-type list sets it (the plates that follow it lose their slice, and the printer remembers it); a bed type the printer does not offer is refused, and so is any change on a printer with one bed type, where the sidebar greys the list out. A plate's own bed type: set_plate_settings.",
+      "description": "Change settings of the selected print, filament or printer preset, or of the project -- layer height, supports, infill, walls, speeds, temperatures -- several in one call. Types: print | filament | printer | project. The change stays unsaved in the preset until save_preset. To switch to another preset, use select_preset; for one object only, set_object_config; for a slot's colour on the plate, set_filament_color. The global bed type is project key curr_bed_type, set as the sidebar's bed-type list sets it (the plates that follow it lose their slice, and the printer remembers it); a bed type the printer does not offer is refused, and so is any change on a printer with one bed type, where the sidebar greys the list out. A plate's own bed type: set_plate_settings. Filament settings go to one slot's preset: filament_slot names it, as the slot's Edit does (required with more than one physical slot, since 2.5.0.6), and the answer's filament says which preset and slots it reached. A preset other slots share is refused unless include_sharing_slots; switching the Filament settings to another slot's preset is refused while they hold unsaved changes (save_preset or reset_preset first).",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
+          "filament_slot": {
+            "description": "The filament slot (1-based) whose preset the filament settings change; required with more than one physical slot. A mixed slot has none: set_mixed_filament.",
+            "type": "integer"
+          },
+          "include_sharing_slots": {
+            "description": "With filament_slot: change its preset even when other slots use it too, which the change reaches as well. Default false: refused, naming how to give the slot its own.",
+            "type": "boolean"
+          },
           "settings": {
             "description": "Settings array",
             "items": {
@@ -545,6 +574,33 @@
       },
       "name": "cut_object",
       "summary": "Cut an object at a Z height"
+    },
+    {
+      "category": "Filaments & colour",
+      "description": "Delete a filament slot, physical or mixed, as its Delete in the sidebar does: its objects, parts and painted facets move to slot 1, the settings that name it (support, feature filaments) to the default, and every later slot moves down one (everything that names one with it). With merge_into, as its Merge with does: all of that moves to that slot instead. Answers deleted_slot, renumbered ({from, to}), objects_changed (each object that printed with the slot: its filaments before, and after, as numbered then), merged_into / merged_into_now, and filaments. Every plate loses its slice. Not an undo step, as in the app, and undo does not reverse it: an undo right after brings back the objects' old slot numbers while the slots stay, putting objects on the wrong slots (undo_warning says so when it applies; add_filament_slot adds a slot back). Refused: the last physical slot; a physical slot of a printer with one filament per extruder; a slot a mixed slot is made of, which breaks the mix, unless allow_breaking_mix; deleting slot 1 (or the only slot using the Filament settings' preset) while those settings have unsaved changes, which the app would re-select (save_preset or reset_preset first); while slicing or while a job runs. delete_mixed_filament deletes a mixed slot too.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "allow_breaking_mix": {
+            "description": "Delete or merge a slot a mixed slot is made of anyway; the mix loses that component. Default false.",
+            "type": "boolean"
+          },
+          "merge_into": {
+            "description": "Move its objects and paint to this slot (1-based, numbered as before the delete) instead of slot 1",
+            "type": "integer"
+          },
+          "slot": {
+            "description": "The slot to delete, 1-based",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "slot"
+        ],
+        "type": "object"
+      },
+      "name": "delete_filament_slot",
+      "summary": "Delete a filament slot, or merge it"
     },
     {
       "category": "Filaments & colour",
@@ -1053,10 +1109,14 @@
     },
     {
       "category": "Config",
-      "description": "List the printer, filament and print presets available for the selected printer. Returns names and identifying fields only; pass summary:false for full configs. Capped per type (default 25) -- narrow it with type/vendor/name_contains, or raise limit.",
+      "description": "List the printer, filament and print presets available for the selected printer. Returns names and identifying fields only; pass summary:false for full configs. Capped per type (default 25) -- narrow it with type/vendor/name_contains, or raise limit. installed: false lists instead what the Setup Wizard offers and install_presets installs: printers (each a model and nozzle) of the installed vendors not yet installed, of a vendor not installed when vendor names it (vendors_not_installed lists them), and filaments not installed that suit the selected printer.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
+          "installed": {
+            "description": "true (default): the presets installed. false: printers and filaments not installed yet, which install_presets installs (names only; type printer or filament).",
+            "type": "boolean"
+          },
           "limit": {
             "description": "Max presets per type. Default 25 with summary, 5 without. 0 = no cap (the unfiltered summary list is ~54,600 characters and overflows most MCP clients).",
             "minimum": 0,
@@ -1260,6 +1320,37 @@
       },
       "name": "get_valid_config_keys",
       "summary": "Discover setting keys by category"
+    },
+    {
+      "category": "Config",
+      "description": "Install printer and filament presets the user has not installed, as the Setup Wizard does: a printer's vendor profiles are laid into the app's data folder when its vendor is not installed yet, and its model and nozzle are enabled; a filament is enabled. Names as get_presets {installed: false} lists them; a printer of a vendor whose folder does not begin its name (Bambu Lab's is BBL) needs vendor. Every preset is reloaded and the selected printer, print preset, filament slots and colours stay as they were (selection_kept) unless one is no longer shown for the printer (selection_changed names each), the filament maps put back (filament_maps_restored); a printer is not selected: next_steps names select_preset. Answers installed, already_installed, vendors_added, filaments_enabled (the filaments the app enables with a new printer too) and project_settings_changed. Refused while slicing, while a job runs, over unsaved preset changes (save_preset or reset_preset first) and while the project carries presets of its own (a 3MF's), which the reload would drop: save_project, new_project, install, then load_project the file again. Not undoable: it writes the data folder.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "filaments": {
+            "description": "Filament preset names",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "printers": {
+            "description": "Printer preset names, e.g. \"Flashforge AD5X 0.4 nozzle\"",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "vendor": {
+            "description": "The vendor of printers not installed, when its folder does not begin their names (e.g. \"BBL\")",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "install_presets",
+      "summary": "Install printer or filament presets"
     },
     {
       "category": "Models",
@@ -1828,7 +1919,7 @@
     },
     {
       "category": "Printers",
-      "description": "Control the Flashforge printer: pause, resume or cancel the current job, turn the enclosure light on/off, or set bed/chamber/nozzle target temperatures.",
+      "description": "Control the Flashforge printer as its Device page does: pause, resume or cancel the current job, turn the light on or off, set bed/chamber/nozzle target temperatures, switch the filtration fans (set_filtration: recirculation, exhaust), set the chamber and part-cooling fans (set_fans, 0-100 %), the print speed of the running job (set_print_speed: 50, 100, 125 or 166 %), or the Z offset (set_z_offset: mm, positive raises the nozzle, within -1 to 1 in 0.025 mm steps). It acts on the real printer. The set_* actions change only what they name: the printer's other settings are read first and sent back as it reports them; the answer gives what was sent and the printer's values before, and get_printer_status's printer.controls reads them back. Refused, sending nothing: a print speed while nothing prints, a fan or filtration the printer does not report, a status lacking a field the command sends back (it would go out as 0), a value out of range, and an argument of another action.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -1840,20 +1931,40 @@
               "cancel",
               "light_on",
               "light_off",
-              "set_temperature"
+              "set_temperature",
+              "set_filtration",
+              "set_fans",
+              "set_print_speed",
+              "set_z_offset"
             ],
             "type": "string"
           },
           "bed": {
-            "description": "set_temperature only: target bed temperature. Omit for no change.",
+            "description": "set_temperature only: target bed temperature, 0-150 C. Omit for no change.",
             "type": "number"
           },
           "chamber": {
-            "description": "set_temperature only: target chamber temperature. Omit for no change.",
+            "description": "set_temperature only: target chamber temperature, 0-100 C. Omit for no change.",
             "type": "number"
           },
+          "chamber_fan": {
+            "description": "set_fans only: chamber fan speed, 0-100 %. Omit to leave it.",
+            "type": "number"
+          },
+          "cooling_fan": {
+            "description": "set_fans only: part-cooling fan speed, 0-100 %. Omit to leave it.",
+            "type": "number"
+          },
+          "cooling_left_fan": {
+            "description": "set_fans only: the left part-cooling fan, 0-100 %, on a printer that reports one.",
+            "type": "number"
+          },
+          "exhaust": {
+            "description": "set_filtration only: the external (exhaust) filtration fan on or off. Omit to leave it.",
+            "type": "boolean"
+          },
           "nozzles": {
-            "description": "set_temperature only: per-tool target temperatures. Tools not listed are left unchanged. set_temperature needs at least one of bed, chamber or a nozzle.",
+            "description": "set_temperature only: per-tool target temperatures, 0-350 C. Tools not listed are left unchanged. set_temperature needs at least one of bed, chamber or a nozzle.",
             "items": {
               "additionalProperties": false,
               "properties": {
@@ -1873,6 +1984,24 @@
               "type": "object"
             },
             "type": "array"
+          },
+          "recirculation": {
+            "description": "set_filtration only: the internal (recirculation) filtration fan on or off. Omit to leave it.",
+            "type": "boolean"
+          },
+          "speed": {
+            "description": "set_print_speed only: the running job's speed in percent, the printer's own steps.",
+            "enum": [
+              50,
+              100,
+              125,
+              166
+            ],
+            "type": "integer"
+          },
+          "z_offset": {
+            "description": "set_z_offset only: the Z offset in mm, positive raises the nozzle; -1 to 1 in 0.025 mm steps.",
+            "type": "number"
           }
         },
         "required": [
@@ -1881,7 +2010,7 @@
         "type": "object"
       },
       "name": "printer_control",
-      "summary": "Pause, resume, cancel, light, temps"
+      "summary": "Job, light, temps, fans, speed, Z offset"
     },
     {
       "category": "Info",
@@ -2283,7 +2412,7 @@
     },
     {
       "category": "Config",
-      "description": "Save dirty changes to preset. Optionally save as new name.",
+      "description": "Save the edited settings of the print, filament or printer preset, to that preset or with name as a new one, as the settings tab's Save does. A filament preset saved under a new name takes over every slot that used the old one (the answer's slots), and one saved from a system preset is made compatible with the selected printer only. A system preset cannot be overwritten: give a name.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -2399,7 +2528,7 @@
     },
     {
       "category": "Config",
-      "description": "Select a printer, filament, or print preset by name. With type 'filament', pass slot (1-based) to set just that filament slot, like the sidebar filament combo; without slot the filament tab switches whichever slot it is on and dirty preset changes are discarded. With type 'printer', the response lists the resulting filaments (slot, preset, colour, previous_color) and, per slot, color_source as observed across the switch: 'unchanged', 'remembered' (the colour last saved for that printer, applied by Remember printer configuration, on by default), 'default' (#26A69A for a slot nothing was saved for) or 'other'. colors_source sums them up, 'mixed' when they differ. To change individual settings, use apply_config.",
+      "description": "Select a printer, filament, or print preset by name. With type 'filament', pass slot (1-based) to set just that filament slot, like the sidebar filament combo; without slot, only with one physical slot (since 2.5.0.6: with several it is refused, as it changed no slot), and dirty preset changes are discarded. With type 'printer', the response lists the resulting filaments (slot, preset, colour, previous_color) and, per slot, color_source as observed across the switch: 'unchanged', 'remembered' (the colour last saved for that printer, applied by Remember printer configuration, on by default), 'default' (#26A69A for a slot nothing was saved for) or 'other'. colors_source sums them up, 'mixed' when they differ. To change individual settings, use apply_config.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {

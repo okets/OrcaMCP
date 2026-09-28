@@ -181,6 +181,27 @@ upstream issue if the user wants one filed.
   `layer_view` option) listing the layers where overhang area first appears, with each one's
   `support_below` gap, would find it in one call.
 
+### Create printer and Create filament
+
+**What:** the sidebar's **Create printer** (`CreatePrinterPresetDialog`: a new printer preset from a
+vendor model's template or the current printer, with a custom name, nozzle, bed shape and height, and
+copies of the chosen filament and process presets made for it) and **Create filament**
+(`CreateFilamentPresetDialog`: a new filament preset from a vendor and type template, for chosen
+printers), as MCP tools.
+
+**Why later:** decided on 2026-09-28 (prompt 13). Both dialogs keep their logic inside their UI: the
+Create button's handler (`CreatePresetsDialog.cpp`, about 5,000 upstream lines) reads its widgets,
+validates, clones the filament and process presets (`clone_presets_for_printer`) and saves the printer
+preset in one lambda. A tool that runs "what the GUI runs" needs that core pulled out of the dialog
+first, a large change to an upstream file. What an agent needs most is already there: `install_presets`
+installs any printer or filament the app ships (the Setup Wizard's install), and `clone_preset`,
+`apply_config` and `save_preset` make a custom printer or filament from an installed one.
+
+**Known so far:** upstream's `PresetBundle::load_system_models_from_json`, which lists the vendor models
+for Create printer, reads `.json` profiles only, while a release build ships every vendor as an `.opc`
+cache (65 caches and one `.json` in `/Applications/OrcaMCP.app` on 2026-09-28): Create printer's model
+list may be empty in a release build. Not checked live; check before building on it.
+
 ### 3D toolpath render
 
 **What:** render the sliced G-code from any camera, coloured by feature, speed or tool, with a layer

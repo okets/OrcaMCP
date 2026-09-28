@@ -1049,6 +1049,41 @@ std::vector<Preset*> PresetBundle::get_current_project_embedded_presets()
     return project_presets;
 }
 
+namespace {
+
+// Orca: at file scope, so a slot whose preset is gone takes the filament the Filament settings would
+// (reset_project_embedded_presets). Upstream's is local to update_compatible.
+class PreferedFilamentsProfileMatch
+{
+public:
+    PreferedFilamentsProfileMatch(const Preset *preset, const std::vector<std::string> &prefered_names) :
+        m_prefered_alias(preset ? preset->alias : std::string()),
+        m_prefered_filament_type(preset ? preset->config.opt_string("filament_type", 0) : std::string("PLA")), // BBS: default choose PLA
+        m_prefered_names(prefered_names)
+        {}
+
+    int operator()(const Preset &preset) const
+    {
+        // Don't match any properties of the "-- default --" profile or the external profiles when switching printer profile.
+        if (preset.is_default || preset.is_external || !preset.is_visible)
+            return 0;
+        if (! m_prefered_alias.empty() && m_prefered_alias == preset.alias)
+            // Matching an alias, always take this preset with priority.
+            return std::numeric_limits<int>::max();
+        int match_quality = (std::find(m_prefered_names.begin(), m_prefered_names.end(), preset.name) != m_prefered_names.end()) + 1;
+        if (! m_prefered_filament_type.empty() && m_prefered_filament_type == preset.config.opt_string("filament_type", 0))
+            match_quality *= 10;
+        return match_quality;
+    }
+
+private:
+    const std::string               m_prefered_alias;
+    const std::string               m_prefered_filament_type;
+    const std::vector<std::string> &m_prefered_names;
+};
+
+} // namespace
+
 //BBS: reset project embedded presets
 void PresetBundle::reset_project_embedded_presets()
 {
@@ -1099,17 +1134,16 @@ void PresetBundle::reset_project_embedded_presets()
             Preset& current_printer = this->printers.get_selected_preset();
             const std::vector<std::string> &prefered_filament_profiles = current_printer.config.option<ConfigOptionStrings>("default_filament_profile")->values;
             const std::string prefered_filament_profile = prefered_filament_profiles.empty() ? std::string() : prefered_filament_profiles.front();
-            if (!prefered_filament_profile.empty()) {
-                // Check if preferred filament exists and is visible
-                const Preset* preferred_preset = this->filaments.find_preset(prefered_filament_profile, false);
-                if (preferred_preset && preferred_preset->is_visible) {
-                    filament_presets[i] = prefered_filament_profile;
-                } else {
-                    // Fall back to first visible filament
-                    filament_presets[i] = this->filaments.first_visible().name;
-                }
-            } else
-                filament_presets[i] = this->filaments.first_visible().name;
+            // Orca: a filament the printer shows: the one it prefers, else the first compatible one the Filament
+            // settings would pick (update_compatible's match: PLA first). Upstream fell back on the first visible
+            // one, the library's Generic PLA, which a printer with its own shadows: a new project after one that
+            // carried its own filament left the slot, and every slot a multi-tool printer copies from it, on a
+            // filament the printer does not list.
+            const Preset* preferred_preset = prefered_filament_profile.empty() ? nullptr : this->filaments.find_preset(prefered_filament_profile, false);
+            if (preferred_preset && preferred_preset->is_visible && preferred_preset->is_compatible)
+                filament_presets[i] = prefered_filament_profile;
+            else
+                filament_presets[i] = this->filaments.first_compatible(PreferedFilamentsProfileMatch(nullptr, prefered_filament_profiles)).name;
         }
     }
 }
@@ -1558,7 +1592,10 @@ bool PresetBundle::apply_vendor_config(
     // If the active filament is not in the wizard-selected filaments, switch to the first
     // compatible wizard-selected filament. This handles the first-run case where load_presets
     // falls back to "Generic PLA" even though the user selected a different filament.
-    if (!supplemented_filaments.empty()) {
+    // Orca: only when `new_filaments` is the whole choice (the wizard's overwrite). A merge adds to what
+    // is enabled, so it is no choice of slot 1's filament: upstream switched slot 1 to the first filament
+    // a merge added (the cloud sync's pending ones, MCP's install_presets).
+    if (overwrite && !supplemented_filaments.empty()) {
         bool active_filament_selected = supplemented_filaments.count(this->filament_presets.front()) > 0;
         if (!active_filament_selected) {
             for (const auto& [filament_name, _] : supplemented_filaments) {
@@ -3566,6 +3603,28 @@ void PresetBundle::update_num_filaments(unsigned int to_del_flament_id)
         erase_or_resize(opt->values);
 
     update_multi_material_filament_presets(to_del_flament_id);
+}
+
+std::vector<size_t> PresetBundle::mixed_filaments_using(size_t physical_id) const
+{
+    std::vector<size_t> mixes;
+    const auto*         components = project_config.option<ConfigOptionStrings>("filament_mixed_components");
+    if (components == nullptr || is_mixed_filament(physical_id))
+        return mixes;
+    for (size_t mix = 0; mix < components->values.size(); ++mix) {
+        if (!is_mixed_filament(mix))
+            continue;
+        const std::vector<unsigned int> listed = parse_mixed_components(components->values[mix]);
+        if (std::find(listed.begin(), listed.end(), static_cast<unsigned int>(physical_id + 1)) != listed.end())
+            mixes.push_back(mix);
+    }
+    return mixes;
+}
+
+bool PresetBundle::merge_breaks_mixed_filament(size_t from_id, size_t to_id) const
+{
+    const std::vector<size_t> mixes = mixed_filaments_using(from_id);
+    return std::find(mixes.begin(), mixes.end(), to_id) != mixes.end();
 }
 
 bool PresetBundle::is_mixed_filament(size_t idx) const
@@ -7440,36 +7499,6 @@ void PresetBundle::update_compatible(PresetSelectCompatibleType select_other_pri
 
     private:
         const std::string m_prefered_filament_type;
-    };
-
-    // Matching by the layer height in addition.
-    class PreferedFilamentsProfileMatch
-    {
-    public:
-        PreferedFilamentsProfileMatch(const Preset *preset, const std::vector<std::string> &prefered_names) :
-            m_prefered_alias(preset ? preset->alias : std::string()),
-            m_prefered_filament_type(preset ? preset->config.opt_string("filament_type", 0) : std::string("PLA")), // BBS: default choose PLA
-            m_prefered_names(prefered_names)
-            {}
-
-        int operator()(const Preset &preset) const
-        {
-            // Don't match any properties of the "-- default --" profile or the external profiles when switching printer profile.
-            if (preset.is_default || preset.is_external || !preset.is_visible)
-                return 0;
-            if (! m_prefered_alias.empty() && m_prefered_alias == preset.alias)
-                // Matching an alias, always take this preset with priority.
-                return std::numeric_limits<int>::max();
-            int match_quality = (std::find(m_prefered_names.begin(), m_prefered_names.end(), preset.name) != m_prefered_names.end()) + 1;
-            if (! m_prefered_filament_type.empty() && m_prefered_filament_type == preset.config.opt_string("filament_type", 0))
-                match_quality *= 10;
-            return match_quality;
-        }
-
-    private:
-        const std::string               m_prefered_alias;
-        const std::string               m_prefered_filament_type;
-        const std::vector<std::string> &m_prefered_names;
     };
 
     BOOST_LOG_TRIVIAL(info) << boost::format("update_compatibility for all presets enter, select_other_print_if_incompatible %1%, select_other_filament_if_incompatible %2%")%(int)select_other_print_if_incompatible %(int)select_other_filament_if_incompatible;

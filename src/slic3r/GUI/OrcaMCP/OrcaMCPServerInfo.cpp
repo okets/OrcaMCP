@@ -206,7 +206,8 @@ json tool_examples()
         {"apply_config", {
             {"single_setting", R"({"settings": [{"type": "print", "key": "layer_height", "value": "0.2"}]})"},
             {"multiple_settings", R"({"settings": [{"type": "print", "key": "layer_height", "value": "0.15"}, {"type": "print", "key": "wall_loops", "value": "3"}, {"type": "print", "key": "sparse_infill_density", "value": "20%"}]})"},
-            {"filament_temp", R"({"settings": [{"type": "filament", "key": "nozzle_temperature", "value": ["210"]}]})"},
+            {"filament_temp", R"({"filament_slot": 2, "settings": [{"type": "filament", "key": "nozzle_temperature", "value": ["210"]}]})"},
+            {"filament_slot", "Filament settings change one slot's preset, as that slot's Edit does: filament_slot names the slot, required with more than one physical slot."},
             {"when_to_use", "Adjusting print quality, speed, supports, etc."}
         }},
         {"cut_object", {

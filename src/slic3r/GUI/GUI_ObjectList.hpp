@@ -1,6 +1,7 @@
 #ifndef slic3r_GUI_ObjectList_hpp_
 #define slic3r_GUI_ObjectList_hpp_
 
+#include <optional>
 #include <map>
 #include <vector>
 #include <set>
@@ -23,6 +24,7 @@ class MenuWithSeparators;
 namespace Slic3r {
 class ConfigOptionsGroup;
 class DynamicPrintConfig;
+class Model;
 class ModelConfig;
 class ModelObject;
 class ModelVolume;
@@ -98,6 +100,58 @@ std::string    get_warning_icon_name(const TriangleMeshStats& stats);
 // by instance 0's offset, so adding a primitive to an object with several instances threw the others off
 // the bed, their rotation and scale applied twice.
 void bake_instance_transform_into_volumes(ModelObject& model_object, bool need_update_assemble_matrix);
+// Orca: the settings besides "extruder" that name a filament slot by its number, 0 meaning the default
+// (the object's own filament): support, support interface, wipe tower, and the per-feature filaments.
+const std::vector<std::string>& filament_number_settings();
+// Orca: whether a filament number setting takes a physical slot only: support and the wipe tower, which the
+// slicer reads as they are (ConfigManipulation resets a mixed one), while the per-feature filaments are
+// resolved layer by layer.
+bool physical_only_filament_setting(const std::string& key);
+
+// Orca: how the filament slots' numbers change when one is deleted or inserted.
+struct FilamentRenumbering
+{
+    enum class Kind { deleted, inserted };
+    Kind   kind = Kind::deleted;
+    size_t slot = 0; // 0-based: the slot deleted, or where the new one goes
+    // A delete's replacement, 0-based as numbered after the delete (a merge's target): what named the
+    // deleted slot names it instead; -1, none: the default takes over.
+    int  replacement          = -1;
+    bool replacement_is_mixed = false;
+
+    static FilamentRenumbering deletion(size_t slot, int replacement = -1, bool replacement_is_mixed = false)
+    {
+        return {Kind::deleted, slot, replacement, replacement_is_mixed};
+    }
+    static FilamentRenumbering insertion(size_t slot) { return {Kind::inserted, slot, -1, false}; }
+
+    // A filament number (1-based, 0 the default) as it reads after the change: nothing when it named the
+    // deleted slot and nothing replaces it. Support and the wipe tower (`physical_only`) print from a
+    // physical filament only, so a replacement that is a mix leaves them on the default.
+    std::optional<int> number(int value, bool physical_only) const;
+};
+
+// Orca: the filament number settings an object, each of its volumes and each of its layer ranges carry,
+// as `change` renumbers them; one that named a deleted slot with no replacement is dropped, so the default
+// takes over. ObjectList::update_filament_values_for_items_when_delete_filament calls it for a delete, and
+// renumber_filaments_after_insert for an insert. Upstream renumbered the support filaments only, on a delete
+// only, wrote a volume's renumbered value into the object's config, and ignored a merge's target.
+void renumber_filament_settings(ModelObject& model_object, const FilamentRenumbering& change);
+// Orca: the same for a preset's config, which keeps every key: one that named a deleted slot with no
+// replacement is 0. Plater::on_filaments_delete and Sidebar::add_custom_filament renumber the print preset
+// the slicer reads with it; upstream renumbered only the plater's own copy, on a delete only.
+void renumber_filament_settings(DynamicPrintConfig& preset_config, const FilamentRenumbering& change);
+// Orca: everything in `model` that names a filament slot by its number, after a slot is inserted at
+// `slot` (0-based): each object's, volume's and layer range's "extruder" and filament number settings,
+// painted facets, and every custom G-code item of every plate (a tool change's filament). Upstream's
+// Sidebar::add_custom_filament shifted the objects' and volumes' extruders and paint only.
+void renumber_filaments_after_insert(Model& model, size_t slot);
+// Orca: every plate's custom G-code items as `change` renumbers them, whatever their type. An item that named
+// a deleted slot with no replacement: a tool or colour change is dropped (its filament is gone; upstream drops
+// a tool change), a pause or custom G-code, which only records the filament printing there, stays on slot 1.
+// Plater::on_filaments_delete and renumber_filaments_after_insert call it; upstream renumbered tool changes
+// only, on a delete only, and a merge moved one to its target, numbered twice.
+void renumber_custom_gcodes(Model& model, const FilamentRenumbering& change);
 // The number of recorded repairs the tooltip states: every RepairedMeshErrors field, summed.
 int            repaired_errors_count(const RepairedMeshErrors& errors);
 
@@ -269,6 +323,8 @@ public:
     void                update_name_in_model(const wxDataViewItem& item) const;
     void                update_name_in_list(int obj_idx, int vol_idx) const;
     void                update_filament_values_for_items(const size_t filaments_count);
+    // Orca: each layer range row of object `obj_idx` shows its range's filament again.
+    void                update_layer_range_rows(size_t obj_idx);
     void                update_filament_values_for_items_when_delete_filament(const size_t filament_id, const int replace_id = -1);
 
     //BBS: update plate

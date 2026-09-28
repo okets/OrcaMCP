@@ -4,6 +4,8 @@
 namespace boost { class any; }
 namespace boost::filesystem { class path; }
 
+#include <optional>
+
 #include <wx/string.h>
 
 #include "libslic3r/Config.hpp"
@@ -98,6 +100,12 @@ void record_mcp_prompt_asked(const std::string& key);
 bool was_mcp_prompt_asked(const std::string& key);
 McpAnswer mcp_answer_for(long style, const std::string& prompt_key);
 inline constexpr const char* MCP_PROMPT_SPLIT_FLOATING = "split_floating"; // split to objects: keep floating pieces' height?
+// Merge a physical filament into a mixed one that lists it as a component? (Sidebar::change_filament's
+// native box, answered at its call site: Cancel unless the tool chose OK.)
+inline constexpr const char* MCP_PROMPT_MERGE_INTO_MIX = "merge_into_mix";
+// The answer a tool set for `prompt_key`, if it set one: for a native box, whose own default is not
+// mcp_default_answer's.
+std::optional<McpAnswer> mcp_chosen_answer(const std::string& prompt_key);
 // Under suppression, a STEP import's StepMeshDialog is not opened: the configured deflection answers it
 // (recorded when the dialog would have shown) and the out parameters are filled. False without
 // suppression: open it. Defined in Plater.cpp; the object list's part loader asks it too.
