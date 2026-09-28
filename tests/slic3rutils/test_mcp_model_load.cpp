@@ -140,7 +140,7 @@ TEST_CASE("a loaded object reads exactly as get_scene_info's summary of it", "[M
     const nlohmann::json summary = model_object_summary_json(*added, 0);
     REQUIRE(loaded.size() == 1);
     CHECK(loaded[0] == summary);
-    for (const char* field : {"id", "name", "object_index", "instance_count", "volume_count", "position",
+    for (const char* field : {"object_id", "internal_id", "name", "object_index", "instance_count", "volume_count", "position",
                               "rotation_degrees", "scale", "bounding_box"})
         CHECK(summary.contains(field));
 }

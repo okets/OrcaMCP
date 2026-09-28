@@ -85,7 +85,7 @@ json suggested_flows()
                 {"step", "1. Get object IDs"},
                 {"tool", "get_scene_info"},
                 {"example", R"({"with_model_object_features": false})"},
-                {"note", "Objects are 0-indexed. Look for model_objects array in response."},
+                {"note", "Objects are 0-indexed: pass plates[].model_objects[].object_id."},
                 {"step2", "2. Transform as needed"},
                 {"tools", "move_object, rotate_object, scale_object, mirror_object, cut_object"},
                 {"examples", {
@@ -160,7 +160,8 @@ json tool_examples()
             {"when_to_use", "Start of session, after loading models, before transforms"},
             {"response_includes", {
                 {"bed", "origin (corner), min_x, min_y, max_x, max_y, max_z - printable area bounds"},
-                {"plates[].model_objects[]", "object_index, name, position, rotation_degrees, scale, bounding_box, instance_count"}
+                {"plates[]", "plate_index, is_current (the plate per-plate tools act on), model_objects, occupancy"},
+                {"plates[].model_objects[]", "object_id (what every tool takes), name, position, rotation_degrees, scale, bounding_box, instance_count"}
             }},
             {"tip", "Use bed info to calculate valid positions. Object positions are center points."}
         }},
@@ -282,11 +283,10 @@ json concepts()
             {"workflow", "1) Load model 2) Configure settings 3) Call slice_all 4) Poll get_slicing_status until complete 5) Export G-code"}
         }},
         {"object_ids", {
-            {"description", "Each object has two identifiers: 'id' (stable string) and 'object_index' (transient 0-based integer)."},
-            {"id_stable", "The 'id' field is a unique stable identifier that persists across add/delete operations. Use for tracking objects across sessions."},
-            {"object_index_transient", "The 'object_index' field is a 0-based array index used for MCP tool operations (move, rotate, etc.). It shifts when objects are added/deleted."},
-            {"finding_ids", "Call get_scene_info and look at plates[].model_objects[] array for both 'id' and 'object_index'"},
-            {"best_practice", "For multi-step workflows: store 'id' to track objects, re-query get_scene_info for current 'object_index' before each operation."}
+            {"description", "Every object description (get_scene_info's model_objects and unplaced_objects, load_model's loaded_objects) carries object_id: the 0-based index every tool's object_id parameter takes. object_index is the same number, kept for older readers."},
+            {"shifts", "An object's object_id shifts when an object before it is deleted: read get_scene_info again after a delete before acting on an index."},
+            {"internal_id", "internal_id is the app's own number for the object: stable while the app runs, not saved in the project, and taken by no tool. Use it only to find an object again after the indices shifted."},
+            {"finding_ids", "Call get_scene_info and read plates[].model_objects[].object_id"}
         }},
         {"instances_vs_objects", {
             {"description", "A ModelObject can have multiple instances. Instances share geometry and per-object settings but have independent positions."},
@@ -378,7 +378,7 @@ json warnings_and_best_practices()
             }}
         }},
         {"common_pitfalls", {
-            {"object_index_shifts", "After delete/add, object_index values shift. Use stable 'id' to track objects, re-query for current object_index."},
+            {"object_id_shifts", "After a delete, object_id values shift. Re-read get_scene_info; internal_id finds the same object again."},
             {"async_operations", "slice_all, auto_orient, arrange_objects are async. Poll or wait before next step."},
             {"cut_object_caution", "Cut removes original and creates new object(s). Use undo if result is wrong."},
             {"settings_not_saved", "apply_config creates dirty values. User must save preset in UI to persist."},
@@ -387,7 +387,7 @@ json warnings_and_best_practices()
         }},
         {"efficiency_tips", {
             "Batch settings: put multiple items in one apply_config call",
-            "Store stable 'id' values, re-query object_index only when needed for operations",
+            "Re-read object_id from get_scene_info after a delete, not before every call",
             "Use render_plate_view before and after transforms to verify",
             "Poll get_slicing_status every 2-3 seconds, not faster"
         }},

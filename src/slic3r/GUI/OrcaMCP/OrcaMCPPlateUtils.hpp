@@ -97,6 +97,19 @@ struct ObjectFootprint
     OrcaMCP::ObjectBrimExtent brim;
 };
 
+// What get_scene_info says about one plate, measured by GetPlates.
+struct PlateEntry
+{
+    std::string    name;
+    int            index      = 0;
+    bool           is_current = false;  // the plate per-plate tools act on, the one `bed` describes
+    BoundingBoxf3  box;
+    nlohmann::json model_objects  = nlohmann::json::array();
+    nlohmann::json prime_tower    = nlohmann::json::object();
+    nlohmann::json excluded_areas = nlohmann::json::array();
+    nlohmann::json occupancy      = nlohmann::json::array();
+};
+
 class OrcaMCPPlateUtils {
 public:
     static nlohmann::json RenderPlateView(const nlohmann::json& params);
@@ -104,6 +117,17 @@ public:
     // mesh_warning, and its features when asked for, come from it.
     static nlohmann::json GetCurrentProject(const bool with_model_object_features,
                                             const std::vector<OrcaMCP::MeshHealth>& mesh_health);
+    // get_scene_info's response before the handler adds the open dialogs, the warnings and the next
+    // steps: the bed (the current plate's area), `plates` and `unplaced_objects`.
+    static nlohmann::json SceneJson(const std::string& hash_code, bool sequential_print, const BoundingBoxf3& bed,
+                                    nlohmann::json plates, nlohmann::json unplaced_objects);
+    // One entry of get_scene_info's `plates`.
+    static nlohmann::json PlateJson(const PlateEntry& plate);
+    // One entry of a plate's `model_objects`: model_object_summary_json of the instances `here`, its
+    // brim and printed footprint (`footprint`, GetObjectFootprint), its variable layer height, its
+    // filaments, and the mesh-health numbers when `with_features`.
+    static nlohmann::json ScenePlateObjectJson(const ModelObject& object, int object_index, const OrcaMCP::InstancesOnPlate& here,
+                                               const OrcaMCP::MeshHealth& health, const ObjectFootprint& footprint, bool with_features);
     // get_scene_info's unplaced_objects: every object with an instance no plate holds, and which.
     // Checking instance 0 alone hid the copy of an object on two plates whose second plate had lost it.
     static nlohmann::json UnplacedObjectsJson(const Model& model, PartPlateList& plates,

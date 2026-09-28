@@ -191,6 +191,20 @@ Get current project state including plates, objects, and positions.
 }
 ```
 
+#### Object and plate numbers
+
+Every object description -- `model_objects`, `unplaced_objects`, and `load_model`'s `loaded_objects`
+-- carries `object_id`, the 0-based index every tool's `object_id` parameter takes. `object_index` is
+the same number, kept for older readers. `internal_id` is the app's own number for the object: stable
+while the app runs, never saved in the project, and taken by no tool (it was called `id`, and an agent
+reading `"id": "71"` beside `"object_index": 0` passed 71). An object's `object_id` shifts when an
+object before it is deleted.
+
+Every plate carries `plate_index` (what `select_plate`, `render_plate_view` and the other plate tools
+take; `index`, the same number, is kept) and `is_current`: true for the plate per-plate tools act on
+(`export_gcode`, `get_print_estimate` without `plate_index`, `send_to_printer`), whose printable area
+`bed` gives.
+
 #### Which filament an object prints with
 
 Each `model_objects` entry carries three filament fields. `extruder_id` is the object's own
@@ -295,8 +309,8 @@ Check slicing progress, for the selected plate and for every plate.
   "plate_index": 0,
   "slice_result_valid": true,
   "plates": [
-    {"index": 0, "slice_result_valid": true, "percent": 100, "gcode_check": {"ok": true}},
-    {"index": 1, "slice_result_valid": true, "percent": 100,
+    {"plate_index": 0, "index": 0, "slice_result_valid": true, "percent": 100, "gcode_check": {"ok": true}},
+    {"plate_index": 1, "index": 1, "slice_result_valid": true, "percent": 100,
      "gcode_check": {"ok": false, "problems": ["above_printable_height"],
                      "message": "a toolpath is above the printer's printable height (the highest layer prints at 20.5 mm; the printable height is 20 mm)",
                      "highest_layer_z_mm": 20.5, "printable_height_mm": 20,
@@ -3125,7 +3139,7 @@ wait still ends by it.
   "polls": 9,
   "timeout_s": 60,
   "timeout_cap_s": 105,
-  "slicing_status": {"is_slicing": false, "state": "done", "plates": [{"index": 0, "slice_result_valid": true, "percent": 100}], "slice_run": {"outcome": "done", "...": "..."}}
+  "slicing_status": {"is_slicing": false, "state": "done", "plates": [{"plate_index": 0, "index": 0, "slice_result_valid": true, "percent": 100}], "slice_run": {"outcome": "done", "...": "..."}}
 }
 ```
 

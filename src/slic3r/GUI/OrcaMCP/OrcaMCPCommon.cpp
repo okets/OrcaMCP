@@ -648,9 +648,7 @@ nlohmann::json object_summary_json(const ModelObject& object, int object_index, 
     const Vec3d size   = box.size();
 
     nlohmann::json summary = {
-        {"id", std::to_string(object.id().id)},
         {"name", object.name},
-        {"object_index", object_index},
         {"instance_count", static_cast<int>(object.instances.size())},
         {"volume_count", static_cast<int>(object.volumes.size())},
         {"position", {{"x", center.x()}, {"y", center.y()}, {"z", center.z()}}},
@@ -670,6 +668,7 @@ nlohmann::json object_summary_json(const ModelObject& object, int object_index, 
                                          {"z", Geometry::rad2deg(rotation.z())}};
         summary["scale"]              = {{"x", scale.x()}, {"y", scale.y()}, {"z", scale.z()}};
     }
+    add_object_identity(summary, object, object_index);
     add_mesh_warning(summary, health);
     return summary;
 }
@@ -699,6 +698,22 @@ nlohmann::json model_object_summary_json(const ModelObject& object, int object_i
     nlohmann::json summary = object_summary_json(object, object_index, plate_box_of(object, here), first, health);
     summary["instances_on_plate"] = here.ids;
     return summary;
+}
+
+void add_object_identity(nlohmann::json& out, const ModelObject& object, int object_index)
+{
+    out["object_id"]    = object_index;
+    out["object_index"] = object_index;
+    out["internal_id"]  = std::to_string(object.id().id);
+}
+
+nlohmann::json plate_slicing_json(int plate_index, bool slice_result_valid, std::optional<int> percent, nlohmann::json gcode_check)
+{
+    return {{"plate_index", plate_index},
+            {"index", plate_index},
+            {"slice_result_valid", slice_result_valid},
+            {"percent", percent ? nlohmann::json(*percent) : nlohmann::json(nullptr)},
+            {"gcode_check", std::move(gcode_check)}};
 }
 
 // Helper to get active warnings as JSON object (always includes count, even if 0)

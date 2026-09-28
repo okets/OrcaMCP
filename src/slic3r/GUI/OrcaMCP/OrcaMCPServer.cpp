@@ -906,8 +906,11 @@ void OrcaMCPServer::register_builtin_tools()
         "get_scene_info",
         ToolCategory::Scene,
         "Plates, objects, bed and occupancy",
-        "Get current project state: plates, objects, positions. Call first to get object_ids. Each "
-        "plate also carries `occupancy`, the complete list of what stands on it in plate "
+        "The scene: every plate (plate_index; is_current marks the plate per-plate tools act on, whose "
+        "area `bed` is) and the objects on it, with position, size, filaments and mesh_warning. Call it "
+        "first. An object's object_id is what every tool's object_id takes; object_index is the same "
+        "number, kept for older readers, and internal_id is the app's own number, which no tool takes. "
+        "Each plate also carries `occupancy`, the complete list of what stands on it in plate "
         "millimetres -- every object's printed footprint (brim included), the prime tower's "
         "footprint (brim included) when one is printed, and the printer's excluded bed areas. Use "
         "`occupancy`, not `model_objects`, to work out where there is free space. An object with "
@@ -3364,10 +3367,8 @@ void OrcaMCPServer::register_builtin_tools()
                         ++plates_sliced;
                     const std::optional<int> percent = p != nullptr ? OrcaMCP::reported_slice_percent(p->get_slicing_percent())
                                                                     : std::nullopt;
-                    plates.push_back({{"index", i},
-                                      {"slice_result_valid", valid},
-                                      {"percent", percent ? nlohmann::json(*percent) : nlohmann::json(nullptr)},
-                                      {"gcode_check", p != nullptr ? OrcaMCP::plate_gcode_check_json(*p) : nlohmann::json(nullptr)}});
+                    plates.push_back(plate_slicing_json(i, valid, percent,
+                                                        p != nullptr ? OrcaMCP::plate_gcode_check_json(*p) : nlohmann::json(nullptr)));
                 }
 
                 // The one answer slice_all's refusal and wait_for_slice go by (OrcaMCP::pipeline_busy).
