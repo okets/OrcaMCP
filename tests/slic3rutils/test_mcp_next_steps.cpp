@@ -391,6 +391,16 @@ TEST_CASE("Vase settings left on objects point at their reset, naming every obje
     CHECK(vase_settings_next_steps({}, {}).empty());
 }
 
+TEST_CASE("Station slots the project lacks point at add_filament_slot where the printer takes more", "[McpNextSteps][orcamcp]")
+{
+    const std::vector<NextStep> steps = missing_slot_next_steps({3, 4}, true);
+    REQUIRE(steps.size() == 1);
+    CHECK(steps[0].tool == "add_filament_slot");
+    CHECK(mentions(steps[0].why, "slots 3 and 4"));
+    CHECK(missing_slot_next_steps({3}, false).empty()); // its slots follow its extruders
+    CHECK(missing_slot_next_steps({}, true).empty());
+}
+
 TEST_CASE("Every next step names a real tool, with arguments its schema accepts", "[McpNextSteps][orcamcp]")
 {
     std::vector<NextStep> steps = Scene({cube_missing_facet(), separate_cubes(2)}).steps();
@@ -426,7 +436,9 @@ TEST_CASE("Every next step names a real tool, with arguments its schema accepts"
         steps.push_back(std::move(step));
     for (NextStep& step : printer_control_next_steps())
         steps.push_back(std::move(step));
-    REQUIRE(steps.size() == 24);
+    for (NextStep& step : missing_slot_next_steps({3, 4}, true))
+        steps.push_back(std::move(step));
+    REQUIRE(steps.size() == 25);
 
     const mcp_tool_references::ToolNames names(OrcaMCPServer::registered_tools());
     json                                 response = json::object();

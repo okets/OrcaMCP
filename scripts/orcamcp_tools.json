@@ -77,6 +77,27 @@
   "instructions": "OrcaMCP drives OrcaSlicer. Before deciding something cannot be done here, call get_server_info: it lists every tool by job.\n\nStart with get_scene_info (plates, objects, each object's object_id). Key tools:\n- Models: load_model (keeps the presets), load_project (replaces them), arrange_objects, auto_orient, move_object, rotate_object, scale_object, cut_object.\n- Mesh: get_mesh_health (holes, open edges), get_object_components (stray shells), repair_mesh.\n- Painting: paint_object (color, support, seam, fuzzy_skin).\n- Filaments and colour: get_filaments, set_object_filament, suggest_color_mix.\n- Settings: get_config_values, apply_config, set_object_config (one object), select_preset.\n- Slicing: slice_all, then wait_for_slice (no polling); get_print_estimate, export_gcode.\n- Seeing results: render_plate_view (its layer_view draws a sliced layer's toolpaths).\n- Printers: get_printer_status, send_to_printer.\n- Several OrcaMCP windows: list_instances, select_instance.\n\nResponses may carry next_steps: the tool to call next, and why.\n\nCareful:\n- send_to_printer uploads AND STARTS the print on a print host; start_print: false only uploads.\n- save_project without output_path overwrites the file the project is named after.\n- new_project and load_project discard unsaved changes without asking.",
   "server_tools": [
     {
+      "category": "Filaments & colour",
+      "description": "Add a physical filament slot, as the sidebar's + button does: after the last physical slot (mixed slots move up one, and so do objects on them), with the preset of the last physical slot unless preset names another, and the sidebar's next colour unless color gives one. Only a printer that changes filaments on one extruder, or a Bambu Lab printer, takes more slots: a printer with one filament per extruder has as many slots as extruders. Answers slot (the new slot's number), preset, color, renumbered ({from, to} for moved mixed slots) and filaments. Every plate loses its slice; no undo step, as in the app (undo does not bring a slot back or take one away). Then give it objects with set_object_filament or paint_object, or another preset with select_preset {type: filament, slot}. Refused while slicing or while a job runs.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "color": {
+            "description": "The slot's colour on the plate, #RRGGBB. Default: the sidebar's next colour.",
+            "type": "string"
+          },
+          "preset": {
+            "description": "A filament preset for the slot (get_presets type filament). Default: the last physical slot's.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "add_filament_slot",
+      "summary": "Add a physical filament slot"
+    },
+    {
       "category": "Printers",
       "description": "Configure a print host on the current printer preset and save it as a user preset with this name.",
       "inputSchema": {
@@ -545,6 +566,33 @@
       },
       "name": "cut_object",
       "summary": "Cut an object at a Z height"
+    },
+    {
+      "category": "Filaments & colour",
+      "description": "Delete a filament slot, physical or mixed, as its Delete in the sidebar does: its objects, parts and painted facets move to slot 1, and every later slot moves down one (objects and paint with it). With merge_into, as its Merge with does: its objects and paint move to that slot instead. Answers deleted_slot, renumbered ({from, to}), objects_changed (each object whose filaments changed, before and after), merged_into / merged_into_now, and filaments. Every plate loses its slice; no undo step, as in the app. Refused: the last physical slot; a physical slot of a printer with one filament per extruder; merging a slot into a mixed slot made of it, unless allow_breaking_mix; deleting slot 1 (or the only slot using the Filament settings' preset) while those settings have unsaved changes, which the app would re-select (save_preset or reset_preset first); while slicing or while a job runs. delete_mixed_filament deletes a mixed slot too.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "allow_breaking_mix": {
+            "description": "Merge into a mixed slot made of the deleted slot anyway; the mix loses that component. Default false.",
+            "type": "boolean"
+          },
+          "merge_into": {
+            "description": "Move its objects and paint to this slot (1-based, numbered as before the delete) instead of slot 1",
+            "type": "integer"
+          },
+          "slot": {
+            "description": "The slot to delete, 1-based",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "slot"
+        ],
+        "type": "object"
+      },
+      "name": "delete_filament_slot",
+      "summary": "Delete a filament slot, or merge it"
     },
     {
       "category": "Filaments & colour",

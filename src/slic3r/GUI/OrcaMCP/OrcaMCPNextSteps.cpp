@@ -312,6 +312,15 @@ std::vector<NextStep> vase_settings_next_steps(const std::vector<int>& object_id
              {{"object_id", object_ids.front()}, {"keys", first_keys}}}};
 }
 
+std::vector<NextStep> missing_slot_next_steps(const std::vector<int>& missing_slots, bool slots_can_be_added)
+{
+    if (missing_slots.empty() || !slots_can_be_added)
+        return {};
+    return {{"add_filament_slot",
+             "the printer holds filament in " + named_ids("slot", missing_slots) +
+                 ", which the project has no filament slot for: this adds one per call, then match_project_to_printer again"}};
+}
+
 std::vector<NextStep> printer_control_next_steps()
 {
     return {{"get_printer_status",

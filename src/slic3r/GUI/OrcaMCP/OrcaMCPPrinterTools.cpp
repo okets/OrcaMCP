@@ -1097,7 +1097,13 @@ void OrcaMCPServer::register_printer_tools()
             // Params and the station snapshot cross to the GUI thread by value; everything the match
             // touches (presets, project config, sidebar) is main-thread-only.
             nlohmann::json response = run_on_main_thread([station = status.slots, slots, dry_run]() -> nlohmann::json {
-                return match_project_to_printer(station, slots, dry_run);
+                nlohmann::json answer = match_project_to_printer(station, slots, dry_run);
+                std::vector<int> missing;
+                for (const nlohmann::json& slot : answer.value("slots", nlohmann::json::array()))
+                    if (!slot.value("in_project", true))
+                        missing.push_back(slot.value("slot", 0));
+                add_next_steps(answer, missing_slot_next_steps(missing, Sidebar::should_show_SEMM_buttons()));
+                return answer;
             });
             response["source"] = "live";
             return response;

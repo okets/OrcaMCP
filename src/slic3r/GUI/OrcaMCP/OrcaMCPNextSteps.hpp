@@ -122,5 +122,11 @@ std::vector<NextStep> support_paint_next_steps(int object_id, bool support_enabl
 // to apply a command, as the Device page shows by waiting for the next status.
 std::vector<NextStep> printer_control_next_steps();
 
+// What match_project_to_printer's answer leads to when the printer holds filament in material-station
+// slots the project has no filament slot for (`missing_slots`, 1-based): add_filament_slot, which adds one
+// slot per call, on a printer that takes more slots (`slots_can_be_added`); nothing on one whose slots
+// follow its extruders.
+std::vector<NextStep> missing_slot_next_steps(const std::vector<int>& missing_slots, bool slots_can_be_added);
+
 }} // namespace GUI::OrcaMCP
 } // namespace Slic3r

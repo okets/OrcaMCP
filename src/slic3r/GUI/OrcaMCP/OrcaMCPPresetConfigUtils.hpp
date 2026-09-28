@@ -228,6 +228,9 @@ public:
     // and that the preset exists as a filament preset compatible with the selected printer;
     // returns false with `error` set and nothing changed otherwise. Main thread only.
     static bool SelectFilamentSlotPreset(int slot, const std::string& presetName, std::string& error);
+    // Why `presetName` cannot go in a filament slot: no filament preset of that name, or one the selected
+    // printer does not take. Empty when it can.
+    static std::string FilamentSlotPresetError(const std::string& presetName);
 
     // Preset management tools
     static void ClonePreset(const std::string& type, const std::string& sourceName, const std::string& newName);

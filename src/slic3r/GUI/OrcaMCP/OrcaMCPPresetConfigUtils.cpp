@@ -751,6 +751,20 @@ nlohmann::json OrcaMCPPresetConfigUtils::SelectPrinterPreset(const std::string& 
             {"filaments", std::move(filaments)}};
 }
 
+std::string OrcaMCPPresetConfigUtils::FilamentSlotPresetError(const std::string& presetName)
+{
+    PresetBundle* bundle = wxGetApp().preset_bundle;
+    // Looking the name up in the filaments collection is what makes it "a filament preset";
+    // a print/printer preset name simply is not found here.
+    const Preset* preset = bundle->filaments.find_preset(presetName, false);
+    if (preset == nullptr)
+        return "Filament preset '" + presetName + "' not found";
+    if (!preset->is_compatible)
+        return "Filament preset '" + presetName + "' is not compatible with the selected printer '" +
+               bundle->printers.get_selected_preset_name() + "'";
+    return std::string();
+}
+
 bool OrcaMCPPresetConfigUtils::SelectFilamentSlotPreset(int slot, const std::string& presetName, std::string& error)
 {
     PresetBundle* bundle = wxGetApp().preset_bundle;
@@ -759,18 +773,9 @@ bool OrcaMCPPresetConfigUtils::SelectFilamentSlotPreset(int slot, const std::str
         error = "slot " + std::to_string(slot) + " out of range 1.." + std::to_string(slot_count);
         return false;
     }
-    // Looking the name up in the filaments collection is what makes it "a filament preset";
-    // a print/printer preset name simply is not found here.
-    const Preset* preset = bundle->filaments.find_preset(presetName, false);
-    if (preset == nullptr) {
-        error = "Filament preset '" + presetName + "' not found";
+    error = FilamentSlotPresetError(presetName);
+    if (!error.empty())
         return false;
-    }
-    if (!preset->is_compatible) {
-        error = "Filament preset '" + presetName + "' is not compatible with the selected printer '" +
-                bundle->printers.get_selected_preset_name() + "'";
-        return false;
-    }
 
     // Everything below mirrors the TYPE_FILAMENT branch of Plater::priv::on_select_preset(),
     // i.e. what picking the preset in the sidebar's filament combo does. Deliberately not the

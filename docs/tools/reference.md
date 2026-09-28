@@ -2754,6 +2754,77 @@ Disable adaptive layer height.
 
 ## Filament & Colour Tools
 
+### add_filament_slot
+Add a physical filament slot, as the sidebar's **+** button does (`Sidebar::add_custom_filament`).
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `color` | string | No | The slot's colour on the plate, `#RRGGBB`. Default: the sidebar's next colour, as the button takes |
+| `preset` | string | No | A filament preset for the slot (compatible with the selected printer). Default: the last physical slot's |
+
+The new slot goes after the last physical slot: mixed slots, which sit at the end, move up one, and so
+do objects on them. Only a printer that changes filaments on one extruder
+(`single_extruder_multi_material`) or a Bambu Lab printer takes more slots, as only those show the
+button; on any other printer each extruder holds one filament and the slots follow the extruders.
+
+**Returns:**
+```json
+{
+  "status": "success",
+  "slot": 3, "preset": "Generic PLA", "color": "#ED1C24",
+  "renumbered": [{"from": 3, "to": 4}],
+  "filaments": [...],
+  "active_warnings": {"count": 0, "warnings": []}
+}
+```
+Every plate loses its slice. No undo step, as in the app: undo does not bring back or take away a slot.
+
+Refused, changing nothing: a printer whose slots follow its extruders (the message says how many, or
+that `single_extruder_multi_material` is off); 64 slots; a G-code preview on the plate (the app would
+close it and start a new project: `new_project` first); a `color` that is not `#RRGGBB`; an unknown or
+incompatible `preset`; while slicing or exporting (`wait_for_slice` first) or while an arrange, orient or
+bed fill runs.
+
+---
+
+### delete_filament_slot
+Delete a filament slot, physical or mixed, as its **Delete** in the sidebar does, or with `merge_into`
+as its **Merge with** does (`Sidebar::delete_filament`, `change_filament`).
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `slot` | integer | Yes | The slot to delete, 1-based |
+| `merge_into` | integer | No | Move its objects, parts and painted facets to this slot (1-based, numbered as before the delete). Default: slot 1, as Delete does |
+| `allow_breaking_mix` | boolean | No | Merge into a mixed slot made of the deleted slot anyway (default false) |
+
+The app renumbers everything after the deleted slot: objects, parts, painted facets, layer ranges,
+support filaments, a plate's filament order, a tool change in the layer list.
+
+**Returns:**
+```json
+{
+  "status": "success",
+  "deleted_slot": 2, "merged_into": 4, "merged_into_now": 3,
+  "renumbered": [{"from": 3, "to": 2}, {"from": 4, "to": 3}],
+  "objects_changed": [{"object_id": 0, "filaments_before": [2], "filaments_after": [3]}],
+  "filaments": [...]
+}
+```
+`objects_changed` is every object whose effective filaments changed, before and after. Every plate
+loses its slice; no undo step, as in the app.
+
+Refused, changing nothing: a slot out of range, or `merge_into` out of range or the slot itself; the
+project's last physical slot; a physical slot of a printer whose slots follow its extruders; merging
+a slot into a mixed slot made of it, unless `allow_breaking_mix: true` (the app warns about it in a box
+that MCP answers, never opens: probe AP); deleting slot 1, or the only slot using the Filament
+settings' preset, while those settings have unsaved changes -- the app would re-select that preset and
+ask what to do with them -- `save_preset` or `reset_preset` first; a G-code preview on the plate; while
+slicing or while an arrange, orient or bed fill runs. `delete_mixed_filament` deletes a mixed slot too.
+
+---
+
 ### set_object_filament
 Assign a filament slot to a whole object, or to one volume of it. To colour only part of a surface,
 paint it: `paint_object` with `mode: color`.
@@ -3437,7 +3508,9 @@ colour. Empty slots are left alone.
 | `allow_cached` | boolean | No | Apply a plan made from the printer's last known status when it cannot be read live (default false) |
 
 **Returns:** `{"status": "success"|"partial"|"not_applied", "dry_run": ..., "changed_count": N,
-"slots": [...], "filaments": [...], "source": "live"|"cached"}`.
+"slots": [...], "filaments": [...], "source": "live"|"cached"}`. A loaded station slot the project has
+no filament slot for has `in_project: false`; where the printer takes more slots, `next_steps` names
+`add_filament_slot`.
 
 When the printer cannot be reached but answered earlier in this session, the plan is made from
 that last status and the response says so: `"source": "cached"`, `age_s`, `live_error` and a `note`.
@@ -3626,6 +3699,7 @@ nothing to suggest has no `next_steps`.
 | `fill_bed_with_instances` | `arrange_objects` with `all_plates: true`, and `set_instance_count` (the last instances) or `delete_object` with the highest `instance_id` | the fill added instances its plate's arrange could not fit, which stand on no plate (`instances_on_no_plate`) |
 | `set_plate_settings` | `arrange_objects` with that `plate_index` | the plate now prints by object |
 | | `reset_object_config` with the first object and the vase settings it carries (`why` names every object) | the plate's spiral vase was on and is off, and objects on it still carry the vase's object settings |
+| `match_project_to_printer` (live) | `add_filament_slot` | the printer holds filament in a station slot the project has no filament slot for, and the printer takes more slots |
 | `printer_control` with a `set_*` action | `get_printer_status` | always: the printer takes a moment to apply a command, and `printer.controls` reads back what it now reports |
 | The bridge's own answers (`list_instances`, `start_orca`, and a tool call it did not forward) | `select_instance` with the `pid` of the first instance that tells who it is (never an older OrcaMCP, which cannot), and `list_instances` | several instances run and this session has not chosen one, or the one it used is gone |
 | | `start_orca` (with `new_instance: true` when others run) | no instance runs, or the one this session used is gone |
