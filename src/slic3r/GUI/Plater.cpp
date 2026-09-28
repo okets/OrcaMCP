@@ -19048,7 +19048,11 @@ void Plater::export_stl(bool extended, bool selection_only, bool multi_stls, Fil
     // BBS
     if (selection_only) {
         // only support selection single full object and mulitiple full object
-        if (!selection.is_single_full_object() && !selection.is_multiple_full_object()) return;
+        // Orca: and whole instances, for which the object menu offers Export as one STL / as STLs too: they
+        // returned here, after the file dialog, writing nothing and saying nothing.
+        if (!selection.is_single_full_object() && !selection.is_multiple_full_object() && !selection.is_single_full_instance() &&
+            !selection.is_multiple_full_instance())
+            return;
     }
 
     // Following lambda generates a combined mesh for export with normals pointing outwards.
@@ -19176,13 +19180,15 @@ void Plater::export_stl(bool extended, bool selection_only, bool multi_stls, Fil
     else
         mesh_to_export = mesh_to_export_sla;
 
-    auto get_save_file = [file_type](std::string const & dir, std::string const & name) {
+    auto get_save_file = [file_type](std::string const & dir, std::string const & object_name) {
         std::string ext = "";
         switch (file_type) {
         case FT_STL: ext = ".stl"; break;
         case FT_DRC: ext = ".drc"; break;
         }
 
+        // Orca: an object named after its file ("cube.stl") is written as cube.stl, not cube.stl.stl.
+        const std::string name = boost::algorithm::iends_with(object_name, ext) ? object_name.substr(0, object_name.size() - ext.size()) : object_name;
         auto path = dir + name + ext;
         int n = 1;
         while (boost::filesystem::exists(path))
@@ -19209,7 +19215,9 @@ void Plater::export_stl(bool extended, bool selection_only, bool multi_stls, Fil
 
     TriangleMesh mesh;
     if (selection_only) {
-        if (selection.is_single_full_object()) {
+        // Orca: one object's Export as STLs writes its file into the folder, as several objects' do: this branch
+        // wrote the folder's own path. Whole instances take the branches below, by the instances selected.
+        if (selection.is_single_full_object() && !multi_stls) {
             const auto obj_idx = selection.get_object_idx();
             const ModelObject* model_object = p->model.objects[obj_idx];
             if (selection.get_mode() == Selection::Instance)
@@ -19222,14 +19230,14 @@ void Plater::export_stl(bool extended, bool selection_only, bool multi_stls, Fil
 
             if (model_object->instances.size() == 1) mesh.translate(-model_object->origin_translation.cast<float>());
         }
-        else if (selection.is_multiple_full_object() && !multi_stls) {
+        else if (!multi_stls) {
             const std::set<std::pair<int, int>>& instances_idxs = p->get_selection().get_selected_object_instances();
             for (const std::pair<int, int>& i : instances_idxs) {
                 ModelObject* object = p->model.objects[i.first];
                 mesh.merge(mesh_to_export(*object, i.second));
             }
         }
-        else if (selection.is_multiple_full_object() && multi_stls) {
+        else {
             const std::set<std::pair<int, int>> &instances_idxs = p->get_selection().get_selected_object_instances();
             for (const std::pair<int, int> &i : instances_idxs) {
                 ModelObject *object = p->model.objects[i.first];

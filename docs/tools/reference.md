@@ -545,9 +545,10 @@ fails, the parts alone, and `active_warnings` carries the app's notice), no modi
 volumes. Without `object_ids`, every object with all its instances, in plate coordinates. With
 `object_ids`, those objects, as the object menu exports a selection: one object with one instance is
 written at its own origin. With `one_file_per_object`, one file per object (per instance with
-`object_ids`), each moved back to the object's own origin, named after the object and never
-overwriting: a name already taken gets `(1)`, `(2)`, ... One file at `output_path` is overwritten.
-`files` lists what was written.
+`object_ids`) in the folder, a single object's too, each moved back to the object's own origin, named
+after the object (one named `cube.stl` writes `cube.stl`, not `cube.stl.stl`) and never overwriting: a name already taken gets `(1)`, `(2)`, ... (until v2.5.0.6 the
+app wrote one selected object's file to the folder's own path, so it failed: probe BE). One file at
+`output_path` is overwritten. `files` lists what was written.
 
 Refused before anything is written: no objects; an `object_id` out of range or listed twice; an
 empty `object_ids` (leave it out for every object); a format that is not `stl` or `drc`, or disagrees

@@ -190,7 +190,8 @@ void Slic3r::GUI::OrcaMCPServer::register_export_tools()
         "with a notice in active_warnings, when that fails), modifiers and support volumes left out. Without object_ids every "
         "object goes in, in plate coordinates; with object_ids only those, as the object menu exports what is selected (an "
         "object with one instance is written at its own origin). one_file_per_object writes one file per object (per selected "
-        "instance with object_ids) into the folder output_path names, each named after its object, never overwriting: a name "
+        "instance with object_ids), a single object's too, into the folder output_path names, each named after its object, "
+        "never overwriting: a name "
         "taken gets (1), (2), ... A single file at output_path is overwritten. files lists what was written. No undo step: the "
         "scene does not change, and the user's selection is put back.",
         {{"type", "object"},
