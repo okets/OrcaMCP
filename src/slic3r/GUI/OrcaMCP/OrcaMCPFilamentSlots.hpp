@@ -93,6 +93,12 @@ struct SlotEdit
 // unless `include_sharing_slots`.
 std::optional<std::string> slot_edit_refusal(const FilamentSlotsState& state, int slot, bool include_sharing_slots, SlotEdit& plan);
 
+// The slot the Filament settings edit (Sidebar's editing_filament, -1 none) after apply_config pointed them
+// at slot `index`, when they edited `previous` before: none when they edited none (the settings window is
+// closed), else `index`, as the slot's Edit leaves it -- they show its preset now, and one editing another
+// slot would write that preset into it on the next refresh (Sidebar::update_presets).
+int editing_slot_after_pointing(int previous, std::size_t index);
+
 // Why filament settings with no filament_slot, or a filament select_preset with no slot, are refused: with
 // several physical slots the call does not say which slot's filament it means. Nothing for one slot.
 std::optional<std::string> slot_needed_refusal(const FilamentSlotsState& state, const std::string& argument);

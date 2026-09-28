@@ -209,6 +209,8 @@ std::optional<std::string> slot_edit_refusal(const FilamentSlotsState& state, in
     return std::nullopt;
 }
 
+int editing_slot_after_pointing(int previous, std::size_t index) { return previous < 0 ? -1 : int(index); }
+
 std::optional<std::string> slot_needed_refusal(const FilamentSlotsState& state, const std::string& argument)
 {
     if (state.physical_slots() <= 1)

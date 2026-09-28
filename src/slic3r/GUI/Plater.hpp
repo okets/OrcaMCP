@@ -264,6 +264,9 @@ public:
     void                    update_ui_from_settings();
 	bool                    show_object_list(bool show) const;
     void                    finish_param_edit();
+    // Orca: the slot the Filament settings edit (a slot's Edit sets it, closing the settings clears it: -1).
+    int                     editing_filament() const;
+    void                    set_editing_filament(int filament_idx);
 
     /**
      * @brief Automatically calculates flushing volumes

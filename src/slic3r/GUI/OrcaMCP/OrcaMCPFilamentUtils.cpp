@@ -104,14 +104,19 @@ bool point_filament_settings_at(const SlotEdit& plan, std::string& error)
         return false;
     }
     // As the slot's Edit: nothing marks a slot as the one the settings edit while the tab switches, or the
-    // switch would write this slot's preset into that one (Sidebar::update_presets).
-    wxGetApp().sidebar().finish_param_edit();
+    // switch would write this slot's preset into that one (Sidebar::update_presets). Afterwards, settings a
+    // user has open edit this slot, whose preset they now show; closed settings edit none.
+    Sidebar&  sidebar  = wxGetApp().sidebar();
+    const int previous = sidebar.editing_filament();
+    sidebar.finish_param_edit();
     if (plan.select_needed && (!tab->select_preset(plan.preset) || wxGetApp().preset_bundle->filaments.get_edited_preset().name != plan.preset)) {
+        sidebar.set_editing_filament(previous);
         error = "The app did not open slot " + std::to_string(plan.index + 1) + "'s preset '" + plan.preset + "' in the Filament settings";
         return false;
     }
     if (TabPresetComboBox* combo = tab->get_combo_box())
         combo->set_filament_idx(int(plan.index));
+    sidebar.set_editing_filament(editing_slot_after_pointing(previous, plan.index));
     return true;
 }
 

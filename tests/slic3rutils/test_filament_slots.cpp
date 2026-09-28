@@ -434,3 +434,13 @@ TEST_CASE("a slot change that renumbered anything warns that an undo would put o
     // Nothing renumbered and nothing moved: an undo restores the same numbers.
     CHECK_FALSE(slot_change_undo_warning(json::array(), json::array()).has_value());
 }
+
+TEST_CASE("pointing the Filament settings at a slot leaves an open settings window editing that slot", "[FilamentSlots]")
+{
+    // Settings closed (no slot edited): they stay closed to the slots, as after the settings' own close.
+    CHECK(editing_slot_after_pointing(-1, 2) == -1);
+    // Settings open on a slot: they now show slot 3's preset, so a pick there reaches slot 3, as the slot's
+    // Edit would leave it -- never slot 1, whose preset they no longer show.
+    CHECK(editing_slot_after_pointing(0, 2) == 2);
+    CHECK(editing_slot_after_pointing(2, 2) == 2);
+}
