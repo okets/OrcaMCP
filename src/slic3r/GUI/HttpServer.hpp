@@ -163,7 +163,11 @@ public:
     bool          start_http_server = false;
 
     bool is_started() { return start_http_server; }
+    // Throws what binding the port throws, e.g. when another process listens on it.
     void start();
+    // Orca: start() for a caller that goes on without the server when its port cannot be bound (the MCP
+    // server, which then tries the next port): empty once it listens, otherwise why it does not.
+    std::string try_start();
     // Stops listening and joins the server's thread. A request still being handled is waited for up
     // to `bound` (without one, for as long as it takes), and never abandoned: its handler may be
     // using what the app destroys next. When the bound passes first this returns false, and leaves the
@@ -207,6 +211,13 @@ private:
         return {boost::asio::ip::address_v4::loopback(), port};
     }
 
+    // Orca: a listener on 127.0.0.1:`port` that no other process can share. asio's endpoint constructor
+    // sets SO_REUSEADDR, which on POSIX only lets a restart bind past its closed connections, but on
+    // Windows lets a second process bind a port another is listening on: two OrcaMCP instances then
+    // shared one port, and either could answer a call. So Windows gets SO_EXCLUSIVEADDRUSE instead.
+    // Throws what binding throws.
+    static boost::asio::ip::tcp::acceptor listen_on_loopback(boost::asio::io_service& io_service, boost::asio::ip::port_type port);
+
     class IOServer
     {
     public:
@@ -220,7 +231,7 @@ private:
         boost::asio::steady_timer          drain_timer{io_service};  // bounds stop()'s drain
         bool                               stopping = false;
 
-        IOServer(HttpServer& server) : server(server), acceptor(io_service, loopback_endpoint(server.port)) {}
+        IOServer(HttpServer& server) : server(server), acceptor(listen_on_loopback(io_service, server.port)) {}
 
         void accept_on(Acceptor& listener, std::shared_ptr<Acceptor> keep_alive);
         void replace_also(std::shared_ptr<Acceptor> listener);

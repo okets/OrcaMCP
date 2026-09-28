@@ -1102,13 +1102,23 @@ echo "AF a cancelled or failed arrange keeps prepare_all's plates locked, its ru
 echo "AG an object added to the scene has only its first instance on a plate (rel2506/07f): $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^void ObjectList::add_object_to_list\(/{f=1} f&&/notify_instance_update\(obj_idx, 0, true\)/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
 echo "AH the first slice waits for every TBB worker at once to name them (rel2506/07g): $(U src/libslic3r/Thread.cpp | awk '/^void name_tbb_thread_pool_threads_set_locale/{f=1} f&&/cv\.wait\(/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
 echo "AI the Repair's worker changes the object itself, off the main thread / a first volume dropped whole skips the next / a repair can delete an object's last part / the Repair's snapshot is taken before its dialog / ModelVolume has a hull setter (0 = no, keep ours) (rel2506/08b): $(U src/slic3r/Utils/FixModelByCgal.cpp | grep -c 'std::thread(\[&model_object') / $(U src/slic3r/Utils/FixModelByCgal.cpp | awk '/removed_parts >= parts_count/{f=1} f&&/ivolume = part_end;/{print "yes"; exit} f&&/continue;/{print "no"; exit}') / $(U src/slic3r/Utils/FixModelByCgal.cpp | awk '/is_not_3dimensional_part\(part_volume->mesh\(\)\)/{f=1} f&&/parts_count\(\)|is_model_part/{print "no"; exit} f&&/delete_volume\(part_idx\)/{print "yes"; exit}') / $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^void ObjectList::fix_through_cgal/{f=1} f&&/TakeSnapshot/{print "yes"; exit} f&&/ProgressDialog progress_dlg/{print "no"; exit}') / $(U src/libslic3r/Model.hpp | grep -c 'set_convex_hull')"
+echo "AJ upstream's acceptor takes asio's SO_REUSEADDR on Windows, which lets a second process bind a port the first listens on (rel2506/09; 0 = bug): $( { U src/slic3r/GUI/HttpServer.hpp; U src/slic3r/GUI/HttpServer.cpp; } | grep -c 'EXCLUSIVEADDRUSE')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
 written is cut (ours drains it, `IOServer::begin_stop`), and upstream binds all interfaces (we bind
 127.0.0.1). Our other `HttpServer` changes are features, not fixes: the second listener for the
-cloud login (`listen_also`) and the loopback endpoint helper. On "no" / 0, take upstream's code and
-re-check that a reply in flight still reaches its client and the bind is still loopback.
+cloud login (`listen_also`), the loopback endpoint helper, and `try_start()`, a `start()` that returns
+why it could not bind instead of throwing (the MCP server then tries the next port; see "Several
+instances at once"). On "no" / 0, take upstream's code and re-check that a reply in flight still reaches
+its client and the bind is still loopback.
+
+Item AJ: asio's endpoint constructor sets `SO_REUSEADDR`, which on Windows lets a second process bind a
+port another listens on, so two instances shared 13618 and either could answer a call. Ours opens every
+listener through `HttpServer::listen_on_loopback`, with `SO_EXCLUSIVEADDRUSE` on Windows (`SO_REUSEADDR`
+elsewhere, where it only covers a restart's closed connections). On a non-zero, take upstream's and
+re-run `slic3rutils_tests "[HttpServer]"` on Windows: a second server on a held port must not start, and a
+stopped server's port must bind again at once.
 
 Item R: upstream's `HttpServer` never reads a request's `Origin` header, so it serves whatever page
 reaches it. Ours passes every request's `Origin`, `Host` and arrival port to a guard before the handler
