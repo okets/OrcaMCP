@@ -822,8 +822,8 @@ void ObjectList::update_filament_values_for_items_when_delete_filament(const siz
         }
         m_objects_model->SetExtruder(extruder, item);
 
-        // Orca: the object's and every volume's support filaments, each in its own config.
-        renumber_support_filaments_after_delete(*object, filament_id);
+        // Orca: the object's and every volume's filament number settings, each in its own config.
+        renumber_filament_settings_after_delete(*object, filament_id);
 
         //if (object->volumes.size() > 1) {
             for (size_t id = 0; id < object->volumes.size(); id++) {
@@ -7006,22 +7006,50 @@ void ObjectList::apply_object_instance_transfrom_to_all_volumes(ModelObject *mod
     wxGetApp().plater()->update();
 }
 
-void renumber_support_filaments_after_delete(ModelObject& model_object, size_t filament_id)
+const std::vector<std::string>& filament_number_settings()
+{
+    static const std::vector<std::string> keys = {"support_filament",           "support_interface_filament", "wipe_tower_filament",
+                                                  "outer_wall_filament_id",     "inner_wall_filament_id",     "sparse_infill_filament_id",
+                                                  "internal_solid_filament_id", "top_surface_filament_id",    "bottom_surface_filament_id"};
+    return keys;
+}
+
+std::optional<int> filament_number_after_delete(int value, size_t filament_id)
+{
+    if (value == int(filament_id) + 1)
+        return std::nullopt;
+    return value > int(filament_id) ? value - 1 : value;
+}
+
+void renumber_filament_settings_after_delete(ModelObject& model_object, size_t filament_id)
 {
     auto renumber = [filament_id](ModelConfigObject& config) {
-        for (const char* key : {"support_filament", "support_interface_filament"}) {
+        for (const std::string& key : filament_number_settings()) {
             if (!config.has(key))
                 continue;
-            const int value = config.opt_int(key);
-            if (value == int(filament_id) + 1)
+            const int                value = config.opt_int(key);
+            const std::optional<int> now   = filament_number_after_delete(value, filament_id);
+            if (!now)
                 config.erase(key);
-            else if (value > int(filament_id))
-                config.set_key_value(key, new ConfigOptionInt(value - 1));
+            else if (*now != value)
+                config.set_key_value(key, new ConfigOptionInt(*now));
         }
     };
     renumber(model_object.config);
     for (ModelVolume* volume : model_object.volumes)
         renumber(volume->config);
+}
+
+void renumber_filament_settings_after_delete(DynamicPrintConfig& preset_config, size_t filament_id)
+{
+    for (const std::string& key : filament_number_settings()) {
+        if (!preset_config.has(key))
+            continue;
+        const int value = preset_config.opt_int(key);
+        const int now   = filament_number_after_delete(value, filament_id).value_or(0);
+        if (now != value)
+            preset_config.set_key_value(key, new ConfigOptionInt(now));
+    }
 }
 
 void bake_instance_transform_into_volumes(ModelObject& model_object, bool need_update_assemble_matrix)

@@ -20385,16 +20385,20 @@ void Plater::on_filaments_delete(size_t num_filaments, size_t filament_id, int r
     sidebar().obj_list()->update_objects_list_filament_column_when_delete_filament(filament_id, num_filaments, replace_filament_id);
 
     // update global support filament
-    static const char *keys[] = {"support_filament", "support_interface_filament"};
-    for (auto key : keys)
+    // Orca: every filament number setting, in the plater's copy of the config and in the print preset the
+    // slicer reads, which upstream left naming the old numbers.
+    for (const std::string& key : filament_number_settings())
         if (p->config->has(key)) {
-            if(p->config->opt_int(key) == filament_id + 1)
+            if (const std::optional<int> now = filament_number_after_delete(p->config->opt_int(key), filament_id))
+                (*(p->config)).set_key_value(key, new ConfigOptionInt(*now));
+            else
                 (*(p->config)).erase(key);
-            else {
-                int new_value = p->config->opt_int(key) > filament_id ? p->config->opt_int(key) - 1 : p->config->opt_int(key);
-                (*(p->config)).set_key_value(key, new ConfigOptionInt(new_value));
-            }
         }
+    renumber_filament_settings_after_delete(wxGetApp().preset_bundle->prints.get_edited_preset().config, filament_id);
+    if (Tab* print_tab = wxGetApp().get_tab(Preset::TYPE_PRINT)) {
+        print_tab->reload_config();
+        print_tab->update_dirty();
+    }
 
     // update UI — runs after remap so update_mixed_filament_list() won't clip remapped extruder IDs
     sidebar().on_filaments_delete(filament_id);

@@ -2918,7 +2918,11 @@ as its **Merge with** does (`Sidebar::delete_filament`, `change_filament`).
 | `allow_breaking_mix` | boolean | No | Merge into a mixed slot made of the deleted slot anyway (default false) |
 
 The app renumbers everything after the deleted slot: objects, parts, painted facets, layer ranges,
-support filaments, a plate's filament order, a tool change in the layer list.
+a plate's filament order, a tool change in the layer list, and every setting that names a slot by its
+number -- support, support interface, wipe tower and the per-feature filaments -- in each object and
+part and in the print preset, where one that named the deleted slot becomes the default (0) and the
+preset is left with unsaved changes (probes AO, AQ: upstream renumbered only the plater's own copy, and
+wrote a part's number into its object).
 
 **Returns:**
 ```json

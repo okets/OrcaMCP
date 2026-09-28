@@ -1,6 +1,7 @@
 #ifndef slic3r_GUI_ObjectList_hpp_
 #define slic3r_GUI_ObjectList_hpp_
 
+#include <optional>
 #include <map>
 #include <vector>
 #include <set>
@@ -98,11 +99,21 @@ std::string    get_warning_icon_name(const TriangleMeshStats& stats);
 // by instance 0's offset, so adding a primitive to an object with several instances threw the others off
 // the bed, their rotation and scale applied twice.
 void bake_instance_transform_into_volumes(ModelObject& model_object, bool need_update_assemble_matrix);
-// Orca: the support filaments an object and each of its volumes name, after filament `filament_id`
-// (0-based) is deleted, as ObjectList::update_filament_values_for_items_when_delete_filament renumbers
-// them: one that named it is dropped (the default takes over), a later one moves down one. Upstream wrote
-// a volume's renumbered value into the object's config, leaving the volume on its old number.
-void renumber_support_filaments_after_delete(ModelObject& model_object, size_t filament_id);
+// Orca: the settings besides "extruder" that name a filament slot by its number, 0 meaning the default
+// (the object's own filament): support, support interface, wipe tower, and the per-feature filaments.
+const std::vector<std::string>& filament_number_settings();
+// Orca: a filament number setting of `value` after filament `filament_id` (0-based) is deleted: a later
+// one moves down one, one before it stays, and one that named it is nothing -- the default takes over.
+std::optional<int> filament_number_after_delete(int value, size_t filament_id);
+// Orca: the filament number settings an object and each of its volumes carry, renumbered after filament
+// `filament_id` is deleted, as ObjectList::update_filament_values_for_items_when_delete_filament does: one
+// that named it is dropped. Upstream renumbered the support filaments only, and wrote a volume's
+// renumbered value into the object's config, leaving the volume on its old number.
+void renumber_filament_settings_after_delete(ModelObject& model_object, size_t filament_id);
+// Orca: the same for a preset's config, which keeps every key: one that named the deleted filament is 0.
+// Plater::on_filaments_delete renumbers the print preset the slicer reads with it; upstream renumbered only
+// the plater's own copy, so the preset went on naming the old numbers.
+void renumber_filament_settings_after_delete(DynamicPrintConfig& preset_config, size_t filament_id);
 // The number of recorded repairs the tooltip states: every RepairedMeshErrors field, summed.
 int            repaired_errors_count(const RepairedMeshErrors& errors);
 

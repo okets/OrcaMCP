@@ -1273,6 +1273,7 @@ echo "AM deleting an object removes only its first instance from the plates / th
 echo "AN a plate's spiral vase gives the print preset's differing settings to its first object only (rel2506/12): $(U src/slic3r/GUI/PartPlate.cpp | grep -c 'applying_keys = config.get().diff(new_conf);')"
 echo "AO deleting a filament writes a volume's renumbered support filament into its object's config (rel2506/13): $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/volumes\[id\]->config.opt_int\(key\) > filament_id/{f=1} f&&/object->config.set_key_value\(key, new ConfigOptionInt\(new_value\)\)/{print "yes"; d=1; exit} END{if(!d) print "no"}')"
 echo "AP the physical filament's Merge with checks the menu's unresolved -2 for a mixed filament that lists it, so it never warns (rel2506/13): $(U src/slic3r/GUI/Plater.cpp | awk '/^void Sidebar::change_filament/{f=1} f&&/m_menu_filament_id/{print "no"; d=1; exit} f&&/is_mixed_filament\(from_id\)/{print "yes"; d=1; exit} END{if(!d) print "unknown"}')"
+echo "AQ deleting a filament renumbers the support filaments in the plater's copy of the config only, not in the print preset the slicer reads (rel2506/13): $(U src/slic3r/GUI/Plater.cpp | awk '/^void Plater::on_filaments_delete/{f=1} f&&/prints\.get_edited_preset\(\)/{print "no"; d=1; exit} f&&/^}/{print "yes"; d=1; exit} END{if(!d) print "unknown"}')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -1614,8 +1615,10 @@ Item AO: deleting a filament slot renumbers every filament an object and its vol
 `support_filament` / `support_interface_filament`, upstream computed the new number from the volume and
 wrote it into the object's config: the volume kept pointing at the old slot (now another filament, or
 none past the last) and the object gained a support filament it never had. And a volume on the deleted
-filament kept the old number in its row. Ours renumbers each config in place through the free function
-`renumber_support_filaments_after_delete` (`GUI_ObjectList.cpp`, tested without the app) and labels the
+filament kept the old number in its row, and the per-feature filaments (`outer_wall_filament_id` and the
+rest) an object or part overrides were not renumbered at all. Ours renumbers every filament number
+setting of each config in place through the free function
+`renumber_filament_settings_after_delete` (`GUI_ObjectList.cpp`, tested without the app) and labels the
 row with the filament it moved to. On "no", take upstream's and re-run `slic3rutils_tests "[FilamentSlots]"`.
 
 Item AP: a physical filament slot's "Merge with" menu calls `Sidebar::change_filament(-2, to)`, -2
@@ -1626,6 +1629,17 @@ itself, which is never a component, so it never showed and the mix was broken si
 `delete_filament_slot` asks too. Its `wxMessageBox` is native, so under MCP suppression it is answered
 at its call site (`MCP_PROMPT_MERGE_INTO_MIX`): Cancel unless the tool chose OK. On "no", take
 upstream's and re-run `slic3rutils_tests "[FilamentSlots]"`; keep the suppression branch around the box.
+
+Item AQ: a filament slot's number is also what the print preset's support, support interface, wipe
+tower and per-feature filaments (`outer_wall_filament_id` and the rest) hold. Deleting a slot,
+`Plater::on_filaments_delete` renumbered the support two in the plater's own copy of the config
+(`p->config`) only, while the slicer reads the print preset (`PresetBundle::full_config`): a setting
+that named the deleted slot went on naming the next filament, a later one the one after it, and one
+that now fell on a mixed slot was reset to the default (`ConfigManipulation`'s check). Ours renumbers
+every filament number setting there and in the print preset (`renumber_filament_settings_after_delete`,
+0 for the deleted one, which leaves the preset unsaved), and in each object and volume (item AO). On
+"no", take upstream's and re-run `slic3rutils_tests "[FilamentSlots]"`, then delete a slot the print
+preset's support filament names.
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices
