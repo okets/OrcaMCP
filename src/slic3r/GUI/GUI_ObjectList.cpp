@@ -822,17 +822,8 @@ void ObjectList::update_filament_values_for_items_when_delete_filament(const siz
         }
         m_objects_model->SetExtruder(extruder, item);
 
-        static const char *keys[] = {"support_filament", "support_interface_filament"};
-        for (auto key : keys) {
-            if (object->config.has(key)) {
-                if(object->config.opt_int(key) == filament_id + 1)
-                    object->config.erase(key);
-                else {
-                    int new_value = object->config.opt_int(key) > filament_id ? object->config.opt_int(key) - 1 : object->config.opt_int(key);
-                    object->config.set_key_value(key, new ConfigOptionInt(new_value));
-                }
-            }
-        }
+        // Orca: the object's and every volume's support filaments, each in its own config.
+        renumber_support_filaments_after_delete(*object, filament_id);
 
         //if (object->volumes.size() > 1) {
             for (size_t id = 0; id < object->volumes.size(); id++) {
@@ -840,22 +831,11 @@ void ObjectList::update_filament_values_for_items_when_delete_filament(const siz
                 if (!item)
                     continue;
 
-                for (auto key : keys) {
-                    if (object->volumes[id]->config.has(key)) {
-                        if (object->volumes[id]->config.opt_int(key) == filament_id + 1)
-                            object->volumes[id]->config.erase(key);
-                        else {
-                            int new_value = object->volumes[id]->config.opt_int(key) > filament_id ? object->volumes[id]->config.opt_int(key) - 1 :
-                                                                                                     object->volumes[id]->config.opt_int(key);
-                            object->config.set_key_value(key, new ConfigOptionInt(new_value));
-                        }
-                    }
-                }
-
                 if (!object->volumes[id]->config.has("extruder")) {
                     continue;
                 }
                 else if (size_t(object->volumes[id]->config.extruder()) == filament_id + 1) {
+                    extruder = wxString::Format("%d", replace_filament_id); // Orca: the row shows the filament it now has
                     object->volumes[id]->config.set_key_value("extruder", new ConfigOptionInt(replace_filament_id));
                 } else {
                     int new_extruder = object->volumes[id]->config.extruder() > filament_id ? object->volumes[id]->config.extruder() - 1 : object->volumes[id]->config.extruder();
@@ -7024,6 +7004,24 @@ void ObjectList::apply_object_instance_transfrom_to_all_volumes(ModelObject *mod
 
     // update the cache data in selection to keep the data of ModelVolume and GLVolume are consistent
     wxGetApp().plater()->update();
+}
+
+void renumber_support_filaments_after_delete(ModelObject& model_object, size_t filament_id)
+{
+    auto renumber = [filament_id](ModelConfigObject& config) {
+        for (const char* key : {"support_filament", "support_interface_filament"}) {
+            if (!config.has(key))
+                continue;
+            const int value = config.opt_int(key);
+            if (value == int(filament_id) + 1)
+                config.erase(key);
+            else if (value > int(filament_id))
+                config.set_key_value(key, new ConfigOptionInt(value - 1));
+        }
+    };
+    renumber(model_object.config);
+    for (ModelVolume* volume : model_object.volumes)
+        renumber(volume->config);
 }
 
 void bake_instance_transform_into_volumes(ModelObject& model_object, bool need_update_assemble_matrix)

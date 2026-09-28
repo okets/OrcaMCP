@@ -98,6 +98,11 @@ std::string    get_warning_icon_name(const TriangleMeshStats& stats);
 // by instance 0's offset, so adding a primitive to an object with several instances threw the others off
 // the bed, their rotation and scale applied twice.
 void bake_instance_transform_into_volumes(ModelObject& model_object, bool need_update_assemble_matrix);
+// Orca: the support filaments an object and each of its volumes name, after filament `filament_id`
+// (0-based) is deleted, as ObjectList::update_filament_values_for_items_when_delete_filament renumbers
+// them: one that named it is dropped (the default takes over), a later one moves down one. Upstream wrote
+// a volume's renumbered value into the object's config, leaving the volume on its old number.
+void renumber_support_filaments_after_delete(ModelObject& model_object, size_t filament_id);
 // The number of recorded repairs the tooltip states: every RepairedMeshErrors field, summed.
 int            repaired_errors_count(const RepairedMeshErrors& errors);
 

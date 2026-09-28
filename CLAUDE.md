@@ -1266,6 +1266,7 @@ echo "AK adding a primitive part or modifier resets only instance 0 and moves ev
 echo "AL the object list's re-listing clears a copy of an object's row map / the maps stay under an object's index when it is deleted or moved (rel2506/11; 0 = bug for the second): $(U src/slic3r/GUI/GUI_ObjectList.cpp | grep -c 'for (auto item : ui_and_3d_volume_map)') / $(U src/slic3r/GUI/ObjectDataViewModel.cpp | grep -c 'ui_and_3d_volume_map')"
 echo "AM deleting an object removes only its first instance from the plates / the object list's instance delete / its delete of every instance but the first tell the plates nothing (rel2506/12; 0 = bug for the second): $(U src/slic3r/GUI/PartPlate.cpp | awk '/^int PartPlateList::notify_instance_removed/{f=1} f&&/remove_object_instances|for \(.*instance.*<.*instances/{print "no"; exit} f&&/update_object_index/{print "yes"; exit}') / $(U src/slic3r/GUI/GUI_ObjectList.cpp | grep -A10 'else if (type == itInstance) {' | grep -c 'partplate_list') / $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^void ObjectList::del_instances_from_object/{f=1} f&&/partplate_list/{print "no"; exit} f&&/^}/{print "yes"; exit}')"
 echo "AN a plate's spiral vase gives the print preset's differing settings to its first object only (rel2506/12): $(U src/slic3r/GUI/PartPlate.cpp | grep -c 'applying_keys = config.get().diff(new_conf);')"
+echo "AO deleting a filament writes a volume's renumbered support filament into its object's config (rel2506/13): $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/volumes\[id\]->config.opt_int\(key\) > filament_id/{f=1} f&&/object->config.set_key_value\(key, new ConfigOptionInt\(new_value\)\)/{print "yes"; d=1; exit} END{if(!d) print "no"}')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -1601,6 +1602,15 @@ after the first object the list held only that object's own, and every later obj
 infill on a vase plate. Ours keeps the two apart (`PartPlate::apply_vase_mode_object_config`, with the
 settings in `PartPlate::vase_mode_object_config`, which MCP's `set_plate_settings` reports from). On 0, take
 upstream's and re-run `slic3rutils_tests "[PlateInstances]"`.
+
+Item AO: deleting a filament slot renumbers every filament an object and its volumes name
+(`ObjectList::update_filament_values_for_items_when_delete_filament`). For a volume's
+`support_filament` / `support_interface_filament`, upstream computed the new number from the volume and
+wrote it into the object's config: the volume kept pointing at the old slot (now another filament, or
+none past the last) and the object gained a support filament it never had. And a volume on the deleted
+filament kept the old number in its row. Ours renumbers each config in place through the free function
+`renumber_support_filaments_after_delete` (`GUI_ObjectList.cpp`, tested without the app) and labels the
+row with the filament it moved to. On "no", take upstream's and re-run `slic3rutils_tests "[FilamentSlots]"`.
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices
