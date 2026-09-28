@@ -11,6 +11,8 @@
 #include "OrcaMCPConfigKeys.hpp"
 #include "OrcaMCPConfigValues.hpp"
 #include "OrcaMCPFilamentUtils.hpp"
+#include "OrcaMCPPresetInstall.hpp"
+#include "slic3r/Utils/ThreadCancel.hpp"
 #include "OrcaMCPGcodeCheck.hpp"
 #include "OrcaMCPLayerRanges.hpp"
 #include "OrcaMCPSliceEstimate.hpp"
@@ -431,6 +433,62 @@ void report_project_rename(nlohmann::json& response, std::vector<std::string>& i
 }
 
 // select_preset's work, success or failure alike; the caller adds what suppressed dialogs said.
+// The printers of `vendors` (not installed) as shipped, read on this thread as the Setup Wizard reads them
+// off the GUI thread; a vendor that cannot be read is left out, its error in `errors`.
+std::vector<CatalogPrinter> shipped_printers_of(const std::vector<std::string>& vendors, std::vector<std::string>& errors)
+{
+    std::vector<CatalogPrinter> printers;
+    for (const std::string& vendor : vendors) {
+        if (this_thread_cancelled())
+            break;
+        std::string error;
+        if (auto shipped = shipped_vendor_printers(vendor, error))
+            printers.insert(printers.end(), shipped->begin(), shipped->end());
+        else
+            errors.push_back(error);
+    }
+    return printers;
+}
+
+// get_presets {installed: false}: what the Setup Wizard offers and install_presets installs.
+nlohmann::json not_installed_presets(const nlohmann::json& params)
+{
+    PresetQuery query;
+    query.vendor        = params.value("vendor", std::string());
+    query.name_contains = params.value("name_contains", std::string());
+    if (params.contains("summary") && !parse_boolean_param(params["summary"], query.summary))
+        return error_response("summary must be a boolean");
+    if (!query.summary)
+        return error_response("summary: false lists the settings of installed presets; installed: false lists names only. "
+                              "Install one first (install_presets), then read its settings");
+    if (const std::string limit_error = parse_preset_limit_param(params, query.limit); !limit_error.empty())
+        return error_response(limit_error);
+    std::string type = params.value("type", std::string());
+    if (type == "all")
+        type.clear();
+    if (!type.empty() && type != "printer" && type != "filament")
+        return error_response("installed: false lists printers and filaments: type must be printer, filament or all");
+
+    std::vector<CatalogPrinter>  printers;
+    std::vector<CatalogFilament> filaments;
+    run_on_main_thread([&printers, &filaments]() {
+        printers  = catalog_printers(*wxGetApp().preset_bundle);
+        filaments = catalog_filaments(*wxGetApp().preset_bundle);
+        return nlohmann::json();
+    });
+    const std::vector<std::string> vendors = uninstalled_vendors();
+    std::vector<std::string>       errors;
+    if ((type.empty() || type == "printer") && !query.vendor.empty()) {
+        const std::vector<CatalogPrinter> shipped = shipped_printers_of(vendors_to_search(vendors, query.vendor, {}), errors);
+        printers.insert(printers.end(), shipped.begin(), shipped.end());
+    }
+    nlohmann::json result = not_installed_json(printers, filaments, vendors, type, query);
+    result["status"]      = "success";
+    if (!errors.empty())
+        result["errors"] = errors;
+    return result;
+}
+
 nlohmann::json select_preset_now(const std::string& type, const std::string& name, int slot, bool has_slot)
 {
     // Without a slot, the Filament settings would switch alone: with several physical slots none of them
@@ -1005,7 +1063,10 @@ void OrcaMCPServer::register_builtin_tools()
         "List presets; filter by type/vendor/name",
         "List the printer, filament and print presets available for the selected printer. "
         "Returns names and identifying fields only; pass summary:false for full configs. "
-        "Capped per type (default 25) -- narrow it with type/vendor/name_contains, or raise limit.",
+        "Capped per type (default 25) -- narrow it with type/vendor/name_contains, or raise limit. "
+        "installed: false lists instead what the Setup Wizard offers and install_presets installs: printers "
+        "(each a model and nozzle) of the installed vendors not yet installed, of a vendor not installed when "
+        "vendor names it (vendors_not_installed lists them), and filaments not installed that suit the selected printer.",
         {
             {"type", "object"},
             {"properties", {
@@ -1034,10 +1095,20 @@ void OrcaMCPServer::register_builtin_tools()
                     {"description", "Max presets per type. Default 25 with summary, 5 without. "
                                     "0 = no cap (the unfiltered summary list is ~54,600 characters "
                                     "and overflows most MCP clients)."}
+                }},
+                {"installed", {
+                    {"type", "boolean"},
+                    {"description", "true (default): the presets installed. false: printers and filaments not installed "
+                                    "yet, which install_presets installs (names only; type printer or filament)."}
                 }}
             }}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
+            bool installed = true;
+            if (params.contains("installed") && !parse_boolean_param(params["installed"], installed))
+                return error_response("installed must be a boolean");
+            if (!installed)
+                return not_installed_presets(params);
             PresetQuery query;
             query.vendor = params.value("vendor", std::string());
             query.name_contains = params.value("name_contains", std::string());
@@ -1599,6 +1670,101 @@ void OrcaMCPServer::register_builtin_tools()
                     response["info_messages"] = info_messages;
                 }
                 return response;
+            });
+        }
+    });
+
+    // install_presets - The Setup Wizard's install of printers and filaments not yet installed
+    register_tool({
+        "install_presets",
+        ToolCategory::Config,
+        "Install printer or filament presets",
+        "Install printer and filament presets the user has not installed, as the Setup Wizard does: a printer's "
+        "vendor profiles are laid into the app's data folder when its vendor is not installed yet, and its model "
+        "and nozzle are enabled; a filament is enabled. Names as get_presets {installed: false} lists them; a printer "
+        "of a vendor whose folder does not begin its name (Bambu Lab's is BBL) needs vendor. Every preset is reloaded "
+        "and the selected printer, filament slots and colours stay as they were (selection_kept); a printer is not "
+        "selected: next_steps names select_preset. Answers installed, already_installed, vendors_added, "
+        "filaments_enabled (the filaments the app enables with a new printer too) and project_settings_changed. "
+        "Refused while slicing, while a job runs, and over unsaved preset changes, which the reload would drop "
+        "(save_preset or reset_preset first). Not undoable: it writes the data folder.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"printers", {{"type", "array"}, {"items", {{"type", "string"}}}, {"description", "Printer preset names, e.g. \"Flashforge AD5X 0.4 nozzle\""}}},
+                {"filaments", {{"type", "array"}, {"items", {{"type", "string"}}}, {"description", "Filament preset names"}}},
+                {"vendor", {{"type", "string"}, {"description", "The vendor of printers not installed, when its folder does not begin their names (e.g. \"BBL\")"}}}
+            }}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            std::vector<std::string> printers, filaments;
+            for (const auto& [key, names] : {std::pair<const char*, std::vector<std::string>*>{"printers", &printers}, {"filaments", &filaments}}) {
+                if (!params.contains(key))
+                    continue;
+                if (!params[key].is_array())
+                    return error_response(std::string(key) + " must be an array of preset names");
+                for (const nlohmann::json& name : params[key]) {
+                    if (!name.is_string() || name.get<std::string>().empty())
+                        return error_response(std::string(key) + " must be an array of preset names; got " + name.dump());
+                    names->push_back(name.get<std::string>());
+                }
+            }
+            if (printers.empty() && filaments.empty())
+                return error_response("install_presets needs something to install: printers or filaments (preset names, as "
+                                      "get_presets {installed: false} lists them)");
+            std::optional<std::string> vendor;
+            if (params.contains("vendor")) {
+                if (!params["vendor"].is_string() || params["vendor"].get<std::string>().empty())
+                    return error_response("vendor must be a vendor's name or folder, e.g. \"BBL\"");
+                vendor = params["vendor"].get<std::string>();
+            }
+
+            // What is installed, and whether an install may go on, from the app.
+            std::optional<std::string>   refusal;
+            std::vector<CatalogPrinter>  known_printers;
+            std::vector<CatalogFilament> known_filaments;
+            auto read_app = [&]() {
+                Plater& plater  = *wxGetApp().plater();
+                refusal         = install_refusal(pipeline_state(plater, plater.get_partplate_list().get_plate_count()),
+                                                  !plater.get_ui_job_worker().is_idle(), OrcaMCPPresetConfigUtils::UnsavedPresetChanges());
+                known_printers  = catalog_printers(*wxGetApp().preset_bundle);
+                known_filaments = catalog_filaments(*wxGetApp().preset_bundle);
+                return nlohmann::json();
+            };
+            run_on_main_thread(read_app);
+            if (refusal)
+                return error_response(*refusal);
+
+            // Printers no installed vendor has: read the vendors the names (or vendor) point to as shipped, on
+            // this thread, as the Setup Wizard reads them off the GUI thread.
+            std::vector<std::string> unresolved;
+            for (const std::string& name : printers)
+                if (std::none_of(known_printers.begin(), known_printers.end(), [&name](const CatalogPrinter& p) { return p.name == name; }))
+                    unresolved.push_back(name);
+            std::vector<std::string> errors;
+            if (!unresolved.empty()) {
+                const std::vector<CatalogPrinter> shipped = shipped_printers_of(vendors_to_search(uninstalled_vendors(), vendor, unresolved), errors);
+                known_printers.insert(known_printers.end(), shipped.begin(), shipped.end());
+            }
+
+            PresetInstallPlan plan;
+            if (const auto unknown = plan_preset_install(printers, filaments, known_printers, known_filaments, plan)) {
+                nlohmann::json answer = error_response(*unknown);
+                if (!errors.empty())
+                    answer["errors"] = errors;
+                return answer;
+            }
+            if (!plan.installs_anything())
+                return {{"status", "success"}, {"changed", false}, {"already_installed", plan.already_installed}};
+
+            return run_on_main_thread([plan]() -> nlohmann::json {
+                McpDialogSuppressionGuard guard;
+                // Checked again where the install runs: the app may have started a slice or a job meanwhile.
+                Plater& plater = *wxGetApp().plater();
+                if (const auto refusal = install_refusal(pipeline_state(plater, plater.get_partplate_list().get_plate_count()),
+                                                         !plater.get_ui_job_worker().is_idle(), OrcaMCPPresetConfigUtils::UnsavedPresetChanges()))
+                    return error_response(*refusal);
+                return guard.report(OrcaMCPPresetConfigUtils::InstallPresets(plan));
             });
         }
     });

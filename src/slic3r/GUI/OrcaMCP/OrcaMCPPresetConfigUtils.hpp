@@ -31,6 +31,8 @@ private:
 // PlaterPresetComboBox::sync_colour_config).
 const std::vector<std::string>& filament_colour_keys();
 
+struct PresetInstallPlan;
+
 } // namespace OrcaMCP
 
 // What get_presets was asked for. The full preset list with every config key is ~1.9 MB, which no
@@ -228,6 +230,12 @@ public:
     // and that the preset exists as a filament preset compatible with the selected printer;
     // returns false with `error` set and nothing changed otherwise. Main thread only.
     static bool SelectFilamentSlotPreset(int slot, const std::string& presetName, std::string& error);
+    // The presets with unsaved changes, one line each: "the print preset '0.20mm Standard' (layer_height, ...)".
+    static std::vector<std::string> UnsavedPresetChanges();
+    // Installs `plan` as the Setup Wizard's Finish does (PresetBundle::apply_vendor_config, in the merge mode
+    // the cloud sync uses, then what GUI_App::run_wizard runs after it) and answers install_presets. Call only
+    // after install_refusal passed. Main thread.
+    static nlohmann::json InstallPresets(const OrcaMCP::PresetInstallPlan& plan);
     // Why `presetName` cannot go in a filament slot: no filament preset of that name, or one the selected
     // printer does not take. Empty when it can.
     static std::string FilamentSlotPresetError(const std::string& presetName);

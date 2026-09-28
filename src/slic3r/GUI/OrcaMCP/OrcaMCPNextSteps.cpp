@@ -312,6 +312,19 @@ std::vector<NextStep> vase_settings_next_steps(const std::vector<int>& object_id
              {{"object_id", object_ids.front()}, {"keys", first_keys}}}};
 }
 
+std::vector<NextStep> installed_printer_next_steps(const std::vector<std::string>& printers)
+{
+    if (printers.empty())
+        return {};
+    std::string names;
+    for (size_t i = 0; i < printers.size(); ++i)
+        names += (i == 0 ? "'" : i + 1 == printers.size() ? " and '" : ", '") + printers[i] + "'";
+    return {{"select_preset",
+             names + (printers.size() == 1 ? " is" : " are") +
+                 " installed, not selected: this selects the first; its filament slots and colours come with it",
+             {{"type", "printer"}, {"name", printers.front()}}}};
+}
+
 std::vector<NextStep> missing_slot_next_steps(const std::vector<int>& missing_slots, bool slots_can_be_added)
 {
     if (missing_slots.empty() || !slots_can_be_added)

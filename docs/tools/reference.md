@@ -1656,6 +1656,7 @@ boxes show: visible presets compatible with the current printer, system and user
 | `name_contains` | string | No | Only presets whose name contains this (case-insensitive) |
 | `summary` | boolean | No | Default `true`: identifying fields only. `false` adds every config key of every match. |
 | `limit` | integer | No | Max presets per type. Default 25 with `summary`, 5 without. `0` = no cap. |
+| `installed` | boolean | No | Default `true`: the presets installed. `false`: what is not installed yet, which `install_presets` installs (see below) |
 
 **Why it is capped and summarised:** the unfiltered full-config response is ~1.9 MB and the
 unfiltered `summary` response is still ~54,600 characters — both over an MCP client's per-result
@@ -1721,6 +1722,84 @@ them, so material searches do not need the full config.
   "hint": "Showing 25 of 318 filamentPresets. Narrow it with type, vendor or name_contains, raise limit, or pass limit: 0 for the whole list."
 }
 ```
+
+**Not installed (`installed: false`):** what the Setup Wizard's printer and filament pages offer, and
+`install_presets` installs:
+- printers of the vendors installed whose model and nozzle are not enabled;
+- printers of a vendor not installed at all, when `vendor` names it (its folder or its name, a part of
+  either): `vendors_not_installed` lists those vendors. Their profiles are read as shipped, off the
+  app's main thread, as the wizard reads them;
+- filaments of the vendors installed (the Orca filament library among them) not enabled that suit the
+  selected printer. A vendor's own filaments come with its printer.
+
+`type` is `printer`, `filament` or `all`; `summary: false` is refused (install one to read its
+settings). Each entry says what `install_presets` needs:
+
+```json
+{
+  "status": "success",
+  "printerPresets": [{"name": "Flashforge AD5X 0.6 nozzle", "vendor": "Flashforge", "vendor_id": "Flashforge",
+                      "printer_model": "Flashforge AD5X", "nozzle": "0.6", "installed": false}],
+  "vendors_not_installed": ["Anker", "Anycubic", "BBL", "..."],
+  "filamentPresets": [{"name": "Generic PETG HF @System", "vendor": "Generic", "filament_type": "PETG", "installed": false}],
+  "query": {"type": null, "installed": false, "vendor": "", "name_contains": "", "limit": 25,
+            "counts": {"printerPresets": 3, "filamentPresets": 41}, "returned": {"printerPresets": 3, "filamentPresets": 25},
+            "truncated": true},
+  "hint": "Showing 25 of 41 filamentPresets. ... Printers of a vendor not installed (vendors_not_installed) are listed when vendor names it. install_presets installs them by name."
+}
+```
+
+---
+
+### install_presets
+Install printer and filament presets the user has not installed, as the Setup Wizard does, without its
+window. A printer's vendor profiles are laid into the app's data folder (`system/<vendor>`) when its
+vendor is not installed yet, and its model and nozzle are enabled in the app config; a filament is
+enabled. The install is the wizard's own, `PresetBundle::apply_vendor_config`, in the merge mode the
+cloud sync uses (it adds to what is installed and removes nothing), followed by what the wizard's Finish
+runs: every preset reloaded, the preset tabs and selectors refreshed, the app config saved.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `printers` | string[] | No | Printer preset names, as `get_presets {installed: false}` lists them |
+| `filaments` | string[] | No | Filament preset names |
+| `vendor` | string | No | The vendor of printers not installed, when its folder does not begin their names (Bambu Lab's is `BBL`) |
+
+At least one name is needed. A printer of a vendor that is not installed is found among the vendors
+whose folder begins its name, or the one `vendor` names.
+
+**Returns:**
+```json
+{
+  "status": "success", "changed": true,
+  "installed": {"printers": [{"name": "Anker M5 0.4 nozzle", "vendor": "Anker", "vendor_id": "Anker",
+                              "printer_model": "Anker M5", "nozzle": "0.4", "installed": true}],
+                "filaments": []},
+  "already_installed": [],
+  "vendors_added": ["Anker"],
+  "filaments_enabled": ["Generic PLA @System"],
+  "selected_printer": "Flashforge Creator 5 Pro 0.4 nozzle",
+  "selection_kept": true,
+  "project_settings_changed": [],
+  "filaments": [...],
+  "next_steps": [{"tool": "select_preset", "arguments": {"type": "printer", "name": "Anker M5 0.4 nozzle"},
+                  "why": "'Anker M5 0.4 nozzle' is installed, not selected: ..."}]
+}
+```
+`filaments_enabled` is every filament the app enabled, the ones the app adds with a new printer (its
+default materials) too. The printer is not selected, unlike the wizard's Finish: a switch replaces the
+filament slots and their colours, so it is its own call (`next_steps`). `selection_kept` and
+`project_settings_changed` say whether the reload left the selection and the project's settings as they
+were. A call that names only what is installed changes nothing: `changed: false`, `already_installed`.
+
+Refused, installing nothing: no names; a name no catalog has (the message says where to look); while
+slicing or exporting (`wait_for_slice` first) or while an arrange, orient or bed fill runs; over unsaved
+preset changes, which the reload would drop (the message names each preset and its changed settings:
+`save_preset` keeps them, `reset_preset` drops them) -- the wizard asks about them first. There is no
+undo: it writes the data folder. Creating a new printer or filament preset from a template (the
+sidebar's Create printer / Create filament) is not an MCP tool yet: `clone_preset`, `apply_config` and
+`save_preset` make a printer of one installed.
 
 ---
 
@@ -3738,6 +3817,7 @@ nothing to suggest has no `next_steps`.
 | `fill_bed_with_instances` | `arrange_objects` with `all_plates: true`, and `set_instance_count` (the last instances) or `delete_object` with the highest `instance_id` | the fill added instances its plate's arrange could not fit, which stand on no plate (`instances_on_no_plate`) |
 | `set_plate_settings` | `arrange_objects` with that `plate_index` | the plate now prints by object |
 | | `reset_object_config` with the first object and the vase settings it carries (`why` names every object) | the plate's spiral vase was on and is off, and objects on it still carry the vase's object settings |
+| `install_presets` | `select_preset` with `type: printer` and the first printer it installed | it installed printers: an install selects none |
 | `match_project_to_printer` (live) | `add_filament_slot` | the printer holds filament in a station slot the project has no filament slot for, and the printer takes more slots |
 | `printer_control` with a `set_*` action | `get_printer_status` | always: the printer takes a moment to apply a command, and `printer.controls` reads back what it now reports |
 | The bridge's own answers (`list_instances`, `start_orca`, and a tool call it did not forward) | `select_instance` with the `pid` of the first instance that tells who it is (never an older OrcaMCP, which cannot), and `list_instances` | several instances run and this session has not chosen one, or the one it used is gone |

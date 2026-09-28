@@ -3,14 +3,19 @@
 #include "OrcaMCPConfigValues.hpp"
 #include "OrcaMCPFilamentUtils.hpp"
 #include "OrcaMCPPlateSettings.hpp"
+#include "OrcaMCPNextSteps.hpp"
+#include "OrcaMCPPresetInstall.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
+#include "slic3r/GUI/MainFrame.hpp"
 #include "slic3r/GUI/Tab.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/PresetComboBoxes.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/GUI/Jobs/OrientJob.hpp"
 #include "libslic3r/PrintConfig.hpp"
+#include "libslic3r/AppConfig.hpp"
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/Utils.hpp"
 
 #include <algorithm>
 #include <boost/algorithm/string/classification.hpp>
@@ -749,6 +754,88 @@ nlohmann::json OrcaMCPPresetConfigUtils::SelectPrinterPreset(const std::string& 
             {"printer", target},
             {"colors_source", summarize_color_sources(sources)},
             {"filaments", std::move(filaments)}};
+}
+
+std::vector<std::string> OrcaMCPPresetConfigUtils::UnsavedPresetChanges()
+{
+    PresetBundle&            bundle = *wxGetApp().preset_bundle;
+    std::vector<std::string> unsaved;
+    for (const auto& [what, presets] : {std::pair<const char*, PresetCollection*>{"print", &bundle.prints},
+                                        {"filament", &bundle.filaments},
+                                        {"printer", &bundle.printers}}) {
+        if (!presets->current_is_dirty())
+            continue;
+        const std::vector<std::string> keys = presets->current_dirty_options(presets->type() == Preset::TYPE_PRINTER);
+        std::string                    listed;
+        for (size_t i = 0; i < keys.size() && i < 6; ++i)
+            listed += (i == 0 ? "" : ", ") + keys[i];
+        if (keys.size() > 6)
+            listed += " and " + std::to_string(keys.size() - 6) + " more";
+        unsaved.push_back(std::string("the ") + what + " preset '" + presets->get_edited_preset().name + "'" +
+                          (listed.empty() ? std::string() : " (" + listed + ")"));
+    }
+    return unsaved;
+}
+
+nlohmann::json OrcaMCPPresetConfigUtils::InstallPresets(const OrcaMCP::PresetInstallPlan& plan)
+{
+    GUI_App&      app    = wxGetApp();
+    PresetBundle& bundle = *app.preset_bundle;
+    AppConfig&    config = *app.app_config;
+    auto filament_section = [&config]() {
+        return config.has_section(AppConfig::SECTION_FILAMENTS) ? config.get_section(AppConfig::SECTION_FILAMENTS)
+                                                                : std::map<std::string, std::string>();
+    };
+
+    const std::string                        printer_before   = bundle.printers.get_selected_preset_name();
+    const std::vector<std::string>           slots_before     = bundle.filament_presets;
+    const DynamicPrintConfig                 project_before   = bundle.project_config;
+    const std::map<std::string, std::string> filaments_before = filament_section();
+    std::vector<std::string>                 vendors_added;
+    for (const auto& [vendor, models] : plan.vendors)
+        if (!is_vendor_installed(vendor))
+            vendors_added.push_back(vendor);
+
+    // As the Setup Wizard does before it opens: the reload that ends the install restores the selections
+    // from the app config.
+    bundle.export_selections(config);
+    if (!bundle.apply_vendor_config(plan.vendors, plan.filaments, &config, /*overwrite=*/false))
+        return {{"status", "error"},
+                {"message", "The app could not lay a vendor's profiles into its data folder (its log says why); nothing was installed"}};
+    // What the Setup Wizard's Finish runs after (GUI_App::run_wizard), and the save the cloud sync makes.
+    app.load_current_presets();
+    app.update_publish_status();
+    app.mainframe->refresh_plugin_tips();
+    config.save();
+
+    nlohmann::json printers = nlohmann::json::array();
+    for (const OrcaMCP::CatalogPrinter& printer : plan.printers) {
+        OrcaMCP::CatalogPrinter now = printer;
+        const Preset*           preset = bundle.printers.find_preset(printer.name, false);
+        now.installed                  = preset != nullptr && preset->is_visible;
+        printers.push_back(OrcaMCP::catalog_printer_json(now));
+    }
+    nlohmann::json filaments_enabled = nlohmann::json::array();
+    for (const auto& [name, value] : filament_section())
+        if (filaments_before.count(name) == 0)
+            filaments_enabled.push_back(name);
+
+    nlohmann::json answer = {{"status", "success"},
+                             {"changed", true},
+                             {"installed", {{"printers", printers}, {"filaments", plan.filament_names}}},
+                             {"already_installed", plan.already_installed},
+                             {"vendors_added", vendors_added},
+                             {"filaments_enabled", filaments_enabled},
+                             {"selected_printer", bundle.printers.get_selected_preset_name()},
+                             {"selection_kept", printer_before == bundle.printers.get_selected_preset_name() &&
+                                                    slots_before == bundle.filament_presets},
+                             {"project_settings_changed", project_before.diff(bundle.project_config)},
+                             {"filaments", OrcaMCP::describe_filaments()["filaments"]}};
+    std::vector<std::string> printer_names;
+    for (const OrcaMCP::CatalogPrinter& printer : plan.printers)
+        printer_names.push_back(printer.name);
+    OrcaMCP::add_next_steps(answer, OrcaMCP::installed_printer_next_steps(printer_names));
+    return answer;
 }
 
 std::string OrcaMCPPresetConfigUtils::FilamentSlotPresetError(const std::string& presetName)

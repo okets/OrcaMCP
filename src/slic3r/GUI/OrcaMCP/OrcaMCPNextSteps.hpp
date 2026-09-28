@@ -126,6 +126,11 @@ std::vector<NextStep> printer_control_next_steps();
 // slots the project has no filament slot for (`missing_slots`, 1-based): add_filament_slot, which adds one
 // slot per call, on a printer that takes more slots (`slots_can_be_added`); nothing on one whose slots
 // follow its extruders.
+// What install_presets' answer leads to when it installed printers (`printers`, their names): select_preset
+// of the first, since an install enables them without selecting one -- the Setup Wizard selects the new
+// printer, and a switch changes the filament slots and their colours, so it is left to its own call.
+std::vector<NextStep> installed_printer_next_steps(const std::vector<std::string>& printers);
+
 std::vector<NextStep> missing_slot_next_steps(const std::vector<int>& missing_slots, bool slots_can_be_added);
 
 }} // namespace GUI::OrcaMCP
