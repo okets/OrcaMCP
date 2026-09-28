@@ -833,7 +833,7 @@
     },
     {
       "category": "Scene",
-      "description": "Save the project to a 3MF at output_path, like the GUI's Save As: the project is then named after that file, so a later save_project without output_path overwrites it. save_project with output_path does the same.",
+      "description": "Save the project to a 3MF at output_path, like the GUI's Save As: the project is then named after that file and marked saved, so a later save_project without output_path overwrites it, and quitting finds nothing unsaved. save_project with output_path does the same. A save that fails leaves the name.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {

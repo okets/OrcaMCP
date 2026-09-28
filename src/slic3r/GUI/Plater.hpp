@@ -391,6 +391,9 @@ public:
     // BBS: save & backup
     void load_project(wxString const & filename = "", wxString const & originfile = "-");
     int save_project(bool saveAs = false);
+    // Orca: Save's steps after its file dialog, to `filename`: the 3MF written, the project named after it, its backup
+    // removed and it marked saved. wxID_YES when written.
+    int save_project_as(const wxString& filename);
     //BBS download project by project id
     void import_model_id(wxString download_info);
     void download_project(const wxString& project_id);

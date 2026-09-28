@@ -15718,7 +15718,12 @@ int Plater::save_project(bool saveAs)
         return wxID_NO;
     if (filename == "<cancel>")
         return wxID_CANCEL;
+    return save_project_as(filename);
+}
 
+// Orca: the rest of save_project, after its file dialog, unchanged: MCP's save_project and export_3mf save through it.
+int Plater::save_project_as(const wxString& filename)
+{
     //BBS export 3mf without gcode
     auto save_strategy = SaveStrategy::SplitModel | SaveStrategy::ShareMesh;
     bool full_pathnames = wxGetApp().app_config->get_bool("export_sources_full_pathnames");

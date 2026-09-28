@@ -280,6 +280,29 @@ std::vector<OrcaMCP::SliceRunPlate> slice_run_plates(PartPlateList& plate_list)
     return plates;
 }
 
+// Why `target` cannot be where a project is saved, or nullopt: it must be a .3mf.
+std::optional<std::string> project_path_refusal(const std::string& target)
+{
+    if (!boost::iends_with(target, ".3mf"))
+        return "output_path must end in .3mf, got \"" + target + "\"";
+    return std::nullopt;
+}
+
+// The GUI's Save As to `target`, less its file dialog (Plater::save_project_as): the 3MF written, the project named
+// after it, its backup removed and it marked saved, as the GUI's Save leaves it. save_project and export_3mf both
+// save through it. The project is named only once the file is written.
+struct ProjectSaved
+{
+    bool saved   = false;
+    bool renamed = false; // the project took target's name
+};
+ProjectSaved save_project_to(Plater& plater, const std::string& target)
+{
+    const std::string before = into_u8(plater.get_project_filename(".3mf"));
+    const bool        saved  = plater.save_project_as(wxString::FromUTF8(target)) == wxID_YES;
+    return {saved, saved && target != before};
+}
+
 // The app's words for why its own validation refused the selected plate, the one reslice() works on, or
 // nullopt when it did not or has none now. The verdict is the plate's (PartPlate::is_apply_result_invalid,
 // which update_background_process sets as it validates); the words are the app's validation of it, whose
@@ -3525,8 +3548,8 @@ void OrcaMCPServer::register_builtin_tools()
         ToolCategory::Scene,
         "Save the project as a 3MF (Save As)",
         "Save the project to a 3MF at output_path, like the GUI's Save As: the project is then named after "
-        "that file, so a later save_project without output_path overwrites it. save_project with "
-        "output_path does the same.",
+        "that file and marked saved, so a later save_project without output_path overwrites it, and quitting "
+        "finds nothing unsaved. save_project with output_path does the same. A save that fails leaves the name.",
         {
             {"type", "object"},
             {"properties", {
@@ -3545,50 +3568,37 @@ void OrcaMCPServer::register_builtin_tools()
                 // Enable dialog suppression to capture any error messages
                 McpDialogSuppressionGuard suppression_guard;
 
-                nlohmann::json result;
+                if (output_path.empty()) {
+                    // File dialogs are modal and would block the GUI thread for as long as the MCP call waits, so
+                    // require an explicit path instead.
+                    return nlohmann::json{{"status", "error"}, {"message", "output_path is required: file dialogs cannot be opened from MCP."}};
+                }
+                if (const auto refusal = project_path_refusal(output_path))
+                    return nlohmann::json{{"status", "error"}, {"message", *refusal}};
 
-                if (!output_path.empty()) {
-                    if (!boost::iends_with(output_path, ".3mf")) {
-                        return nlohmann::json{{"status", "error"},
-                                              {"message", "output_path must end in .3mf, got \"" + output_path + "\""}};
-                    }
-                    const std::string name_before = into_u8(plater->get_project_filename(".3mf"));
-
-                    // Silent export with path
-                    int export_result = plater->export_3mf(boost::filesystem::path(output_path), SaveStrategy::Silence | SaveStrategy::SplitModel);
-
-                    auto info_messages = suppression_guard.messages();
-
-                    if (export_result == 0) {
-                        // SaveStrategy::Silence skips Plater's own naming, so do it here: this is
-                        // the API's save-project operation, and save_project can then save in place.
-                        plater->set_project_filename(wxString::FromUTF8(output_path));
-                        result["status"] = "success";
-                        result["output_path"] = output_path;
-                        // Naming the project is not a side effect a caller can be expected to guess:
-                        // it retitles the window, adds the file to Recent Projects, and makes both
-                        // save_project and a Cmd-S in the GUI overwrite this file from now on.
-                        if (output_path != name_before) {
-                            result["project_renamed_to"] = output_path;
-                            info_messages.push_back("The project is now named " + output_path +
-                                                    ": export_3mf is this API's Save, so save_project and the GUI's "
-                                                    "Save both write there from now on.");
-                        }
-                    } else {
-                        result["status"] = "error";
-                        result["message"] = "Failed to export the project to " + output_path +
-                                            ". Check that the folder exists and is writable.";
-                    }
-                    if (!info_messages.empty()) {
-                        result["info_messages"] = info_messages;
+                const ProjectSaved saved         = save_project_to(*plater, output_path);
+                auto               info_messages = suppression_guard.messages();
+                nlohmann::json     result;
+                if (saved.saved) {
+                    result["status"] = "success";
+                    result["output_path"] = output_path;
+                    // Naming the project is not a side effect a caller can be expected to guess:
+                    // it retitles the window, adds the file to Recent Projects, and makes both
+                    // save_project and a Cmd-S in the GUI overwrite this file from now on.
+                    if (saved.renamed) {
+                        result["project_renamed_to"] = output_path;
+                        info_messages.push_back("The project is now named " + output_path +
+                                                ": export_3mf is this API's Save, so save_project and the GUI's "
+                                                "Save both write there from now on.");
                     }
                 } else {
-                    // No path provided. File dialogs are modal and would block the GUI thread
-                    // for as long as the MCP call waits, so require an explicit path instead.
                     result["status"] = "error";
-                    result["message"] = "output_path is required: file dialogs cannot be opened from MCP.";
+                    result["message"] = "Failed to export the project to " + output_path +
+                                        ". Check that the folder exists and is writable.";
                 }
-
+                if (!info_messages.empty()) {
+                    result["info_messages"] = info_messages;
+                }
                 return result;
             });
         }
@@ -3630,24 +3640,16 @@ void OrcaMCPServer::register_builtin_tools()
                                     "dialog that would ask for one. Call save_project again with "
                                     "output_path set to the .3mf path to save to."}};
                 }
-                if (!boost::iends_with(target, ".3mf")) {
-                    return nlohmann::json{{"status", "error"},
-                                          {"message", "output_path must end in .3mf, got \"" + target + "\""}};
-                }
+                if (const auto refusal = project_path_refusal(target))
+                    return nlohmann::json{{"status", "error"}, {"message", *refusal}};
 
-                // Naming the project first turns save_project into the Save As the GUI would do
-                // after its file dialog; with the name already set it saves in place.
-                const bool renamed = target != current_name;
-                if (renamed)
-                    plater->set_project_filename(wxString::FromUTF8(target));
-
-                int result = plater->save_project(false);
-                auto info_messages = suppression_guard.messages();
+                const ProjectSaved saved         = save_project_to(*plater, target);
+                auto               info_messages = suppression_guard.messages();
 
                 nlohmann::json response;
-                if (result == wxID_YES) {
+                if (saved.saved) {
                     response = {{"status", "success"}, {"filename", into_u8(plater->get_project_filename(".3mf"))}};
-                    if (renamed) {
+                    if (saved.renamed) {
                         response["project_renamed_to"] = target;
                         info_messages.push_back("The project is now named " + target +
                                                 ": save_project and the GUI's Save both write there from now on.");
@@ -3655,10 +3657,8 @@ void OrcaMCPServer::register_builtin_tools()
                 } else {
                     response = {{"status", "error"},
                                 {"message", std::string("Failed to save the project to ") + target +
-                                            ". Check that the folder exists and is writable." +
-                                            (renamed ? " The project has been renamed to that path even though the "
-                                                       "save failed."
-                                                     : "")}};
+                                            ". Check that the folder exists and is writable. The project's name is "
+                                            "unchanged."}};
                 }
                 if (!info_messages.empty()) {
                     response["info_messages"] = info_messages;

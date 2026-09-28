@@ -527,6 +527,13 @@ as the GUI's Save As does.
 cosmetic: it retitles the window, adds the file to Recent Projects, and makes both `save_project`
 and a Cmd-S in the GUI overwrite that file.
 
+`export_3mf` and `save_project` save through the same steps as the GUI's Save (`Plater::save_project_as`,
+what follows its file dialog, probe BK): the file written, the project named after it, its crash backup
+removed and the project marked saved, so the window title loses its `*`, `list_instances` reports it saved
+and `quit_app` with `discard_changes: false` finds nothing to lose. Until v2.5.0.6 `export_3mf` wrote the
+file and named the project only, leaving it marked unsaved. A save that fails leaves the project's name as
+it was (`save_project` used to rename it first).
+
 ---
 
 ### export_stl
