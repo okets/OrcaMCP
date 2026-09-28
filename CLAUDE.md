@@ -1923,7 +1923,7 @@ after the label alone: any byte above 127 meant binary. A small binary STL at wh
 and 15 mm cubes from a generator) has none, so it was read as text and loaded no geometry; a binary STL whose label
 starts with "solid" was read right only because its bytes usually cross 127. A binary STL is exactly its label, its
 facet count and 50 bytes per facet, and ours decides by that first, falling back to the byte test; text never
-matches (the count's four ASCII bytes are at least 0x20202020 facets, a 26 GB file). On a non-zero, take upstream's
+matches (the count's four bytes read as text are at least 0x09090909 facets, tabs, a file over 7.5 GB). On a non-zero, take upstream's
 and re-run `libslic3r_tests "[stl]"`, which writes such files byte by byte.
 
 Item BM is a hook, not a fix: MCP's `export_gcode` waits for the plain `.gcode` it asked the app to write in the

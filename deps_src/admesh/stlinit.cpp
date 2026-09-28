@@ -64,7 +64,8 @@ static FILE *stl_open_count_facets(stl_file *stl, const char *file, unsigned int
     // Orca: a binary STL is exactly its label, its facet count and SIZEOF_STL_FACET bytes per facet, which decides
     // first. The byte test below took a file for ASCII when the 128 bytes after its label were all below 128, as a
     // small binary STL at whole millimetres with zero normals is: it loaded no geometry. Text never matches: the
-    // count's four bytes read as ASCII are at least 0x20202020 facets, a file of more than 26 GB.
+    // count's four bytes read as text are at least 0x09090909 facets (tabs, the lowest byte text holds), a file of more
+    // than 7.5 GB.
     bool binary_by_size = false;
     if (file_size >= header_size) {
         uint32_t header_num_facets = 0;
