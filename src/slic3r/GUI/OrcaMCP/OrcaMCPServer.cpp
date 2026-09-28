@@ -433,6 +433,11 @@ void report_project_rename(nlohmann::json& response, std::vector<std::string>& i
 // select_preset's work, success or failure alike; the caller adds what suppressed dialogs said.
 nlohmann::json select_preset_now(const std::string& type, const std::string& name, int slot, bool has_slot)
 {
+    // Without a slot, the Filament settings would switch alone: with several physical slots none of them
+    // would print with it (Sidebar::update_presets changes a slot only while its settings are open).
+    if (type == "filament" && !has_slot)
+        if (const auto refusal = slot_needed_refusal(filament_slots_state(), "slot"))
+            return {{"status", "error"}, {"message", *refusal + ". Nothing was selected."}};
     if (has_slot) {
         std::string error;
         if (!OrcaMCPPresetConfigUtils::SelectFilamentSlotPreset(slot, name, error))
@@ -1325,8 +1330,9 @@ void OrcaMCPServer::register_builtin_tools()
         ToolCategory::Config,
         "Switch a preset, or one filament slot's",
         "Select a printer, filament, or print preset by name. With type 'filament', pass slot "
-        "(1-based) to set just that filament slot, like the sidebar filament combo; without slot "
-        "the filament tab switches whichever slot it is on and dirty preset changes are discarded. "
+        "(1-based) to set just that filament slot, like the sidebar filament combo; without slot, only "
+        "with one physical slot (since 2.5.0.6: with several it is refused, as it changed no slot), and "
+        "dirty preset changes are discarded. "
         "With type 'printer', the response lists the resulting filaments (slot, preset, colour, "
         "previous_color) and, per slot, color_source as observed across the switch: 'unchanged', "
         "'remembered' (the colour last saved for that printer, applied by Remember printer configuration, "
@@ -1390,10 +1396,25 @@ void OrcaMCPServer::register_builtin_tools()
         "on the plate, set_filament_color. The global bed type is project key curr_bed_type, set as the "
         "sidebar's bed-type list sets it (the plates that follow it lose their slice, and the printer "
         "remembers it); a bed type the printer does not offer is refused, and so is any change on a printer "
-        "with one bed type, where the sidebar greys the list out. A plate's own bed type: set_plate_settings.",
+        "with one bed type, where the sidebar greys the list out. A plate's own bed type: set_plate_settings. "
+        "Filament settings go to one slot's preset: filament_slot names it, as the slot's Edit does (required "
+        "with more than one physical slot, since 2.5.0.6), and the answer's filament says which preset and "
+        "slots it reached. A preset other slots share is refused unless include_sharing_slots; switching the "
+        "Filament settings to another slot's preset is refused while they hold unsaved changes (save_preset or "
+        "reset_preset first).",
         {
             {"type", "object"},
             {"properties", {
+                {"filament_slot", {
+                    {"type", "integer"},
+                    {"description", "The filament slot (1-based) whose preset the filament settings change; required with "
+                                    "more than one physical slot. A mixed slot has none: set_mixed_filament."}
+                }},
+                {"include_sharing_slots", {
+                    {"type", "boolean"},
+                    {"description", "With filament_slot: change its preset even when other slots use it too, which the "
+                                    "change reaches as well. Default false: refused, naming how to give the slot its own."}
+                }},
                 {"settings", {
                     {"type", "array"},
                     {"description", "Settings array"},
@@ -1427,8 +1448,41 @@ void OrcaMCPServer::register_builtin_tools()
             std::string    settings_error;
             if (!parse_settings_param(params.value("settings", nlohmann::json()), settings, settings_error, /*with_type=*/true))
                 return error_response(settings_error);
-            return run_on_main_thread([settings]() {
+            std::optional<int> filament_slot;
+            if (params.contains("filament_slot")) {
+                int slot = 0;
+                if (!parse_integer_param(params["filament_slot"], slot))
+                    return error_response("filament_slot must be an integer, 1-based");
+                filament_slot = slot;
+            }
+            bool include_sharing_slots = false;
+            if (params.contains("include_sharing_slots")) {
+                if (!parse_boolean_param(params["include_sharing_slots"], include_sharing_slots))
+                    return error_response("include_sharing_slots must be a boolean");
+                if (!filament_slot)
+                    return error_response("include_sharing_slots goes with filament_slot: name the slot whose preset to change");
+            }
+            const bool writes_filament = std::any_of(settings.begin(), settings.end(),
+                                                     [](const nlohmann::json& item) { return item.value("type", "") == "filament"; });
+            if (filament_slot && !writes_filament)
+                return error_response("filament_slot goes with filament settings (type filament), and this call has none");
+            return run_on_main_thread([settings, filament_slot, include_sharing_slots, writes_filament]() {
                 McpDialogSuppressionGuard suppression_guard;
+
+                // Which slot's preset the filament settings go to: the one filament_slot names, pointed at as
+                // its Edit does, or with one physical slot that one. Decided before anything is written.
+                if (writes_filament) {
+                    const FilamentSlotsState slots = filament_slots_state();
+                    if (filament_slot) {
+                        SlotEdit plan;
+                        if (const auto refusal = slot_edit_refusal(slots, *filament_slot, include_sharing_slots, plan))
+                            return error_response(*refusal);
+                        std::string error;
+                        if (!point_filament_settings_at(plan, error))
+                            return suppression_guard.report(error_response(error + ". Nothing was changed."));
+                    } else if (const auto refusal = slot_needed_refusal(slots, "filament_slot"))
+                        return error_response(*refusal + ". Nothing was changed.");
+                }
 
                 // The wire format is a flat list of {type, key, value} items (existing, published
                 // contract). OrcaMCPPresetConfigUtils::ApplyConfig operates on a batch of settings
@@ -1517,6 +1571,14 @@ void OrcaMCPServer::register_builtin_tools()
                     {"duplicate_keys", duplicate_keys},
                     {"active_warnings", get_active_warnings_json(plater)}
                 };
+                if (writes_filament) {
+                    // Where the filament settings went: the preset the Filament settings edit, and every slot
+                    // using it, which all print with the change.
+                    const FilamentSlotsState slots  = filament_slots_state();
+                    response["filament"] = {{"slot", filament_slot.value_or(1)},
+                                            {"preset", slots.edited_preset},
+                                            {"slots", slots_using(slots, slots.edited_preset)}};
+                }
                 auto info_messages = suppression_guard.messages();
                 if (!flattened_slots.empty()) {
                     response["flattened_gradient_slots"] = flattened_slots;

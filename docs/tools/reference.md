@@ -1801,6 +1801,11 @@ Switch to a different preset. To change individual settings, use `apply_config`.
 | `name` | string | Yes | Preset name |
 | `slot` | integer | No | With `type: filament`: the 1-based filament slot to set, like the sidebar combo |
 
+**Behaviour change (2.5.0.6):** `type: filament` without `slot` is refused when the project has more
+than one physical slot. It switched the Filament settings alone, and no slot printed with the preset
+(the app changes a slot from the settings only while that slot's settings window is open). With one
+physical slot it still switches slot 1.
+
 **Returns (`type: printer`):** what the switch left in the filament slots, because upstream's
 *Remember printer configuration* (on by default) replaces every slot's colour on a printer switch:
 ```json
@@ -1834,6 +1839,8 @@ call. The change stays unsaved in the preset until `save_preset`. To switch pres
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `settings` | array | Yes | Array of setting changes |
+| `filament_slot` | integer | No | The filament slot (1-based) whose preset the `filament` settings change. Required with more than one physical slot |
+| `include_sharing_slots` | boolean | No | With `filament_slot`: change its preset even when other slots use it too (default false) |
 
 **Setting object format:**
 ```json
@@ -1870,6 +1877,29 @@ call. The change stays unsaved in the preset until `save_preset`. To switch pres
   "active_warnings": {"count": 0, "warnings": []}
 }
 ```
+
+**A slot's filament settings:** the Filament settings edit one filament preset at a time, and every slot
+using that preset prints with the change. `filament_slot` points them at that slot's preset first, as the
+slot's **Edit** in the sidebar does (without opening the settings), so the change goes where it is meant:
+
+```json
+{"name": "apply_config", "arguments": {
+  "filament_slot": 3,
+  "settings": [{"type": "filament", "key": "nozzle_temperature", "value": "235"}]
+}}
+```
+
+The answer says where it went: `"filament": {"slot": 3, "preset": "Generic PETG", "slots": [3]}`, the
+preset and every slot using it. Refused, changing nothing:
+- `filament_slot` on a mixed slot (it has no preset of its own: `set_mixed_filament`), or out of range;
+- a preset other slots share, unless `include_sharing_slots: true` -- the message names how to give the
+  slot its own: `clone_preset {type: filament, source_name, new_name}`, then
+  `select_preset {type: filament, name, slot}`;
+- switching the Filament settings to another slot's preset while they hold unsaved changes, which the
+  switch would discard: `save_preset` or `reset_preset` first;
+- **behaviour change (2.5.0.6):** `filament` settings without `filament_slot` when the project has more
+  than one physical slot. They went to whichever preset the Filament settings happened to show, which
+  may have been no slot's at all. With one physical slot they go to slot 1, as before.
 
 **Duplicates:** listing the same `type` + `key` twice in one call applies the **last** value (the
 same as two separate calls would). Each such key is reported in `duplicate_keys` as

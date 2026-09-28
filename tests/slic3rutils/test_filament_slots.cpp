@@ -280,3 +280,18 @@ TEST_CASE("add_filament_slot and delete_filament_slot refuse a malformed call be
     CHECK(mentions(call_tool("delete_filament_slot", {{"slot", 2}, {"merge_into", "one"}})["message"], "merge_into must be an integer"));
     CHECK(call_tool("delete_filament_slot", {{"slot", 2}, {"allow_breaking_mix", "yes"}})["message"] == "allow_breaking_mix must be a boolean");
 }
+
+TEST_CASE("apply_config refuses a filament_slot it could not act on, before the app", "[FilamentSlots][orcamcp]")
+{
+    const json print_only = json::array({{{"type", "print"}, {"key", "layer_height"}, {"value", "0.2"}}});
+    const json filament   = json::array({{{"type", "filament"}, {"key", "nozzle_temperature"}, {"value", "230"}}});
+
+    CHECK(call_tool("apply_config", {{"settings", print_only}, {"filament_slot", 2}})["message"] ==
+          "filament_slot goes with filament settings (type filament), and this call has none");
+    CHECK(call_tool("apply_config", {{"settings", filament}, {"include_sharing_slots", true}})["message"] ==
+          "include_sharing_slots goes with filament_slot: name the slot whose preset to change");
+    CHECK(call_tool("apply_config", {{"settings", filament}, {"filament_slot", "two"}})["message"] ==
+          "filament_slot must be an integer, 1-based");
+    CHECK(call_tool("apply_config", {{"settings", filament}, {"filament_slot", 2}, {"include_sharing_slots", "yes"}})["message"] ==
+          "include_sharing_slots must be a boolean");
+}

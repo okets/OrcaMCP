@@ -251,10 +251,18 @@
     },
     {
       "category": "Config",
-      "description": "Change settings of the selected print, filament or printer preset, or of the project -- layer height, supports, infill, walls, speeds, temperatures -- several in one call. Types: print | filament | printer | project. The change stays unsaved in the preset until save_preset. To switch to another preset, use select_preset; for one object only, set_object_config; for a slot's colour on the plate, set_filament_color. The global bed type is project key curr_bed_type, set as the sidebar's bed-type list sets it (the plates that follow it lose their slice, and the printer remembers it); a bed type the printer does not offer is refused, and so is any change on a printer with one bed type, where the sidebar greys the list out. A plate's own bed type: set_plate_settings.",
+      "description": "Change settings of the selected print, filament or printer preset, or of the project -- layer height, supports, infill, walls, speeds, temperatures -- several in one call. Types: print | filament | printer | project. The change stays unsaved in the preset until save_preset. To switch to another preset, use select_preset; for one object only, set_object_config; for a slot's colour on the plate, set_filament_color. The global bed type is project key curr_bed_type, set as the sidebar's bed-type list sets it (the plates that follow it lose their slice, and the printer remembers it); a bed type the printer does not offer is refused, and so is any change on a printer with one bed type, where the sidebar greys the list out. A plate's own bed type: set_plate_settings. Filament settings go to one slot's preset: filament_slot names it, as the slot's Edit does (required with more than one physical slot, since 2.5.0.6), and the answer's filament says which preset and slots it reached. A preset other slots share is refused unless include_sharing_slots; switching the Filament settings to another slot's preset is refused while they hold unsaved changes (save_preset or reset_preset first).",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
+          "filament_slot": {
+            "description": "The filament slot (1-based) whose preset the filament settings change; required with more than one physical slot. A mixed slot has none: set_mixed_filament.",
+            "type": "integer"
+          },
+          "include_sharing_slots": {
+            "description": "With filament_slot: change its preset even when other slots use it too, which the change reaches as well. Default false: refused, naming how to give the slot its own.",
+            "type": "boolean"
+          },
           "settings": {
             "description": "Settings array",
             "items": {
@@ -2485,7 +2493,7 @@
     },
     {
       "category": "Config",
-      "description": "Select a printer, filament, or print preset by name. With type 'filament', pass slot (1-based) to set just that filament slot, like the sidebar filament combo; without slot the filament tab switches whichever slot it is on and dirty preset changes are discarded. With type 'printer', the response lists the resulting filaments (slot, preset, colour, previous_color) and, per slot, color_source as observed across the switch: 'unchanged', 'remembered' (the colour last saved for that printer, applied by Remember printer configuration, on by default), 'default' (#26A69A for a slot nothing was saved for) or 'other'. colors_source sums them up, 'mixed' when they differ. To change individual settings, use apply_config.",
+      "description": "Select a printer, filament, or print preset by name. With type 'filament', pass slot (1-based) to set just that filament slot, like the sidebar filament combo; without slot, only with one physical slot (since 2.5.0.6: with several it is refused, as it changed no slot), and dirty preset changes are discarded. With type 'printer', the response lists the resulting filaments (slot, preset, colour, previous_color) and, per slot, color_source as observed across the switch: 'unchanged', 'remembered' (the colour last saved for that printer, applied by Remember printer configuration, on by default), 'default' (#26A69A for a slot nothing was saved for) or 'other'. colors_source sums them up, 'mixed' when they differ. To change individual settings, use apply_config.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {

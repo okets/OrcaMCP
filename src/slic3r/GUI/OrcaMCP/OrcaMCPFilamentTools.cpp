@@ -42,25 +42,6 @@ std::string format_one_decimal(double value)
     return std::string(buf);
 }
 
-// The slots and the Filament settings as they are now. Main thread.
-FilamentSlotsState filament_slots_state()
-{
-    const PresetBundle& bundle = *wxGetApp().preset_bundle;
-    FilamentSlotsState  state;
-    for (size_t i = 0; i < bundle.filament_presets.size(); ++i) {
-        state.is_mixed.push_back(bundle.is_mixed_filament(i));
-        state.slot_presets.push_back(bundle.filament_presets[i]);
-    }
-    state.multi_material = Sidebar::should_show_SEMM_buttons();
-    state.extruders      = size_t(std::max(1, bundle.get_printer_extruder_count()));
-    state.gcode_preview  = wxGetApp().plater()->using_exported_file();
-    state.edited_preset  = bundle.filaments.get_edited_preset().name;
-    state.edited_dirty   = bundle.filaments.current_is_dirty();
-    if (state.edited_dirty)
-        state.dirty_keys = bundle.filaments.current_dirty_options();
-    return state;
-}
-
 PipelineState current_pipeline()
 {
     Plater& plater = *wxGetApp().plater();

@@ -7,11 +7,22 @@
 #include "slic3r/GUI/MixedFilamentDialog.hpp"   // MixedFilamentResult
 #include "libslic3r/ColorDecomposeRecipe.hpp"   // ColorDecomposePhysicalFilament
 #include "slic3r/GUI/OrcaMCP/OrcaMCPFilamentModel.hpp"  // ClearedOverride
+#include "slic3r/GUI/OrcaMCP/OrcaMCPFilamentSlots.hpp"  // FilamentSlotsState, SlotEdit
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
 // Snapshot of every filament slot (physical first, then mixed). Main thread only.
 nlohmann::json describe_filaments();
+
+// The slots and the Filament settings as they are now, for OrcaMCPFilamentSlots' decisions. Main thread only.
+FilamentSlotsState filament_slots_state();
+
+// Points the Filament settings at slot `plan.index`'s preset, as the slot's Edit does
+// (PlaterPresetComboBox::switch_to_tab) without opening the settings: the settings tab selects the
+// preset, its filament index follows the slot, and no slot is left marked as the one the settings edit
+// (Sidebar::finish_param_edit, what closing the settings does). Call only after slot_edit_refusal
+// passed: it never discards unsaved changes. False with `error` when the app did not select it. Main thread only.
+bool point_filament_settings_at(const SlotEdit& plan, std::string& error);
 
 // Builds a MixedFilamentResult from tool params; returns false and fills `error` on bad input.
 // Only shape/parse checks (array sizes, numeric types, ratio sum) live here -- domain rules
