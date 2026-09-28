@@ -286,6 +286,11 @@ bool brim_ears_change(const std::vector<BrimPoint>& current, const std::vector<B
 // but "extruder", so the object keeps its filament, as the GUI's reset leaves it.
 std::vector<std::string> object_overrides_to_reset(const std::vector<std::string>& object_keys);
 
+// The objects standing on `plate`, once each, in the plate's order. PartPlate::get_objects_on_this_plate
+// lists an object once per instance it holds there, so an object with two copies on a plate was
+// described, drawn and counted twice.
+std::vector<ModelObject*> objects_on_plate(PartPlate& plate);
+
 // The index of `object` in the plater's model, matched by pointer or by ObjectID (a Print's copy of
 // an object carries the original's id), or -1.
 int model_object_index(const ModelObject* object);

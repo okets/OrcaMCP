@@ -4161,7 +4161,7 @@ void OrcaMCPServer::register_builtin_tools()
                 if (after.printed) {
                     PartPlate* plate = plate_list.get_plate(index);
                     const DynamicPrintConfig& print_cfg = wxGetApp().preset_bundle->prints.get_edited_preset().config;
-                    for (ModelObject* obj : plate->get_objects_on_this_plate()) {
+                    for (ModelObject* obj : objects_on_plate(*plate)) {
                         const InstancesOnPlate here = instances_on_plate(*obj, model_object_index(obj), *plate);
                         const ObjectFootprint  fp   = OrcaMCPPlateUtils::GetObjectFootprint(*obj, plate_box_of(*obj, here), print_cfg);
                         if (OrcaMCP::footprints_overlap(after.footprint, fp.rect))

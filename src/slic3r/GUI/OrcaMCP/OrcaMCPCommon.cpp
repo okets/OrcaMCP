@@ -656,6 +656,15 @@ void mark_plate_unsliced(PartPlateList& plates, int plate_index)
         plate->update_slice_result_valid_state(false);
 }
 
+std::vector<ModelObject*> objects_on_plate(PartPlate& plate)
+{
+    std::vector<ModelObject*> objects;
+    for (ModelObject* object : plate.get_objects_on_this_plate())
+        if (std::find(objects.begin(), objects.end(), object) == objects.end())
+            objects.push_back(object);
+    return objects;
+}
+
 int model_object_index(const ModelObject* object)
 {
     return model_object_index(wxGetApp().model(), object);

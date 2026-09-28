@@ -1105,7 +1105,7 @@ nlohmann::json OrcaMCPPlateUtils::GetPlates(bool with_model_object_features, con
 
         // Loop through each ModelObject (now deduplicated)
         nlohmann::json objects_info = nlohmann::json::array();
-        for (const auto& obj : plate->get_objects_on_this_plate()) {
+        for (const auto& obj : OrcaMCP::objects_on_plate(*plate)) {
             const int object_index = OrcaMCP::model_object_index(obj);  // the index transform tools take
             // This plate's instances only: an object with copies on other plates is described here by
             // the copies standing here, and says which they are. Its bounding box and footprint used to
@@ -1331,7 +1331,7 @@ nlohmann::json OrcaMCPPlateUtils::CaptureTurntablePreview(int plate_index, int v
     // The box of what stands on this plate: each object's instances here (instances_on_plate), not
     // every copy it has on every plate, which aimed the camera between plates.
     BoundingBoxf3 objects_box;
-    for (const ModelObject* obj : plate->get_objects_on_this_plate()) {
+    for (const ModelObject* obj : OrcaMCP::objects_on_plate(*plate)) {
         const OrcaMCP::InstancesOnPlate here = OrcaMCP::instances_on_plate(*obj, OrcaMCP::model_object_index(obj), *plate);
         objects_box.merge(OrcaMCP::plate_box_of(*obj, here));
     }

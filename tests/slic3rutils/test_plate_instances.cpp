@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "slic3r/GUI/OrcaMCP/OrcaMCPCommon.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
 #include "libslic3r/Format/bbs_3mf.hpp"
 #include "libslic3r/Model.hpp"
@@ -201,6 +202,21 @@ TEST_CASE("Deleting the last instance renumbers nothing and leaves the other pla
     CHECK(plates->get_plate(1)->empty());
     CHECK(plates->get_plate(0)->is_slice_result_valid());
     CHECK_FALSE(plates->get_plate(1)->is_slice_result_valid());
+}
+
+TEST_CASE("A plate's objects are listed once each, however many of their instances it holds", "[PlateInstances][orcamcp]")
+{
+    // PartPlate::get_objects_on_this_plate lists an object once per instance; MCP's scene, arrange and
+    // plan listed a two-copy object twice.
+    Slic3r::Model                        model;
+    const std::unique_ptr<PartPlateList> plates = plate_list_for(model, 1);
+    const Slic3r::ModelObject&           pair   = add_cube(model, *plates, {centre_of(*plates, 0), beside(centre_of(*plates, 0))});
+    const Slic3r::ModelObject&           single = add_cube(model, *plates, {centre_of(*plates, 0) - Vec3d(40.0, 0.0, 0.0)});
+
+    const std::vector<Slic3r::ModelObject*> objects = Slic3r::GUI::OrcaMCP::objects_on_plate(*plates->get_plate(0));
+    REQUIRE(objects.size() == 2);
+    CHECK(objects[0] == &pair);
+    CHECK(objects[1] == &single);
 }
 
 TEST_CASE("Every object on a plate that turns spiral vase on gets the vase settings", "[PlateInstances][orcamcp]")

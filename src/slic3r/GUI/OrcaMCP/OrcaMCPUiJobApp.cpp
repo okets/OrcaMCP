@@ -68,7 +68,7 @@ std::vector<ObjectTransforms> current_plate_objects(Plater& plater)
     PartPlate* plate = plater.get_partplate_list().get_curr_plate();
     if (plate == nullptr)
         return objects;
-    for (const ModelObject* object : plate->get_objects_on_this_plate())
+    for (const ModelObject* object : objects_on_plate(*plate))
         objects.push_back(transforms_of(*object));
     return objects;
 }
