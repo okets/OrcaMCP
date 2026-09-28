@@ -245,7 +245,7 @@ multi-filament however `extruder_id` reads.
 
 #### Unplaced objects
 
-`unplaced_objects` lists every object with an instance no plate holds: `object_index`, `id`, `name`,
+`unplaced_objects` lists every object with an instance no plate holds: `object_id`, `object_index`, `internal_id`, `name`,
 `instance_count`, `unplaced_instances` (the instances on no plate), `position` (their box's centre)
 and `reason`. Deleting a plate leaves what stood on it there, and a move can carry an instance off
 every plate. An object whose other instances are on plates is also listed under those plates, by the
@@ -531,7 +531,7 @@ G-code preview, model files are refused too; `new_project` returns to an editabl
 |-------|-------------|
 | `status` | `success`, or `error` when the file failed to load, **loaded but added no objects** (for example a ZIP, whose file picker cannot open under MCP), did not produce a G-code preview (unreadable G-code), or was refused (see above) |
 | `file` | The path loaded |
-| `loaded_objects` | One entry per object the load added, in the same shape as `get_scene_info`'s `model_objects`: `id`, `name`, `object_index` (the index other tools take as `object_id`), `instance_count`, `volume_count`, `position`, `rotation_degrees`, `scale` `{x,y,z}` of its first instance, `bounding_box` `{size_x, size_y, size_z, min, max}` and `mesh_warning` (with `mesh_warning_reason` when the object list shows its warning icon). A merged multi-part file shows as one object with several volumes; a model scaled to fit the bed shows its scale. Empty for a G-code preview. |
+| `loaded_objects` | One entry per object the load added, in the same shape as `get_scene_info`'s `model_objects`: `object_id` (the index every tool takes), `object_index` (the same number, kept for older readers), `internal_id` (the app's own number, which no tool takes), `name`, `instance_count`, `volume_count`, `position`, `rotation_degrees`, `scale` `{x,y,z}` of its first instance, `bounding_box` `{size_x, size_y, size_z, min, max}` and `mesh_warning` (with `mesh_warning_reason` when the object list shows its warning icon). A merged multi-part file shows as one object with several volumes; a model scaled to fit the bed shows its scale. Empty for a G-code preview. |
 | `filaments_added` | Filament slots the import added, because the model uses more filaments than the scene had (0 when none) |
 | `project_renamed_to` | Present only if the project's name changed: never for a model file, and always for a G-code preview (named after the file, so a later `save_project {}` writes there) |
 | `info_messages` | What happened, then what the slicer would have shown. A 3MF import says whether the file carried presets that were not applied. A prompt that offered a choice ends with the answer given, e.g. `"Object too large: ... scale it down to fit the print bed automatically? (auto-answered Yes)"`; the multi-part question also names the other `multipart` value |
@@ -545,7 +545,7 @@ A 20 mm cube exported 1000 times too large, on a 256 mm bed:
   "status": "success",
   "file": "/tmp/cube_20m.stl",
   "loaded_objects": [
-    {"id": "65", "name": "cube_20m.stl", "object_index": 0, "instance_count": 1, "volume_count": 1,
+    {"object_id": 0, "object_index": 0, "internal_id": "65", "name": "cube_20m.stl", "instance_count": 1, "volume_count": 1,
      "position": {"x": 128.0, "y": 128.0, "z": 127.0},
      "rotation_degrees": {"x": 0.0, "y": 0.0, "z": 0.0},
      "scale": {"x": 0.0127, "y": 0.0127, "z": 0.0127},
