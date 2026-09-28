@@ -78,6 +78,10 @@ struct SliceRunPlate
                             // off the plate or over its height, no filament that cannot print where it is
     bool valid     = true;  // its validation did not fail (PartPlate::is_apply_result_invalid)
     bool selected  = false; // it is the selected plate, the one reslice() works on
+    std::optional<std::string> validation_message; // the app's words for a failed validation, when it has them
+                                                   // (the selected plate's: its Print is the one validated)
+    bool slice_failed = false; // its last slice ended in an error, which stays in active_warnings until the next
+                               // (the selected plate's: Plater::last_error_blocks_reslice)
 };
 
 enum class SliceRunOutcome
@@ -134,6 +138,43 @@ inline void split_unsliced(const std::vector<SliceRunPlate>& plates, std::vector
         else
             unsliced.push_back(plate.index);
     }
+}
+
+// Why a plate the run asked for has no slice result, as far as its state tells now, and where the app's
+// own words are when it has some. A validation failure's notification closes once the plate validates,
+// and an edit's leaves none: only a slice that failed leaves one in active_warnings.
+inline std::string unsliced_reason(const SliceRunPlate& plate)
+{
+    if (!plate.valid)
+        return plate.validation_message ? "the app's validation refuses it: " + *plate.validation_message :
+                                          std::string("the app's validation refuses it (slice_all answers with the app's words)");
+    if (!plate.ready)
+        return "the app will not slice it as it stands: an object partly off the plate or too tall for it, or a filament that "
+               "cannot print where it is (get_scene_info's placement says which)";
+    if (plate.slice_failed)
+        return "its last slice ended in an error (active_warnings has it)";
+    return "its slice was stopped or failed (a failure stays in active_warnings until the next slice), or an edit since "
+           "invalidated it";
+}
+
+// "plate_index 1, 3 has no slice result: <why>" for `unsliced`, the plates with one reason together, in order.
+inline std::string unsliced_plates_text(const std::vector<SliceRunPlate>& plates, const std::vector<int>& unsliced)
+{
+    std::vector<std::pair<std::string, std::vector<int>>> by_reason;
+    for (const SliceRunPlate& plate : plates) {
+        if (!plate.exists || std::find(unsliced.begin(), unsliced.end(), plate.index) == unsliced.end())
+            continue;
+        const std::string reason = unsliced_reason(plate);
+        auto              group  = std::find_if(by_reason.begin(), by_reason.end(), [&reason](const auto& g) { return g.first == reason; });
+        if (group == by_reason.end())
+            by_reason.push_back({reason, {plate.index}});
+        else
+            group->second.push_back(plate.index);
+    }
+    std::string text;
+    for (const auto& [reason, indexes] : by_reason)
+        text += (text.empty() ? "" : "; ") + ("plate_index " + plate_index_list(indexes) + " has no slice result: " + reason);
+    return text;
 }
 
 // A cancelled run's message: who cancelled it where, and the plates it left without a result; the
@@ -200,8 +241,7 @@ inline SliceRunJudgement judge_slice_run(bool                              run_k
         message = std::to_string(gone) + " of the run's " + std::to_string(plates.size()) +
                   " plate(s) no longer exist: the plate list changed (a plate was deleted, or an undo, redo or project "
                   "load rebuilt the list), which cancels Slice All; ";
-    message += std::string("plate_index ") + plate_index_list(unsliced) + " has no slice result" +
-               (gone > 0 ? "" : ": its slice failed (active_warnings says why), was cancelled, or an edit since invalidated it");
+    message += gone > 0 ? "plate_index " + plate_index_list(unsliced) + " has no slice result" : unsliced_plates_text(plates, unsliced);
     return {SliceRunOutcome::incomplete, message + "; call slice_all again", skipped};
 }
 

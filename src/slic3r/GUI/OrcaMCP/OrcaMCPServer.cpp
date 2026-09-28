@@ -317,7 +317,15 @@ OrcaMCP::SliceRunJudgement judge_last_run(Plater& plater, PartPlateList& plate_l
 {
     const OrcaMCP::SliceAllEndedEarly* ended     = plater.slice_all_ended_early();
     const OrcaMCP::SliceCancelled*     cancelled = plater.slice_cancelled();
-    return OrcaMCP::judge_slice_run(!s_slice_run_scope.empty(), slicing, slice_run_plates(plate_list),
+    std::vector<OrcaMCP::SliceRunPlate> plates   = slice_run_plates(plate_list);
+    // Why the selected plate is not sliced, in the app's words where it has some: the process holds its Print.
+    for (OrcaMCP::SliceRunPlate& plate : plates)
+        if (plate.selected && !plate.sliced && !slicing) {
+            if (!plate.valid)
+                plate.validation_message = selected_plate_validation_failure(plater, plate_list);
+            plate.slice_failed = plater.last_error_blocks_reslice();
+        }
+    return OrcaMCP::judge_slice_run(!s_slice_run_scope.empty(), slicing, plates,
                                     ended ? std::optional<std::string>(OrcaMCP::slice_all_ended_early_text(*ended)) : std::nullopt,
                                     cancelled ? std::optional<std::string>(OrcaMCP::slice_cancelled_text(*cancelled)) : std::nullopt);
 }

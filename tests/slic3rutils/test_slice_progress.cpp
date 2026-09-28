@@ -183,6 +183,39 @@ TEST_CASE("a run that left plates unsliced names those, not the empty ones it sk
     CHECK(judged.skipped == std::vector<int>{0});
 }
 
+// Every unsliced plate was "its slice failed (active_warnings says why), was cancelled, or an edit since
+// invalidated it", and after a failed validation active_warnings was empty: its notification closes once
+// the plate validates again. Each plate now gets the reason its state tells, and the app's words where it
+// has them.
+TEST_CASE("an unsliced plate is told apart by why, with the app's words where it has them", "[orcamcp][SliceProgress]")
+{
+    SliceRunPlate refused       = unsliced_plate(0);
+    refused.valid               = false;
+    refused.validation_message  = "The prime tower is required for a filament change";
+    SliceRunPlate off_plate     = unsliced_plate(1);
+    off_plate.ready             = false;
+    SliceRunPlate failed        = unsliced_plate(2);
+    failed.slice_failed         = true;
+    SliceRunPlate stopped       = unsliced_plate(3);
+    SliceRunPlate stopped_too   = unsliced_plate(4);
+    const SliceRunJudgement judged =
+        judge_slice_run(/*run_known=*/true, /*slicing=*/false, {refused, off_plate, failed, stopped, stopped_too}, std::nullopt);
+    CHECK(judged.outcome == SliceRunOutcome::incomplete);
+    CHECK(judged.message.find("plate_index 0 has no slice result: the app's validation refuses it: The prime tower is required") !=
+          std::string::npos);
+    CHECK(judged.message.find("plate_index 1 has no slice result: the app will not slice it as it stands") != std::string::npos);
+    CHECK(judged.message.find("plate_index 2 has no slice result: its last slice ended in an error (active_warnings has it)") !=
+          std::string::npos);
+    CHECK(judged.message.find("plate_index 3, 4 has no slice result: its slice was stopped or failed") != std::string::npos);
+    CHECK(judged.message.find("active_warnings says why") == std::string::npos);
+
+    // A failed validation the app has no words for now points where they are.
+    SliceRunPlate refused_silently = unsliced_plate(0);
+    refused_silently.valid         = false;
+    CHECK(judge_slice_run(true, false, {refused_silently}, std::nullopt).message.find("slice_all answers with the app's words") !=
+          std::string::npos);
+}
+
 TEST_CASE("a run none of whose plates has anything to slice is incomplete, with nothing to slice", "[orcamcp][SliceProgress]")
 {
     const SliceRunJudgement judged = judge_slice_run(/*run_known=*/true, /*slicing=*/false, {empty_plate(0), empty_plate(1)}, std::nullopt);
