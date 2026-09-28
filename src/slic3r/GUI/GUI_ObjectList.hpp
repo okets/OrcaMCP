@@ -90,6 +90,13 @@ struct MeshErrorsInfo
 // get_warning_icon_name when it needs only the icon, so it reports exactly what the list shows.
 MeshErrorsInfo mesh_errors_info(const TriangleMeshStats& stats, wxString* sidebar_info = nullptr, int* non_manifold_edges = nullptr);
 std::string    get_warning_icon_name(const TriangleMeshStats& stats);
+
+// Orca: ObjectList::apply_object_instance_transfrom_to_all_volumes' model change, apart from the list so
+// it is tested without the app: instance 0's rotation, scale and mirror moved into every volume, and every
+// instance given what keeps its copy where it was -- instance 0 only its offset. Upstream reset instance 0
+// alone and moved every instance by instance 0's offset, so adding a primitive to an object with several
+// instances threw the others off the bed, their rotation and scale applied twice.
+void bake_instance_transform_into_volumes(ModelObject& model_object, bool need_update_assemble_matrix);
 // The number of recorded repairs the tooltip states: every RepairedMeshErrors field, summed.
 int            repaired_errors_count(const RepairedMeshErrors& errors);
 

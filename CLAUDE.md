@@ -1229,6 +1229,7 @@ echo "AG an object added to the scene has only its first instance on a plate (re
 echo "AH the first slice waits for every TBB worker at once to name them (rel2506/07g): $(U src/libslic3r/Thread.cpp | awk '/^void name_tbb_thread_pool_threads_set_locale/{f=1} f&&/cv\.wait\(/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
 echo "AI the Repair's worker changes the object itself, off the main thread / a first volume dropped whole skips the next / a repair can delete an object's last part / the Repair's snapshot is taken before its dialog / ModelVolume has a hull setter (0 = no, keep ours) (rel2506/08b): $(U src/slic3r/Utils/FixModelByCgal.cpp | grep -c 'std::thread(\[&model_object') / $(U src/slic3r/Utils/FixModelByCgal.cpp | awk '/removed_parts >= parts_count/{f=1} f&&/ivolume = part_end;/{print "yes"; exit} f&&/continue;/{print "no"; exit}') / $(U src/slic3r/Utils/FixModelByCgal.cpp | awk '/is_not_3dimensional_part\(part_volume->mesh\(\)\)/{f=1} f&&/parts_count\(\)|is_model_part/{print "no"; exit} f&&/delete_volume\(part_idx\)/{print "yes"; exit}') / $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^void ObjectList::fix_through_cgal/{f=1} f&&/TakeSnapshot/{print "yes"; exit} f&&/ProgressDialog progress_dlg/{print "no"; exit}') / $(U src/libslic3r/Model.hpp | grep -c 'set_convex_hull')"
 echo "AJ upstream's acceptor takes asio's SO_REUSEADDR on Windows, which lets a second process bind a port the first listens on (rel2506/09; 0 = bug): $( { U src/slic3r/GUI/HttpServer.hpp; U src/slic3r/GUI/HttpServer.cpp; } | grep -c 'EXCLUSIVEADDRUSE')"
+echo "AK adding a primitive part or modifier resets only instance 0 and moves every instance by its offset (rel2506/11): $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^void ObjectList::apply_object_instance_transfrom_to_all_volumes/{f=1} f&&/translate_instances\(original_instance_center\)/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -1514,6 +1515,18 @@ the hull set through `ModelVolume::set_convex_hull`, which ours adds to `Model.h
 count is upstream's own, 0 while it has none; on a non-zero, take upstream's and drop ours). On a "no" or 0, upstream fixed that part: take its version, keep the
 plan/apply split around it, and re-run `slic3rutils_tests "[MeshRepair]"`, whose "planned repair builds
 the same object as the repair done in place" test holds the plan to upstream's loop.
+
+Item AK: adding a primitive part or modifier (`ObjectList::load_generic_subobject`, the object list's
+Add Part / Modifier / ... > Cube and friends) ends with `apply_object_instance_transfrom_to_all_volumes`,
+which moves instance 0's rotation and scale into every volume, resets instance 0, and then moves every
+instance by instance 0's offset. An object with more than one instance lost its other copies: on
+2026-09-28 a second copy of a 1.5x object jumped from (128, 112) to (256, 256), off the bed, and grew to
+2.25x, its rotation and scale now applied twice. Ours moves the model change into the free function
+`bake_instance_transform_into_volumes` (`GUI_ObjectList.cpp`, so it is tested without the app), which
+gives every instance what keeps its copy where it was -- instance 0 only its offset, the others their own
+transform less instance 0's rotation and scale -- and the member calls it. On "no", take upstream's
+function and re-run `slic3rutils_tests "[PartEdits]"`, whose "keeps every copy of the object where it
+was" test holds any version to it.
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices

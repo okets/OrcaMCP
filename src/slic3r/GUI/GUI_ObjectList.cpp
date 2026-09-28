@@ -7015,35 +7015,45 @@ ModelObject* ObjectList::object(const int obj_idx) const
 
 void ObjectList::apply_object_instance_transfrom_to_all_volumes(ModelObject *model_object, bool need_update_assemble_matrix)
 {
-    const Geometry::Transformation &instance_transformation  = model_object->instances[0]->get_transformation();
-    Vec3d                           original_instance_center = instance_transformation.get_offset();
+    bake_instance_transform_into_volumes(*model_object, need_update_assemble_matrix);
+
+    // update the cache data in selection to keep the data of ModelVolume and GLVolume are consistent
+    wxGetApp().plater()->update();
+}
+
+void bake_instance_transform_into_volumes(ModelObject& model_object, bool need_update_assemble_matrix)
+{
+    const Geometry::Transformation instance_transformation = model_object.instances[0]->get_transformation();
 
     if (need_update_assemble_matrix) {
         // apply the instance_transform(except offset) to assemble_transform
         Geometry::Transformation instance_transformation_copy = instance_transformation;
         instance_transformation_copy.set_offset(Vec3d(0, 0, 0)); // remove the effect of offset
         const Transform3d &instance_inverse_matrix = instance_transformation_copy.get_matrix().inverse();
-        const Transform3d &assemble_matrix         = model_object->instances[0]->get_assemble_transformation().get_matrix();
+        const Transform3d &assemble_matrix         = model_object.instances[0]->get_assemble_transformation().get_matrix();
         Transform3d        new_assemble_transform  = assemble_matrix * instance_inverse_matrix;
-        model_object->instances[0]->set_assemble_from_transform(new_assemble_transform);
+        model_object.instances[0]->set_assemble_from_transform(new_assemble_transform);
     }
 
-    // apply the instance_transform to volumn
-    const Transform3d &transformation_matrix = instance_transformation.get_matrix();
-    for (ModelVolume *volume : model_object->volumes) {
-        const Transform3d &volume_matrix = volume->get_matrix();
-        Transform3d        new_matrix    = transformation_matrix * volume_matrix;
-        volume->set_transformation(new_matrix);
+    // apply the instance_transform (but its offset) to every volume
+    const Transform3d first_no_offset = instance_transformation.get_matrix_no_offset();
+    for (ModelVolume *volume : model_object.volumes)
+        volume->set_transformation(Geometry::Transformation(first_no_offset * volume->get_matrix()));
+
+    // Orca: every instance keeps its copy where it was. Instance 0 keeps only its offset, as upstream left
+    // it; each other instance loses instance 0's rotation and scale, which its volumes now carry. Upstream
+    // reset instance 0 alone and then moved every instance by instance 0's offset.
+    const Transform3d undo_first = first_no_offset.inverse();
+    for (size_t i = 1; i < model_object.instances.size(); ++i) {
+        ModelInstance *instance = model_object.instances[i];
+        instance->set_transformation(Geometry::Transformation(instance->get_matrix() * undo_first));
     }
-    model_object->instances[0]->set_transformation(Geometry::Transformation());
+    Geometry::Transformation first_offset_only;
+    first_offset_only.set_offset(instance_transformation.get_offset());
+    model_object.instances[0]->set_transformation(first_offset_only);
+    model_object.invalidate_bounding_box();
 
-    model_object->ensure_on_bed();
-    // keep new instance center the same as the original center
-    model_object->translate(-original_instance_center);
-    model_object->translate_instances(original_instance_center);
-
-    // update the cache data in selection to keep the data of ModelVolume and GLVolume are consistent
-    wxGetApp().plater()->update();
+    model_object.ensure_on_bed();
 }
 
 } //namespace GUI
