@@ -10,6 +10,7 @@
 #include "OrcaMCPGcodeCheck.hpp"
 #include "OrcaMCPLayerRanges.hpp"
 #include "OrcaMCPSliceEstimate.hpp"
+#include "OrcaMCPNextSteps.hpp"
 #include "OrcaMCPServerInfo.hpp"
 #include "OrcaMCPModelLoad.hpp"
 #include "OrcaMCPRequestGuard.hpp"
@@ -918,7 +919,9 @@ void OrcaMCPServer::register_builtin_tools()
         "while a modal window no dialog accounts for runs. Every object carries `mesh_warning`, true when "
         "the object list shows its warning icon (open edges or recorded repairs), with "
         "`mesh_warning_reason`, the list's one-line reason; each such object also adds a MeshErrors "
-        "warning to this response's active_warnings, saying what an agent can do about it.",
+        "warning to this response's active_warnings, saying what an agent can do about it. next_steps "
+        "names get_mesh_health for an object with that icon, and get_object_components for one with a "
+        "part made of several shells (a loose part or stray fragment, which shows no icon).",
         {
             {"type", "object"},
             {"properties", {
@@ -963,6 +966,7 @@ void OrcaMCPServer::register_builtin_tools()
                 // objects the object list flags with its warning icon.
                 result["active_warnings"] = get_active_warnings_json(wxGetApp().plater());
                 add_warnings(result["active_warnings"], mesh_error_warnings(wxGetApp().plater()->model(), mesh_health));
+                add_next_steps(result, mesh_next_steps(wxGetApp().plater()->model(), mesh_health));
 
                 return result;
             });
@@ -3188,7 +3192,9 @@ void OrcaMCPServer::register_builtin_tools()
         "load_model",
         ToolCategory::Models,
         "Import STL, 3MF, OBJ or STEP geometry",
-        "Import a 3D model file (STL, 3MF, OBJ, STEP, etc.)",
+        "Import a 3D model file (STL, 3MF, OBJ, STEP, etc.). next_steps names get_mesh_health for a "
+        "loaded object with the mesh warning icon, and get_object_components for one with a part made "
+        "of several shells (a loose part or stray fragment).",
         {
             {"type", "object"},
             {"properties", {
@@ -3266,6 +3272,8 @@ void OrcaMCPServer::register_builtin_tools()
                                       into_u8(plater->get_project_filename(".3mf")));
                 response["active_warnings"] = get_active_warnings_json(plater);
                 add_warnings(response["active_warnings"], mesh_error_warnings(plater->model(), flagged_object_indices(loaded_objects)));
+                const Model& model = plater->model();
+                add_next_steps(response, mesh_next_steps(model, added_object_indices(model, objects_before), model_mesh_health(model)));
                 if (!info_messages.empty())
                     response["info_messages"] = info_messages;
                 return response;

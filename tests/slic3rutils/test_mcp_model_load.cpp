@@ -71,6 +71,7 @@ TEST_CASE("an unset or unknown setting opens the project, as upstream's fallthro
 namespace {
 using Slic3r::Model;
 using Slic3r::ModelObject;
+using Slic3r::GUI::OrcaMCP::added_object_indices;
 using Slic3r::GUI::OrcaMCP::load_file_kind;
 using Slic3r::GUI::OrcaMCP::load_refusal;
 using Slic3r::GUI::OrcaMCP::loaded_objects_json;
@@ -112,6 +113,18 @@ TEST_CASE("loaded_objects names only the objects the load added, by their scene 
     CHECK_THAT(loaded[0]["bounding_box"]["size_x"].get<double>(), WithinAbs(5.0, 1e-9));
     CHECK_THAT(loaded[0]["bounding_box"]["size_y"].get<double>(), WithinAbs(10.0, 1e-9));
     CHECK_THAT(loaded[0]["bounding_box"]["size_z"].get<double>(), WithinAbs(15.0, 1e-9));
+}
+
+TEST_CASE("the objects a load added are known by their scene index", "[McpModelLoad][orcamcp][load]")
+{
+    // What load_model's next_steps ask about: the new objects, never the scene's older ones.
+    Model model;
+    add_box(model, "already here");
+    const auto before = object_ids(model);
+    add_box(model, "new one");
+    add_box(model, "new two");
+    CHECK(added_object_indices(model, before) == std::vector<int>{1, 2});
+    CHECK(added_object_indices(model, object_ids(model)).empty());
 }
 
 // get_scene_info and load_model describe an object with one serializer, so the same object reads

@@ -250,6 +250,13 @@ loaded was picked by exact name, and the ones nothing named (`get_mesh_health`,
   footguns (`send_to_printer` starts the print, `save_project` without a path overwrites, `load_project`
   and `new_project` discard), and `get_server_info` for the rest. A test enforces the limit and checks
   every snake_case name in them.
+- **Next steps.** A response whose result implies a follow-up carries `next_steps`:
+  `[{"tool", "arguments" (left out when none), "why"}]`, built by `add_next_steps` from the builders in
+  `OrcaMCPNextSteps.cpp`, never by hand in a handler. At most one step per tool (`arguments` names the
+  first object, `why` all of them). `tests/slic3rutils/test_mcp_next_steps.cpp` (`[McpNextSteps]`)
+  checks every builder's steps name real tools with `arguments` that pass `tool_arguments_error`
+  against the tool's schema. Which responses carry which steps: `docs/tools/reference.md`, "Next
+  Steps". A new step goes in a builder there, with its case in that test.
 
 ---
 
@@ -436,6 +443,7 @@ gh release upload v2.3.2.10 ./path/to/new/artifact.exe -R okets/OrcaMCP
 | `src/slic3r/Utils/ObicoLink.cpp` | Flashforge preset's Obico link: page link object and token-free MCP status (spec `docs/superpowers/specs/2026-09-15-obico-camera-source-design.md`) |
 | `src/slic3r/GUI/HttpServer.hpp` | HTTP server with JSON responses; listens on 127.0.0.1 only |
 | `src/slic3r/GUI/HttpServer.cpp` | POST body reading, ResponseJson, the stop that waits for handlers and lets replies out |
+| `src/slic3r/GUI/OrcaMCP/OrcaMCPNextSteps.cpp` | A response's `next_steps`: the one shape and helper (`add_next_steps`), and the builders that decide which follow-up a result implies (see "Server instructions and next steps"; unit-tested in `tests/slic3rutils/test_mcp_next_steps.cpp`) |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPMeshHealth.cpp` | Mesh health as the object list reports it: the warning icon and its exact tooltip through the list's own `mesh_errors_info` (`GUI_ObjectList.cpp`), the numbers behind them, and `get_mesh_health`'s shell lists (unit-tested in `tests/slic3rutils/test_mesh_health.cpp`); the tool itself is `OrcaMCPMeshTools.cpp` |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPMainThreadGate.hpp` | How a call hands work to the main thread and waits, and how quitting releases it: the gate is `QueuedCalls` (`src/slic3r/Utils/QueuedCall.hpp`), with `call_through` for a tool's json (see "Threading Model"; unit-tested in `tests/slic3rutils/test_mcp_shutdown.cpp`, `test_queued_call.cpp`) |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPQuit.cpp` | Quitting while a modal dialog is open: which dialogs are open, ending the innermost unanswered, holding the close until they are gone, and `quit_app`'s refusals (unit-tested in `tests/slic3rutils/test_mcp_quit.cpp`); the wx side (modal hook, turn timer) is `OrcaMCPQuitApp.cpp` |

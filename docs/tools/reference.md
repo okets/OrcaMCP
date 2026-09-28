@@ -2946,6 +2946,29 @@ Many tools return an `active_warnings` section in their response, providing visi
 
 ---
 
+## Next Steps
+
+A response whose result implies a follow-up says which tool to call next, and why, in `next_steps`:
+
+```json
+"next_steps": [
+  {"tool": "get_object_components", "arguments": {"object_id": 0},
+   "why": "part \"bracket\" of object 0 (\"bracket\") has 2 shells: a loose part or stray fragment may be one of them"}
+]
+```
+
+`tool` is always a real tool and `arguments`, left out when the tool needs none, is a call that tool
+accepts as it stands. There is at most one step per tool: `arguments` names the first object it
+applies to, and `why` names them all ("objects 0, 3 and 7 ... call it for each"). A response with
+nothing to suggest has no `next_steps`.
+
+| Response | Step | When |
+|----------|------|------|
+| `load_model` (the objects it added), `get_scene_info` (every object) | `get_mesh_health` | an object shows the object list's mesh warning icon (open edges, or repairs a 3MF recorded) |
+| | `get_object_components` | a model part of the object is more than one shell: a loose part or a stray fragment, which leaves no warning icon when it is closed |
+
+---
+
 ## Error Handling
 
 A tool that ran and could not do what it was asked answers normally, with `"status": "error"` and a

@@ -939,7 +939,7 @@
     },
     {
       "category": "Scene",
-      "description": "Get current project state: plates, objects, positions. Call first to get object_ids. Each plate also carries `occupancy`, the complete list of what stands on it in plate millimetres -- every object's printed footprint (brim included), the prime tower's footprint (brim included) when one is printed, and the printer's excluded bed areas. Use `occupancy`, not `model_objects`, to work out where there is free space. An object with instances on several plates is listed under each by the instances there (`instances_on_plate`): its bounding_box, position and footprint are theirs. `unplaced_objects` lists every object with an instance on no plate, and which (`unplaced_instances`). `open_dialogs` names any dialog the app is showing, waiting for the user (tool calls still run under it); `system_dialog_open` is true while a system file chooser or alert is open, `untracked_modal_loop` while a modal window no dialog accounts for runs. Every object carries `mesh_warning`, true when the object list shows its warning icon (open edges or recorded repairs), with `mesh_warning_reason`, the list's one-line reason; each such object also adds a MeshErrors warning to this response's active_warnings, saying what an agent can do about it.",
+      "description": "Get current project state: plates, objects, positions. Call first to get object_ids. Each plate also carries `occupancy`, the complete list of what stands on it in plate millimetres -- every object's printed footprint (brim included), the prime tower's footprint (brim included) when one is printed, and the printer's excluded bed areas. Use `occupancy`, not `model_objects`, to work out where there is free space. An object with instances on several plates is listed under each by the instances there (`instances_on_plate`): its bounding_box, position and footprint are theirs. `unplaced_objects` lists every object with an instance on no plate, and which (`unplaced_instances`). `open_dialogs` names any dialog the app is showing, waiting for the user (tool calls still run under it); `system_dialog_open` is true while a system file chooser or alert is open, `untracked_modal_loop` while a modal window no dialog accounts for runs. Every object carries `mesh_warning`, true when the object list shows its warning icon (open edges or recorded repairs), with `mesh_warning_reason`, the list's one-line reason; each such object also adds a MeshErrors warning to this response's active_warnings, saying what an agent can do about it. next_steps names get_mesh_health for an object with that icon, and get_object_components for one with a part made of several shells (a loose part or stray fragment, which shows no icon).",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -1059,7 +1059,7 @@
     },
     {
       "category": "Models",
-      "description": "Import a 3D model file (STL, 3MF, OBJ, STEP, etc.)",
+      "description": "Import a 3D model file (STL, 3MF, OBJ, STEP, etc.). next_steps names get_mesh_health for a loaded object with the mesh warning icon, and get_object_components for one with a part made of several shells (a loose part or stray fragment).",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {

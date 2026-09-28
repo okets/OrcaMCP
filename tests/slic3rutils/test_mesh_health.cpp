@@ -10,6 +10,7 @@
 #include "libslic3r/TriangleMesh.hpp"
 
 #include <test_utils.hpp>
+#include "mesh_fixtures.hpp"
 
 #include <string>
 
@@ -22,35 +23,11 @@
 using namespace Slic3r;
 using namespace Slic3r::GUI::OrcaMCP;
 using Catch::Matchers::WithinAbs;
+using namespace mesh_fixtures;
 
 namespace {
 
 const char* const k_hole_tooltip = "Remaining errors:\n\t3 non-manifold edges\n\nClick the icon to repair model object";
-
-// A closed 10 mm cube with its first facet removed: a triangular hole whose three edges each
-// leave one neighbour facet with an open edge.
-indexed_triangle_set cube_missing_facet()
-{
-    indexed_triangle_set its = its_make_cube(10.0, 10.0, 10.0);
-    its.indices.erase(its.indices.begin());
-    return its;
-}
-
-indexed_triangle_set translated(indexed_triangle_set its, const Vec3f& offset)
-{
-    for (Vec3f& v : its.vertices)
-        v += offset;
-    return its;
-}
-
-// `count` separate cubes in one mesh, each 1 mm and 3 mm from the last: `count` shells.
-indexed_triangle_set separate_cubes(int count)
-{
-    indexed_triangle_set its;
-    for (int i = 0; i < count; ++i)
-        its_merge(its, translated(its_make_cube(1.0, 1.0, 1.0), Vec3f(3.f * i, 0.f, 0.f)));
-    return its;
-}
 
 RepairedMeshErrors reversed_facets(int count)
 {
@@ -60,21 +37,6 @@ RepairedMeshErrors reversed_facets(int count)
 }
 
 std::string utf8(const wxString& text) { return text.ToUTF8().data(); }
-
-// One object holding `mesh` as its only part, with one instance, as a load leaves it.
-struct OnePartObject
-{
-    Model        model;
-    ModelObject* object = nullptr;
-
-    explicit OnePartObject(TriangleMesh&& mesh)
-    {
-        object       = model.add_object();
-        object->name = "Test object";
-        object->add_volume(std::move(mesh));
-        object->add_instance();
-    }
-};
 
 } // namespace
 
