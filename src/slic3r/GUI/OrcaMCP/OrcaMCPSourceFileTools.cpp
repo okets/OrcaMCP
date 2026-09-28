@@ -153,6 +153,13 @@ nlohmann::json reload_on_main_thread(const ReloadRequest& request)
     if (const auto refusal = reload_sources_refusal(missing, request.file_path, is_file))
         return error_response(*refusal);
 
+    // A painting tool left open would go on painting the meshes the reload replaces, and write that painting
+    // into the new ones when it closes: the app's reload refuses while a toolbar tool is open, as its Replace does.
+    const int   object_id = request.object_id.value_or(-1);
+    std::string closed_tool;
+    if (const auto failed = close_toolbar_tool_for_change(*plater, object_id, object_id >= 0 ? model.objects[size_t(object_id)]->volumes.size() : 0,
+                                                          closed_tool))
+        return *failed;
     McpDialogSuppressionGuard guard;
     if (request.file_path)
         guard.answer_file(*request.file_path);
@@ -161,7 +168,7 @@ nlohmann::json reload_on_main_thread(const ReloadRequest& request)
         ModelObject* object = model.objects[size_t(*request.object_id)];
         ModelVolume* volume = request.volume_id && object->volumes.size() > 1 ? object->volumes[size_t(*request.volume_id)] : nullptr;
         if (const auto refusal = select_as_a_click_does(*plater, *request.object_id, volume))
-            return guard.report(error_response(*refusal));
+            return with_closed_tool(guard.report(error_response(*refusal)), closed_tool);
         plater->reload_from_disk();
     } else {
         plater->reload_all_from_disk();
@@ -175,11 +182,11 @@ nlohmann::json reload_on_main_thread(const ReloadRequest& request)
             why += ": file_path answered the first missing file, and the app could not find the rest (" + file_names(missing) +
                    ") beside it; put them in one folder, or reload the objects one at a time";
         why += "; info_messages says what the app reported";
-        return guard.report(error_response(why));
+        return with_closed_tool(guard.report(error_response(why)), closed_tool);
     }
     nlohmann::json answer = {{"status", "success"}, {"reloaded", std::move(reloaded)}};
     report_loaded(*plater, changed_objects, answer);
-    return guard.report(answer);
+    return with_closed_tool(guard.report(answer), closed_tool);
 }
 
 // ---- replace_volume_with_file ----
@@ -232,9 +239,8 @@ nlohmann::json replace_on_main_thread(const ReplaceRequest& request)
         plater->replace_with_stl();
     } else {
         guard.answer_folder(*request.folder);
-        // One undo step for the whole folder, where the menu takes one per part: the plan found a file for at
-        // least one part, so the step has a change in it.
-        Plater::TakeSnapshot snapshot(plater, _u8L("Replace with 3D file"));
+        // The menu's undo steps: one per part replaced, each taken once its file loaded, so a file that fails
+        // to load leaves none.
         plater->replace_all_with_stl();
     }
 
@@ -263,9 +269,10 @@ void Slic3r::GUI::OrcaMCPServer::register_source_file_tools()
         "reloads one part. A file is found where it was loaded from, else beside the object's own file; when it is in neither "
         "place the app asks for it, and file_path answers: a file of the same name there (its folder is then searched for the "
         "other missing ones), or another file, which replaces the part. Without file_path a missing file is refused, "
-        "naming it. A piece of a cut is refused (a reload would bring back the whole model). reloaded lists the parts loaded "
+        "naming it. A piece of a cut is refused, as the object list's menu item is off for one; Reload All takes its parts "
+        "loaded from a file, as the app's does (the parts the cut went through name no file). reloaded lists the parts loaded "
         "anew, with the placement; a file that fails to load is named in info_messages and the others are still reloaded. "
-        "One undo step, taken only when something changed.",
+        "An open toolbar tool is closed first (closed_toolbar_tool). One undo step, taken only when something changed.",
         {{"type", "object"},
          {"properties",
           {{"object_id", {{"type", "integer"}, {"minimum", 0}, {"description", "The object to reload (default: every object)"}}},
@@ -290,7 +297,7 @@ void Slic3r::GUI::OrcaMCPServer::register_source_file_tools()
         "the object has several). folder instead replaces every part of the object (or volume_id's) with the file of its "
         "source file's name in that folder, as Replace all with 3D files does, skipping parts whose file is not there. A piece "
         "of a cut is refused. An open toolbar tool is closed first (closed_toolbar_tool). replaced lists the parts loaded anew, "
-        "with the placement. One undo step.",
+        "with the placement. One undo step per part replaced, as the app takes (none when nothing was).",
         {{"type", "object"},
          {"properties",
           {{"object_id", {{"type", "integer"}, {"minimum", 0}, {"description", "The object"}}},

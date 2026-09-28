@@ -27,8 +27,7 @@ std::string invalid_volume(const SourceObject& object, int volume_id)
 
 std::string cut_piece(int object_id, const std::string& action)
 {
-    return object_words(object_id) + " is a piece of a cut, which the app does not " + action +
-           " (its menu item is off for one): it would bring back the whole model";
+    return object_words(object_id) + " is a piece of a cut, which the app does not " + action + " (the object list's menu item is off for one)";
 }
 
 // The object's volumes the reload takes, (object, volume).
@@ -65,17 +64,8 @@ ReloadDecision plan_reload(const ReloadRequest& request, const std::vector<Sourc
                           "nothing to reload");
         return decision;
     }
-    std::vector<int> cut;
-    for (const SourceObject& object : scene)
-        if (object.cut)
-            cut.push_back(object.object_id);
-    if (!cut.empty()) {
-        std::string ids;
-        for (int id : cut)
-            ids += (ids.empty() ? "" : ", ") + std::to_string(id);
-        return refuse("The scene holds pieces of a cut (object " + ids + "), which a reload would turn back into the whole model: "
-                      "reload the other objects one at a time, by object_id");
-    }
+    // Reload All, as the app's: every part loaded from a file, a cut piece's too -- the parts the cut went through
+    // were made anew and name no file (Cut's add_cut_volume), and a part it left whole reloads as itself.
     for (const SourceObject& object : scene)
         add_reloadable(object, std::nullopt, decision.volumes);
     if (decision.volumes.empty())

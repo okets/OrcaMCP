@@ -11471,6 +11471,11 @@ static std::vector<std::pair<int, int>> reloadable_volumes(const Model &model, c
 
 void Plater::priv::reload_from_disk(const std::string& snapshot_name)
 {
+    // Orca: not under an open toolbar tool, as Replace 3D file: a painting tool keeps the triangles of the
+    // meshes a reload replaces (it rebuilds on another object or volume count only) and writes that painting
+    // into the new meshes when it closes.
+    if (!q->get_view3D_canvas3D()->get_gizmos_manager().check_gizmos_closed_except(GLGizmosManager::EType::Undefined))
+        return;
 #if ENABLE_RELOAD_FROM_DISK_REWORK
     // collect selected reloadable ModelVolumes
     std::vector<std::pair<int, int>> selected_volumes = reloadable_volumes(model, get_selection());
@@ -11629,12 +11634,20 @@ void Plater::priv::reload_from_disk(const std::string& snapshot_name)
 
 #if ENABLE_RELOAD_FROM_DISK_REWORK
     // Orca: the undo step is taken right before the first volume changes, not before loading: a reload
-    // whose files all fail to load changed nothing and left an empty undo step.
-    std::optional<Plater::TakeSnapshot> snapshot;
-    const auto before_change = [&]() {
-        if (!snapshot)
-            snapshot.emplace(q, snapshot_name.empty() ? _u8L("Reload from disk") : snapshot_name);
-    };
+    // whose files all fail to load changed nothing and left an empty undo step. A part given another file
+    // is changed by replace_volume_with_stl, which takes the step it is handed only once that file loaded,
+    // so it is handed the step while none is taken. What follows the step is in it.
+    struct ReloadUndoStep
+    {
+        Plater*     plater;
+        std::string name;
+        bool        taken = false;
+        ~ReloadUndoStep() { if (taken) plater->allow_snapshots(); }
+        void        before_change() { if (!taken) { plater->take_snapshot(name); follow(); } }
+        std::string for_replace() const { return taken ? std::string() : name; }
+        void        after_replace() { if (!taken) follow(); } // the replace took it
+        void        follow() { plater->suppress_snapshots(); taken = true; }
+    } undo_step{q, snapshot_name.empty() ? _u8L("Reload from disk") : snapshot_name};
 #endif // ENABLE_RELOAD_FROM_DISK_REWORK
 
     std::vector<wxString> fail_list;
@@ -11762,7 +11775,7 @@ void Plater::priv::reload_from_disk(const std::string& snapshot_name)
                     continue;
                 }
 
-                before_change();
+                undo_step.before_change();
                 ModelVolume *new_volume = nullptr;
                 // BBS: step model
                 if (new_volume_idx < 0 && new_object_idx >= 0) {
@@ -11888,9 +11901,13 @@ void Plater::priv::reload_from_disk(const std::string& snapshot_name)
     for (auto [src, dest] : replace_paths) {
         for (auto [obj_idx, vol_idx] : selected_volumes) {
             if (boost::algorithm::iequals(model.objects[obj_idx]->volumes[vol_idx]->source.input_file, src.string())) {
-                before_change();
                 // When an error occurs, either the dest parsing error occurs, or the number of objects in the dest is greater than 1 and cannot be replaced, and cannot be replaced in this loop.
-                if (!replace_volume_with_stl(obj_idx, vol_idx, dest, "")) break;
+                // Orca: named among the files that failed, as a file that fails to load is above.
+                if (!replace_volume_with_stl(obj_idx, vol_idx, dest, undo_step.for_replace())) {
+                    fail_list.push_back(from_u8(dest.string()));
+                    break;
+                }
+                undo_step.after_replace();
             }
         }
     }
@@ -11931,6 +11948,9 @@ void Plater::priv::reload_from_disk(const std::string& snapshot_name)
 void Plater::priv::reload_all_from_disk()
 {
     if (model.objects.empty())
+        return;
+    // Orca: before select_all, which a reload that refuses (an open toolbar tool) would leave behind.
+    if (!q->get_view3D_canvas3D()->get_gizmos_manager().check_gizmos_closed_except(GLGizmosManager::EType::Undefined))
         return;
 
     // Orca: the reload takes the undo step, named for this, right before its first change (not up front,

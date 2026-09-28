@@ -42,8 +42,8 @@ struct ReloadRequest
 };
 
 // The (object, volume) pairs the call reloads, or why it is refused: volume_id without object_id, an
-// object or volume out of range, a cut piece (the app's Reload from disk is off for one; Reload All takes
-// none), nothing loaded from a file.
+// object or volume out of range, a cut piece (the object list's Reload from disk is off for one), nothing
+// loaded from a file. Reload All takes every object's parts loaded from a file, as the app's does.
 struct ReloadDecision
 {
     std::vector<std::pair<int, int>> volumes;

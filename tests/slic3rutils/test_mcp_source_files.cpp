@@ -64,16 +64,23 @@ TEST_CASE("reload_from_disk reloads an object's parts loaded from a file, not it
     CHECK(mentions(plan_reload(one, scene).refusal, "was not loaded from a file"));
 }
 
-TEST_CASE("reload_from_disk refuses a cut piece, and Reload All while one is in the scene", "[McpSourceFiles][orcamcp]")
+// Reload from disk is off for a cut piece in the object list, so the call refuses one. The app's Reload All
+// takes every part loaded from a file, a cut piece's too: the parts the cut went through were made anew and name
+// no file (Cut's add_cut_volume), and a part it left whole reloads as itself. Round 1 refused Reload All while a
+// cut piece was in the scene, saying a reload would bring back the whole model, which it cannot.
+TEST_CASE("reload_from_disk refuses a cut piece, and Reload All takes every part from a file as the app's does", "[McpSourceFiles][orcamcp]")
 {
-    const std::vector<SourceObject> scene = {object(0, {from_file(0, "/m/a.stl")}, /*cut=*/true), object(1, {from_file(0, "/m/b.stl")})};
+    const SourceVolume              cut_through{0, "cube_A", "", false};
+    const std::vector<SourceObject> scene = {object(0, {cut_through, from_file(1, "/m/whole.stl")}, /*cut=*/true),
+                                             object(1, {from_file(0, "/m/b.stl")})};
     ReloadRequest cut;
     cut.object_id = 0;
     CHECK(mentions(plan_reload(cut, scene).refusal, "piece of a cut"));
-    CHECK(mentions(plan_reload(ReloadRequest{}, scene).refusal, "object 0"));
     ReloadRequest other;
     other.object_id = 1;
     CHECK(plan_reload(other, scene).volumes.size() == 1);
+
+    CHECK(plan_reload(ReloadRequest{}, scene).volumes == std::vector<std::pair<int, int>>{{0, 1}, {1, 0}});
 }
 
 TEST_CASE("reload_from_disk refuses a volume without its object, and ids out of range", "[McpSourceFiles][orcamcp]")

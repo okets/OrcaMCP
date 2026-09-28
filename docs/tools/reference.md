@@ -1070,13 +1070,17 @@ it cancels the reload before anything changed, and the error names it. Without `
 is refused, naming it; with `file_path` and nothing missing, it is refused too (to load another file, use
 `replace_volume_with_file`).
 
-Refused: a part not loaded from a file (a shape added in the app); a piece of a cut, which a reload would
-turn back into the whole model -- and Reload All while one is in the scene; while an arrange, orient or bed
-fill runs. A file that fails to load is named in `info_messages` ("Unable to reload"), and the others are
-still reloaded. `objects` gives each changed object's placement; `next_steps` names `get_mesh_health` /
-`get_object_components` for a reloaded mesh that needs a look. One undo step, taken right before the first
-part changes; none when nothing did (until v2.5.0.6 a failed load left one, and a scene not updated for the
-parts already reloaded: probe BC).
+Refused: a part not loaded from a file (a shape added in the app); a piece of a cut, as the object list's
+Reload from disk is off for one; while an arrange, orient or bed fill runs. Without `object_id`, as the app's
+Reload All, every part loaded from a file reloads, a cut piece's too: the parts the cut went through were made
+anew and name no file, and a part it left whole reloads as itself. A file that fails to load -- a source file, or the `file_path` that replaces a part -- is named in
+`info_messages` ("Unable to reload"), and the others are still reloaded. `objects` gives each changed object's placement; `next_steps` names `get_mesh_health` /
+`get_object_components` for a reloaded mesh that needs a look. An open toolbar tool is closed first
+(`closed_toolbar_tool`): a painting tool left open kept painting the replaced meshes and wrote that into the
+new ones when it closed, and the app's own reload now refuses under one, as its Replace does (probe BF). One
+undo step, taken right before the first part changes -- for a part given another file, once that file has
+loaded; none when nothing did (until v2.5.0.6 a failed load left one, and a scene not updated for the parts
+already reloaded: probe BC).
 
 ---
 
@@ -1101,8 +1105,10 @@ has one part -- and its painting as the app's "Keep painted feature" setting say
 part is an error ("Unable to replace with more than one volume"), and nothing changes. With `folder`, a
 part whose file is not there, or is its own source file, is skipped, as the menu skips it (the app's list
 of what it replaced and skipped is in `info_messages`); a folder with no such file for any part is refused
-before anything changes. One undo step, for the folder too (the menu takes one per part). Refused: a piece
-of a cut; `file_path` and `folder` both or neither; while an arrange, orient or bed fill runs.
+before anything changes. One undo step for each part replaced, as the app takes them (so a `folder` that
+replaced three parts takes three `undo` calls to take back), each taken once its file has loaded: a file that
+fails to load leaves none. Refused: a piece of a cut; `file_path` and `folder` both or neither; while an
+arrange, orient or bed fill runs.
 
 ---
 
