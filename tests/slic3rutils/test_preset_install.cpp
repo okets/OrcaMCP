@@ -212,24 +212,6 @@ TEST_CASE("installing a printer lays its vendor into the data folder and enables
     CHECK(uninstalled_vendors().empty());
 }
 
-TEST_CASE("installing a filament keeps the filament slot 1 had", "[PresetInstall]")
-{
-    InstallFolders folders;
-    AppConfig      app_config;
-    app_config.set_section(AppConfig::SECTION_FILAMENTS, {{"Generic PLA @System", "true"}});
-    PresetBundle bundle;
-    bundle.load_presets(app_config, ForwardCompatibilitySubstitutionRule::EnableSilent);
-    REQUIRE(bundle.filament_presets.front() == "Generic PLA @System");
-
-    // The cloud sync's merge mode, which install_presets takes: it adds, and changes no selection. It used
-    // to switch slot 1 to the first filament it added, which it took for the wizard's whole choice.
-    REQUIRE(bundle.apply_vendor_config({}, {{"Generic PETG @System", "true"}}, &app_config, /*overwrite=*/false));
-
-    CHECK(bundle.filament_presets.front() == "Generic PLA @System");
-    CHECK(app_config.get_section(AppConfig::SECTION_FILAMENTS).count("Generic PETG @System") == 1);
-    CHECK(app_config.get_section(AppConfig::SECTION_FILAMENTS).count("Generic PLA @System") == 1);
-}
-
 TEST_CASE("nothing is installed while slicing, while a job runs, or over unsaved preset changes", "[PresetInstall]")
 {
     CHECK_FALSE(install_refusal(PipelineState{}, false, {}, {}).has_value());

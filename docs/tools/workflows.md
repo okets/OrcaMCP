@@ -96,8 +96,13 @@ This guide shows how to combine MCP tools for common 3D printing tasks.
 | `wall_loops` | print | "2", "3", "4" |
 | `sparse_infill_density` | print | "10%", "20%", "50%" |
 | `enable_support` | print | "0", "1" |
-| `nozzle_temperature` | filament | ["210"], ["220"] |
-| `bed_temperature` | filament | ["60"], ["70"] |
+| `nozzle_temperature` | filament (with `filament_slot`) | ["210"], ["220"] |
+| `hot_plate_temp`, `textured_plate_temp` | filament (with `filament_slot`) | ["60"], ["70"] |
+
+A filament setting changes one slot's preset: `filament_slot` names the slot, and it is required when
+the project has more than one physical slot. Every slot using that preset gets the change, so one
+another slot shares is refused unless `include_sharing_slots: true` (the refusal names how to give the
+slot a preset of its own).
 
 **Example:**
 ```json
@@ -108,6 +113,12 @@ This guide shows how to combine MCP tools for common 3D printing tasks.
     {"type": "print", "key": "sparse_infill_density", "value": "20%"},
     {"type": "print", "key": "enable_support", "value": "1"}
   ]
+}}
+
+// Slot 2's filament
+{"name": "apply_config", "arguments": {
+  "filament_slot": 2,
+  "settings": [{"type": "filament", "key": "nozzle_temperature", "value": ["230"]}]
 }}
 ```
 

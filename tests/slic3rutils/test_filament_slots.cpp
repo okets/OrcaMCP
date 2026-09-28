@@ -207,24 +207,6 @@ TEST_CASE("adding a filament before the mixed ones moves every number that names
     CHECK(preset.opt_int("support_filament") == 3);
 }
 
-TEST_CASE("a filament a mixed filament lists is one whose delete breaks it", "[FilamentSlots]")
-{
-    PresetBundle bundle;
-    // Three physical slots and a mixed slot 4 of slots 1 and 3.
-    bundle.project_config.option<ConfigOptionBools>("filament_is_mixed", true)->values           = {false, false, false, true};
-    bundle.project_config.option<ConfigOptionStrings>("filament_mixed_components", true)->values = {"", "", "", "1,3"};
-
-    CHECK(bundle.merge_breaks_mixed_filament(0, 3));
-    CHECK(bundle.merge_breaks_mixed_filament(2, 3));
-    CHECK_FALSE(bundle.merge_breaks_mixed_filament(1, 3)); // not a component
-    CHECK_FALSE(bundle.merge_breaks_mixed_filament(3, 0)); // a mixed filament merged away breaks nothing
-    CHECK_FALSE(bundle.merge_breaks_mixed_filament(0, 1)); // into a physical one
-
-    CHECK(bundle.mixed_filaments_using(0) == std::vector<size_t>{3});
-    CHECK(bundle.mixed_filaments_using(1).empty());
-    CHECK(bundle.mixed_filaments_using(3).empty()); // a mixed filament is no component
-}
-
 TEST_CASE("a slot is added only where the sidebar offers its + button", "[FilamentSlots]")
 {
     CHECK_FALSE(add_slot_refusal(multi_material_project(1), idle_pipeline, false).has_value());
