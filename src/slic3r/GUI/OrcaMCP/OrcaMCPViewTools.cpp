@@ -8,6 +8,7 @@
 #include "OrcaMCPCommon.hpp"
 #include "OrcaMCPNextSteps.hpp"
 #include "OrcaMCPPartTools.hpp"
+#include "OrcaMCPPendingEvents.hpp"
 #include "OrcaMCPServer.hpp"
 #include "OrcaMCPUserView.hpp"
 
@@ -65,13 +66,13 @@ std::string open_toolbar_tool(Plater& plater)
 }
 
 // The tab bar's click on tab `id`: MainFrame::select_tab, whose handler posts the plater its view change,
-// which runs here, inside the call's dialog suppression, rather than after it returned. Switching to
-// Preview slices the selected plate when it has no result, as the tab does.
+// which runs here, inside the call's dialog suppression, rather than after it returned, with whatever the
+// plater had queued before it. Switching to Preview slices the selected plate when it has no result, as
+// the tab does.
 void switch_tab(Plater& plater, const std::string& id)
 {
     wxGetApp().mainframe->select_tab(from_u8(id));
-    // The plater's own queue, where the tab handler posted it (wxWindow hides the call; the event handler's is public).
-    static_cast<wxEvtHandler&>(plater).ProcessPendingEvents();
+    process_queued_events(plater);
 }
 
 // The View menu's view, on the canvas the tab shows: where the camera looks from (Default View also
