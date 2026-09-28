@@ -555,7 +555,9 @@ public:
     // Silent G-code export to a specific file path (for MCP automation). Returns why the export did
     // not start (OrcaMCP::export_not_started), or nullopt when it is being written.
     std::optional<std::string> export_gcode_to_file(const std::string& output_path);
-    void export_gcode_3mf(bool export_all = false);
+    // Orca: true once the sliced file was written; MCP's export_gcode answers its file dialog
+    // (mcp_answer_path_dialog), and a write that failed says so instead of reporting it exported.
+    bool export_gcode_3mf(bool export_all = false);
     void send_gcode_finish(wxString name);
     void export_core_3mf();
     // Export a "published" 3MF embedding the author-selected settings in the file metadata; a

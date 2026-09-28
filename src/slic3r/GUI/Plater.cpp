@@ -18512,13 +18512,13 @@ void Plater::send_to_printer(bool isall)
 }
 
 //BBS export gcode 3mf to file
-void Plater::export_gcode_3mf(bool export_all)
+bool Plater::export_gcode_3mf(bool export_all)
 {
     if (p->model.objects.empty())
-        return;
+        return false;
 
     if (p->process_completed_with_error == p->partplate_list.get_curr_plate_index())
-        return;
+        return false;
 
     //calc default_output_file, get default output file from background process
     fs::path default_output_file;
@@ -18529,18 +18529,18 @@ void Plater::export_gcode_3mf(bool export_all)
         // Also if there is something wrong with the current configuration, a pop-up dialog will be shown and the export will not be performed.
         unsigned int state = this->p->update_restart_background_process(false, false);
         if (state & priv::UPDATE_BACKGROUND_PROCESS_INVALID)
-            return;
+            return false;
         default_output_file = this->p->background_process.output_filepath_for_project(
             into_path(this->p->get_project_filename(".3mf")));
     }
     catch (const Slic3r::PlaceholderParserError& ex) {
         // Show the error with monospaced font.
         show_error(this, ex.what(), true);
-        return;
+        return false;
     }
     catch (const std::exception& ex) {
         show_error(this, ex.what(), false);
-        return;
+        return false;
     }
     default_output_file.replace_extension(".gcode.3mf");
     default_output_file = fs::path(Slic3r::fold_utf8_to_ascii(default_output_file.string()));
@@ -18549,7 +18549,13 @@ void Plater::export_gcode_3mf(bool export_all)
     start_dir = appconfig.get_last_output_dir(default_output_file.parent_path().string(), false);
 
     fs::path output_path;
-    {
+    // Orca MCP: the tool call's path answers the file dialog, which would block the call for good.
+    if (std::vector<std::string> answered; mcp_answer_path_dialog(into_u8(_L("Save Sliced file as:")), McpPathDialog::file, answered)) {
+        if (!answered.empty())
+            output_path = into_path(from_u8(answered.front()));
+        if (!output_path.empty() && output_path.extension().string() != ".3mf")
+            output_path = output_path.string() + ".3mf";
+    } else {
         std::string ext = default_output_file.extension().string();
         wxFileDialog dlg(this, _L("Save Sliced file as:"),
             start_dir,
@@ -18576,7 +18582,15 @@ void Plater::export_gcode_3mf(bool export_all)
         int plate_idx = get_partplate_list().get_curr_plate_index();
         if (export_all)
             plate_idx = PLATE_ALL_IDX;
-        export_3mf(output_path, SaveStrategy::Silence | SaveStrategy::SplitModel | SaveStrategy::WithGcode | SaveStrategy::SkipModel, plate_idx); // BBS: silence
+        const int written = export_3mf(output_path, SaveStrategy::Silence | SaveStrategy::SplitModel | SaveStrategy::WithGcode | SaveStrategy::SkipModel, plate_idx); // BBS: silence
+        // Orca: the export is over (it is not the background process's), so no later slice's completion
+        // reports it again; and a write that failed says so, where upstream reported it exported whatever
+        // export_3mf returned.
+        p->exporting_status = ExportingStatus::NOT_EXPORTING;
+        if (written != 0) {
+            show_error(this, _L("Export failed\nPlease check write permissions or file in use by another application"));
+            return false;
+        }
 
         RemovableDriveManager& removable_drive_manager = *wxGetApp().removable_drive_manager();
 
@@ -18587,7 +18601,9 @@ void Plater::export_gcode_3mf(bool export_all)
         // update last output dir
         appconfig.update_last_output_dir(output_path.parent_path().string(), false);
         p->notification_manager->push_exporting_finished_notification(output_path.string(), p->last_output_dir_path, on_removable);
+        return true;
     }
+    return false;
 }
 
 void Plater::send_gcode_finish(wxString name)

@@ -777,12 +777,16 @@
     },
     {
       "category": "Slicing",
-      "description": "Export the selected plate's G-code. The plate must be sliced (slice_all, then wait_for_slice). status is export_started when the app has begun writing the file in the background -- not a failure: the file is complete once wait_for_slice returns (get_slicing_status's busy is false again), which next_steps says -- or error, with message saying why nothing was written. Refused, as the GUI's Export button is off, when the check its slice ran on its G-code failed: get_slicing_status's plates[].gcode_check names what it found.",
+      "description": "Export sliced G-code. An output_path ending in .gcode writes the selected plate's G-code, as the GUI's Export G-code does: status is export_started when the app has begun writing the file in the background -- not a failure: the file is complete once wait_for_slice returns (get_slicing_status's busy is false again), which next_steps says. An output_path ending in .gcode.3mf writes the plate sliced file (the G-code inside a 3MF, which printers and the app open as a sliced project), as Export plate sliced file does, or with all_plates every sliced plate's, as Export all plate sliced file does: written at once, status success, with the plates it holds; the project keeps its name. The plates must be sliced (slice_all, then wait_for_slice). Refused, as the GUI's Export items are off, when the check a plate's slice ran on its G-code failed: get_slicing_status's plates[].gcode_check names what it found. error, with message, says why nothing was written.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
+          "all_plates": {
+            "description": "With a .gcode.3mf output_path: every plate with a printable object, each sliced, in one file (default false: the selected plate). A .gcode holds one plate.",
+            "type": "boolean"
+          },
           "output_path": {
-            "description": "Output path (required; file dialogs cannot be opened from MCP).",
+            "description": "Where to write: a .gcode file, or a .gcode.3mf for the plate sliced file (required; file dialogs cannot be opened from MCP).",
             "type": "string"
           }
         },
@@ -792,7 +796,7 @@
         "type": "object"
       },
       "name": "export_gcode",
-      "summary": "Write the sliced plate's G-code"
+      "summary": "Write sliced G-code, or a .gcode.3mf"
     },
     {
       "category": "Transforms",

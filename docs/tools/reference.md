@@ -2543,8 +2543,11 @@ cancel only between phases, so on the unoptimized dev build that wait can take a
 ---
 
 ### export_gcode
-Export the selected plate's sliced G-code to a file. The file is written asynchronously, so a
-successful call answers `status: "export_started"`, not `"success"`:
+Export sliced G-code: a plain `.gcode` of the selected plate, or the plate sliced file (`.gcode.3mf`)
+of the selected plate or of every plate.
+
+A `.gcode` is written asynchronously, as the GUI's Export G-code writes it, so a successful call
+answers `status: "export_started"`, not `"success"`:
 
 | `status` | Meaning |
 |----------|---------|
@@ -2554,7 +2557,10 @@ successful call answers `status: "export_started"`, not `"success"`:
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `output_path` | string | Yes | Output path (a file dialog cannot open under MCP) |
+| `output_path` | string | Yes | Where to write: a `.gcode` file, or a `.gcode.3mf` for the plate sliced file (a file dialog cannot open under MCP) |
+| `all_plates` | boolean | No | With a `.gcode.3mf`: every plate with a printable object, each sliced, in one file (default false: the selected plate). A `.gcode` holds one plate, so `all_plates` with one is refused |
+
+A path ending in `.3mf` but not `.gcode.3mf` is refused: a project is `export_3mf`'s.
 
 `status: "export_started"` only when the app scheduled the export. An export that did not start is
 `status: "error"` with the reason as `message`: the scene has no objects, "Another export job is
@@ -2567,6 +2573,24 @@ A plate whose slice failed its G-code check is refused as the GUI's Export butto
 problems in words ("The export did not start: plate_index 0 failed the app's check of its sliced
 G-code, ...: a toolpath is above the printer's printable height. ..."); `get_slicing_status`'s
 `plates[].gcode_check` lists them. An error dialog the app raised is added as `error_messages`.
+
+**The plate sliced file (`.gcode.3mf`)** is what File > Export > Export plate sliced file (Ctrl+G) and
+Export all plate sliced file write: the G-code inside a 3MF, with the plates' thumbnails, which
+printers and the app (`load_model` onto an empty scene) open as a sliced project. It is written at
+once, through the app's own export, whose file dialog the path answers:
+
+```json
+{"status": "success", "output_path": "/tmp/out/box.gcode.3mf", "format": "gcode.3mf", "plates": [0, 2], "bytes": 81234,
+ "active_warnings": {"count": 0, "warnings": []}}
+```
+
+`plates` are the plates whose G-code the file holds. Refused before anything is written, as the GUI's
+items are off: the selected plate (or, with `all_plates`, any plate with a printable object on it --
+empty plates and plates of unprintable objects do not count, and at least one must be there) without
+a slice result ("slice_all, then wait_for_slice, first"), or whose G-code check failed; the scene
+empty; another export running; slicing in progress. The project keeps its name: this is an export,
+not a save. A write that fails is an error with the app's words ("Export failed ..."); until
+v2.5.0.6 the app reported it exported anyway (probe AZ).
 
 ---
 
