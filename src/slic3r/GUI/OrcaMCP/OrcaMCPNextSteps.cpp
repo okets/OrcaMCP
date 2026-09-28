@@ -202,6 +202,14 @@ std::vector<NextStep> export_next_steps(bool export_started)
              nullptr}};
 }
 
+std::vector<NextStep> cancel_slice_next_steps(bool still_stopping)
+{
+    if (!still_stopping)
+        return {};
+    return {{"wait_for_slice", "the cancelled slice is still stopping: wait_for_slice returns once the app has taken in how it ended",
+             nullptr}};
+}
+
 std::vector<NextStep> uniform_image_next_steps(size_t model_volumes, size_t drawn, int plate_index)
 {
     const std::string plate = "plate " + std::to_string(plate_index);

@@ -323,9 +323,11 @@ OrcaMCP::SliceStartSignals slice_start_signals(Plater& plater, PartPlateList& pl
 // How the last slice_all run stands (OrcaMCP::judge_slice_run), from its plates as they are now.
 OrcaMCP::SliceRunJudgement judge_last_run(Plater& plater, PartPlateList& plate_list, bool slicing)
 {
-    const OrcaMCP::SliceAllEndedEarly* ended = plater.slice_all_ended_early();
+    const OrcaMCP::SliceAllEndedEarly* ended     = plater.slice_all_ended_early();
+    const OrcaMCP::SliceCancelled*     cancelled = plater.slice_cancelled();
     return OrcaMCP::judge_slice_run(!s_slice_run_scope.empty(), slicing, slice_run_plates(plate_list),
-                                    ended ? std::optional<std::string>(OrcaMCP::slice_all_ended_early_text(*ended)) : std::nullopt);
+                                    ended ? std::optional<std::string>(OrcaMCP::slice_all_ended_early_text(*ended)) : std::nullopt,
+                                    cancelled ? std::optional<std::string>(OrcaMCP::slice_cancelled_text(*cancelled)) : std::nullopt);
 }
 
 // get_slicing_status's slice_run: how the last slice_all run stands (outcome, and why when it is
@@ -339,6 +341,10 @@ nlohmann::json slice_run_json(Plater& plater, PartPlateList& plate_list, const O
         run["stopped_at_plate"] = ended->plate_index;
         run["reason"]           = ended->reason;
     }
+    if (const OrcaMCP::SliceCancelled* cancelled = plater.slice_cancelled()) {
+        run["cancelled_at_plate"] = cancelled->plate_index;
+        run["cancelled_by"]       = cancelled->by_tool ? "cancel_slice" : "app";
+    }
     run["scope"]   = s_slice_run_scope.empty() ? nlohmann::json(nullptr) : nlohmann::json(s_slice_run_scope);
     nlohmann::json indexes = nlohmann::json::array();
     for (const OrcaMCP::SliceRunPlate& plate : slice_run_plates(plate_list))
@@ -351,6 +357,23 @@ nlohmann::json slice_run_json(Plater& plater, PartPlateList& plate_list, const O
     if (!judged.message.empty())
         run["message"] = judged.message;
     return run;
+}
+
+// Plater::is_background_process_slicing() reports Plater::priv::m_is_slicing, which the plate walk holds
+// true from the first plate to the last and clears only when the run finishes or stops. So once it is
+// false the whole slice_all run is over, not merely one plate, and the plate selected at slice_all can be
+// put back (s_slice_all_restore_print_index): `result` then says restored_selected_plate. Not under an
+// arrange or bed fill, which applies its result to the current plate: a later call puts it back.
+void restore_plate_selected_at_slice_all(Plater& plater, PartPlateList& plate_list, bool is_running, nlohmann::json& result)
+{
+    if (is_running || s_slice_all_restore_print_index < 0 || !plater.get_ui_job_worker().is_idle())
+        return;
+    const int restore_to            = plate_list.find_plate_by_print_index(s_slice_all_restore_print_index);
+    s_slice_all_restore_print_index = -1;
+    if (restore_to >= 0 && restore_to != plate_list.get_curr_plate_index()) {
+        plater.select_plate(restore_to);
+        result["restored_selected_plate"] = restore_to;
+    }
 }
 
 // A plate whose slice result get_print_estimate can read: the selected one when it has one, else the
@@ -3361,6 +3384,62 @@ void OrcaMCPServer::register_builtin_tools()
         }
     });
 
+    // cancel_slice - the Cancel on the app's slicing notification (Plater::cancel_slicing)
+    register_tool({
+        "cancel_slice",
+        ToolCategory::Slicing,
+        "Cancel the running slice or Slice All",
+        "Cancel the slice in progress, as the Cancel on the app's slicing notification does: a Slice All run "
+        "ends there too (between two plates as well), and the plates it sliced before keep their results. "
+        "cancelled says whether anything was: false when nothing was slicing, or the last slice had already "
+        "ended. An export or an upload in progress is not a slice and is refused. The answer comes once the "
+        "app has taken in the cancel, with slice_run as get_slicing_status gives it (outcome cancelled, "
+        "cancelled_at_plate, and which plates have no result) and restored_selected_plate when a Slice All "
+        "run's plate selection was put back; wait_for_slice also ends on outcome cancelled. No undo step.",
+        {
+            {"type", "object"},
+            {"properties", nlohmann::json::object()}
+        },
+        [](const nlohmann::json&) -> nlohmann::json {
+            nlohmann::json cancelled = run_on_main_thread([]() -> nlohmann::json {
+                Plater*                     plater = wxGetApp().plater();
+                McpDialogSuppressionGuard   suppression_guard;
+                const OrcaMCP::PipelineState state = OrcaMCP::pipeline_state(*plater, plater->get_partplate_list().get_plate_count());
+                switch (OrcaMCP::slice_cancel_action(state)) {
+                case OrcaMCP::SliceCancelAction::refuse: return error_response(OrcaMCP::slice_cancel_refusal(state));
+                case OrcaMCP::SliceCancelAction::nothing:
+                    return {{"status", "success"}, {"cancelled", false}, {"message", OrcaMCP::nothing_to_cancel_text(state)}};
+                case OrcaMCP::SliceCancelAction::cancel:
+                case OrcaMCP::SliceCancelAction::end_run: break;
+                }
+                const bool slicing_all = state.slice_all_plate >= 0;
+                if (!plater->cancel_slicing(/*by_tool=*/true))
+                    return {{"status", "success"}, {"cancelled", false}, {"message", OrcaMCP::nothing_to_cancel_text(state)}};
+                const OrcaMCP::SliceCancelled* record = plater->slice_cancelled();
+                nlohmann::json answer = {{"status", "success"}, {"cancelled", record != nullptr}, {"run", slicing_all ? "slice_all" : "slice"}};
+                if (record != nullptr)
+                    answer["plate_index"] = record->plate_index;
+                else
+                    answer["message"] = "The slice finished before the cancel reached it, so it keeps its result.";
+                return suppression_guard.report(answer);
+            });
+            if (cancelled.value("status", "") != "success" || !cancelled.value("cancelled", false))
+                return cancelled;
+            // A second turn of the main thread: the cancelled slice's completion, queued before this, has
+            // been taken in by now, so the run's state is final.
+            return run_on_main_thread([answer = std::move(cancelled)]() mutable -> nlohmann::json {
+                Plater*        plater     = wxGetApp().plater();
+                PartPlateList& plate_list = plater->get_partplate_list();
+                const bool     is_running = plater->is_background_process_slicing();
+                restore_plate_selected_at_slice_all(*plater, plate_list, is_running, answer);
+                answer["slice_run"]       = slice_run_json(*plater, plate_list, judge_last_run(*plater, plate_list, is_running));
+                answer["active_warnings"] = get_active_warnings_json(plater);
+                add_next_steps(answer, cancel_slice_next_steps(is_running));
+                return answer;
+            });
+        }
+    });
+
     // export_gcode - Export G-code
     register_tool({
         "export_gcode",
@@ -3696,7 +3775,8 @@ void OrcaMCPServer::register_builtin_tools()
         "started and is past its wait), other (one the GUI started, or the arrange a bed fill starts), or null; slice_all's busy_job means one. "
         "slice_run says how the last slice_all run stands: scope, the "
         "plates it asked for, skipped (those of them with nothing on them to slice), and outcome running, "
-        "done, ended_early or incomplete (also when no plate had anything to slice), judged by its plates "
+        "done, ended_early, cancelled (by cancel_slice or the app's Cancel: cancelled_at_plate, cancelled_by) "
+        "or incomplete (also when no plate had anything to slice), judged by its plates "
         "still there (null once none is, after new_project or load_project), with a message "
         "saying which plates and why when it is not done. When a slice_all run over every plate ends, "
         "this restores the plate that was selected when slice_all was called and reports it as "
@@ -3721,21 +3801,8 @@ void OrcaMCPServer::register_builtin_tools()
 
                 nlohmann::json result;
 
-                // Plater::is_background_process_slicing() reports Plater::priv::m_is_slicing, which
-                // the plate walk holds true from the first plate to the last and clears only when the
-                // run finishes or stops. So "not running" here means the whole slice_all run is over,
-                // not merely that one plate finished, and this is the first moment it is safe to put
-                // the caller's plate back. See s_slice_all_restore_print_index.
-                // Not under an arrange or bed fill, which applies its result to the current plate: the plate is
-                // put back by a later call.
-                if (!is_running && s_slice_all_restore_print_index >= 0 && plater->get_ui_job_worker().is_idle()) {
-                    const int restore_to            = plate_list.find_plate_by_print_index(s_slice_all_restore_print_index);
-                    s_slice_all_restore_print_index = -1;
-                    if (restore_to >= 0 && restore_to != plate_list.get_curr_plate_index()) {
-                        plater->select_plate(restore_to);
-                        result["restored_selected_plate"] = restore_to;
-                    }
-                }
+                // The first moment the plate selected at slice_all can be put back.
+                restore_plate_selected_at_slice_all(*plater, plate_list, is_running, result);
 
                 PartPlate* plate = plate_list.get_curr_plate();
                 // "not running" is not "finished": before the first slice, and after any edit
@@ -6068,7 +6135,8 @@ void OrcaMCPServer::register_bridge_tools()
         "Wait for the running slice to finish",
         "Wait until the running slice is over, instead of polling get_slicing_status: call it after "
         "slice_all. It returns when the run ends, or after timeout_s. outcome is done (every plate the "
-        "run asked for has a result, empty plates aside: those are skipped), ended_early or incomplete "
+        "run asked for has a result, empty plates aside: those are skipped), ended_early, cancelled "
+        "(cancel_slice, or the app's Cancel) or incomplete "
         "(slicing_status.slice_run.message says which plates and why), not_slicing (nothing was running "
         "and the selected plate has no result), "
         "timed_out (still slicing: call it again), or app_gone (the app quit or crashed during the wait). "

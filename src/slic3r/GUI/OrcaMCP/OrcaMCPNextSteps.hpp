@@ -103,6 +103,10 @@ std::vector<NextStep> slice_start_next_steps(const SliceStartReport& report, std
 // returns once the export is over; nothing for an export that did not start.
 std::vector<NextStep> export_next_steps(bool export_started);
 
+// What cancel_slice's answer leads to: wait_for_slice while the cancelled slice is still stopping (its
+// completion not taken in yet), which returns once it has; nothing once the run is over.
+std::vector<NextStep> cancel_slice_next_steps(bool still_stopping);
+
 // What a render_plate_view view whose picture came out one flat colour leads to (uniform_image_hint
 // says why in words): get_scene_info when nothing on plate `plate_index` was drawn (`drawn` 0: no model
 // volume in the 3D view, or none printable on that plate), render_plate_view of that plate without

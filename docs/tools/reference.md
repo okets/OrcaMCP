@@ -38,7 +38,7 @@ into a call that reports success and changes nothing. See [Error Handling](#erro
 | **Layer Ranges** | `get_object_layer_ranges`, `set_object_layer_range`, `delete_object_layer_range` |
 | **Filaments & colour** | `get_filaments`, `add_filament_slot`, `delete_filament_slot`, `set_object_filament`, `set_mixed_filament`, `delete_mixed_filament`, `set_filament_color`, `get_flush_volumes`, `set_flush_volumes`, `auto_calc_flush_volumes`, `get_toolchanger_config`, `suggest_color_mix`, `get_color_palette` |
 | **Painting** | `paint_object`, `remap_paint`, `get_object_paint`, `clear_object_paint`, `set_brim_ears`, `pick_facet` |
-| **Slicing** | `slice_all`, `wait_for_slice` (bridge-only), `get_slicing_status`, `export_gcode`, `get_print_estimate` |
+| **Slicing** | `slice_all`, `cancel_slice`, `wait_for_slice` (bridge-only), `get_slicing_status`, `export_gcode`, `get_print_estimate` |
 | **Visualization** | `render_plate_view`, `get_preview_base64`, `set_gcode_view_type` |
 | **Printers** | `get_printers`, `select_printer`, `add_physical_printer`, `discover_printers`, `send_to_printer`, `get_printer_status`, `printer_control`, `list_printer_files`, `print_printer_file`, `match_project_to_printer` |
 | **Adaptive** | `apply_adaptive_layer_height`, `clear_adaptive_layer_height` |
@@ -383,7 +383,7 @@ call `wait_for_slice` rather than polling this.
 | `stage` | While slicing: the app's progress text for the running slice ("Generating walls", "Generating support", ...), in the app's language. `null` when nothing is slicing |
 | `plates_sliced` / `plates_total` | How many of the plates have a valid result |
 | `restored_selected_plate` | Present only on the poll that ends a `slice_all` run over every plate: the plate that was selected when `slice_all` was called has been selected again |
-| `slice_run` | How the last `slice_all` run stands. `scope` (`all_plates`, `current_plate`, or `null` before the first `slice_all`) and `plates`: the current indexes of the plates it asked for that still exist. `skipped`: those of them with no printable object, which have nothing to slice (Slice All skips them). `outcome`: `running`, `done` (every one of them with something on it has a result), `ended_early`, `incomplete` (the run is over and some of the plates still there have no result -- a plate-list change during the run cancels Slice All, and `message` then says so -- or none of its plates had anything to slice, `message` "nothing to slice ..."), or `null` with no run or once none of its plates is left (after `new_project` or `load_project`). A plate deleted after the run does not make it incomplete; `message` says which plates and why when it is `ended_early` or `incomplete`. `ended_early: true`, with `stopped_at_plate` and `reason`, when the last Slice All run stopped before its last plate because another job (an arrange, an orient) was running; that plate and the ones after it are not sliced. `active_warnings` carries a `SliceAllEndedEarly` warning then too. Cleared when the next Slice All starts; call `slice_all` again. `wait_for_slice` ends its wait on this |
+| `slice_run` | How the last `slice_all` run stands. `scope` (`all_plates`, `current_plate`, or `null` before the first `slice_all`) and `plates`: the current indexes of the plates it asked for that still exist. `skipped`: those of them with no printable object, which have nothing to slice (Slice All skips them). `outcome`: `running`, `done` (every one of them with something on it has a result), `ended_early`, `cancelled` (someone cancelled it: `cancel_slice`, or the Cancel on the app's slicing notification; `cancelled_at_plate` and `cancelled_by` -- `cancel_slice` or `app` -- say where and who, and `message` names the plates left without a result, which `slice_all` slices), `incomplete` (the run is over and some of the plates still there have no result -- a plate-list change during the run cancels Slice All, and `message` then says so -- or none of its plates had anything to slice, `message` "nothing to slice ..."), or `null` with no run or once none of its plates is left (after `new_project` or `load_project`). A plate deleted after the run does not make it incomplete; `message` says which plates and why when it is `ended_early`, `cancelled` or `incomplete`. `ended_early: true`, with `stopped_at_plate` and `reason`, when the last Slice All run stopped before its last plate because another job (an arrange, an orient) was running; that plate and the ones after it are not sliced. `active_warnings` carries a `SliceAllEndedEarly` warning then too. Cleared when the next Slice All starts; call `slice_all` again. `wait_for_slice` ends its wait on this |
 
 **Usage:** After `slice_all`, call `wait_for_slice` (it polls this for you), or poll every 2-3
 seconds until `slice_run.outcome` is no longer `running`, then call `get_print_estimate`. `is_slicing: false` on its own does **not** mean the slice finished - it is
@@ -2509,6 +2509,39 @@ left with three unsliced plates and no error.
 
 ---
 
+### cancel_slice
+Cancel the slice in progress, as the Cancel on the app's slicing notification does. A Slice All run
+ends there too -- also between two plates, where the app's Cancel used to do nothing and the run went
+on -- and the plates it sliced before keep their results. No undo step: slicing is not an edit.
+
+**Parameters:** None
+
+**Returns:**
+```json
+{
+  "status": "success",
+  "cancelled": true,
+  "run": "slice_all",
+  "plate_index": 1,
+  "slice_run": {"ended_early": false, "cancelled_at_plate": 1, "cancelled_by": "cancel_slice", "scope": "all_plates",
+                "plates": [0, 1, 2], "skipped": [], "outcome": "cancelled",
+                "message": "Slice All was cancelled by cancel_slice at plate_index 1; plate_index 1, 2 has no slice result: call slice_all to slice it"},
+  "restored_selected_plate": 0,
+  "active_warnings": {"count": 0, "warnings": []}
+}
+```
+
+| Case | Answer |
+|------|--------|
+| A slice or a Slice All run in progress | `cancelled: true`, `run` (`slice` or `slice_all`) and the `plate_index` it was on. The answer comes once the app has taken in the cancel: `slice_run` is `get_slicing_status`'s (outcome `cancelled`), and `restored_selected_plate` when a Slice All run's plate selection was put back, as `get_slicing_status` does after a run. If the cancelled slice is still stopping, `next_steps` names `wait_for_slice`, which ends on outcome `cancelled` too |
+| Nothing slicing, or the last slice already ended (its completion being taken in) | `cancelled: false`, with a `message` saying which |
+| An export or an upload in progress | `status: "error"`: it is not a slice. `wait_for_slice` waits for it |
+
+A cancel stops the slicing thread first, as the app's Cancel does: organic tree supports check for a
+cancel only between phases, so on the unoptimized dev build that wait can take a while.
+
+---
+
 ### export_gcode
 Export the selected plate's sliced G-code to a file. The file is written asynchronously, so a
 successful call answers `status: "export_started"`, not `"success"`:
@@ -3862,6 +3895,7 @@ nothing to suggest has no `next_steps`.
 | | `get_slicing_status` | `busy_job`: an arrange, orient or bed fill holds the app, which `wait_for_slice` does not wait for; `slice_all` again once `ui_job` is null |
 | | `get_print_estimate` with the `plate_index` of a sliced plate (the selected one when it has a result) | `already_sliced` |
 | `export_gcode` | `wait_for_slice` | `export_started`: the file is still being written |
+| `cancel_slice` | `wait_for_slice` | the cancelled slice is still stopping: its completion is not taken in yet |
 | `render_plate_view`, on each view whose `uniform_image` is true (beside its `hint`) | `get_scene_info` | nothing printable on that plate was drawn |
 | | `render_plate_view` with `{plate_index, save_to_file: true}` | the plate's objects were drawn but the camera looked elsewhere: no views gives a contact sheet fitted to the plate |
 | `paint_object` with `mode: support` | `set_object_config` for that object: `enable_support` `"1"` and `support_type` `normal(manual)` (or `tree(manual)` when its type is a tree one), for support only where painted | the object has painted enforcers and `enable_support` is off for it, so they do nothing (`info_messages` says so too). Not for blockers alone or erased paint: turning support on is the opposite of what a blocker asks; and not with an `(auto)` type, which would also support every other overhang |
@@ -4097,6 +4131,7 @@ wait still ends by it.
 |-----------|---------|
 | `done` | Every plate the last `slice_all` asked for has a slice result, empty plates aside: those have nothing to slice and are skipped (`slice_run.skipped`). Without a `slice_all` this session: the selected plate has one |
 | `ended_early` | Slice All stopped before its last plate; `message` is the app's reason |
+| `cancelled` | Someone cancelled the run: `cancel_slice`, or the Cancel on the app's slicing notification; `message` says where, and names the plates left without a result |
 | `incomplete` | The run is over and some of its plates still there have no result (a plate-list change during the run cancels Slice All), or none of them had anything to slice; `message` names them. A plate deleted after the run does not count |
 | `not_slicing` | Nothing was slicing and the selected plate has no result: `slice_all` was never called, could not start, or its plates are gone (a new project) |
 | `timed_out` | Still slicing at the timeout (`timed_out: true`); call it again |

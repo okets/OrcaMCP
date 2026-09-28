@@ -120,6 +120,21 @@ inline std::string slice_all_ended_early_text(const SliceAllEndedEarly& ended)
     return "Slice All stopped at plate " + std::to_string(ended.plate_index) + ": " + ended.reason + "; call slice_all again";
 }
 
+// A slice or a Slice All run cancelled on purpose (Plater::cancel_slicing): by cancel_slice, or by the
+// Cancel on the app's slicing notification. Kept, like SliceAllEndedEarly, until the next slice,
+// plate-list change or project; get_slicing_status's slice_run reports it as outcome cancelled.
+struct SliceCancelled
+{
+    int  plate_index = -1;    // 0-based: the plate being sliced when it was cancelled
+    bool slice_all   = false; // a Slice All run, not one plate's slice
+    bool by_tool     = false; // cancel_slice; false: the app's own Cancel
+};
+inline std::string slice_cancelled_text(const SliceCancelled& cancelled)
+{
+    return std::string(cancelled.slice_all ? "Slice All" : "The slice") + " was cancelled " +
+           (cancelled.by_tool ? "by cancel_slice" : "in the app") + " at plate_index " + std::to_string(cancelled.plate_index);
+}
+
 // A plate deleted or moved while a slice runs, or the plate list rebuilt (undo, redo, a 3MF load). The
 // slice is stopped: its Print or its plate may be the one freed, and the process may be pointed at
 // another plate. A Slice All run is cancelled, as any cancel ends it: it walks the plates by index.

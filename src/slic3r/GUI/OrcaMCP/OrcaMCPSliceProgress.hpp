@@ -87,6 +87,7 @@ enum class SliceRunOutcome
     done,        // every plate the run asked for has a slice result
     ended_early, // Slice All stopped before its last plate (Plater::slice_all_ended_early)
     incomplete,  // the run is over and some of its plates still there have no slice result
+    cancelled,   // someone cancelled it: cancel_slice, or the app's Cancel (Plater::slice_cancelled)
 };
 
 inline const char* slice_run_outcome_name(SliceRunOutcome outcome)
@@ -97,6 +98,7 @@ inline const char* slice_run_outcome_name(SliceRunOutcome outcome)
     case SliceRunOutcome::done: return "done";
     case SliceRunOutcome::ended_early: return "ended_early";
     case SliceRunOutcome::incomplete: return "incomplete";
+    case SliceRunOutcome::cancelled: return "cancelled";
     }
     return "none";
 }
@@ -117,19 +119,53 @@ inline std::string plate_index_list(const std::vector<int>& indexes)
     return list;
 }
 
+// The run's plates still there that have something on them and no slice result, and those with
+// nothing on them, by plate index.
+inline void split_unsliced(const std::vector<SliceRunPlate>& plates, std::vector<int>& unsliced, std::vector<int>& skipped, bool& any_sliced)
+{
+    any_sliced = false;
+    for (const SliceRunPlate& plate : plates) {
+        if (!plate.exists)
+            continue;
+        if (!plate.printable)
+            skipped.push_back(plate.index);
+        else if (plate.sliced)
+            any_sliced = true;
+        else
+            unsliced.push_back(plate.index);
+    }
+}
+
+// A cancelled run's message: who cancelled it where, and the plates it left without a result; the
+// plates it sliced before keep theirs.
+inline SliceRunJudgement cancelled_run(const std::string& cancelled_text, const std::vector<SliceRunPlate>& plates)
+{
+    std::vector<int> unsliced, skipped;
+    bool             any_sliced = false;
+    split_unsliced(plates, unsliced, skipped, any_sliced);
+    std::string message = cancelled_text;
+    if (!unsliced.empty())
+        message += "; plate_index " + plate_index_list(unsliced) + " has no slice result: call slice_all to slice it";
+    return {SliceRunOutcome::cancelled, message, skipped};
+}
+
 // How the last slice_all run stands. `run_known` is false before the first slice_all; `plates` are
 // the plates it asked for; `ended_early_text` is Plater's report of a Slice All run that stopped early
-// (slice_all_ended_early_text). A run in progress is running whatever else holds, and a run that
-// ended early says so rather than listing the plates that stop left unsliced. An empty plate has
-// nothing to slice: it is skipped, not unsliced, so a run is done once every plate with something on
-// it is sliced -- and a run with nothing to slice on any plate is not done at all.
+// (slice_all_ended_early_text), `cancelled_text` of one someone cancelled (slice_cancelled_text). A run
+// in progress is running whatever else holds, and a run that was cancelled or ended early says so
+// rather than only listing the plates that left unsliced. An empty plate has nothing to slice: it is
+// skipped, not unsliced, so a run is done once every plate with something on it is sliced -- and a run
+// with nothing to slice on any plate is not done at all.
 inline SliceRunJudgement judge_slice_run(bool                              run_known,
                                          bool                              slicing,
                                          const std::vector<SliceRunPlate>& plates,
-                                         const std::optional<std::string>& ended_early_text)
+                                         const std::optional<std::string>& ended_early_text,
+                                         const std::optional<std::string>& cancelled_text = std::nullopt)
 {
     if (slicing)
         return {SliceRunOutcome::running, {}, {}};
+    if (cancelled_text)
+        return cancelled_run(*cancelled_text, plates);
     if (ended_early_text)
         return {SliceRunOutcome::ended_early, *ended_early_text, {}};
     if (!run_known)
@@ -142,16 +178,7 @@ inline SliceRunJudgement judge_slice_run(bool                              run_k
         return {SliceRunOutcome::none, {}, {}};
     std::vector<int> unsliced, skipped;
     bool             any_sliced = false;
-    for (const SliceRunPlate& plate : plates) {
-        if (!plate.exists)
-            continue;
-        if (!plate.printable)
-            skipped.push_back(plate.index);
-        else if (plate.sliced)
-            any_sliced = true;
-        else
-            unsliced.push_back(plate.index);
-    }
+    split_unsliced(plates, unsliced, skipped, any_sliced);
 
     if (unsliced.empty()) {
         if (any_sliced)
@@ -317,6 +344,44 @@ inline std::optional<SliceStartReport> refuse_while_busy(const PipelineState& st
         return std::nullopt;
     return SliceStartReport{SliceStart::not_started, "busy_slicing",
                             pipeline_busy_text(state) + ", so nothing was started: call wait_for_slice, then slice_all again"};
+}
+
+// ---- What cancel_slice does ---------------------------------------------------------------------
+
+// What cancelling does in each pipeline state, as the Cancel on the app's slicing notification does it
+// (Plater::cancel_slicing), decided before anything is touched.
+enum class SliceCancelAction
+{
+    cancel,  // a slice is in progress: stop it, which also ends a Slice All run
+    end_run, // a Slice All run between two plates, the next one's start already queued: end the run there
+    refuse,  // the process exports or uploads, which is no slice: nothing is cancelled
+    nothing, // nothing slices, or the last slice already ended and its completion is being taken in
+};
+
+inline SliceCancelAction slice_cancel_action(const PipelineState& state)
+{
+    switch (pipeline_busy(state)) {
+    case PipelineBusy::slicing: return state.process_working ? SliceCancelAction::cancel : SliceCancelAction::end_run;
+    case PipelineBusy::exporting:
+    case PipelineBusy::uploading: return SliceCancelAction::refuse;
+    case PipelineBusy::stopping:
+    case PipelineBusy::idle: break;
+    }
+    return SliceCancelAction::nothing;
+}
+
+// cancel_slice's words for the actions that cancel nothing.
+inline std::string slice_cancel_refusal(const PipelineState& state)
+{
+    return pipeline_busy_text(state) + ", not a slice, so nothing was cancelled: cancel_slice cancels slicing only; wait_for_slice "
+                                       "waits for it to end";
+}
+inline std::string nothing_to_cancel_text(const PipelineState& state)
+{
+    if (pipeline_busy(state) == PipelineBusy::stopping)
+        return "The last slice already finished or stopped, and the app is taking in how it ended, so nothing was cancelled: "
+               "get_slicing_status says how it ended.";
+    return "Nothing is slicing, so nothing was cancelled.";
 }
 
 // What the app shows right after slice_all dispatched its slice.

@@ -6757,6 +6757,11 @@ struct Plater::priv
     // Orca: the Slice All run that ended before its last plate; cleared by any new slice, plate-list
     // change or project, so the plate it names is still that one.
     std::optional<OrcaMCP::SliceAllEndedEarly> m_slice_all_ended_early;
+    // Orca: what the slicing notification's Cancel and MCP's cancel_slice do (OrcaMCPSliceCredit.hpp,
+    // SliceCancelled): stop the slice, end a Slice All run, and record the cancel; false when nothing sliced.
+    bool cancel_slicing(bool by_tool);
+    // Orca: the slice or Slice All run cancelled on purpose; cleared like m_slice_all_ended_early.
+    std::optional<OrcaMCP::SliceCancelled> m_slice_cancelled;
     // Orca: the safety net under the callers' stops (PartPlateList::set_before_free), and the slice it
     // cancelled, told once by the next MCP response's active_warnings.
     void stop_slice_running_on(const std::vector<const PartPlate*>& plates, const std::vector<const PrintBase*>& prints,
@@ -10315,6 +10320,7 @@ void Plater::priv::reset(bool apply_presets_change)
     // crashed or froze the app.
     this->background_process.stop();
     m_slice_all_ended_early.reset(); // Orca: its plates are gone
+    m_slice_cancelled.reset();
 
     //BBS: clear the partplate list's object before object cleared
     partplate_list.reinit();
@@ -12708,6 +12714,7 @@ OrcaMCP::PlateListChangeDuringSlice Plater::priv::stop_slice_for_plate_list_chan
         m_slice_all = false; // the completion still to come ends the run
     m_plate_list_change |= change;
     m_slice_all_ended_early.reset(); // the plate it names may move or go
+    m_slice_cancelled.reset();
     return change;
 }
 
@@ -12739,6 +12746,24 @@ void Plater::priv::stop_slice_running_on(const std::vector<const PartPlate*>& pl
     const OrcaMCP::PlateListChangeDuringSlice change = stop_slice_for_plate_list_change();
     if (change.slice_cancelled || change.slice_all_cancelled)
         m_slice_cancelled_by_free = OrcaMCP::slice_cancelled_by_free_text(caller);
+}
+
+bool Plater::priv::cancel_slicing(bool by_tool)
+{
+    const bool slicing_all = slicing_all_plates();
+    if (!background_process.running() && !slicing_all)
+        return false;
+    PartPlate*       plate       = background_process.get_current_plate();
+    const int        plate_index = slicing_all ? m_cur_slice_plate : plate != nullptr ? plate->get_index() : partplate_list.get_curr_plate_index();
+    bool             cancelled_a_slice = false;
+    if (background_process.running())
+        background_process.stop(&cancelled_a_slice);
+    if (slicing_all)
+        m_slice_all = false; // the completion still to come, the one queued between two plates included, ends the run
+    // A slice that had already finished was not cancelled: its completion credits it when it is handled.
+    if (cancelled_a_slice || slicing_all)
+        m_slice_cancelled = OrcaMCP::SliceCancelled{plate_index, slicing_all, by_tool};
+    return true;
 }
 
 void Plater::priv::post_plate_not_started(unsigned int state)
@@ -13809,12 +13834,9 @@ void Plater::priv::init_notification_manager()
         return;
     notification_manager->init();
 
-    auto cancel_callback = [this]() {
-        if (this->background_process.idle())
-            return false;
-        this->background_process.stop();
-        return true;
-    };
+    // Orca: the notification's Cancel is MCP's cancel_slice: it also ends a Slice All run between two plates,
+    // where upstream's did nothing (the process idle) and the run went on, and it records the cancel.
+    auto cancel_callback = [this]() { return cancel_slicing(/*by_tool=*/false); };
     notification_manager->init_slicing_progress_notification(cancel_callback);
     notification_manager->set_fff(printer_technology == ptFFF);
     notification_manager->init_progress_indicator();
@@ -19565,6 +19587,7 @@ void Plater::reslice()
 {
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", Line %1%: enter, process_completed_with_error=%2%")%__LINE__ %p->process_completed_with_error;
     p->m_slice_all_ended_early.reset(); // Orca: a new slice: the plate it named may be sliced now
+    p->m_slice_cancelled.reset();
     // There is "invalid data" button instead "slice now"
     if (p->process_completed_with_error == p->partplate_list.get_curr_plate_index())
     {
@@ -22377,6 +22400,8 @@ const OrcaMCP::SliceAllEndedEarly* Plater::slice_all_ended_early() const
     return p->m_slice_all_ended_early ? &*p->m_slice_all_ended_early : nullptr;
 }
 int Plater::slice_all_plate_in_progress() const { return p->slicing_all_plates() ? p->m_cur_slice_plate : -1; }
+bool Plater::cancel_slicing(bool by_tool) { return p->cancel_slicing(by_tool); }
+const OrcaMCP::SliceCancelled* Plater::slice_cancelled() const { return p->m_slice_cancelled ? &*p->m_slice_cancelled : nullptr; }
 std::optional<std::string> Plater::take_slice_cancelled_by_free()
 {
     std::optional<std::string> note;

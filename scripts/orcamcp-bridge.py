@@ -1007,7 +1007,7 @@ WAIT_FOR_SLICE_MIN_POLL_TIMEOUT_S = 1.0   # one poll's own HTTP timeout: at leas
 WAIT_FOR_SLICE_MAX_POLL_TIMEOUT_S = 10.0  # and at most this; the last poll starts this long before the deadline
 WAIT_FOR_SLICE_GONE_AFTER_S = 1.0         # refusals must last this long before the app counts as gone
 # The outcomes the app's get_slicing_status reports in slice_run.outcome once a run is over.
-FINISHED_SLICE_OUTCOMES = ("done", "ended_early", "incomplete")
+FINISHED_SLICE_OUTCOMES = ("done", "ended_early", "incomplete", "cancelled")
 # JSON-RPC error the app answers with while it quits (OrcaMCPJsonRpcError.hpp, McpShuttingDown).
 APP_QUITTING_ERROR = -32002
 

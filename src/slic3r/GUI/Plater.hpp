@@ -95,7 +95,7 @@ class FinishSyncAmsDialog;
 using t_optgroups = std::vector <std::shared_ptr<ConfigOptionsGroup>>;
 
 class Plater;
-namespace OrcaMCP { struct PlateListChangeDuringSlice; struct SliceAllEndedEarly; }
+namespace OrcaMCP { struct PlateListChangeDuringSlice; struct SliceAllEndedEarly; struct SliceCancelled; }
 enum class ActionButtonType : int;
 
 // Sentinel filament id meaning "use the slot the sidebar context menu was opened on"
@@ -862,6 +862,11 @@ public:
     const OrcaMCP::SliceAllEndedEarly* slice_all_ended_early() const; // nullptr: none
     // Orca: the plate a Slice All run is on (0-based), -1 when none runs.
     int slice_all_plate_in_progress() const;
+    // Orca: the slicing notification's Cancel, which MCP's cancel_slice runs too: stops the slice in
+    // progress, ends a Slice All run (between two plates as well), and records the cancel until the next
+    // slice, plate-list change or project. False when nothing was slicing.
+    bool cancel_slicing(bool by_tool = false);
+    const OrcaMCP::SliceCancelled* slice_cancelled() const; // nullptr: none
     // Orca: a slice the safety net cancelled, told once: taking it clears it.
     std::optional<std::string> take_slice_cancelled_by_free();
     //BBS: update slicing context

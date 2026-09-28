@@ -236,6 +236,14 @@ class WaitForSliceTest(unittest.TestCase):
         self.assertEqual(report["message"], "Slice All stopped at plate 2")
         self.assertFalse(report["timed_out"])
 
+    def test_a_run_someone_cancelled_ends_the_wait_with_outcome_cancelled_and_its_message(self):
+        FakeApp.script = [SLICING, status(False, outcome="cancelled",
+                                          message="Slice All was cancelled by cancel_slice at plate_index 1")]
+        _, report = self.call()
+        self.assertEqual(report["outcome"], "cancelled")
+        self.assertIn("cancelled by cancel_slice", report["message"])
+        self.assertFalse(report["timed_out"])
+
     def test_a_run_cancelled_by_a_plate_list_change_is_incomplete_not_done(self):
         FakeApp.script = [SLICING, status(False, state="done", outcome="incomplete",
                                           message="the plate list changed during the run")]
