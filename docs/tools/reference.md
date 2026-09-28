@@ -1110,7 +1110,15 @@ Cut an object at a specified Z height.
 `z_height` is in plate millimetres, the same frame `get_object_info` reports, and the object's own
 rotation is accounted for: `Cut` brings each mesh into the cut plane's frame with
 `get_matrix_no_offset()`, so the instance's rotation and scale are already applied there and the
-handler only has to subtract the instance's Z offset.
+handler only has to subtract the instance's offset.
+
+It is the app's own horizontal cut (`Plater::cut_horizontal`'s), and its result goes in as the cut
+tool's does (`Plater::apply_cut_object_to_model`): the pieces are the last objects afterwards
+(`new_object_ids`), each on the plate and in the object list, and the original's index is free, so
+every object after it moves down by one. One undo step ("Cut by Plane"). Before v2.5.0.6 the pieces
+were added to the model alone -- on no plate, `get_scene_info` listed them under `unplaced_objects`,
+and missing from the object list -- and the cut took no undo step, so an undo after it also undid the
+call before it.
 
 ---
 

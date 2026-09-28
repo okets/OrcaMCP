@@ -5382,7 +5382,9 @@ void OrcaMCPServer::register_builtin_tools()
         "Cut an object at a Z height",
         "Cut object at a Z height measured in plate mm (height above the bed), the same frame "
         "get_object_info reports -- the object's own rotation is accounted for. keep: below, above, "
-        "or both.",
+        "or both. The app's own cut: the pieces are the last objects afterwards (new_object_ids), each on "
+        "the plate, and the original's index is free, so every object after it moves down by one. One undo "
+        "step.",
         {
             {"type", "object"},
             {"properties", {
@@ -5427,22 +5429,6 @@ void OrcaMCPServer::register_builtin_tools()
 
                 ModelObject* obj = model.objects[object_id];
 
-                // Get instance offset to calculate cut position relative to object
-                const Vec3d instance_offset = obj->instances[0]->get_offset();
-
-                // Subtracting only the offset is the whole conversion, rotation included: Cut brings
-                // each mesh into the frame the cut matrix lives in with get_matrix_no_offset()
-                // (CutUtils.cpp:332, used at :77), so the instance's rotation and scale are already
-                // applied there and the only difference left from plate coordinates is the
-                // translation. A rotated instance does not break this.
-                // For horizontal cut at z_height (world coords), the cut plane offset
-                // relative to instance is (0, 0, z_height - instance_offset.z)
-                // Since objects on bed have z_offset=0, this simplifies to (0, 0, z_height)
-                Vec3d cut_center_offset(0, 0, z_height - instance_offset.z());
-
-                // Create cut matrix: translation to cut position (no rotation for horizontal cut)
-                Transform3d cut_matrix = Geometry::translation_transform(cut_center_offset);
-
                 // Set attributes based on what to keep
                 // PlaceOnCut flips the piece so the cut face becomes the new bottom
                 // - "below": keep lower part, no flip needed (already on bed)
@@ -5458,27 +5444,34 @@ void OrcaMCPServer::register_builtin_tools()
                     attributes = ModelObjectCutAttribute::KeepLower;  // No flip - bottom already on bed
                 }
 
-                // Perform the cut
-                Cut cut(obj, 0, cut_matrix, attributes);
-                const ModelObjectPtrs& new_objects = cut.perform_with_plane();
-
-                // Add the resulting objects to the model
-                for (ModelObject* new_obj : new_objects) {
-                    model.add_object(*new_obj);
+                // The app's own horizontal cut, as Plater::cut_horizontal makes it (a plane at z_height in plate mm on
+                // instance 0: Cut brings each mesh into the plane's frame with the instance's rotation and scale
+                // applied, so a rotated instance needs nothing more), and its result put in as the cut gizmo puts it
+                // (Plater::apply_cut_object_to_model): the object list lists the pieces and the plates hold them. The
+                // pieces used to be added to the model alone -- on no plate, missing from the object list -- and with
+                // no undo step, so undo after a cut undid the call before it too. The gizmo's undo step.
+                const std::string original_name = obj->name;
+                const size_t      objects_before = model.objects.size();
+                {
+                    Plater::TakeSnapshot snapshot(plater, _u8L("Cut by Plane"));
+                    const Vec3d            instance_offset = obj->instances[0]->get_offset();
+                    Cut                    cut(obj, 0, Geometry::translation_transform(z_height * Vec3d::UnitZ() - instance_offset), attributes);
+                    const ModelObjectPtrs& new_objects = cut.perform_with_plane();
+                    plater->apply_cut_object_to_model(size_t(object_id), new_objects);
                 }
-
-                // Remove the original object
-                std::string original_name = obj->name;
-                plater->remove(object_id);
-
-                plater->update();
+                // The original's index is free and the pieces are the last objects.
+                const size_t new_objects_count = model.objects.size() + 1 - objects_before;
+                std::vector<int> new_object_ids;
+                for (size_t i = objects_before - 1; i < model.objects.size(); ++i)
+                    new_object_ids.push_back(int(i));
 
                 nlohmann::json result = {
                     {"status", "success"},
                     {"original_object", original_name},
                     {"z_height", z_height},
                     {"kept", keep},
-                    {"new_objects_count", new_objects.size()},
+                    {"new_objects_count", new_objects_count},
+                    {"new_object_ids", new_object_ids},
                     {"active_warnings", get_active_warnings_json(plater)}
                 };
 
