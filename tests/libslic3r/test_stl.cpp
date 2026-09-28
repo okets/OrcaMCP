@@ -3,6 +3,8 @@
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Format/STL.hpp"
 
+#include <boost/filesystem.hpp>
+
 using namespace Slic3r;
 
 static inline std::string stl_path(const char* path)
@@ -54,4 +56,18 @@ SCENARIO("Reading an STL file", "[stl]") {
 			}
 		}
 	}
+}
+
+TEST_CASE("Storing an STL says whether the file was written", "[stl]")
+{
+    TriangleMesh mesh = make_cube(10., 10., 10.);
+    const std::string missing_folder = (boost::filesystem::temp_directory_path() / boost::filesystem::unique_path() / "cube.stl").string();
+    CHECK_FALSE(Slic3r::store_stl(missing_folder.c_str(), &mesh, /*binary=*/true));
+    CHECK_FALSE(Slic3r::store_stl(missing_folder.c_str(), &mesh, /*binary=*/false));
+
+    const boost::filesystem::path written = boost::filesystem::temp_directory_path() / boost::filesystem::unique_path("%%%%-cube.stl");
+    CHECK(Slic3r::store_stl(written.string().c_str(), &mesh, /*binary=*/true));
+    Slic3r::Model model;
+    CHECK(Slic3r::load_stl(written.string().c_str(), &model));
+    boost::filesystem::remove(written);
 }

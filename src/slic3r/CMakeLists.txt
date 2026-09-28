@@ -485,6 +485,22 @@ set(SLIC3R_GUI_SOURCES
     GUI/OrcaMCP/OrcaMCPFirstLayerPlan.cpp
     GUI/OrcaMCP/OrcaMCPGcodeCheck.hpp
     GUI/OrcaMCP/OrcaMCPGcodeCheck.cpp
+    GUI/OrcaMCP/OrcaMCPExports.hpp
+    GUI/OrcaMCP/OrcaMCPExports.cpp
+    GUI/OrcaMCP/OrcaMCPExportTools.hpp
+    GUI/OrcaMCP/OrcaMCPExportTools.cpp
+    GUI/OrcaMCP/OrcaMCPLayerGcode.hpp
+    GUI/OrcaMCP/OrcaMCPLayerGcode.cpp
+    GUI/OrcaMCP/OrcaMCPLayerGcodeTools.hpp
+    GUI/OrcaMCP/OrcaMCPLayerGcodeTools.cpp
+    GUI/OrcaMCP/OrcaMCPUserView.hpp
+    GUI/OrcaMCP/OrcaMCPUserView.cpp
+    GUI/OrcaMCP/OrcaMCPPendingEvents.hpp
+    GUI/OrcaMCP/OrcaMCPPendingEvents.cpp
+    GUI/OrcaMCP/OrcaMCPViewTools.cpp
+    GUI/OrcaMCP/OrcaMCPSourceFiles.hpp
+    GUI/OrcaMCP/OrcaMCPSourceFiles.cpp
+    GUI/OrcaMCP/OrcaMCPSourceFileTools.cpp
     GUI/OrcaMCP/OrcaMCPLayerPlan.hpp
     GUI/OrcaMCP/OrcaMCPLayerPlan.cpp
     GUI/OrcaMCP/OrcaMCPPresetConfigUtils.hpp

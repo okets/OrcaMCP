@@ -69,6 +69,11 @@ add_executable(${_TEST_NAME}_tests
     test_slice_credit.cpp
     test_slice_progress.cpp
     test_gcode_check.cpp
+    test_mcp_exports.cpp
+    test_layer_gcode.cpp
+    test_mcp_user_view.cpp
+    test_mcp_pending_events.cpp
+    test_mcp_source_files.cpp
     test_config_values.cpp
     test_http_server.cpp
     test_thread_cancel.cpp

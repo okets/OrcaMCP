@@ -254,6 +254,32 @@ TEST_CASE("An export that started is waited for, and one that did not suggests n
     CHECK(export_next_steps(false).empty());
 }
 
+TEST_CASE("A cancelled slice still stopping is waited for, and one that has stopped suggests nothing", "[McpNextSteps][orcamcp]")
+{
+    const std::vector<NextStep> stopping = cancel_slice_next_steps(true);
+    REQUIRE(stopping.size() == 1);
+    CHECK(stopping[0].tool == "wait_for_slice");
+    CHECK(mentions(stopping[0].why, "still stopping"));
+    CHECK(cancel_slice_next_steps(false).empty());
+}
+
+TEST_CASE("A layer G-code change points at slicing again, and one that changed nothing at nothing", "[McpNextSteps][orcamcp]")
+{
+    const std::vector<NextStep> changed = layer_gcode_next_steps(1, true);
+    REQUIRE(changed.size() == 1);
+    CHECK(changed[0].tool == "slice_all");
+    CHECK(mentions(changed[0].why, "plate 1"));
+    CHECK(layer_gcode_next_steps(1, false).empty());
+}
+
+TEST_CASE("A Preview tab that started a slice is waited for, and one that did not suggests nothing", "[McpNextSteps][orcamcp]")
+{
+    const std::vector<NextStep> slicing = show_view_next_steps(true);
+    REQUIRE(slicing.size() == 1);
+    CHECK(slicing[0].tool == "wait_for_slice");
+    CHECK(show_view_next_steps(false).empty());
+}
+
 TEST_CASE("A flat render of a plate its objects are not on points at get_scene_info", "[McpNextSteps][orcamcp]")
 {
     for (const size_t model_volumes : {size_t(0), size_t(4)}) {
@@ -429,6 +455,12 @@ TEST_CASE("Every next step names a real tool, with arguments its schema accepts"
             steps.push_back(std::move(step));
     for (NextStep& step : export_next_steps(true))
         steps.push_back(std::move(step));
+    for (NextStep& step : cancel_slice_next_steps(true))
+        steps.push_back(std::move(step));
+    for (NextStep& step : layer_gcode_next_steps(0, true))
+        steps.push_back(std::move(step));
+    for (NextStep& step : show_view_next_steps(true))
+        steps.push_back(std::move(step));
     for (const size_t drawn : {size_t(0), size_t(2)})
         for (NextStep& step : uniform_image_next_steps(2, drawn, 0))
             steps.push_back(std::move(step));
@@ -461,7 +493,7 @@ TEST_CASE("Every next step names a real tool, with arguments its schema accepts"
         steps.push_back(std::move(step));
     for (NextStep& step : slot_change_next_steps(true))
         steps.push_back(std::move(step));
-    REQUIRE(steps.size() == 27);
+    REQUIRE(steps.size() == 30);
 
     const mcp_tool_references::ToolNames names(OrcaMCPServer::registered_tools());
     json                                 response = json::object();

@@ -358,15 +358,16 @@ bool PartPlate::has_spiral_mode_config() const
 
 bool PartPlate::get_spiral_vase_mode() const
 {
+	return get_spiral_vase_mode(wxGetApp().preset_bundle->prints.get_edited_preset().config);
+}
+
+bool PartPlate::get_spiral_vase_mode(const DynamicPrintConfig& global_config) const
+{
 	std::string key = "spiral_mode";
-	if (m_config.has(key)) {
+	if (m_config.has(key))
 		return m_config.opt_bool(key);
-	}
-	else {
-		DynamicPrintConfig* global_config = &wxGetApp().preset_bundle->prints.get_edited_preset().config;
-		if (global_config->has(key))
-			return global_config->opt_bool(key);
-	}
+	if (global_config.has(key))
+		return global_config.opt_bool(key);
 	return false;
 }
 
@@ -1573,6 +1574,12 @@ std::vector<int> PartPlate::get_extruders(bool conside_custom_gcode, const Dynam
 	bool glb_support = glb_config.opt_bool("enable_support");
     glb_support |= glb_config.opt_int("raft_layers") > 0;
 
+	// Orca: the filaments of the objects the slicer prints (slicer_prints_object), whatever their features do -- their
+	// parts' and layer ranges', which Print::object_extruders counts whatever the regions hold --, to tell whether the
+	// slicer may take the plate's filament changes (below). A feature's filament prints only where the feature does,
+	// which only the slicer's regions know. Filled for the objects on the plate; which of them the slicer prints is
+	// asked only when there is a filament change to decide.
+	std::vector<std::pair<int, std::vector<int>>> filaments_by_object;
 	for (int obj_idx = 0; obj_idx < m_model->objects.size(); obj_idx++) {
 		// Any instance on the plate counts, as PrintApply does: after an arrange, instance 0
 		// can sit on a different plate.
@@ -1580,16 +1587,20 @@ std::vector<int> PartPlate::get_extruders(bool conside_custom_gcode, const Dynam
 			continue;
 
 		ModelObject* mo = m_model->objects[obj_idx];
+		std::vector<int>& object_filaments = filaments_by_object.emplace_back(obj_idx, std::vector<int>()).second;
 		for (ModelVolume* mv : mo->volumes) {
 			std::vector<int> volume_extruders = mv->get_extruders();
 			plate_extruders.insert(plate_extruders.end(), volume_extruders.begin(), volume_extruders.end());
+			object_filaments.insert(object_filaments.end(), volume_extruders.begin(), volume_extruders.end());
 		}
 
 		// layer range
         for (auto layer_range : mo->layer_config_ranges) {
             if (layer_range.second.has("extruder")) {
-                if (auto id = layer_range.second.option("extruder")->getInt(); id > 0)
+                if (auto id = layer_range.second.option("extruder")->getInt(); id > 0) {
 					plate_extruders.push_back(id);
+					object_filaments.push_back(id);
+				}
 			}
 		}
 
@@ -1691,8 +1702,27 @@ std::vector<int> PartPlate::get_extruders(bool conside_custom_gcode, const Dynam
         int nums_extruders = 0;
         if (const ConfigOptionStrings *color_option = dynamic_cast<const ConfigOptionStrings *>(project_config.option("filament_colour"))) {
             nums_extruders = color_option->values.size();
-			if (m_model->plates_custom_gcodes.find(m_plate_index) != m_model->plates_custom_gcodes.end()) {
-				for (auto item : m_model->plates_custom_gcodes.at(m_plate_index).gcodes) {
+			// Orca: only the filament changes the slicer may take (CustomGCode::tool_changes_apply): the others print
+			// nothing, and counted they made a filament the plate never prints used. The objects' filaments here are
+			// the fewest the slicer counts (a feature's may add one), so a change it may take is listed, never missed.
+			const auto plate_gcodes = m_model->plates_custom_gcodes.find(m_plate_index);
+			const bool has_changes  = plate_gcodes != m_model->plates_custom_gcodes.end() &&
+			                         std::any_of(plate_gcodes->second.gcodes.begin(), plate_gcodes->second.gcodes.end(),
+			                                     [](const CustomGCode::Item& item) { return item.type == CustomGCode::ToolChange; });
+			std::vector<int> object_filaments;
+			if (has_changes)
+				for (const auto& [obj_idx, filaments] : filaments_by_object)
+					if (slicer_prints_object(obj_idx))
+						object_filaments.insert(object_filaments.end(), filaments.begin(), filaments.end());
+			sort_remove_duplicates(object_filaments);
+			PrintSequence sequence = get_print_seq();
+			if (sequence == PrintSequence::ByDefault)
+				if (const auto* global = glb_config.option<ConfigOptionEnum<PrintSequence>>("print_sequence"))
+					sequence = global->value;
+			if (has_changes &&
+				CustomGCode::tool_changes_apply(plate_gcodes->second.mode, size_t(nums_extruders), object_filaments.size(),
+												sequence != PrintSequence::ByObject, get_spiral_vase_mode(glb_config))) {
+				for (auto item : plate_gcodes->second.gcodes) {
 					if (item.type == CustomGCode::Type::ToolChange && item.extruder <= nums_extruders)
 						plate_extruders.push_back(item.extruder);
 				}
@@ -2763,6 +2793,24 @@ bool PartPlate::contain_instance_totally(int obj_id, int instance_id) const
 	}
 
 	return result;
+}
+
+// Orca: whether the slicer prints object `obj_id` when it slices this plate: some instance of it on the plate that is
+// printable -- the object's flag, the instance's, and inside the plate's build volume, computed as the plater computes
+// it for the Print (Plater::priv::update_print_volume_state, ModelInstance::is_printable), which leaves out every other.
+bool PartPlate::slicer_prints_object(int obj_id) const
+{
+	if (obj_id < 0 || obj_id >= int(m_model->objects.size()) || !m_model->objects[obj_id]->printable)
+		return false;
+	const ModelObject* object = m_model->objects[obj_id];
+	const BuildVolume  build_volume(get_shape(), m_height, m_extruder_areas, m_extruder_heights);
+	for (int instance_id = 0; instance_id < int(object->instances.size()); ++instance_id) {
+		const ModelInstance* instance = object->instances[instance_id];
+		if (obj_to_instance_set.count({obj_id, instance_id}) != 0 && instance->printable &&
+			instance->calc_print_volume_state(build_volume) == ModelInstancePVS_Inside)
+			return true;
+	}
+	return false;
 }
 
 //judge whether any of the object's instances is totally included in plate or not

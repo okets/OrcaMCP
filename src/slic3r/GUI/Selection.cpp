@@ -2182,7 +2182,8 @@ std::set<std::pair<int, int>> Selection::get_selected_object_instances()
 {
     std::set<std::pair<int, int>> instances_idxs;
     // BBS only support multi full object now
-    if (!is_multiple_full_object())
+    // Orca: whole objects or whole instances, which Plater::export_stl, its one caller, exports.
+    if (!is_single_full_object() && !is_multiple_full_object() && !is_single_full_instance() && !is_multiple_full_instance())
         return instances_idxs;
 
     for (ObjectIdxsToInstanceIdxsMap::iterator obj_it = m_cache.content.begin(); obj_it != m_cache.content.end(); ++obj_it)

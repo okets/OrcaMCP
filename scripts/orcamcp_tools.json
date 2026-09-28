@@ -56,7 +56,7 @@
     },
     {
       "category": "Slicing",
-      "description": "Wait until the running slice is over, instead of polling get_slicing_status: call it after slice_all. It returns when the run ends, or after timeout_s. outcome is done (every plate the run asked for has a result, empty plates aside: those are skipped), ended_early or incomplete (slicing_status.slice_run.message says which plates and why), not_slicing (nothing was running and the selected plate has no result), timed_out (still slicing: call it again), or app_gone (the app quit or crashed during the wait). slicing_status is get_slicing_status's final answer, with each plate's percent and gcode_check. The wait is capped 15 s below ORCAMCP_TIMEOUT (105 s at the default 120 s), or a quarter below it when that is less, because the bridge answers nothing else while it waits; timeout_cap_s reports the cap applied. Under an ORCAMCP_TIMEOUT of 2 s there is no room to wait, and the call is refused.",
+      "description": "Wait until the running slice is over, instead of polling get_slicing_status: call it after slice_all. It returns when the run ends, or after timeout_s. outcome is done (every plate the run asked for has a result, empty plates aside: those are skipped), ended_early, cancelled (cancel_slice, or the app's Cancel) or incomplete (slicing_status.slice_run.message says which plates and why), not_slicing (nothing was running and the selected plate has no result), timed_out (still slicing: call it again), or app_gone (the app quit or crashed during the wait). slicing_status is get_slicing_status's final answer, with each plate's percent and gcode_check. The wait is capped 15 s below ORCAMCP_TIMEOUT (105 s at the default 120 s), or a quarter below it when that is less, because the bridge answers nothing else while it waits; timeout_cap_s reports the cap applied. Under an ORCAMCP_TIMEOUT of 2 s there is no room to wait, and the call is refused.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -96,6 +96,54 @@
       },
       "name": "add_filament_slot",
       "summary": "Add a physical filament slot"
+    },
+    {
+      "category": "Slicing",
+      "description": "Add G-code at the start of a sliced layer, as the Preview's layer slider's menu does: a pause, a filament change (filament: the slot to change to), custom G-code (gcode) or the printer's template G-code. The layer is given by its number (layer, as the slider numbers them) or height (z), on the current plate or plate_index, which must have been sliced as the settings are now. The slider's rules hold: nothing at a layer while the plate prints by object; a filament change only where the slicer takes one (several filaments, the plate's objects printing with one, not in spiral vase mode); the template only when the printer has one; custom G-code of 1 to 1023 characters. What needs no layer is checked first; then the plate is made current, as the slider edits the plate shown, and every answer says so (plate_made_current, with whether its slice was invalidated). On a layer that already has G-code, a custom G-code's text and a filament change's filament are changed (replaced says what was there); anything else there must be deleted first (delete_layer_gcode). The same again changes nothing. The plate loses its slice (slice it again: next_steps). Not an undo step, as the slider's edits are not. The answer lists the plate's layer_gcodes, as get_scene_info does.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "filament": {
+            "description": "With filament_change: the filament slot to change to (1-based)",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "gcode": {
+            "description": "With custom: the G-code to run at the start of the layer",
+            "type": "string"
+          },
+          "layer": {
+            "description": "The layer, as the Preview's layer slider numbers them (1 is the first)",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "plate_index": {
+            "description": "Plate index (0-based). Default: the current plate",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": {
+            "description": "pause, filament_change (to `filament`), custom (the `gcode` text) or template (the printer's template G-code)",
+            "enum": [
+              "pause",
+              "filament_change",
+              "custom",
+              "template"
+            ],
+            "type": "string"
+          },
+          "z": {
+            "description": "Or the layer by height in mm: the printed layer nearest to it",
+            "type": "number"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "type": "object"
+      },
+      "name": "add_layer_gcode",
+      "summary": "Add a pause or G-code at a sliced layer"
     },
     {
       "category": "Printers",
@@ -408,6 +456,18 @@
       "summary": "Orient the current plate's objects"
     },
     {
+      "category": "Slicing",
+      "description": "Cancel the slice in progress, as the Cancel on the app's slicing notification does: a Slice All run ends there too (between two plates as well), and the plates it sliced before keep their results. cancelled says whether anything was: false when nothing was slicing, or the last slice had already ended. An export or an upload in progress is not a slice and is refused. The answer comes once the app has taken in the cancel, with slice_run as get_slicing_status gives it (outcome cancelled, cancelled_at_plate, and which plates have no result) and restored_selected_plate when a Slice All run's plate selection was put back; wait_for_slice also ends on outcome cancelled. No undo step.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "name": "cancel_slice",
+      "summary": "Cancel the running slice or Slice All"
+    },
+    {
       "category": "Adaptive",
       "description": "Remove Variable Layer Height, revert to fixed.",
       "inputSchema": {
@@ -603,6 +663,33 @@
       "summary": "Delete a filament slot, or merge it"
     },
     {
+      "category": "Slicing",
+      "description": "Delete the G-code at a layer -- a pause, filament change, custom or template G-code -- as the Preview's layer slider's Delete does. The layer is given by number (layer) or height (z), on the current plate or plate_index (made current once a plate with G-code at a layer is found, and plate_made_current says so); get_scene_info's plates[].layer_gcodes lists them. The plate loses its slice (slice it again: next_steps). Not an undo step, as the slider's edits are not.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "layer": {
+            "description": "The layer, as the Preview's layer slider numbers them (1 is the first)",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "plate_index": {
+            "description": "Plate index (0-based). Default: the current plate",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "z": {
+            "description": "Or the layer by height in mm: the printed layer nearest to it",
+            "type": "number"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "delete_layer_gcode",
+      "summary": "Remove the pause or G-code at a layer"
+    },
+    {
       "category": "Filaments & colour",
       "description": "Delete a mixed (virtual) filament slot.",
       "inputSchema": {
@@ -746,7 +833,7 @@
     },
     {
       "category": "Scene",
-      "description": "Save the project to a 3MF at output_path, like the GUI's Save As: the project is then named after that file, so a later save_project without output_path overwrites it. save_project with output_path does the same.",
+      "description": "Save the project to a 3MF at output_path, like the GUI's Save As: the project is then named after that file and marked saved, so a later save_project without output_path overwrites it, and quitting finds nothing unsaved. save_project with output_path does the same. A save that fails leaves the name.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -765,12 +852,16 @@
     },
     {
       "category": "Slicing",
-      "description": "Export the selected plate's G-code. The plate must be sliced (slice_all, then wait_for_slice). status is export_started when the app has begun writing the file in the background -- not a failure: the file is complete once wait_for_slice returns (get_slicing_status's busy is false again), which next_steps says -- or error, with message saying why nothing was written. Refused, as the GUI's Export button is off, when the check its slice ran on its G-code failed: get_slicing_status's plates[].gcode_check names what it found.",
+      "description": "Export sliced G-code. An output_path ending in .gcode writes the selected plate's G-code, as the GUI's Export G-code does: status is export_started when the app has begun writing the file in the background -- not a failure: the file is complete once wait_for_slice returns (get_slicing_status's busy is false again), which next_steps says. An output_path ending in .gcode.3mf writes the plate sliced file (the G-code inside a 3MF, which printers and the app open as a sliced project), as Export plate sliced file does, or with all_plates every sliced plate's, as Export all plate sliced file does: written at once, status success, with the plates it holds; the project keeps its name. The plates must be sliced (slice_all, then wait_for_slice). Refused, as the GUI's Export items are off, when the check a plate's slice ran on its G-code failed: get_slicing_status's plates[].gcode_check names what it found. error, with message, says why nothing was written.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
+          "all_plates": {
+            "description": "With a .gcode.3mf output_path: every plate with a printable object, each sliced, in one file (default false: the selected plate). A .gcode holds one plate.",
+            "type": "boolean"
+          },
           "output_path": {
-            "description": "Output path (required; file dialogs cannot be opened from MCP).",
+            "description": "Where to write: a .gcode file, or a .gcode.3mf for the plate sliced file (required; file dialogs cannot be opened from MCP).",
             "type": "string"
           }
         },
@@ -780,7 +871,46 @@
         "type": "object"
       },
       "name": "export_gcode",
-      "summary": "Write the sliced plate's G-code"
+      "summary": "Write sliced G-code, or a .gcode.3mf"
+    },
+    {
+      "category": "Scene",
+      "description": "Export objects' meshes as STL (or Draco DRC) files, as the app's File > Export > Export all objects as one STL / as STLs and the object menu's Export as one STL / as STLs write them: negative parts cut from the parts (the parts alone, with a notice in active_warnings, when that fails), modifiers and support volumes left out. Without object_ids every object goes in, in plate coordinates; with object_ids only those, as the object menu exports what is selected (an object with one instance is written at its own origin). one_file_per_object writes one file per object (per selected instance with object_ids), a single object's too, into the folder output_path names, each named after its object, never overwriting: a name taken gets (1), (2), ... A single file at output_path is overwritten. files lists what was written. No undo step: the scene does not change, and the user's selection is put back.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "format": {
+            "description": "stl (default) or drc; for one file, its extension decides",
+            "enum": [
+              "stl",
+              "drc"
+            ],
+            "type": "string"
+          },
+          "object_ids": {
+            "description": "The objects to export, by object_id (default: every object)",
+            "items": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "one_file_per_object": {
+            "description": "One file per object in the folder output_path (default false: one file)",
+            "type": "boolean"
+          },
+          "output_path": {
+            "description": "The file to write, ending in .stl or .drc; with one_file_per_object the existing folder the files go in (required: file dialogs cannot be opened from MCP)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "output_path"
+        ],
+        "type": "object"
+      },
+      "name": "export_stl",
+      "summary": "Export objects as STL or DRC mesh files"
     },
     {
       "category": "Transforms",
@@ -1269,7 +1399,7 @@
     },
     {
       "category": "Slicing",
-      "description": "Get the current slicing state: slicing (in progress), done (the last slice_all run is done -- every plate it asked for that has something on it is sliced -- and the selected plate is sliced or empty; before any slice_all, or once none of its plates exists (a new project), the selected plate is sliced) or idle (anything else); a plate deleted after the run does not undo it. To wait for a slice to finish, call wait_for_slice rather than polling this; then get_print_estimate. The plates array reports every plate's slice result and percent (0-100; null for a plate with no result that is not slicing), so a slice_all run can be followed plate by plate; stage is the app's progress text for the running slice (\"Generating support\", in the app's language; null when idle). busy says whether the slicing pipeline is busy, and busy_reason with what: slicing, exporting, uploading, or stopping (the last slice's completion is not taken in yet); slice_all starts nothing while it is, and wait_for_slice waits it out. ui_job names a job holding the app apart from slicing: arranging, orienting or filling_bed (one a tool started and is past its wait), other (one the GUI started, or the arrange a bed fill starts), or null; slice_all's busy_job means one. slice_run says how the last slice_all run stands: scope, the plates it asked for, skipped (those of them with nothing on them to slice), and outcome running, done, ended_early or incomplete (also when no plate had anything to slice), judged by its plates still there (null once none is, after new_project or load_project), with a message saying which plates and why when it is not done. When a slice_all run over every plate ends, this restores the plate that was selected when slice_all was called and reports it as restored_selected_plate. Each plate's gcode_check is the check its slice ran on its own G-code (null without a result): {ok: true}, or ok false with problems -- outside_bed, above_printable_height, above_extruder_height, outside_extruder_area, in_wrapping_area, over_printed_mass, toolpath_outside, filament_bed_conflict -- and a message; above_printable_height also gives highest_layer_z_mm and printable_height_mm, and a hint at the usual cause. The GUI keeps a failed plate's Print and Export buttons off, and export_gcode and send_to_printer refuse it.",
+      "description": "Get the current slicing state: slicing (in progress), done (the last slice_all run is done -- every plate it asked for that has something on it is sliced -- and the selected plate is sliced or empty; before any slice_all, or once none of its plates exists (a new project), the selected plate is sliced) or idle (anything else); a plate deleted after the run does not undo it. To wait for a slice to finish, call wait_for_slice rather than polling this; then get_print_estimate. The plates array reports every plate's slice result and percent (0-100; null for a plate with no result that is not slicing), so a slice_all run can be followed plate by plate; stage is the app's progress text for the running slice (\"Generating support\", in the app's language; null when idle). busy says whether the slicing pipeline is busy, and busy_reason with what: slicing, exporting, uploading, or stopping (the last slice's completion is not taken in yet); slice_all starts nothing while it is, and wait_for_slice waits it out. ui_job names a job holding the app apart from slicing: arranging, orienting or filling_bed (one a tool started and is past its wait), other (one the GUI started, or the arrange a bed fill starts), or null; slice_all's busy_job means one. slice_run says how the last slice_all run stands: scope, the plates it asked for, skipped (those of them with nothing on them to slice), and outcome running, done, ended_early, cancelled (by cancel_slice or the app's Cancel: cancelled_at_plate, cancelled_by) or incomplete (also when no plate had anything to slice), judged by its plates still there (null once none is, after new_project or load_project), with a message saying which plates and why when it is not done. When a slice_all run over every plate ends, this restores the plate that was selected when slice_all was called and reports it as restored_selected_plate. Each plate's gcode_check is the check its slice ran on its own G-code (null without a result): {ok: true}, or ok false with problems -- outside_bed, above_printable_height, above_extruder_height, outside_extruder_area, in_wrapping_area, over_printed_mass, toolpath_outside, filament_bed_conflict -- and a message; above_printable_height also gives highest_layer_z_mm and printable_height_mm, and a hint at the usual cause. The GUI keeps a failed plate's Print and Export buttons off, and export_gcode and send_to_printer refuse it.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {},
@@ -2047,6 +2177,33 @@
       "summary": "Redo the last undone operation"
     },
     {
+      "category": "Models",
+      "description": "Reload an object's parts from the files they were loaded from, as the object list's Reload from disk does -- or, without object_id, every object, as the plate menu's Reload All does: each part takes its file's mesh as it is now, keeping its place, settings, filament and type (painting as the app's keep_painting setting says). volume_id reloads one part. A file is found where it was loaded from, else beside the object's own file; when it is in neither place the app asks for it, and file_path answers: a file of the same name there (its folder is then searched for the other missing ones), or another file, which replaces the part. Without file_path a missing file is refused, naming it. A piece of a cut is refused, as the object list's menu item is off for one; Reload All takes its parts loaded from a file, as the app's does (the parts the cut went through name no file). reloaded lists the parts loaded anew, with the placement; a file that fails to load is named in info_messages and the others are still reloaded. An open toolbar tool is closed first (closed_toolbar_tool). One undo step, taken only when something changed.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "file_path": {
+            "description": "Where a source file that moved or was deleted is now, or another file to load into the part",
+            "type": "string"
+          },
+          "object_id": {
+            "description": "The object to reload (default: every object)",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "volume_id": {
+            "description": "One part of object_id, as get_object_info numbers them",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "reload_from_disk",
+      "summary": "Reload objects from their source files"
+    },
+    {
       "category": "Painting",
       "description": "Renumber an object's painted filaments in one step: mapping {\"1\": 2, \"2\": 3, \"3\": 4} moves every facet painted with filament 1 to 2, 2 to 3 and 3 to 4 together -- never chained, so 1 does not end up at 3 -- which frees slot 1, e.g. for a support filament. Filaments the mapping does not list keep their facets. 0 means unpainted: as a key it paints the bare facets, as a value it unpaints. New filaments must be existing slots (get_filaments). One undo step. Returns facet counts per filament before and after (facets_before / facets_after, and per volume). Unpainted facets print with the part's own filament, which this leaves as it is: when the mapping moves that filament, notes names the set_object_filament call that moves them too. For one filament, paint_object with selection \"state\" does the same.",
       "inputSchema": {
@@ -2302,6 +2459,39 @@
       },
       "name": "repair_mesh",
       "summary": "Repair a mesh: close holes, open edges"
+    },
+    {
+      "category": "Models",
+      "description": "Replace a part's mesh with another 3D file (STL, 3MF, STEP, OBJ, ...), as the object list's Replace 3D file does: the new mesh takes the part's place, settings, filament, type and name (the object's too when it has one part), and painting as the app's keep_painting setting says. The file must hold one part. volume_id names the part (needed when the object has several). folder instead replaces every part of the object (or volume_id's) with the file of its source file's name in that folder, as Replace all with 3D files does, skipping parts whose file is not there. A piece of a cut is refused. An open toolbar tool is closed first (closed_toolbar_tool). replaced lists the parts loaded anew, with the placement. One undo step per part replaced, as the app takes (none when nothing was).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "file_path": {
+            "description": "The new file for the part",
+            "type": "string"
+          },
+          "folder": {
+            "description": "Or a folder holding a file of each part's source file name",
+            "type": "string"
+          },
+          "object_id": {
+            "description": "The object",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "volume_id": {
+            "description": "The part, as get_object_info numbers them (needed with several)",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "object_id"
+        ],
+        "type": "object"
+      },
+      "name": "replace_volume_with_file",
+      "summary": "Replace a part's mesh with another file"
     },
     {
       "category": "Per-Object",
@@ -3229,6 +3419,61 @@
       },
       "name": "set_volume_type",
       "summary": "Change a volume's type: part, modifier"
+    },
+    {
+      "category": "Visualization",
+      "description": "Change what the user sees in the OrcaMCP window, when the user asks to be shown something: the tab (prepare, preview, device, home, project, calibration, multi_device, as the window has them now) and the 3D view's camera, as the tab bar and the View menu change them. camera is one of the View menu's views (default, top, bottom, front, back, left, right) or iso; zoom_to fits the view to the current plate, the bed or every object; object_id selects that object as a click on its row does and zooms to it (Prepare only). The camera works in Prepare and Preview only. Switching to preview slices the selected plate when it has no result, as the tab does for the user (slice_started, and next_steps names wait_for_slice), and closes an open toolbar tool (closed_toolbar_tool). No other tool moves the user's view: render_plate_view draws images for you. Called with nothing, it changes nothing and says what the user sees (user_view: tab, camera, plate). No undo step.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "camera": {
+            "description": "A View menu view: default (and zoom to the bed), iso, top, bottom, front, back, left, right",
+            "enum": [
+              "default",
+              "iso",
+              "top",
+              "bottom",
+              "front",
+              "back",
+              "left",
+              "right"
+            ],
+            "type": "string"
+          },
+          "object_id": {
+            "description": "Select this object and zoom to it (Prepare only)",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "tab": {
+            "description": "The tab to show: prepare (the 3D view), preview (the sliced G-code), device, home, project, calibration or multi_device; device_web in printer-agents mode",
+            "enum": [
+              "home",
+              "prepare",
+              "preview",
+              "device",
+              "device_web",
+              "multi_device",
+              "project",
+              "calibration"
+            ],
+            "type": "string"
+          },
+          "zoom_to": {
+            "description": "Fit the view to the current plate, the bed or every object",
+            "enum": [
+              "plate",
+              "bed",
+              "objects"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "show_view",
+      "summary": "Show the user a tab, view or object"
     },
     {
       "category": "Slicing",

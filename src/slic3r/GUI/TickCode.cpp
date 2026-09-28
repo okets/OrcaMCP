@@ -201,4 +201,12 @@ bool TickCodeInfo::has_tick_with_code(Type type)
 
 bool TickCodeInfo::has_tick(int tick) { return ticks.find(TickCode{tick}) != ticks.end(); }
 
+bool clears_plate_layer_gcode(std::map<int, bool>& vase_by_plate, int plate_key, bool vase, bool by_object)
+{
+    const auto [recorded, first_seen] = vase_by_plate.emplace(plate_key, vase);
+    const bool vase_changed           = !first_seen && recorded->second != vase;
+    recorded->second                  = vase;
+    return by_object || vase_changed;
+}
+
 }}

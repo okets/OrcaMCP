@@ -551,9 +551,10 @@ ToolOrdering::ToolOrdering(const Print &print, unsigned int first_extruder, bool
 
     // BBS
 	if (auto num_filaments = unsigned(print.config().filament_diameter.size());
-		num_filaments > 1 && print.object_extruders().size() == 1 && // the current Print's configuration is CustomGCode::MultiAsSingle
+        // Orca: the one rule, which Print::extruders and PartPlate::get_extruders count the filament changes by too.
         //BBS: replace model custom gcode with current plate custom gcode
-        print.model().get_curr_plate_custom_gcodes().mode == CustomGCode::MultiAsSingle) {
+        CustomGCode::tool_changes_apply(print.model().get_curr_plate_custom_gcodes().mode, num_filaments, print.object_extruders().size(),
+                                        /*by_layer=*/true, print.config().spiral_mode.value)) {
 		// Printing a single extruder platter on a printer with more than 1 extruder (or single-extruder multi-material).
 		// There may be custom per-layer tool changes available at the model.
         per_layer_extruder_switches = custom_tool_changes(print.model().get_curr_plate_custom_gcodes(), num_filaments);

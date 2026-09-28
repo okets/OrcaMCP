@@ -184,6 +184,7 @@
 #include "FilamentMapDialog.hpp"
 #include "CloneDialog.hpp"
 #include "PurgeModeDialog.hpp"
+#include "OrcaMCP/OrcaMCPExports.hpp"
 #include "OrcaMCP/OrcaMCPGcodeCheck.hpp"
 #include "OrcaMCP/OrcaMCPModelLoad.hpp"
 #include "OrcaMCP/OrcaMCPQuit.hpp"
@@ -6757,6 +6758,11 @@ struct Plater::priv
     // Orca: the Slice All run that ended before its last plate; cleared by any new slice, plate-list
     // change or project, so the plate it names is still that one.
     std::optional<OrcaMCP::SliceAllEndedEarly> m_slice_all_ended_early;
+    // Orca: what the slicing notification's Cancel and MCP's cancel_slice do (OrcaMCPSliceCredit.hpp,
+    // SliceCancelled): stop the slice, end a Slice All run, and record the cancel; false when nothing sliced.
+    bool cancel_slicing(bool by_tool);
+    // Orca: the slice or Slice All run cancelled on purpose; cleared like m_slice_all_ended_early.
+    std::optional<OrcaMCP::SliceCancelled> m_slice_cancelled;
     // Orca: the safety net under the callers' stops (PartPlateList::set_before_free), and the slice it
     // cancelled, told once by the next MCP response's active_warnings.
     void stop_slice_running_on(const std::vector<const PartPlate*>& plates, const std::vector<const PrintBase*>& prints,
@@ -7106,7 +7112,8 @@ struct Plater::priv
     void export_gcode(fs::path output_path, bool output_path_on_removable_media);
     void export_gcode(fs::path output_path, bool output_path_on_removable_media, PrintHostJob upload_job);
 
-    void reload_from_disk();
+    // Orca: `snapshot_name` names the undo step it takes before its first change ("Reload from disk" when empty).
+    void reload_from_disk(const std::string& snapshot_name = {});
     bool replace_volume_with_stl(int object_idx, int volume_idx, const fs::path& new_path, const std::string& snapshot = "");
     void replace_with_stl();
     void replace_all_with_stl();
@@ -7704,21 +7711,8 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
             Model& model = wxGetApp().plater()->model();
             //BBS: replace model custom gcode with current plate custom gcode
             model.plates_custom_gcodes[model.curr_plate_index] = preview->get_canvas3d()->get_gcode_viewer().get_layers_slider()->GetTicksValues();
-
-            // BBS set to invalid state only
-            if (tick_event_type == Type::ToolChange || tick_event_type == Type::Custom || tick_event_type == Type::Template || tick_event_type == Type::PausePrint) {
-                PartPlate *plate = this->q->get_partplate_list().get_curr_plate();
-                if (plate) {
-                    plate->update_slice_result_valid_state(false);
-                }
-            }
-            set_plater_dirty(true);
-
-            preview->on_tick_changed(tick_event_type);
-
-            // update slice and print button
-            wxGetApp().mainframe->update_slice_print_status(MainFrame::SlicePrintEventType::eEventSliceUpdate, true, false);
-            set_need_update(true);
+            // Orca: the rest is Plater::on_layer_gcodes_changed, which MCP's layer G-code tools run too
+            this->q->on_layer_gcodes_changed(this->q->get_partplate_list().get_curr_plate_index(), tick_event_type);
         });
     }
     if (wxGetApp().is_gcode_viewer())
@@ -10000,10 +9994,9 @@ wxString Plater::priv::get_export_file(GUI::FileType file_type, const wxString& 
 {
     // MCP automation: a native file dialog is modal and would block the GUI thread forever
     // while the MCP handler waits for this call to return. Report it instead of opening it.
-    if (is_mcp_dialog_suppression_enabled()) {
-        add_mcp_suppressed_answer("Save file: choose where to write it", "Cancel: nothing was written");
-        return wxString();
-    }
+    // A tool that has the path answers it (export_stl's output_path); with none it is cancelled.
+    if (std::vector<std::string> answered; mcp_answer_path_dialog("Save file: choose where to write it", McpPathDialog::file, answered))
+        return answered.empty() ? wxString() : from_u8(answered.front());
 
     wxString wildcard;
     switch (file_type) {
@@ -10315,6 +10308,7 @@ void Plater::priv::reset(bool apply_presets_change)
     // crashed or froze the app.
     this->background_process.stop();
     m_slice_all_ended_early.reset(); // Orca: its plates are gone
+    m_slice_cancelled.reset();
 
     //BBS: clear the partplate list's object before object cleared
     partplate_list.reinit();
@@ -11253,11 +11247,19 @@ void Plater::priv::replace_with_stl()
 
     wxString title = _L("Select a new file");
     title += ":";
+    fs::path out_path;
+    // Orca MCP: the tool call's file_path answers the dialog, which would block the call for good.
+    if (std::vector<std::string> answered; mcp_answer_path_dialog(into_u8(title), McpPathDialog::file, answered)) {
+        if (answered.empty())
+            return;
+        out_path = answered.front();
+    } else {
     wxFileDialog dialog(q, title, "", from_u8(input_path.filename().string()), file_wildcards(FT_MODEL), wxFD_OPEN | wxFD_FILE_MUST_EXIST);
     if (dialog.ShowModal() != wxID_OK)
         return;
 
-    fs::path out_path = dialog.GetPath().ToUTF8().data();
+    out_path = dialog.GetPath().ToUTF8().data();
+    }
     if (out_path.empty()) {
         MessageDialog dlg(q, _L("File for the replacement wasn\'t selected"), _L("Error during replacement"), wxOK | wxOK_DEFAULT | wxICON_WARNING);
         dlg.ShowModal();
@@ -11337,11 +11339,19 @@ void Plater::priv::replace_all_with_stl()
 
     wxString title = _L("Select folder to replace from");
     title += ":";
+    fs::path out_path;
+    // Orca MCP: the tool call's folder answers the dialog, which would block the call for good.
+    if (std::vector<std::string> answered; mcp_answer_path_dialog(into_u8(title), McpPathDialog::folder, answered)) {
+        if (answered.empty())
+            return;
+        out_path = answered.front();
+    } else {
     wxDirDialog dialog(q, title, from_u8(input_path.parent_path().string()), wxDD_DEFAULT_STYLE | wxDD_DIR_MUST_EXIST);
     if (dialog.ShowModal() != wxID_OK)
         return;
 
-    fs::path out_path = dialog.GetPath().ToUTF8().data();
+    out_path = dialog.GetPath().ToUTF8().data();
+    }
     if (out_path.empty()) {
         MessageDialog dlg(q, _L("Directory for the replace wasn't selected"), _L("Error during replacement"), wxOK | wxOK_DEFAULT | wxICON_WARNING);
         dlg.ShowModal();
@@ -11402,6 +11412,42 @@ void Plater::priv::replace_all_with_stl()
     dlg.ShowModal();
 }
 
+// Orca: which volumes Reload from disk reloads, and where it finds their files, out of reloadable_volumes and
+// reload_from_disk, so MCP's reload_from_disk decides as they do before it asks (Plater.hpp).
+bool is_reloadable_volume(const ModelVolume& volume)
+{
+    return !volume.source.is_from_builtin_objects && !volume.source.input_file.empty() &&
+           !fs::path(volume.source.input_file).extension().string().empty();
+}
+
+ReloadSources reload_sources(const Model& model, const std::vector<std::pair<int, int>>& volumes)
+{
+    ReloadSources sources;
+    for (auto [obj_idx, vol_idx] : volumes) {
+        const ModelObject *object = model.objects[obj_idx];
+        const ModelVolume *volume = object->volumes[vol_idx];
+        if (fs::exists(volume->source.input_file))
+            sources.input_paths.push_back(volume->source.input_file);
+        else {
+            // searches the source in the same folder containing the object
+            bool found = false;
+            if (!object->input_file.empty()) {
+                fs::path object_path = fs::path(object->input_file).remove_filename();
+                if (!object_path.empty()) {
+                    object_path /= fs::path(volume->source.input_file).filename();
+                    if (fs::exists(object_path)) {
+                        sources.input_paths.push_back(object_path);
+                        found = true;
+                    }
+                }
+            }
+            if (!found)
+                sources.missing.push_back(volume->source.input_file);
+        }
+    }
+    return sources;
+}
+
 #if ENABLE_RELOAD_FROM_DISK_REWORK
 static std::vector<std::pair<int, int>> reloadable_volumes(const Model &model, const Selection &selection)
 {
@@ -11415,7 +11461,7 @@ static std::vector<std::pair<int, int>> reloadable_volumes(const Model &model, c
             const int          v_idx = v.volume_idx();
             if (0 <= v_idx && v_idx < int(obj->volumes.size())) {
                 const ModelVolume *vol = obj->volumes[v_idx];
-                if (!vol->source.is_from_builtin_objects && !vol->source.input_file.empty() && !fs::path(vol->source.input_file).extension().string().empty())
+                if (is_reloadable_volume(*vol))
                     ret.push_back({o_idx, v_idx});
             }
         }
@@ -11424,8 +11470,13 @@ static std::vector<std::pair<int, int>> reloadable_volumes(const Model &model, c
 }
 #endif // ENABLE_RELOAD_FROM_DISK_REWORK
 
-void Plater::priv::reload_from_disk()
+void Plater::priv::reload_from_disk(const std::string& snapshot_name)
 {
+    // Orca: not under an open toolbar tool, as Replace 3D file: a painting tool keeps the triangles of the
+    // meshes a reload replaces (it rebuilds on another object or volume count only) and writes that painting
+    // into the new meshes when it closes.
+    if (!q->get_view3D_canvas3D()->get_gizmos_manager().check_gizmos_closed_except(GLGizmosManager::EType::Undefined))
+        return;
 #if ENABLE_RELOAD_FROM_DISK_REWORK
     // collect selected reloadable ModelVolumes
     std::vector<std::pair<int, int>> selected_volumes = reloadable_volumes(model, get_selection());
@@ -11480,27 +11531,10 @@ void Plater::priv::reload_from_disk()
     std::vector<fs::path> missing_input_paths;
 #if ENABLE_RELOAD_FROM_DISK_REWORK
     std::vector<std::pair<fs::path, fs::path>> replace_paths;
-    for (auto [obj_idx, vol_idx] : selected_volumes) {
-        const ModelObject *object = model.objects[obj_idx];
-        const ModelVolume *volume = object->volumes[vol_idx];
-        if (fs::exists(volume->source.input_file))
-            input_paths.push_back(volume->source.input_file);
-        else {
-            // searches the source in the same folder containing the object
-            bool found = false;
-            if (!object->input_file.empty()) {
-                fs::path object_path = fs::path(object->input_file).remove_filename();
-                if (!object_path.empty()) {
-                    object_path /= fs::path(volume->source.input_file).filename();
-                    if (fs::exists(object_path)) {
-                        input_paths.push_back(object_path);
-                        found = true;
-                    }
-                }
-            }
-            if (!found)
-                missing_input_paths.push_back(volume->source.input_file);
-        }
+    {
+        ReloadSources sources = reload_sources(model, selected_volumes); // Orca: moved out, for MCP to ask too
+        input_paths           = std::move(sources.input_paths);
+        missing_input_paths   = std::move(sources.missing);
     }
 #else
     std::vector<fs::path> replace_paths;
@@ -11545,11 +11579,21 @@ void Plater::priv::reload_from_disk()
         title += " (" + from_u8(search.filename().string()) + ")";
 #endif // __APPLE__
         title += ":";
+        std::string sel_filename_path;
+        // Orca MCP: the tool call's file_path answers the dialog, once: a file still missing after it gets no
+        // answer, which cancels the reload before anything changed, as a cancel does.
+        if (std::vector<std::string> answered; mcp_answer_path_dialog(into_u8(title), McpPathDialog::file, answered)) {
+            set_mcp_path_answer(McpPathDialog::file, {});
+            if (answered.empty())
+                return;
+            sel_filename_path = answered.front();
+        } else {
         wxFileDialog dialog(q, title, "", from_u8(search.filename().string()), file_wildcards(FT_MODEL), wxFD_OPEN | wxFD_FILE_MUST_EXIST);
         if (dialog.ShowModal() != wxID_OK)
             return;
 
-        std::string sel_filename_path = dialog.GetPath().ToUTF8().data();
+        sel_filename_path = dialog.GetPath().ToUTF8().data();
+        }
         std::string sel_filename = fs::path(sel_filename_path).filename().string();
         if (boost::algorithm::iequals(search.filename().string(), sel_filename)) {
             input_paths.push_back(sel_filename_path);
@@ -11590,7 +11634,21 @@ void Plater::priv::reload_from_disk()
     replace_paths.erase(std::unique(replace_paths.begin(), replace_paths.end()), replace_paths.end());
 
 #if ENABLE_RELOAD_FROM_DISK_REWORK
-    Plater::TakeSnapshot snapshot(q, _u8L("Reload from disk"));
+    // Orca: the undo step is taken right before the first volume changes, not before loading: a reload
+    // whose files all fail to load changed nothing and left an empty undo step. A part given another file
+    // is changed by replace_volume_with_stl, which takes the step it is handed only once that file loaded,
+    // so it is handed the step while none is taken. What follows the step is in it.
+    struct ReloadUndoStep
+    {
+        Plater*     plater;
+        std::string name;
+        bool        taken = false;
+        ~ReloadUndoStep() { if (taken) plater->allow_snapshots(); }
+        void        before_change() { if (!taken) { plater->take_snapshot(name); follow(); } }
+        std::string for_replace() const { return taken ? std::string() : name; }
+        void        after_replace() { if (!taken) follow(); } // the replace took it
+        void        follow() { plater->suppress_snapshots(); taken = true; }
+    } undo_step{q, snapshot_name.empty() ? _u8L("Reload from disk") : snapshot_name};
 #endif // ENABLE_RELOAD_FROM_DISK_REWORK
 
     std::vector<wxString> fail_list;
@@ -11647,7 +11705,10 @@ void Plater::priv::reload_from_disk()
         catch (std::exception&)
         {
             // error while loading
-            return;
+            // Orca: the others are still reloaded, the scene is updated for those already done, and the file
+            // is named below; upstream returned, leaving the scene stale and an undo step for nothing.
+            fail_list.push_back(from_u8(path));
+            continue;
         }
 
 #if ENABLE_RELOAD_FROM_DISK_REWORK
@@ -11715,6 +11776,7 @@ void Plater::priv::reload_from_disk()
                     continue;
                 }
 
+                undo_step.before_change();
                 ModelVolume *new_volume = nullptr;
                 // BBS: step model
                 if (new_volume_idx < 0 && new_object_idx >= 0) {
@@ -11839,9 +11901,15 @@ void Plater::priv::reload_from_disk()
 #if ENABLE_RELOAD_FROM_DISK_REWORK
     for (auto [src, dest] : replace_paths) {
         for (auto [obj_idx, vol_idx] : selected_volumes) {
-            if (boost::algorithm::iequals(model.objects[obj_idx]->volumes[vol_idx]->source.input_file, src.string()))
+            if (boost::algorithm::iequals(model.objects[obj_idx]->volumes[vol_idx]->source.input_file, src.string())) {
                 // When an error occurs, either the dest parsing error occurs, or the number of objects in the dest is greater than 1 and cannot be replaced, and cannot be replaced in this loop.
-                if (!replace_volume_with_stl(obj_idx, vol_idx, dest, "")) break;
+                // Orca: named among the files that failed, as a file that fails to load is above.
+                if (!replace_volume_with_stl(obj_idx, vol_idx, dest, undo_step.for_replace())) {
+                    fail_list.push_back(from_u8(dest.string()));
+                    break;
+                }
+                undo_step.after_replace();
+            }
         }
     }
 #else
@@ -11882,15 +11950,17 @@ void Plater::priv::reload_all_from_disk()
 {
     if (model.objects.empty())
         return;
+    // Orca: before select_all, which a reload that refuses (an open toolbar tool) would leave behind.
+    if (!q->get_view3D_canvas3D()->get_gizmos_manager().check_gizmos_closed_except(GLGizmosManager::EType::Undefined))
+        return;
 
-    Plater::TakeSnapshot snapshot(q, _u8L("Reload all"));
-    Plater::SuppressSnapshots suppress(q);
-
+    // Orca: the reload takes the undo step, named for this, right before its first change (not up front,
+    // which left an empty step when nothing reloaded).
     Selection& selection = get_selection();
     Selection::IndicesList curr_idxs = selection.get_volume_idxs();
     // reload from disk uses selection
     select_all();
-    reload_from_disk();
+    reload_from_disk(_u8L("Reload all"));
     // restore previous selection
     selection.clear();
     for (unsigned int idx : curr_idxs) {
@@ -12708,6 +12778,7 @@ OrcaMCP::PlateListChangeDuringSlice Plater::priv::stop_slice_for_plate_list_chan
         m_slice_all = false; // the completion still to come ends the run
     m_plate_list_change |= change;
     m_slice_all_ended_early.reset(); // the plate it names may move or go
+    m_slice_cancelled.reset();
     return change;
 }
 
@@ -12739,6 +12810,24 @@ void Plater::priv::stop_slice_running_on(const std::vector<const PartPlate*>& pl
     const OrcaMCP::PlateListChangeDuringSlice change = stop_slice_for_plate_list_change();
     if (change.slice_cancelled || change.slice_all_cancelled)
         m_slice_cancelled_by_free = OrcaMCP::slice_cancelled_by_free_text(caller);
+}
+
+bool Plater::priv::cancel_slicing(bool by_tool)
+{
+    const bool slicing_all = slicing_all_plates();
+    if (!background_process.running() && !slicing_all)
+        return false;
+    PartPlate*       plate       = background_process.get_current_plate();
+    const int        plate_index = slicing_all ? m_cur_slice_plate : plate != nullptr ? plate->get_index() : partplate_list.get_curr_plate_index();
+    bool             cancelled_a_slice = false;
+    if (background_process.running())
+        background_process.stop(&cancelled_a_slice);
+    if (slicing_all)
+        m_slice_all = false; // the completion still to come, the one queued between two plates included, ends the run
+    // A slice that had already finished was not cancelled: its completion credits it when it is handled.
+    if (cancelled_a_slice || slicing_all)
+        m_slice_cancelled = OrcaMCP::SliceCancelled{plate_index, slicing_all, by_tool};
+    return true;
 }
 
 void Plater::priv::post_plate_not_started(unsigned int state)
@@ -13809,12 +13898,9 @@ void Plater::priv::init_notification_manager()
         return;
     notification_manager->init();
 
-    auto cancel_callback = [this]() {
-        if (this->background_process.idle())
-            return false;
-        this->background_process.stop();
-        return true;
-    };
+    // Orca: the notification's Cancel is MCP's cancel_slice: it also ends a Slice All run between two plates,
+    // where upstream's did nothing (the process idle) and the run went on, and it records the cancel.
+    auto cancel_callback = [this]() { return cancel_slicing(/*by_tool=*/false); };
     notification_manager->init_slicing_progress_notification(cancel_callback);
     notification_manager->set_fff(printer_technology == ptFFF);
     notification_manager->init_progress_indicator();
@@ -15632,7 +15718,12 @@ int Plater::save_project(bool saveAs)
         return wxID_NO;
     if (filename == "<cancel>")
         return wxID_CANCEL;
+    return save_project_as(filename);
+}
 
+// Orca: the rest of save_project, after its file dialog, unchanged: MCP's save_project and export_3mf save through it.
+int Plater::save_project_as(const wxString& filename)
+{
     //BBS export 3mf without gcode
     auto save_strategy = SaveStrategy::SplitModel | SaveStrategy::ShareMesh;
     bool full_pathnames = wxGetApp().app_config->get_bool("export_sources_full_pathnames");
@@ -18490,13 +18581,13 @@ void Plater::send_to_printer(bool isall)
 }
 
 //BBS export gcode 3mf to file
-void Plater::export_gcode_3mf(bool export_all)
+bool Plater::export_gcode_3mf(bool export_all)
 {
     if (p->model.objects.empty())
-        return;
+        return false;
 
     if (p->process_completed_with_error == p->partplate_list.get_curr_plate_index())
-        return;
+        return false;
 
     //calc default_output_file, get default output file from background process
     fs::path default_output_file;
@@ -18507,18 +18598,18 @@ void Plater::export_gcode_3mf(bool export_all)
         // Also if there is something wrong with the current configuration, a pop-up dialog will be shown and the export will not be performed.
         unsigned int state = this->p->update_restart_background_process(false, false);
         if (state & priv::UPDATE_BACKGROUND_PROCESS_INVALID)
-            return;
+            return false;
         default_output_file = this->p->background_process.output_filepath_for_project(
             into_path(this->p->get_project_filename(".3mf")));
     }
     catch (const Slic3r::PlaceholderParserError& ex) {
         // Show the error with monospaced font.
         show_error(this, ex.what(), true);
-        return;
+        return false;
     }
     catch (const std::exception& ex) {
         show_error(this, ex.what(), false);
-        return;
+        return false;
     }
     default_output_file.replace_extension(".gcode.3mf");
     default_output_file = fs::path(Slic3r::fold_utf8_to_ascii(default_output_file.string()));
@@ -18527,8 +18618,11 @@ void Plater::export_gcode_3mf(bool export_all)
     start_dir = appconfig.get_last_output_dir(default_output_file.parent_path().string(), false);
 
     fs::path output_path;
-    {
-        std::string ext = default_output_file.extension().string();
+    // Orca MCP: the tool call's path answers the file dialog, which would block the call for good.
+    if (std::vector<std::string> answered; mcp_answer_path_dialog(into_u8(_L("Save Sliced file as:")), McpPathDialog::file, answered)) {
+        if (!answered.empty())
+            output_path = into_path(from_u8(OrcaMCP::sliced_file_path(answered.front())));
+    } else {
         wxFileDialog dlg(this, _L("Save Sliced file as:"),
             start_dir,
             from_path(default_output_file.filename()),
@@ -18536,10 +18630,8 @@ void Plater::export_gcode_3mf(bool export_all)
             wxFD_SAVE | wxFD_OVERWRITE_PROMPT
         );
         if (dlg.ShowModal() == wxID_OK) {
-            output_path = into_path(dlg.GetPath());
-            ext = output_path.extension().string();
-            if (ext != ".3mf")
-                output_path = output_path.string() + ".3mf";
+            // Orca: .3mf added unless the name ends in it in any case (upstream: X.GCODE.3MF became X.GCODE.3MF.3mf).
+            output_path = into_path(from_u8(OrcaMCP::sliced_file_path(into_u8(dlg.GetPath()))));
         }
     }
 
@@ -18554,7 +18646,15 @@ void Plater::export_gcode_3mf(bool export_all)
         int plate_idx = get_partplate_list().get_curr_plate_index();
         if (export_all)
             plate_idx = PLATE_ALL_IDX;
-        export_3mf(output_path, SaveStrategy::Silence | SaveStrategy::SplitModel | SaveStrategy::WithGcode | SaveStrategy::SkipModel, plate_idx); // BBS: silence
+        const int written = export_3mf(output_path, SaveStrategy::Silence | SaveStrategy::SplitModel | SaveStrategy::WithGcode | SaveStrategy::SkipModel, plate_idx); // BBS: silence
+        // Orca: the export is over (it is not the background process's), so no later slice's completion
+        // reports it again; and a write that failed says so, where upstream reported it exported whatever
+        // export_3mf returned.
+        p->exporting_status = ExportingStatus::NOT_EXPORTING;
+        if (written != 0) {
+            show_error(this, _L("Export failed\nPlease check write permissions or file in use by another application"));
+            return false;
+        }
 
         RemovableDriveManager& removable_drive_manager = *wxGetApp().removable_drive_manager();
 
@@ -18565,7 +18665,9 @@ void Plater::export_gcode_3mf(bool export_all)
         // update last output dir
         appconfig.update_last_output_dir(output_path.parent_path().string(), false);
         p->notification_manager->push_exporting_finished_notification(output_path.string(), p->last_output_dir_path, on_removable);
+        return true;
     }
+    return false;
 }
 
 void Plater::send_gcode_finish(wxString name)
@@ -18897,7 +18999,7 @@ TriangleMesh Plater::combine_mesh_fff(const ModelObject& mo, int instance_id, st
 
 // BBS export with/without boolean, however, stil merge mesh
 #define EXPORT_WITH_BOOLEAN 0
-void Plater::export_stl(bool extended, bool selection_only, bool multi_stls, FileType file_type)
+void Plater::export_stl(bool extended, bool selection_only, bool multi_stls, FileType file_type, std::vector<std::string>* written)
 {
     if (p->model.objects.empty()) { return; }
 
@@ -18915,15 +19017,22 @@ void Plater::export_stl(bool extended, bool selection_only, bool multi_stls, Fil
 
     wxString path;
     if (multi_stls) {
+        // Orca MCP: the tool call's folder answers the dialog, which would block the call for good.
+        if (std::vector<std::string> answered; mcp_answer_path_dialog(into_u8(_L("Choose a directory")), McpPathDialog::folder, answered)) {
+            if (!answered.empty())
+                path = from_u8(answered.front()) + "/";
+        } else {
         wxDirDialog dlg(this, _L("Choose a directory"), from_u8(wxGetApp().app_config->get_last_dir()),
                         wxDD_DEFAULT_STYLE | wxDD_DIR_MUST_EXIST);
         if (dlg.ShowModal() == wxID_OK) {
             path = dlg.GetPath() + "/";
         }
+        }
     } else {
         path = p->get_export_file(file_type);
     }
-    if (path.empty()) { return; }
+    // Orca: a cancelled file dialog answers "<cancel>", which upstream took for the file to write.
+    if (path.empty() || path == "<cancel>") { return; }
     const std::string path_u8 = into_u8(path);
 
     wxBusyCursor wait;
@@ -18940,7 +19049,11 @@ void Plater::export_stl(bool extended, bool selection_only, bool multi_stls, Fil
     // BBS
     if (selection_only) {
         // only support selection single full object and mulitiple full object
-        if (!selection.is_single_full_object() && !selection.is_multiple_full_object()) return;
+        // Orca: and whole instances, for which the object menu offers Export as one STL / as STLs too: they
+        // returned here, after the file dialog, writing nothing and saying nothing.
+        if (!selection.is_single_full_object() && !selection.is_multiple_full_object() && !selection.is_single_full_instance() &&
+            !selection.is_multiple_full_instance())
+            return;
     }
 
     // Following lambda generates a combined mesh for export with normals pointing outwards.
@@ -19068,13 +19181,15 @@ void Plater::export_stl(bool extended, bool selection_only, bool multi_stls, Fil
     else
         mesh_to_export = mesh_to_export_sla;
 
-    auto get_save_file = [file_type](std::string const & dir, std::string const & name) {
+    auto get_save_file = [file_type](std::string const & dir, std::string const & object_name) {
         std::string ext = "";
         switch (file_type) {
         case FT_STL: ext = ".stl"; break;
         case FT_DRC: ext = ".drc"; break;
         }
 
+        // Orca: an object named after its file ("cube.stl") is written as cube.stl, not cube.stl.stl.
+        const std::string name = boost::algorithm::iends_with(object_name, ext) ? object_name.substr(0, object_name.size() - ext.size()) : object_name;
         auto path = dir + name + ext;
         int n = 1;
         while (boost::filesystem::exists(path))
@@ -19082,9 +19197,28 @@ void Plater::export_stl(bool extended, bool selection_only, bool multi_stls, Fil
         return path;
     };
 
+    // Orca: every file is stored through here, which says whether it was written: the files go to
+    // `written` (MCP's export_stl reports them), and a file that was not is the app's Export failed error,
+    // where upstream said nothing.
+    std::vector<std::string> failed;
+    auto store_mesh = [&](const std::string& file, TriangleMesh& mesh) {
+        const bool stored = file_type == FT_DRC ? Slic3r::store_drc(file.c_str(), &mesh, quality) : Slic3r::store_stl(file.c_str(), &mesh, true);
+        if (!stored)
+            failed.push_back(file);
+        else if (written != nullptr)
+            written->push_back(file);
+    };
+    auto report_failures = [&]() {
+        if (!failed.empty())
+            show_error(this, _L("Export failed\nPlease check write permissions or file in use by another application") + "\n" +
+                                 from_u8(failed.front()));
+    };
+
     TriangleMesh mesh;
     if (selection_only) {
-        if (selection.is_single_full_object()) {
+        // Orca: one object's Export as STLs writes its file into the folder, as several objects' do: this branch
+        // wrote the folder's own path. Whole instances take the branches below, by the instances selected.
+        if (selection.is_single_full_object() && !multi_stls) {
             const auto obj_idx = selection.get_object_idx();
             const ModelObject* model_object = p->model.objects[obj_idx];
             if (selection.get_mode() == Selection::Instance)
@@ -19097,25 +19231,23 @@ void Plater::export_stl(bool extended, bool selection_only, bool multi_stls, Fil
 
             if (model_object->instances.size() == 1) mesh.translate(-model_object->origin_translation.cast<float>());
         }
-        else if (selection.is_multiple_full_object() && !multi_stls) {
+        else if (!multi_stls) {
             const std::set<std::pair<int, int>>& instances_idxs = p->get_selection().get_selected_object_instances();
             for (const std::pair<int, int>& i : instances_idxs) {
                 ModelObject* object = p->model.objects[i.first];
                 mesh.merge(mesh_to_export(*object, i.second));
             }
         }
-        else if (selection.is_multiple_full_object() && multi_stls) {
+        else {
             const std::set<std::pair<int, int>> &instances_idxs = p->get_selection().get_selected_object_instances();
             for (const std::pair<int, int> &i : instances_idxs) {
                 ModelObject *object = p->model.objects[i.first];
                 auto mesh = mesh_to_export(*object, i.second);
                 mesh.translate(-object->origin_translation.cast<float>());
 
-                switch (file_type) {
-                case FT_STL: Slic3r::store_stl(get_save_file(path_u8, object->name).c_str(), &mesh, true); break;
-                case FT_DRC: Slic3r::store_drc(get_save_file(path_u8, object->name).c_str(), &mesh, quality); break;
-                }
+                store_mesh(get_save_file(path_u8, object->name), mesh);
             }
+            report_failures();
             return;
         }
     }
@@ -19128,18 +19260,14 @@ void Plater::export_stl(bool extended, bool selection_only, bool multi_stls, Fil
             auto mesh = mesh_to_export(*o, -1);
             mesh.translate(-o->origin_translation.cast<float>());
 
-            switch (file_type) {
-            case FT_STL: Slic3r::store_stl(get_save_file(path_u8, o->name).c_str(), &mesh, true); break;
-            case FT_DRC: Slic3r::store_drc(get_save_file(path_u8, o->name).c_str(), &mesh, quality); break;
-            }
+            store_mesh(get_save_file(path_u8, o->name), mesh);
         }
+        report_failures();
         return;
     }
 
-    switch (file_type) {
-    case FT_STL: Slic3r::store_stl(path_u8.c_str(), &mesh, true); break;
-    case FT_DRC: Slic3r::store_drc(path_u8.c_str(), &mesh, quality); break;
-    }
+    store_mesh(path_u8, mesh);
+    report_failures();
 }
 
 //BBS: remove amf export
@@ -19537,7 +19665,8 @@ void Plater::export_toolpaths_to_obj() const
         return;
 
     wxString path = p->get_export_file(FT_OBJ);
-    if (path.empty())
+    // Orca: a cancelled file dialog answers "<cancel>", which upstream took for the file to write.
+    if (path.empty() || path == "<cancel>")
         return;
 
     wxBusyCursor wait;
@@ -19565,6 +19694,7 @@ void Plater::reslice()
 {
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", Line %1%: enter, process_completed_with_error=%2%")%__LINE__ %p->process_completed_with_error;
     p->m_slice_all_ended_early.reset(); // Orca: a new slice: the plate it named may be sliced now
+    p->m_slice_cancelled.reset();
     // There is "invalid data" button instead "slice now"
     if (p->process_completed_with_error == p->partplate_list.get_curr_plate_index())
     {
@@ -20396,6 +20526,24 @@ void Plater::on_filaments_delete(size_t num_filaments, size_t filament_id, int r
     // only: a merge's target, already numbered as after the delete, was moved down one more, only the first
     // tool change to the merged slot moved there, and colour changes kept their old numbers.
     GUI::renumber_custom_gcodes(p->model, deletion);
+}
+
+void Plater::on_layer_gcodes_changed(int plate_index, CustomGCode::Type type)
+{
+    // BBS set to invalid state only
+    if (type == Type::ToolChange || type == Type::Custom || type == Type::Template || type == Type::PausePrint) {
+        PartPlate *plate = get_partplate_list().get_plate(plate_index);
+        if (plate) {
+            plate->update_slice_result_valid_state(false);
+        }
+    }
+    p->set_plater_dirty(true);
+
+    p->preview->on_tick_changed(type);
+
+    // update slice and print button
+    wxGetApp().mainframe->update_slice_print_status(MainFrame::SlicePrintEventType::eEventSliceUpdate, true, false);
+    p->set_need_update(true);
 }
 
 void Plater::renumber_filament_settings(const FilamentRenumbering& change)
@@ -22377,6 +22525,8 @@ const OrcaMCP::SliceAllEndedEarly* Plater::slice_all_ended_early() const
     return p->m_slice_all_ended_early ? &*p->m_slice_all_ended_early : nullptr;
 }
 int Plater::slice_all_plate_in_progress() const { return p->slicing_all_plates() ? p->m_cur_slice_plate : -1; }
+bool Plater::cancel_slicing(bool by_tool) { return p->cancel_slicing(by_tool); }
+const OrcaMCP::SliceCancelled* Plater::slice_cancelled() const { return p->m_slice_cancelled ? &*p->m_slice_cancelled : nullptr; }
 std::optional<std::string> Plater::take_slice_cancelled_by_free()
 {
     std::optional<std::string> note;

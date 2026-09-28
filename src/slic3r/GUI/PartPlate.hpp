@@ -286,6 +286,8 @@ public:
 
     bool has_spiral_mode_config() const;
     bool get_spiral_vase_mode() const;
+    // Orca: the plate's own vase mode, else `global_config`'s (the print preset's, which the no-argument form reads).
+    bool get_spiral_vase_mode(const DynamicPrintConfig& global_config) const;
     void set_spiral_vase_mode(bool spiral_mode, bool as_global);
 
     std::vector<Vec2d> get_plate_wrapping_detection_area() const;
@@ -383,6 +385,9 @@ public:
     bool contain_instance_totally(int obj_id, int instance_id) const;
     //judge whether any of the object's instances is totally included in plate or not
     bool contain_any_instance_totally(int obj_id) const;
+    // Orca: whether the slicer prints object `obj_id` when it slices this plate: an instance of it here that is printable
+    // (the object's flag, the instance's, inside the plate's build volume), as ModelInstance::is_printable decides.
+    bool slicer_prints_object(int obj_id) const;
 
     //judge whether the plate's origin is at the left of instance or not
     bool is_left_top_of(int obj_id, int instance_id);

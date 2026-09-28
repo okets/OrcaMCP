@@ -95,7 +95,7 @@ class FinishSyncAmsDialog;
 using t_optgroups = std::vector <std::shared_ptr<ConfigOptionsGroup>>;
 
 class Plater;
-namespace OrcaMCP { struct PlateListChangeDuringSlice; struct SliceAllEndedEarly; }
+namespace OrcaMCP { struct PlateListChangeDuringSlice; struct SliceAllEndedEarly; struct SliceCancelled; }
 enum class ActionButtonType : int;
 
 // Sentinel filament id meaning "use the slot the sidebar context menu was opened on"
@@ -337,6 +337,18 @@ struct SendGcodeError
     bool        monospaced = false;
 };
 
+// Orca: which volumes the object list's Reload from disk reloads (loaded from a file with an extension, not a
+// built-in shape), and where it finds their files: where they were loaded from, else beside the object's own
+// file; `missing` the ones found nowhere, for which it asks the user. MCP's reload_from_disk asks the same.
+bool is_reloadable_volume(const ModelVolume& volume);
+struct ReloadSources
+{
+    std::vector<boost::filesystem::path> input_paths;
+    std::vector<boost::filesystem::path> missing;
+};
+// `volumes`: (object, volume) indices into `model`.
+ReloadSources reload_sources(const Model& model, const std::vector<std::pair<int, int>>& volumes);
+
 class Plater: public wxPanel
 {
 public:
@@ -379,6 +391,9 @@ public:
     // BBS: save & backup
     void load_project(wxString const & filename = "", wxString const & originfile = "-");
     int save_project(bool saveAs = false);
+    // Orca: Save's steps after its file dialog, to `filename`: the 3MF written, the project named after it, its backup
+    // removed and it marked saved. wxID_YES when written.
+    int save_project_as(const wxString& filename);
     //BBS download project by project id
     void import_model_id(wxString download_info);
     void download_project(const wxString& project_id);
@@ -555,7 +570,9 @@ public:
     // Silent G-code export to a specific file path (for MCP automation). Returns why the export did
     // not start (OrcaMCP::export_not_started), or nullopt when it is being written.
     std::optional<std::string> export_gcode_to_file(const std::string& output_path);
-    void export_gcode_3mf(bool export_all = false);
+    // Orca: true once the sliced file was written; MCP's export_gcode answers its file dialog
+    // (mcp_answer_path_dialog), and a write that failed says so instead of reporting it exported.
+    bool export_gcode_3mf(bool export_all = false);
     void send_gcode_finish(wxString name);
     void export_core_3mf();
     // Export a "published" 3MF embedding the author-selected settings in the file metadata; a
@@ -566,7 +583,9 @@ public:
     bool get_pending_published(std::vector<std::string>& out_keys, std::vector<Slic3r::PublishedMaterialEntry>& out_material) const;
     void set_pending_published(const std::vector<std::string>& published_keys, const std::vector<Slic3r::PublishedMaterialEntry>& material_keys);
     static TriangleMesh combine_mesh_fff(const ModelObject& mo, int instance_id, std::function<void(const std::string&)> notify_func = {});
-    void export_stl(bool extended = false, bool selection_only = false, bool multi_stls = false, FileType file_type = FT_STL);
+    // Orca: `written`, when given, gets every file the export wrote (MCP's export_stl reports them).
+    void export_stl(bool extended = false, bool selection_only = false, bool multi_stls = false, FileType file_type = FT_STL,
+                    std::vector<std::string>* written = nullptr);
     //BBS: remove amf
     //void export_amf();
     //BBS add extra param for exporting 3mf silence
@@ -659,6 +678,10 @@ public:
     // slicer reads and of the plater's own copy, renumbered after a slot is deleted or inserted; the print
     // settings show it (unsaved).
     void renumber_filament_settings(const FilamentRenumbering& change);
+    // Orca: what the Preview's layer slider does once plate `plate_index`'s G-code at a layer changed
+    // (Model::plates_custom_gcodes): the plate loses its slice result, the project is dirty, the preview
+    // and the slice buttons follow. MCP's add_layer_gcode and delete_layer_gcode run it too.
+    void on_layer_gcodes_changed(int plate_index, CustomGCode::Type type);
     std::vector<Slic3r::ColorRGBA> get_extruders_colors();
     // BBS
     void on_bed_type_change(BedType bed_type);
@@ -862,6 +885,11 @@ public:
     const OrcaMCP::SliceAllEndedEarly* slice_all_ended_early() const; // nullptr: none
     // Orca: the plate a Slice All run is on (0-based), -1 when none runs.
     int slice_all_plate_in_progress() const;
+    // Orca: the slicing notification's Cancel, which MCP's cancel_slice runs too: stops the slice in
+    // progress, ends a Slice All run (between two plates as well), and records the cancel until the next
+    // slice, plate-list change or project. False when nothing was slicing.
+    bool cancel_slicing(bool by_tool = false);
+    const OrcaMCP::SliceCancelled* slice_cancelled() const; // nullptr: none
     // Orca: a slice the safety net cancelled, told once: taking it clears it.
     std::optional<std::string> take_slice_cancelled_by_free();
     //BBS: update slicing context

@@ -467,6 +467,20 @@ private:
 // Slice All run, and `plate_count` plates. Main thread.
 PipelineState pipeline_state(Plater& plater, int plate_count);
 
+// Records a slice of the selected plate that a tool started other than through slice_all (show_view's
+// Preview tab, which slices the plate as the GUI's tab does), as slice_all records its runs, so
+// get_slicing_status's slice_run and wait_for_slice follow it. Main thread.
+void record_selected_plate_slice_run(PartPlateList& plate_list);
+
+// Applies a settings change the background timer has not taken in yet, while the pipeline is idle
+// (apply_pending_update), so what the caller does next -- slice, report a slice, export one, read its
+// layers -- goes by the settings as they are now. Under the caller's `guard`, which captures what it says.
+void apply_pending_settings(Plater& plater, const McpDialogSuppressionGuard& guard);
+
+// Makes `plate_index` the current plate, as a plate's own icons do first -- the plate the slicing process
+// applies the settings to; not an undo step of its own.
+void make_plate_current(Plater& plater, int plate_index);
+
 // Closes the toolbar tool (gizmo) open in the 3D view, as the user closes it, and says which it was;
 // "" when none was open. The object list's Repair refuses while one is open -- its undo snapshot would
 // land in the tool's own undo stack -- and a painting tool's selectors belong to the volumes it was

@@ -3,6 +3,7 @@
 
 #include "libslic3r/CustomGCode.hpp"
 #include "libslic3r/Color.hpp"
+#include <map>
 #include <set>
 
 namespace Slic3r {
@@ -56,6 +57,12 @@ public:
 
     void set_extruder_colors(std::vector<std::string>* extruder_colors) { m_colors = extruder_colors; }
 };
+
+// Orca: STUDIO-2621's clear of a plate's layer G-code, which no longer works there: the plate prints by object,
+// or its own vase mode changed since the Preview last showed it. `vase_by_plate` records each plate's mode by a
+// key no other plate takes (its print index); a plate shown the first time has its mode recorded only. A static
+// "last vase mode" used to clear whichever plate was shown next after any change, and one first shown in vase mode.
+bool clears_plate_layer_gcode(std::map<int, bool>& vase_by_plate, int plate_key, bool vase, bool by_object);
 
 }} // Slic3r
 

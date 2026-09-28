@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "slic3r/GUI/OrcaMCP/OrcaMCPSliceCredit.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPSliceProgress.hpp"
 
 // What get_slicing_status says while a slice runs (each plate's percent, the stage) and once it is
@@ -182,6 +183,39 @@ TEST_CASE("a run that left plates unsliced names those, not the empty ones it sk
     CHECK(judged.skipped == std::vector<int>{0});
 }
 
+// Every unsliced plate was "its slice failed (active_warnings says why), was cancelled, or an edit since
+// invalidated it", and after a failed validation active_warnings was empty: its notification closes once
+// the plate validates again. Each plate now gets the reason its state tells, and the app's words where it
+// has them.
+TEST_CASE("an unsliced plate is told apart by why, with the app's words where it has them", "[orcamcp][SliceProgress]")
+{
+    SliceRunPlate refused       = unsliced_plate(0);
+    refused.valid               = false;
+    refused.validation_message  = "The prime tower is required for a filament change";
+    SliceRunPlate off_plate     = unsliced_plate(1);
+    off_plate.ready             = false;
+    SliceRunPlate failed        = unsliced_plate(2);
+    failed.slice_failed         = true;
+    SliceRunPlate stopped       = unsliced_plate(3);
+    SliceRunPlate stopped_too   = unsliced_plate(4);
+    const SliceRunJudgement judged =
+        judge_slice_run(/*run_known=*/true, /*slicing=*/false, {refused, off_plate, failed, stopped, stopped_too}, std::nullopt);
+    CHECK(judged.outcome == SliceRunOutcome::incomplete);
+    CHECK(judged.message.find("plate_index 0 has no slice result: the app's validation refuses it: The prime tower is required") !=
+          std::string::npos);
+    CHECK(judged.message.find("plate_index 1 has no slice result: the app will not slice it as it stands") != std::string::npos);
+    CHECK(judged.message.find("plate_index 2 has no slice result: its last slice ended in an error (active_warnings has it)") !=
+          std::string::npos);
+    CHECK(judged.message.find("plate_index 3, 4 has no slice result: its slice was stopped or failed") != std::string::npos);
+    CHECK(judged.message.find("active_warnings says why") == std::string::npos);
+
+    // A failed validation the app has no words for now points where they are.
+    SliceRunPlate refused_silently = unsliced_plate(0);
+    refused_silently.valid         = false;
+    CHECK(judge_slice_run(true, false, {refused_silently}, std::nullopt).message.find("slice_all answers with the app's words") !=
+          std::string::npos);
+}
+
 TEST_CASE("a run none of whose plates has anything to slice is incomplete, with nothing to slice", "[orcamcp][SliceProgress]")
 {
     const SliceRunJudgement judged = judge_slice_run(/*run_known=*/true, /*slicing=*/false, {empty_plate(0), empty_plate(1)}, std::nullopt);
@@ -242,6 +276,55 @@ TEST_CASE("every outcome has the name get_slicing_status reports", "[orcamcp][Sl
     CHECK(std::string(slice_run_outcome_name(SliceRunOutcome::done)) == "done");
     CHECK(std::string(slice_run_outcome_name(SliceRunOutcome::ended_early)) == "ended_early");
     CHECK(std::string(slice_run_outcome_name(SliceRunOutcome::incomplete)) == "incomplete");
+    CHECK(std::string(slice_run_outcome_name(SliceRunOutcome::cancelled)) == "cancelled");
+}
+
+// ---- a run someone cancelled --------------------------------------------------------------------
+//
+// Before cancel_slice, a run the user cancelled in the app read as incomplete, "failed, was cancelled,
+// or an edit since invalidated it": the agent could not tell a cancel from a failure.
+
+TEST_CASE("a cancelled run says who cancelled it where, and names the plates it left without a result", "[orcamcp][SliceProgress]")
+{
+    const std::string       cancelled = "Slice All was cancelled by cancel_slice at plate_index 1";
+    const SliceRunJudgement judged    = judge_slice_run(/*run_known=*/true, /*slicing=*/false,
+                                                     {sliced_plate(0), unsliced_plate(1), empty_plate(2), unsliced_plate(3)},
+                                                     std::nullopt, cancelled);
+    CHECK(judged.outcome == SliceRunOutcome::cancelled);
+    CHECK(judged.message.find(cancelled) == 0);
+    CHECK(judged.message.find("plate_index 1, 3 has no slice result") != std::string::npos);
+    CHECK(judged.skipped == std::vector<int>{2});
+}
+
+TEST_CASE("a cancel that left every plate with its result is judged as the run it ended", "[orcamcp][SliceProgress]")
+{
+    // A Slice All run ended between plates that were all sliced already: nothing was lost.
+    const SliceRunJudgement judged = judge_slice_run(true, false, {sliced_plate(0), sliced_plate(1)}, std::nullopt,
+                                                     std::string("Slice All was cancelled in the app at plate_index 1"));
+    CHECK(judged.outcome == SliceRunOutcome::done);
+    // A cancel with nothing sliced at all is still a cancel.
+    CHECK(judge_slice_run(true, false, {unsliced_plate(0)}, std::nullopt, std::string("The slice was cancelled in the app at plate_index 0"))
+              .outcome == SliceRunOutcome::cancelled);
+}
+
+TEST_CASE("a slice running again after a cancel is running, and a cancel outranks an early end", "[orcamcp][SliceProgress]")
+{
+    const std::optional<std::string> cancelled = std::string("The slice was cancelled in the app at plate_index 0");
+    CHECK(judge_slice_run(true, /*slicing=*/true, {unsliced_plate(0)}, std::nullopt, cancelled).outcome == SliceRunOutcome::running);
+    CHECK(judge_slice_run(true, false, {unsliced_plate(0)}, std::string("Slice All stopped at plate 0"), cancelled).outcome ==
+          SliceRunOutcome::cancelled);
+}
+
+TEST_CASE("the words of a cancel name the run, who cancelled it and the plate", "[orcamcp][SliceProgress]")
+{
+    CHECK(slice_cancelled_text({2, /*slice_all=*/true, /*by_tool=*/true}) == "Slice All was cancelled by cancel_slice at plate_index 2");
+    CHECK(slice_cancelled_text({0, false, false}) == "The slice was cancelled in the app at plate_index 0");
+}
+
+TEST_CASE("after a cancelled run the state is idle, not done", "[orcamcp][SliceProgress]")
+{
+    const SliceRunPlate selected{true, true, true, 0, true, true, true};
+    CHECK(slice_state(false, SliceRunOutcome::cancelled, selected) == SliceState::idle);
 }
 
 // ---- what slice_all reports ---------------------------------------------------------------------
@@ -325,6 +408,25 @@ TEST_CASE("every busy state has the name get_slicing_status reports", "[orcamcp]
     CHECK(std::string(pipeline_busy_name(PipelineBusy::exporting)) == "exporting");
     CHECK(std::string(pipeline_busy_name(PipelineBusy::uploading)) == "uploading");
     CHECK(std::string(pipeline_busy_name(PipelineBusy::stopping)) == "stopping");
+}
+
+TEST_CASE("cancel_slice cancels a slice, ends a Slice All run between plates, and nothing else", "[orcamcp][SliceProgress]")
+{
+    // What the Cancel on the app's slicing notification does, decided before anything is touched.
+    CHECK(slice_cancel_action(pipeline(true, /*working=*/true, false)) == SliceCancelAction::cancel);
+    CHECK(slice_cancel_action(pipeline(true, true, false, false, false, /*slice_all_plate=*/2)) == SliceCancelAction::cancel);
+    CHECK(slice_cancel_action(pipeline(true, /*working=*/false, false, false, false, /*slice_all_plate=*/2)) == SliceCancelAction::end_run);
+    CHECK(slice_cancel_action(pipeline(false, true, false, /*exporting=*/true)) == SliceCancelAction::refuse);
+    CHECK(slice_cancel_action(pipeline(false, true, false, true, /*uploading=*/true)) == SliceCancelAction::refuse);
+    CHECK(slice_cancel_action(pipeline(false, false, false)) == SliceCancelAction::nothing);
+    CHECK(slice_cancel_action(pipeline(false, false, /*done=*/true)) == SliceCancelAction::nothing);
+}
+
+TEST_CASE("cancel_slice's refusal and no-op say what the pipeline is doing", "[orcamcp][SliceProgress]")
+{
+    CHECK(slice_cancel_refusal(pipeline(false, true, false, /*exporting=*/true)).find("a G-code export is running, not a slice") == 0);
+    CHECK(nothing_to_cancel_text(pipeline(false, false, false)) == "Nothing is slicing, so nothing was cancelled.");
+    CHECK(nothing_to_cancel_text(pipeline(false, false, /*done=*/true)).find("already finished or stopped") != std::string::npos);
 }
 
 TEST_CASE("a slice that is running after the dispatch has started", "[orcamcp][SliceProgress]")

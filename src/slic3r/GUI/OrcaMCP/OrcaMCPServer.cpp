@@ -7,6 +7,8 @@
 #include "OrcaMCPInstanceRegistry.hpp"
 #include "OrcaMCPPartEdits.hpp"
 #include "OrcaMCPArrangeTools.hpp"
+#include "OrcaMCPExports.hpp"
+#include "OrcaMCPExportTools.hpp"
 #include "OrcaMCPPartTools.hpp"
 #include "OrcaMCPConfigKeys.hpp"
 #include "OrcaMCPConfigValues.hpp"
@@ -278,14 +280,27 @@ std::vector<OrcaMCP::SliceRunPlate> slice_run_plates(PartPlateList& plate_list)
     return plates;
 }
 
-// Applies a settings change the background timer has not taken in yet, while the pipeline is idle
-// (OrcaMCP::apply_pending_update), so what the caller does next -- slice, report a slice, export one
-// -- goes by the settings as they are now. Under the caller's `guard`, which captures what it says.
-void apply_pending_settings(Plater& plater, const McpDialogSuppressionGuard& guard)
+// Why `target` cannot be where a project is saved, or nullopt: it must be a .3mf.
+std::optional<std::string> project_path_refusal(const std::string& target)
 {
-    OrcaMCP::apply_pending_update(guard, OrcaMCP::pipeline_state(plater, plater.get_partplate_list().get_plate_count()),
-                                  plater.is_background_process_update_scheduled(),
-                                  [&plater] { plater.apply_pending_background_update(); });
+    if (!boost::iends_with(target, ".3mf"))
+        return "output_path must end in .3mf, got \"" + target + "\"";
+    return std::nullopt;
+}
+
+// The GUI's Save As to `target`, less its file dialog (Plater::save_project_as): the 3MF written, the project named
+// after it, its backup removed and it marked saved, as the GUI's Save leaves it. save_project and export_3mf both
+// save through it. The project is named only once the file is written.
+struct ProjectSaved
+{
+    bool saved   = false;
+    bool renamed = false; // the project took target's name
+};
+ProjectSaved save_project_to(Plater& plater, const std::string& target)
+{
+    const std::string before = into_u8(plater.get_project_filename(".3mf"));
+    const bool        saved  = plater.save_project_as(wxString::FromUTF8(target)) == wxID_YES;
+    return {saved, saved && target != before};
 }
 
 // The app's words for why its own validation refused the selected plate, the one reslice() works on, or
@@ -323,9 +338,19 @@ OrcaMCP::SliceStartSignals slice_start_signals(Plater& plater, PartPlateList& pl
 // How the last slice_all run stands (OrcaMCP::judge_slice_run), from its plates as they are now.
 OrcaMCP::SliceRunJudgement judge_last_run(Plater& plater, PartPlateList& plate_list, bool slicing)
 {
-    const OrcaMCP::SliceAllEndedEarly* ended = plater.slice_all_ended_early();
-    return OrcaMCP::judge_slice_run(!s_slice_run_scope.empty(), slicing, slice_run_plates(plate_list),
-                                    ended ? std::optional<std::string>(OrcaMCP::slice_all_ended_early_text(*ended)) : std::nullopt);
+    const OrcaMCP::SliceAllEndedEarly* ended     = plater.slice_all_ended_early();
+    const OrcaMCP::SliceCancelled*     cancelled = plater.slice_cancelled();
+    std::vector<OrcaMCP::SliceRunPlate> plates   = slice_run_plates(plate_list);
+    // Why the selected plate is not sliced, in the app's words where it has some: the process holds its Print.
+    for (OrcaMCP::SliceRunPlate& plate : plates)
+        if (plate.selected && !plate.sliced && !slicing) {
+            if (!plate.valid)
+                plate.validation_message = selected_plate_validation_failure(plater, plate_list);
+            plate.slice_failed = plater.last_error_blocks_reslice();
+        }
+    return OrcaMCP::judge_slice_run(!s_slice_run_scope.empty(), slicing, plates,
+                                    ended ? std::optional<std::string>(OrcaMCP::slice_all_ended_early_text(*ended)) : std::nullopt,
+                                    cancelled ? std::optional<std::string>(OrcaMCP::slice_cancelled_text(*cancelled)) : std::nullopt);
 }
 
 // get_slicing_status's slice_run: how the last slice_all run stands (outcome, and why when it is
@@ -339,6 +364,10 @@ nlohmann::json slice_run_json(Plater& plater, PartPlateList& plate_list, const O
         run["stopped_at_plate"] = ended->plate_index;
         run["reason"]           = ended->reason;
     }
+    if (const OrcaMCP::SliceCancelled* cancelled = plater.slice_cancelled()) {
+        run["cancelled_at_plate"] = cancelled->plate_index;
+        run["cancelled_by"]       = cancelled->by_tool ? "cancel_slice" : "app";
+    }
     run["scope"]   = s_slice_run_scope.empty() ? nlohmann::json(nullptr) : nlohmann::json(s_slice_run_scope);
     nlohmann::json indexes = nlohmann::json::array();
     for (const OrcaMCP::SliceRunPlate& plate : slice_run_plates(plate_list))
@@ -351,6 +380,23 @@ nlohmann::json slice_run_json(Plater& plater, PartPlateList& plate_list, const O
     if (!judged.message.empty())
         run["message"] = judged.message;
     return run;
+}
+
+// Plater::is_background_process_slicing() reports Plater::priv::m_is_slicing, which the plate walk holds
+// true from the first plate to the last and clears only when the run finishes or stops. So once it is
+// false the whole slice_all run is over, not merely one plate, and the plate selected at slice_all can be
+// put back (s_slice_all_restore_print_index): `result` then says restored_selected_plate. Not under an
+// arrange or bed fill, which applies its result to the current plate: a later call puts it back.
+void restore_plate_selected_at_slice_all(Plater& plater, PartPlateList& plate_list, bool is_running, nlohmann::json& result)
+{
+    if (is_running || s_slice_all_restore_print_index < 0 || !plater.get_ui_job_worker().is_idle())
+        return;
+    const int restore_to            = plate_list.find_plate_by_print_index(s_slice_all_restore_print_index);
+    s_slice_all_restore_print_index = -1;
+    if (restore_to >= 0 && restore_to != plate_list.get_curr_plate_index()) {
+        plater.select_plate(restore_to);
+        result["restored_selected_plate"] = restore_to;
+    }
 }
 
 // A plate whose slice result get_print_estimate can read: the selected one when it has one, else the
@@ -3361,30 +3407,102 @@ void OrcaMCPServer::register_builtin_tools()
         }
     });
 
+    // cancel_slice - the Cancel on the app's slicing notification (Plater::cancel_slicing)
+    register_tool({
+        "cancel_slice",
+        ToolCategory::Slicing,
+        "Cancel the running slice or Slice All",
+        "Cancel the slice in progress, as the Cancel on the app's slicing notification does: a Slice All run "
+        "ends there too (between two plates as well), and the plates it sliced before keep their results. "
+        "cancelled says whether anything was: false when nothing was slicing, or the last slice had already "
+        "ended. An export or an upload in progress is not a slice and is refused. The answer comes once the "
+        "app has taken in the cancel, with slice_run as get_slicing_status gives it (outcome cancelled, "
+        "cancelled_at_plate, and which plates have no result) and restored_selected_plate when a Slice All "
+        "run's plate selection was put back; wait_for_slice also ends on outcome cancelled. No undo step.",
+        {
+            {"type", "object"},
+            {"properties", nlohmann::json::object()}
+        },
+        [](const nlohmann::json&) -> nlohmann::json {
+            nlohmann::json cancelled = run_on_main_thread([]() -> nlohmann::json {
+                Plater*                     plater = wxGetApp().plater();
+                McpDialogSuppressionGuard   suppression_guard;
+                const OrcaMCP::PipelineState state = OrcaMCP::pipeline_state(*plater, plater->get_partplate_list().get_plate_count());
+                switch (OrcaMCP::slice_cancel_action(state)) {
+                case OrcaMCP::SliceCancelAction::refuse: return error_response(OrcaMCP::slice_cancel_refusal(state));
+                case OrcaMCP::SliceCancelAction::nothing:
+                    return {{"status", "success"}, {"cancelled", false}, {"message", OrcaMCP::nothing_to_cancel_text(state)}};
+                case OrcaMCP::SliceCancelAction::cancel:
+                case OrcaMCP::SliceCancelAction::end_run: break;
+                }
+                const bool slicing_all = state.slice_all_plate >= 0;
+                if (!plater->cancel_slicing(/*by_tool=*/true))
+                    return {{"status", "success"}, {"cancelled", false}, {"message", OrcaMCP::nothing_to_cancel_text(state)}};
+                const OrcaMCP::SliceCancelled* record = plater->slice_cancelled();
+                nlohmann::json answer = {{"status", "success"}, {"cancelled", record != nullptr}, {"run", slicing_all ? "slice_all" : "slice"}};
+                if (record != nullptr)
+                    answer["plate_index"] = record->plate_index;
+                else
+                    answer["message"] = "The slice finished before the cancel reached it, so it keeps its result.";
+                return suppression_guard.report(answer);
+            });
+            if (cancelled.value("status", "") != "success" || !cancelled.value("cancelled", false))
+                return cancelled;
+            // A second turn of the main thread: the cancelled slice's completion, queued before this, has
+            // been taken in by now, so the run's state is final.
+            return run_on_main_thread([answer = std::move(cancelled)]() mutable -> nlohmann::json {
+                Plater*        plater     = wxGetApp().plater();
+                PartPlateList& plate_list = plater->get_partplate_list();
+                const bool     is_running = plater->is_background_process_slicing();
+                restore_plate_selected_at_slice_all(*plater, plate_list, is_running, answer);
+                answer["slice_run"]       = slice_run_json(*plater, plate_list, judge_last_run(*plater, plate_list, is_running));
+                answer["active_warnings"] = get_active_warnings_json(plater);
+                add_next_steps(answer, cancel_slice_next_steps(is_running));
+                return answer;
+            });
+        }
+    });
+
     // export_gcode - Export G-code
     register_tool({
         "export_gcode",
         ToolCategory::Slicing,
-        "Write the sliced plate's G-code",
-        "Export the selected plate's G-code. The plate must be sliced (slice_all, then wait_for_slice). "
-        "status is export_started when the app has begun writing the file in the background -- not a "
-        "failure: the file is complete once wait_for_slice returns (get_slicing_status's busy is false "
-        "again), which next_steps says -- or error, with message saying why nothing was written. "
-        "Refused, as the GUI's Export button is off, when the check its slice ran on its G-code failed: "
-        "get_slicing_status's plates[].gcode_check names what it found.",
+        "Write sliced G-code, or a .gcode.3mf",
+        "Export sliced G-code. An output_path ending in .gcode writes the selected plate's G-code, as the GUI's "
+        "Export G-code does: status is export_started when the app has begun writing the file in the background -- "
+        "not a failure: the file is complete once wait_for_slice returns (get_slicing_status's busy is false "
+        "again), which next_steps says. An output_path ending in .gcode.3mf writes the plate sliced file (the "
+        "G-code inside a 3MF, which printers and the app open as a sliced project), as Export plate sliced "
+        "file does, or with all_plates every sliced plate's, as Export all plate sliced file does: written at "
+        "once, status success, with the plates it holds; the project keeps its name. The plates must be "
+        "sliced (slice_all, then wait_for_slice). Refused, as the GUI's Export items are off, when the check a "
+        "plate's slice ran on its G-code failed: get_slicing_status's plates[].gcode_check names what it "
+        "found. error, with message, says why nothing was written.",
         {
             {"type", "object"},
             {"properties", {
                 {"output_path", {
                     {"type", "string"},
-                    {"description", "Output path (required; file dialogs cannot be opened from MCP)."}
+                    {"description", "Where to write: a .gcode file, or a .gcode.3mf for the plate sliced file (required; file "
+                                    "dialogs cannot be opened from MCP)."}
+                }},
+                {"all_plates", {
+                    {"type", "boolean"},
+                    {"description", "With a .gcode.3mf output_path: every plate with a printable object, each sliced, in one "
+                                    "file (default false: the selected plate). A .gcode holds one plate."}
                 }}
             }},
             {"required", {"output_path"}}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
             std::string output_path = params.value("output_path", "");
-            return run_on_main_thread([output_path]() {
+            bool        all_plates  = false;
+            if (params.contains("all_plates") && !parse_boolean_param(params["all_plates"], all_plates))
+                return error_response("all_plates must be a boolean");
+            if (const auto refusal = OrcaMCP::gcode_export_path_refusal(output_path, all_plates))
+                return error_response(*refusal);
+            const bool sliced_file = OrcaMCP::gcode_export_kind(output_path) == OrcaMCP::GcodeExportKind::sliced_file;
+            return run_on_main_thread([output_path, all_plates, sliced_file]() {
                 Plater* plater = wxGetApp().plater();
                 // Enable dialog suppression to capture any error messages
                 McpDialogSuppressionGuard suppression_guard;
@@ -3394,38 +3512,31 @@ void OrcaMCPServer::register_builtin_tools()
                 if (plater->is_background_process_slicing()) {
                     return suppression_guard.report({{"status", "error"}, {"message", "Slicing still in progress"}});
                 }
+                if (sliced_file)
+                    return OrcaMCP::export_sliced_file(*plater, suppression_guard, output_path, all_plates);
 
                 nlohmann::json result;
+                // Silent export to specific path. Not started says why: no objects, another export
+                // running, the plate's validation failure, or the app not scheduling it.
+                const std::optional<std::string> not_started = plater->export_gcode_to_file(output_path);
+                auto info_messages = suppression_guard.notices();
 
-                if (!output_path.empty()) {
-                    // Silent export to specific path. Not started says why: no objects, another export
-                    // running, the plate's validation failure, or the app not scheduling it.
-                    const std::optional<std::string> not_started = plater->export_gcode_to_file(output_path);
-                    auto info_messages = suppression_guard.notices();
-
-                    if (!not_started) {
-                        result["status"] = "export_started";
-                        result["output_path"] = output_path;
-                        result["note"] = "G-code export started. The file will be written asynchronously.";
-                    } else {
-                        result["status"] = "error";
-                        result["message"] = *not_started;
-                    }
-                    if (!info_messages.empty()) {
-                        result["info_messages"] = info_messages;
-                    }
-                    // An export the app answered with an error dialog failed, with its words.
-                    result = suppression_guard.fail_on_errors(result);
-                    if (result["status"] == "error")
-                        result.erase("note");
-                    add_next_steps(result, export_next_steps(result["status"] == "export_started"));
+                if (!not_started) {
+                    result["status"] = "export_started";
+                    result["output_path"] = output_path;
+                    result["note"] = "G-code export started. The file will be written asynchronously.";
                 } else {
-                    // No path provided. File dialogs are modal and would block the GUI thread
-                    // for as long as the MCP call waits, so require an explicit path instead.
                     result["status"] = "error";
-                    result["message"] = "output_path is required: file dialogs cannot be opened from MCP.";
+                    result["message"] = *not_started;
                 }
-
+                if (!info_messages.empty()) {
+                    result["info_messages"] = info_messages;
+                }
+                // An export the app answered with an error dialog failed, with its words.
+                result = suppression_guard.fail_on_errors(result);
+                if (result["status"] == "error")
+                    result.erase("note");
+                add_next_steps(result, export_next_steps(result["status"] == "export_started"));
                 return result;
             });
         }
@@ -3437,8 +3548,8 @@ void OrcaMCPServer::register_builtin_tools()
         ToolCategory::Scene,
         "Save the project as a 3MF (Save As)",
         "Save the project to a 3MF at output_path, like the GUI's Save As: the project is then named after "
-        "that file, so a later save_project without output_path overwrites it. save_project with "
-        "output_path does the same.",
+        "that file and marked saved, so a later save_project without output_path overwrites it, and quitting "
+        "finds nothing unsaved. save_project with output_path does the same. A save that fails leaves the name.",
         {
             {"type", "object"},
             {"properties", {
@@ -3457,50 +3568,37 @@ void OrcaMCPServer::register_builtin_tools()
                 // Enable dialog suppression to capture any error messages
                 McpDialogSuppressionGuard suppression_guard;
 
-                nlohmann::json result;
+                if (output_path.empty()) {
+                    // File dialogs are modal and would block the GUI thread for as long as the MCP call waits, so
+                    // require an explicit path instead.
+                    return nlohmann::json{{"status", "error"}, {"message", "output_path is required: file dialogs cannot be opened from MCP."}};
+                }
+                if (const auto refusal = project_path_refusal(output_path))
+                    return nlohmann::json{{"status", "error"}, {"message", *refusal}};
 
-                if (!output_path.empty()) {
-                    if (!boost::iends_with(output_path, ".3mf")) {
-                        return nlohmann::json{{"status", "error"},
-                                              {"message", "output_path must end in .3mf, got \"" + output_path + "\""}};
-                    }
-                    const std::string name_before = into_u8(plater->get_project_filename(".3mf"));
-
-                    // Silent export with path
-                    int export_result = plater->export_3mf(boost::filesystem::path(output_path), SaveStrategy::Silence | SaveStrategy::SplitModel);
-
-                    auto info_messages = suppression_guard.messages();
-
-                    if (export_result == 0) {
-                        // SaveStrategy::Silence skips Plater's own naming, so do it here: this is
-                        // the API's save-project operation, and save_project can then save in place.
-                        plater->set_project_filename(wxString::FromUTF8(output_path));
-                        result["status"] = "success";
-                        result["output_path"] = output_path;
-                        // Naming the project is not a side effect a caller can be expected to guess:
-                        // it retitles the window, adds the file to Recent Projects, and makes both
-                        // save_project and a Cmd-S in the GUI overwrite this file from now on.
-                        if (output_path != name_before) {
-                            result["project_renamed_to"] = output_path;
-                            info_messages.push_back("The project is now named " + output_path +
-                                                    ": export_3mf is this API's Save, so save_project and the GUI's "
-                                                    "Save both write there from now on.");
-                        }
-                    } else {
-                        result["status"] = "error";
-                        result["message"] = "Failed to export the project to " + output_path +
-                                            ". Check that the folder exists and is writable.";
-                    }
-                    if (!info_messages.empty()) {
-                        result["info_messages"] = info_messages;
+                const ProjectSaved saved         = save_project_to(*plater, output_path);
+                auto               info_messages = suppression_guard.messages();
+                nlohmann::json     result;
+                if (saved.saved) {
+                    result["status"] = "success";
+                    result["output_path"] = output_path;
+                    // Naming the project is not a side effect a caller can be expected to guess:
+                    // it retitles the window, adds the file to Recent Projects, and makes both
+                    // save_project and a Cmd-S in the GUI overwrite this file from now on.
+                    if (saved.renamed) {
+                        result["project_renamed_to"] = output_path;
+                        info_messages.push_back("The project is now named " + output_path +
+                                                ": export_3mf is this API's Save, so save_project and the GUI's "
+                                                "Save both write there from now on.");
                     }
                 } else {
-                    // No path provided. File dialogs are modal and would block the GUI thread
-                    // for as long as the MCP call waits, so require an explicit path instead.
                     result["status"] = "error";
-                    result["message"] = "output_path is required: file dialogs cannot be opened from MCP.";
+                    result["message"] = "Failed to export the project to " + output_path +
+                                        ". Check that the folder exists and is writable.";
                 }
-
+                if (!info_messages.empty()) {
+                    result["info_messages"] = info_messages;
+                }
                 return result;
             });
         }
@@ -3542,24 +3640,16 @@ void OrcaMCPServer::register_builtin_tools()
                                     "dialog that would ask for one. Call save_project again with "
                                     "output_path set to the .3mf path to save to."}};
                 }
-                if (!boost::iends_with(target, ".3mf")) {
-                    return nlohmann::json{{"status", "error"},
-                                          {"message", "output_path must end in .3mf, got \"" + target + "\""}};
-                }
+                if (const auto refusal = project_path_refusal(target))
+                    return nlohmann::json{{"status", "error"}, {"message", *refusal}};
 
-                // Naming the project first turns save_project into the Save As the GUI would do
-                // after its file dialog; with the name already set it saves in place.
-                const bool renamed = target != current_name;
-                if (renamed)
-                    plater->set_project_filename(wxString::FromUTF8(target));
-
-                int result = plater->save_project(false);
-                auto info_messages = suppression_guard.messages();
+                const ProjectSaved saved         = save_project_to(*plater, target);
+                auto               info_messages = suppression_guard.messages();
 
                 nlohmann::json response;
-                if (result == wxID_YES) {
+                if (saved.saved) {
                     response = {{"status", "success"}, {"filename", into_u8(plater->get_project_filename(".3mf"))}};
-                    if (renamed) {
+                    if (saved.renamed) {
                         response["project_renamed_to"] = target;
                         info_messages.push_back("The project is now named " + target +
                                                 ": save_project and the GUI's Save both write there from now on.");
@@ -3567,10 +3657,8 @@ void OrcaMCPServer::register_builtin_tools()
                 } else {
                     response = {{"status", "error"},
                                 {"message", std::string("Failed to save the project to ") + target +
-                                            ". Check that the folder exists and is writable." +
-                                            (renamed ? " The project has been renamed to that path even though the "
-                                                       "save failed."
-                                                     : "")}};
+                                            ". Check that the folder exists and is writable. The project's name is "
+                                            "unchanged."}};
                 }
                 if (!info_messages.empty()) {
                     response["info_messages"] = info_messages;
@@ -3696,7 +3784,8 @@ void OrcaMCPServer::register_builtin_tools()
         "started and is past its wait), other (one the GUI started, or the arrange a bed fill starts), or null; slice_all's busy_job means one. "
         "slice_run says how the last slice_all run stands: scope, the "
         "plates it asked for, skipped (those of them with nothing on them to slice), and outcome running, "
-        "done, ended_early or incomplete (also when no plate had anything to slice), judged by its plates "
+        "done, ended_early, cancelled (by cancel_slice or the app's Cancel: cancelled_at_plate, cancelled_by) "
+        "or incomplete (also when no plate had anything to slice), judged by its plates "
         "still there (null once none is, after new_project or load_project), with a message "
         "saying which plates and why when it is not done. When a slice_all run over every plate ends, "
         "this restores the plate that was selected when slice_all was called and reports it as "
@@ -3721,21 +3810,8 @@ void OrcaMCPServer::register_builtin_tools()
 
                 nlohmann::json result;
 
-                // Plater::is_background_process_slicing() reports Plater::priv::m_is_slicing, which
-                // the plate walk holds true from the first plate to the last and clears only when the
-                // run finishes or stops. So "not running" here means the whole slice_all run is over,
-                // not merely that one plate finished, and this is the first moment it is safe to put
-                // the caller's plate back. See s_slice_all_restore_print_index.
-                // Not under an arrange or bed fill, which applies its result to the current plate: the plate is
-                // put back by a later call.
-                if (!is_running && s_slice_all_restore_print_index >= 0 && plater->get_ui_job_worker().is_idle()) {
-                    const int restore_to            = plate_list.find_plate_by_print_index(s_slice_all_restore_print_index);
-                    s_slice_all_restore_print_index = -1;
-                    if (restore_to >= 0 && restore_to != plate_list.get_curr_plate_index()) {
-                        plater->select_plate(restore_to);
-                        result["restored_selected_plate"] = restore_to;
-                    }
-                }
+                // The first moment the plate selected at slice_all can be put back.
+                restore_plate_selected_at_slice_all(*plater, plate_list, is_running, result);
 
                 PartPlate* plate = plate_list.get_curr_plate();
                 // "not running" is not "finished": before the first slice, and after any edit
@@ -5980,6 +6056,10 @@ void OrcaMCPServer::register_builtin_tools()
     register_part_tools();
     register_arrange_tools();
     register_plate_tools();
+    register_export_tools();
+    register_layer_gcode_tools();
+    register_view_tools();
+    register_source_file_tools();
     register_bridge_tools();
 
     BOOST_LOG_TRIVIAL(info) << "OrcaMCPServer: Registered " << s_tools.size() << " tools";
@@ -6068,7 +6148,8 @@ void OrcaMCPServer::register_bridge_tools()
         "Wait for the running slice to finish",
         "Wait until the running slice is over, instead of polling get_slicing_status: call it after "
         "slice_all. It returns when the run ends, or after timeout_s. outcome is done (every plate the "
-        "run asked for has a result, empty plates aside: those are skipped), ended_early or incomplete "
+        "run asked for has a result, empty plates aside: those are skipped), ended_early, cancelled "
+        "(cancel_slice, or the app's Cancel) or incomplete "
         "(slicing_status.slice_run.message says which plates and why), not_slicing (nothing was running "
         "and the selected plate has no result), "
         "timed_out (still slicing: call it again), or app_gone (the app quit or crashed during the wait). "
@@ -6092,5 +6173,29 @@ void OrcaMCPServer::register_bridge_tools()
         }
     });
 }
+
+namespace OrcaMCP {
+
+void record_selected_plate_slice_run(PartPlateList& plate_list)
+{
+    s_slice_all_restore_print_index = -1;
+    record_slice_run(plate_list, /*every_plate=*/false, plate_list.get_curr_plate_index());
+}
+
+void apply_pending_settings(Plater& plater, const McpDialogSuppressionGuard& guard)
+{
+    apply_pending_update(guard, pipeline_state(plater, plater.get_partplate_list().get_plate_count()),
+                         plater.is_background_process_update_scheduled(), [&plater] { plater.apply_pending_background_update(); });
+}
+
+void make_plate_current(Plater& plater, int plate_index)
+{
+    if (plater.get_partplate_list().get_curr_plate_index() == plate_index)
+        return;
+    Plater::SuppressSnapshots not_an_edit(&plater);
+    plater.select_plate(plate_index);
+}
+
+} // namespace OrcaMCP
 
 }} // namespace Slic3r::GUI

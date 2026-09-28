@@ -29,8 +29,8 @@ into a call that reports success and changes nothing. See [Error Handling](#erro
 
 | Category | Tools |
 |----------|-------|
-| **Scene** | `get_scene_info`, `new_project`, `load_project`, `save_project`, `export_3mf` |
-| **Models** | `load_model`, `auto_orient`, `arrange_objects`, `get_object_info`, `get_mesh_health`, `repair_mesh`, `get_object_components`, `rename_object`, `set_object_printable`, `split_object`, `add_volume`, `set_volume_type`, `assemble_objects`, `merge_parts`, `invalidate_cut_info` |
+| **Scene** | `get_scene_info`, `new_project`, `load_project`, `save_project`, `export_3mf`, `export_stl` |
+| **Models** | `load_model`, `auto_orient`, `arrange_objects`, `get_object_info`, `get_mesh_health`, `repair_mesh`, `get_object_components`, `rename_object`, `set_object_printable`, `split_object`, `add_volume`, `set_volume_type`, `assemble_objects`, `merge_parts`, `invalidate_cut_info`, `reload_from_disk`, `replace_volume_with_file` |
 | **Transforms** | `move_object`, `rotate_object`, `scale_object`, `mirror_object`, `flatten_object`, `clone_object`, `set_instance_count`, `fill_bed_with_instances`, `cut_object`, `delete_object`, `transform_objects` |
 | **Plates** | `add_plate`, `select_plate`, `delete_plate`, `set_prime_tower_position`, `set_plate_settings` |
 | **Config** | `get_presets`, `install_presets`, `get_edited_presets`, `get_config_values`, `select_preset`, `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset`, `get_valid_config_keys` |
@@ -38,8 +38,8 @@ into a call that reports success and changes nothing. See [Error Handling](#erro
 | **Layer Ranges** | `get_object_layer_ranges`, `set_object_layer_range`, `delete_object_layer_range` |
 | **Filaments & colour** | `get_filaments`, `add_filament_slot`, `delete_filament_slot`, `set_object_filament`, `set_mixed_filament`, `delete_mixed_filament`, `set_filament_color`, `get_flush_volumes`, `set_flush_volumes`, `auto_calc_flush_volumes`, `get_toolchanger_config`, `suggest_color_mix`, `get_color_palette` |
 | **Painting** | `paint_object`, `remap_paint`, `get_object_paint`, `clear_object_paint`, `set_brim_ears`, `pick_facet` |
-| **Slicing** | `slice_all`, `wait_for_slice` (bridge-only), `get_slicing_status`, `export_gcode`, `get_print_estimate` |
-| **Visualization** | `render_plate_view`, `get_preview_base64`, `set_gcode_view_type` |
+| **Slicing** | `slice_all`, `cancel_slice`, `wait_for_slice` (bridge-only), `get_slicing_status`, `export_gcode`, `get_print_estimate`, `add_layer_gcode`, `delete_layer_gcode` |
+| **Visualization** | `render_plate_view`, `get_preview_base64`, `set_gcode_view_type`, `show_view` |
 | **Printers** | `get_printers`, `select_printer`, `add_physical_printer`, `discover_printers`, `send_to_printer`, `get_printer_status`, `printer_control`, `list_printer_files`, `print_printer_file`, `match_project_to_printer` |
 | **Adaptive** | `apply_adaptive_layer_height`, `clear_adaptive_layer_height` |
 | **History** | `undo`, `redo` |
@@ -207,7 +207,8 @@ and a stray shell; the object list's warning icon shows for it):
     ],
     "settings": {"name": "", "locked": false, "bed_type": "global", "print_sequence": "global",
                  "first_layer_filament_order": "auto", "other_layers_filament_order": "auto", "spiral_vase": "global"},
-    "effective": {"bed_type": "Textured PEI Plate", "print_sequence": "by layer", "spiral_vase": false}
+    "effective": {"bed_type": "Textured PEI Plate", "print_sequence": "by layer", "spiral_vase": false},
+    "layer_gcodes": [{"layer": 42, "z_mm": 8.4, "type": "pause"}]
   }],
   "unplaced_objects": [],
   "open_dialogs": [],
@@ -224,6 +225,23 @@ and a stray shell; the object list's warning icon shows for it):
   ]
 }
 ```
+
+Each plate's `layer_gcodes` is its G-code at a layer, as the Preview's layer slider shows it: `layer`
+(1-based, `null` while the plate's layers are not known -- never sliced, changed since, a settings change
+not yet applied, or a plate other than the current one, whose layers may be an older slice's), `z_mm`,
+`type` (`pause`, `filament_change` with its `filament`, `custom` with its `gcode`, `template`, or
+`color_change` from an older project). `add_layer_gcode` and `delete_layer_gcode` change them.
+
+A filament change also says whether the G-code has a switch for it, as the slicer takes them: `active`
+true, or false with `inactive_reason`, or null while not known (a plate other than the current one, whose
+objects' filaments only its Print can count). It has none on a plate printed by object, in spiral vase mode
+(the plate's own or the print preset's), on a plate whose objects print with several filaments (a part, a
+painting, a mixed slot's components count once, a feature's filament such as its walls' counts where the
+feature prints), on a project of one filament (the slicer turns no filament change into a color change), for
+one recorded in another filament mode (an older project's), for one to the filament already printing there
+(the objects' own below the first change, the previous change's above it), and for one above the plate's
+last layer. The Preview's layer slider hides the first three and shows the rest, as upstream does; they all
+stay in the project, and a vase plate's apply again once vase mode is off.
 
 With a prime tower printed, `prime_tower` also carries `position` (the front-left corner of the tower
 body), `position_is`, `size`, `brim_width_mm`, `body`, `footprint`, `footprint_includes_brim` and a
@@ -383,7 +401,7 @@ call `wait_for_slice` rather than polling this.
 | `stage` | While slicing: the app's progress text for the running slice ("Generating walls", "Generating support", ...), in the app's language. `null` when nothing is slicing |
 | `plates_sliced` / `plates_total` | How many of the plates have a valid result |
 | `restored_selected_plate` | Present only on the poll that ends a `slice_all` run over every plate: the plate that was selected when `slice_all` was called has been selected again |
-| `slice_run` | How the last `slice_all` run stands. `scope` (`all_plates`, `current_plate`, or `null` before the first `slice_all`) and `plates`: the current indexes of the plates it asked for that still exist. `skipped`: those of them with no printable object, which have nothing to slice (Slice All skips them). `outcome`: `running`, `done` (every one of them with something on it has a result), `ended_early`, `incomplete` (the run is over and some of the plates still there have no result -- a plate-list change during the run cancels Slice All, and `message` then says so -- or none of its plates had anything to slice, `message` "nothing to slice ..."), or `null` with no run or once none of its plates is left (after `new_project` or `load_project`). A plate deleted after the run does not make it incomplete; `message` says which plates and why when it is `ended_early` or `incomplete`. `ended_early: true`, with `stopped_at_plate` and `reason`, when the last Slice All run stopped before its last plate because another job (an arrange, an orient) was running; that plate and the ones after it are not sliced. `active_warnings` carries a `SliceAllEndedEarly` warning then too. Cleared when the next Slice All starts; call `slice_all` again. `wait_for_slice` ends its wait on this |
+| `slice_run` | How the last `slice_all` run stands. `scope` (`all_plates`, `current_plate`, or `null` before the first `slice_all`) and `plates`: the current indexes of the plates it asked for that still exist. `skipped`: those of them with no printable object, which have nothing to slice (Slice All skips them). `outcome`: `running`, `done` (every one of them with something on it has a result), `ended_early`, `cancelled` (someone cancelled it: `cancel_slice`, or the Cancel on the app's slicing notification; `cancelled_at_plate` and `cancelled_by` -- `cancel_slice` or `app` -- say where and who, and `message` names the plates left without a result, which `slice_all` slices), `incomplete` (the run is over and some of the plates still there have no result -- a plate-list change during the run cancels Slice All, and `message` then says so -- or none of its plates had anything to slice, `message` "nothing to slice ..."), or `null` with no run or once none of its plates is left (after `new_project` or `load_project`). A plate deleted after the run does not make it incomplete; `message` says which plates and why when it is `ended_early`, `cancelled` or `incomplete`. `ended_early: true`, with `stopped_at_plate` and `reason`, when the last Slice All run stopped before its last plate because another job (an arrange, an orient) was running; that plate and the ones after it are not sliced. `active_warnings` carries a `SliceAllEndedEarly` warning then too. Cleared when the next Slice All starts; call `slice_all` again. `wait_for_slice` ends its wait on this |
 
 **Usage:** After `slice_all`, call `wait_for_slice` (it polls this for you), or poll every 2-3
 seconds until `slice_run.outcome` is no longer `running`, then call `get_print_estimate`. `is_slicing: false` on its own does **not** mean the slice finished - it is
@@ -510,6 +528,51 @@ as the GUI's Save As does.
 `project_renamed_to` is present whenever the call changed the project's name. The rename is not
 cosmetic: it retitles the window, adds the file to Recent Projects, and makes both `save_project`
 and a Cmd-S in the GUI overwrite that file.
+
+`export_3mf` and `save_project` save through the same steps as the GUI's Save (`Plater::save_project_as`,
+what follows its file dialog, probe BK): the file written, the project named after it, its crash backup
+removed and the project marked saved, so the window title loses its `*`, `list_instances` reports it saved
+and `quit_app` with `discard_changes: false` finds nothing to lose. Until v2.5.0.6 `export_3mf` wrote the
+file and named the project only, leaving it marked unsaved. A save that fails leaves the project's name as
+it was (`save_project` used to rename it first).
+
+---
+
+### export_stl
+Export objects' meshes as STL, or Draco (DRC), as the app's File > Export > Export all objects as one
+STL / as STLs and the object menu's Export as one STL / as STLs write them. The scene does not change:
+no undo step, and the user's selection is put back.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `output_path` | string | Yes | The file, ending in `.stl` or `.drc` (its extension decides the format); with `one_file_per_object`, the existing folder the files go in |
+| `format` | string | No | `stl` (default) or `drc`. For one file it must agree with the extension |
+| `object_ids` | integer[] | No | The objects to export, by `object_id`. Default: every object |
+| `one_file_per_object` | boolean | No | One file per object, named after it, in the folder `output_path` (default false: one file) |
+
+**Returns:**
+```json
+{"status": "success", "format": "stl", "one_file_per_object": true, "object_ids": "all",
+ "files": [{"path": "/tmp/out/cube.stl", "bytes": 684}, {"path": "/tmp/out/cube(1).stl", "bytes": 684}],
+ "active_warnings": {"count": 0, "warnings": []}}
+```
+
+What goes in is the app's: each object's parts with its negative parts cut away (when that boolean
+fails, the parts alone, and `active_warnings` carries the app's notice), no modifiers or support
+volumes. Without `object_ids`, every object with all its instances, in plate coordinates. With
+`object_ids`, those objects, as the object menu exports a selection: one object with one instance is
+written at its own origin. With `one_file_per_object`, one file per object (per instance with
+`object_ids`) in the folder, a single object's too, each moved back to the object's own origin, named
+after the object (one named `cube.stl` writes `cube.stl`, not `cube.stl.stl`) and never overwriting: a name already taken gets `(1)`, `(2)`, ... (until v2.5.0.6 the
+app wrote one selected object's file to the folder's own path, so it failed: probe BE). One file at
+`output_path` is overwritten. `files` lists what was written.
+
+Refused before anything is written: no objects; an `object_id` out of range or listed twice; an
+empty `object_ids` (leave it out for every object); a format that is not `stl` or `drc`, or disagrees
+with the file's extension; `one_file_per_object` with a folder that is not there; while an arrange,
+orient or bed fill runs. A file the app could not write is an error with its words ("Export failed
+..."); until v2.5.0.6 the app said nothing then (probe BA).
 
 ---
 
@@ -994,6 +1057,77 @@ tools refuse them, naming this call. An object that is not part of a cut changes
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `object_id` | integer | Yes | Any piece of the cut |
+
+---
+
+### reload_from_disk
+Reload parts from the files they were loaded from, as the object list's Reload from disk does -- or,
+without `object_id`, every object, as the plate menu's Reload All does. Each part takes its file's mesh
+as it is now and keeps its place, settings, filament and type (painting as the app's "Keep painted
+feature after mesh change" setting says).
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `object_id` | integer | No | The object (default: every object) |
+| `volume_id` | integer | No | One part of `object_id` |
+| `file_path` | string | No | Where a source file that moved or was deleted is now, or another file to load into the part |
+
+**Returns:**
+```json
+{"status": "success",
+ "reloaded": [{"object_id": 0, "volume_id": 0, "name": "bracket.stl", "source_file": "/tmp/models/bracket.stl"}],
+ "objects": [{"object_id": 0, "plate_index": 0, "on_bed": true, "...": "..."}],
+ "active_warnings": {"count": 0, "warnings": []}}
+```
+
+The app finds a file where it was loaded from, else beside the object's own file (a project's folder).
+When it is in neither place the app asks for it; `file_path` answers, as the user's pick would: a file of
+the same name (its folder is then searched for the other missing ones), or another file, which replaces
+the part ("Do you want to replace it?", answered Yes). The answer is used once: a file still missing after
+it cancels the reload before anything changed, and the error names it. Without `file_path`, a missing file
+is refused, naming it; with `file_path` and nothing missing, it is refused too (to load another file, use
+`replace_volume_with_file`).
+
+Refused: a part not loaded from a file (a shape added in the app); a piece of a cut, as the object list's
+Reload from disk is off for one; while an arrange, orient or bed fill runs. Without `object_id`, as the app's
+Reload All, every part loaded from a file reloads, a cut piece's too: the parts the cut went through were made
+anew and name no file, and a part it left whole reloads as itself. A file that fails to load -- a source file, or the `file_path` that replaces a part -- is named in
+`info_messages` ("Unable to reload"), and the others are still reloaded. `objects` gives each changed object's placement; `next_steps` names `get_mesh_health` /
+`get_object_components` for a reloaded mesh that needs a look. An open toolbar tool is closed first
+(`closed_toolbar_tool`): a painting tool left open kept painting the replaced meshes and wrote that into the
+new ones when it closed, and the app's own reload now refuses under one, as its Replace does (probe BF). One
+undo step, taken right before the first part changes -- for a part given another file, once that file has
+loaded; none when nothing did (until v2.5.0.6 a failed load left one, and a scene not updated for the parts
+already reloaded: probe BC).
+
+---
+
+### replace_volume_with_file
+Replace a part's mesh with another 3D file, as the object list's Replace 3D file does; with `folder`,
+every part whose source file's name the folder holds, as Replace all with 3D files does.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `object_id` | integer | Yes | The object |
+| `volume_id` | integer | No | The part (needed with `file_path` when the object has several) |
+| `file_path` | string | One of these two | The new file (STL, 3MF, STEP, OBJ, ...), holding one part |
+| `folder` | string | | A folder holding a file of each part's source file name |
+
+**Returns:** `replaced` (the parts loaded anew: `object_id`, `volume_id`, `name`, `source_file`),
+`object_name`, `objects` (placement), `closed_toolbar_tool` when an open toolbar tool was closed first,
+`active_warnings`, `next_steps` as `reload_from_disk`.
+
+The new mesh takes the part's place, settings, filament, type and name -- the object's name too when it
+has one part -- and its painting as the app's "Keep painted feature" setting says. A file of more than one
+part is an error ("Unable to replace with more than one volume"), and nothing changes. With `folder`, a
+part whose file is not there, or is its own source file, is skipped, as the menu skips it (the app's list
+of what it replaced and skipped is in `info_messages`); a folder with no such file for any part is refused
+before anything changes. One undo step for each part replaced, as the app takes them (so a `folder` that
+replaced three parts takes three `undo` calls to take back), each taken once its file has loaded: a file that
+fails to load leaves none. Refused: a piece of a cut; `file_path` and `folder` both or neither; while an
+arrange, orient or bed fill runs.
 
 ---
 
@@ -2509,9 +2643,46 @@ left with three unsliced plates and no error.
 
 ---
 
+### cancel_slice
+Cancel the slice in progress, as the Cancel on the app's slicing notification does. A Slice All run
+ends there too -- also between two plates, where the app's Cancel used to do nothing and the run went
+on -- and the plates it sliced before keep their results. No undo step: slicing is not an edit.
+
+**Parameters:** None
+
+**Returns:**
+```json
+{
+  "status": "success",
+  "cancelled": true,
+  "run": "slice_all",
+  "plate_index": 1,
+  "slice_run": {"ended_early": false, "cancelled_at_plate": 1, "cancelled_by": "cancel_slice", "scope": "all_plates",
+                "plates": [0, 1, 2], "skipped": [], "outcome": "cancelled",
+                "message": "Slice All was cancelled by cancel_slice at plate_index 1; plate_index 1, 2 has no slice result: call slice_all to slice it"},
+  "restored_selected_plate": 0,
+  "active_warnings": {"count": 0, "warnings": []}
+}
+```
+
+| Case | Answer |
+|------|--------|
+| A slice or a Slice All run in progress | `cancelled: true`, `run` (`slice` or `slice_all`) and the `plate_index` it was on. The answer comes once the app has taken in the cancel: `slice_run` is `get_slicing_status`'s (outcome `cancelled`), and `restored_selected_plate` when a Slice All run's plate selection was put back, as `get_slicing_status` does after a run. If the cancelled slice is still stopping, `next_steps` names `wait_for_slice`, which ends on outcome `cancelled` too |
+| Nothing slicing, or the last slice already ended (its completion being taken in) | `cancelled: false`, with a `message` saying which |
+| A Slice All run ended between plates that were all sliced already | `cancelled: true`, but `slice_run.outcome` is `done`: the cancel left no plate without its result |
+| An export or an upload in progress | `status: "error"`: it is not a slice. `wait_for_slice` waits for it |
+
+A cancel stops the slicing thread first, as the app's Cancel does: organic tree supports check for a
+cancel only between phases, so on the unoptimized dev build that wait can take a while.
+
+---
+
 ### export_gcode
-Export the selected plate's sliced G-code to a file. The file is written asynchronously, so a
-successful call answers `status: "export_started"`, not `"success"`:
+Export sliced G-code: a plain `.gcode` of the selected plate, or the plate sliced file (`.gcode.3mf`)
+of the selected plate or of every plate.
+
+A `.gcode` is written asynchronously, as the GUI's Export G-code writes it, so a successful call
+answers `status: "export_started"`, not `"success"`:
 
 | `status` | Meaning |
 |----------|---------|
@@ -2521,7 +2692,10 @@ successful call answers `status: "export_started"`, not `"success"`:
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `output_path` | string | Yes | Output path (a file dialog cannot open under MCP) |
+| `output_path` | string | Yes | Where to write: a `.gcode` file, or a `.gcode.3mf` for the plate sliced file (a file dialog cannot open under MCP) |
+| `all_plates` | boolean | No | With a `.gcode.3mf`: every plate with a printable object, each sliced, in one file (default false: the selected plate). A `.gcode` holds one plate, so `all_plates` with one is refused |
+
+A path ending in `.3mf` but not `.gcode.3mf` is refused: a project is `export_3mf`'s.
 
 `status: "export_started"` only when the app scheduled the export. An export that did not start is
 `status: "error"` with the reason as `message`: the scene has no objects, "Another export job is
@@ -2534,6 +2708,24 @@ A plate whose slice failed its G-code check is refused as the GUI's Export butto
 problems in words ("The export did not start: plate_index 0 failed the app's check of its sliced
 G-code, ...: a toolpath is above the printer's printable height. ..."); `get_slicing_status`'s
 `plates[].gcode_check` lists them. An error dialog the app raised is added as `error_messages`.
+
+**The plate sliced file (`.gcode.3mf`)** is what File > Export > Export plate sliced file (Ctrl+G) and
+Export all plate sliced file write: the G-code inside a 3MF, with the plates' thumbnails, which
+printers and the app (`load_model` onto an empty scene) open as a sliced project. It is written at
+once, through the app's own export, whose file dialog the path answers:
+
+```json
+{"status": "success", "output_path": "/tmp/out/box.gcode.3mf", "format": "gcode.3mf", "plates": [0, 2], "bytes": 81234,
+ "active_warnings": {"count": 0, "warnings": []}}
+```
+
+`plates` are the plates whose G-code the file holds. Refused before anything is written, as the GUI's
+items are off: the selected plate (or, with `all_plates`, any plate with a printable object on it --
+empty plates and plates of unprintable objects do not count, and at least one must be there) without
+a slice result ("slice_all, then wait_for_slice, first"), or whose G-code check failed; the scene
+empty; another export running; slicing in progress. The project keeps its name: this is an export,
+not a save. A write that fails is an error with the app's words ("Export failed ..."); until
+v2.5.0.6 the app reported it exported anyway (probe AZ).
 
 ---
 
@@ -2641,6 +2833,72 @@ interface was told it made no tool changes at all; the `total_toolchanges` key i
 |--------|-------|---------|
 | `in_progress` | `slicing` | The background slicer is still running |
 | `error` | `idle` | The current plate has no valid slice result - run `slice_all` first |
+
+---
+
+### add_layer_gcode
+Put a pause, a filament change, custom G-code or the printer's template G-code at the start of a
+sliced layer, as the Preview's layer slider's menu does (right-click a layer: Add Pause, Change
+Filament, Add Custom G-code, Add Custom Template).
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `type` | string | Yes | `pause`, `filament_change`, `custom` or `template` |
+| `layer` | integer | One of these two | The layer, as the slider numbers them (1 is the first) |
+| `z` | number | | Or its height in mm: the printed layer nearest to it |
+| `plate_index` | integer | No | The plate (default: the current one), made current first, as the slider edits the plate the Preview shows. It must have been sliced as the settings are now |
+| `filament` | integer | With `filament_change` | The filament slot to change to (1-based) |
+| `gcode` | string | With `custom` | The G-code, 1 to 1023 characters (the slider's window holds 1023) |
+
+**Returns:**
+```json
+{"status": "success", "changed": true, "plate_index": 0,
+ "added": {"layer": 42, "z_mm": 8.4, "type": "pause"},
+ "layer_gcodes": [{"layer": 42, "z_mm": 8.4, "type": "pause"}],
+ "slice_result_valid": false,
+ "undo": "not an undo step, as the Preview's layer slider's edits are not: delete_layer_gcode (or add_layer_gcode) changes it back",
+ "active_warnings": {"count": 0, "warnings": []},
+ "next_steps": [{"tool": "slice_all", "why": "plate 0's layer G-code changed, so it lost its slice: ..."}]}
+```
+
+The slider's rules hold, and a call they rule out is refused before anything changes:
+
+- Nothing at a layer while the plate prints by object (`set_plate_settings` `print_sequence: "by layer"` first).
+- A filament change only where the slicer takes one: on a project of several filaments, on a plate whose
+  objects print with one of them as the slicer counts them (a part, a painting, a feature's filament such
+  as its walls' or infill's make several; a mixed slot counts once), not in spiral vase mode (the plate's
+  own, else the print preset's), and to a slot the project has.
+- The template only when the printer has template G-code (`template_custom_gcode`).
+- On a layer that already has G-code: custom G-code's text and a filament change's filament are
+  edited in place, and `replaced` says what was there; any other kind there must be deleted first
+  (`delete_layer_gcode`), as the slider offers only Delete. The same again changes nothing
+  (`changed: false`).
+
+A pause records the plate's filament, a filament change the slot and its colour, as the slider does.
+`printer_gcode_empty` says when the printer's pause G-code is empty, so the pause writes nothing.
+
+The layers are the current plate's slice, once a settings change the app has not taken in yet has been
+applied: another plate's Print keeps the layers it was last sliced with until it is current again, and
+a changed layer height or object makes them another slice's, so the call is refused then, asking for a
+slice. The plate loses its slice, as in the app; `next_steps` names `slice_all`. Its layers stay known
+until the next slice, while the Print's layers are still that slice's (each object's slicing and support
+steps, by the stamp they took when done), so several can be added in a row. Refused while the slicing
+pipeline is busy or an arrange, orient or bed fill runs, and on a G-code preview. **Not an undo step**: the
+app's undo history does not hold layer G-code, so an undo neither removes nor restores it.
+
+What needs no layer is checked before the plate is made current, so such a refusal (by object, vase mode,
+a template the printer lacks, a plate never sliced, nothing to delete) changes nothing. Once the call has
+made the plate current, or brought its Print up to settings changed since, every answer says so, success
+or refusal: `plate_made_current` {`previous_plate_index`, `switched`, `slice_invalidated`: the plate's slice
+was made with other settings and is gone}.
+
+---
+
+### delete_layer_gcode
+Delete the G-code at a layer, as the slider's Delete does (Delete Pause, Delete Custom G-code, ...).
+Takes `layer` or `z`, and `plate_index`; answers as `add_layer_gcode`, with `deleted`. A plate with no
+G-code at a layer is refused before it is made current, a layer with none of its own after. Not an undo step.
 
 ---
 
@@ -2864,6 +3122,44 @@ a change it had made, so a retry applied it twice.
 `orcamcp_render_*` PNG or JPEG named the way it names them (`<prefix><time>_<pid>_<sequence>_<tag>`),
 directly inside the system temp directory, checked after `..` and links are resolved. Every other path is rejected. Before v2.5.0.6 the check only looked for the
 prefix anywhere in the path, so `<anywhere>/orcamcp_render_/../<file>` passed.
+
+---
+
+### show_view
+Change what the user sees in the OrcaMCP window, when the user asks to be shown something: the tab,
+as the tab bar switches it, and the 3D view's camera, as the View menu turns it. Every other tool
+leaves the user's view alone: `render_plate_view` draws images for the agent, and `slice_all` puts
+back the view its Slice button's event changes.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `tab` | string | No | `prepare` (the 3D view), `preview` (the sliced G-code), `device`, `home`, `project`, `calibration`, `multi_device`, or `device_web` in printer-agents mode -- as the window has them now |
+| `camera` | string | No | A View menu view: `default` (Default View: the plate from the front, zoomed to the bed), `iso`, `top`, `bottom`, `front`, `back` (the menu's Rear), `left`, `right` |
+| `zoom_to` | string | No | Fit the view to the current `plate`, the `bed` or every object (`objects`) |
+| `object_id` | integer | No | Select that object, as a click on its row does, and zoom to it (Prepare only, as the object list's double-click) |
+
+**Returns:**
+```json
+{"status": "success", "changed": true, "previous_tab": "prepare",
+ "user_view": {"tab": "preview", "camera": {"view": "top", "projection": "orthographic", "target": [128.0, 128.0, 0.0], "zoom": 2.4},
+               "plate_index": 0},
+ "slice_started": "the Preview tab slices the selected plate when it has no result, as it does for the user",
+ "active_warnings": {"count": 0, "warnings": []},
+ "next_steps": [{"tool": "wait_for_slice", "why": "the Preview tab started slicing the selected plate, as it does for the user: ..."}]}
+```
+
+The tab changes first, then the camera: a view keeps the zoom, a zoom keeps the view, and an object's
+zoom comes last. `user_view` says what the user sees afterwards: the tab, the camera -- its `view` by
+name when it looks along one, else `null` (the user turned it) -- and the current plate. Called with no
+arguments it changes nothing (`changed: false`) and reports `user_view`.
+
+As for the user: switching to `preview` slices the selected plate when it has no result
+(`slice_started`, recorded as a slice of that plate so `wait_for_slice` follows it) and closes an open
+toolbar tool (`closed_toolbar_tool`); a Bambu multi-extruder printer's filament check may ask on the
+way, and suppression answers it. Refused: a tab the window does not have now (the answer lists those it
+has); `camera`, `zoom_to` or `object_id` with a tab other than Prepare or Preview showing, where the View
+menu is off; `object_id` in Preview; `zoom_to` with `object_id`. No undo step: the view is not an edit.
 
 ---
 
@@ -3855,13 +4151,16 @@ nothing to suggest has no `next_steps`.
 
 | Response | Step | When |
 |----------|------|------|
-| `load_model` (the objects it added), `get_scene_info` (every object) | `get_mesh_health` | an object shows the object list's mesh warning icon (open edges, or repairs a 3MF recorded) |
+| `load_model` (the objects it added), `get_scene_info` (every object), `reload_from_disk` / `replace_volume_with_file` (the objects they changed) | `get_mesh_health` | an object shows the object list's mesh warning icon (open edges, or repairs a 3MF recorded) |
 | `get_mesh_health` | `repair_mesh` for that object | the object has open edges. Not for a closed mesh whose icon shows repairs recorded at load: a repair leaves it as it is |
 | | `get_object_components` | a model part of the object is more than one shell: a loose part or a stray fragment, which leaves no warning icon when it is closed |
 | `slice_all` | `wait_for_slice` | `slicing_started`, or `not_started` with `busy_slicing` (wait, then `slice_all` again) |
 | | `get_slicing_status` | `busy_job`: an arrange, orient or bed fill holds the app, which `wait_for_slice` does not wait for; `slice_all` again once `ui_job` is null |
 | | `get_print_estimate` with the `plate_index` of a sliced plate (the selected one when it has a result) | `already_sliced` |
 | `export_gcode` | `wait_for_slice` | `export_started`: the file is still being written |
+| `cancel_slice` | `wait_for_slice` | the cancelled slice is still stopping: its completion is not taken in yet |
+| `add_layer_gcode`, `delete_layer_gcode` | `slice_all` | the call changed the plate's layer G-code, so it lost its slice |
+| `show_view` | `wait_for_slice` | switching to the Preview tab started a slice of the selected plate |
 | `render_plate_view`, on each view whose `uniform_image` is true (beside its `hint`) | `get_scene_info` | nothing printable on that plate was drawn |
 | | `render_plate_view` with `{plate_index, save_to_file: true}` | the plate's objects were drawn but the camera looked elsewhere: no views gives a contact sheet fitted to the plate |
 | `paint_object` with `mode: support` | `set_object_config` for that object: `enable_support` `"1"` and `support_type` `normal(manual)` (or `tree(manual)` when its type is a tree one), for support only where painted | the object has painted enforcers and `enable_support` is off for it, so they do nothing (`info_messages` says so too). Not for blockers alone or erased paint: turning support on is the opposite of what a blocker asks; and not with an `(auto)` type, which would also support every other overhang |
@@ -4097,6 +4396,7 @@ wait still ends by it.
 |-----------|---------|
 | `done` | Every plate the last `slice_all` asked for has a slice result, empty plates aside: those have nothing to slice and are skipped (`slice_run.skipped`). Without a `slice_all` this session: the selected plate has one |
 | `ended_early` | Slice All stopped before its last plate; `message` is the app's reason |
+| `cancelled` | Someone cancelled the run: `cancel_slice`, or the Cancel on the app's slicing notification; `message` says where, and names the plates left without a result |
 | `incomplete` | The run is over and some of its plates still there have no result (a plate-list change during the run cancels Slice All), or none of them had anything to slice; `message` names them. A plate deleted after the run does not count |
 | `not_slicing` | Nothing was slicing and the selected plate has no result: `slice_all` was never called, could not start, or its plates are gone (a new project) |
 | `timed_out` | Still slicing at the timeout (`timed_out: true`); call it again |

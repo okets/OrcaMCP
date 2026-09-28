@@ -468,15 +468,20 @@ void Preview::update_layers_slider_mode()
     bool can_change_color = true;
     // extruder used for whole model for multi-extruder printer profile
     int only_extruder = -1;
+    const PartPlate* plate = wxGetApp().plater()->get_partplate_list().get_curr_plate();
 
     // BBS
     if (wxGetApp().filaments_cnt() > 1) {
         //const ModelObjectPtrs& objects = wxGetApp().plater()->model().objects;
-        auto plate_extruders = wxGetApp().plater()->get_partplate_list().get_curr_plate()->get_extruders_without_support();
-        for (auto extruder : plate_extruders) {
-            if (extruder != plate_extruders[0])
-                can_change_color = false;
-        }
+        auto plate_extruders = plate->get_extruders_without_support();
+        // Orca: filament changes are offered and shown where the slicer takes them, by its own rule and the filaments
+        // the shown plate's objects print, from its Print (features and mixed slots as it counts them). The plate's
+        // parts' filaments, which upstream compared, hid a change that a mixed slot's plate prints, and showed one
+        // that a feature's filament keeps from printing.
+        const Print& print = *m_process->fff_print();
+        can_change_color   = !CustomGCode::tool_changes_hidden(
+            CustomGCode::tool_changes_off(CustomGCode::MultiAsSingle, size_t(wxGetApp().filaments_cnt()), print.object_extruders().size(),
+                                          plate->get_real_print_seq() != PrintSequence::ByObject, plate->get_spiral_vase_mode()));
         // check if whole model uses just only one extruder
         if (!plate_extruders.empty()) {
             //const int extruder = objects[0]->config.has("extruder") ? objects[0]->config.option("extruder")->getInt() : 0;
@@ -502,7 +507,8 @@ void Preview::update_layers_slider_mode()
     }
 
     IMSlider *m_layers_slider = m_canvas->get_gcode_viewer().get_layers_slider();
-    m_layers_slider->SetModeAndOnlyExtruder(one_extruder_printed_model, only_extruder, can_change_color);
+    // Orca: the plate's own vase mode, which may differ from the print preset's.
+    m_layers_slider->SetModeAndOnlyExtruder(one_extruder_printed_model, only_extruder, can_change_color, plate->get_spiral_vase_mode());
 }
 
 void Preview::update_layers_slider_from_canvas(wxKeyEvent &event)
@@ -581,7 +587,27 @@ void Preview::update_layers_slider(const std::vector<double>& layers_z, bool kee
     auto curr_print_seq = curr_plate->get_real_print_seq();
     bool sequential_print = (curr_print_seq == PrintSequence::ByObject);
     m_layers_slider->SetDrawMode(sequential_print);
-    
+
+    // Orca: STUDIO-2621's clears, made on the plate's layer G-code at once: the slider made them by a deferred change
+    // event, and a second update of the slider before it re-read the plate's items, and the clear was lost. What follows
+    // a tick edit -- the plate's slice invalidated (it was made with the items), Print and Export off, the project
+    // changed -- is still deferred, as the change event was: it reloads this preview.
+    const bool gcode_only = plater->only_gcode_mode() || plater->using_exported_file();
+    if (wxGetApp().is_editor() && !gcode_only) {
+        int plate_print_index = -1;
+        curr_plate->get_print(nullptr, nullptr, &plate_print_index);
+        if (clears_plate_layer_gcode(m_vase_by_plate, plate_print_index, curr_plate->get_spiral_vase_mode(), sequential_print) &&
+            !ticks_info_from_curr_plate.gcodes.empty()) {
+            ticks_info_from_curr_plate.gcodes.clear();
+            plater->model().plates_custom_gcodes[plater->get_partplate_list().get_curr_plate_index()].gcodes.clear();
+            CallAfter([plate_print_index]() {
+                Plater* plater = wxGetApp().plater();
+                if (const int index = plater->get_partplate_list().find_plate_by_print_index(plate_print_index); index >= 0)
+                    plater->on_layer_gcodes_changed(index, CustomGCode::Custom);
+            });
+        }
+    }
+    m_layers_slider->SetGcodeOnly(gcode_only);
     m_layers_slider->SetTicksValues(ticks_info_from_curr_plate);
 
     auto print_mode_stat = m_gcode_result->print_statistics.modes.front();

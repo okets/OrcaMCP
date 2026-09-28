@@ -715,3 +715,198 @@ TEST_CASE("Multi-extruder slice stays in bounds with a short max_layer_height", 
     REQUIRE_FALSE(print.objects().front()->layers().empty());
 }
 
+// A filament change at a layer (the layer slider's Change Filament: a ToolChange in the plate's custom
+// G-code) adds a filament to the print. Print::apply decides the prime tower -- off for one filament --
+// from the filaments the print uses, and used to take them from the model it had before this apply: the
+// apply that brought the change in left the tower off, the slice then changed filaments with no tower,
+// and the next apply turned it on and threw that slice away. Deleting the change did the same the other
+// way (independent_support_layer_height).
+TEST_CASE("The apply that brings in a filament change decides the prime tower by it, so the next apply keeps the slice", "[MultiFilament][Print]")
+{
+    const DynamicPrintConfig config = multifilament_config(2, {{"enable_prime_tower", 1}, {"independent_support_layer_height", 1}});
+    Print print;
+    Model model;
+    init_print({cube(20)}, print, model, config);
+    print.apply(model, config);
+    // One object on filament 1: one filament, no tower.
+    REQUIRE_FALSE(print.config().enable_prime_tower.value);
+
+    CustomGCode::Info& plate_gcodes = model.plates_custom_gcodes[model.curr_plate_index];
+    plate_gcodes.mode               = CustomGCode::MultiAsSingle;
+    plate_gcodes.gcodes.push_back({10.0, CustomGCode::ToolChange, 2, "#00FF00", ""});
+    print.apply(model, config);
+    CHECK(print.config().enable_prime_tower.value);
+    CHECK(print.apply(model, config) == PrintBase::APPLY_STATUS_UNCHANGED);
+
+    plate_gcodes.gcodes.clear();
+    print.apply(model, config);
+    CHECK_FALSE(print.config().enable_prime_tower.value);
+    CHECK(print.config().independent_support_layer_height.value);
+    CHECK(print.apply(model, config) == PrintBase::APPLY_STATUS_UNCHANGED);
+}
+
+// normalize_fdm_2 also turns the prime tower off for a by-object print of several objects, from the object count of
+// the last apply. Removing the second object left the tower off for the one object left, which prints two
+// filaments, and the next apply turned it on and threw that slice away.
+TEST_CASE("The apply that removes an object from a by-object print decides the prime tower by the objects left", "[MultiFilament][Print]")
+{
+    const DynamicPrintConfig config = multifilament_config(2, {{"enable_prime_tower", 1}, {"print_sequence", "by object"}});
+    Print print;
+    Model model;
+    // Object 0 prints its outer wall with filament 2, so the print uses both filaments with or without object 1.
+    const std::vector<std::vector<ConfigBase::SetDeserializeItem>> overrides{{{"extruder", 1}, {"outer_wall_filament_id", 2}},
+                                                                             {{"extruder", 1}}};
+    init_print(std::vector<TriangleMesh>{cube(20), cube(20)}, print, model, config, &overrides);
+    print.apply(model, config);
+    REQUIRE(print.extruders(true) == std::vector<unsigned int>{0, 1});
+    REQUIRE_FALSE(print.config().enable_prime_tower.value); // by object, two objects
+
+    model.delete_object(size_t(1));
+    print.apply(model, config);
+    CHECK(print.config().enable_prime_tower.value); // one object, two filaments
+    CHECK(print.apply(model, config) == PrintBase::APPLY_STATUS_UNCHANGED);
+}
+
+// The slicer takes a plate's filament changes only on a by-layer print whose objects all print with one
+// filament (ToolOrdering). Print::extruders(true) counted every one, so a change the Preview's slider keeps
+// but the slicer ignores -- on a plate printing with several filaments, or by object -- made a filament the
+// plate never prints used (the prime tower's filaments, the filament grouping).
+TEST_CASE("A filament change counts as a filament the plate uses only where the slicer applies it", "[MultiFilament][Print]")
+{
+    const auto plate_changes_to = [](Model& model, int filament) {
+        CustomGCode::Info& plate_gcodes = model.plates_custom_gcodes[model.curr_plate_index];
+        plate_gcodes.mode               = CustomGCode::MultiAsSingle;
+        plate_gcodes.gcodes             = {{6.0, CustomGCode::ToolChange, filament, "#0000FF", ""}};
+    };
+
+    SECTION("one object on one filament: the change applies")
+    {
+        const DynamicPrintConfig config = multifilament_config(3, {});
+        Print print;
+        Model model;
+        init_print({cube(20)}, print, model, config);
+        plate_changes_to(model, 3);
+        print.apply(model, config);
+        CHECK(print.extruders(true) == std::vector<unsigned int>{0, 2});
+    }
+    SECTION("objects on two filaments: the change prints nothing")
+    {
+        const DynamicPrintConfig config = multifilament_config(3, {});
+        Print print;
+        Model model;
+        const std::vector<std::vector<ConfigBase::SetDeserializeItem>> overrides{{{"extruder", 1}}, {{"extruder", 2}}};
+        init_print(std::vector<TriangleMesh>{cube(20), cube(20)}, print, model, config, &overrides);
+        plate_changes_to(model, 3);
+        print.apply(model, config);
+        CHECK(print.extruders(true) == std::vector<unsigned int>{0, 1});
+    }
+    SECTION("by object: the change prints nothing")
+    {
+        const DynamicPrintConfig config = multifilament_config(3, {{"print_sequence", "by object"}});
+        Print print;
+        Model model;
+        init_print({cube(20)}, print, model, config);
+        plate_changes_to(model, 3);
+        print.apply(model, config);
+        CHECK(print.extruders(true) == std::vector<unsigned int>{0});
+    }
+}
+
+// Upstream's Preview erased a plate's filament changes in spiral vase mode, but only once the plate was shown; the
+// slicer took them all the same, with no prime tower (spiral mode has none): a vase plate printed a filament change
+// the slider hides, and a project opened with one printed it without the Preview ever erasing it. The slicer now
+// takes none on a vase plate, whatever was shown, as the slider hides them; they apply again when vase mode is off.
+TEST_CASE("A filament change on a spiral vase plate prints nothing, as the slider hides it", "[MultiFilament][Print]")
+{
+    const DynamicPrintConfig config = multifilament_config(2, {{"spiral_mode", 1},
+                                                               {"wall_loops", 1},
+                                                               {"top_shell_layers", 0},
+                                                               {"sparse_infill_density", "0%"},
+                                                               {"enable_support", 0},
+                                                               {"skirt_loops", 0},
+                                                               {"brim_type", "no_brim"}});
+    Print print;
+    Model model;
+    init_print({cube(20)}, print, model, config);
+    CustomGCode::Info& plate_gcodes = model.plates_custom_gcodes[model.curr_plate_index];
+    plate_gcodes.mode               = CustomGCode::MultiAsSingle;
+    plate_gcodes.gcodes.push_back({6.0, CustomGCode::ToolChange, 2, "#00FF00", ""});
+    print.apply(model, config);
+
+    CHECK(print.extruders(true) == std::vector<unsigned int>{0});
+    CHECK(tools_for_role(gcode(print), "") == std::set<int>{0}); // every extrusion on filament 1
+}
+
+// The one rule the slicer, the plate's filament list, the Preview's slider and MCP's layer_gcodes share.
+TEST_CASE("A plate's filament changes are taken only by layer, out of vase mode, on one of several filaments", "[MultiFilament][Print]")
+{
+    using CustomGCode::ToolChangesOff;
+    const auto off = [](size_t filaments, size_t object_filaments, bool by_layer, bool vase, CustomGCode::Mode mode = CustomGCode::MultiAsSingle) {
+        return CustomGCode::tool_changes_off(mode, filaments, object_filaments, by_layer, vase);
+    };
+    CHECK(off(2, 1, true, false) == ToolChangesOff::none);
+    CHECK(off(2, 1, false, false) == ToolChangesOff::by_object);
+    CHECK(off(2, 1, true, true) == ToolChangesOff::spiral_vase);
+    CHECK(off(1, 1, true, false) == ToolChangesOff::one_filament);
+    CHECK(off(3, 2, true, false) == ToolChangesOff::several_filaments);
+    CHECK(off(2, 1, true, false, CustomGCode::MultiExtruder) == ToolChangesOff::other_mode);
+    // The slider hides the ones that print nothing by object, in vase mode or on several filaments, and shows the rest,
+    // as upstream does: those on one filament or in another mode write nothing either.
+    CHECK(CustomGCode::tool_changes_hidden(ToolChangesOff::spiral_vase));
+    CHECK(CustomGCode::tool_changes_hidden(ToolChangesOff::several_filaments));
+    CHECK(CustomGCode::tool_changes_hidden(ToolChangesOff::by_object));
+    CHECK_FALSE(CustomGCode::tool_changes_hidden(ToolChangesOff::one_filament));
+    CHECK_FALSE(CustomGCode::tool_changes_hidden(ToolChangesOff::none));
+}
+
+// Each change, as ToolOrdering::collect_extruders takes them in height order: one to the filament already printing
+// there switches nothing.
+TEST_CASE("A filament change to the filament already printing there switches nothing", "[MultiFilament][Print]")
+{
+    using CustomGCode::ToolChangesOff;
+    CustomGCode::Info info;
+    info.mode   = CustomGCode::MultiAsSingle;
+    info.gcodes = {{2.0, CustomGCode::ToolChange, 2, "", ""}, {4.0, CustomGCode::ToolChange, 2, "", ""}, {6.0, CustomGCode::ToolChange, 1, "", ""}};
+    CHECK(CustomGCode::tool_change_effects(info, 2, {1}, true, false) ==
+          std::vector<ToolChangesOff>{ToolChangesOff::none, ToolChangesOff::same_filament, ToolChangesOff::none});
+    CHECK(CustomGCode::tool_change_effects(info, 2, {2}, true, false) ==
+          std::vector<ToolChangesOff>{ToolChangesOff::same_filament, ToolChangesOff::same_filament, ToolChangesOff::none});
+    // A slot the printer lacks is filament 1, as custom_tool_changes reads it.
+    info.gcodes = {{2.0, CustomGCode::ToolChange, 5, "", ""}};
+    CHECK(CustomGCode::tool_change_effects(info, 2, {1}, true, false) == std::vector<ToolChangesOff>{ToolChangesOff::same_filament});
+    // The plate's reason goes to every change, and a pause is no change.
+    info.gcodes = {{1.0, CustomGCode::PausePrint, 1, "", ""}, {2.0, CustomGCode::ToolChange, 2, "", ""}};
+    CHECK(CustomGCode::tool_change_effects(info, 1, {1}, true, false)[1] == ToolChangesOff::one_filament);
+    CHECK(CustomGCode::tool_change_effects(info, 2, {1, 2}, true, false)[1] == ToolChangesOff::several_filaments);
+}
+
+// What the rule follows, in the slicer's own G-code: no filament change becomes a color change (assign_custom_gcodes
+// skips every one, and GCode's emitter asserts none arrives), and one to the filament already printing switches nothing.
+TEST_CASE("A filament change writes nothing on one filament, or to the filament already printing", "[MultiFilament][Print]")
+{
+    const auto sliced = [](const DynamicPrintConfig& config, int object_filament, int change_to,
+                           CustomGCode::Type type = CustomGCode::ToolChange) {
+        Print print;
+        Model model;
+        const std::vector<std::vector<ConfigBase::SetDeserializeItem>> overrides{{{"extruder", object_filament}}};
+        init_print(std::vector<TriangleMesh>{cube(20)}, print, model, config, &overrides);
+        CustomGCode::Info& plate_gcodes = model.plates_custom_gcodes[model.curr_plate_index];
+        plate_gcodes.mode               = CustomGCode::MultiAsSingle;
+        plate_gcodes.gcodes.push_back({6.0, type, change_to, "", ""});
+        print.apply(model, config);
+        return gcode(print);
+    };
+
+    DynamicPrintConfig one = DynamicPrintConfig::full_print_config();
+    one.set_deserialize_strict({{"color_change_gcode", "M600 ; COLOR CHANGE BY THE TEST"}, {"machine_pause_gcode", "M601 ; PAUSE BY THE TEST"}});
+    // As G-code lines, not the config's dump at the end.
+    const std::string on_one = sliced(one, 1, 1);
+    CHECK(on_one.find("\nM600 ; COLOR CHANGE BY THE TEST") == std::string::npos);
+    CHECK(on_one.find("\nM601 ; PAUSE BY THE TEST") == std::string::npos);
+    // Where the same set-up writes a pause, it is found.
+    CHECK(sliced(one, 1, 1, CustomGCode::PausePrint).find("\nM601 ; PAUSE BY THE TEST") != std::string::npos);
+
+    const DynamicPrintConfig two = multifilament_config(2, {});
+    CHECK(tools_for_role(sliced(two, 2, 2), "") == std::set<int>{1});
+    CHECK(tools_for_role(sliced(two, 2, 1), "") == std::set<int>{0, 1}); // the same set-up, a change that switches
+}
