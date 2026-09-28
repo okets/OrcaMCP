@@ -108,6 +108,8 @@ struct PlateEntry
     nlohmann::json prime_tower    = nlohmann::json::object();
     nlohmann::json excluded_areas = nlohmann::json::array();
     nlohmann::json occupancy      = nlohmann::json::array();
+    nlohmann::json settings       = nlohmann::json::object(); // the plate's own settings (set_plate_settings' shape)
+    nlohmann::json effective      = nlohmann::json::object(); // what applies on it
 };
 
 class OrcaMCPPlateUtils {

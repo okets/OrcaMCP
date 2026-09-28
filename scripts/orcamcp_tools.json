@@ -138,7 +138,7 @@
     },
     {
       "category": "Plates",
-      "description": "Create a new plate.",
+      "description": "Create a new plate. Refused while an arrange, orient or bed fill runs: it places objects by the plates as they were.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {},
@@ -150,7 +150,7 @@
     },
     {
       "category": "Models",
-      "description": "Add a volume to an object, as the object list's Add Part / Negative Part / Modifier / Support Blocker / Support Enforcer does: a primitive (shape) or a model file (file_path). A primitive is sized a tenth of the bed's longest side and stands beside the object at its right-front corner, on the bed: move_object and scale_object with volume_id place and size it. As the object list does, adding a primitive moves the object's rotation and scale from its instance into its volumes (instance_transform_moved_to_volumes says when). A file's volume keeps the position its file gives it. A modifier changes only the settings set_object_config with volume_id gives it. The answer: the new volume (volume_id, box and position in plate mm) and every volume. One undo step. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange or orient runs.",
+      "description": "Add a volume to an object, as the object list's Add Part / Negative Part / Modifier / Support Blocker / Support Enforcer does: a primitive (shape) or a model file (file_path). A primitive is sized a tenth of the bed's longest side and stands beside the object at its right-front corner, on the bed: move_object and scale_object with volume_id place and size it. As the object list does, adding a primitive moves the object's rotation and scale from its instance into its volumes (instance_transform_moved_to_volumes says when). A file's volume keeps the position its file gives it. A modifier changes only the settings set_object_config with volume_id gives it. The answer: the new volume (volume_id, box and position in plate mm) and every volume. One undo step. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange, orient or bed fill runs.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -230,7 +230,7 @@
     },
     {
       "category": "Config",
-      "description": "Change settings of the selected print, filament or printer preset, or of the project -- layer height, supports, infill, walls, speeds, temperatures -- several in one call. Types: print | filament | printer | project. The change stays unsaved in the preset until save_preset. To switch to another preset, use select_preset; for one object only, set_object_config; for a slot's colour on the plate, set_filament_color.",
+      "description": "Change settings of the selected print, filament or printer preset, or of the project -- layer height, supports, infill, walls, speeds, temperatures -- several in one call. Types: print | filament | printer | project. The change stays unsaved in the preset until save_preset. To switch to another preset, use select_preset; for one object only, set_object_config; for a slot's colour on the plate, set_filament_color. The global bed type is project key curr_bed_type, set as the sidebar's bed-type list sets it (the plates that follow it lose their slice, and the printer remembers it); a bed type the printer does not offer is refused, and so is any change on a printer with one bed type, where the sidebar greys the list out. A plate's own bed type: set_plate_settings.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -277,24 +277,58 @@
     },
     {
       "category": "Models",
-      "description": "Arrange every object on the current plate, as the plate's Arrange does, and answer once the arrange has been applied: status success with objects, each one's placement (position, rotation_degrees, scale, changed, and rotate_object's placement fields). The arrange runs in the background while this waits, up to the bridge's cap (15 s below ORCAMCP_TIMEOUT); still running then, status arrange_started with finished false, and get_slicing_status's ui_job says when it has finished. status cancelled when the app cancelled it (nothing moved); refused while another job runs.",
+      "description": "Arrange the objects on a plate -- the current one, or plate_index, made current first as the plate's own Arrange icon does -- or with all_plates every object on every plate that is not locked, as the A key does (it may add plates, and move unprintable objects to a plate after the last). The arrange menu's options this call gives (spacing_mm, auto_rotate, allow_multiple_materials, align_to_y_axis, avoid_calibration_region, reset_options) are saved as the menu saves them, and every later arrange uses them, clone_object's and fill_bed_with_instances' too; arrange_options reports the ones in force. An arrange re-sorts every object in the scene, those on other plates too: object_id_changes lists each object whose object_id changed. Answered once the arrange has been applied: status success with objects, each one's placement (position, rotation_degrees, scale, changed, and rotate_object's placement fields, and previous_object_id when the arrange moved it in the object list: an arrange re-sorts the objects, so re-read object_id). The arrange runs in the background while this waits, up to the bridge's cap (15 s below ORCAMCP_TIMEOUT); still running then, status arrange_started with finished false, and get_slicing_status's ui_job says when it has finished. status cancelled when the app cancelled it (nothing moved). Refused for a locked plate (set_plate_settings unlocks it) and while another job runs.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
+          "align_to_y_axis": {
+            "description": "Line objects up along Y (Align to Y axis); not with auto_rotate. Kept until the app restarts or the printer changes, as the menu keeps it",
+            "type": "boolean"
+          },
+          "all_plates": {
+            "description": "Arrange every object on every plate that is not locked, as the A key and the arrange menu's Arrange do; it may add plates, and moves unprintable objects to a plate after the last. Default false: one plate",
+            "type": "boolean"
+          },
+          "allow_multiple_materials": {
+            "description": "Let objects of different filaments share a plate (Allow multiple materials on same plate). Saved as the arrange menu saves it: every later arrange uses it.",
+            "type": "boolean"
+          },
+          "auto_rotate": {
+            "description": "Turn objects about Z to fit more (Auto rotate for arrangement). Saved as the arrange menu saves it: every later arrange uses it.",
+            "type": "boolean"
+          },
+          "avoid_calibration_region": {
+            "description": "Keep clear of the extrusion calibration area; only on a Bambu Lab printer that scans its first layer. Saved as the arrange menu saves it: every later arrange uses it.",
+            "type": "boolean"
+          },
           "include_preview": {
             "description": "Return turntable preview path, drawn once the arrange has been applied",
             "type": "boolean"
+          },
+          "plate_index": {
+            "description": "The plate to arrange, made the current plate first as the plate's own Arrange icon does. Default: the current plate",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reset_options": {
+            "description": "The arrange menu's Reset, before the options this call gives: automatic spacing, no auto-rotate, several materials allowed, align to Y as the printer's default",
+            "type": "boolean"
+          },
+          "spacing_mm": {
+            "description": "Gap between objects in mm, 0 for automatic spacing (the arrange menu's Spacing), for the current print sequence's set. Saved as the arrange menu saves it: every later arrange uses it.",
+            "minimum": 0,
+            "type": "number"
           }
         },
         "required": [],
         "type": "object"
       },
       "name": "arrange_objects",
-      "summary": "Arrange the current plate's objects"
+      "summary": "Arrange a plate's objects or all plates"
     },
     {
       "category": "Models",
-      "description": "Assemble two or more objects into one object with their volumes as its parts, as the object list's Assemble does: each keeps its place, settings and filament; the new object, named Assembly, takes each object's first instance (assembled_from says how many others were left out). The assembly is the last object afterwards, and the objects after each assembled one move down. A piece of a cut is refused until invalidate_cut_info. One undo step. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange or orient runs.",
+      "description": "Assemble two or more objects into one object with their volumes as its parts, as the object list's Assemble does: each keeps its place, settings and filament; the new object, named Assembly, takes each object's first instance (assembled_from says how many others were left out). The assembly is the last object afterwards, and the objects after each assembled one move down. A piece of a cut is refused until invalidate_cut_info. One undo step. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange, orient or bed fill runs.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -408,7 +442,7 @@
     },
     {
       "category": "Transforms",
-      "description": "Clone object. duplicate=true for independent copies. The copies are placed by an arrange of the destination plate, and the answer comes once it has been applied: objects lists every object on that plate with its placement. Past the bridge's cap the arrange is still running (status arrange_started, finished false; get_slicing_status's ui_job says when it has finished); refused, with nothing copied, while another job runs.",
+      "description": "Clone object. duplicate=true for independent copies. The copies are placed by an arrange of the destination plate, one undo step with the copies, and the answer comes once it has been applied (the arrange re-sorts the objects: the ids given are those after it, and object_id_changes lists every object whose object_id changed): objects lists every object on that plate with its placement. Past the bridge's cap the arrange is still running (status arrange_started, finished false; get_slicing_status's ui_job says when it has finished); refused, with nothing copied, while another job runs.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -477,7 +511,7 @@
     },
     {
       "category": "Transforms",
-      "description": "Cut object at a Z height measured in plate mm (height above the bed), the same frame get_object_info reports -- the object's own rotation is accounted for. keep: below, above, or both. The app's own cut: the pieces are the last objects afterwards (new_object_ids), each on the plate, and the original's index is free, so every object after it moves down by one. One undo step. Refused while an arrange or orient runs; an open toolbar tool is closed first (closed_toolbar_tool).",
+      "description": "Cut object at a Z height measured in plate mm (height above the bed), the same frame get_object_info reports -- the object's own rotation is accounted for. keep: below, above, or both. The app's own cut: the pieces are the last objects afterwards (new_object_ids), each on the plate, and the original's index is free, so every object after it moves down by one. One undo step. Refused while an arrange, orient or bed fill runs; an open toolbar tool is closed first (closed_toolbar_tool).",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -533,13 +567,18 @@
     },
     {
       "category": "Transforms",
-      "description": "Remove an object from the scene, or with volume_id one of its volumes (a part, modifier, negative or support volume), as the object list's Delete does, in one undo step. Objects after a deleted one move down by one. Deleting a piece of a cut ends the cut's link for its other pieces (cut_info_invalidated_for). An object's last solid part is not deleted on its own (delete the object), nor a cut object's solid part until invalidate_cut_info. When deleting a volume leaves one, its settings move to the object (settings_moved_to_object), as the list does. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange or orient runs.",
+      "description": "Remove an object from the scene, or with volume_id one of its volumes (a part, modifier, negative or support volume), or with instance_id one of its instances (linked copies), as the object list's Delete does, in one undo step. Objects after a deleted one move down by one, and so do instances after a deleted instance; an object's only instance is the object (delete it without instance_id). Deleting a piece of a cut ends the cut's link for its other pieces (cut_info_invalidated_for). An object's last solid part is not deleted on its own (delete the object), nor a cut object's solid part until invalidate_cut_info. When deleting a volume leaves one, its settings move to the object (settings_moved_to_object), as the list does. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange, orient or bed fill runs.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
           "include_preview": {
             "description": "Return turntable preview path",
             "type": "boolean"
+          },
+          "instance_id": {
+            "description": "Delete this instance (as get_object_info's instance_placement lists them) instead of the object; not with volume_id",
+            "minimum": 0,
+            "type": "integer"
           },
           "object_id": {
             "description": "Object index (0-based)",
@@ -557,7 +596,7 @@
         "type": "object"
       },
       "name": "delete_object",
-      "summary": "Remove an object or one of its parts"
+      "summary": "Remove an object, a part or an instance"
     },
     {
       "category": "Layer Ranges",
@@ -588,7 +627,7 @@
     },
     {
       "category": "Plates",
-      "description": "Delete a plate. Cannot delete the last plate. Objects on it are NOT deleted and NOT moved to another plate: they are moved outside every plate, where get_scene_info lists them under unplaced_objects. Delete them first if you do not want them. A slice in progress is cancelled, a Slice All run with it (the response says so; call slice_all again).",
+      "description": "Delete a plate. Cannot delete the last plate; refused while an arrange, orient or bed fill runs. Objects on it are NOT deleted and NOT moved to another plate: they are moved outside every plate, where get_scene_info lists them under unplaced_objects. Delete them first if you do not want them. A slice in progress is cancelled, a Slice All run with it (the response says so; call slice_all again).",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -686,6 +725,59 @@
       },
       "name": "export_gcode",
       "summary": "Write the sliced plate's G-code"
+    },
+    {
+      "category": "Transforms",
+      "description": "Fill the free space of a plate with instances (linked copies) of an object, as the GUI's Fill bed with instances does: the plate the instance stands on, made current first, gets as many as fit, then its objects are arranged; one undo step (the GUI's takes two). The arrange menu's options this call gives are saved and used, as the menu's are. Answered once the fill and its arrange have been applied, with instances_added (0 when nothing more fits), instances_on_no_plate (copies the fill's estimate added and the arrange could not fit; next_steps names how to place or remove them), every object on the plate with its placement, and object_id_changes (the arrange re-sorts every object in the scene). Past the bridge's cap: status fill_bed_started with finished false, and get_slicing_status's ui_job says when it has ended. Refused for an object with an unprintable instance or a piece of a cut, an instance on no plate, and while another job runs; an open toolbar tool is closed first (closed_toolbar_tool).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "align_to_y_axis": {
+            "description": "Line objects up along Y (Align to Y axis); not with auto_rotate. Kept until the app restarts or the printer changes, as the menu keeps it",
+            "type": "boolean"
+          },
+          "allow_multiple_materials": {
+            "description": "Let objects of different filaments share a plate (Allow multiple materials on same plate). Saved as the arrange menu saves it: every later arrange uses it.",
+            "type": "boolean"
+          },
+          "auto_rotate": {
+            "description": "Turn objects about Z to fit more (Auto rotate for arrangement). Saved as the arrange menu saves it: every later arrange uses it.",
+            "type": "boolean"
+          },
+          "avoid_calibration_region": {
+            "description": "Keep clear of the extrusion calibration area; only on a Bambu Lab printer that scans its first layer. Saved as the arrange menu saves it: every later arrange uses it.",
+            "type": "boolean"
+          },
+          "include_preview": {
+            "description": "Return turntable preview path, drawn once the fill has been applied",
+            "type": "boolean"
+          },
+          "instance_id": {
+            "description": "The instance whose plate is filled, and whose placement the new ones copy (default 0), as get_object_info's instance_placement lists them",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "object_id": {
+            "description": "Object index (0-based)",
+            "type": "integer"
+          },
+          "reset_options": {
+            "description": "The arrange menu's Reset, before the options this call gives: automatic spacing, no auto-rotate, several materials allowed, align to Y as the printer's default",
+            "type": "boolean"
+          },
+          "spacing_mm": {
+            "description": "Gap between objects in mm, 0 for automatic spacing (the arrange menu's Spacing), for the current print sequence's set. Saved as the arrange menu saves it: every later arrange uses it.",
+            "minimum": 0,
+            "type": "number"
+          }
+        },
+        "required": [
+          "object_id"
+        ],
+        "type": "object"
+      },
+      "name": "fill_bed_with_instances",
+      "summary": "Fill a plate with an object's instances"
     },
     {
       "category": "Transforms",
@@ -1117,7 +1209,7 @@
     },
     {
       "category": "Slicing",
-      "description": "Get the current slicing state: slicing (in progress), done (the last slice_all run is done -- every plate it asked for that has something on it is sliced -- and the selected plate is sliced or empty; before any slice_all, or once none of its plates exists (a new project), the selected plate is sliced) or idle (anything else); a plate deleted after the run does not undo it. To wait for a slice to finish, call wait_for_slice rather than polling this; then get_print_estimate. The plates array reports every plate's slice result and percent (0-100; null for a plate with no result that is not slicing), so a slice_all run can be followed plate by plate; stage is the app's progress text for the running slice (\"Generating support\", in the app's language; null when idle). busy says whether the slicing pipeline is busy, and busy_reason with what: slicing, exporting, uploading, or stopping (the last slice's completion is not taken in yet); slice_all starts nothing while it is, and wait_for_slice waits it out. ui_job names a job holding the app apart from slicing: arranging or orienting (one a tool started and is past its wait), other (one the GUI started), or null; slice_all's busy_job means one. slice_run says how the last slice_all run stands: scope, the plates it asked for, skipped (those of them with nothing on them to slice), and outcome running, done, ended_early or incomplete (also when no plate had anything to slice), judged by its plates still there (null once none is, after new_project or load_project), with a message saying which plates and why when it is not done. When a slice_all run over every plate ends, this restores the plate that was selected when slice_all was called and reports it as restored_selected_plate. Each plate's gcode_check is the check its slice ran on its own G-code (null without a result): {ok: true}, or ok false with problems -- outside_bed, above_printable_height, above_extruder_height, outside_extruder_area, in_wrapping_area, over_printed_mass, toolpath_outside, filament_bed_conflict -- and a message; above_printable_height also gives highest_layer_z_mm and printable_height_mm, and a hint at the usual cause. The GUI keeps a failed plate's Print and Export buttons off, and export_gcode and send_to_printer refuse it.",
+      "description": "Get the current slicing state: slicing (in progress), done (the last slice_all run is done -- every plate it asked for that has something on it is sliced -- and the selected plate is sliced or empty; before any slice_all, or once none of its plates exists (a new project), the selected plate is sliced) or idle (anything else); a plate deleted after the run does not undo it. To wait for a slice to finish, call wait_for_slice rather than polling this; then get_print_estimate. The plates array reports every plate's slice result and percent (0-100; null for a plate with no result that is not slicing), so a slice_all run can be followed plate by plate; stage is the app's progress text for the running slice (\"Generating support\", in the app's language; null when idle). busy says whether the slicing pipeline is busy, and busy_reason with what: slicing, exporting, uploading, or stopping (the last slice's completion is not taken in yet); slice_all starts nothing while it is, and wait_for_slice waits it out. ui_job names a job holding the app apart from slicing: arranging, orienting or filling_bed (one a tool started and is past its wait), other (one the GUI started, or the arrange a bed fill starts), or null; slice_all's busy_job means one. slice_run says how the last slice_all run stands: scope, the plates it asked for, skipped (those of them with nothing on them to slice), and outcome running, done, ended_early or incomplete (also when no plate had anything to slice), judged by its plates still there (null once none is, after new_project or load_project), with a message saying which plates and why when it is not done. When a slice_all run over every plate ends, this restores the plate that was selected when slice_all was called and reports it as restored_selected_plate. Each plate's gcode_check is the check its slice ran on its own G-code (null without a result): {ok: true}, or ok false with problems -- outside_bed, above_printable_height, above_extruder_height, outside_extruder_area, in_wrapping_area, over_printed_mass, toolpath_outside, filament_bed_conflict -- and a message; above_printable_height also gives highest_layer_z_mm and printable_height_mm, and a hint at the usual cause. The GUI keeps a failed plate's Print and Export buttons off, and export_gcode and send_to_printer refuse it.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {},
@@ -1285,7 +1377,7 @@
     },
     {
       "category": "Models",
-      "description": "Merge an object's parts into one part, as the object list's Mesh boolean does: its solid parts are joined by a union and its negative volumes subtracted; its modifiers and support volumes, its parts' own settings and filaments, its layer ranges and brim ears are not carried (not_carried lists them); its name and object settings are. Every instance of the object becomes part of one mesh in one instance (instances_merged says so). When the union fails, the parts are joined without it (boolean says so). The merged object is the last object afterwards. Painting is cleared unless keep_painting keeps it. One undo step. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange or orient runs.",
+      "description": "Merge an object's parts into one part, as the object list's Mesh boolean does: its solid parts are joined by a union and its negative volumes subtracted; its modifiers and support volumes, its parts' own settings and filaments, its layer ranges and brim ears are not carried (not_carried lists them); its name and object settings are. Every instance of the object becomes part of one mesh in one instance (instances_merged says so). When the union fails, the parts are joined without it (boolean says so). The merged object is the last object afterwards. Painting is cleared unless keep_painting keeps it. One undo step. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange, orient or bed fill runs.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -2288,7 +2380,7 @@
     },
     {
       "category": "Plates",
-      "description": "Select a plate as current.",
+      "description": "Select a plate as current. Refused while an arrange, orient or bed fill runs: a plate's arrange applies its result to the current plate.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -2581,6 +2673,36 @@
       "summary": "Choose the G-code preview color mode"
     },
     {
+      "category": "Transforms",
+      "description": "Set how many instances (linked copies: one mesh, each placed on its own) an object has, as the GUI's Set number of instances does, in one undo step: new ones are added a small step from the last one, as Add instance places them (they may overlap: next_steps then names arrange_objects), and a lower count removes the last ones. count is 1 to 1000; to remove the object, delete_object; to remove one chosen instance, delete_object with instance_id. Answers the instances added or removed and each instance's placement; the same count is changed: false, with no undo step. Refused for an object with an unprintable instance or a piece of a cut, as the GUI's menu is, and while an arrange, orient or bed fill runs. An open toolbar tool is closed first (closed_toolbar_tool).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "description": "How many instances, 1 to 1000",
+            "maximum": 1000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "include_preview": {
+            "description": "Return turntable preview path",
+            "type": "boolean"
+          },
+          "object_id": {
+            "description": "Object index (0-based)",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "object_id",
+          "count"
+        ],
+        "type": "object"
+      },
+      "name": "set_instance_count",
+      "summary": "Set how many instances an object has"
+    },
+    {
       "category": "Filaments & colour",
       "description": "Create or edit a mixed (virtual) filament slot that alternates two or three physical filaments by layer ratio. Requires a multi-filament printer profile.",
       "inputSchema": {
@@ -2819,6 +2941,102 @@
     },
     {
       "category": "Plates",
+      "description": "Change a plate's own settings, as its settings dialog, name editor and lock icon do: bed_type, print_sequence, the filament order of the first layer and of later layer ranges, spiral_vase, name and locked (a locked plate's objects stay put when arranging). Only what the call gives changes, in one undo step; the answer's settings are in this tool's argument shape (sent back, they change nothing), effective says what applies. \"global\" follows the printer's and print settings. A plate whose slicing settings change is made the current plate first, as the dialog does. spiral_vase \"on\" is the dialog's Enable answered Yes: every object on the plate gets the vase's object settings (one wall, no top shell, no infill, no support), which are the object's, so its copies on other plates print with them too (vase_settings_applied lists them); \"off\" and \"global\" leave those settings on the objects. A plate's own bed_type is offered for Bambu Lab printers only (elsewhere the plate follows the global one, apply_config's project curr_bed_type). The same settings again: changed false, no undo step; a value the plate already has is never refused. Refused while an arrange, orient or bed fill runs (an arrange of every plate locks and unlocks plates as it runs).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "bed_type": {
+            "description": "\"global\", or a bed type the printer offers, as the config spells it: \"Cool Plate\", \"Engineering Plate\", \"High Temp Plate\", \"Textured PEI Plate\", \"Textured Cool Plate\", \"Supertack Plate\"",
+            "type": "string"
+          },
+          "first_layer_filament_order": {
+            "description": "\"auto\", or every filament number (1-based) once, in the order the first layer prints them",
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "type": [
+              "string",
+              "array"
+            ]
+          },
+          "locked": {
+            "description": "Lock the plate: arranging and auto-orient leave its objects where they are",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "The plate's name, up to 250 characters; \"\" for none",
+            "type": "string"
+          },
+          "other_layers_filament_order": {
+            "description": "\"auto\", or layer ranges from layer 2 on, each with every filament number once in printing order; ranges may not share a layer",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "from_layer": {
+                  "description": "First layer of the range, 2 or more",
+                  "minimum": 2,
+                  "type": "integer"
+                },
+                "order": {
+                  "description": "Every filament number once, in printing order",
+                  "items": {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "type": "array"
+                },
+                "to_layer": {
+                  "description": "Last layer of the range; null or left out: the last layer",
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "from_layer",
+                "order"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "string",
+              "array"
+            ]
+          },
+          "plate_index": {
+            "description": "Plate index (0-based). Default: the current plate",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "print_sequence": {
+            "description": "Print the plate by layer or by object",
+            "enum": [
+              "global",
+              "by layer",
+              "by object"
+            ],
+            "type": "string"
+          },
+          "spiral_vase": {
+            "description": "\"on\" also gives every object on the plate the vase's object settings (see the description); \"global\" follows the print settings",
+            "enum": [
+              "global",
+              "on",
+              "off"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "set_plate_settings",
+      "summary": "Change a plate's settings, name or lock"
+    },
+    {
+      "category": "Plates",
       "description": "Move the prime tower on a plate. x/y are the front-left corner (min x, min y) of the tower BODY in plate millimetres -- the same frame get_object_info and get_scene_info report object bounding boxes in, and exactly what get_scene_info reports as plates[].prime_tower.position. The brim prints outside the body on all four sides; the position is validated so that the body plus its brim stays inside the printable area. Objects the new footprint lands on are reported as conflicts rather than refused.",
       "inputSchema": {
         "additionalProperties": false,
@@ -2847,7 +3065,7 @@
     },
     {
       "category": "Models",
-      "description": "Change a volume's type, as the object list's Change Type does: part, negative_volume, modifier, support_blocker or support_enforcer. The object's last solid part stays a part, and a text or SVG volume never becomes a support volume. The list keeps volumes sorted by type, so the volume's index can change: volume_id in the answer is the new one, previous_volume_id the old. The same type changes nothing. One undo step. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange or orient runs.",
+      "description": "Change a volume's type, as the object list's Change Type does: part, negative_volume, modifier, support_blocker or support_enforcer. The object's last solid part stays a part, and a text or SVG volume never becomes a support volume. The list keeps volumes sorted by type, so the volume's index can change: volume_id in the answer is the new one, previous_volume_id the old. The same type changes nothing. One undo step. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange, orient or bed fill runs.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -2885,7 +3103,7 @@
     },
     {
       "category": "Slicing",
-      "description": "Slice every plate in the project, the way the GUI's Slice All button does: one plate at a time until all are sliced. Pass all_plates=false to slice only the plate that is currently selected. status says what happened: slicing_started, or not_started with a reason and a message: busy_slicing (the pipeline is busy -- get_slicing_status's busy: a slice or Slice All run, an export, an upload, or the last slice still stopping; nothing is started -- call wait_for_slice, then slice_all again), already_sliced (nothing to do), busy_job (an arrange or an orient holds the app: poll get_slicing_status until ui_job is null, then slice_all again), invalid (the app refuses the plate as it stands -- its validation, an object partly off the plate, a filament check, missing plugins, a broken mixed filament, or a last slice that failed; message says which, in the app's words for a validation failure), nothing_to_slice (no printable object fully on the plates -- one partly off its plate or too tall for the printer does not count -- and no refusal the app gives words for) or unknown. Then call wait_for_slice, which returns once the run is over, with each plate's result; next_steps names the tool to call next. The plate selection walks from the first plate to the last while the run is in progress, and get_slicing_status puts back the plate that was selected here once it ends.",
+      "description": "Slice every plate in the project, the way the GUI's Slice All button does: one plate at a time until all are sliced. Pass all_plates=false to slice only the plate that is currently selected. status says what happened: slicing_started, or not_started with a reason and a message: busy_slicing (the pipeline is busy -- get_slicing_status's busy: a slice or Slice All run, an export, an upload, or the last slice still stopping; nothing is started -- call wait_for_slice, then slice_all again), already_sliced (nothing to do), busy_job (an arrange, an orient or a bed fill holds the app: poll get_slicing_status until ui_job is null, then slice_all again), invalid (the app refuses the plate as it stands -- its validation, an object partly off the plate, a filament check, missing plugins, a broken mixed filament, or a last slice that failed; message says which, in the app's words for a validation failure), nothing_to_slice (no printable object fully on the plates -- one partly off its plate or too tall for the printer does not count -- and no refusal the app gives words for) or unknown. Then call wait_for_slice, which returns once the run is over, with each plate's result; next_steps names the tool to call next. The plate selection walks from the first plate to the last while the run is in progress, and get_slicing_status puts back the plate that was selected here once it ends.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -2902,7 +3120,7 @@
     },
     {
       "category": "Models",
-      "description": "Split an object as the object list's Split does. to: \"objects\" makes one object per solid part of a multi-part object, or per shell of a one-part object; its modifiers, negative volumes and support volumes are not carried (dropped_volumes lists them), and each piece keeps its place. When a piece would float and the object drops to the bed, keep_height (default true) keeps each piece at its height, false drops them onto the bed. The pieces are the last objects afterwards and every object after the split one moves down by one. to: \"parts\" splits one volume into one part per shell (name it with volume_id in a multi-part object); the pieces are named <name>_1, _2, ..., keep its filament, and stay in place. Painting is cleared unless keep_painting keeps it. One undo step. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange or orient runs.",
+      "description": "Split an object as the object list's Split does. to: \"objects\" makes one object per solid part of a multi-part object, or per shell of a one-part object; its modifiers, negative volumes and support volumes are not carried (dropped_volumes lists them), and each piece keeps its place. When a piece would float and the object drops to the bed, keep_height (default true) keeps each piece at its height, false drops them onto the bed. The pieces are the last objects afterwards and every object after the split one moves down by one. to: \"parts\" splits one volume into one part per shell (name it with volume_id in a multi-part object); the pieces are named <name>_1, _2, ..., keep its filament, and stay in place. Painting is cleared unless keep_painting keeps it. One undo step. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange, orient or bed fill runs.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {

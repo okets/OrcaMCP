@@ -2,6 +2,7 @@
 #include "OrcaMCPCommon.hpp"
 #include "OrcaMCPConfigValues.hpp"
 #include "OrcaMCPFilamentUtils.hpp"
+#include "OrcaMCPPlateSettings.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Tab.hpp"
 #include "slic3r/GUI/Plater.hpp"
@@ -396,6 +397,33 @@ void OrcaMCPPresetConfigUtils::UpdatePresetTabs() {
     }
 }
 
+namespace {
+
+// Why apply_config cannot set the global bed type as `type` gives it, or nothing with `bed_type` set: it is
+// the project's (type project), and one the sidebar's bed-type list offers, which it greys out on a printer
+// with one bed type (Sidebar::update_presets: Bambu Lab printers and support_multi_bed_types offer several).
+std::optional<ApplyConfigResult::RejectedValue> global_bed_type_refusal_for(const std::string& type, const std::string& value,
+                                                                            std::optional<BedType>& bed_type)
+{
+    if (type != "project")
+        return ApplyConfigResult::RejectedValue{"curr_bed_type", "curr_bed_type is the project's bed type, the sidebar's",
+                                                "the same item with type \"project\""};
+    PresetBundle&             bundle     = *wxGetApp().preset_bundle;
+    const DynamicPrintConfig& printer    = bundle.printers.get_edited_preset().config;
+    const bool                selectable = bundle.is_bbl_vendor() ||
+                                           (printer.has("support_multi_bed_types") && printer.opt_bool("support_multi_bed_types"));
+    const std::vector<BedType>& offered  = wxGetApp().sidebar().get_cur_combox_bed_types();
+    const BedType               current  = bundle.project_config.opt_enum<BedType>("curr_bed_type");
+    BedType                     parsed   = btDefault;
+    if (const auto refusal = OrcaMCP::global_bed_type_refusal(value, offered, selectable, current, parsed))
+        return ApplyConfigResult::RejectedValue{"curr_bed_type", *refusal,
+                                                selectable ? "one of " + OrcaMCP::listed_bed_types(offered) : "\"" + OrcaMCP::bed_type_value(current) + "\""};
+    bed_type = parsed;
+    return std::nullopt;
+}
+
+} // namespace
+
 ApplyConfigResult OrcaMCPPresetConfigUtils::ApplyConfig(const nlohmann::json& item) {
     ApplyConfigResult result;
     const std::string type = item.value("type", "");
@@ -433,10 +461,13 @@ ApplyConfigResult OrcaMCPPresetConfigUtils::ApplyConfig(const nlohmann::json& it
         if (const auto* opt = config->option<ConfigOptionStrings>("filament_colour"))
             colors_before = opt->values;
     // What a project write can change: the keys it names, and the colour keys a colour change syncs.
+    // The global bed type is not among them: the sidebar's own path marks the plates it changes.
     std::vector<std::string> written_keys = OrcaMCP::filament_colour_keys();
     for (const auto& [key, value] : item.at("settings").items())
-        written_keys.push_back(key);
+        if (key != "curr_bed_type")
+            written_keys.push_back(key);
     const OrcaMCP::WrittenValues written(*config, type == "project" ? written_keys : std::vector<std::string>());
+    std::optional<BedType>       bed_type;
 
     ConfigSubstitutionContext context(ForwardCompatibilitySubstitutionRule::Enable);
     for (auto& [key, value] : item.at("settings").items()) {
@@ -457,6 +488,14 @@ ApplyConfigResult OrcaMCPPresetConfigUtils::ApplyConfig(const nlohmann::json& it
             continue;
         }
         const std::string& value_str = shaped.text;
+        if (key == "curr_bed_type") {
+            if (const auto refusal = global_bed_type_refusal_for(type, value_str, bed_type)) {
+                result.invalid.push_back(key);
+                result.rejected.push_back(*refusal);
+            } else
+                result.applied.push_back(key);
+            continue;
+        }
         // A colour key deserializes any string at all, and upstream then decodes an unparseable one
         // as black -- so "B17C38" (no '#') would be accepted here and show up as a black spool.
         // Keep the old value and report the key instead.
@@ -493,6 +532,11 @@ ApplyConfigResult OrcaMCPPresetConfigUtils::ApplyConfig(const nlohmann::json& it
     }
 
     if (type == "project") {
+        // The sidebar's bed-type list, as the user picks from it (Plater::priv::on_select_bed_type): the
+        // plates that follow the global bed type lose their slice, the bed is drawn anew, and the printer
+        // remembers it (app config), which the refresh below saves.
+        if (bed_type)
+            wxGetApp().sidebar().set_bed_type_accord_combox(*bed_type);
         if (const auto* opt = config->option<ConfigOptionStrings>("filament_colour"))
             for (size_t i = 0; i < opt->values.size(); ++i) {
                 // A slot the project did not have before is new, so it counts as changed.

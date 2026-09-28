@@ -589,13 +589,14 @@ TEST_CASE("flatten_object orients an object only when the orient job would orien
     using Locked = std::vector<int>;
     CHECK_FALSE(flatten_refusal(2, /*printable=*/true, /*instances=*/2, /*on_locked_plates=*/Locked{}, /*job_running=*/false).has_value());
     CHECK(flatten_refusal(2, true, 1, Locked{}, /*job_running=*/true) ==
-          "another job (an arrange or an orient) is running: poll get_slicing_status until ui_job is null, then call "
+          "another job (an arrange, an orient or a bed fill) is running: poll get_slicing_status until ui_job is null, then call "
           "flatten_object again");
     CHECK(flatten_refusal(2, /*printable=*/false, 1, Locked{}, false) ==
           "object 2 is marked not printable, and only printable objects are oriented: turn it with rotate_object instead");
     CHECK(flatten_refusal(2, true, /*instances=*/0, Locked{}, false) == "object 2 has no instance to orient");
     CHECK(flatten_refusal(2, true, /*instances=*/2, /*on_locked_plates=*/Locked{0, 1}, false) ==
-          "object 2 is on a locked plate, which is never oriented: unlock the plate, or turn it with rotate_object");
+          "object 2 is on a locked plate, which is never oriented: unlock the plate (set_plate_settings locked: false), or turn it with "
+          "rotate_object");
 }
 
 TEST_CASE("flatten_object refuses an object only some of whose instances are on a locked plate", "[orcamcp][transform_frames]")
@@ -605,10 +606,12 @@ TEST_CASE("flatten_object refuses an object only some of whose instances are on 
     using Slic3r::GUI::OrcaMCP::flatten_refusal;
     CHECK(flatten_refusal(2, true, /*instances=*/3, /*on_locked_plates=*/std::vector<int>{1, 2}, false) ==
           "object 2 has instances 1, 2 on a locked plate, which the orient would move up or down with the others "
-          "without turning them: unlock their plate, or move them to another plate, then call flatten_object again");
+          "without turning them: unlock their plate (set_plate_settings locked: false), or move them to another plate, then call "
+          "flatten_object again");
     CHECK(flatten_refusal(2, true, /*instances=*/2, /*on_locked_plates=*/std::vector<int>{1}, false) ==
           "object 2 has instance 1 on a locked plate, which the orient would move up or down with the others "
-          "without turning it: unlock its plate, or move it to another plate, then call flatten_object again");
+          "without turning it: unlock its plate (set_plate_settings locked: false), or move it to another plate, then call "
+          "flatten_object again");
 }
 
 TEST_CASE("flatten_object starts the orient job only on a selection of exactly the named object", "[orcamcp][transform_frames]")

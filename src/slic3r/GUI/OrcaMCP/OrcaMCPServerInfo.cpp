@@ -405,8 +405,8 @@ json warnings_and_best_practices()
             }}
         }},
         {"common_pitfalls", {
-            {"object_id_shifts", "After a delete, object_id values shift. Re-read get_scene_info; internal_id finds the same object again."},
-            {"async_operations", "slice_all and export_gcode run in the background: call wait_for_slice. arrange_objects, auto_orient, flatten_object and clone_object answer once their job is applied (finished: false past the bridge's cap: then get_slicing_status's ui_job)."},
+            {"object_id_shifts", "After a delete or an arrange, object_id values shift (an arrange re-sorts the objects; its answer gives previous_object_id). Re-read get_scene_info; internal_id finds the same object again."},
+            {"async_operations", "slice_all and export_gcode run in the background: call wait_for_slice. arrange_objects, auto_orient, flatten_object, clone_object and fill_bed_with_instances answer once their job is applied (finished: false past the bridge's cap: then get_slicing_status's ui_job)."},
             {"cut_object_caution", "Cut removes original and creates new object(s). Use undo if result is wrong."},
             {"settings_not_saved", "apply_config creates dirty values: save_preset keeps them."},
             {"undo_limits", "Undo history is limited. Save project before destructive operations."},
@@ -425,6 +425,7 @@ json warnings_and_best_practices()
                 "move_object", "rotate_object", "scale_object", "mirror_object",
                 "flatten_object", "clone_object", "delete_object", "cut_object",
                 "arrange_objects", "auto_orient", "undo", "redo",
+                "set_instance_count", "fill_bed_with_instances",
                 "apply_adaptive_layer_height", "clear_adaptive_layer_height"
             }},
             {"preview_hint", "When include_preview=true, the response includes a 'preview_hint' message encouraging you to check the preview image for a visual sense of the plate and objects."},

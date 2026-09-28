@@ -3109,6 +3109,86 @@ void PartPlate::update_object_index(int obj_idx_removed, int obj_idx_max)
 
 }
 
+// Orca: the entries of object `obj_id` leave `entries`; whether there were any.
+static bool erase_object_entries(std::set<std::pair<int, int>>& entries, int obj_id)
+{
+	const size_t before = entries.size();
+	for (auto it = entries.begin(); it != entries.end();)
+		it = it->first == obj_id ? entries.erase(it) : std::next(it);
+	return entries.size() != before;
+}
+
+// Orca: the entries of object `obj_id` after instance `removed` move down one; whether any did.
+static bool renumber_object_entries(std::set<std::pair<int, int>>& entries, int obj_id, int removed)
+{
+	std::set<std::pair<int, int>> renumbered;
+	bool                          changed = false;
+	for (const std::pair<int, int>& entry : entries) {
+		const bool later = entry.first == obj_id && entry.second > removed;
+		renumbered.insert(later ? std::pair(entry.first, entry.second - 1) : entry);
+		changed |= later;
+	}
+	entries.swap(renumbered);
+	return changed;
+}
+
+bool PartPlate::remove_object_instances(int obj_id)
+{
+	const bool held = erase_object_entries(obj_to_instance_set, obj_id);
+	erase_object_entries(instance_outside_set, obj_id);
+	// As remove_instance does: an instance partly outside no longer keeps the plate from slicing.
+	if (held)
+		update_states();
+	return held;
+}
+
+bool PartPlate::renumber_instances_after(int obj_id, int instance_id_removed)
+{
+	const bool held = renumber_object_entries(obj_to_instance_set, obj_id, instance_id_removed);
+	renumber_object_entries(instance_outside_set, obj_id, instance_id_removed);
+	if (held)
+		update_states();
+	return held;
+}
+
+// Orca: the object settings a vase plate gives its objects, apart so MCP reports the same list.
+const DynamicPrintConfig& PartPlate::vase_mode_object_config()
+{
+	static const DynamicPrintConfig config = [] {
+		DynamicPrintConfig new_conf;
+		new_conf.set_key_value("wall_loops", new ConfigOptionInt(1));
+		new_conf.set_key_value("top_shell_layers", new ConfigOptionInt(0));
+		new_conf.set_key_value("sparse_infill_density", new ConfigOptionPercent(0));
+		new_conf.set_key_value("enable_support", new ConfigOptionBool(false));
+		new_conf.set_key_value("enforce_support_layers", new ConfigOptionInt(0));
+		new_conf.set_key_value("detect_thin_wall", new ConfigOptionBool(false));
+		new_conf.set_key_value("timelapse_type", new ConfigOptionEnum<TimelapseType>(tlTraditional));
+		new_conf.set_key_value("overhang_reverse", new ConfigOptionBool(false));
+		return new_conf;
+	}();
+	return config;
+}
+
+// Orca: each object gets the vase settings the print preset lacks, and those of its own that differ.
+// Upstream reused one list for both, so every object after the first got only its own.
+void PartPlate::apply_vase_mode_object_config(const DynamicPrintConfig& print_preset, const ModelObjectPtrs& objects)
+{
+	const DynamicPrintConfig& new_conf = vase_mode_object_config();
+	const auto applying_keys = print_preset.diff(new_conf);
+
+	for (ModelObject* object : objects) {
+		ModelConfigObject& config = object->config;
+
+		for (auto opt_key : applying_keys) {
+			config.set_key_value(opt_key, new_conf.option(opt_key)->clone());
+		}
+
+		for (auto opt_key : config.get().diff(new_conf)) {
+			config.set_key_value(opt_key, new_conf.option(opt_key)->clone());
+		}
+	}
+}
+
 void PartPlate::set_vase_mode_related_object_config(int obj_id) {
 	ModelObjectPtrs obj_ptrs;
 	if (obj_id != -1) {
@@ -3118,30 +3198,7 @@ void PartPlate::set_vase_mode_related_object_config(int obj_id) {
 	else
 		obj_ptrs = get_objects_on_this_plate();
 
-	DynamicPrintConfig* global_config = &wxGetApp().preset_bundle->prints.get_edited_preset().config;
-	DynamicPrintConfig new_conf;
-	new_conf.set_key_value("wall_loops", new ConfigOptionInt(1));
-	new_conf.set_key_value("top_shell_layers", new ConfigOptionInt(0));
-	new_conf.set_key_value("sparse_infill_density", new ConfigOptionPercent(0));
-	new_conf.set_key_value("enable_support", new ConfigOptionBool(false));
-	new_conf.set_key_value("enforce_support_layers", new ConfigOptionInt(0));
-	new_conf.set_key_value("detect_thin_wall", new ConfigOptionBool(false));
-	new_conf.set_key_value("timelapse_type", new ConfigOptionEnum<TimelapseType>(tlTraditional));
-	new_conf.set_key_value("overhang_reverse", new ConfigOptionBool(false));
-	auto applying_keys = global_config->diff(new_conf);
-
-	for (ModelObject* object : obj_ptrs) {
-		ModelConfigObject& config = object->config;
-
-		for (auto opt_key : applying_keys) {
-			config.set_key_value(opt_key, new_conf.option(opt_key)->clone());
-		}
-
-		applying_keys = config.get().diff(new_conf);
-		for (auto opt_key : applying_keys) {
-			config.set_key_value(opt_key, new_conf.option(opt_key)->clone());
-		}
-	}
+	apply_vase_mode_object_config(wxGetApp().preset_bundle->prints.get_edited_preset().config, obj_ptrs);
 	//wxGetApp().obj_list()->update_selections();
 }
 
@@ -5544,6 +5601,12 @@ int PartPlateList::notify_instance_removed(int obj_id, int instance_id)
 	}
 
 	if (instance_id == -1) {
+		// Orca: the object's other instances leave their plates too, before the later objects move down.
+		for (PartPlate* plate : m_plate_list)
+			if (plate->remove_object_instances(obj_id))
+				instances_changed_on(plate);
+		unprintable_plate.remove_object_instances(obj_id);
+
 		//update all the obj_ids which is bigger
 		for (unsigned int i = 0; i < (unsigned int)m_plate_list.size(); ++i)
 		{
@@ -5559,6 +5622,36 @@ int PartPlateList::notify_instance_removed(int obj_id, int instance_id)
 		m_plater->mark_plate_toolbar_image_dirty();
 
 	return 0;
+}
+
+// Orca: see the declaration.
+int PartPlateList::notify_instance_deleted(int obj_id, int instance_id)
+{
+	notify_instance_removed(obj_id, instance_id);
+	for (PartPlate* plate : m_plate_list)
+		if (plate->renumber_instances_after(obj_id, instance_id))
+			instances_changed_on(plate);
+	unprintable_plate.renumber_instances_after(obj_id, instance_id);
+	return 0;
+}
+
+// Orca: see the declaration. From the last, so no later instance is renumbered.
+void PartPlateList::notify_instances_deleted_from(int obj_id, int first_instance)
+{
+	if (obj_id < 0 || obj_id >= int(m_model->objects.size()))
+		return;
+	for (int i = int(m_model->objects[obj_id]->instances.size()) - 1; i >= first_instance; --i)
+		notify_instance_deleted(obj_id, i);
+}
+
+// Orca: a plate whose instances changed has no slice of them, nor thumbnails.
+void PartPlateList::instances_changed_on(PartPlate* plate)
+{
+	plate->update_slice_result_valid_state();
+	plate->thumbnail_data.reset();
+	plate->no_light_thumbnail_data.reset();
+	plate->top_thumbnail_data.reset();
+	plate->pick_thumbnail_data.reset();
 }
 
 //add instance to special plate, need to remove from the original plate

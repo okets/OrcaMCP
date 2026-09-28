@@ -2804,6 +2804,8 @@ void ObjectList::del_instances_from_object(const int obj_idx)
     // BBS: remove snapshot name "Delete All Instances from Object"
     take_snapshot("");
 
+    // Orca: the plates learn it: every instance after the first leaves its plate.
+    wxGetApp().plater()->get_partplate_list().notify_instances_deleted_from(obj_idx, 1);
     while ( instances.size()> 1)
         instances.pop_back();
 
@@ -2928,6 +2930,8 @@ bool ObjectList::del_subobject_from_object(const int obj_idx, const int idx, con
 
         // BBS: remove snapshot name "Delete Instance"
         take_snapshot("");
+        // Orca: the plates learn it, and file every later instance under its new index.
+        wxGetApp().plater()->get_partplate_list().notify_instance_deleted(obj_idx, idx);
         object->delete_instance(idx);
     }
     else

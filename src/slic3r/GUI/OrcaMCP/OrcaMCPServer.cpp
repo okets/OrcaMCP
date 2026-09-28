@@ -6,6 +6,7 @@
 #include "OrcaMCPImageFiles.hpp"
 #include "OrcaMCPInstanceRegistry.hpp"
 #include "OrcaMCPPartEdits.hpp"
+#include "OrcaMCPArrangeTools.hpp"
 #include "OrcaMCPPartTools.hpp"
 #include "OrcaMCPConfigKeys.hpp"
 #include "OrcaMCPConfigValues.hpp"
@@ -1386,7 +1387,10 @@ void OrcaMCPServer::register_builtin_tools()
         "height, supports, infill, walls, speeds, temperatures -- several in one call. Types: print | "
         "filament | printer | project. The change stays unsaved in the preset until save_preset. To switch "
         "to another preset, use select_preset; for one object only, set_object_config; for a slot's colour "
-        "on the plate, set_filament_color.",
+        "on the plate, set_filament_color. The global bed type is project key curr_bed_type, set as the "
+        "sidebar's bed-type list sets it (the plates that follow it lose their slice, and the printer "
+        "remembers it); a bed type the printer does not offer is refused, and so is any change on a printer "
+        "with one bed type, where the sidebar greys the list out. A plate's own bed type: set_plate_settings.",
         {
             {"type", "object"},
             {"properties", {
@@ -1765,30 +1769,29 @@ void OrcaMCPServer::register_builtin_tools()
         }
     });
 
-    // arrange_objects - Arrange objects on plate
+    // arrange_objects - Arrange one plate, or every plate, with the arrange menu's options (OrcaMCPArrangeTools.cpp)
     register_tool({
         "arrange_objects",
         ToolCategory::Models,
-        "Arrange the current plate's objects",
-        "Arrange every object on the current plate, as the plate's Arrange does, and answer once the "
-        "arrange has been applied: status success with objects, each one's placement (position, "
-        "rotation_degrees, scale, changed, and rotate_object's placement fields). The arrange runs in the background while "
-        "this waits, up to the bridge's cap (15 s below ORCAMCP_TIMEOUT); still running then, status "
-        "arrange_started with finished false, and get_slicing_status's ui_job says when it has finished. "
-        "status cancelled when the app cancelled it (nothing moved); refused while another job runs.",
+        "Arrange a plate's objects or all plates",
+        "Arrange the objects on a plate -- the current one, or plate_index, made current first as the plate's own Arrange icon does -- "
+        "or with all_plates every object on every plate that is not locked, as the A key does (it may add plates, and move "
+        "unprintable objects to a plate after the last). The arrange menu's options this call gives (spacing_mm, auto_rotate, "
+        "allow_multiple_materials, align_to_y_axis, avoid_calibration_region, reset_options) are saved as the menu saves them, and "
+        "every later arrange uses them, clone_object's and fill_bed_with_instances' too; arrange_options reports the ones in force. "
+        "An arrange re-sorts every object in the scene, those on other plates too: object_id_changes lists each object whose "
+        "object_id changed. "
+        "Answered once the arrange has been applied: status success with objects, each one's placement (position, rotation_degrees, "
+        "scale, changed, and rotate_object's placement fields, and previous_object_id when the arrange moved it in the object list: "
+        "an arrange re-sorts the objects, so re-read object_id). The arrange runs in the background while this waits, up to the "
+        "bridge's cap (15 s below ORCAMCP_TIMEOUT); still running then, status arrange_started with finished false, and "
+        "get_slicing_status's ui_job says when it has finished. status cancelled when the app cancelled it (nothing moved). Refused "
+        "for a locked plate (set_plate_settings unlocks it) and while another job runs.",
         {
             {"type", "object"},
-            {"properties", {
-                {"include_preview", {
-                    {"type", "boolean"},
-                    {"description", "Return turntable preview path, drawn once the arrange has been applied"}
-                }}
-            }}
+            {"properties", arrange_objects_properties()}
         },
-        [](const nlohmann::json& params) -> nlohmann::json {
-            return run_plate_ui_job("arrange_objects", UiJobKind::arrange, params.value("include_preview", false),
-                                    "Check the preview image to see the new arrangement of objects on the plate.");
-        }
+        [](const nlohmann::json& params) -> nlohmann::json { return arrange_objects(params); }
     });
 
     // undo - Undo last operation
@@ -3009,8 +3012,8 @@ void OrcaMCPServer::register_builtin_tools()
         "selected. status says what happened: slicing_started, or not_started with a reason and a "
         "message: busy_slicing (the pipeline is busy -- get_slicing_status's busy: a slice or Slice All "
         "run, an export, an upload, or the last slice still stopping; nothing is started -- call "
-        "wait_for_slice, then slice_all again), already_sliced (nothing to do), busy_job (an arrange or an "
-        "orient holds the app: poll get_slicing_status until ui_job is null, then slice_all again), "
+        "wait_for_slice, then slice_all again), already_sliced (nothing to do), busy_job (an arrange, an "
+        "orient or a bed fill holds the app: poll get_slicing_status until ui_job is null, then slice_all again), "
         "invalid (the app refuses the plate as it stands -- its validation, an object "
         "partly off the plate, a filament check, missing plugins, a broken mixed filament, or a last "
         "slice that failed; message says which, in the app's words for a validation failure), "
@@ -3427,8 +3430,8 @@ void OrcaMCPServer::register_builtin_tools()
         "language; null when idle). busy says whether the slicing pipeline is busy, and busy_reason "
         "with what: slicing, exporting, uploading, or stopping (the last slice's completion is not "
         "taken in yet); slice_all starts nothing while it is, and wait_for_slice waits it out. ui_job "
-        "names a job holding the app apart from slicing: arranging or orienting (one a tool started and "
-        "is past its wait), other (one the GUI started), or null; slice_all's busy_job means one. "
+        "names a job holding the app apart from slicing: arranging, orienting or filling_bed (one a tool "
+        "started and is past its wait), other (one the GUI started, or the arrange a bed fill starts), or null; slice_all's busy_job means one. "
         "slice_run says how the last slice_all run stands: scope, the "
         "plates it asked for, skipped (those of them with nothing on them to slice), and outcome running, "
         "done, ended_early or incomplete (also when no plate had anything to slice), judged by its plates "
@@ -3461,7 +3464,9 @@ void OrcaMCPServer::register_builtin_tools()
                 // run finishes or stops. So "not running" here means the whole slice_all run is over,
                 // not merely that one plate finished, and this is the first moment it is safe to put
                 // the caller's plate back. See s_slice_all_restore_print_index.
-                if (!is_running && s_slice_all_restore_print_index >= 0) {
+                // Not under an arrange or bed fill, which applies its result to the current plate: the plate is
+                // put back by a later call.
+                if (!is_running && s_slice_all_restore_print_index >= 0 && plater->get_ui_job_worker().is_idle()) {
                     const int restore_to            = plate_list.find_plate_by_print_index(s_slice_all_restore_print_index);
                     s_slice_all_restore_print_index = -1;
                     if (restore_to >= 0 && restore_to != plate_list.get_curr_plate_index()) {
@@ -3810,7 +3815,7 @@ void OrcaMCPServer::register_builtin_tools()
         "add_plate",
         ToolCategory::Plates,
         "Add a new plate",
-        "Create a new plate.",
+        "Create a new plate. Refused while an arrange, orient or bed fill runs: it places objects by the plates as they were.",
         {
             {"type", "object"},
             {"properties", nlohmann::json::object()}
@@ -3819,6 +3824,11 @@ void OrcaMCPServer::register_builtin_tools()
             return run_on_main_thread([]() {
                 Plater* plater = wxGetApp().plater();
                 PartPlateList& plate_list = plater->get_partplate_list();
+
+                // An arrange or bed fill places objects by the plates as they were when it started: a plate
+                // added under it moves them (the plate grid re-flows).
+                if (const auto refusal = edit_job_refusal(!plater->get_ui_job_worker().is_idle(), "add_plate"))
+                    return error_response(*refusal);
 
                 // Capture state before creation
                 int previous_plate_count = plate_list.get_plate_count();
@@ -3860,7 +3870,7 @@ void OrcaMCPServer::register_builtin_tools()
         "delete_plate",
         ToolCategory::Plates,
         "Delete a plate; its objects go unplaced",
-        "Delete a plate. Cannot delete the last plate. Objects on it are NOT deleted and NOT moved to another plate: they are moved outside every plate, where get_scene_info lists them under unplaced_objects. Delete them first if you do not want them. "
+        "Delete a plate. Cannot delete the last plate; refused while an arrange, orient or bed fill runs. Objects on it are NOT deleted and NOT moved to another plate: they are moved outside every plate, where get_scene_info lists them under unplaced_objects. Delete them first if you do not want them. "
         "A slice in progress is cancelled, a Slice All run with it (the response says so; call slice_all again).",
         {
             {"type", "object"},
@@ -3876,6 +3886,10 @@ void OrcaMCPServer::register_builtin_tools()
             return run_on_main_thread([plate_index]() {
                 Plater* plater = wxGetApp().plater();
                 PartPlateList& plate_list = plater->get_partplate_list();
+
+                // An arrange or bed fill places objects by the plates as they were when it started.
+                if (const auto refusal = edit_job_refusal(!plater->get_ui_job_worker().is_idle(), "delete_plate"))
+                    return error_response(*refusal);
 
                 // Capture state before deletion
                 int plate_count_before = plate_list.get_plate_count();
@@ -3943,7 +3957,8 @@ void OrcaMCPServer::register_builtin_tools()
         "select_plate",
         ToolCategory::Plates,
         "Make a plate the current one",
-        "Select a plate as current.",
+        "Select a plate as current. Refused while an arrange, orient or bed fill runs: a plate's arrange applies its "
+        "result to the current plate.",
         {
             {"type", "object"},
             {"properties", {
@@ -3984,6 +3999,11 @@ void OrcaMCPServer::register_builtin_tools()
                         {"note", "Already on plate " + std::to_string(plate_index) + ", no change needed."}
                     };
                 }
+
+                // A plate's arrange applies its result to the current plate (postprocess_bed_index_for_current_plate):
+                // another plate selected under it takes the arranged objects.
+                if (const auto refusal = edit_job_refusal(!plater->get_ui_job_worker().is_idle(), "select_plate"))
+                    return error_response(*refusal);
 
                 int result = plater->select_plate(plate_index);
                 int current_plate = plate_list.get_curr_plate_index();
@@ -4161,7 +4181,7 @@ void OrcaMCPServer::register_builtin_tools()
                 if (after.printed) {
                     PartPlate* plate = plate_list.get_plate(index);
                     const DynamicPrintConfig& print_cfg = wxGetApp().preset_bundle->prints.get_edited_preset().config;
-                    for (ModelObject* obj : plate->get_objects_on_this_plate()) {
+                    for (ModelObject* obj : objects_on_plate(*plate)) {
                         const InstancesOnPlate here = instances_on_plate(*obj, model_object_index(obj), *plate);
                         const ObjectFootprint  fp   = OrcaMCPPlateUtils::GetObjectFootprint(*obj, plate_box_of(*obj, here), print_cfg);
                         if (OrcaMCP::footprints_overlap(after.footprint, fp.rect))
@@ -4932,7 +4952,8 @@ void OrcaMCPServer::register_builtin_tools()
         ToolCategory::Transforms,
         "Copy an object as instances or objects",
         "Clone object. duplicate=true for independent copies. The copies are placed by an arrange of the "
-        "destination plate, and the answer comes once it has been applied: objects lists every object on "
+        "destination plate, one undo step with the copies, and the answer comes once it has been applied (the arrange re-sorts "
+        "the objects: the ids given are those after it, and object_id_changes lists every object whose object_id changed): objects lists every object on "
         "that plate with its placement. Past the bridge's cap the arrange is still running (status "
         "arrange_started, finished false; get_slicing_status's ui_job says when it has finished); refused, "
         "with nothing copied, while another job runs.",
@@ -4983,6 +5004,9 @@ void OrcaMCPServer::register_builtin_tools()
             nlohmann::json                result;
             std::shared_ptr<UiJobOutcome> outcome;
             std::vector<ObjectTransforms> scope;
+            std::vector<ObjectID>         order; // before the arrange, which re-sorts the objects
+            ObjectID                      source_id;
+            std::vector<ObjectID>         new_ids;  // duplicates: the new objects
             const nlohmann::json refusal = run_on_main_thread([&]() -> nlohmann::json {
                 Plater* plater = wxGetApp().plater();
                 Model& model = plater->model();
@@ -5010,11 +5034,16 @@ void OrcaMCPServer::register_builtin_tools()
                         throw std::runtime_error("Invalid destination_plate: " + std::to_string(actual_destination) +
                                                  " (only " + std::to_string(plate_count) + " plates exist)");
                     }
-                    // Select destination plate before cloning
+                    // Select destination plate before cloning; selecting is not an edit of its own.
+                    Plater::SuppressSnapshots not_an_edit(plater);
                     plater->select_plate(actual_destination);
                 }
 
+                // One undo step for the copies and the arrange that places them, taken before either: the
+                // arrange's own step came after the copies, so undo took back only the arrange.
+                plater->take_snapshot("Selection-clone");
                 ModelObject* obj = model.objects[object_id];
+                source_id        = obj->id();
 
                 if (duplicate) {
                     // Create independent copies - each gets its own object_id
@@ -5042,6 +5071,7 @@ void OrcaMCPServer::register_builtin_tools()
 
                         int new_id = static_cast<int>(model.objects.size()) - 1;
                         new_object_ids.push_back(new_id);
+                        new_ids.push_back(new_obj->id());
 
                         // Register with GUI object list
                         wxGetApp().obj_list()->add_object_to_list(new_id, false, true, false);
@@ -5052,7 +5082,8 @@ void OrcaMCPServer::register_builtin_tools()
 
                     // Arrange to place the new objects on the destination plate
                     scope   = current_plate_objects(*plater);
-                    outcome = start_ui_job(*plater, UiJobKind::arrange, Job::PREPARE_STATE_MENU);
+                    order   = object_order(model);
+                    outcome = start_ui_job(*plater, UiJobKind::arrange, Job::PREPARE_STATE_MENU, /*take_snapshot=*/false);
 
                     // Build enhanced response with clear metadata
                     result = {
@@ -5105,7 +5136,8 @@ void OrcaMCPServer::register_builtin_tools()
 
                     // Arrange to place the new instances on the destination plate
                     scope   = current_plate_objects(*plater);
-                    outcome = start_ui_job(*plater, UiJobKind::arrange, Job::PREPARE_STATE_MENU);
+                    order   = object_order(model);
+                    outcome = start_ui_job(*plater, UiJobKind::arrange, Job::PREPARE_STATE_MENU, /*take_snapshot=*/false);
 
                     // Build enhanced response with clear metadata
                     result = {
@@ -5129,12 +5161,22 @@ void OrcaMCPServer::register_builtin_tools()
             });
             if (!refusal.is_null())
                 return refusal;
-            return answer_after_ui_job(*outcome, [result, scope, include_preview]() -> nlohmann::json {
+            return answer_after_ui_job(*outcome, [result, scope, order, source_id, new_ids, include_preview]() -> nlohmann::json {
                 nlohmann::json answer = result;
+                // The indices after the arrange, which re-sorts the objects.
+                const Model& model = wxGetApp().plater()->model();
+                answer[answer.contains("source_object_id") ? "source_object_id" : "object_id"] = object_index_of(model, source_id);
+                if (answer.contains("new_object_ids")) {
+                    nlohmann::json ids = nlohmann::json::array();
+                    for (const ObjectID& id : new_ids)
+                        ids.push_back(object_index_of(model, id));
+                    answer["new_object_ids"] = ids;
+                }
                 nlohmann::json objects = nlohmann::json::array();
                 for (const ObjectTransforms& before : scope)
                     objects.push_back(placement_after_job(before));
-                answer["objects"]         = objects;
+                answer["objects"]           = objects;
+                answer["object_id_changes"] = object_id_changes(order, wxGetApp().plater()->model());
                 answer["active_warnings"] = get_active_warnings_json(wxGetApp().plater());
                 if (include_preview) {
                     add_turntable_preview_if_requested(answer, true);
@@ -5267,14 +5309,16 @@ void OrcaMCPServer::register_builtin_tools()
     register_tool({
         "delete_object",
         ToolCategory::Transforms,
-        "Remove an object or one of its parts",
+        "Remove an object, a part or an instance",
         "Remove an object from the scene, or with volume_id one of its volumes (a part, modifier, negative "
-        "or support volume), as the object list's Delete does, in one undo step. Objects after a deleted "
-        "one move down by one. Deleting a piece of a cut ends the cut's link for its other pieces "
+        "or support volume), or with instance_id one of its instances (linked copies), as the object list's "
+        "Delete does, in one undo step. Objects after a deleted one move down by one, and so do instances "
+        "after a deleted instance; an object's only instance is the object (delete it without instance_id). "
+        "Deleting a piece of a cut ends the cut's link for its other pieces "
         "(cut_info_invalidated_for). An object's last solid part is not deleted on its own (delete the "
         "object), nor a cut object's solid part until invalidate_cut_info. When deleting a volume leaves "
         "one, its settings move to the object (settings_moved_to_object), as the list does. An open toolbar "
-        "tool is closed first (closed_toolbar_tool). Refused while an arrange or orient runs.",
+        "tool is closed first (closed_toolbar_tool). Refused while an arrange, orient or bed fill runs.",
         {
             {"type", "object"},
             {"properties", {
@@ -5286,6 +5330,12 @@ void OrcaMCPServer::register_builtin_tools()
                     {"type", "integer"},
                     {"minimum", 0},
                     {"description", "Delete this volume (as get_object_info lists them) instead of the object"}
+                }},
+                {"instance_id", {
+                    {"type", "integer"},
+                    {"minimum", 0},
+                    {"description", "Delete this instance (as get_object_info's instance_placement lists them) instead of the "
+                                    "object; not with volume_id"}
                 }},
                 {"include_preview", {
                     {"type", "boolean"},
@@ -5474,7 +5524,7 @@ void OrcaMCPServer::register_builtin_tools()
         "get_object_info reports -- the object's own rotation is accounted for. keep: below, above, "
         "or both. The app's own cut: the pieces are the last objects afterwards (new_object_ids), each on "
         "the plate, and the original's index is free, so every object after it moves down by one. One undo "
-        "step. Refused while an arrange or orient runs; an open toolbar tool is closed first "
+        "step. Refused while an arrange, orient or bed fill runs; an open toolbar tool is closed first "
         "(closed_toolbar_tool).",
         {
             {"type", "object"},
@@ -5666,6 +5716,8 @@ void OrcaMCPServer::register_builtin_tools()
     register_paint_tools();
     register_mesh_tools();
     register_part_tools();
+    register_arrange_tools();
+    register_plate_tools();
     register_bridge_tools();
 
     BOOST_LOG_TRIVIAL(info) << "OrcaMCPServer: Registered " << s_tools.size() << " tools";

@@ -27,7 +27,7 @@ namespace GUI { namespace OrcaMCP {
 
 // ---- Reading a call ----
 
-// Why an edit must wait, or nothing: while an arrange or orient runs (`ui_job_running`) the job finalizes
+// Why an edit must wait, or nothing: while an arrange, orient or bed fill runs (`ui_job_running`) the job finalizes
 // through the objects it started on, and an edit that deletes one leaves it a freed instance.
 std::optional<std::string> edit_job_refusal(bool ui_job_running, const std::string& tool);
 

@@ -1,4 +1,5 @@
 #include "OrcaMCPPlateUtils.hpp"
+#include "OrcaMCPPlateTools.hpp"
 #include "OrcaMCPInstanceBox.hpp"
 #include "OrcaMCPImageFiles.hpp"
 #include "OrcaMCPPlateOccupancy.hpp"
@@ -1056,7 +1057,9 @@ nlohmann::json OrcaMCPPlateUtils::PlateJson(const PlateEntry& plate)
         {"prime_tower", plate.prime_tower},
         {"excluded_areas", plate.excluded_areas},
         {"occupancy", plate.occupancy},
-        {"occupancy_frame", "plate_mm"}
+        {"occupancy_frame", "plate_mm"},
+        {"settings", plate.settings},
+        {"effective", plate.effective}
     };
 }
 
@@ -1096,6 +1099,9 @@ nlohmann::json OrcaMCPPlateUtils::GetPlates(bool with_model_object_features, con
         entry.index      = plate->get_index();
         entry.is_current = entry.index == plate_list.get_curr_plate_index();
         entry.box        = plate->get_plate_box();
+        const nlohmann::json plate_settings = OrcaMCP::plate_settings_entry_json(*plate);
+        entry.settings   = plate_settings.at("settings");
+        entry.effective  = plate_settings.at("effective");
 
         // Everything standing on this plate, in one list and one frame: the model objects, the
         // prime tower, and the printer's own excluded bed areas. An agent looking for free space
@@ -1105,7 +1111,7 @@ nlohmann::json OrcaMCPPlateUtils::GetPlates(bool with_model_object_features, con
 
         // Loop through each ModelObject (now deduplicated)
         nlohmann::json objects_info = nlohmann::json::array();
-        for (const auto& obj : plate->get_objects_on_this_plate()) {
+        for (const auto& obj : OrcaMCP::objects_on_plate(*plate)) {
             const int object_index = OrcaMCP::model_object_index(obj);  // the index transform tools take
             // This plate's instances only: an object with copies on other plates is described here by
             // the copies standing here, and says which they are. Its bounding box and footprint used to
@@ -1331,7 +1337,7 @@ nlohmann::json OrcaMCPPlateUtils::CaptureTurntablePreview(int plate_index, int v
     // The box of what stands on this plate: each object's instances here (instances_on_plate), not
     // every copy it has on every plate, which aimed the camera between plates.
     BoundingBoxf3 objects_box;
-    for (const ModelObject* obj : plate->get_objects_on_this_plate()) {
+    for (const ModelObject* obj : OrcaMCP::objects_on_plate(*plate)) {
         const OrcaMCP::InstancesOnPlate here = OrcaMCP::instances_on_plate(*obj, OrcaMCP::model_object_index(obj), *plate);
         objects_box.merge(OrcaMCP::plate_box_of(*obj, here));
     }

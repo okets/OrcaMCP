@@ -182,7 +182,7 @@ std::vector<NextStep> slice_start_next_steps(const SliceStartReport& report, std
                  nullptr}};
     if (report.reason == "busy_job")
         return {{"get_slicing_status",
-                 "an arrange or an orient holds the app, which wait_for_slice does not wait for: call slice_all again once "
+                 "an arrange, an orient or a bed fill holds the app, which wait_for_slice does not wait for: call slice_all again once "
                  "get_slicing_status's ui_job is null",
                  nullptr}};
     if (report.reason == "already_sliced" && sliced_plate)
@@ -236,6 +236,80 @@ std::vector<NextStep> support_paint_next_steps(int object_id, bool support_enabl
                  ", so support is generated only where painted (an (auto) type would also support every other overhang)",
              {{"object_id", object_id},
               {"settings", {{{"key", "enable_support"}, {"value", "1"}}, {{"key", "support_type"}, {"value", manual}}}}}}};
+}
+
+namespace {
+
+// "instance 3" / "instances 3 and 4".
+std::string named_ids(const std::string& noun, const std::vector<int>& ids)
+{
+    return noun + (ids.size() == 1 ? " " : "s ") + listed_ids(ids);
+}
+
+} // namespace
+
+std::vector<NextStep> added_instances_next_steps(int object_id, int plate_index, const std::vector<int>& crowded,
+                                                 const std::vector<int>& partly_off, const std::vector<int>& on_no_plate)
+{
+    const std::string step = "the GUI's Add instance puts each new instance a small step from the last one, not where there is room: ";
+    const std::string object = " of object " + std::to_string(object_id);
+    if (!on_no_plate.empty())
+        return {{"arrange_objects",
+                 step + named_ids("instance", on_no_plate) + object + (on_no_plate.size() == 1 ? " stands" : " stand") +
+                     " on no plate, and a plate's arrange takes only the instances it holds: arranging every plate places them (it may "
+                     "add plates)",
+                 {{"all_plates", true}}}};
+    if (crowded.empty() && partly_off.empty())
+        return {};
+    std::string why = step;
+    if (!crowded.empty())
+        why += named_ids("instance", crowded) + object + (crowded.size() == 1 ? " overlaps" : " overlap") + " another";
+    if (!partly_off.empty())
+        why += std::string(crowded.empty() ? "" : ", and ") + named_ids("instance", partly_off) + (partly_off.size() == 1 ? " stands" : " stand") +
+               " partly off the plate";
+    return {{"arrange_objects", why + ": it spaces plate " + std::to_string(plate_index) + "'s objects", {{"plate_index", plate_index}}}};
+}
+
+std::vector<NextStep> unplaced_instances_next_steps(int object_id, const std::vector<int>& on_no_plate, int instance_count)
+{
+    if (on_no_plate.empty())
+        return {};
+    const std::string what = named_ids("instance", on_no_plate) + " of object " + std::to_string(object_id) +
+                             (on_no_plate.size() == 1 ? " stands" : " stand") + " on no plate: the fill's estimate added more than its plate's arrange fit";
+    std::vector<NextStep> steps = {{"arrange_objects", what + "; arranging every plate puts them on plates of their own (it may add plates)",
+                                    {{"all_plates", true}}}};
+    const int  kept     = instance_count - int(on_no_plate.size());
+    bool       the_last = true;
+    for (std::size_t i = 0; i < on_no_plate.size(); ++i)
+        the_last = the_last && on_no_plate[i] == kept + int(i);
+    if (the_last)
+        steps.push_back({"set_instance_count", what + "; this removes them, the last " + std::to_string(on_no_plate.size()),
+                         {{"object_id", object_id}, {"count", kept}}});
+    else
+        steps.push_back({"delete_object", what + "; this removes the highest, and the ids after a deleted one shift down: call it for "
+                                                 "each, highest first",
+                         {{"object_id", object_id}, {"instance_id", on_no_plate.back()}}});
+    return steps;
+}
+
+std::vector<NextStep> print_by_object_next_steps(int plate_index)
+{
+    return {{"arrange_objects",
+             "plate " + std::to_string(plate_index) + " now prints by object, each object whole before the next, so the print head must "
+             "clear the ones already printed: an arrange of the plate spaces them for it, as the app's notice suggests",
+             {{"plate_index", plate_index}}}};
+}
+
+std::vector<NextStep> vase_settings_next_steps(const std::vector<int>& object_ids, const std::vector<std::string>& first_keys)
+{
+    if (object_ids.empty() || first_keys.empty())
+        return {};
+    return {{"reset_object_config",
+             named_ids("object", object_ids) + (object_ids.size() == 1 ? " still carries" : " still carry") +
+                 " the object settings spiral vase gives (one wall, no top shell, no infill), which print thin and open without "
+                 "the vase: this removes them from object " + std::to_string(object_ids.front()) +
+                 (object_ids.size() > 1 ? "; call it for each" : ""),
+             {{"object_id", object_ids.front()}, {"keys", first_keys}}}};
 }
 
 }}} // namespace Slic3r::GUI::OrcaMCP

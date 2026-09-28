@@ -212,7 +212,7 @@ FirstLayerPlan collect_first_layer(PartPlate& plate, const DynamicPrintConfig& f
     }
 
     std::vector<FootprintInput> footprints;
-    for (const ModelObject* mo : plate.get_objects_on_this_plate()) {
+    for (const ModelObject* mo : objects_on_plate(plate)) {
         const int             object_index = model_object_index(mo);
         const InstancesOnPlate here         = instances_on_plate(*mo, object_index, plate);
         const ObjectFootprint  fp           = OrcaMCPPlateUtils::GetObjectFootprint(*mo, plate_box_of(*mo, here), full_config);

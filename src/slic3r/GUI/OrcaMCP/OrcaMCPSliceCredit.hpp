@@ -113,7 +113,7 @@ struct SliceAllEndedEarly
 // The run_ended outcome's: the plate could not be started while the UI worker was busy.
 inline SliceAllEndedEarly slice_all_ended_by_busy_worker(int plate_index)
 {
-    return {plate_index, "another job (an arrange or an orient) was running"};
+    return {plate_index, "another job (an arrange, an orient or a bed fill) was running"};
 }
 inline std::string slice_all_ended_early_text(const SliceAllEndedEarly& ended)
 {

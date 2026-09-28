@@ -447,6 +447,77 @@ TEST_CASE("The wait lets go at once when the app quits", "[McpUiJob][orcamcp]")
     CHECK(waited == UiJobWait::quitting);
 }
 
+TEST_CASE("Waiting until something is done ends when it is, at the cap, or on a quit", "[McpUiJob][orcamcp]")
+{
+    std::atomic<bool> done{false};
+    std::thread       finish([&done] {
+        std::this_thread::sleep_for(100ms);
+        done.store(true);
+    });
+    CHECK(wait_until([&done] { return done.load(); }, k_bound) == UiJobWait::finished);
+    finish.join();
+    CHECK(wait_until([] { return false; }, 100ms) == UiJobWait::timed_out);
+    const Slic3r::ScopedThreadCancelCheck check([] { return true; });
+    CHECK(wait_until([] { return false; }, k_bound) == UiJobWait::quitting);
+}
+
+TEST_CASE("A job whose finalize starts another leaves the worker busy after it is reported finished", "[McpUiJob][orcamcp]")
+{
+    // A bed fill's finalize starts the plate's arrange (Plater::arrange): its outcome says finished while
+    // the arrange is queued, so the tool waits for the worker to go idle too.
+    BoostThreadWorker worker{nullptr, "test"};
+    auto              follow_up = std::make_shared<RecordingJob>();
+    struct Chaining : Job
+    {
+        Worker&                       worker;
+        std::shared_ptr<RecordingJob> next;
+        Chaining(Worker& worker, std::shared_ptr<RecordingJob> next) : worker(worker), next(std::move(next)) {}
+        void process(Ctl&) override {}
+        void finalize(bool, std::exception_ptr&) override { worker.push(next); }
+    };
+    auto outcome = std::make_shared<UiJobOutcome>(UiJobKind::fill_bed);
+    worker.push(std::make_shared<ReportingJob>(std::make_unique<Chaining>(worker, follow_up), outcome));
+    const auto deadline = std::chrono::steady_clock::now() + k_bound;
+    while (outcome->state() == State::pending && std::chrono::steady_clock::now() < deadline) {
+        worker.process_events();
+        std::this_thread::sleep_for(2ms);
+    }
+    REQUIRE(outcome->state() == State::finished);
+    CHECK_FALSE(worker.is_idle());
+    REQUIRE(pump_until_idle(worker, k_bound));
+    CHECK(follow_up->finalized);
+}
+
+TEST_CASE("Every object an arrange re-sorted is named, those on plates it did not arrange too", "[McpUiJob][orcamcp]")
+{
+    // A, B and D on the arranged plate, C elsewhere: the re-sort gives A, C, B, D, and B moved though
+    // the arrange did not reach it.
+    Slic3r::Model model;
+    for (const char* name : {"A", "B", "C", "D"})
+        model.add_object()->name = name;
+    const std::vector<Slic3r::ObjectID> before = object_order(model);
+    std::swap(model.objects[1], model.objects[2]);
+
+    CHECK(object_id_changes(before, model) ==
+          nlohmann::json::array({{{"object_id", 1}, {"previous_object_id", 2}, {"name", "C"}},
+                                 {{"object_id", 2}, {"previous_object_id", 1}, {"name", "B"}}}));
+    CHECK(object_id_changes(object_order(model), model).empty());
+    CHECK(object_index_of(model, before[1]) == 2);
+    CHECK(object_index_of(model, Slic3r::ObjectID()) == -1);
+}
+
+TEST_CASE("An object deleted since is left out of the renumbered objects", "[McpUiJob][orcamcp]")
+{
+    Slic3r::Model model;
+    for (const char* name : {"A", "B", "C"})
+        model.add_object()->name = name;
+    const std::vector<Slic3r::ObjectID> before = object_order(model);
+    model.delete_object(size_t(0));
+    CHECK(object_id_changes(before, model) ==
+          nlohmann::json::array({{{"object_id", 0}, {"previous_object_id", 1}, {"name", "B"}},
+                                 {{"object_id", 1}, {"previous_object_id", 2}, {"name", "C"}}}));
+}
+
 // ==================== WHAT THE TOOL ANSWERS ====================
 
 TEST_CASE("A job that did not finish is answered with what stopped it and what to do", "[McpUiJob][orcamcp]")
@@ -471,12 +542,20 @@ TEST_CASE("A job that did not finish is answered with what stopped it and what t
           nlohmann::json{{"status", "arrange_started"},
                          {"finished", false},
                          {"message", "OrcaMCP began quitting while the arrange ran, so it may not have finished."}});
+    CHECK(ui_job_unfinished_json(UiJobKind::fill_bed, UiJobWait::timed_out, 10.0, "") ==
+          nlohmann::json{{"status", "fill_bed_started"},
+                         {"finished", false},
+                         {"ui_job", "filling_bed"},
+                         {"message", "Still filling the bed after 10.0 s: get_slicing_status's ui_job stays \"filling_bed\" until "
+                                     "it has finished; then get_scene_info reads the result."}});
+    CHECK(ui_job_unfinished_json(UiJobKind::fill_bed, UiJobWait::cancelled, 1.0, "").at("message").get<std::string>().find(
+              "cancelled the bed fill") != std::string::npos);
 }
 
 TEST_CASE("A tool asked to start a job while another runs says how to tell when it has ended", "[McpUiJob][orcamcp]")
 {
     CHECK(ui_job_busy_message("auto_orient") ==
-          "another job (an arrange or an orient) is running: poll get_slicing_status until ui_job is null, then call "
+          "another job (an arrange, an orient or a bed fill) is running: poll get_slicing_status until ui_job is null, then call "
           "auto_orient again");
 }
 
@@ -489,6 +568,8 @@ TEST_CASE("get_slicing_status names the UI job that is running", "[McpUiJob][orc
     CHECK(ui_job_json(false, &arranging) == "arranging");
     CHECK(ui_job_json(false, &ended) == "other");   // the worker holds a job MCP did not start
     CHECK(ui_job_json(false, nullptr) == "other");
+    UiJobOutcome filling(UiJobKind::fill_bed);
+    CHECK(ui_job_json(false, &filling) == "filling_bed");
 }
 
 TEST_CASE("The wait's cap is what the bridge sends, 105 s without it", "[McpUiJob][orcamcp]")

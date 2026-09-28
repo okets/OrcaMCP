@@ -332,6 +332,65 @@ TEST_CASE("An assembly is pointed at get_object_info, to list its volumes", "[Mc
     CHECK(steps[0].arguments == json{{"object_id", 5}});
 }
 
+TEST_CASE("Added instances that overlap or stand partly off their plate point at an arrange of that plate", "[McpNextSteps][orcamcp]")
+{
+    const std::vector<NextStep> steps = added_instances_next_steps(3, 1, {2, 3}, {}, {});
+    REQUIRE(steps.size() == 1);
+    CHECK(steps[0].tool == "arrange_objects");
+    CHECK(steps[0].arguments == json{{"plate_index", 1}});
+    CHECK(steps[0].why.find("instances 2 and 3 of object 3 overlap another") != std::string::npos);
+    CHECK(added_instances_next_steps(3, 1, {}, {4}, {})[0].why.find("instance 4 stands partly off the plate") != std::string::npos);
+}
+
+TEST_CASE("Added instances on no plate point at an arrange of every plate, which alone places them", "[McpNextSteps][orcamcp]")
+{
+    // A plate's arrange leaves an instance on no plate where it is (ArrangeJob::prepare_partplate).
+    const std::vector<NextStep> steps = added_instances_next_steps(3, 0, {2}, {}, {5, 6});
+    REQUIRE(steps.size() == 1);
+    CHECK(steps[0].arguments == json{{"all_plates", true}});
+    CHECK(steps[0].why.find("instances 5 and 6 of object 3 stand on no plate") != std::string::npos);
+}
+
+TEST_CASE("A fill's instances on no plate point at an arrange of every plate, and at their removal", "[McpNextSteps][orcamcp]")
+{
+    // The last ones: set_instance_count removes them.
+    std::vector<NextStep> steps = unplaced_instances_next_steps(2, {8, 9}, 10);
+    REQUIRE(steps.size() == 2);
+    CHECK(steps[0].tool == "arrange_objects");
+    CHECK(steps[0].arguments == json{{"all_plates", true}});
+    CHECK(steps[1].tool == "set_instance_count");
+    CHECK(steps[1].arguments == json{{"object_id", 2}, {"count", 8}});
+    // Others: delete_object, highest first.
+    steps = unplaced_instances_next_steps(2, {3, 9}, 10);
+    REQUIRE(steps.size() == 2);
+    CHECK(steps[1].tool == "delete_object");
+    CHECK(steps[1].arguments == json{{"object_id", 2}, {"instance_id", 9}});
+    CHECK(unplaced_instances_next_steps(2, {}, 10).empty());
+}
+
+TEST_CASE("Added instances that stand clear need no next step", "[McpNextSteps][orcamcp]")
+{
+    CHECK(added_instances_next_steps(3, 1, {}, {}, {}).empty());
+}
+
+TEST_CASE("A plate that now prints by object points at an arrange of that plate", "[McpNextSteps][orcamcp]")
+{
+    const std::vector<NextStep> steps = print_by_object_next_steps(2);
+    REQUIRE(steps.size() == 1);
+    CHECK(steps[0].tool == "arrange_objects");
+    CHECK(steps[0].arguments == json{{"plate_index", 2}});
+}
+
+TEST_CASE("Vase settings left on objects point at their reset, naming every object", "[McpNextSteps][orcamcp]")
+{
+    const std::vector<NextStep> steps = vase_settings_next_steps({1, 4}, {"top_shell_layers", "wall_loops"});
+    REQUIRE(steps.size() == 1);
+    CHECK(steps[0].tool == "reset_object_config");
+    CHECK(steps[0].arguments == json{{"object_id", 1}, {"keys", {"top_shell_layers", "wall_loops"}}});
+    CHECK(steps[0].why.find("objects 1 and 4 still carry") != std::string::npos);
+    CHECK(vase_settings_next_steps({}, {}).empty());
+}
+
 TEST_CASE("Every next step names a real tool, with arguments its schema accepts", "[McpNextSteps][orcamcp]")
 {
     std::vector<NextStep> steps = Scene({cube_missing_facet(), separate_cubes(2)}).steps();
@@ -355,7 +414,17 @@ TEST_CASE("Every next step names a real tool, with arguments its schema accepts"
         steps.push_back(std::move(step));
     for (NextStep& step : assembled_next_steps(0))
         steps.push_back(std::move(step));
-    REQUIRE(steps.size() == 15);
+    for (const std::vector<int>& on_no_plate : {std::vector<int>{}, std::vector<int>{3}})
+        for (NextStep& step : added_instances_next_steps(0, 1, {1}, {2}, on_no_plate))
+            steps.push_back(std::move(step));
+    for (const std::vector<int>& on_no_plate : {std::vector<int>{8, 9}, std::vector<int>{3, 9}})
+        for (NextStep& step : unplaced_instances_next_steps(0, on_no_plate, 10))
+            steps.push_back(std::move(step));
+    for (NextStep& step : print_by_object_next_steps(1))
+        steps.push_back(std::move(step));
+    for (NextStep& step : vase_settings_next_steps({0, 2}, {"sparse_infill_density", "wall_loops"}))
+        steps.push_back(std::move(step));
+    REQUIRE(steps.size() == 23);
 
     const mcp_tool_references::ToolNames names(OrcaMCPServer::registered_tools());
     json                                 response = json::object();

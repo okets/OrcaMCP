@@ -59,6 +59,30 @@ std::vector<NextStep> mesh_repair_next_steps(const ModelObject& object, int obje
 // deletes one).
 std::vector<NextStep> split_parts_next_steps(int object_id, int volume_id, const std::vector<int>& pieces);
 
+// What set_instance_count's added instances lead to: arrange_objects of every plate when some of them
+// (`on_no_plate`) stand on no plate -- a plate's arrange takes only the instances it holds, so only the
+// arrange of every plate places them -- else arrange_objects of plate `plate_index` when some overlap
+// another object or instance there (`crowded`) or stand partly off it (`partly_off`): the GUI's Add
+// instance puts each one a small step from the last, not where there is room. Nothing when every added
+// one stands clear.
+std::vector<NextStep> added_instances_next_steps(int object_id, int plate_index, const std::vector<int>& crowded,
+                                                 const std::vector<int>& partly_off, const std::vector<int>& on_no_plate);
+
+// What fill_bed_with_instances' instances on no plate (`on_no_plate`, of the object's `instance_count`)
+// lead to: the fill's estimate added more than its plate's arrange fit. arrange_objects of every plate
+// puts them on plates of their own; or they are removed -- set_instance_count when they are the last
+// ones, else delete_object of the highest (instance ids after a deleted one shift down).
+std::vector<NextStep> unplaced_instances_next_steps(int object_id, const std::vector<int>& on_no_plate, int instance_count);
+
+// What set_plate_settings' print_sequence "by object" on plate `plate_index` leads to: arrange_objects of
+// that plate, which spaces objects for printing one after another, as the app's notice suggests.
+std::vector<NextStep> print_by_object_next_steps(int plate_index);
+
+// What turning a plate's spiral vase off leads to: reset_object_config of the objects (`object_ids`) that
+// still carry the object settings the vase gave them (`first_keys`: the first one's), which a plate
+// without the vase prints thin-walled and open. Nothing when none carries them.
+std::vector<NextStep> vase_settings_next_steps(const std::vector<int>& object_ids, const std::vector<std::string>& first_keys);
+
 // What a new or retyped volume `volume_id` of type `type_name` leads to: move_object with volume_id when
 // it stands `beside_object` (add_volume's primitive, at the object's right-front corner), and, for a
 // modifier, set_object_config with volume_id: a modifier changes only the settings it is given.
