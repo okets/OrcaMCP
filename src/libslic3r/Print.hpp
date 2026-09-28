@@ -1223,6 +1223,10 @@ public:
 
     std::tuple<float, float> object_skirt_offset(double margin_height = 0) const;
 
+private:
+    // Orca: one pass of apply(), which runs a second when the pass changed the filaments used (PrintApply.cpp).
+    ApplyStatus         apply_once(const Model &model, DynamicPrintConfig config, bool extruder_applied);
+
 protected:
     struct FilamentIndexKey
     {

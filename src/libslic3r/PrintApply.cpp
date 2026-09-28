@@ -1195,7 +1195,25 @@ static PrintObjectRegions* generate_print_object_regions(
     return out.release();
 }
 
+// Orca: the config is normalized by the filaments this Print uses (normalize_fdm_2: the prime tower off for one
+// filament, independent support layer height off with the tower), read before the model it is given is applied:
+// from the model and objects of the last apply. An apply that changes the filaments used -- a filament change at a
+// layer added or deleted, an object moved to another filament -- normalized by the old set, and its late pass can
+// only turn options off, so a print that gained a filament was sliced with no prime tower, and the next apply,
+// normalizing by the new set, invalidated that slice. So when the filaments used changed, the same inputs are
+// applied once more, now normalized by the filaments they use: what the next apply would have done, before any
+// slice is made.
 Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_config, bool extruder_applied)
+{
+    const std::vector<unsigned int> used_before = this->extruders(true);
+    const ApplyStatus               first       = this->apply_once(model, new_full_config, extruder_applied);
+    if (this->extruders(true) == used_before)
+        return first;
+    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": the filaments used changed, applying again normalized by them";
+    return std::max(first, this->apply_once(model, std::move(new_full_config), extruder_applied));
+}
+
+Print::ApplyStatus Print::apply_once(const Model &model, DynamicPrintConfig new_full_config, bool extruder_applied)
 {
 #ifdef _DEBUG
     check_model_ids_validity(model);

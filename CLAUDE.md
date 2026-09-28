@@ -1297,6 +1297,7 @@ echo "AZ Export plate sliced file reports a failed write as exported, and leaves
 echo "BA storing an STL returns true whatever the write did (0 = fixed) / the STL export and / the toolpath export take a cancelled file dialog's \"<cancel>\" for the file to write (rel2506/14): $(U src/libslic3r/Format/STL.cpp | grep -c 'FIXME returning false even if write failed') / $(U src/slic3r/GUI/Plater.cpp | awk '/^void Plater::export_stl\(/{f=1} f&&/path.empty\(\)/{print ($0 ~ /<cancel>/ ? "no" : "yes"); d=1; exit} END{if(!d) print "unknown"}') / $(U src/slic3r/GUI/Plater.cpp | awk '/^void Plater::export_toolpaths_to_obj/{f=1} f&&/path.empty\(\)/{print ($0 ~ /<cancel>/ ? "no" : "yes"); d=1; exit} END{if(!d) print "unknown"}')"
 echo "BB the layer slider's change handler holds what follows a change inline, which MCP's layer G-code tools need to run too (rel2506/14; a move): $(U src/slic3r/GUI/Plater.cpp | awk '/EVT_CUSTOMEVT_TICKSCHANGED, \[this\]/{f=1} f&&/on_layer_gcodes_changed/{print "no"; d=1; exit} f&&/set_plater_dirty\(true\)/{print "yes"; d=1; exit} END{if(!d) print "unknown"}')"
 echo "BC Reload from disk returns on a file that fails to load, the scene not updated / takes its undo step before loading (0 = bug) / Reload All takes one up front / where it finds files is inline (0 = move not upstream) / no native file or folder dialog on an MCP path takes the call's path (0 = keep ours) (rel2506/14): $(U src/slic3r/GUI/Plater.cpp | awk '/^void Plater::priv::reload_from_disk\(/{f=1} f&&/\/\/ error while loading/{getline; print ($0 ~ /return;/ ? "yes" : "no"); d=1; exit} END{if(!d) print "unknown"}') / $(U src/slic3r/GUI/Plater.cpp | grep -c 'std::optional<Plater::TakeSnapshot> snapshot') / $(U src/slic3r/GUI/Plater.cpp | awk '/^void Plater::priv::reload_all_from_disk/{f=1} f&&/TakeSnapshot/{print "yes"; d=1; exit} f&&/^}/{print "no"; d=1; exit} END{if(!d) print "unknown"}') / $(U src/slic3r/GUI/Plater.cpp | grep -c 'ReloadSources reload_sources') / $(U src/slic3r/GUI/Plater.cpp | grep -c 'mcp_answer_path_dialog')"
+echo "BD Print::apply normalizes the config by the filaments the last apply used, and its late pass only turns options off, so the apply that adds or drops a filament slices with the old prime tower and the next one discards that slice (rel2506/14; 0 = bug): $(U src/libslic3r/PrintApply.cpp | grep -c 'apply_once')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -1781,6 +1782,21 @@ AZ and BA take the tool call's path under MCP (`mcp_answer_path_dialog`: six sit
 the answer once read, so a second missing file cancels the reload before anything changed). On "no" or a
 non-zero, take upstream's and keep the MCP branches; re-run `slic3rutils_tests "[McpSourceFiles]"`, then
 reload two objects, one from a file made unreadable: the other reloads, the scene shows it, one undo step.
+
+Item BD: `Print::apply` normalizes the config by the filaments the print uses (`normalize_fdm_2`: the prime
+tower off for one filament, `independent_support_layer_height` off with the tower), and reads them
+(`extruders(true)`) before it applies the model it is given: from the last apply's objects and custom G-code. Its
+late pass, by the new set, can only turn options off. So the apply that brought in a filament change at a layer
+(or an object on another filament) left the tower off, the slice changed filaments with no tower, and the next
+apply -- MCP's `export_gcode`, the GUI's Export, a status read -- turned it on and invalidated that slice: MCP's
+export refused a plate `wait_for_slice` had just reported done, and the next `slice_all` sliced again. Deleting the
+change did the same the other way. The GUI's Slice then Export slices twice, the first preview and estimate from
+the slice with no tower. The filament maps the slicing thread writes back were suspected and are not the cause:
+the invalidating diff was `enable_prime_tower` and `independent_support_layer_height` (lldb at the apply's
+`print_diff`). Ours applies once more, with the same inputs, when an apply changed the filaments used
+(`Print::apply` around `apply_once`, upstream's body), before any slice is made. On 0, see whether upstream's
+apply now normalizes by the filaments of the model it is given; if so, take it and drop ours, and re-run
+`fff_print_tests "[MultiFilament]"`.
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices

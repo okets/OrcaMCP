@@ -715,3 +715,32 @@ TEST_CASE("Multi-extruder slice stays in bounds with a short max_layer_height", 
     REQUIRE_FALSE(print.objects().front()->layers().empty());
 }
 
+// A filament change at a layer (the layer slider's Change Filament: a ToolChange in the plate's custom
+// G-code) adds a filament to the print. Print::apply decides the prime tower -- off for one filament --
+// from the filaments the print uses, and used to take them from the model it had before this apply: the
+// apply that brought the change in left the tower off, the slice then changed filaments with no tower,
+// and the next apply turned it on and threw that slice away. Deleting the change did the same the other
+// way (independent_support_layer_height).
+TEST_CASE("The apply that brings in a filament change decides the prime tower by it, so the next apply keeps the slice", "[MultiFilament][Print]")
+{
+    const DynamicPrintConfig config = multifilament_config(2, {{"enable_prime_tower", 1}, {"independent_support_layer_height", 1}});
+    Print print;
+    Model model;
+    init_print({cube(20)}, print, model, config);
+    print.apply(model, config);
+    // One object on filament 1: one filament, no tower.
+    REQUIRE_FALSE(print.config().enable_prime_tower.value);
+
+    CustomGCode::Info& plate_gcodes = model.plates_custom_gcodes[model.curr_plate_index];
+    plate_gcodes.mode               = CustomGCode::MultiAsSingle;
+    plate_gcodes.gcodes.push_back({10.0, CustomGCode::ToolChange, 2, "#00FF00", ""});
+    print.apply(model, config);
+    CHECK(print.config().enable_prime_tower.value);
+    CHECK(print.apply(model, config) == PrintBase::APPLY_STATUS_UNCHANGED);
+
+    plate_gcodes.gcodes.clear();
+    print.apply(model, config);
+    CHECK_FALSE(print.config().enable_prime_tower.value);
+    CHECK(print.config().independent_support_layer_height.value);
+    CHECK(print.apply(model, config) == PrintBase::APPLY_STATUS_UNCHANGED);
+}
