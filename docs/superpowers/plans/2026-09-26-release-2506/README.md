@@ -66,9 +66,9 @@ gave were wrong; the prompts carry the corrected facts.
 | 07d | (no prompt file; 07c's agent) | 07c | nine per-tool argument bugs from 07c's audit: rotate relative, one-bound range delete, empty reset keys, flatten's plate-wide orient, clone count, cut keep, config-key category, uniform scale, empty set_temperature | merged and pushed 2026-09-28 (three rounds, 14 commits; merge 85ae40e7fa; Build all green) |
 | 07e | (no prompt file; 07c's agent) | 07d | arrange_objects / auto_orient / flatten_object wait for their job and return the final placement; get_slicing_status reports a running job | merged and pushed 2026-09-28 (three rounds, 9 commits; merge 6b3491f94c); probes AE and AF |
 | 07f | (no prompt file; 07c's agent) | 07e | an object whose instances sit on two plates: a 3MF round trip loses the second plate; on_bed measured over both instances | merged and pushed 2026-09-28 (two rounds, 4 commits; merge e9431bd0c4; Build all green); probe AG |
-| 07g | [The first slice can hang the app](07g-tbb-thread-naming.md) | 07f | `name_tbb_thread_pool_threads_set_locale` (Thread.cpp): a barrier across the TBB pool | merged and pushed 2026-09-28 (two rounds, 3 commits; merge 5c0bbc0278); probe AH |
-| 08 | [Server instructions and hints](08-instructions-and-hints.md) | 01–07g | `initialize`, descriptions, result hints | design done 2026-09-28; the instructions text and decisions A–E are with the user |
-| 09 | [Several instances, switch between them](09-second-instance-crash.md) | 01–08 | port fallback, instance registry (with open file), bridge `list_instances` / `select_instance` | design done 2026-09-28 (read-only, early); nine decisions with the user |
+| 07g | [The first slice can hang the app](07g-tbb-thread-naming.md) | 07f | `name_tbb_thread_pool_threads_set_locale` (Thread.cpp): a barrier across the TBB pool | merged and pushed 2026-09-28 (two rounds, 3 commits; merge 5c0bbc0278; Build all green on every platform); probe AH |
+| 08 | [Server instructions and hints](08-instructions-and-hints.md) | 01–07g | `initialize`, descriptions, result hints | design approved by the user 2026-09-28: instructions text as drafted; next_steps; object_id + internal_id; C, D, E yes. Implementing |
+| 09 | [Several instances, switch between them](09-second-instance-crash.md) | 01–08 | port fallback, instance registry (with open file), bridge `list_instances` / `select_instance` | design approved by the user 2026-09-28 (decisions 1-7 and 9 as recommended; 8: start_orca keeps launching only the installed app). Starts after 08 merges |
 | 10 | [Flashforge print options](../2026-09-27-flashforge-print-options.md) (flow calibration, leveling, time-lapse) | 01–09 | `FlashforgeApi::PrintOptions`, the send dialog, `send_to_printer`, `print_printer_file`, `get_printer_status` | written 2026-09-27 in another session; the user decided 2026-09-28 it runs last, after all other work and right before the version bump. Its live printer steps start real prints: they run only with the user present and on their word at that moment |
 
 If time runs short, the priority is 01, 02, 03, 04b, 05, 08, 04, 06, 07. Anything unfinished moves to the
@@ -113,7 +113,7 @@ roadmap; nothing ships half-done.
   `load_model` calls while the user watches OrcaSlicer, and the user says whether small "Loading..."
   windows pile up next to the main window. If they don't, the ghosts are a locked-screen artefact, and
   the fix (turning off the progress-dialog fade on macOS) is optional. If they do, ship the fix.
-- **09: the multi-instance design.** It goes to the user once all other coding is done.
+- ~~**09: the multi-instance design.**~~ Approved by the user 2026-09-28.
 - **Optional: upstream issues.** The user decides whether to file any. (1) Closing many upstream Yes/No
   dialogs with the close box takes the "proceed" branch (roadmap). (2) The G-code over-height check never
   fires on non-Bambu printers (07b). Warn upstream that parsing `;Z:` alone breaks every non-Bambu
