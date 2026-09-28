@@ -146,6 +146,12 @@ void renumber_filament_settings(DynamicPrintConfig& preset_config, const Filamen
 // painted facets, and every custom G-code item of every plate (a tool change's filament). Upstream's
 // Sidebar::add_custom_filament shifted the objects' and volumes' extruders and paint only.
 void renumber_filaments_after_insert(Model& model, size_t slot);
+// Orca: every plate's custom G-code items as `change` renumbers them, whatever their type. An item that named
+// a deleted slot with no replacement: a tool or colour change is dropped (its filament is gone; upstream drops
+// a tool change), a pause or custom G-code, which only records the filament printing there, stays on slot 1.
+// Plater::on_filaments_delete and renumber_filaments_after_insert call it; upstream renumbered tool changes
+// only, on a delete only, and a merge moved one to its target, numbered twice.
+void renumber_custom_gcodes(Model& model, const FilamentRenumbering& change);
 // The number of recorded repairs the tooltip states: every RepairedMeshErrors field, summed.
 int            repaired_errors_count(const RepairedMeshErrors& errors);
 

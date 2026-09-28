@@ -2955,6 +2955,12 @@ default when `merge_into` is a mixed slot, since they print from a physical fila
 AU: upstream renumbered only the plater's own copy, wrote a part's number into its object, and dropped a
 merged slot's support filaments instead of moving them).
 
+The layer list's custom G-code is renumbered the same way, every item of it, as an add renumbers them: a
+tool change or colour change to the deleted slot moves to `merge_into`; without it, it is dropped (its
+filament is gone, and upstream drops such a tool change too). A pause or custom G-code only records the
+filament printing there, so it stays, on `merge_into` or slot 1 (probe AV: upstream renumbered tool changes
+only, moved only the first to a merged slot, and numbered it twice, so it landed a slot too low).
+
 **Returns:**
 ```json
 {

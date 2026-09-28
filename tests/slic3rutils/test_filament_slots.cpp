@@ -477,3 +477,71 @@ TEST_CASE("the filament numbers a batch of settings may not take are named with 
     CHECK(refused[1].first == "support_filament");
     CHECK(mentions(refused[1].second, "mixed"));
 }
+
+namespace {
+
+using GcodeItems = std::vector<CustomGCode::Item>;
+
+// The plate's items after `change`, as "<type> <filament>" in print_z order.
+std::vector<std::string> gcodes_after(GcodeItems items, const GUI::FilamentRenumbering& change)
+{
+    Model model;
+    model.plates_custom_gcodes[0].gcodes = std::move(items);
+    GUI::renumber_custom_gcodes(model, change);
+    std::vector<std::string> after;
+    for (const CustomGCode::Item& item : model.plates_custom_gcodes[0].gcodes) {
+        const char* type = item.type == CustomGCode::ToolChange  ? "tool" :
+                           item.type == CustomGCode::ColorChange ? "colour" :
+                           item.type == CustomGCode::PausePrint  ? "pause" : "custom";
+        after.push_back(std::string(type) + " " + std::to_string(item.extruder));
+    }
+    return after;
+}
+
+using Items = std::vector<std::string>;
+
+} // namespace
+
+TEST_CASE("merging a slot moves the tool changes to it onto the target, numbered as after the merge", "[FilamentSlots]")
+{
+    // Slots 1-3, a tool change at z 5 to slot 2; slot 2 merged into 3, which is slot 2 after the merge (index 1).
+    CHECK(gcodes_after({{5.0, CustomGCode::ToolChange, 2, "", ""}}, GUI::FilamentRenumbering::deletion(1, 1)) ==
+          Items{"tool 2"});
+
+    // Every tool change to the merged slot moves, not only the first, and one to a later slot moves down one.
+    const GcodeItems items{{5.0, CustomGCode::ToolChange, 2, "", ""},
+                           {8.0, CustomGCode::ToolChange, 2, "", ""},
+                           {9.0, CustomGCode::ToolChange, 3, "", ""},
+                           {10.0, CustomGCode::ToolChange, 1, "", ""}};
+    CHECK(gcodes_after(items, GUI::FilamentRenumbering::deletion(1, 0)) ==
+          Items{"tool 1", "tool 1", "tool 2", "tool 1"});
+}
+
+TEST_CASE("deleting a slot drops the tool and colour changes to it, and keeps a pause or custom G-code", "[FilamentSlots]")
+{
+    // As upstream drops a tool change to a deleted slot; a colour change for it goes too, its filament gone. A
+    // pause or custom G-code only records the filament printing there, and stays, on slot 1.
+    const GcodeItems items{{2.0, CustomGCode::ColorChange, 2, "#FF0000", ""},
+                           {3.0, CustomGCode::ToolChange, 2, "", ""},
+                           {4.0, CustomGCode::PausePrint, 2, "", ""},
+                           {5.0, CustomGCode::Custom, 2, "", "M117 hi"},
+                           {6.0, CustomGCode::ColorChange, 3, "#00FF00", ""},
+                           {7.0, CustomGCode::PausePrint, 3, "", ""}};
+    CHECK(gcodes_after(items, GUI::FilamentRenumbering::deletion(1)) == Items{"pause 1",
+                                                                               "custom 1",
+                                                                               "colour 2",
+                                                                               "pause 2"});
+}
+
+TEST_CASE("a merge moves colour changes and every other item to the target too, as an add renumbers them all", "[FilamentSlots]")
+{
+    const GcodeItems items{{2.0, CustomGCode::ColorChange, 3, "#FF0000", ""},
+                           {4.0, CustomGCode::PausePrint, 3, "", ""},
+                           {6.0, CustomGCode::ColorChange, 4, "#00FF00", ""}};
+    // Slot 3 merged into 1.
+    CHECK(gcodes_after(items, GUI::FilamentRenumbering::deletion(2, 0)) ==
+          Items{"colour 1", "pause 1", "colour 3"});
+    // And an add before slot 3 moves every one of them up, whatever its type.
+    CHECK(gcodes_after(items, GUI::FilamentRenumbering::insertion(2)) ==
+          Items{"colour 4", "pause 4", "colour 5"});
+}

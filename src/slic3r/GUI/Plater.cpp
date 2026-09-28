@@ -20382,28 +20382,18 @@ void Plater::on_filaments_delete(size_t num_filaments, size_t filament_id, int r
     // update global support filament
     // Orca: every filament number setting, in the plater's copy of the config and in the print preset the
     // slicer reads, which upstream left naming the old numbers; a merge's target takes the merged one's.
-    renumber_filament_settings(FilamentRenumbering::deletion(
-        filament_id, replace_filament_id, replace_filament_id >= 0 && wxGetApp().preset_bundle->is_mixed_filament(size_t(replace_filament_id))));
+    const FilamentRenumbering deletion = FilamentRenumbering::deletion(
+        filament_id, replace_filament_id, replace_filament_id >= 0 && wxGetApp().preset_bundle->is_mixed_filament(size_t(replace_filament_id)));
+    renumber_filament_settings(deletion);
 
     // update UI — runs after remap so update_mixed_filament_list() won't clip remapped extruder IDs
     sidebar().on_filaments_delete(filament_id);
 
     // update customize gcode
-    for (auto item = p->model.plates_custom_gcodes.begin(); item != p->model.plates_custom_gcodes.end(); ++item) {
-        auto iter = std::remove_if(item->second.gcodes.begin(), item->second.gcodes.end(), [filament_id](const Item& gcode_item) {
-            return (gcode_item.type == CustomGCode::Type::ToolChange && gcode_item.extruder == filament_id + 1);
-        });
-        if (replace_filament_id == -1)
-            item->second.gcodes.erase(iter, item->second.gcodes.end());
-        else if(iter != item->second.gcodes.end()) {
-            iter->extruder = replace_filament_id + 1;
-        }
-
-        for (auto& item : item->second.gcodes) {
-            if (item.type == CustomGCode::Type::ToolChange && item.extruder > filament_id)
-                item.extruder--;
-        }
-    }
+    // Orca: every item, as an add renumbers them (renumber_custom_gcodes). Upstream renumbered tool changes
+    // only: a merge's target, already numbered as after the delete, was moved down one more, only the first
+    // tool change to the merged slot moved there, and colour changes kept their old numbers.
+    GUI::renumber_custom_gcodes(p->model, deletion);
 }
 
 void Plater::renumber_filament_settings(const FilamentRenumbering& change)

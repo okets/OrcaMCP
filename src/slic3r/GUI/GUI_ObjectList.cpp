@@ -7091,10 +7091,23 @@ void renumber_filaments_after_insert(Model& model, size_t slot)
         for (ModelVolume* volume : object->volumes)
             volume->mmu_segmentation_facets.shift_states_above(*volume, threshold, +1);
     }
-    for (auto& [plate, info] : model.plates_custom_gcodes)
-        for (CustomGCode::Item& item : info.gcodes)
-            if (std::optional<int> now = insert.number(item.extruder, false))
-                item.extruder = *now;
+    renumber_custom_gcodes(model, insert);
+}
+
+void renumber_custom_gcodes(Model& model, const FilamentRenumbering& change)
+{
+    // A tool or colour change to a deleted slot with no replacement: its filament is gone.
+    const auto filament_gone = [&change](const CustomGCode::Item& item) {
+        return (item.type == CustomGCode::ToolChange || item.type == CustomGCode::ColorChange) &&
+               !change.number(item.extruder, /*physical_only=*/false);
+    };
+    for (auto& [plate, info] : model.plates_custom_gcodes) {
+        std::vector<CustomGCode::Item>& items = info.gcodes;
+        items.erase(std::remove_if(items.begin(), items.end(), filament_gone), items.end());
+        // A pause or custom G-code only records the filament printing there: on a deleted one, slot 1.
+        for (CustomGCode::Item& item : items)
+            item.extruder = change.number(item.extruder, /*physical_only=*/false).value_or(1);
+    }
 }
 
 void bake_instance_transform_into_volumes(ModelObject& model_object, bool need_update_assemble_matrix)
