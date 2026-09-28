@@ -234,7 +234,9 @@ public:
 
     // Preset management tools
     static void ClonePreset(const std::string& type, const std::string& sourceName, const std::string& newName);
-    static void SavePreset(const std::string& type, const std::string& name = "");
+    // Saves the edited preset of `type` as the settings tab's Save does, under `name` or its own; returns the
+    // name it was saved as. Throws when it cannot.
+    static std::string SavePreset(const std::string& type, const std::string& name = "");
     static void DeletePreset(const std::string& type, const std::string& name);
     static void ResetPreset(const std::string& type);
 

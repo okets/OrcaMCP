@@ -885,7 +885,7 @@ void OrcaMCPPresetConfigUtils::ClonePreset(const std::string& type, const std::s
     UpdatePresetTabs();
 }
 
-void OrcaMCPPresetConfigUtils::SavePreset(const std::string& type, const std::string& name) {
+std::string OrcaMCPPresetConfigUtils::SavePreset(const std::string& type, const std::string& name) {
     Preset::Type preset_type = GetPresetTypeFromString(type);
     Tab* tab = wxGetApp().get_tab(preset_type);
     if (!tab) {
@@ -908,10 +908,17 @@ void OrcaMCPPresetConfigUtils::SavePreset(const std::string& type, const std::st
         throw std::runtime_error("Cannot overwrite system preset '" + save_name + "'. Use a different name.");
     }
 
-    // Save the preset
-    presets->save_current_preset(save_name, false, false);
-
-    UpdatePresetTabs();
+    // The settings tab's own Save with the name given (no name dialog): what saving from the GUI does after
+    // the file is written -- a filament preset saved from a system one made compatible with the selected
+    // printer only, every filament slot on the old preset moved to the new name, the plater's selectors and
+    // the dependent tabs refreshed. Writing the file alone left the slots on the old preset, which no longer
+    // carried the change.
+    const std::string before = edited.name;
+    tab->save_preset(save_name);
+    if (presets->find_preset(save_name, false) == nullptr || presets->get_edited_preset().name != save_name)
+        throw std::runtime_error("The app did not save the " + type + " preset as '" + save_name + "'" +
+                                 (before == save_name ? std::string() : " (still '" + before + "')"));
+    return save_name;
 }
 
 void OrcaMCPPresetConfigUtils::DeletePreset(const std::string& type, const std::string& name) {

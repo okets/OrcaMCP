@@ -1663,7 +1663,10 @@ void OrcaMCPServer::register_builtin_tools()
         "save_preset",
         ToolCategory::Config,
         "Save edited settings to a preset",
-        "Save dirty changes to preset. Optionally save as new name.",
+        "Save the edited settings of the print, filament or printer preset, to that preset or with name as a new "
+        "one, as the settings tab's Save does. A filament preset saved under a new name takes over every slot that "
+        "used the old one (the answer's slots), and one saved from a system preset is made compatible with the "
+        "selected printer only. A system preset cannot be overwritten: give a name.",
         {
             {"type", "object"},
             {"properties", {
@@ -1685,14 +1688,15 @@ void OrcaMCPServer::register_builtin_tools()
             return run_on_main_thread([type, name]() {
                 McpDialogSuppressionGuard suppression_guard;
                 try {
-                    OrcaMCPPresetConfigUtils::SavePreset(type, name);
+                    const std::string saved_name = OrcaMCPPresetConfigUtils::SavePreset(type, name);
                     auto info_messages = suppression_guard.messages();
-                    std::string saved_name = name.empty() ? "current preset" : name;
                     nlohmann::json response = {
                         {"status", "success"},
                         {"message", "Preset saved successfully"},
                         {"saved_preset", saved_name}
                     };
+                    if (type == "filament")
+                        response["slots"] = slots_using(filament_slots_state(), saved_name);
                     if (!info_messages.empty()) {
                         response["info_messages"] = info_messages;
                     }

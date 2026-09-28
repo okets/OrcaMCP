@@ -2377,7 +2377,7 @@
     },
     {
       "category": "Config",
-      "description": "Save dirty changes to preset. Optionally save as new name.",
+      "description": "Save the edited settings of the print, filament or printer preset, to that preset or with name as a new one, as the settings tab's Save does. A filament preset saved under a new name takes over every slot that used the old one (the answer's slots), and one saved from a system preset is made compatible with the selected printer only. A system preset cannot be overwritten: give a name.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {

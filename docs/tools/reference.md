@@ -2015,8 +2015,17 @@ Save current dirty changes to a preset. If name is provided, saves as a new pres
   "saved_preset": "My New Preset"
 }
 ```
+`saved_preset` is the name it was saved as, also when `name` is omitted. For `type: filament`, `slots`
+lists the filament slots now using it.
 
-**Note:** Cannot overwrite system presets. Use `clone_preset` first if you need to modify a system preset.
+It saves as the settings tab's Save button does (`Tab::save_preset`, with the name given instead of its
+name dialog). So a filament preset saved under a new name takes over every slot that used the old one,
+and one saved from a system preset is made compatible with the selected printer only, as in the GUI.
+Before 2.5.0.6 only the file was written: the slots stayed on the old preset, which no longer carried the
+change, and the new filament preset was compatible with every printer.
+
+**Note:** Cannot overwrite system presets: give a `name`. A preset for one slot alone: `clone_preset`,
+then `select_preset {type: filament, slot}`.
 
 ---
 
