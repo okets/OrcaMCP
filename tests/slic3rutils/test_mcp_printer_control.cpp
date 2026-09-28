@@ -67,21 +67,19 @@ json printer_ctl_body(const json& args)
     return {{"serialNumber", "SN-TEST"}, {"checkCode", "CC-TEST"}, {"payload", {{"cmd", "printerCtl_cmd"}, {"args", args}}}};
 }
 
-// Whether `body` is `expected`: every string and integer the same, every other number within 1e-9 (a
-// Z offset or a fan speed read back from the printer's JSON).
-bool same_body(const json& body, const json& expected)
+// `value` with every non-integer number rounded to 1e-9 (a Z offset or a fan speed read back from the
+// printer's JSON), so two bodies compare with ==, and a failure prints both.
+json rounded(const json& value)
 {
-    if (body.is_object() && expected.is_object()) {
-        if (body.size() != expected.size())
-            return false;
-        for (const auto& [key, value] : expected.items())
-            if (!body.contains(key) || !same_body(body.at(key), value))
-                return false;
-        return true;
+    if (value.is_structured()) {
+        json out = value;
+        for (json& item : out)
+            item = rounded(item);
+        return out;
     }
-    if (body.is_number_float() || expected.is_number_float())
-        return body.is_number() && expected.is_number() && std::abs(body.get<double>() - expected.get<double>()) < 1e-9;
-    return body == expected;
+    if (value.is_number_float())
+        return std::round(value.get<double>() * 1e9) / 1e9;
+    return value;
 }
 
 std::string refusal_of(const json& body) { return body.value("refused", std::string()); }
@@ -94,22 +92,22 @@ TEST_CASE("each new printer control sends the Device page's own command", "[McpP
 {
     SECTION("set_print_speed changes the running job's speed and carries the rest as the printer reports it")
     {
-        CHECK(same_body(control_body({{"action", "set_print_speed"}, {"speed", 125}}, printing_printer()),
-                        printer_ctl_body({{"zAxisCompensation", 0.05}, {"speed", 125}, {"chamberFan", 30}, {"coolingFan", 70}})));
+        CHECK(rounded(control_body({{"action", "set_print_speed"}, {"speed", 125}}, printing_printer())) ==
+                        rounded(printer_ctl_body({{"zAxisCompensation", 0.05}, {"speed", 125}, {"chamberFan", 30}, {"coolingFan", 70}})));
     }
 
     SECTION("set_z_offset on an idle printer sends 100 % for the speed an idle printer reports as 0")
     {
-        CHECK(same_body(control_body({{"action", "set_z_offset"}, {"z_offset", -0.075}}, idle_printer()),
-                        printer_ctl_body({{"zAxisCompensation", -0.075}, {"speed", 100}, {"chamberFan", 30}, {"coolingFan", 70}})));
+        CHECK(rounded(control_body({{"action", "set_z_offset"}, {"z_offset", -0.075}}, idle_printer())) ==
+                        rounded(printer_ctl_body({{"zAxisCompensation", -0.075}, {"speed", 100}, {"chamberFan", 30}, {"coolingFan", 70}})));
     }
 
     SECTION("set_fans changes only the fans it names")
     {
-        CHECK(same_body(control_body({{"action", "set_fans"}, {"chamber_fan", 50}}, idle_printer()),
-                        printer_ctl_body({{"zAxisCompensation", 0.05}, {"speed", 100}, {"chamberFan", 50}, {"coolingFan", 70}})));
-        CHECK(same_body(control_body({{"action", "set_fans"}, {"chamber_fan", 0}, {"cooling_fan", 100}}, idle_printer()),
-                        printer_ctl_body({{"zAxisCompensation", 0.05}, {"speed", 100}, {"chamberFan", 0}, {"coolingFan", 100}})));
+        CHECK(rounded(control_body({{"action", "set_fans"}, {"chamber_fan", 50}}, idle_printer())) ==
+                        rounded(printer_ctl_body({{"zAxisCompensation", 0.05}, {"speed", 100}, {"chamberFan", 50}, {"coolingFan", 70}})));
+        CHECK(rounded(control_body({{"action", "set_fans"}, {"chamber_fan", 0}, {"cooling_fan", 100}}, idle_printer())) ==
+                        rounded(printer_ctl_body({{"zAxisCompensation", 0.05}, {"speed", 100}, {"chamberFan", 0}, {"coolingFan", 100}})));
     }
 
     SECTION("set_filtration switches one fan and keeps the other as it is")
@@ -234,7 +232,7 @@ TEST_CASE("printer_control refuses what the printer cannot or should not do, bef
 TEST_CASE("a status names the controls printer_control changes", "[McpPrinterControl][orcamcp]")
 {
     const json controls = printer_controls_json(GUI::console_raw_detail(idle_printer().raw));
-    CHECK(same_body(controls, json{{"print_speed_percent", nullptr}, // an idle printer reports 0
+    CHECK(rounded(controls) == rounded(json{{"print_speed_percent", nullptr}, // an idle printer reports 0
                            {"z_offset_mm", 0.05},
                            {"chamber_fan_percent", 30},
                            {"cooling_fan_percent", 70},
