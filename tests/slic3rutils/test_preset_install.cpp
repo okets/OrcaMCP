@@ -359,3 +359,27 @@ TEST_CASE("install_presets and get_presets installed: false refuse a call they c
     CHECK(answer("get_presets", {{"installed", false}, {"type", "print"}})["message"].get<std::string>().find("printer, filament or all") != std::string::npos);
     CHECK(answer("get_presets", {{"installed", "no"}})["message"] == "installed must be a boolean");
 }
+
+TEST_CASE("an install names each selected preset its reload changed, and none when it kept them", "[PresetInstall]")
+{
+    const PresetSelection before{"C5P", "0.12mm Standard @FF C5", {"Generic PLA @FF C5P", "Generic PLA @System"}};
+    CHECK(selection_changes(before, before).empty());
+
+    // A slot on a preset the printer does not show is given one it does (PresetBundle::load_selections).
+    PresetSelection after = before;
+    after.filaments[1]    = "Generic PLA @FF C5P";
+    const json changes    = selection_changes(before, after);
+    REQUIRE(changes.size() == 1);
+    CHECK(changes[0]["preset"] == "filament");
+    CHECK(changes[0]["slot"] == 2);
+    CHECK(changes[0]["before"] == "Generic PLA @System");
+    CHECK(changes[0]["after"] == "Generic PLA @FF C5P");
+
+    after.print = "0.20mm Standard @FF C5";
+    after.filaments.pop_back(); // a slot the reload dropped
+    const json more = selection_changes(before, after);
+    REQUIRE(more.size() == 2);
+    CHECK(more[0]["preset"] == "print");
+    CHECK(more[1]["slot"] == 2);
+    CHECK(more[1]["after"] == nullptr);
+}

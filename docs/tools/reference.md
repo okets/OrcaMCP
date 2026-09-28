@@ -1791,7 +1791,11 @@ whose folder begins its name, or the one `vendor` names.
 `filaments_enabled` is every filament the app enabled, the ones the app adds with a new printer (its
 default materials) too. The printer is not selected, unlike the wizard's Finish: a switch replaces the
 filament slots and their colours, so it is its own call (`next_steps`). `selection_kept` says whether the
-reload left the printer, print preset and filament slots selected as they were. The reload gives every
+reload left the printer, print preset and filament slots selected as they were. It keeps each preset the
+printer still shows and replaces one it does not (upstream's `load_selections`) -- a slot left on a
+preset the printer does not show, for instance, which `new_project` can leave after a project that
+carried its own presets -- and `selection_changed` names each: `{"preset": "printer" | "print" | "filament", "slot"
+(a filament's), "before", "after"}`. The reload gives every
 slot extruder 1 again (upstream's `load_selections`); the install puts the project's filament maps back
 (which extruder, nozzle and nozzle volume each slot prints with), and `filament_maps_restored` names them.
 `project_settings_changed` lists any other project setting the reload changed. A call that names only what is installed changes nothing: `changed: false`, `already_installed`.

@@ -98,6 +98,19 @@ std::optional<std::string> install_refusal(const PipelineState& pipeline, bool u
 // which the 3MF export uses, copies only those with a parent). Any thread, for a bundle no other thread changes.
 std::vector<std::string> project_preset_names(const PresetBundle& bundle);
 
+// The printer, print and filament slot presets selected, as an install compares them before and after its reload.
+struct PresetSelection
+{
+    std::string              printer;
+    std::string              print;
+    std::vector<std::string> filaments; // one per slot, slot 1 first
+};
+
+// What the reload changed in the selection -- it keeps each preset still shown for the printer and replaces
+// one that is not (PresetBundle::load_selections) -- as [{preset: "printer" | "print" | "filament", slot (a
+// filament's, 1-based), before, after (null for a slot it dropped)}]; empty when it kept them all.
+nlohmann::json selection_changes(const PresetSelection& before, const PresetSelection& after);
+
 // Puts back the project's filament maps (which extruder, nozzle and nozzle volume each slot prints with)
 // from `before` into `after` when the reload an install ends with reset them (PresetBundle::load_selections
 // gives every slot extruder 1) and the slots are the same in number. Returns the keys it put back.

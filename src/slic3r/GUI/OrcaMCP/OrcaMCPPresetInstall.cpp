@@ -214,6 +214,25 @@ std::vector<std::string> project_preset_names(const PresetBundle& bundle)
     return names;
 }
 
+nlohmann::json selection_changes(const PresetSelection& before, const PresetSelection& after)
+{
+    nlohmann::json changes = nlohmann::json::array();
+    if (before.printer != after.printer)
+        changes.push_back({{"preset", "printer"}, {"before", before.printer}, {"after", after.printer}});
+    if (before.print != after.print)
+        changes.push_back({{"preset", "print"}, {"before", before.print}, {"after", after.print}});
+    const auto slot_preset = [](const std::vector<std::string>& slots, size_t i) {
+        return i < slots.size() ? nlohmann::json(slots[i]) : nlohmann::json(nullptr);
+    };
+    for (size_t i = 0; i < std::max(before.filaments.size(), after.filaments.size()); ++i)
+        if (slot_preset(before.filaments, i) != slot_preset(after.filaments, i))
+            changes.push_back({{"preset", "filament"},
+                               {"slot", int(i + 1)},
+                               {"before", slot_preset(before.filaments, i)},
+                               {"after", slot_preset(after.filaments, i)}});
+    return changes;
+}
+
 std::vector<std::string> restore_filament_maps(const DynamicPrintConfig& before, DynamicPrintConfig& after)
 {
     std::vector<std::string> restored;

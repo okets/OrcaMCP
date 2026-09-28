@@ -835,9 +835,11 @@ nlohmann::json OrcaMCPPresetConfigUtils::InstallPresets(const OrcaMCP::PresetIns
                                                                 : std::map<std::string, std::string>();
     };
 
-    const std::string                        printer_before   = bundle.printers.get_selected_preset_name();
-    const std::string                        print_before     = bundle.prints.get_selected_preset_name();
-    const std::vector<std::string>           slots_before     = bundle.filament_presets;
+    const auto selection = [&bundle]() {
+        return OrcaMCP::PresetSelection{bundle.printers.get_selected_preset_name(), bundle.prints.get_selected_preset_name(),
+                                        bundle.filament_presets};
+    };
+    const OrcaMCP::PresetSelection           selection_before = selection();
     const DynamicPrintConfig                 project_before   = bundle.project_config;
     const std::map<std::string, std::string> filaments_before = filament_section();
     std::vector<std::string>                 vendors_added;
@@ -871,6 +873,7 @@ nlohmann::json OrcaMCPPresetConfigUtils::InstallPresets(const OrcaMCP::PresetIns
         if (filaments_before.count(name) == 0)
             filaments_enabled.push_back(name);
 
+    const nlohmann::json selection_changed = OrcaMCP::selection_changes(selection_before, selection());
     nlohmann::json answer = {{"status", "success"},
                              {"changed", true},
                              {"installed", {{"printers", printers}, {"filaments", plan.filament_names}}},
@@ -878,12 +881,12 @@ nlohmann::json OrcaMCPPresetConfigUtils::InstallPresets(const OrcaMCP::PresetIns
                              {"vendors_added", vendors_added},
                              {"filaments_enabled", filaments_enabled},
                              {"selected_printer", bundle.printers.get_selected_preset_name()},
-                             {"selection_kept", printer_before == bundle.printers.get_selected_preset_name() &&
-                                                    print_before == bundle.prints.get_selected_preset_name() &&
-                                                    slots_before == bundle.filament_presets},
+                             {"selection_kept", selection_changed.empty()},
                              {"filament_maps_restored", maps_restored},
                              {"project_settings_changed", project_before.diff(bundle.project_config)},
                              {"filaments", OrcaMCP::describe_filaments()["filaments"]}};
+    if (!selection_changed.empty())
+        answer["selection_changed"] = selection_changed;
     std::vector<std::string> printer_names;
     for (const OrcaMCP::CatalogPrinter& printer : plan.printers)
         printer_names.push_back(printer.name);
