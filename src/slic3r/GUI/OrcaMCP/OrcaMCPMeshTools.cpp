@@ -5,10 +5,8 @@
 #include "OrcaMCPMeshRepair.hpp"
 #include "OrcaMCPUiJob.hpp"
 
-#include "slic3r/GUI/GLCanvas3D.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/GUI_ObjectList.hpp"
-#include "slic3r/GUI/Gizmos/GLGizmosManager.hpp"
 #include "slic3r/GUI/I18N.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/GUI/Plater.hpp"
@@ -46,29 +44,6 @@ std::optional<std::string> app_repair_refusal(Plater& plater)
 {
     return repair_refusal(pipeline_state(plater, plater.get_partplate_list().get_plate_count()),
                           !plater.get_ui_job_worker().is_idle(), Slic3r::cgal_repair_dialog_running());
-}
-
-// Closes the toolbar tool (gizmo) open in the 3D view, as the user closes it, and says which it was;
-// "" when none was open. The object list's Repair refuses while one is open -- its undo snapshot would
-// land in the tool's own undo stack -- and an agent does what the user would: close it. New Project
-// closes them the same way (Plater::priv::reset). Closing a painting tool (and cut, measure, brim ears,
-// text, SVG) records its own undo step, as when the user closes it, so it is closed only for a repair
-// that is about to be applied.
-std::string close_open_toolbar_tool(Plater& plater)
-{
-    GLCanvas3D*      canvas = plater.get_view3D_canvas3D();
-    GLGizmosManager& gizmos = canvas->get_gizmos_manager();
-    if (gizmos.get_current_type() == GLGizmosManager::Undefined)
-        return {};
-    const GLGizmoBase* current = gizmos.get_current();
-    std::string        name    = current != nullptr ? current->get_name(false) : std::string("a toolbar tool");
-    canvas->reset_all_gizmos();
-    return name;
-}
-
-bool toolbar_tool_open(Plater& plater)
-{
-    return plater.get_view3D_canvas3D()->get_gizmos_manager().get_current_type() != GLGizmosManager::Undefined;
 }
 
 // Main thread, the first step: the call read and checked, and what the repair reads captured. Null to
@@ -119,13 +94,6 @@ void update_after_repair(Plater& plater, int object_id, int volume_id, std::size
     list->update_plate_values_for_items();
     list->update_item_error_icon(object_id, volume_id);
     list->update_info_items(std::size_t(object_id));
-}
-
-nlohmann::json with_closed_tool(nlohmann::json answer, const std::string& closed_tool)
-{
-    if (!closed_tool.empty())
-        answer["closed_toolbar_tool"] = closed_tool;
-    return answer;
 }
 
 // Main thread, the last step: the plan applied, if the object is still as captured and the plan

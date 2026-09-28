@@ -6,6 +6,8 @@
 #include "OrcaMCPSliceCredit.hpp"
 #include "OrcaMCPUiJob.hpp"
 #include "slic3r/GUI/BackgroundSlicingProcess.hpp"
+#include "slic3r/GUI/GLCanvas3D.hpp"
+#include "slic3r/GUI/Gizmos/GLGizmosManager.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/GUI/NotificationManager.hpp"
@@ -233,6 +235,30 @@ PipelineState pipeline_state(Plater& plater, int plate_count)
             process.is_upload_scheduled(),
             plater.slice_all_plate_in_progress(),
             plate_count};
+}
+
+std::string close_open_toolbar_tool(Plater& plater)
+{
+    GLCanvas3D*      canvas = plater.get_view3D_canvas3D();
+    GLGizmosManager& gizmos = canvas->get_gizmos_manager();
+    if (gizmos.get_current_type() == GLGizmosManager::Undefined)
+        return {};
+    const GLGizmoBase* current = gizmos.get_current();
+    std::string        name    = current != nullptr ? current->get_name(false) : std::string("a toolbar tool");
+    canvas->reset_all_gizmos();
+    return name;
+}
+
+bool toolbar_tool_open(Plater& plater)
+{
+    return plater.get_view3D_canvas3D()->get_gizmos_manager().get_current_type() != GLGizmosManager::Undefined;
+}
+
+nlohmann::json with_closed_tool(nlohmann::json answer, const std::string& closed_tool)
+{
+    if (!closed_tool.empty())
+        answer["closed_toolbar_tool"] = closed_tool;
+    return answer;
 }
 
 bool object_within_plate(const BoundingBoxf3& object_bbox, const BoundingBoxf3& plate_box, double z_tolerance)
@@ -511,10 +537,8 @@ void transform_instance_about_box(ModelInstance& instance, const Transform3d& wo
     instance.set_transformation(transformation);
 }
 
-// The lowest point of one instance, read from the model parts' convex hulls as the GUI's drop reads
-// it (ModelObject::get_instance_min_z). That function visits every hull vertex once per facet it
-// belongs to, about six times over; this visits each once. A hull qhull could not build is empty,
-// and the mesh stands in for it, as it does there.
+} // namespace
+
 double instance_min_z(const ModelObject& object, size_t instance_idx)
 {
     const Transform3d instance_matrix = object.instances[instance_idx]->get_matrix();
@@ -530,8 +554,6 @@ double instance_min_z(const ModelObject& object, size_t instance_idx)
     }
     return min_z;
 }
-
-} // namespace
 
 void transform_instances_in_plate_frame(ModelObject& object, const Transform3d& world_transform)
 {
