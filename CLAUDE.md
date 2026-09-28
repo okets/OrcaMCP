@@ -1235,6 +1235,7 @@ echo "AH the first slice waits for every TBB worker at once to name them (rel250
 echo "AI the Repair's worker changes the object itself, off the main thread / a first volume dropped whole skips the next / a repair can delete an object's last part / the Repair's snapshot is taken before its dialog / ModelVolume has a hull setter (0 = no, keep ours) (rel2506/08b): $(U src/slic3r/Utils/FixModelByCgal.cpp | grep -c 'std::thread(\[&model_object') / $(U src/slic3r/Utils/FixModelByCgal.cpp | awk '/removed_parts >= parts_count/{f=1} f&&/ivolume = part_end;/{print "yes"; exit} f&&/continue;/{print "no"; exit}') / $(U src/slic3r/Utils/FixModelByCgal.cpp | awk '/is_not_3dimensional_part\(part_volume->mesh\(\)\)/{f=1} f&&/parts_count\(\)|is_model_part/{print "no"; exit} f&&/delete_volume\(part_idx\)/{print "yes"; exit}') / $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^void ObjectList::fix_through_cgal/{f=1} f&&/TakeSnapshot/{print "yes"; exit} f&&/ProgressDialog progress_dlg/{print "no"; exit}') / $(U src/libslic3r/Model.hpp | grep -c 'set_convex_hull')"
 echo "AJ upstream's acceptor takes asio's SO_REUSEADDR on Windows, which lets a second process bind a port the first listens on (rel2506/09; 0 = bug): $( { U src/slic3r/GUI/HttpServer.hpp; U src/slic3r/GUI/HttpServer.cpp; } | grep -c 'EXCLUSIVEADDRUSE')"
 echo "AK adding a primitive part or modifier resets only instance 0 and moves every instance by its offset (rel2506/11): $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^void ObjectList::apply_object_instance_transfrom_to_all_volumes/{f=1} f&&/translate_instances\(original_instance_center\)/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
+echo "AL the object list's re-listing clears a copy of an object's row map / the maps stay under an object's index when it is deleted or moved (rel2506/11; 0 = bug for the second): $(U src/slic3r/GUI/GUI_ObjectList.cpp | grep -c 'for (auto item : ui_and_3d_volume_map)') / $(U src/slic3r/GUI/ObjectDataViewModel.cpp | grep -c 'ui_and_3d_volume_map')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -1532,6 +1533,17 @@ gives every instance what keeps its copy where it was -- instance 0 only its off
 transform less instance 0's rotation and scale -- and the member calls it. On "no", take upstream's
 function and re-run `slic3rutils_tests "[PartEdits]"`, whose "keeps every copy of the object where it
 was" test holds any version to it.
+
+Item AL: the object list keeps, per object index, which volume each of an object's rows stands for (a
+cut object's connectors have no row), and its Change Type maps a row to a volume through it
+(`ObjectList::set_volume_type`). `add_volumes_to_object_in_list` cleared a copy of the object's map, so
+rows it no longer had kept their old volumes, and nothing moved the maps when an object was deleted or
+moved: the next object took over the deleted one's map, and after deleting a cut object with connectors
+the list's Change Type on the object behind it retyped another of its volumes, or none. Ours erases the
+object's map before re-listing it, drops and shifts the maps when the list deletes or moves an object
+(`erase_object_from_volume_maps`, `move_object_in_volume_maps`, free functions in
+`ObjectDataViewModel.cpp` tested without the app) and clears them with the list. On "no" / a non-zero
+second count, take upstream's and re-run `slic3rutils_tests "[PartEdits]"`.
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices

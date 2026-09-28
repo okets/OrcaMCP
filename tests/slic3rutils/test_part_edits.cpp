@@ -3,12 +3,14 @@
 
 #include "mesh_fixtures.hpp"
 #include "slic3r/GUI/GUI_ObjectList.hpp"
+#include "slic3r/GUI/ObjectDataViewModel.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPPartEdits.hpp"
 #include "libslic3r/Geometry.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/TriangleMesh.hpp"
 
 #include <algorithm>
+#include <map>
 #include <cmath>
 #include <optional>
 #include <string>
@@ -450,4 +452,59 @@ TEST_CASE("Moving the instance's transform into the volumes keeps every copy of 
     // Instance 0 keeps only its offset: its rotation and scale are in the volumes now.
     CHECK(object.instances[0]->get_matrix_no_offset().matrix().isApprox(Transform3d::Identity().matrix(), 1e-9));
     check_vec(object.instances[0]->get_offset(), Vec3d(128, 144, 0));
+}
+
+// The list keeps, per object index, which volume each of its rows stands for. Deleting an object left its
+// map under its index, so the next object took it over: after deleting a cut object whose connectors were
+// hidden, the list's Change Type on the object behind it retyped another volume, or none.
+TEST_CASE("Deleting an object from the list drops its row map and moves the later objects' maps down", "[PartEdits][orcamcp]")
+{
+    std::map<int, std::map<int, int>> maps = {{0, {{0, 0}, {1, 2}}}, {1, {{0, 0}, {1, 1}}}, {3, {{0, 1}}}};
+    Slic3r::GUI::erase_object_from_volume_maps(maps, 0);
+    CHECK(maps == std::map<int, std::map<int, int>>{{0, {{0, 0}, {1, 1}}}, {2, {{0, 1}}}});
+    Slic3r::GUI::erase_object_from_volume_maps(maps, 1); // an object with no map: the later ones still move
+    CHECK(maps == std::map<int, std::map<int, int>>{{0, {{0, 0}, {1, 1}}}, {1, {{0, 1}}}});
+}
+
+TEST_CASE("Moving an object in the list moves its row map with it", "[PartEdits][orcamcp]")
+{
+    std::map<int, std::map<int, int>> maps = {{0, {{0, 0}}}, {1, {{0, 1}}}, {2, {{0, 2}}}};
+    Slic3r::GUI::move_object_in_volume_maps(maps, 0, 2);
+    CHECK(maps == std::map<int, std::map<int, int>>{{0, {{0, 1}}}, {1, {{0, 2}}}, {2, {{0, 0}}}});
+    Slic3r::GUI::move_object_in_volume_maps(maps, 2, 0);
+    CHECK(maps == std::map<int, std::map<int, int>>{{0, {{0, 0}}}, {1, {{0, 1}}}, {2, {{0, 2}}}});
+}
+
+// The Assemble view places each copy by its assemble transform; the bake gave every copy's instance its
+// share of the change but only instance 0's assemble transform, so the view applied instance 0's rotation
+// and scale twice to the others.
+TEST_CASE("Moving the instance's transform into the volumes keeps every copy where the Assemble view shows it", "[PartEdits][orcamcp]")
+{
+    Model        model;
+    ModelObject& object = two_part_object(model, Vec3d(128, 144, 0), 30.);
+    object.instances[0]->set_scaling_factor(Vec3d(1.5, 1.5, 1.5));
+    ModelInstance* second = object.add_instance();
+    second->set_offset(Vec3d(128, 80, 0));
+    second->set_rotation(Vec3d(0., 0., Geometry::deg2rad(120.)));
+    second->set_scaling_factor(Vec3d(1.5, 1.5, 1.5));
+    for (ModelInstance* instance : object.instances)
+        instance->set_assemble_transformation(instance->get_transformation());
+    const auto assembled_box = [&object](std::size_t i) {
+        BoundingBoxf3 box;
+        for (const ModelVolume* volume : object.volumes)
+            box.merge(volume->mesh().transformed_bounding_box(object.instances[i]->get_assemble_transformation().get_matrix() *
+                                                               volume->get_matrix()));
+        return box;
+    };
+    std::vector<BoundingBoxf3> before;
+    for (std::size_t i = 0; i < object.instances.size(); ++i)
+        before.push_back(assembled_box(i));
+
+    Slic3r::GUI::bake_instance_transform_into_volumes(object, /*need_update_assemble_matrix=*/true);
+
+    for (std::size_t i = 0; i < object.instances.size(); ++i) {
+        INFO("instance " << i);
+        check_vec(assembled_box(i).min, before[i].min, 1e-4);
+        check_vec(assembled_box(i).max, before[i].max, 1e-4);
+    }
 }
