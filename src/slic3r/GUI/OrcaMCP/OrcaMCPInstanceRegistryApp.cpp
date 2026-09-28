@@ -111,12 +111,7 @@ void announce_mcp_server(const PortChoice& choice)
         return;
     }
     BOOST_LOG_TRIVIAL(warning) << "OrcaMCP: " << describe_port_choice(choice);
-    // A cloud sign-in asks for the server again on every message it sends: say it once.
-    static bool warned = false;
-    if (!warned) {
-        warned = true;
-        notify(NotificationManager::NotificationLevel::WarningNotificationLevel, no_port_warning());
-    }
+    notify(NotificationManager::NotificationLevel::WarningNotificationLevel, no_port_warning());
 }
 
 void stop_project_watch()

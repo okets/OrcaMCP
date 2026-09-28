@@ -2,23 +2,36 @@
 
 #include <boost/asio.hpp>
 
+#include <vector>
+
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
 namespace {
 
 using boost::asio::ip::tcp;
 
-// Whether a connection to `where` is accepted, or still pending after `timeout`.
-bool accepts_or_holds(const tcp::endpoint& where, std::chrono::milliseconds timeout)
+// Whether a connection to any of `where` is accepted within `timeout`. They are tried together, and the
+// probe returns as soon as one is accepted or all have failed. A connection still pending at the timeout
+// is no sign of a listener: Windows refuses one to a closed loopback port only after about a second of
+// retries, and a firewall that drops loopback IPv6 never answers, while a listener accepts at once. The
+// sockets close on return, and a handler never run goes with the io_context.
+bool accepted_within(const std::vector<tcp::endpoint>& where, std::chrono::milliseconds timeout)
 {
-    boost::asio::io_context   io;
-    tcp::socket               socket(io);
-    std::optional<bool>       connected;
-    socket.async_connect(where, [&connected](const boost::system::error_code& ec) { connected = !ec; });
+    boost::asio::io_context  io;
+    std::vector<tcp::socket> sockets;
+    sockets.reserve(where.size());
+    bool   accepted = false;
+    size_t finished = 0;
+    for (const tcp::endpoint& endpoint : where) {
+        sockets.emplace_back(io);
+        sockets.back().async_connect(endpoint, [&](const boost::system::error_code& ec) {
+            accepted = accepted || !ec;
+            if (accepted || ++finished == where.size())
+                io.stop();
+        });
+    }
     io.run_for(timeout);
-    // Not finished in time: something holds the port without answering. The socket closes on return,
-    // and its handler, never run, goes with the io_context.
-    return connected.value_or(true);
+    return accepted;
 }
 
 } // namespace
@@ -33,8 +46,8 @@ std::vector<Port> mcp_ports()
 
 bool port_has_listener(Port port, std::chrono::milliseconds timeout)
 {
-    return accepts_or_holds({boost::asio::ip::address_v4::loopback(), port}, timeout) ||
-           accepts_or_holds({boost::asio::ip::address_v6::loopback(), port}, timeout);
+    return accepted_within({{boost::asio::ip::address_v4::loopback(), port}, {boost::asio::ip::address_v6::loopback(), port}},
+                           timeout);
 }
 
 PortChoice choose_port(const std::vector<Port>& ports, const std::function<bool(Port)>& has_listener,

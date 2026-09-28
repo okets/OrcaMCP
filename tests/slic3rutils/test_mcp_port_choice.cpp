@@ -16,7 +16,12 @@
 
 using namespace Slic3r::GUI;
 using namespace Slic3r::GUI::OrcaMCP;
+using namespace std::chrono_literals;
 using boost::asio::ip::tcp;
+
+// Long enough for any refusal to arrive, Windows' included (it retries a refused loopback connect for
+// about a second): a probe answers as soon as it knows, so no test waits this long for a listener.
+constexpr auto k_patient = 10s;
 
 namespace {
 
@@ -107,7 +112,7 @@ TEST_CASE("with every port taken there is no MCP server, and the reason names ea
 TEST_CASE("a listener on 127.0.0.1 is found", "[McpPortChoice]")
 {
     Listener listener({boost::asio::ip::address_v4::loopback(), 0});
-    CHECK(port_has_listener(listener.port()));
+    CHECK(port_has_listener(listener.port(), k_patient));
 }
 
 TEST_CASE("a listener on every interface is found, as an older OrcaMCP listens", "[McpPortChoice]")
@@ -115,12 +120,30 @@ TEST_CASE("a listener on every interface is found, as an older OrcaMCP listens",
     // OrcaMCP 2.5.0.5 binds *:13618. macOS lets a 127.0.0.1 listener bind beside it, and a call could
     // then reach either (2026-09-27), so binding is no test: the connection is.
     Listener listener({tcp::v4(), 0});
-    CHECK(port_has_listener(listener.port()));
+    CHECK(port_has_listener(listener.port(), k_patient));
 }
 
-TEST_CASE("a port nothing listens on is free", "[McpPortChoice]")
+TEST_CASE("a port nothing listens on is free, however slowly its connection is refused", "[McpPortChoice]")
 {
-    CHECK_FALSE(port_has_listener(free_loopback_port()));
+    CHECK_FALSE(port_has_listener(free_loopback_port(), k_patient));
+}
+
+TEST_CASE("a connection still unanswered when the probe gives up is no sign of a listener", "[McpPortChoice]")
+{
+    // Windows refuses a loopback connection to a closed port only after about a second of retries, and a
+    // firewall that drops loopback IPv6 never answers: a probe that counted a pending connection as a
+    // listener found every port taken there, and ran without MCP. A listener accepts at once; the bind
+    // decides the rest. A zero timeout gives up before any answer, whatever the port holds.
+    CHECK_FALSE(port_has_listener(free_loopback_port(), 0ms));
+}
+
+TEST_CASE("a probe that finds a listener returns without waiting out its timeout", "[McpPortChoice]")
+{
+    // It runs on the main thread at startup: waiting the full timeout per port cost seconds on Windows.
+    Listener   listener({boost::asio::ip::address_v4::loopback(), 0});
+    const auto started = std::chrono::steady_clock::now();
+    CHECK(port_has_listener(listener.port(), k_patient));
+    CHECK(std::chrono::steady_clock::now() - started < k_patient);
 }
 
 TEST_CASE("an MCP server passes over a port an older OrcaMCP listens on every interface", "[McpPortChoice][HttpServer]")
@@ -128,7 +151,7 @@ TEST_CASE("an MCP server passes over a port an older OrcaMCP listens on every in
     Listener         older({tcp::v4(), 0});
     const Port       spare = free_loopback_port();
     HttpServer       server;
-    const PortChoice choice = choose_port({older.port(), spare}, [](Port port) { return port_has_listener(port); },
+    const PortChoice choice = choose_port({older.port(), spare}, [](Port port) { return port_has_listener(port, k_patient); },
                                           [&server](Port port) {
                                               server.set_port(port);
                                               return server.try_start();

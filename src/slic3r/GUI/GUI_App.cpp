@@ -7799,8 +7799,11 @@ void GUI_App::start_http_server(const std::string& provider)
 {
     // A login callback that reaches this server is answered for `provider`, until a login names its own.
     m_login_server.set_provider(provider);
-    if (m_http_server.is_started())
+    // Once per session: the cloud sign-in asks for the server on every message it sends, and probing the
+    // ports each time would stall the main thread for nothing when none was free.
+    if (m_http_server.is_started() || m_mcp_port_chosen)
         return;
+    m_mcp_port_chosen = true;
     // Route /mcp requests to MCP server; everything else is a cloud login's callback.
     m_http_server.set_request_handler([this](const std::string& method, const std::string& url, const std::string& body)
         -> std::shared_ptr<HttpServer::Response> {

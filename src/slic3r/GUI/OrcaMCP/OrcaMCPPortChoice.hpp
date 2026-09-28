@@ -31,8 +31,12 @@ constexpr size_t mcp_port_count = 10;
 // 13618 to 13627, in the order they are tried.
 std::vector<Port> mcp_ports();
 
-// True when something accepts a connection on `port` at 127.0.0.1 or [::1], or holds a connection
-// attempt past `timeout` (a listener whose queue is full). False when both are refused or unreachable.
+// True when something accepts a connection on `port` at 127.0.0.1 or [::1] within `timeout`; both are
+// tried at once, and it returns as soon as it knows. A connection refused, unreachable, or still pending
+// at the timeout is no listener: Windows refuses one to a closed loopback port only after about a second,
+// and a firewall may drop loopback IPv6, while a listener accepts at once. The bind decides the rest (on
+// Windows an exclusive bind still succeeds beside another process's listener on every interface, which is
+// why this looks at all).
 bool port_has_listener(Port port, std::chrono::milliseconds timeout = std::chrono::milliseconds(200));
 
 struct PortChoice
