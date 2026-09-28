@@ -2643,6 +2643,7 @@ on -- and the plates it sliced before keep their results. No undo step: slicing 
 |------|--------|
 | A slice or a Slice All run in progress | `cancelled: true`, `run` (`slice` or `slice_all`) and the `plate_index` it was on. The answer comes once the app has taken in the cancel: `slice_run` is `get_slicing_status`'s (outcome `cancelled`), and `restored_selected_plate` when a Slice All run's plate selection was put back, as `get_slicing_status` does after a run. If the cancelled slice is still stopping, `next_steps` names `wait_for_slice`, which ends on outcome `cancelled` too |
 | Nothing slicing, or the last slice already ended (its completion being taken in) | `cancelled: false`, with a `message` saying which |
+| A Slice All run ended between plates that were all sliced already | `cancelled: true`, but `slice_run.outcome` is `done`: the cancel left no plate without its result |
 | An export or an upload in progress | `status: "error"`: it is not a slice. `wait_for_slice` waits for it |
 
 A cancel stops the slicing thread first, as the app's Cancel does: organic tree supports check for a

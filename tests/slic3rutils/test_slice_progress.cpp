@@ -263,12 +263,15 @@ TEST_CASE("a cancelled run says who cancelled it where, and names the plates it 
     CHECK(judged.skipped == std::vector<int>{2});
 }
 
-TEST_CASE("a cancelled run whose plates all kept a result names no plate", "[orcamcp][SliceProgress]")
+TEST_CASE("a cancel that left every plate with its result is judged as the run it ended", "[orcamcp][SliceProgress]")
 {
-    const SliceRunJudgement judged =
-        judge_slice_run(true, false, {sliced_plate(0)}, std::nullopt, std::string("The slice was cancelled in the app at plate_index 0"));
-    CHECK(judged.outcome == SliceRunOutcome::cancelled);
-    CHECK(judged.message == "The slice was cancelled in the app at plate_index 0");
+    // A Slice All run ended between plates that were all sliced already: nothing was lost.
+    const SliceRunJudgement judged = judge_slice_run(true, false, {sliced_plate(0), sliced_plate(1)}, std::nullopt,
+                                                     std::string("Slice All was cancelled in the app at plate_index 1"));
+    CHECK(judged.outcome == SliceRunOutcome::done);
+    // A cancel with nothing sliced at all is still a cancel.
+    CHECK(judge_slice_run(true, false, {unsliced_plate(0)}, std::nullopt, std::string("The slice was cancelled in the app at plate_index 0"))
+              .outcome == SliceRunOutcome::cancelled);
 }
 
 TEST_CASE("a slice running again after a cancel is running, and a cancel outranks an early end", "[orcamcp][SliceProgress]")

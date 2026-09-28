@@ -137,16 +137,19 @@ inline void split_unsliced(const std::vector<SliceRunPlate>& plates, std::vector
 }
 
 // A cancelled run's message: who cancelled it where, and the plates it left without a result; the
-// plates it sliced before keep theirs.
-inline SliceRunJudgement cancelled_run(const std::string& cancelled_text, const std::vector<SliceRunPlate>& plates)
+// plates it sliced before keep theirs. nullopt when it left none: a cancel between plates that were all
+// sliced already cost nothing, and the run is judged as any other.
+inline std::optional<SliceRunJudgement> cancelled_run(const std::string& cancelled_text, const std::vector<SliceRunPlate>& plates)
 {
     std::vector<int> unsliced, skipped;
     bool             any_sliced = false;
     split_unsliced(plates, unsliced, skipped, any_sliced);
+    if (unsliced.empty() && any_sliced)
+        return std::nullopt;
     std::string message = cancelled_text;
     if (!unsliced.empty())
         message += "; plate_index " + plate_index_list(unsliced) + " has no slice result: call slice_all to slice it";
-    return {SliceRunOutcome::cancelled, message, skipped};
+    return SliceRunJudgement{SliceRunOutcome::cancelled, message, skipped};
 }
 
 // How the last slice_all run stands. `run_known` is false before the first slice_all; `plates` are
@@ -165,7 +168,8 @@ inline SliceRunJudgement judge_slice_run(bool                              run_k
     if (slicing)
         return {SliceRunOutcome::running, {}, {}};
     if (cancelled_text)
-        return cancelled_run(*cancelled_text, plates);
+        if (std::optional<SliceRunJudgement> cancelled = cancelled_run(*cancelled_text, plates))
+            return *cancelled;
     if (ended_early_text)
         return {SliceRunOutcome::ended_early, *ended_early_text, {}};
     if (!run_known)
