@@ -107,6 +107,10 @@ std::vector<NextStep> export_next_steps(bool export_started);
 // completion not taken in yet), which returns once it has; nothing once the run is over.
 std::vector<NextStep> cancel_slice_next_steps(bool still_stopping);
 
+// What add_layer_gcode's or delete_layer_gcode's change on plate `plate_index` leads to: slice_all, which
+// slices that plate again (plates still sliced are kept); nothing for a call that changed nothing.
+std::vector<NextStep> layer_gcode_next_steps(int plate_index, bool changed);
+
 // What a render_plate_view view whose picture came out one flat colour leads to (uniform_image_hint
 // says why in words): get_scene_info when nothing on plate `plate_index` was drawn (`drawn` 0: no model
 // volume in the 3D view, or none printable on that plate), render_plate_view of that plate without

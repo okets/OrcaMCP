@@ -1,5 +1,6 @@
 #include "OrcaMCPPlateUtils.hpp"
 #include "OrcaMCPPlateTools.hpp"
+#include "OrcaMCPLayerGcodeTools.hpp"
 #include "OrcaMCPInstanceBox.hpp"
 #include "OrcaMCPImageFiles.hpp"
 #include "OrcaMCPPlateOccupancy.hpp"
@@ -1059,7 +1060,8 @@ nlohmann::json OrcaMCPPlateUtils::PlateJson(const PlateEntry& plate)
         {"occupancy", plate.occupancy},
         {"occupancy_frame", "plate_mm"},
         {"settings", plate.settings},
-        {"effective", plate.effective}
+        {"effective", plate.effective},
+        {"layer_gcodes", plate.layer_gcodes}
     };
 }
 
@@ -1102,6 +1104,7 @@ nlohmann::json OrcaMCPPlateUtils::GetPlates(bool with_model_object_features, con
         const nlohmann::json plate_settings = OrcaMCP::plate_settings_entry_json(*plate);
         entry.settings   = plate_settings.at("settings");
         entry.effective  = plate_settings.at("effective");
+        entry.layer_gcodes = OrcaMCP::plate_layer_gcodes_json(*plate);
 
         // Everything standing on this plate, in one list and one frame: the model objects, the
         // prime tower, and the printer's own excluded bed areas. An agent looking for free space

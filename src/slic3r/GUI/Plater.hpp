@@ -663,6 +663,10 @@ public:
     // slicer reads and of the plater's own copy, renumbered after a slot is deleted or inserted; the print
     // settings show it (unsaved).
     void renumber_filament_settings(const FilamentRenumbering& change);
+    // Orca: what the Preview's layer slider does once plate `plate_index`'s G-code at a layer changed
+    // (Model::plates_custom_gcodes): the plate loses its slice result, the project is dirty, the preview
+    // and the slice buttons follow. MCP's add_layer_gcode and delete_layer_gcode run it too.
+    void on_layer_gcodes_changed(int plate_index, CustomGCode::Type type);
     std::vector<Slic3r::ColorRGBA> get_extruders_colors();
     // BBS
     void on_bed_type_change(BedType bed_type);

@@ -7709,21 +7709,8 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
             Model& model = wxGetApp().plater()->model();
             //BBS: replace model custom gcode with current plate custom gcode
             model.plates_custom_gcodes[model.curr_plate_index] = preview->get_canvas3d()->get_gcode_viewer().get_layers_slider()->GetTicksValues();
-
-            // BBS set to invalid state only
-            if (tick_event_type == Type::ToolChange || tick_event_type == Type::Custom || tick_event_type == Type::Template || tick_event_type == Type::PausePrint) {
-                PartPlate *plate = this->q->get_partplate_list().get_curr_plate();
-                if (plate) {
-                    plate->update_slice_result_valid_state(false);
-                }
-            }
-            set_plater_dirty(true);
-
-            preview->on_tick_changed(tick_event_type);
-
-            // update slice and print button
-            wxGetApp().mainframe->update_slice_print_status(MainFrame::SlicePrintEventType::eEventSliceUpdate, true, false);
-            set_need_update(true);
+            // Orca: the rest is Plater::on_layer_gcodes_changed, which MCP's layer G-code tools run too
+            this->q->on_layer_gcodes_changed(this->q->get_partplate_list().get_curr_plate_index(), tick_event_type);
         });
     }
     if (wxGetApp().is_gcode_viewer())
@@ -20453,6 +20440,24 @@ void Plater::on_filaments_delete(size_t num_filaments, size_t filament_id, int r
     // only: a merge's target, already numbered as after the delete, was moved down one more, only the first
     // tool change to the merged slot moved there, and colour changes kept their old numbers.
     GUI::renumber_custom_gcodes(p->model, deletion);
+}
+
+void Plater::on_layer_gcodes_changed(int plate_index, CustomGCode::Type type)
+{
+    // BBS set to invalid state only
+    if (type == Type::ToolChange || type == Type::Custom || type == Type::Template || type == Type::PausePrint) {
+        PartPlate *plate = get_partplate_list().get_plate(plate_index);
+        if (plate) {
+            plate->update_slice_result_valid_state(false);
+        }
+    }
+    p->set_plater_dirty(true);
+
+    p->preview->on_tick_changed(type);
+
+    // update slice and print button
+    wxGetApp().mainframe->update_slice_print_status(MainFrame::SlicePrintEventType::eEventSliceUpdate, true, false);
+    p->set_need_update(true);
 }
 
 void Plater::renumber_filament_settings(const FilamentRenumbering& change)

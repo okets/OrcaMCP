@@ -210,6 +210,16 @@ std::vector<NextStep> cancel_slice_next_steps(bool still_stopping)
              nullptr}};
 }
 
+std::vector<NextStep> layer_gcode_next_steps(int plate_index, bool changed)
+{
+    if (!changed)
+        return {};
+    return {{"slice_all",
+             "plate " + std::to_string(plate_index) + "'s layer G-code changed, so it lost its slice: slice_all slices it again, with the "
+             "change in its G-code (plates still sliced are kept)",
+             nullptr}};
+}
+
 std::vector<NextStep> uniform_image_next_steps(size_t model_volumes, size_t drawn, int plate_index)
 {
     const std::string plate = "plate " + std::to_string(plate_index);

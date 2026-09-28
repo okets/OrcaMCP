@@ -110,6 +110,7 @@ struct PlateEntry
     nlohmann::json occupancy      = nlohmann::json::array();
     nlohmann::json settings       = nlohmann::json::object(); // the plate's own settings (set_plate_settings' shape)
     nlohmann::json effective      = nlohmann::json::object(); // what applies on it
+    nlohmann::json layer_gcodes   = nlohmann::json::array();  // its G-code at a layer (plate_layer_gcodes_json)
 };
 
 class OrcaMCPPlateUtils {

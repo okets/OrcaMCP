@@ -98,6 +98,54 @@
       "summary": "Add a physical filament slot"
     },
     {
+      "category": "Slicing",
+      "description": "Add G-code at the start of a sliced layer, as the Preview's layer slider's menu does: a pause, a filament change (filament: the slot to change to), custom G-code (gcode) or the printer's template G-code. The layer is given by its number (layer, as the slider numbers them) or height (z), on the current plate or plate_index, which must have been sliced. The slider's rules hold: nothing at a layer while the plate prints by object; a filament change only on a project of several filaments, a plate printed with one, and not in spiral vase; the template only when the printer has one; custom G-code of 1 to 1023 characters. On a layer that already has G-code, a custom G-code's text and a filament change's filament are changed (replaced says what was there); anything else there must be deleted first (delete_layer_gcode). The same again changes nothing. The plate loses its slice (slice it again: next_steps). Not an undo step, as the slider's edits are not. The answer lists the plate's layer_gcodes, as get_scene_info does.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "filament": {
+            "description": "With filament_change: the filament slot to change to (1-based)",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "gcode": {
+            "description": "With custom: the G-code to run at the start of the layer",
+            "type": "string"
+          },
+          "layer": {
+            "description": "The layer, as the Preview's layer slider numbers them (1 is the first)",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "plate_index": {
+            "description": "Plate index (0-based). Default: the current plate",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": {
+            "description": "pause, filament_change (to `filament`), custom (the `gcode` text) or template (the printer's template G-code)",
+            "enum": [
+              "pause",
+              "filament_change",
+              "custom",
+              "template"
+            ],
+            "type": "string"
+          },
+          "z": {
+            "description": "Or the layer by height in mm: the printed layer nearest to it",
+            "type": "number"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "type": "object"
+      },
+      "name": "add_layer_gcode",
+      "summary": "Add a pause or G-code at a sliced layer"
+    },
+    {
       "category": "Printers",
       "description": "Configure a print host on the current printer preset and save it as a user preset with this name.",
       "inputSchema": {
@@ -613,6 +661,33 @@
       },
       "name": "delete_filament_slot",
       "summary": "Delete a filament slot, or merge it"
+    },
+    {
+      "category": "Slicing",
+      "description": "Delete the G-code at a layer -- a pause, filament change, custom or template G-code -- as the Preview's layer slider's Delete does. The layer is given by number (layer) or height (z), on the current plate or plate_index; get_scene_info's plates[].layer_gcodes lists them. The plate loses its slice (slice it again: next_steps). Not an undo step, as the slider's edits are not.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "layer": {
+            "description": "The layer, as the Preview's layer slider numbers them (1 is the first)",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "plate_index": {
+            "description": "Plate index (0-based). Default: the current plate",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "z": {
+            "description": "Or the layer by height in mm: the printed layer nearest to it",
+            "type": "number"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "delete_layer_gcode",
+      "summary": "Remove the pause or G-code at a layer"
     },
     {
       "category": "Filaments & colour",

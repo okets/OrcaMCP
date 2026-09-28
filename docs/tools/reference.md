@@ -38,7 +38,7 @@ into a call that reports success and changes nothing. See [Error Handling](#erro
 | **Layer Ranges** | `get_object_layer_ranges`, `set_object_layer_range`, `delete_object_layer_range` |
 | **Filaments & colour** | `get_filaments`, `add_filament_slot`, `delete_filament_slot`, `set_object_filament`, `set_mixed_filament`, `delete_mixed_filament`, `set_filament_color`, `get_flush_volumes`, `set_flush_volumes`, `auto_calc_flush_volumes`, `get_toolchanger_config`, `suggest_color_mix`, `get_color_palette` |
 | **Painting** | `paint_object`, `remap_paint`, `get_object_paint`, `clear_object_paint`, `set_brim_ears`, `pick_facet` |
-| **Slicing** | `slice_all`, `cancel_slice`, `wait_for_slice` (bridge-only), `get_slicing_status`, `export_gcode`, `get_print_estimate` |
+| **Slicing** | `slice_all`, `cancel_slice`, `wait_for_slice` (bridge-only), `get_slicing_status`, `export_gcode`, `get_print_estimate`, `add_layer_gcode`, `delete_layer_gcode` |
 | **Visualization** | `render_plate_view`, `get_preview_base64`, `set_gcode_view_type` |
 | **Printers** | `get_printers`, `select_printer`, `add_physical_printer`, `discover_printers`, `send_to_printer`, `get_printer_status`, `printer_control`, `list_printer_files`, `print_printer_file`, `match_project_to_printer` |
 | **Adaptive** | `apply_adaptive_layer_height`, `clear_adaptive_layer_height` |
@@ -207,7 +207,8 @@ and a stray shell; the object list's warning icon shows for it):
     ],
     "settings": {"name": "", "locked": false, "bed_type": "global", "print_sequence": "global",
                  "first_layer_filament_order": "auto", "other_layers_filament_order": "auto", "spiral_vase": "global"},
-    "effective": {"bed_type": "Textured PEI Plate", "print_sequence": "by layer", "spiral_vase": false}
+    "effective": {"bed_type": "Textured PEI Plate", "print_sequence": "by layer", "spiral_vase": false},
+    "layer_gcodes": [{"layer": 42, "z_mm": 8.4, "type": "pause"}]
   }],
   "unplaced_objects": [],
   "open_dialogs": [],
@@ -224,6 +225,11 @@ and a stray shell; the object list's warning icon shows for it):
   ]
 }
 ```
+
+Each plate's `layer_gcodes` is its G-code at a layer, as the Preview's layer slider shows it: `layer`
+(1-based, `null` while the plate's layers are not known -- never sliced, or changed since), `z_mm`,
+`type` (`pause`, `filament_change` with its `filament`, `custom` with its `gcode`, `template`, or
+`color_change` from an older project). `add_layer_gcode` and `delete_layer_gcode` change them.
 
 With a prime tower printed, `prime_tower` also carries `position` (the front-left corner of the tower
 body), `position_is`, `size`, `brim_width_mm`, `body`, `footprint`, `footprint_includes_brim` and a
@@ -2738,6 +2744,61 @@ interface was told it made no tool changes at all; the `total_toolchanges` key i
 
 ---
 
+### add_layer_gcode
+Put a pause, a filament change, custom G-code or the printer's template G-code at the start of a
+sliced layer, as the Preview's layer slider's menu does (right-click a layer: Add Pause, Change
+Filament, Add Custom G-code, Add Custom Template).
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `type` | string | Yes | `pause`, `filament_change`, `custom` or `template` |
+| `layer` | integer | One of these two | The layer, as the slider numbers them (1 is the first) |
+| `z` | number | | Or its height in mm: the printed layer nearest to it |
+| `plate_index` | integer | No | The plate (default: the current one). It must have been sliced |
+| `filament` | integer | With `filament_change` | The filament slot to change to (1-based) |
+| `gcode` | string | With `custom` | The G-code, 1 to 1023 characters (the slider's window holds 1023) |
+
+**Returns:**
+```json
+{"status": "success", "changed": true, "plate_index": 0,
+ "added": {"layer": 42, "z_mm": 8.4, "type": "pause"},
+ "layer_gcodes": [{"layer": 42, "z_mm": 8.4, "type": "pause"}],
+ "slice_result_valid": false,
+ "undo": "not an undo step, as the Preview's layer slider's edits are not: delete_layer_gcode (or add_layer_gcode) changes it back",
+ "active_warnings": {"count": 0, "warnings": []},
+ "next_steps": [{"tool": "slice_all", "why": "plate 0's layer G-code changed, so it lost its slice: ..."}]}
+```
+
+The slider's rules hold, and a call they rule out is refused before anything changes:
+
+- Nothing at a layer while the plate prints by object (`set_plate_settings` `print_sequence: "by layer"` first).
+- A filament change only on a project of several filaments, on a plate that prints with one of them
+  (a plate painted or set to several has no single filament to change from), not in spiral vase mode,
+  and to a slot the project has.
+- The template only when the printer has template G-code (`template_custom_gcode`).
+- On a layer that already has G-code: custom G-code's text and a filament change's filament are
+  edited in place, and `replaced` says what was there; any other kind there must be deleted first
+  (`delete_layer_gcode`), as the slider offers only Delete. The same again changes nothing
+  (`changed: false`).
+
+A pause records the plate's filament, a filament change the slot and its colour, as the slider does.
+`printer_gcode_empty` says when the printer's pause G-code is empty, so the pause writes nothing.
+
+The plate loses its slice, as in the app; `next_steps` names `slice_all`. The plate's layers stay known
+until the next slice, so several can be added in a row. Refused while the slicing pipeline is busy or an
+arrange, orient or bed fill runs, and on a G-code preview. **Not an undo step**: the app's undo history
+does not hold layer G-code, so an undo neither removes nor restores it.
+
+---
+
+### delete_layer_gcode
+Delete the G-code at a layer, as the slider's Delete does (Delete Pause, Delete Custom G-code, ...).
+Takes `layer` or `z`, and `plate_index`; answers as `add_layer_gcode`, with `deleted`. A layer with no
+G-code of its own is refused. Not an undo step.
+
+---
+
 ## Visualization Tools
 
 ### render_plate_view
@@ -3957,6 +4018,7 @@ nothing to suggest has no `next_steps`.
 | | `get_print_estimate` with the `plate_index` of a sliced plate (the selected one when it has a result) | `already_sliced` |
 | `export_gcode` | `wait_for_slice` | `export_started`: the file is still being written |
 | `cancel_slice` | `wait_for_slice` | the cancelled slice is still stopping: its completion is not taken in yet |
+| `add_layer_gcode`, `delete_layer_gcode` | `slice_all` | the call changed the plate's layer G-code, so it lost its slice |
 | `render_plate_view`, on each view whose `uniform_image` is true (beside its `hint`) | `get_scene_info` | nothing printable on that plate was drawn |
 | | `render_plate_view` with `{plate_index, save_to_file: true}` | the plate's objects were drawn but the camera looked elsewhere: no views gives a contact sheet fitted to the plate |
 | `paint_object` with `mode: support` | `set_object_config` for that object: `enable_support` `"1"` and `support_type` `normal(manual)` (or `tree(manual)` when its type is a tree one), for support only where painted | the object has painted enforcers and `enable_support` is off for it, so they do nothing (`info_messages` says so too). Not for blockers alone or erased paint: turning support on is the opposite of what a blocker asks; and not with an `(auto)` type, which would also support every other overhang |
