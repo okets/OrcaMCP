@@ -792,10 +792,23 @@ void ObjectList::update_filament_values_for_items(const size_t filaments_count)
                         object->volumes[id]->config.erase(key);
             }
         }
+
+        // Orca: the layer range rows too. An add before mixed slots renumbers the ranges' filaments
+        // (renumber_filaments_after_insert), and upstream refreshed the object and volume rows only, so a
+        // range's row kept its old number.
+        update_layer_range_rows(i);
     }
 
     // BBS
     wxGetApp().plater()->update();
+}
+
+void ObjectList::update_layer_range_rows(size_t obj_idx)
+{
+    for (const auto& [range, config] : (*m_objects)[obj_idx]->layer_config_ranges)
+        if (config.has("extruder"))
+            if (const wxDataViewItem row = m_objects_model->GetItemByLayerRange(int(obj_idx), range))
+                m_objects_model->SetExtruder(wxString::Format("%d", config.option("extruder")->getInt()), row);
 }
 
 void ObjectList::update_filament_values_for_items_when_delete_filament(const size_t filament_id, const int replace_id)

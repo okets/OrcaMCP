@@ -323,6 +323,8 @@ public:
     void                update_name_in_model(const wxDataViewItem& item) const;
     void                update_name_in_list(int obj_idx, int vol_idx) const;
     void                update_filament_values_for_items(const size_t filaments_count);
+    // Orca: each layer range row of object `obj_idx` shows its range's filament again.
+    void                update_layer_range_rows(size_t obj_idx);
     void                update_filament_values_for_items_when_delete_filament(const size_t filament_id, const int replace_id = -1);
 
     //BBS: update plate
