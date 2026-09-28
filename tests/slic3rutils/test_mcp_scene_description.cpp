@@ -12,6 +12,7 @@
 
 #include <fstream>
 #include <set>
+#include <algorithm>
 #include <sstream>
 #include <string>
 
@@ -94,8 +95,10 @@ json reference_example(const std::string& marker)
     REQUIRE(in.good());
     std::stringstream text;
     text << in.rdbuf();
-    const std::string doc   = text.str();
-    const size_t      at    = doc.find(marker);
+    // A Windows checkout has CRLF line ends (core.autocrlf), which the search below must not depend on.
+    std::string doc = text.str();
+    doc.erase(std::remove(doc.begin(), doc.end(), '\r'), doc.end());
+    const size_t at = doc.find(marker);
     INFO("marker \"" << marker << "\" in " << ORCAMCP_REFERENCE_DOC);
     REQUIRE(at != std::string::npos);
     const size_t open = doc.find("```json\n", at);

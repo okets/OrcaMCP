@@ -83,7 +83,14 @@ TEST_CASE("a queued call that has started is waited for past the bound", "[Queue
     std::shared_future<void> started_f = started.get_future().share();
     std::atomic<bool>        finished{false};
 
-    auto queue = [&](std::function<void()> task) { std::thread(std::move(task)).detach(); };
+    // The task goes to a thread of its own, and the queue returns once the work is under way there:
+    // the call has started before the bound whenever that thread gets to run. A queue that returned at
+    // once left it to the scheduler, and a loaded Windows runner started the thread after the 10 ms, so
+    // the caller rightly gave up before the work began and the test failed.
+    auto queue = [&](std::function<void()> task) {
+        std::thread(std::move(task)).detach();
+        started_f.wait();
+    };
     const bool ran = run_queued_and_wait(
         queue,
         [&] {
