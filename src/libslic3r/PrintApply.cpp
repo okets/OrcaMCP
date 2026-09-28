@@ -1195,21 +1195,22 @@ static PrintObjectRegions* generate_print_object_regions(
     return out.release();
 }
 
-// Orca: the config is normalized by the filaments this Print uses (normalize_fdm_2: the prime tower off for one
-// filament, independent support layer height off with the tower), read before the model it is given is applied:
-// from the model and objects of the last apply. An apply that changes the filaments used -- a filament change at a
-// layer added or deleted, an object moved to another filament -- normalized by the old set, and its late pass can
-// only turn options off, so a print that gained a filament was sliced with no prime tower, and the next apply,
-// normalizing by the new set, invalidated that slice. So when the filaments used changed, the same inputs are
-// applied once more, now normalized by the filaments they use: what the next apply would have done, before any
-// slice is made.
+// Orca: the config is normalized by the objects and filaments this Print has (normalize_fdm_2: the prime tower off
+// for one filament or for a by-object print of several objects, independent support layer height off with the
+// tower), read before the model it is given is applied: from the model and objects of the last apply. An apply that
+// changes them -- a filament change at a layer added or deleted, an object moved to another filament, an object
+// added or removed -- normalized by the old ones, and its late pass can only turn options off, so a print that
+// gained a filament was sliced with no prime tower, and the next apply, normalizing by the new ones, invalidated that
+// slice. So when they changed, the same inputs are applied once more, now normalized by what they hold: what the
+// next apply would have done, before any slice is made. The second pass changes neither, so there is no third.
 Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_config, bool extruder_applied)
 {
-    const std::vector<unsigned int> used_before = this->extruders(true);
-    const ApplyStatus               first       = this->apply_once(model, new_full_config, extruder_applied);
-    if (this->extruders(true) == used_before)
+    const auto        normalized_by = [this] { return std::make_pair(this->objects().size(), this->extruders(true)); };
+    const auto        before        = normalized_by();
+    const ApplyStatus first         = this->apply_once(model, new_full_config, extruder_applied);
+    if (normalized_by() == before)
         return first;
-    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": the filaments used changed, applying again normalized by them";
+    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": the objects or filaments used changed, applying again normalized by them";
     return std::max(first, this->apply_once(model, std::move(new_full_config), extruder_applied));
 }
 

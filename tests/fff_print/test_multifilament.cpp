@@ -745,6 +745,28 @@ TEST_CASE("The apply that brings in a filament change decides the prime tower by
     CHECK(print.apply(model, config) == PrintBase::APPLY_STATUS_UNCHANGED);
 }
 
+// normalize_fdm_2 also turns the prime tower off for a by-object print of several objects, from the object count of
+// the last apply. Removing the second object left the tower off for the one object left, which prints two
+// filaments, and the next apply turned it on and threw that slice away.
+TEST_CASE("The apply that removes an object from a by-object print decides the prime tower by the objects left", "[MultiFilament][Print]")
+{
+    const DynamicPrintConfig config = multifilament_config(2, {{"enable_prime_tower", 1}, {"print_sequence", "by object"}});
+    Print print;
+    Model model;
+    // Object 0 prints its outer wall with filament 2, so the print uses both filaments with or without object 1.
+    const std::vector<std::vector<ConfigBase::SetDeserializeItem>> overrides{{{"extruder", 1}, {"outer_wall_filament_id", 2}},
+                                                                             {{"extruder", 1}}};
+    init_print(std::vector<TriangleMesh>{cube(20), cube(20)}, print, model, config, &overrides);
+    print.apply(model, config);
+    REQUIRE(print.extruders(true) == std::vector<unsigned int>{0, 1});
+    REQUIRE_FALSE(print.config().enable_prime_tower.value); // by object, two objects
+
+    model.delete_object(size_t(1));
+    print.apply(model, config);
+    CHECK(print.config().enable_prime_tower.value); // one object, two filaments
+    CHECK(print.apply(model, config) == PrintBase::APPLY_STATUS_UNCHANGED);
+}
+
 // The slicer takes a plate's filament changes only on a by-layer print whose objects all print with one
 // filament (ToolOrdering). Print::extruders(true) counted every one, so a change the Preview's slider keeps
 // but the slicer ignores -- on a plate printing with several filaments, or by object -- made a filament the
