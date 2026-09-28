@@ -36,6 +36,24 @@ inline indexed_triangle_set separate_cubes(int count)
     return its;
 }
 
+// A flat 10 mm square in the XY plane, two facets and no thickness: a stray sheet with four open
+// edges and no volume.
+inline indexed_triangle_set flat_square()
+{
+    indexed_triangle_set its;
+    its.vertices = {{0.f, 0.f, 0.f}, {10.f, 0.f, 0.f}, {10.f, 10.f, 0.f}, {0.f, 10.f, 0.f}};
+    its.indices  = {{0, 1, 2}, {0, 2, 3}};
+    return its;
+}
+
+// A closed 10 mm cube at the origin with `stray` beside it, 20 mm along X, in one mesh: two shells.
+inline indexed_triangle_set cube_with(indexed_triangle_set stray)
+{
+    indexed_triangle_set its = Slic3r::its_make_cube(10.0, 10.0, 10.0);
+    Slic3r::its_merge(its, translated(std::move(stray), Slic3r::Vec3f(20.f, 0.f, 0.f)));
+    return its;
+}
+
 // One object holding `mesh` as its only part, with one instance, as a load leaves it.
 struct OnePartObject
 {

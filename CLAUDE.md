@@ -1046,6 +1046,7 @@ echo "AE cancel_all leaves a job whose process has returned to finalize as not c
 echo "AF a cancelled or failed arrange keeps prepare_all's plates locked, its running flag and its notification (rel2506/07e): $(U src/slic3r/GUI/Jobs/ArrangeJob.cpp | awk '/^void ArrangeJob::finalize/{f=1} f&&/lock\(false\)|end_arrange_run/{print "no"; exit} f&&/if \(canceled \|\| eptr\)/{print "yes"; exit}')"
 echo "AG an object added to the scene has only its first instance on a plate (rel2506/07f): $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^void ObjectList::add_object_to_list\(/{f=1} f&&/notify_instance_update\(obj_idx, 0, true\)/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
 echo "AH the first slice waits for every TBB worker at once to name them (rel2506/07g): $(U src/libslic3r/Thread.cpp | awk '/^void name_tbb_thread_pool_threads_set_locale/{f=1} f&&/cv\.wait\(/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
+echo "AI the Repair's worker changes the object itself, off the main thread / a first volume dropped whole skips the next / a repair can delete an object's last part / the Repair's snapshot is taken before its dialog (rel2506/08b): $(U src/slic3r/Utils/FixModelByCgal.cpp | grep -c 'std::thread(\[&model_object') / $(U src/slic3r/Utils/FixModelByCgal.cpp | awk '/removed_parts >= parts_count/{f=1} f&&/ivolume = part_end;/{print "yes"; exit} f&&/continue;/{print "no"; exit}') / $(U src/slic3r/Utils/FixModelByCgal.cpp | awk '/is_not_3dimensional_part\(part_volume->mesh\(\)\)/{f=1} f&&/parts_count\(\)|is_model_part/{print "no"; exit} f&&/delete_volume\(part_idx\)/{print "yes"; exit}') / $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^void ObjectList::fix_through_cgal/{f=1} f&&/TakeSnapshot/{print "yes"; exit} f&&/ProgressDialog progress_dlg/{print "no"; exit}')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -1297,6 +1298,26 @@ pointers. macOS reads a thread's name back like the other posix systems (`get_cu
 On "no", upstream dropped the barrier: compare its replacement with ours, keep whichever prepares a
 worker that joins later, and re-run `libslic3r_tests "[Thread]"` (on the barrier, the busy-pool test
 fails at its 30 s deadline).
+
+Item AI: upstream's `fix_model_with_cgal_gui` (`FixModelByCgal.cpp`) runs the whole repair on a
+worker thread against the live `ModelObject` while the progress dialog pumps events: it splits, deletes
+and re-meshes volumes there and creates `ModelVolume`s, whose ids only the main thread may make
+(`ObjectID.hpp`), while the dialog's `YieldFor` runs other main-thread work, an MCP call's among it
+(`CallAfter` events are of the UI category), on the same object. Its worker is a `std::thread` (512 KB
+of stack on macOS), where the app's other CGAL work uses `create_thread`'s 16 MB. When an object's first
+volume is dropped whole, its loop skips the next volume (`part_end` cannot go below 0); a repair whose
+parts are all flat or empty deletes every volume, leaving an object with none; a cancel keeps the
+volumes already changed, but the object list is not told. `ObjectList::fix_through_cgal` takes its undo
+snapshot before the dialog, so what the dialog lets through lands in the repair's undo step, and it
+repairs a multi-volume selection by the indices it read first, which the first repair's split moves.
+Ours splits the repair in three (`capture_cgal_repair`, `plan_cgal_repair`: pure mesh work on any
+thread, predicting the parts `ModelVolume::split` makes; `apply_cgal_repair`: upstream's loop on the
+main thread, taking each part's repaired mesh from the plan), which the object list's Repair, the cut
+gizmo and MCP's `repair_mesh` all run. The loop skips nothing and never deletes the last model part;
+the list plans every object under its dialog, then takes one snapshot and applies them, finding objects
+and volumes by pointer and id. On a "no" or 0, upstream fixed that part: take its version, keep the
+plan/apply split around it, and re-run `slic3rutils_tests "[MeshRepair]"`, whose "planned repair builds
+the same object as the repair done in place" test holds the plan to upstream's loop.
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices
