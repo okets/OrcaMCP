@@ -589,7 +589,9 @@ void Preview::update_layers_slider(const std::vector<double>& layers_z, bool kee
     m_layers_slider->SetDrawMode(sequential_print);
 
     // Orca: STUDIO-2621's clears, made on the plate's layer G-code at once: the slider made them by a deferred change
-    // event, and a second update of the slider before it re-read the plate's items, and the clear was lost.
+    // event, and a second update of the slider before it re-read the plate's items, and the clear was lost. What follows
+    // a tick edit -- the plate's slice invalidated (it was made with the items), Print and Export off, the project
+    // changed -- is still deferred, as the change event was: it reloads this preview.
     const bool gcode_only = plater->only_gcode_mode() || plater->using_exported_file();
     if (wxGetApp().is_editor() && !gcode_only) {
         int plate_print_index = -1;
@@ -598,7 +600,11 @@ void Preview::update_layers_slider(const std::vector<double>& layers_z, bool kee
             !ticks_info_from_curr_plate.gcodes.empty()) {
             ticks_info_from_curr_plate.gcodes.clear();
             plater->model().plates_custom_gcodes[plater->get_partplate_list().get_curr_plate_index()].gcodes.clear();
-            plater->set_plater_dirty(true);
+            CallAfter([plate_print_index]() {
+                Plater* plater = wxGetApp().plater();
+                if (const int index = plater->get_partplate_list().find_plate_by_print_index(plate_print_index); index >= 0)
+                    plater->on_layer_gcodes_changed(index, CustomGCode::Custom);
+            });
         }
     }
     m_layers_slider->SetGcodeOnly(gcode_only);

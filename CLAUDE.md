@@ -1858,9 +1858,11 @@ by every plate and starting at off: the next plate shown after a vase toggle had
 own mode, and so had a plate first shown in vase mode (a project opened with one lost its pauses on its first
 Preview); the slider took the print preset's vase mode, not the plate's own (`PartPlate::get_spiral_vase_mode`).
 Ours makes both clears in `Preview::update_layers_slider` on the plate's layer G-code before the slider reads it,
-and marks the project changed (`set_plater_dirty`), deciding by `clears_plate_layer_gcode` (`TickCode.cpp`): by
-object, or the plate's own vase mode changed since the Preview last showed it, recorded per plate by print index
-(a plate shown the first time is recorded only, so a toggle made before a plate's first Preview keeps its ticks).
+deciding by `clears_plate_layer_gcode` (`TickCode.cpp`): by object, or the plate's own vase mode changed since the
+Preview last showed it, recorded per plate by print index (a plate shown the first time is recorded only, so a
+toggle made before a plate's first Preview keeps its ticks). What follows a tick edit -- the plate's slice
+invalidated, Print and Export off, the project changed (`Plater::on_layer_gcodes_changed`) -- still runs deferred, as
+the change event did: a slice made before the Preview cleared the items has them in its G-code.
 On a non-zero or "yes", take upstream's and re-run `slic3rutils_tests "[LayerGcode]"`, then toggle a plate's vase
 mode between two Previews of it: its pauses go, the other plate's stay.
 
