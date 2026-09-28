@@ -93,6 +93,11 @@ std::optional<std::string> plan_preset_install(const std::vector<std::string>& p
 std::optional<std::string> install_refusal(const PipelineState& pipeline, bool ui_job_running, const std::vector<std::string>& unsaved,
                                            const std::vector<std::string>& embedded);
 
+// The presets `bundle` holds for the open project alone (a 3MF's own, is_project_embedded), one line each:
+// "the filament preset 'X'". Every one, with a parent or not (PresetBundle::get_current_project_embedded_presets,
+// which the 3MF export uses, copies only those with a parent). Any thread, for a bundle no other thread changes.
+std::vector<std::string> project_preset_names(const PresetBundle& bundle);
+
 // Puts back the project's filament maps (which extruder, nozzle and nozzle volume each slot prints with)
 // from `before` into `after` when the reload an install ends with reset them (PresetBundle::load_selections
 // gives every slot extruder 1) and the slots are the same in number. Returns the keys it put back.

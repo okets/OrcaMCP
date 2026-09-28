@@ -243,6 +243,32 @@ TEST_CASE("nothing is installed while the project carries presets of its own, wh
     CHECK(refusal->find("Nothing was installed") != std::string::npos);
 }
 
+TEST_CASE("the presets a project carries of its own are the ones an install's reload drops", "[PresetInstall]")
+{
+    InstallFolders folders;
+    AppConfig      app_config;
+    app_config.set_section(AppConfig::SECTION_FILAMENTS, {{"Generic PLA @System", "true"}});
+    PresetBundle bundle;
+    bundle.load_presets(app_config, ForwardCompatibilitySubstitutionRule::EnableSilent);
+    CHECK(project_preset_names(bundle).empty());
+
+    // A 3MF's own filament with no installed parent, as a project load adds it (load_external_preset with the
+    // file's name): PresetBundle::get_current_project_embedded_presets leaves such a one out (it copies only
+    // presets with a parent), so this reads the presets themselves.
+    DynamicPrintConfig config = bundle.filaments.default_preset().config;
+    const auto [preset, modified] = bundle.filaments.load_external_preset(
+        (folders.data.path / "fixture.3mf").string(), "fixture.3mf", "Fixture PETG", config, {}, PresetCollection::LoadAndSelect::Never);
+    REQUIRE(preset != nullptr);
+    const std::string name = preset->name;
+    CHECK(project_preset_names(bundle) == std::vector<std::string>{"the filament preset '" + name + "'"});
+
+    // What the refusal protects: the reload resets every collection and reads the user presets back, not these.
+    bundle.export_selections(app_config);
+    REQUIRE(bundle.apply_vendor_config({}, {{"Generic PETG @System", "true"}}, &app_config, /*overwrite=*/false));
+    CHECK(bundle.filaments.find_preset(name, false) == nullptr);
+    CHECK(project_preset_names(bundle).empty());
+}
+
 TEST_CASE("an install's reload resets the project's filament maps, and the install puts them back", "[PresetInstall]")
 {
     InstallFolders folders;

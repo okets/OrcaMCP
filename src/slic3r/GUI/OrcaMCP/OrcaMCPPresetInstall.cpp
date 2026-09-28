@@ -202,6 +202,18 @@ std::optional<std::string> install_refusal(const PipelineState& pipeline, bool u
     return std::nullopt;
 }
 
+std::vector<std::string> project_preset_names(const PresetBundle& bundle)
+{
+    std::vector<std::string> names;
+    for (const auto& [what, presets] : {std::pair<const char*, const PresetCollection*>{"printer", &bundle.printers},
+                                        {"print", &bundle.prints},
+                                        {"filament", &bundle.filaments}})
+        for (const Preset& preset : *presets)
+            if (preset.is_project_embedded)
+                names.push_back(std::string("the ") + what + " preset '" + preset.name + "'");
+    return names;
+}
+
 std::vector<std::string> restore_filament_maps(const DynamicPrintConfig& before, DynamicPrintConfig& after)
 {
     std::vector<std::string> restored;

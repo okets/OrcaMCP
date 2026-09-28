@@ -779,12 +779,7 @@ std::vector<std::string> OrcaMCPPresetConfigUtils::UnsavedPresetChanges()
 
 std::vector<std::string> OrcaMCPPresetConfigUtils::ProjectEmbeddedPresets()
 {
-    std::vector<std::string> embedded;
-    for (const Preset* preset : wxGetApp().preset_bundle->get_current_project_embedded_presets()) {
-        const char* what = preset->type == Preset::TYPE_PRINTER ? "printer" : preset->type == Preset::TYPE_FILAMENT ? "filament" : "print";
-        embedded.push_back(std::string("the ") + what + " preset '" + preset->name + "'");
-    }
-    return embedded;
+    return OrcaMCP::project_preset_names(*wxGetApp().preset_bundle);
 }
 
 nlohmann::json OrcaMCPPresetConfigUtils::InstallPresets(const OrcaMCP::PresetInstallPlan& plan)
