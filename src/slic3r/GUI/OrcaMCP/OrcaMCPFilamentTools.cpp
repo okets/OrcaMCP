@@ -401,7 +401,7 @@ void OrcaMCPServer::register_filament_tools()
                 }},
                 {"create", {
                     {"type", "boolean"},
-                    {"description", "When true, create the mixed slot via apply_mixed_filament. Default false."}
+                    {"description", "When true, also create the suggested mix as a new mixed filament slot, as set_mixed_filament does. Default false."}
                 }}
             }},
             {"required", {"target_color"}}

@@ -209,7 +209,9 @@ What the tests enforce, with no app running:
   - `get_server_info`'s default response names every tool, bridge-only ones included, reports
     `SoftFever_VERSION`, stays under 6 KB, and its section index matches the sections;
   - every tool name `get_server_info` mentions, in structured fields or prose, is a real tool
-    (`tests/slic3rutils/mcp_tool_references.hpp`, reusable for other text);
+    (`tests/slic3rutils/mcp_tool_references.hpp`, reusable for other text), and so is every one a
+    tool's own summary, description and schema text names (a schema's enum values, and the few
+    response fields and status words descriptions name, are not tool references);
   - `initialize` answers the server instructions, which fit in 2048 ASCII characters, name only
     real tools, and name the tools agents missed without them; the golden file's copy matches.
 - `scripts/tests/` (`python3 -m unittest discover -s scripts/tests -t scripts`, run by the fork's

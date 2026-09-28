@@ -217,6 +217,37 @@ TEST_CASE("Every tool get_server_info mentions is a real tool", "[orcamcp][tools
     CHECK(unknown.empty());
 }
 
+namespace {
+
+// Response fields and status words tool descriptions name that look like tool names ("slice_run",
+// "arrange_started"). A response has no schema to read them from, so they are listed here.
+const std::set<std::string> response_words_named_in_descriptions{"slice_run", "reset_count", "arrange_started"};
+
+} // namespace
+
+TEST_CASE("Every tool name a tool's own text mentions is a real tool", "[orcamcp][tools]")
+{
+    // An agent reads a description only once it has chosen the tool, and follows what it names: a
+    // name no tool answers to sends it nowhere.
+    const mcp_tool_references::ToolNames names(OrcaMCPServer::registered_tools(), response_words_named_in_descriptions);
+    std::vector<mcp_tool_references::Reference> unknown;
+    for (const auto& [name, tool] : OrcaMCPServer::registered_tools()) {
+        const nlohmann::json text = {{"summary", tool.summary}, {"description", tool.description}, {"inputSchema", tool.input_schema}};
+        for (mcp_tool_references::Reference& reference : mcp_tool_references::unknown_in_json(text, names))
+            unknown.push_back({name + reference.where, reference.token});
+    }
+    INFO("tool text names tools that do not exist:\n" << mcp_tool_references::describe(unknown));
+    CHECK(unknown.empty());
+}
+
+TEST_CASE("The tool-name check takes a schema's enum values for what they are", "[orcamcp][tools]")
+{
+    // printer_control's action "set_temperature" is a value to send, not a tool to call.
+    const mcp_tool_references::ToolNames names(OrcaMCPServer::registered_tools());
+    CHECK(names.is_other_name("set_temperature"));
+    CHECK(mcp_tool_references::unknown_in_text("send action set_temperature, then set_temperatures", "text", names).size() == 1);
+}
+
 TEST_CASE("The tool-name check tells tool references from config keys and parameters", "[orcamcp][tools]")
 {
     const mcp_tool_references::ToolNames names(OrcaMCPServer::registered_tools());
