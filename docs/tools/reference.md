@@ -3221,6 +3221,13 @@ ships with always list the same names, descriptions and schemas. The bridge's ow
 (`start_orca`) come from the same file whether the app runs or not, so an agent sees the same list
 before and after the app starts.
 
+The server instructions an MCP client shows before any tool is loaded -- one line per job naming
+its key tools, the canonical workflow, the calls that overwrite or start something, and
+`get_server_info` for the rest -- come from the same file (`instructions`). The bridge always
+answers `initialize` itself, so they are the same with the app running or not. Claude Code shows
+the first 2048 characters of them; a unit test keeps them within that, in ASCII, naming only real
+tools.
+
 A running app of a different build than the bridge's file can still list other tools. For that
 case the bridge advertises `tools.listChanged` and sends `notifications/tools/list_changed` the
 first time a live OrcaSlicer answers after the file's list was served. A client that honours it
