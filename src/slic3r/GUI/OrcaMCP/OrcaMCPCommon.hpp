@@ -241,6 +241,17 @@ const BoundingBoxf3& object_world_box(const ModelObject& object);
 // plan, the prime tower's conflicts -- and a render's fit to the object frames it: an object with
 // instances on several plates is described under each plate by the instances there, never by the
 // box spanning them all. `holds(i)` says whether the plate holds instance i.
+// Which object a description is about, the same in every one (get_scene_info's model_objects and
+// unplaced_objects, load_model's loaded_objects): `object_id`, the index every tool's object_id takes;
+// `object_index`, the same number, kept for older readers; `internal_id`, the app's own ObjectID as a
+// string -- stable while the app runs, never saved in the project, and taken by no tool. It was once
+// called `id`, beside object_index, and an agent passed it as the object_id.
+void add_object_identity(nlohmann::json& out, const ModelObject& object, int object_index);
+
+// One entry of get_slicing_status's `plates`: {plate_index, index (the same, kept for older readers),
+// slice_result_valid, percent (null when `percent` is empty), gcode_check}.
+nlohmann::json plate_slicing_json(int plate_index, bool slice_result_valid, std::optional<int> percent, nlohmann::json gcode_check);
+
 struct InstancesOnPlate
 {
     std::vector<int> ids;  // instance indices, ascending

@@ -29,14 +29,14 @@ into a call that reports success and changes nothing. See [Error Handling](#erro
 | Category | Tools |
 |----------|-------|
 | **Scene** | `get_scene_info`, `new_project`, `load_project`, `save_project`, `export_3mf` |
-| **Models** | `load_model`, `auto_orient`, `arrange_objects`, `get_object_info`, `get_mesh_health`, `rename_object`, `set_object_printable` |
+| **Models** | `load_model`, `auto_orient`, `arrange_objects`, `get_object_info`, `get_mesh_health`, `get_object_components`, `rename_object`, `set_object_printable` |
 | **Transforms** | `move_object`, `rotate_object`, `scale_object`, `mirror_object`, `flatten_object`, `clone_object`, `cut_object`, `delete_object`, `transform_objects` |
 | **Plates** | `add_plate`, `select_plate`, `delete_plate`, `set_prime_tower_position` |
 | **Config** | `get_presets`, `get_edited_presets`, `get_config_values`, `select_preset`, `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset`, `get_valid_config_keys` |
 | **Per-Object** | `get_object_config`, `set_object_config`, `reset_object_config` |
 | **Layer Ranges** | `get_object_layer_ranges`, `set_object_layer_range`, `delete_object_layer_range` |
 | **Filaments & colour** | `get_filaments`, `set_object_filament`, `set_mixed_filament`, `delete_mixed_filament`, `set_filament_color`, `get_flush_volumes`, `set_flush_volumes`, `auto_calc_flush_volumes`, `get_toolchanger_config`, `suggest_color_mix`, `get_color_palette` |
-| **Painting** | `paint_object`, `remap_paint`, `get_object_paint`, `clear_object_paint`, `set_brim_ears`, `get_object_components`, `pick_facet` |
+| **Painting** | `paint_object`, `remap_paint`, `get_object_paint`, `clear_object_paint`, `set_brim_ears`, `pick_facet` |
 | **Slicing** | `slice_all`, `wait_for_slice` (bridge-only), `get_slicing_status`, `export_gcode`, `get_print_estimate` |
 | **Visualization** | `render_plate_view`, `get_preview_base64`, `set_gcode_view_type` |
 | **Printers** | `get_printers`, `select_printer`, `add_physical_printer`, `discover_printers`, `send_to_printer`, `get_printer_status`, `printer_control`, `list_printer_files`, `print_printer_file`, `match_project_to_printer` |
@@ -144,52 +144,94 @@ Get current project state including plates, objects, and positions.
 {"name": "get_scene_info", "arguments": {"with_model_object_features": false}}
 ```
 
-**Returns:**
+**Returns** (captured from a real response on 2026-09-28: one object, a column with an arm, a hole
+and a stray shell; the object list's warning icon shows for it):
+
+<!-- get_scene_info example: test_mcp_scene_description.cpp holds its keys to what the response writes -->
 ```json
 {
-  "bed": {"origin": "corner", "min_x": 0, "max_x": 310, "min_y": 0, "max_y": 310, "max_z": 350},
+  "hash_code": "03fcaebe3e7327f107f130f92019a838",
+  "sequential_print_enabled": false,
+  "bed": {"origin": "corner", "min_x": -0.0001, "min_y": -0.0001, "max_x": 256.0001, "max_y": 256.0001, "max_z": 256.0001},
   "plates": [{
+    "name": "",
     "plate_index": 0,
+    "index": 0,
     "is_current": true,
+    "bounding_box": {"min": {"x": -0.0001, "y": -0.0001, "z": -0.0001}, "max": {"x": 256.0001, "y": 256.0001, "z": 256.0001}},
     "model_objects": [{
+      "object_id": 0,
       "object_index": 0,
-      "id": "abc123",
-      "name": "benchy.stl",
-      "position": [155, 155, 0],
-      "rotation_degrees": [0, 0, 0],
-      "scale": [1, 1, 1],
-      "bounding_box": {"min": [...], "max": [...], "size": [...]},
-      "brim": {"type": "auto_brim", "extent_mm": 0.0, "extent_upper_bound_mm": 18.0, "extent_is_exact": false},
-      "printed_footprint": {"min_x": 145, "min_y": 145, "max_x": 165, "max_y": 165, "size_x": 20, "size_y": 20},
-      "printed_footprint_includes_brim": false,
+      "internal_id": "65",
+      "name": "gallows.stl",
       "instance_count": 1,
-      "mesh_warning": false
+      "instances_on_plate": [0],
+      "volume_count": 1,
+      "position": {"x": 128.0, "y": 128.0, "z": 12.5},
+      "rotation_degrees": {"x": 0.0, "y": -0.0, "z": 0.0},
+      "scale": {"x": 1.0, "y": 1.0, "z": 1.0},
+      "bounding_box": {"min": {"x": 104.0, "y": 123.0, "z": 0.0}, "max": {"x": 152.0, "y": 133.0, "z": 25.0},
+                       "size_x": 48.0, "size_y": 10.0, "size_z": 25.0},
+      "brim": {"type": "no_brim", "extent_mm": 0.0, "extent_upper_bound_mm": 0.0, "extent_is_exact": true},
+      "printed_footprint": {"min_x": 104.0, "min_y": 123.0, "max_x": 152.0, "max_y": 133.0, "size_x": 48.0, "size_y": 10.0},
+      "printed_footprint_includes_brim": false,
+      "vlh_enabled": false,
+      "vlh_profile_points": 0,
+      "extruder_id": 1,
+      "filaments_used": [1],
+      "filament_override_count": 0,
+      "mesh_warning": true,
+      "mesh_warning_reason": "Error: 3 non-manifold edges."
     }],
     "prime_tower": {
-      "printed": true,
-      "reason": "printed",
-      "reason_detail": "A prime tower is printed on this plate and occupies the reported footprint.",
+      "printed": false,
+      "reason": "single_filament_plate",
+      "reason_detail": "This plate uses a single filament, so no tower is generated even though the project is multi-filament.",
       "frame": "plate_mm",
-      "stored_position": {"x": 165.0, "y": 250.0, "frame": "plate_local_mm"},
-      "position": {"x": 165.0, "y": 250.0},
-      "position_is": "front_left_corner_of_tower_body",
-      "size": {"x": 60.0, "y": 42.5, "z": 31.2},
-      "brim_width": 3.0,
-      "body": {"min_x": 165, "min_y": 250, "max_x": 225, "max_y": 292.5, "size_x": 60, "size_y": 42.5},
-      "footprint": {"min_x": 162, "min_y": 247, "max_x": 228, "max_y": 295.5, "size_x": 66, "size_y": 48.5},
-      "footprint_includes_brim": true
+      "stored_position": {"x": 165.0, "y": 225.09014892578125, "frame": "plate_local_mm"}
     },
     "excluded_areas": [],
     "occupancy_frame": "plate_mm",
     "occupancy": [
-      {"kind": "object", "name": "benchy.stl", "object_index": 0, "footprint": {...},
-       "includes_brim": false, "footprint_is_exact": false, "height_mm": 48.0},
-      {"kind": "prime_tower", "name": "Prime tower", "footprint": {...},
-       "includes_brim": true, "footprint_is_exact": true, "height_mm": 31.2}
+      {"kind": "object", "name": "gallows.stl", "object_index": 0, "instances_on_plate": [0],
+       "footprint": {"min_x": 104.0, "min_y": 123.0, "max_x": 152.0, "max_y": 133.0, "size_x": 48.0, "size_y": 10.0},
+       "includes_brim": false, "footprint_is_exact": true, "height_mm": 25.0}
     ]
-  }]
+  }],
+  "unplaced_objects": [],
+  "open_dialogs": [],
+  "system_dialog_open": false,
+  "untracked_modal_loop": false,
+  "active_warnings": {"count": 1, "warnings": [{
+    "level": "warning", "type": "MeshErrors", "object_id": 0, "object_name": "gallows.stl",
+    "message": "Error: 3 non-manifold edges. MCP has no tool that repairs a mesh. Slicing closes each layer's outline across gaps of up to 2 mm, so a hole that small usually prints closed; a wider one can leave that outline out of a layer, so check the sliced preview there. Details: get_mesh_health {object_id: 0}."}]},
+  "next_steps": [
+    {"tool": "get_mesh_health", "arguments": {"object_id": 0},
+     "why": "object 0 (\"gallows.stl\") shows the mesh warning icon: Error: 3 non-manifold edges."},
+    {"tool": "get_object_components", "arguments": {"object_id": 0},
+     "why": "part \"gallows.stl\" of object 0 (\"gallows.stl\") has 2 shells: a loose part or stray fragment may be one of them"}
+  ]
 }
 ```
+
+With a prime tower printed, `prime_tower` also carries `position` (the front-left corner of the tower
+body), `position_is`, `size`, `brim_width_mm`, `body`, `footprint`, `footprint_includes_brim` and a
+`note`, and `occupancy` a `prime_tower` entry. `with_model_object_features` adds `features` to every
+object; `include_preview` adds `preview_path` and `preview_hint`.
+
+#### Object and plate numbers
+
+Every object description -- `model_objects`, `unplaced_objects`, and `load_model`'s `loaded_objects`
+-- carries `object_id`, the 0-based index every tool's `object_id` parameter takes. `object_index` is
+the same number, kept for older readers. `internal_id` is the app's own number for the object: stable
+while the app runs, never saved in the project, and taken by no tool (it was called `id`, and an agent
+reading `"id": "71"` beside `"object_index": 0` passed 71). An object's `object_id` shifts when an
+object before it is deleted.
+
+Every plate carries `plate_index` (what `select_plate`, `render_plate_view` and the other plate tools
+take; `index`, the same number, is kept) and `is_current`: true for the plate per-plate tools act on
+(`export_gcode`, `get_print_estimate` without `plate_index`, `send_to_printer`), whose printable area
+`bed` gives.
 
 #### Which filament an object prints with
 
@@ -203,7 +245,7 @@ multi-filament however `extruder_id` reads.
 
 #### Unplaced objects
 
-`unplaced_objects` lists every object with an instance no plate holds: `object_index`, `id`, `name`,
+`unplaced_objects` lists every object with an instance no plate holds: `object_id`, `object_index`, `internal_id`, `name`,
 `instance_count`, `unplaced_instances` (the instances on no plate), `position` (their box's centre)
 and `reason`. Deleting a plate leaves what stood on it there, and a move can carry an instance off
 every plate. An object whose other instances are on plates is also listed under those plates, by the
@@ -282,7 +324,8 @@ the filament map). Such a dialog waits for the user; tool calls still run while 
 ---
 
 ### get_slicing_status
-Check slicing progress, for the selected plate and for every plate.
+Check slicing progress, for the selected plate and for every plate. To wait for a slice to finish,
+call `wait_for_slice` rather than polling this.
 
 **Parameters:** None
 
@@ -295,8 +338,8 @@ Check slicing progress, for the selected plate and for every plate.
   "plate_index": 0,
   "slice_result_valid": true,
   "plates": [
-    {"index": 0, "slice_result_valid": true, "percent": 100, "gcode_check": {"ok": true}},
-    {"index": 1, "slice_result_valid": true, "percent": 100,
+    {"plate_index": 0, "index": 0, "slice_result_valid": true, "percent": 100, "gcode_check": {"ok": true}},
+    {"plate_index": 1, "index": 1, "slice_result_valid": true, "percent": 100,
      "gcode_check": {"ok": false, "problems": ["above_printable_height"],
                      "message": "a toolpath is above the printer's printable height (the highest layer prints at 20.5 mm; the printable height is 20 mm)",
                      "highest_layer_z_mm": 20.5, "printable_height_mm": 20,
@@ -338,7 +381,7 @@ the end of it reads `done`; `plates_sliced` / `plates` say which plates have a r
 ## Project Tools
 
 ### new_project
-Create a new empty project. A running slice is cancelled first (see `quit_app` for how long that can
+Create a new empty project. Unsaved project changes are discarded without asking. A running slice is cancelled first (see `quit_app` for how long that can
 take). Refused while the startup "restore unsaved items?" prompt waits (`get_scene_info`'s
 `open_dialogs`): the new project would take over the app's record of the backup that prompt offers,
 and a later launch would not offer it again. Answer the prompt, or `quit_app`, which keeps it. An
@@ -355,7 +398,9 @@ the new project was started.
 ---
 
 ### load_project
-Load a project file (.3mf), replacing the current project. A running slice is cancelled first.
+Open a project file (.3mf) as the project: its objects, plates **and presets** replace the scene and
+the current settings, and unsaved project changes are discarded without asking. To add a model's
+geometry without changing any setting, use `load_model`. A running slice is cancelled first.
 Refused while the startup "restore unsaved items?" prompt waits, as `new_project` is.
 
 **Parameters:**
@@ -392,7 +437,9 @@ it - `project_renamed_to` says which file that is.
 ---
 
 ### save_project
-Save the current project.
+Save the current project. Without `output_path` it **overwrites the file the project is named after**
+(the last `load_project`, `export_3mf` or `save_project` path); with it, it saves there and names the
+project after it, as `export_3mf` does.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
@@ -450,7 +497,10 @@ and a Cmd-S in the GUI overwrite that file.
 ## Model Tools
 
 ### load_model
-Import a 3D model file, adding its objects to the scene.
+Import a 3D model file, adding its objects to the scene and **keeping the current presets**: this is
+how to re-import a model without losing settings. To open a 3MF as the project, with its presets, use
+`load_project`. `next_steps` names `get_mesh_health` for a loaded object with the mesh warning icon and
+`get_object_components` for one with a part made of several shells (see [Next Steps](#next-steps)).
 
 A 3MF is always imported as geometry only, whatever the app's "load behaviour" setting says and
 whether the scene is empty or not: its printer, filament and process presets are not applied, your
@@ -481,7 +531,7 @@ G-code preview, model files are refused too; `new_project` returns to an editabl
 |-------|-------------|
 | `status` | `success`, or `error` when the file failed to load, **loaded but added no objects** (for example a ZIP, whose file picker cannot open under MCP), did not produce a G-code preview (unreadable G-code), or was refused (see above) |
 | `file` | The path loaded |
-| `loaded_objects` | One entry per object the load added, in the same shape as `get_scene_info`'s `model_objects`: `id`, `name`, `object_index` (the index other tools take as `object_id`), `instance_count`, `volume_count`, `position`, `rotation_degrees`, `scale` `{x,y,z}` of its first instance, `bounding_box` `{size_x, size_y, size_z, min, max}` and `mesh_warning` (with `mesh_warning_reason` when the object list shows its warning icon). A merged multi-part file shows as one object with several volumes; a model scaled to fit the bed shows its scale. Empty for a G-code preview. |
+| `loaded_objects` | One entry per object the load added, in the same shape as `get_scene_info`'s `model_objects`: `object_id` (the index every tool takes), `object_index` (the same number, kept for older readers), `internal_id` (the app's own number, which no tool takes), `name`, `instance_count`, `volume_count`, `position`, `rotation_degrees`, `scale` `{x,y,z}` of its first instance, `bounding_box` `{size_x, size_y, size_z, min, max}` and `mesh_warning` (with `mesh_warning_reason` when the object list shows its warning icon). A merged multi-part file shows as one object with several volumes; a model scaled to fit the bed shows its scale. Empty for a G-code preview. |
 | `filaments_added` | Filament slots the import added, because the model uses more filaments than the scene had (0 when none) |
 | `project_renamed_to` | Present only if the project's name changed: never for a model file, and always for a G-code preview (named after the file, so a later `save_project {}` writes there) |
 | `info_messages` | What happened, then what the slicer would have shown. A 3MF import says whether the file carried presets that were not applied. A prompt that offered a choice ends with the answer given, e.g. `"Object too large: ... scale it down to fit the print bed automatically? (auto-answered Yes)"`; the multi-part question also names the other `multipart` value |
@@ -495,7 +545,7 @@ A 20 mm cube exported 1000 times too large, on a 256 mm bed:
   "status": "success",
   "file": "/tmp/cube_20m.stl",
   "loaded_objects": [
-    {"id": "65", "name": "cube_20m.stl", "object_index": 0, "instance_count": 1, "volume_count": 1,
+    {"object_id": 0, "object_index": 0, "internal_id": "65", "name": "cube_20m.stl", "instance_count": 1, "volume_count": 1,
      "position": {"x": 128.0, "y": 128.0, "z": 127.0},
      "rotation_degrees": {"x": 0.0, "y": 0.0, "z": 0.0},
      "scale": {"x": 0.0127, "y": 0.0127, "z": 0.0127},
@@ -570,16 +620,18 @@ auto_orient again".
 ---
 
 ### get_mesh_health
-Mesh errors behind the object list's warning icon: open edges (holes, non-manifold), repaired
-facets, and loose parts or stray shells, for one object and each of its volumes.
+Check an object's mesh for problems: holes and open edges (non-manifold), repaired facets, and loose
+parts or stray shells, for one object and each of its volumes -- the errors behind the object list's
+warning icon.
 
 The icon state and its tooltip come from the object list's own code (`mesh_errors_info` in
 `GUI_ObjectList.cpp`), so this reports exactly what the GUI shows: the icon appears when a mesh has
 open edges or recorded repairs. `tooltip` is the icon's tooltip word for word, in the app's
 language -- its last line, "Click the icon to repair model object", is for the GUI;
 `mesh_warning_reason` is the one line the sidebar shows. A flagged object also gets `advice`, what an
-agent can do: MCP cannot repair a mesh, and slicing closes each layer's outline across gaps of up to
-2 mm (`TriangleMeshSlicer`), so a small hole usually prints closed and a wider one may not. A mesh
+agent can do: MCP has no tool that repairs a mesh, and slicing closes each layer's outline across
+gaps of up to 2 mm (`TriangleMeshSlicer`), so a small hole usually prints closed and a wider one may
+not. A mesh
 that is only repaired (no open edges) prints as it is.
 
 - An object's `open_edges` and repairs count every volume, modifiers included, as the list does. Its
@@ -612,7 +664,7 @@ that is only repaired (no open edges) prints as it is.
   "mesh_warning": true,
   "tooltip": "Remaining errors:\n\t3 non-manifold edges\n\nClick the icon to repair model object",
   "mesh_warning_reason": "Error: 3 non-manifold edges.",
-  "advice": "MCP cannot repair a mesh: the GUI's repair is not exposed. Slicing closes each layer's outline across gaps of up to 2 mm, so a hole that small usually prints closed; a wider one can leave that outline out of a layer, so check the sliced preview there.",
+  "advice": "MCP has no tool that repairs a mesh. Slicing closes each layer's outline across gaps of up to 2 mm, so a hole that small usually prints closed; a wider one can leave that outline out of a layer, so check the sliced preview there.",
   "summary": {"facets": 1215, "shells": 2, "open_edges": 3, "manifold": false, "repaired": false,
               "errors_repaired": 0,
               "repaired_errors": {"edges_fixed": 0, "degenerate_facets": 0, "facets_removed": 0,
@@ -1189,7 +1241,8 @@ them, so material searches do not need the full config.
 ---
 
 ### get_edited_presets
-Get currently active presets with dirty options.
+Every setting of the selected printer, print and filament presets, unsaved ones marked: 25-48 KB. For
+a few settings, or which presets are selected, use `get_config_values` (under 1 KB).
 
 **Parameters:** None
 
@@ -1255,7 +1308,7 @@ A dozen keys cost well under 1 KB. An unknown key is an error naming it, in `unk
 ---
 
 ### select_preset
-Switch to a different preset.
+Switch to a different preset. To change individual settings, use `apply_config`.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
@@ -1288,7 +1341,10 @@ save the colours for the selected printer, so a switch away and back returns the
 ---
 
 ### apply_config
-Modify configuration settings.
+Change settings of the selected print, filament or printer preset, or of the project, several in one
+call. The change stays unsaved in the preset until `save_preset`. To switch presets, use
+`select_preset`; for one object only, `set_object_config`; for a slot's colour on the plate,
+`set_filament_color`.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
@@ -1497,7 +1553,8 @@ Discard all unsaved changes to the current preset and revert to the last saved s
 ---
 
 ### get_valid_config_keys
-List valid configuration keys for a category.
+List the setting keys of a category, to find the key for a setting (`support_type`,
+`sparse_infill_density`, ...).
 
 **Parameters:**
 | Parameter | Type | Required | Description |
@@ -1510,7 +1567,9 @@ List valid configuration keys for a category.
 ## Per-Object Config Tools
 
 ### get_object_info
-Get detailed information about an object.
+One object's position, rotation, scale, bounding box, placement, and every volume (part, modifier,
+negative volume, support blocker) with its type and filament. It does not check the mesh:
+`get_mesh_health` reports holes and open edges, `get_object_components` loose parts and stray shells.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
@@ -1585,7 +1644,8 @@ Get per-object configuration overrides.
 ---
 
 ### set_object_config
-Set per-object configuration overrides.
+Override settings for one object only (supports, infill, walls, layer height, ...), leaving the
+presets and the other objects alone.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
@@ -1735,7 +1795,8 @@ Slice every plate in the project, one after another, exactly as the GUI's **Slic
   "plates_to_slice": 4,
   "selected_plate_at_call": 0,
   "note": "Slicing all 4 plates. The plate selection walks to the last plate while it runs; get_slicing_status restores plate 0 when the run ends.",
-  "active_warnings": {"count": 0, "warnings": []}
+  "active_warnings": {"count": 0, "warnings": []},
+  "next_steps": [{"tool": "wait_for_slice", "why": "the slice runs in the background: wait_for_slice returns once it is over, with each plate's result"}]
 }
 ```
 
@@ -1755,8 +1816,9 @@ Slice every plate in the project, one after another, exactly as the GUI's **Slic
 | `invalid` | The app refuses a plate it was asked for as it stands, the way the GUI greys its Slice button, ahead of `nothing_to_slice`; `message` says which check, the first that applies: its validation (the plate's validation result, not a guess from `active_warnings`; `message` gives the app's words, e.g. "Prime Tower is partially outside the printable area"), plugins slicing needs but that are missing, a mixed filament that lost a component, a plate not ready to slice (an object partly off the plate or over its height, or a filament that cannot print where it is), or the plate's last slice having failed, which the app does not retry until something on the plate changes. A setting fixed just before the call counts: the app takes in a settings change 0.5 s after it, and `slice_all` applies one still waiting first (so do `get_slicing_status`, `get_print_estimate` and `export_gcode`), so it is not refused on the failure the fix removed |
 | `unknown` | No signal explains it; `active_warnings` may |
 
-**Note:** Async operation. Call `wait_for_slice`, or poll `get_slicing_status` until `state` is
-`done` (or until `plates_sliced` equals `plates_total` for a multi-plate run).
+**Note:** Async operation. Call `wait_for_slice`, which returns once the run is over; `next_steps`
+names it (for `slicing_started` and `busy_slicing`), `get_slicing_status` for `busy_job`, and
+`get_print_estimate` with a sliced plate's `plate_index` for `already_sliced`. `get_slicing_status` reads the state at any moment.
 
 **Plate selection.** Slicing every plate is driven by the slicer's own per-plate chaining, which
 selects each plate in turn, so the selection moves while the run is in progress. The first
@@ -1789,8 +1851,13 @@ left with three unsliced plates and no error.
 ---
 
 ### export_gcode
-Export the selected plate's sliced G-code to a file. The file is written asynchronously:
-`status: "export_started"`.
+Export the selected plate's sliced G-code to a file. The file is written asynchronously, so a
+successful call answers `status: "export_started"`, not `"success"`:
+
+| `status` | Meaning |
+|----------|---------|
+| `export_started` | The app has begun writing the file in the background: not a failure. It is complete once `wait_for_slice` returns (`get_slicing_status`'s `busy` is false again, `busy_reason` was `exporting`); `next_steps` names `wait_for_slice` |
+| `error` | Nothing was written; `message` says why (below) |
 
 **Parameters:**
 | Parameter | Type | Required | Description |
@@ -2102,7 +2169,8 @@ cap's first layer has no support in it (the 0.2 mm gap is layer 50, the interfac
 ---
 
 ### get_preview_base64
-Convert a preview image file to base64 data URI for remote/containerized clients.
+Read an image file OrcaMCP wrote (`render_plate_view`, `include_preview`) back as a base64 data URI,
+for remote or containerized clients. It renders nothing: call `render_plate_view` first.
 
 **When to use:** Only use this tool if you do NOT have direct filesystem access to read the `preview_path`. Agents with local filesystem access (like Claude Code CLI) should use the Read tool instead.
 
@@ -2173,7 +2241,8 @@ Disable adaptive layer height.
 ## Filament & Colour Tools
 
 ### set_object_filament
-Assign a filament slot to a whole object, or to one volume of it.
+Assign a filament slot to a whole object, or to one volume of it. To colour only part of a surface,
+paint it: `paint_object` with `mode: color`.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
@@ -2338,7 +2407,12 @@ state's `facet_count` can exceed `original_facets` and the two must never be div
 the other.
 
 ### paint_object
-Write per-triangle paint — the same data the GUI paint gizmos write.
+Paint an object's surface as the GUI's paint tools do: filament colours for a multi-colour print,
+support enforcers and blockers, the seam, or fuzzy skin -- per-triangle paint, the same data the paint
+gizmos write. To put a whole object or volume on one filament, use `set_object_filament`. Painted
+support enforcers do nothing while `enable_support` is off; `next_steps` then names the
+`set_object_config` call that turns it on with a `(manual)` `support_type`, for support only where
+painted.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
@@ -2617,7 +2691,7 @@ and shape `paint_object` and `get_object_paint` use), `brim_ear_count`, `brim_ea
 ---
 
 ### get_object_components
-List the connected shells of each **model part**'s mesh — the pieces `paint_object
+Find loose parts, stray shells and mesh fragments: the connected shells of each **model part**'s mesh — the pieces `paint_object
 {selection: "component"}` can paint individually. A generated or assembled model often has a
 feature (a bag, a wheel) as its own shell.
 
@@ -2940,9 +3014,39 @@ Many tools return an `active_warnings` section in their response, providing visi
 | `SlicingSeriousWarning` | Serious slicing issue |
 | `ValidateError` | Validation failed |
 | `PlaterWarning` | General plater warning |
-| `MeshErrors` | The object list shows its warning icon for an object: open edges or recorded repairs. Only `get_scene_info` (every flagged object) and `load_model` (the flagged objects it added) report it, because no tool can clear it. `message` gives the list's reason and what an agent can do (MCP cannot repair; slicing closes each layer's outline across gaps up to 2 mm); the entry also carries `object_id` and `object_name`. `get_mesh_health` has the numbers |
+| `MeshErrors` | The object list shows its warning icon for an object: open edges or recorded repairs. Only `get_scene_info` (every flagged object) and `load_model` (the flagged objects it added) report it, because no tool can clear it. `message` gives the list's reason and what an agent can do (MCP has no tool that repairs a mesh; slicing closes each layer's outline across gaps up to 2 mm); the entry also carries `object_id` and `object_name`. `get_mesh_health` has the numbers |
 
 **Note:** The `count` field is always present (even when 0) to help agents confirm issues have been resolved.
+
+---
+
+## Next Steps
+
+A response whose result implies a follow-up says which tool to call next, and why, in `next_steps`:
+
+```json
+"next_steps": [
+  {"tool": "get_object_components", "arguments": {"object_id": 0},
+   "why": "part \"bracket\" of object 0 (\"bracket\") has 2 shells: a loose part or stray fragment may be one of them"}
+]
+```
+
+`tool` is always a real tool and `arguments`, left out when the tool needs none, is a call that tool
+accepts as it stands. There is at most one step per tool: `arguments` names the first object it
+applies to, and `why` names them all ("objects 0, 3 and 7 ... call it for each"). A response with
+nothing to suggest has no `next_steps`.
+
+| Response | Step | When |
+|----------|------|------|
+| `load_model` (the objects it added), `get_scene_info` (every object) | `get_mesh_health` | an object shows the object list's mesh warning icon (open edges, or repairs a 3MF recorded) |
+| | `get_object_components` | a model part of the object is more than one shell: a loose part or a stray fragment, which leaves no warning icon when it is closed |
+| `slice_all` | `wait_for_slice` | `slicing_started`, or `not_started` with `busy_slicing` (wait, then `slice_all` again) |
+| | `get_slicing_status` | `busy_job`: an arrange or orient holds the app, which `wait_for_slice` does not wait for; `slice_all` again once `ui_job` is null |
+| | `get_print_estimate` with the `plate_index` of a sliced plate (the selected one when it has a result) | `already_sliced` |
+| `export_gcode` | `wait_for_slice` | `export_started`: the file is still being written |
+| `render_plate_view`, on each view whose `uniform_image` is true (beside its `hint`) | `get_scene_info` | nothing printable on that plate was drawn |
+| | `render_plate_view` with `{plate_index, save_to_file: true}` | the plate's objects were drawn but the camera looked elsewhere: no views gives a contact sheet fitted to the plate |
+| `paint_object` with `mode: support` | `set_object_config` for that object: `enable_support` `"1"` and `support_type` `normal(manual)` (or `tree(manual)` when its type is a tree one), for support only where painted | the object has painted enforcers and `enable_support` is off for it, so they do nothing (`info_messages` says so too). Not for blockers alone or erased paint: turning support on is the opposite of what a blocker asks; and not with an `(auto)` type, which would also support every other overhang |
 
 ---
 
@@ -3088,7 +3192,7 @@ wait still ends by it.
   "polls": 9,
   "timeout_s": 60,
   "timeout_cap_s": 105,
-  "slicing_status": {"is_slicing": false, "state": "done", "plates": [{"index": 0, "slice_result_valid": true, "percent": 100}], "slice_run": {"outcome": "done", "...": "..."}}
+  "slicing_status": {"is_slicing": false, "state": "done", "plates": [{"plate_index": 0, "index": 0, "slice_result_valid": true, "percent": 100}], "slice_run": {"outcome": "done", "...": "..."}}
 }
 ```
 
@@ -3118,6 +3222,13 @@ app's tool registry, and a unit test fails whenever the two disagree, so a build
 ships with always list the same names, descriptions and schemas. The bridge's own tools
 (`start_orca`) come from the same file whether the app runs or not, so an agent sees the same list
 before and after the app starts.
+
+The server instructions an MCP client shows before any tool is loaded -- `get_server_info` for
+every tool, one line per job naming its key tools, `next_steps`, and the calls that overwrite,
+discard or start something -- come from the same file (`instructions`). The bridge always answers
+`initialize` itself, so they are the same with the app running or not. Claude Code shows the first
+2048 characters of them; unit tests keep them within that and under 1,600 (room for later tools), in
+ASCII, naming only real tools.
 
 A running app of a different build than the bridge's file can still list other tools. For that
 case the bridge advertises `tools.listChanged` and sends `notifications/tools/list_changed` the

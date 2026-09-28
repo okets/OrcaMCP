@@ -4,6 +4,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <vector>
 #include <nlohmann/json.hpp>
 
 #include "libslic3r/ObjectID.hpp"
@@ -49,6 +50,9 @@ std::string threemf_import_message(bool carries_presets);
 // The ids of the objects in `model`, taken before a load so the objects it adds can be told apart
 // from the ones already there (every load path appends, but compare ids, not counts).
 std::set<ObjectID> object_ids(const Model& model);
+
+// The index in `model` of every object whose id is not in `before`: the objects a load added.
+std::vector<int> added_object_indices(const Model& model, const std::set<ObjectID>& before);
 
 // load_model's loaded_objects: one model_object_summary_json (OrcaMCPCommon.hpp) per object in
 // `model` whose id is not in `before`, so an object reads the same here as in get_scene_info.

@@ -77,12 +77,20 @@ std::set<ObjectID> object_ids(const Model& model)
     return ids;
 }
 
+std::vector<int> added_object_indices(const Model& model, const std::set<ObjectID>& before)
+{
+    std::vector<int> added;
+    for (size_t i = 0; i < model.objects.size(); ++i)
+        if (before.count(model.objects[i]->id()) == 0)
+            added.push_back(static_cast<int>(i));
+    return added;
+}
+
 nlohmann::json loaded_objects_json(const Model& model, const std::set<ObjectID>& before)
 {
     nlohmann::json loaded = nlohmann::json::array();
-    for (size_t i = 0; i < model.objects.size(); ++i)
-        if (before.count(model.objects[i]->id()) == 0)
-            loaded.push_back(model_object_summary_json(*model.objects[i], static_cast<int>(i)));
+    for (int index : added_object_indices(model, before))
+        loaded.push_back(model_object_summary_json(*model.objects[size_t(index)], index));
     return loaded;
 }
 

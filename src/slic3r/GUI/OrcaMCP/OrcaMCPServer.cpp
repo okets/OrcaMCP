@@ -10,6 +10,7 @@
 #include "OrcaMCPGcodeCheck.hpp"
 #include "OrcaMCPLayerRanges.hpp"
 #include "OrcaMCPSliceEstimate.hpp"
+#include "OrcaMCPNextSteps.hpp"
 #include "OrcaMCPServerInfo.hpp"
 #include "OrcaMCPModelLoad.hpp"
 #include "OrcaMCPRequestGuard.hpp"
@@ -360,6 +361,19 @@ nlohmann::json slice_run_json(Plater& plater, PartPlateList& plate_list, const O
     return run;
 }
 
+// A plate whose slice result get_print_estimate can read: the selected one when it has one, else the
+// first that does, or none.
+std::optional<int> plate_with_result(PartPlateList& plate_list)
+{
+    const PartPlate* selected = plate_list.get_curr_plate();
+    if (selected != nullptr && selected->is_slice_result_valid())
+        return plate_list.get_curr_plate_index();
+    for (int i = 0; i < plate_list.get_plate_count(); ++i)
+        if (plate_list.get_plate(i)->is_slice_result_valid())
+            return i;
+    return std::nullopt;
+}
+
 // The selected plate, as OrcaMCP::slice_state reads it.
 OrcaMCP::SliceRunPlate selected_plate_state(PartPlateList& plate_list)
 {
@@ -614,7 +628,8 @@ nlohmann::json OrcaMCPServer::handle_initialize(const nlohmann::json& params)
         {"serverInfo", {
             {"name", "orca-slicer"},
             {"version", version()}
-        }}
+        }},
+        {"instructions", server_instructions()}
     };
 }
 
@@ -689,6 +704,7 @@ nlohmann::json OrcaMCPServer::tools_manifest()
     return {
         {"generated_from", "The MCP tool registry in src/slic3r/GUI/OrcaMCP. Do not edit by hand: see CLAUDE.md, "
                            "\"Tool list\", for how to regenerate it."},
+        {"instructions", server_instructions()},
         {"server_tools", server_tools},
         {"bridge_tools", bridge_tools}
     };
@@ -879,7 +895,8 @@ void OrcaMCPServer::register_builtin_tools()
         "get_server_info",
         ToolCategory::Info,
         "This guide; pass section for the rest",
-        "Get documentation about tools, concepts, and workflows",
+        "Every tool's one-line summary by category, a quick start, and guides (concepts, workflows, "
+        "examples) to fetch by section: call it to find a tool before deciding one does not exist.",
         {
             {"type", "object"},
             {"properties", {
@@ -903,8 +920,11 @@ void OrcaMCPServer::register_builtin_tools()
         "get_scene_info",
         ToolCategory::Scene,
         "Plates, objects, bed and occupancy",
-        "Get current project state: plates, objects, positions. Call first to get object_ids. Each "
-        "plate also carries `occupancy`, the complete list of what stands on it in plate "
+        "The scene: every plate (plate_index; is_current marks the plate per-plate tools act on, whose "
+        "area `bed` is) and the objects on it, with position, size, filaments and mesh_warning. Call it "
+        "first. An object's object_id is what every tool's object_id takes; object_index is the same "
+        "number, kept for older readers, and internal_id is the app's own number, which no tool takes. "
+        "Each plate also carries `occupancy`, the complete list of what stands on it in plate "
         "millimetres -- every object's printed footprint (brim included), the prime tower's "
         "footprint (brim included) when one is printed, and the printer's excluded bed areas. Use "
         "`occupancy`, not `model_objects`, to work out where there is free space. An object with "
@@ -916,7 +936,9 @@ void OrcaMCPServer::register_builtin_tools()
         "while a modal window no dialog accounts for runs. Every object carries `mesh_warning`, true when "
         "the object list shows its warning icon (open edges or recorded repairs), with "
         "`mesh_warning_reason`, the list's one-line reason; each such object also adds a MeshErrors "
-        "warning to this response's active_warnings, saying what an agent can do about it.",
+        "warning to this response's active_warnings, saying what an agent can do about it. next_steps "
+        "names get_mesh_health for an object with that icon, and get_object_components for one with a "
+        "part made of several shells (a loose part or stray fragment, which shows no icon).",
         {
             {"type", "object"},
             {"properties", {
@@ -961,6 +983,7 @@ void OrcaMCPServer::register_builtin_tools()
                 // objects the object list flags with its warning icon.
                 result["active_warnings"] = get_active_warnings_json(wxGetApp().plater());
                 add_warnings(result["active_warnings"], mesh_error_warnings(wxGetApp().plater()->model(), mesh_health));
+                add_next_steps(result, mesh_next_steps(wxGetApp().plater()->model(), mesh_health));
 
                 return result;
             });
@@ -1071,8 +1094,9 @@ void OrcaMCPServer::register_builtin_tools()
     register_tool({
         "get_edited_presets",
         ToolCategory::Config,
-        "Active presets and their unsaved edits",
-        "Get currently edited presets with dirty (modified) options",
+        "Every setting of the active presets",
+        "Every setting of the selected printer, print and filament presets, with the unsaved (dirty) ones "
+        "marked: 25-48 KB. For a few settings, or which presets are selected, use get_config_values.",
         {
             {"type", "object"},
             {"properties", nlohmann::json::object()}
@@ -1089,7 +1113,7 @@ void OrcaMCPServer::register_builtin_tools()
         "get_config_values",
         ToolCategory::Config,
         "Selected presets and chosen settings",
-        "Which presets are selected: with no arguments, the selected printer, print (process) and each "
+        "Read settings by key, or which presets are selected: with no arguments, the selected printer, print (process) and each "
         "filament slot's preset, with a dirty flag for unsaved changes, in about 400 bytes. Pass keys to "
         "read just those settings -- a dozen cost well under 1 KB, against 25-48 KB for "
         "get_edited_presets -- grouped under where each lives: print, filament (one value per slot), "
@@ -1162,7 +1186,7 @@ void OrcaMCPServer::register_builtin_tools()
         "render_plate_view",
         ToolCategory::Visualization,
         "Render a plate, object or sliced layer",
-        "Render a plate. Omit views for a contact sheet of iso, top and front fitted to the plate. A view is {preset: iso|top|front|back|left|right|low, fit: \"plate\" | {object_index}} or explicit {camera_position, target} in BED mm (the get_scene_info frame; plate N sits at plates[N].bounding_box) -- or add frame: \"plate_local\" to give them relative to the plate's front-left corner. The requested plate's objects are drawn, including any hanging over its edge, from the 3D scene whichever tab the app shows. Every view returns objects_in_frame, uniform_image (+hint), plate_origin and the camera; overlays (outline, 10 mm grid, origin, labels) are on by default. Use save_to_file=true for PNG paths. layer_view draws a top-down plan instead: \"first_layer\", or any sliced layer as {layer: N} or {z: mm}, filtered by features and filaments, with the layer's height, filaments and extruded areas -- the way to check supports, interfaces and which tool prints what on a given layer.",
+        "Render a picture of a plate, one object, or a sliced layer's toolpaths (layer_view). Omit views for a contact sheet of iso, top and front fitted to the plate. A view is {preset: iso|top|front|back|left|right|low, fit: \"plate\" | {object_index}} or explicit {camera_position, target} in BED mm (the get_scene_info frame; plate N sits at plates[N].bounding_box) -- or add frame: \"plate_local\" to give them relative to the plate's front-left corner. The requested plate's objects are drawn, including any hanging over its edge, from the 3D scene whichever tab the app shows. Every view returns objects_in_frame, uniform_image (+hint), plate_origin and the camera; overlays (outline, 10 mm grid, origin, labels) are on by default. Use save_to_file=true for PNG paths. layer_view draws a top-down plan instead: \"first_layer\", or any sliced layer as {layer: N} or {z: mm}, filtered by features and filaments, with the layer's height, filaments and extruded areas -- the way to check supports, interfaces and which tool prints what on a given layer.",
         {
             {"type", "object"},
             {"properties", {
@@ -1272,8 +1296,9 @@ void OrcaMCPServer::register_builtin_tools()
     register_tool({
         "get_preview_base64",
         ToolCategory::Visualization,
-        "A preview image as base64",
-        "Convert preview image to base64. Use only if no filesystem access.",
+        "An image file OrcaMCP wrote, as base64",
+        "Read an image file OrcaMCP wrote (render_plate_view, include_preview) back as base64, for a client "
+        "that cannot read files. It renders nothing: call render_plate_view first.",
         {
             {"type", "object"},
             {"properties", {
@@ -1303,7 +1328,7 @@ void OrcaMCPServer::register_builtin_tools()
         "previous_color) and, per slot, color_source as observed across the switch: 'unchanged', "
         "'remembered' (the colour last saved for that printer, applied by Remember printer configuration, "
         "on by default), 'default' (#26A69A for a slot nothing was saved for) or 'other'. colors_source "
-        "sums them up, 'mixed' when they differ.",
+        "sums them up, 'mixed' when they differ. To change individual settings, use apply_config.",
         {
             {"type", "object"},
             {"properties", {
@@ -1355,7 +1380,11 @@ void OrcaMCPServer::register_builtin_tools()
         "apply_config",
         ToolCategory::Config,
         "Change settings, several in one call",
-        "Apply print settings. Batch multiple in one call. Types: print | filament | printer | project.",
+        "Change settings of the selected print, filament or printer preset, or of the project -- layer "
+        "height, supports, infill, walls, speeds, temperatures -- several in one call. Types: print | "
+        "filament | printer | project. The change stays unsaved in the preset until save_preset. To switch "
+        "to another preset, use select_preset; for one object only, set_object_config; for a slot's colour "
+        "on the plate, set_filament_color.",
         {
             {"type", "object"},
             {"properties", {
@@ -1712,7 +1741,8 @@ void OrcaMCPServer::register_builtin_tools()
         "auto_orient",
         ToolCategory::Models,
         "Orient the current plate's objects",
-        "Orient every object on the current plate for printing, as the plate's Auto Rotate does, and "
+        "Orient every object on the current plate for printing (least overhang to support, most bed "
+        "contact), as the plate's Auto Rotate does, and "
         "answer once the orient has been applied: status success with objects, each one's placement "
         "(position, rotation_degrees, scale, changed, and rotate_object's placement fields). The orient runs in the "
         "background while this waits, up to the bridge's cap (15 s below ORCAMCP_TIMEOUT); still running "
@@ -1852,7 +1882,8 @@ void OrcaMCPServer::register_builtin_tools()
         "set_object_config",
         ToolCategory::PerObject,
         "Override settings for one object",
-        "Set per-object setting overrides.",
+        "Override settings for one object only (supports, infill, walls, layer height, ...), leaving the "
+        "presets and the other objects alone.",
         {
             {"type", "object"},
             {"properties", {
@@ -2155,7 +2186,8 @@ void OrcaMCPServer::register_builtin_tools()
         "get_valid_config_keys",
         ToolCategory::Config,
         "Discover setting keys by category",
-        "Get valid configuration keys.",
+        "List the setting keys by category, with their descriptions on request: how to find the key for a "
+        "setting (support_type, sparse_infill_density, wall_loops, ...).",
         {
             {"type", "object"},
             {"properties", {
@@ -2890,8 +2922,8 @@ void OrcaMCPServer::register_builtin_tools()
         "slice that failed; message says which, in the app's words for a validation failure), "
         "nothing_to_slice (no printable object fully on the plates -- one partly off its plate or too tall "
         "for the printer does not count -- and no refusal the app gives words for) or unknown. Then call "
-        "wait_for_slice, or poll get_slicing_status until state is \"done\"; its plates array says which "
-        "plates have a result. The plate selection walks from the first plate to the last while the "
+        "wait_for_slice, which returns once the run is over, with each plate's result; next_steps names "
+        "the tool to call next. The plate selection walks from the first plate to the last while the "
         "run is in progress, and get_slicing_status puts back the plate that was selected here once "
         "it ends.",
         {
@@ -2925,13 +2957,14 @@ void OrcaMCPServer::register_builtin_tools()
                     {"plates_to_slice", slice_every_plate ? plate_count : 1},
                     {"selected_plate_at_call", plate_at_call}
                 };
-                const auto answer = [&result](const OrcaMCP::SliceStartReport& report, nlohmann::json active_warnings) {
+                const auto answer = [&result, &plate_list](const OrcaMCP::SliceStartReport& report, nlohmann::json active_warnings) {
                     result["status"] = OrcaMCP::slice_start_status_name(report.status);
                     if (!report.reason.empty()) {
                         result["reason"]  = report.reason;
                         result["message"] = report.message;
                     }
                     result["active_warnings"] = std::move(active_warnings);
+                    add_next_steps(result, slice_start_next_steps(report, plate_with_result(plate_list)));
                 };
 
                 // While the pipeline is busy -- slicing, exporting, uploading, or still taking in the last
@@ -2975,6 +3008,9 @@ void OrcaMCPServer::register_builtin_tools()
         ToolCategory::Slicing,
         "Write the sliced plate's G-code",
         "Export the selected plate's G-code. The plate must be sliced (slice_all, then wait_for_slice). "
+        "status is export_started when the app has begun writing the file in the background -- not a "
+        "failure: the file is complete once wait_for_slice returns (get_slicing_status's busy is false "
+        "again), which next_steps says -- or error, with message saying why nothing was written. "
         "Refused, as the GUI's Export button is off, when the check its slice ran on its G-code failed: "
         "get_slicing_status's plates[].gcode_check names what it found.",
         {
@@ -3023,6 +3059,7 @@ void OrcaMCPServer::register_builtin_tools()
                     result = suppression_guard.fail_on_errors(result);
                     if (result["status"] == "error")
                         result.erase("note");
+                    add_next_steps(result, export_next_steps(result["status"] == "export_started"));
                 } else {
                     // No path provided. File dialogs are modal and would block the GUI thread
                     // for as long as the MCP call waits, so require an explicit path instead.
@@ -3039,8 +3076,10 @@ void OrcaMCPServer::register_builtin_tools()
     register_tool({
         "export_3mf",
         ToolCategory::Scene,
-        "Write the project to a 3MF file",
-        "Export project as 3MF file.",
+        "Save the project as a 3MF (Save As)",
+        "Save the project to a 3MF at output_path, like the GUI's Save As: the project is then named after "
+        "that file, so a later save_project without output_path overwrites it. save_project with "
+        "output_path does the same.",
         {
             {"type", "object"},
             {"properties", {
@@ -3113,8 +3152,9 @@ void OrcaMCPServer::register_builtin_tools()
         "save_project",
         ToolCategory::Scene,
         "Save the project, in place or as a copy",
-        "Save the current project. Saves in place once the project has a file name; pass "
-        "output_path to name it (or to save a copy under a new name).",
+        "Save the current project. Without output_path it overwrites the file the project is named after "
+        "(the last load_project, export_3mf or save_project path); pass output_path to name it, or to save "
+        "under a new name.",
         {
             {"type", "object"},
             {"properties", {
@@ -3185,8 +3225,12 @@ void OrcaMCPServer::register_builtin_tools()
     register_tool({
         "load_model",
         ToolCategory::Models,
-        "Import STL, 3MF, OBJ or STEP geometry",
-        "Import a 3D model file (STL, 3MF, OBJ, STEP, etc.)",
+        "Add a model's geometry; keeps presets",
+        "Add a model file's objects (STL, 3MF, OBJ, STEP, ...) to the scene, keeping the current presets: a "
+        "3MF brings its geometry only, never its settings, and never renames the project. To open a 3MF as "
+        "the project, with its settings, use load_project. next_steps names get_mesh_health for a "
+        "loaded object with the mesh warning icon, and get_object_components for one with a part made "
+        "of several shells (a loose part or stray fragment).",
         {
             {"type", "object"},
             {"properties", {
@@ -3264,6 +3308,8 @@ void OrcaMCPServer::register_builtin_tools()
                                       into_u8(plater->get_project_filename(".3mf")));
                 response["active_warnings"] = get_active_warnings_json(plater);
                 add_warnings(response["active_warnings"], mesh_error_warnings(plater->model(), flagged_object_indices(loaded_objects)));
+                const Model& model = plater->model();
+                add_next_steps(response, mesh_next_steps(model, added_object_indices(model, objects_before), model_mesh_health(model)));
                 if (!info_messages.empty())
                     response["info_messages"] = info_messages;
                 return response;
@@ -3275,12 +3321,12 @@ void OrcaMCPServer::register_builtin_tools()
     register_tool({
         "get_slicing_status",
         ToolCategory::Slicing,
-        "Slicing state per plate; poll this",
+        "Slicing state and progress, per plate",
         "Get the current slicing state: slicing (in progress), done (the last slice_all run is done -- "
         "every plate it asked for that has something on it is sliced -- and the selected plate is sliced "
         "or empty; before any slice_all, or once none of its plates exists (a new project), the selected "
-        "plate is sliced) or idle (anything else); a plate deleted after the run does not undo it. Poll "
-        "until state is done, then get_print_estimate. "
+        "plate is sliced) or idle (anything else); a plate deleted after the run does not undo it. To wait "
+        "for a slice to finish, call wait_for_slice rather than polling this; then get_print_estimate. "
         "The plates array reports every plate's slice result and percent (0-100; null for a plate "
         "with no result that is not slicing), so a slice_all run can be followed plate by plate; "
         "stage is the app's progress text for the running slice (\"Generating support\", in the app's "
@@ -3349,10 +3395,8 @@ void OrcaMCPServer::register_builtin_tools()
                         ++plates_sliced;
                     const std::optional<int> percent = p != nullptr ? OrcaMCP::reported_slice_percent(p->get_slicing_percent())
                                                                     : std::nullopt;
-                    plates.push_back({{"index", i},
-                                      {"slice_result_valid", valid},
-                                      {"percent", percent ? nlohmann::json(*percent) : nlohmann::json(nullptr)},
-                                      {"gcode_check", p != nullptr ? OrcaMCP::plate_gcode_check_json(*p) : nlohmann::json(nullptr)}});
+                    plates.push_back(plate_slicing_json(i, valid, percent,
+                                                        p != nullptr ? OrcaMCP::plate_gcode_check_json(*p) : nlohmann::json(nullptr)));
                 }
 
                 // The one answer slice_all's refusal and wait_for_slice go by (OrcaMCP::pipeline_busy).
@@ -3443,7 +3487,7 @@ void OrcaMCPServer::register_builtin_tools()
                         return nlohmann::json{
                             {"status", "in_progress"},
                             {"state", "slicing"},
-                            {"message", "Slicing still in progress. Poll get_slicing_status until state is \"done\"."}
+                            {"message", "Slicing still in progress: call wait_for_slice, which returns once it is over."}
                         };
                     }
 
@@ -3475,7 +3519,7 @@ void OrcaMCPServer::register_builtin_tools()
                             {"state", "idle"},
                             {"plate_index", plate_index},
                             {"message", "Plate " + std::to_string(plate_index) + " has no valid slice result. Run "
-                                        "slice_all and poll get_slicing_status until state is \"done\"."},
+                                        "slice_all, then wait_for_slice."},
                             {"active_warnings", get_active_warnings_json(plater)}
                         };
                     }
@@ -3557,7 +3601,7 @@ void OrcaMCPServer::register_builtin_tools()
         "new_project",
         ToolCategory::Scene,
         "Start a new, empty project",
-        "Create a new empty project. A running slice is cancelled first. Refused while the app's startup "
+        "Create a new empty project. Unsaved project changes are discarded without asking. A running slice is cancelled first. Refused while the app's startup "
         "\"restore unsaved items?\" prompt waits (get_scene_info's open_dialogs), since it would orphan that backup.",
         {
             {"type", "object"},
@@ -3587,8 +3631,10 @@ void OrcaMCPServer::register_builtin_tools()
     register_tool({
         "load_project",
         ToolCategory::Scene,
-        "Open a 3MF as the project",
-        "Load a 3MF project file. A running slice is cancelled first. Refused while the app's startup "
+        "Open a 3MF project, replacing presets",
+        "Open a 3MF as the project: its objects, plates and presets replace the scene and the current "
+        "settings, and unsaved project changes are discarded without asking. To add a model without "
+        "changing the settings, use load_model. A running slice is cancelled first. Refused while the app's startup "
         "\"restore unsaved items?\" prompt waits (get_scene_info's open_dialogs), since it would orphan that backup.",
         {
             {"type", "object"},
@@ -4966,8 +5012,8 @@ void OrcaMCPServer::register_builtin_tools()
         "get_object_info",
         ToolCategory::Models,
         "One object's transform, volumes, slots",
-        "Get info about a single object: its box and first instance's transform, every volume with its "
-        "filament, and, as rotate_object reports them, the placement fields: instance_placement (each instance's plate and whether it is inside it), plate_index (instance 0's plate), plate_indices and on_bed (every instance inside its own plate).",
+        "One object's position, rotation, scale and bounding box, every volume (part, modifier, negative "
+        "volume, support blocker) with its type and filament, and, as rotate_object reports them, the placement fields: instance_placement (each instance's plate and whether it is inside it), plate_index (instance 0's plate), plate_indices and on_bed (every instance inside its own plate).",
         {
             {"type", "object"},
             {"properties", {
@@ -5454,7 +5500,9 @@ void OrcaMCPServer::register_builtin_tools()
         "Set G-code preview visualization mode. Requires sliced G-code. "
         "Available types: feature_type, speed, actual_speed, fan_speed, temperature, "
         "flow, actual_flow, layer_height, line_width, layer_time, layer_time_log, "
-        "pressure_advance, acceleration, jerk, tool, filament",
+        "pressure_advance, acceleration, jerk, tool, filament. This changes only what the app's own "
+        "Preview tab shows, which no MCP image draws: to see a sliced layer's toolpaths, use "
+        "render_plate_view's layer_view.",
         {
             {"type", "object"},
             {"properties", {

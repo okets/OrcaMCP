@@ -15,6 +15,11 @@ namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
 using ToolMap = std::map<std::string, OrcaMCPServer::ToolDefinition>;
 
+// The server instructions: what initialize answers, the app's and the bridge's (which reads its copy
+// from scripts/orcamcp_tools.json). The one text a client shows before any tool is loaded, so it names
+// the key tool of each job. At most 2048 characters, which is where Claude Code cuts it off.
+const std::string& server_instructions();
+
 // What get_server_info's `section` parameter accepts: each documentation section, then "all".
 const std::vector<std::string>& server_info_section_names();
 

@@ -71,6 +71,7 @@ TEST_CASE("an unset or unknown setting opens the project, as upstream's fallthro
 namespace {
 using Slic3r::Model;
 using Slic3r::ModelObject;
+using Slic3r::GUI::OrcaMCP::added_object_indices;
 using Slic3r::GUI::OrcaMCP::load_file_kind;
 using Slic3r::GUI::OrcaMCP::load_refusal;
 using Slic3r::GUI::OrcaMCP::loaded_objects_json;
@@ -114,6 +115,18 @@ TEST_CASE("loaded_objects names only the objects the load added, by their scene 
     CHECK_THAT(loaded[0]["bounding_box"]["size_z"].get<double>(), WithinAbs(15.0, 1e-9));
 }
 
+TEST_CASE("the objects a load added are known by their scene index", "[McpModelLoad][orcamcp][load]")
+{
+    // What load_model's next_steps ask about: the new objects, never the scene's older ones.
+    Model model;
+    add_box(model, "already here");
+    const auto before = object_ids(model);
+    add_box(model, "new one");
+    add_box(model, "new two");
+    CHECK(added_object_indices(model, before) == std::vector<int>{1, 2});
+    CHECK(added_object_indices(model, object_ids(model)).empty());
+}
+
 // get_scene_info and load_model describe an object with one serializer, so the same object reads
 // the same in both: an agent that learned get_scene_info's object_index and bounding_box.size_x
 // finds them under those names in loaded_objects too.
@@ -127,7 +140,7 @@ TEST_CASE("a loaded object reads exactly as get_scene_info's summary of it", "[M
     const nlohmann::json summary = model_object_summary_json(*added, 0);
     REQUIRE(loaded.size() == 1);
     CHECK(loaded[0] == summary);
-    for (const char* field : {"id", "name", "object_index", "instance_count", "volume_count", "position",
+    for (const char* field : {"object_id", "internal_id", "name", "object_index", "instance_count", "volume_count", "position",
                               "rotation_degrees", "scale", "bounding_box"})
         CHECK(summary.contains(field));
 }

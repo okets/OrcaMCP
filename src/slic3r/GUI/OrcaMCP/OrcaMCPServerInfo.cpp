@@ -23,15 +23,16 @@ json quick_start()
 {
     return json{
         {"first_steps", {
-            "1. Call get_scene_info to understand current project state",
-            "2. Use render_plate_view with save_to_file=true to visualize",
-            "3. For more, call get_server_info with a section from the sections list below"
+            "1. get_scene_info: plates, objects and their object_id",
+            "2. get_mesh_health, get_object_components: holes, open edges, loose parts",
+            "3. render_plate_view save_to_file=true, then Read the PNG",
+            "4. get_server_info section=<one of sections> for more"
         }},
         {"common_tasks", {
-            {"load_and_slice", "load_model -> arrange_objects -> slice_all -> poll get_slicing_status -> export_gcode"},
-            {"change_settings", "apply_config with settings array"},
-            {"modify_object", "get_scene_info (get object_id) -> transform tools"},
-            {"visualize", "render_plate_view with save_to_file=true (omit views for a 3-view contact sheet), then Read the PNG; check uniform_image first"}
+            {"load_and_slice", "load_model -> slice_all -> wait_for_slice -> get_print_estimate -> export_gcode"},
+            {"supports", "apply_config enable_support, support_type (set_object_config: one object); paint_object mode support; render_plate_view layer_view"},
+            {"modify_object", "get_scene_info (object_id) -> transform tools"},
+            {"visualize", "render_plate_view save_to_file=true; check uniform_image first"}
         }}
     };
 }
@@ -52,9 +53,9 @@ json suggested_flows()
                 {"next2", "3. Start slicing"},
                 {"tool3", "slice_all"},
                 {"example3", "{}"},
-                {"next3", "4. Wait for completion (poll every 2-3 seconds)"},
-                {"tool4", "get_slicing_status"},
-                {"example4", "{} -> repeat until is_slicing=false"},
+                {"next3", "4. Wait for completion: it returns once the run is over"},
+                {"tool4", "wait_for_slice"},
+                {"example4", "{} -> outcome done"},
                 {"next4", "5. Export G-code"},
                 {"tool5", "export_gcode"},
                 {"example5", R"({"output_path": "/path/to/output.gcode"})"}
@@ -77,7 +78,7 @@ json suggested_flows()
                 {"tool", "apply_config"},
                 {"example", R"({"settings": [{"type": "print", "key": "layer_height", "value": "0.15"}, {"type": "print", "key": "sparse_infill_density", "value": "20%"}]})"}
             }},
-            {"note", "Settings become 'dirty' until user saves preset in UI"}
+            {"note", "Settings stay 'dirty' (unsaved) until save_preset saves them"}
         }},
         {"object_manipulation_workflow", {
             {"description", "Transform objects (move, rotate, scale, cut)"},
@@ -85,7 +86,7 @@ json suggested_flows()
                 {"step", "1. Get object IDs"},
                 {"tool", "get_scene_info"},
                 {"example", R"({"with_model_object_features": false})"},
-                {"note", "Objects are 0-indexed. Look for model_objects array in response."},
+                {"note", "Objects are 0-indexed: pass plates[].model_objects[].object_id."},
                 {"step2", "2. Transform as needed"},
                 {"tools", "move_object, rotate_object, scale_object, mirror_object, cut_object"},
                 {"examples", {
@@ -137,8 +138,8 @@ json suggested_flows()
                 {"step2", "2. Slice the project"},
                 {"tool2", "slice_all"},
                 {"step3", "3. Wait for slicing to complete"},
-                {"tool3", "get_slicing_status"},
-                {"note2", "Poll every 2-3 seconds until is_slicing=false"},
+                {"tool3", "wait_for_slice"},
+                {"note2", "It returns once the run is over; call it again on timed_out"},
                 {"step4", "4. Send to printer"},
                 {"tool4", "send_to_printer"},
                 {"example4", R"({"start_print": false})"},
@@ -160,7 +161,8 @@ json tool_examples()
             {"when_to_use", "Start of session, after loading models, before transforms"},
             {"response_includes", {
                 {"bed", "origin (corner), min_x, min_y, max_x, max_y, max_z - printable area bounds"},
-                {"plates[].model_objects[]", "object_index, name, position, rotation_degrees, scale, bounding_box, instance_count"}
+                {"plates[]", "plate_index, is_current (the plate per-plate tools act on), model_objects, occupancy"},
+                {"plates[].model_objects[]", "object_id (what every tool takes), name, position, rotation_degrees, scale, bounding_box, instance_count"}
             }},
             {"tip", "Use bed info to calculate valid positions. Object positions are center points."}
         }},
@@ -257,7 +259,7 @@ json concepts()
             {"description", "When you modify a setting, it becomes 'dirty' - meaning it differs from the saved preset. Dirty values are tracked in the 'dirty_options' array."},
             {"example", "If you change layer_height from 0.2 to 0.22, 'layer_height' appears in dirty_options"},
             {"persistence", "Dirty values are NOT automatically saved. They exist only in the current editing session."},
-            {"saving", "To save dirty values permanently, the user must save the preset through the UI (Ctrl+S or right-click preset -> Save)"},
+            {"saving", "save_preset saves dirty values into the preset, or as a new preset with a name"},
             {"use_case", "Dirty tracking lets you experiment with settings without modifying saved presets. You can always revert by reloading the preset."}
         }},
         {"plates", {
@@ -279,14 +281,13 @@ json concepts()
         }},
         {"slicing", {
             {"description", "Slicing converts 3D models into G-code layer by layer. It's an async operation."},
-            {"workflow", "1) Load model 2) Configure settings 3) Call slice_all 4) Poll get_slicing_status until complete 5) Export G-code"}
+            {"workflow", "1) Load model 2) Configure settings 3) Call slice_all 4) Call wait_for_slice, which returns once it is over 5) Export G-code"}
         }},
         {"object_ids", {
-            {"description", "Each object has two identifiers: 'id' (stable string) and 'object_index' (transient 0-based integer)."},
-            {"id_stable", "The 'id' field is a unique stable identifier that persists across add/delete operations. Use for tracking objects across sessions."},
-            {"object_index_transient", "The 'object_index' field is a 0-based array index used for MCP tool operations (move, rotate, etc.). It shifts when objects are added/deleted."},
-            {"finding_ids", "Call get_scene_info and look at plates[].model_objects[] array for both 'id' and 'object_index'"},
-            {"best_practice", "For multi-step workflows: store 'id' to track objects, re-query get_scene_info for current 'object_index' before each operation."}
+            {"description", "Every object description (get_scene_info's model_objects and unplaced_objects, load_model's loaded_objects) carries object_id: the 0-based index every tool's object_id parameter takes. object_index is the same number, kept for older readers."},
+            {"shifts", "An object's object_id shifts when an object before it is deleted: read get_scene_info again after a delete before acting on an index."},
+            {"internal_id", "internal_id is the app's own number for the object: stable while the app runs, not saved in the project, and taken by no tool. Use it only to find an object again after the indices shifted."},
+            {"finding_ids", "Call get_scene_info and read plates[].model_objects[].object_id"}
         }},
         {"instances_vs_objects", {
             {"description", "A ModelObject can have multiple instances. Instances share geometry and per-object settings but have independent positions."},
@@ -371,25 +372,25 @@ json warnings_and_best_practices()
                 {"get_scene_info", "Use with_model_object_features=false unless you need every object's mesh-health numbers."}
             }},
             {"prefer_light_tools", {
-                "get_slicing_status - tiny response, safe for polling",
+                "wait_for_slice - one call waits a slice out, instead of polling get_slicing_status",
                 "apply_config - small response",
                 "undo/redo - minimal response",
                 "All transform tools (move, rotate, scale, etc.) - minimal responses"
             }}
         }},
         {"common_pitfalls", {
-            {"object_index_shifts", "After delete/add, object_index values shift. Use stable 'id' to track objects, re-query for current object_index."},
-            {"async_operations", "slice_all, auto_orient, arrange_objects are async. Poll or wait before next step."},
+            {"object_id_shifts", "After a delete, object_id values shift. Re-read get_scene_info; internal_id finds the same object again."},
+            {"async_operations", "slice_all and export_gcode run in the background: call wait_for_slice. arrange_objects, auto_orient, flatten_object and clone_object answer once their job is applied (finished: false past the bridge's cap: then get_slicing_status's ui_job)."},
             {"cut_object_caution", "Cut removes original and creates new object(s). Use undo if result is wrong."},
-            {"settings_not_saved", "apply_config creates dirty values. User must save preset in UI to persist."},
+            {"settings_not_saved", "apply_config creates dirty values: save_preset keeps them."},
             {"undo_limits", "Undo history is limited. Save project before destructive operations."},
             {"positioning", "For absolute move_object: unspecified axes preserve current position. To spread objects, use relative=true with offsets, or arrange_objects."}
         }},
         {"efficiency_tips", {
             "Batch settings: put multiple items in one apply_config call",
-            "Store stable 'id' values, re-query object_index only when needed for operations",
+            "Re-read object_id from get_scene_info after a delete, not before every call",
             "Use render_plate_view before and after transforms to verify",
-            "Poll get_slicing_status every 2-3 seconds, not faster"
+            "Call wait_for_slice after slice_all rather than polling get_slicing_status"
         }},
         {"visual_preview", {
             {"description", "Many tools support include_preview=true to return a turntable preview image path alongside results."},
@@ -492,6 +493,32 @@ json unknown_section(const std::string& requested)
 }
 
 } // namespace
+
+const std::string& server_instructions()
+{
+    // Most important first: Claude Code shows only the first 2048 characters, and the text stays under
+    // 1,600 so later tools fit (both checked in [orcamcp][tools], with every snake_case name in it).
+    // The key tool per job only: get_server_info lists the rest.
+    static const std::string instructions = R"INSTRUCTIONS(OrcaMCP drives OrcaSlicer. Before deciding something cannot be done here, call get_server_info: it lists every tool by job.
+
+Start with get_scene_info (plates, objects, each object's object_id). Key tools:
+- Models: load_model (keeps the presets), load_project (replaces them), arrange_objects, auto_orient, move_object, rotate_object, scale_object, cut_object.
+- Mesh: get_mesh_health (holes, open edges), get_object_components (stray shells).
+- Painting: paint_object (color, support, seam, fuzzy_skin).
+- Filaments and colour: get_filaments, set_object_filament, suggest_color_mix.
+- Settings: get_config_values, apply_config, set_object_config (one object), select_preset.
+- Slicing: slice_all, then wait_for_slice (no polling); get_print_estimate, export_gcode.
+- Seeing results: render_plate_view (its layer_view draws a sliced layer's toolpaths).
+- Printers: get_printer_status, send_to_printer.
+
+Responses may carry next_steps: the tool to call next, and why.
+
+Careful:
+- send_to_printer uploads AND STARTS the print on a print host; start_print: false only uploads.
+- save_project without output_path overwrites the file the project is named after.
+- new_project and load_project discard unsaved changes without asking.)INSTRUCTIONS";
+    return instructions;
+}
 
 const std::vector<std::string>& server_info_section_names()
 {

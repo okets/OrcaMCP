@@ -39,7 +39,9 @@ struct Reference
 class ToolNames
 {
 public:
-    explicit ToolNames(const ToolMap& tools)
+    // `other_names`: names the tools' schemas cannot supply that are not tools either, such as the
+    // response fields a description names.
+    explicit ToolNames(const ToolMap& tools, const std::set<std::string>& other_names = {}) : m_parameters(other_names)
     {
         for (const auto& [name, tool] : tools) {
             m_tools.insert(name);
@@ -57,7 +59,7 @@ public:
         return std::regex_match(token, snake_case) && m_first_words.count(first_word(token)) != 0;
     }
 
-    // Shaped like a tool name, but a config key or a tool parameter instead.
+    // Shaped like a tool name, but a config key, a tool parameter or one of its enum values instead.
     bool is_other_name(const std::string& token) const
     {
         return m_parameters.count(token) != 0 || Slic3r::print_config_def.has(token);
@@ -70,6 +72,10 @@ private:
     {
         if (!schema.is_object())
             return;
+        if (auto values = schema.find("enum"); values != schema.end() && values->is_array())
+            for (const auto& value : *values)
+                if (value.is_string())
+                    m_parameters.insert(value.get<std::string>());
         if (auto properties = schema.find("properties"); properties != schema.end() && properties->is_object()) {
             for (auto it = properties->begin(); it != properties->end(); ++it) {
                 m_parameters.insert(it.key());

@@ -4,6 +4,7 @@
 #include "OrcaMCPPaintModel.hpp"
 #include "OrcaMCPPaintSelect.hpp"
 #include "OrcaMCPFilamentModel.hpp"
+#include "OrcaMCPNextSteps.hpp"
 
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Plater.hpp"
@@ -535,28 +536,58 @@ const Slic3r::ConfigOption* effective_print_option(const Slic3r::DynamicPrintCon
     return option ? option : global.option(key);
 }
 
+// The object's own setting `key`, else the process preset's.
+const Slic3r::ConfigOption* effective_print_option(const Slic3r::ModelObject& obj, const char* key)
+{
+    return effective_print_option(obj.config.get(), wxGetApp().preset_bundle->prints.get_edited_preset().config, key);
+}
+
+// Whether painted support enforcers and blockers do anything on `obj`: only while enable_support is on.
+bool painted_support_prints(const Slic3r::ModelObject& obj)
+{
+    const Slic3r::ConfigOption* option = effective_print_option(obj, "enable_support");
+    return option == nullptr || option->getBool();
+}
+
 // Painted supports and painted fuzzy skin do nothing unless the corresponding setting is on.
 // The gizmos say so on screen (GLGizmoFdmSupports.cpp, GLGizmoFuzzySkin.cpp); over MCP the
 // equivalent is an info message, or the caller paints, slices, and sees no difference.
 std::vector<std::string> paint_prerequisite_messages(const Slic3r::ModelObject& obj, PaintMode mode)
 {
     std::vector<std::string> messages;
-    const Slic3r::DynamicPrintConfig& global     = wxGetApp().preset_bundle->prints.get_edited_preset().config;
-    const Slic3r::DynamicPrintConfig& object_cfg = obj.config.get();
-
-    if (mode == PaintMode::Support) {
-        const Slic3r::ConfigOption* option = effective_print_option(object_cfg, global, "enable_support");
-        if (option && !option->getBool())
-            messages.push_back("Painted support enforcers and blockers have no effect while "
-                               "enable_support is false. Set it with apply_config or set_object_config.");
-    }
+    if (mode == PaintMode::Support && !painted_support_prints(obj))
+        messages.push_back("Painted support enforcers and blockers have no effect while "
+                           "enable_support is false. Set it with apply_config or set_object_config.");
     if (mode == PaintMode::FuzzySkin) {
-        const Slic3r::ConfigOption* option = effective_print_option(object_cfg, global, "fuzzy_skin");
+        const Slic3r::ConfigOption* option = effective_print_option(obj, "fuzzy_skin");
         if (option && option->getInt() == int(Slic3r::FuzzySkinType::Disabled_fuzzy))
             messages.push_back("Painted fuzzy skin has no effect while fuzzy_skin is 'disabled_fuzzy' "
                                "(the default). Set fuzzy_skin to 'none' to use painted regions only.");
     }
     return messages;
+}
+
+// Whether any volume of `obj` now carries painted support enforcers.
+bool has_painted_enforcers(const Slic3r::ModelObject& obj)
+{
+    return std::any_of(obj.volumes.begin(), obj.volumes.end(), [](const Slic3r::ModelVolume* volume) {
+        return volume->supported_facets.has_facets(*volume, Slic3r::EnforcerBlockerType::ENFORCER);
+    });
+}
+
+// The object's support_type as the config writes it ("normal(auto)"), its own else the process preset's.
+std::string effective_support_type(const Slic3r::ModelObject& obj)
+{
+    const Slic3r::ConfigOption* option = effective_print_option(obj, "support_type");
+    return option != nullptr ? option->serialize() : std::string();
+}
+
+// The call that makes support painted on object `object_id` count, as next_steps (support_paint_next_steps).
+std::vector<NextStep> paint_prerequisite_steps(const Slic3r::ModelObject& obj, int object_id, PaintMode mode)
+{
+    if (mode != PaintMode::Support)
+        return {};
+    return support_paint_next_steps(object_id, painted_support_prints(obj), has_painted_enforcers(obj), effective_support_type(obj));
 }
 
 // ---- Renumbering painted states: remap_paint, and paint_object's selection "state" -------------
@@ -705,6 +736,7 @@ nlohmann::json run_paint_remap(const nlohmann::json& params, const PaintRemapReq
         // What paint_object says for every other selection: painted supports need enable_support, ...
         if (const std::vector<std::string> messages = paint_prerequisite_messages(*target.object, request.mode); !messages.empty())
             result["info_messages"] = messages;
+        add_next_steps(result, paint_prerequisite_steps(*target.object, target.object_id, request.mode));
         return result;
     });
 }
@@ -737,7 +769,9 @@ void OrcaMCPServer::register_paint_tools()
         "paint_object",
         ToolCategory::Painting,
         "Paint color, support, seam, fuzzy skin",
-        "Paint per-triangle annotations on an object, the same data the GUI paint gizmos write. "
+        "Paint an object's surface as the GUI's paint tools do: filament colours for a multi-colour "
+        "print, support enforcers and blockers, the seam, or fuzzy skin -- per-triangle data, the same "
+        "the paint gizmos write. To put a whole object or volume on one filament, use set_object_filament. "
         "mode selects which: color (multi-material / MMU segmentation), support, seam or "
         "fuzzy_skin. selection selects where: bands along a plate axis (an even split across a "
         "list of filaments, or explicit ranges), a box, a sphere, or the whole volume. "
@@ -755,7 +789,9 @@ void OrcaMCPServer::register_paint_tools()
         "which is instance_id's alone, only when the object has one instance. A facet "
         "belongs to the band or region containing its centroid. Paint lives on the volume, so it "
         "applies to every instance; instance_id only says whose transform reads your "
-        "coordinates. Verify with get_object_paint, undo with undo, reset with clear_object_paint.",
+        "coordinates. Verify with get_object_paint, undo with undo, reset with clear_object_paint. Painted "
+        "support enforcers do nothing while enable_support is off: next_steps then names the set_object_config "
+        "call that turns it on with a (manual) support_type, for support only where painted.",
         {
             {"type", "object"},
             {"properties", {
@@ -1309,6 +1345,7 @@ void OrcaMCPServer::register_paint_tools()
                 }
                 if (!messages.empty())
                     result["info_messages"] = messages;
+                add_next_steps(result, paint_prerequisite_steps(*target.object, target.object_id, mode));
 
                 return result;
             });
@@ -1807,9 +1844,10 @@ void OrcaMCPServer::register_paint_tools()
 
     register_tool({
         "get_object_components",
-        ToolCategory::Painting,
-        "List a part's connected mesh shells",
-        "List the connected shells of each MODEL PART's mesh -- component id, facet count, area and a "
+        ToolCategory::Models,
+        "Loose parts and stray shells of a mesh",
+        "Find loose parts, stray shells and mesh fragments: the connected shells of each MODEL PART's mesh "
+        "-- component id, facet count, area and a "
         "plate-frame bounding box. Parts only: modifiers, negative volumes and support blockers are "
         "not listed here, so this is not a census of the object's volumes; get_object_info's `volumes` "
         "is, with each volume's type and filament. A generated or assembled model often has a feature (a bag, a "

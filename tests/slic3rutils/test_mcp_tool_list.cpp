@@ -1,8 +1,11 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "slic3r/GUI/OrcaMCP/OrcaMCPServer.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPServerInfo.hpp"
 #include "libslic3r_version.h"
 #include "mcp_tool_references.hpp"
+
+#include <algorithm>
 
 #include <cstdlib>
 #include <fstream>
@@ -214,6 +217,37 @@ TEST_CASE("Every tool get_server_info mentions is a real tool", "[orcamcp][tools
     CHECK(unknown.empty());
 }
 
+namespace {
+
+// Response fields and status words tool descriptions name that look like tool names ("slice_run",
+// "arrange_started"). A response has no schema to read them from, so they are listed here.
+const std::set<std::string> response_words_named_in_descriptions{"slice_run", "reset_count", "arrange_started", "export_started"};
+
+} // namespace
+
+TEST_CASE("Every tool name a tool's own text mentions is a real tool", "[orcamcp][tools]")
+{
+    // An agent reads a description only once it has chosen the tool, and follows what it names: a
+    // name no tool answers to sends it nowhere.
+    const mcp_tool_references::ToolNames names(OrcaMCPServer::registered_tools(), response_words_named_in_descriptions);
+    std::vector<mcp_tool_references::Reference> unknown;
+    for (const auto& [name, tool] : OrcaMCPServer::registered_tools()) {
+        const nlohmann::json text = {{"summary", tool.summary}, {"description", tool.description}, {"inputSchema", tool.input_schema}};
+        for (mcp_tool_references::Reference& reference : mcp_tool_references::unknown_in_json(text, names))
+            unknown.push_back({name + reference.where, reference.token});
+    }
+    INFO("tool text names tools that do not exist:\n" << mcp_tool_references::describe(unknown));
+    CHECK(unknown.empty());
+}
+
+TEST_CASE("The tool-name check takes a schema's enum values for what they are", "[orcamcp][tools]")
+{
+    // printer_control's action "set_temperature" is a value to send, not a tool to call.
+    const mcp_tool_references::ToolNames names(OrcaMCPServer::registered_tools());
+    CHECK(names.is_other_name("set_temperature"));
+    CHECK(mcp_tool_references::unknown_in_text("send action set_temperature, then set_temperatures", "text", names).size() == 1);
+}
+
 TEST_CASE("The tool-name check tells tool references from config keys and parameters", "[orcamcp][tools]")
 {
     const mcp_tool_references::ToolNames names(OrcaMCPServer::registered_tools());
@@ -241,6 +275,59 @@ TEST_CASE("The tool-name check also reads plain text", "[orcamcp][tools]")
     REQUIRE(unknown.size() == 1);
     CHECK(unknown.front().token == "export_gcodes");
     CHECK(unknown.front().where == "text");
+}
+
+// ==================== SERVER INSTRUCTIONS ====================
+//
+// The one text a client shows an agent before it has loaded any tool: Claude Code loads tool schemas
+// only once an agent picks a tool by name, so the instructions are where the names it should pick are.
+
+TEST_CASE("initialize carries the server instructions", "[orcamcp][tools]")
+{
+    const nlohmann::json result = OrcaMCPServer::handle_initialize(nlohmann::json::object());
+    REQUIRE(result.contains("instructions"));
+    CHECK(result.at("instructions") == Slic3r::GUI::OrcaMCP::server_instructions());
+}
+
+TEST_CASE("The server instructions fit the 2048 characters Claude Code shows, in plain ASCII", "[orcamcp][tools]")
+{
+    // Claude Code cuts a server's instructions after 2048 characters ("... [truncated]"), measured on
+    // another server's on 2026-09-28. ASCII keeps characters and bytes the same count.
+    const std::string& instructions = Slic3r::GUI::OrcaMCP::server_instructions();
+    INFO("the instructions are " << instructions.size() << " characters");
+    CHECK_FALSE(instructions.empty());
+    CHECK(instructions.size() <= 2048);
+    CHECK(std::all_of(instructions.begin(), instructions.end(), [](char c) { return c == '\n' || (c >= 0x20 && c < 0x7f); }));
+}
+
+TEST_CASE("The server instructions leave room to grow, so each addition is a choice", "[orcamcp][tools]")
+{
+    // 2048 is the hard cut. The text is kept well under it (1,228 characters on 2026-09-28) so that later
+    // tools fit; a line that takes it past 1,600 means something else should go, or move to
+    // get_server_info. Raise this only deliberately.
+    const std::string& instructions = Slic3r::GUI::OrcaMCP::server_instructions();
+    INFO("the instructions are " << instructions.size() << " characters");
+    CHECK(instructions.size() <= 1600);
+}
+
+TEST_CASE("Every tool the server instructions name is a real tool", "[orcamcp][tools]")
+{
+    const mcp_tool_references::ToolNames names(OrcaMCPServer::registered_tools());
+    const auto unknown = mcp_tool_references::unknown_in_text(Slic3r::GUI::OrcaMCP::server_instructions(), "instructions", names);
+    INFO("the instructions name tools that do not exist:\n" << mcp_tool_references::describe(unknown));
+    CHECK(unknown.empty());
+}
+
+TEST_CASE("The server instructions name the tools agents did not find without them", "[orcamcp][tools]")
+{
+    // The 2026-09-26 session: mesh errors diagnosed in another program, support painted there, a slice
+    // polled 27 times, toolpaths "not rendered", get_server_info called only after the user pushed back.
+    const std::string& instructions = Slic3r::GUI::OrcaMCP::server_instructions();
+    for (const char* tool : {"get_mesh_health", "get_object_components", "paint_object", "wait_for_slice", "render_plate_view",
+                             "get_server_info"}) {
+        INFO("tool " << tool);
+        CHECK(instructions.find(tool) != std::string::npos);
+    }
 }
 
 // ==================== BRIDGE-ONLY TOOLS ====================
@@ -362,6 +449,9 @@ std::vector<std::string> manifest_differences(const nlohmann::json& file, const 
             if (in_registry.count(name) == 0)
                 differences.push_back(std::string(list) + ": " + name + " is in the file but not registered");
     }
+    // The bridge answers initialize itself, with the file's copy of the server instructions.
+    if (file.value("instructions", nlohmann::json()) != registry.at("instructions"))
+        differences.push_back("instructions differ");
     return differences;
 }
 

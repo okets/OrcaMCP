@@ -113,16 +113,16 @@ grep -hA1 -E '^\s*register_(bridge_)?tool\(\{' src/slic3r/GUI/OrcaMCP/*.cpp | gr
 
 | Category | Tools |
 |----------|-------|
-| **Scene** | `get_scene_info` (plates, objects with `filaments_used` — read that, not `extruder_id` — and `mesh_warning` (the object list's warning icon, with its reason; `with_model_object_features` adds the mesh-health numbers), and each plate's full occupancy: object footprints with brim, the prime tower, excluded bed areas; `unplaced_objects`: every object with an instance on no plate, and which (`unplaced_instances`); `open_dialogs` / `system_dialog_open` / `untracked_modal_loop`: a dialog waiting for the user), `new_project`, `load_project` (both cancel a running slice; refused while the startup restore prompt waits), `save_project`, `export_3mf` |
-| **Models** | `load_model` (a 3MF is always geometry only: never its presets, never a rename; `.gcode` / `.gcode.3mf` only onto an empty scene, as a preview; returns `loaded_objects` in `get_scene_info`'s object shape, `filaments_added`; `multipart: merge\|separate`), `auto_orient` / `arrange_objects` (the current plate's objects; answered once the job has been applied, with `objects`, each one's placement, or `finished: false` past the wait's cap, `status: cancelled` when the app cancelled it; see "Waiting for a UI job"), `get_object_info` (incl. every volume with its type and filament), `get_mesh_health` (mesh errors behind the object list's warning icon: the icon state, its exact tooltip, open edges, recorded repairs, shells, per object and per volume), `rename_object`, `set_object_printable` |
+| **Scene** | `get_scene_info` (plates, each with `plate_index` and `is_current` (the plate per-plate tools act on; `index` kept), objects, each with `object_id` (the index every tool takes; `object_index` the same, kept; `internal_id` the app's ObjectID, stable while the app runs, taken by no tool -- it was `id`, which an agent passed as the object_id), `filaments_used` — read that, not `extruder_id` — and `mesh_warning` (the object list's warning icon, with its reason; `with_model_object_features` adds the mesh-health numbers), and each plate's full occupancy: object footprints with brim, the prime tower, excluded bed areas; `unplaced_objects`: every object with an instance on no plate, and which (`unplaced_instances`); `open_dialogs` / `system_dialog_open` / `untracked_modal_loop`: a dialog waiting for the user), `new_project`, `load_project` (both cancel a running slice; refused while the startup restore prompt waits), `save_project`, `export_3mf` |
+| **Models** | `load_model` (a 3MF is always geometry only: never its presets, never a rename; `.gcode` / `.gcode.3mf` only onto an empty scene, as a preview; returns `loaded_objects` in `get_scene_info`'s object shape, `filaments_added`; `multipart: merge\|separate`), `auto_orient` / `arrange_objects` (the current plate's objects; answered once the job has been applied, with `objects`, each one's placement, or `finished: false` past the wait's cap, `status: cancelled` when the app cancelled it; see "Waiting for a UI job"), `get_object_info` (incl. every volume with its type and filament), `get_mesh_health` (mesh errors behind the object list's warning icon: the icon state, its exact tooltip, open edges, recorded repairs, shells, per object and per volume), `get_object_components` (loose parts, stray shells: every shell of each model part), `rename_object`, `set_object_printable` |
 | **Transforms** | Every transform, and `get_object_info`, reports each instance's placement (`instance_placement`: its plate and whether it is inside it), `plate_index` (instance 0's plate), `plate_indices` and `on_bed` (every instance inside the plate it is on). `move_object`, `rotate_object` (a change in degrees; `relative: false` is refused), `scale_object`, `mirror_object`, `flatten_object` (the named object only, which replaces the selection, as the GUI's Orient does for a selection; an object with an instance on a locked plate is refused; answered once its orient has been applied), `clone_object` (answered once its arrange has been applied, with `objects`), `cut_object`, `delete_object`, `transform_objects` (rotate, scale, mirror and transform drop a resting object back onto the bed like the GUI; an explicit Z is kept) |
 | **Plates** | `add_plate`, `select_plate`, `delete_plate`, `set_prime_tower_position` |
 | **Config** | `get_presets`, `get_edited_presets` (25-48 KB), `get_config_values` (no arguments: the selected printer, print and per-slot filament presets with dirty flags, ~400 B; `keys`: just those settings, grouped by `apply_config` type, with `dirty` saved values; `dirty_only`), `select_preset` (`type: printer` returns the resulting `filaments`, each with its observed `color_source`: `unchanged`/`remembered`/`default`/`other`), `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset`, `get_valid_config_keys` |
 | **Per-Object** | `get_object_config`, `set_object_config`, `reset_object_config` |
 | **Layer Ranges** | `get_object_layer_ranges`, `set_object_layer_range`, `delete_object_layer_range` |
 | **Filaments & colour** | `get_filaments`, `set_object_filament` (whole-object form clears the volumes' own slots and reports `effective_filaments`; a volume's slot beats the object's), `set_mixed_filament`, `delete_mixed_filament`, `set_filament_color` (a slot's plate colour, saved for the selected printer so a switch away and back keeps it; `apply_config` edits the preset instead), `get_flush_volumes`, `set_flush_volumes`, `auto_calc_flush_volumes`, `get_toolchanger_config`, `suggest_color_mix`, `get_color_palette` |
-| **Painting** | `paint_object` (`selection: state` repaints every facet now in `match_filament` / `match_state`), `remap_paint` (renumbers painted filaments at once, `{"1": 2, "2": 3}`, never chained; one undo step; `facets_before` / `facets_after`; `notes` names the `set_object_filament` call for unpainted facets on a moved base filament), `get_object_paint`, `clear_object_paint`, `set_brim_ears`, `get_object_components`, `pick_facet` |
-| **Slicing** | `slice_all` (`status`: slicing_started, or not_started with a `reason`: `busy_slicing` — the pipeline is busy (slicing, exporting, uploading or stopping), nothing is started, call `wait_for_slice` then `slice_all` again — or already_sliced / busy_job (an arrange or an orient holds the app: poll `get_slicing_status` until `ui_job` is null) / invalid (the app refuses the plate as it stands: its validation, with its message, an object partly off the plate, a filament check, missing plugins, a broken mixed filament, or a failed last slice; `message` says which) / nothing_to_slice (nothing printable on the plates -- partly off one or too tall -- and no refusal the app gives words for, which comes first) / unknown), `wait_for_slice` (bridge-only: polls `get_slicing_status` until the run is over, capped 15 s below `ORCAMCP_TIMEOUT`, or a quarter below it under 60 s; `outcome` done / ended_early / incomplete / not_slicing / timed_out / app_gone), `get_slicing_status` (`busy` / `busy_reason`: the one busy test slice_all and wait_for_slice share; `ui_job`: `arranging` / `orienting` (a tool's job past its wait), `other` (the GUI's), or null, kept apart from `busy`; per-plate `percent`, `stage` text, and `slice_run.outcome` for the last `slice_all` run: running / done / ended_early / incomplete, with `skipped` empty plates, which never keep a run from `done`; `state` follows that run; per-plate `gcode_check`: the check the slice ran on its own G-code, `{ok: true}` or `problems` codes and a `message`; `above_printable_height` adds `highest_layer_z_mm`, `printable_height_mm` and a `hint`), `export_gcode` (the selected plate, sliced; refused when its `gcode_check` failed, as the GUI's Export button is off), `get_print_estimate` (`time_by_feature`: seconds per feature, walls split, travel, tool changes, other and unattributed, summing to the total; `printed_layers` = the G-code's layer count; `object_layers` / `support_layers` split; `layer_count` deprecated, now the printed count too) |
+| **Painting** | `paint_object` (`selection: state` repaints every facet now in `match_filament` / `match_state`), `remap_paint` (renumbers painted filaments at once, `{"1": 2, "2": 3}`, never chained; one undo step; `facets_before` / `facets_after`; `notes` names the `set_object_filament` call for unpainted facets on a moved base filament), `get_object_paint`, `clear_object_paint`, `set_brim_ears`, `pick_facet` |
+| **Slicing** | `slice_all` (`status`: slicing_started, or not_started with a `reason`: `busy_slicing` — the pipeline is busy (slicing, exporting, uploading or stopping), nothing is started, call `wait_for_slice` then `slice_all` again — or already_sliced / busy_job (an arrange or an orient holds the app: poll `get_slicing_status` until `ui_job` is null) / invalid (the app refuses the plate as it stands: its validation, with its message, an object partly off the plate, a filament check, missing plugins, a broken mixed filament, or a failed last slice; `message` says which) / nothing_to_slice (nothing printable on the plates -- partly off one or too tall -- and no refusal the app gives words for, which comes first) / unknown), `wait_for_slice` (bridge-only: polls `get_slicing_status` until the run is over, capped 15 s below `ORCAMCP_TIMEOUT`, or a quarter below it under 60 s; `outcome` done / ended_early / incomplete / not_slicing / timed_out / app_gone), `get_slicing_status` (`busy` / `busy_reason`: the one busy test slice_all and wait_for_slice share; `ui_job`: `arranging` / `orienting` (a tool's job past its wait), `other` (the GUI's), or null, kept apart from `busy`; per-plate `percent` (each plate entry has `plate_index`, `index` kept), `stage` text, and `slice_run.outcome` for the last `slice_all` run: running / done / ended_early / incomplete, with `skipped` empty plates, which never keep a run from `done`; `state` follows that run; per-plate `gcode_check`: the check the slice ran on its own G-code, `{ok: true}` or `problems` codes and a `message`; `above_printable_height` adds `highest_layer_z_mm`, `printable_height_mm` and a `hint`), `export_gcode` (the selected plate, sliced; refused when its `gcode_check` failed, as the GUI's Export button is off), `get_print_estimate` (`time_by_feature`: seconds per feature, walls split, travel, tool changes, other and unattributed, summing to the total; `printed_layers` = the G-code's layer count; `object_layers` / `support_layers` split; `layer_count` deprecated, now the printed count too) |
 | **Visualization** | `render_plate_view` (named cameras `iso/top/front/back/left/right/low`, fit to plate or object, default 3-view contact sheet, plate outline + 10 mm grid + origin + object labels, `objects_in_frame` / `uniform_image` metadata, `layer_view: first_layer` plan with brim, supports and rafts, and `layer_view: {layer}` / `{z}` for any sliced layer from the G-code, filtered by `features` / `filaments`, `color_by` feature or filament, with its height, filaments, extruded areas and per-object `objects_at_height` (object and support layer, overhang coverage); coordinates are bed mm; drawn from the 3D view whatever tab shows; images in the system temp directory), `get_preview_base64`, `set_gcode_view_type` |
 | **Printers** | `get_printers` (`is_online` is not a live check; `current_print_host.last_status_age_s` is), `select_printer`, `add_physical_printer` (incl. optional Obico URL/token for Flashforge), `discover_printers`, `send_to_printer` (refused when a plate it would send failed its `gcode_check`), `get_printer_status` (a failure names host:port and the next step, with the last known material station as `cached`), `printer_control`, `list_printer_files`, `print_printer_file`, `match_project_to_printer` (falls back to the printer's last status, applied only with `allow_cached: true`) |
 | **Adaptive** | `apply_adaptive_layer_height`, `clear_adaptive_layer_height` |
@@ -141,6 +141,7 @@ generated from that registry:
 | `tools/list` while the app runs | `OrcaMCPServer::handle_tools_list` (bridge-only tools left out) |
 | `get_server_info`'s catalogue | `OrcaMCPServerInfo.cpp`, on every call |
 | The bridge's list while the app is down, and its own tools' text either way | `scripts/orcamcp_tools.json`, the golden file |
+| `initialize`'s `instructions` (the bridge always answers `initialize` itself, from the golden file's `instructions`; the app's copy is for direct HTTP clients) | `OrcaMCP::server_instructions()`, `OrcaMCPServerInfo.cpp` (see "Server instructions and next steps") |
 
 Regenerate the golden file with the command in "Adding New Tools", step 4, below.
 
@@ -208,7 +209,12 @@ What the tests enforce, with no app running:
   - `get_server_info`'s default response names every tool, bridge-only ones included, reports
     `SoftFever_VERSION`, stays under 6 KB, and its section index matches the sections;
   - every tool name `get_server_info` mentions, in structured fields or prose, is a real tool
-    (`tests/slic3rutils/mcp_tool_references.hpp`, reusable for other text).
+    (`tests/slic3rutils/mcp_tool_references.hpp`, reusable for other text), and so is every one a
+    tool's own summary, description and schema text names (a schema's enum values, and the few
+    response fields and status words descriptions name, are not tool references);
+  - `initialize` answers the server instructions, which fit in 2048 ASCII characters (and under
+    1,600, to leave room), name only real tools, and name the tools agents missed without them; the
+    golden file's copy matches.
 - `scripts/tests/` (`python3 -m unittest discover -s scripts/tests -t scripts`, run by the fork's
   `Python tests` workflow on pushes to `mcp`): the bridge's offline and online lists are identical
   in names, descriptions and order; no bridge tool's text appears in the bridge; every
@@ -216,13 +222,51 @@ What the tests enforce, with no app running:
   stops the bridge, which then offers a fallback `start_orca` whose description names the file;
   `start_orca` and `wait_for_slice` refuse an argument their schema in the file does not declare,
   in the app's words, and no bridge tool takes a nested object; the Windows path rewrite forwards
-  arguments that are not an object untouched, for the app to refuse (`test_bridge_arguments.py`).
+  arguments that are not an object untouched, for the app to refuse (`test_bridge_arguments.py`);
+  `initialize` answers the file's instructions, app or no app, and still answers without them for a
+  file that has none (`test_bridge_instructions.py`).
+- `tests/slic3rutils/test_mcp_scene_description.cpp` (`[McpSceneDescription]`): every object
+  description carries `object_id` (and `internal_id`, never `id`), every plate `plate_index` and
+  `is_current`; and `docs/tools/reference.md`'s `get_scene_info` example (after its
+  `<!-- get_scene_info example` marker) has exactly the keys the response's builders write, at the top
+  level, per plate, per object and in `prime_tower`. Change the response and the example with it.
+  CI's test jobs check out `docs/tools` for it; a reference-only change does not start CI, so run
+  `[McpSceneDescription]` locally.
 - CI: Build all also runs on a change to `scripts/orcamcp_tools.json` alone, since only its C++
   tests can compare the file with the registry.
 
 Adding a bridge-only tool: a `register_bridge_tool({...})` in `OrcaMCPServer::register_bridge_tools()`
 (same fields as any tool, no handler), its Python handler in `BRIDGE_HANDLERS` in
 `scripts/orcamcp-bridge.py`, then regenerate the golden file.
+
+### Server instructions and next steps
+
+Claude Code loads MCP tool schemas lazily: an agent sees only the tool **names** until it picks one,
+and a tool's description only after it chose that tool. The one text it sees before loading anything
+is the server's `instructions`, from `initialize`. In the 2026-09-26 session every tool an agent
+loaded was picked by exact name, and the ones nothing named (`get_mesh_health`,
+`get_object_components`, `paint_object`, `wait_for_slice`) were missed until the user pushed back.
+
+- **Where they live.** `OrcaMCP::server_instructions()` (`OrcaMCPServerInfo.cpp`) is the one copy:
+  `OrcaMCPServer::handle_initialize` answers it, and `tools_manifest()` writes it into the golden
+  file's `instructions`, which the bridge's `initialize` answers. The bridge answers `initialize`
+  itself even while the app runs, so what a client shows is always the golden file's copy; the
+  `[orcamcp][tools]` golden-file test keeps the two equal.
+- **The limit is 2048 characters; the text stays under 1,600.** Claude Code cuts a server's
+  instructions at 2048 characters ("... [truncated]", measured on another server's on 2026-09-28), so
+  they are ASCII (characters = bytes) and most important first. They were 1,228 on 2026-09-28, shortened
+  on the user's word so later tools fit: `get_server_info` first, `get_scene_info`, one line per job
+  naming only its key tools, `next_steps`, and the footguns (`send_to_printer` starts the print,
+  `save_project` without a path overwrites, `new_project` and `load_project` discard). Tests hold them to
+  2048 (the hard cut) and 1,600 (raise only deliberately: a line that needs more room means another goes,
+  or moves to `get_server_info`), and check every snake_case name in them.
+- **Next steps.** A response whose result implies a follow-up carries `next_steps`:
+  `[{"tool", "arguments" (left out when none), "why"}]`, built by `add_next_steps` from the builders in
+  `OrcaMCPNextSteps.cpp`, never by hand in a handler. At most one step per tool (`arguments` names the
+  first object, `why` all of them). `tests/slic3rutils/test_mcp_next_steps.cpp` (`[McpNextSteps]`)
+  checks every builder's steps name real tools with `arguments` that pass `tool_arguments_error`
+  against the tool's schema. Which responses carry which steps: `docs/tools/reference.md`, "Next
+  Steps". A new step goes in a builder there, with its case in that test.
 
 ---
 
@@ -409,6 +453,7 @@ gh release upload v2.3.2.10 ./path/to/new/artifact.exe -R okets/OrcaMCP
 | `src/slic3r/Utils/ObicoLink.cpp` | Flashforge preset's Obico link: page link object and token-free MCP status (spec `docs/superpowers/specs/2026-09-15-obico-camera-source-design.md`) |
 | `src/slic3r/GUI/HttpServer.hpp` | HTTP server with JSON responses; listens on 127.0.0.1 only |
 | `src/slic3r/GUI/HttpServer.cpp` | POST body reading, ResponseJson, the stop that waits for handlers and lets replies out |
+| `src/slic3r/GUI/OrcaMCP/OrcaMCPNextSteps.cpp` | A response's `next_steps`: the one shape and helper (`add_next_steps`), and the builders that decide which follow-up a result implies (see "Server instructions and next steps"; unit-tested in `tests/slic3rutils/test_mcp_next_steps.cpp`) |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPMeshHealth.cpp` | Mesh health as the object list reports it: the warning icon and its exact tooltip through the list's own `mesh_errors_info` (`GUI_ObjectList.cpp`), the numbers behind them, and `get_mesh_health`'s shell lists (unit-tested in `tests/slic3rutils/test_mesh_health.cpp`); the tool itself is `OrcaMCPMeshTools.cpp` |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPMainThreadGate.hpp` | How a call hands work to the main thread and waits, and how quitting releases it: the gate is `QueuedCalls` (`src/slic3r/Utils/QueuedCall.hpp`), with `call_through` for a tool's json (see "Threading Model"; unit-tested in `tests/slic3rutils/test_mcp_shutdown.cpp`, `test_queued_call.cpp`) |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPQuit.cpp` | Quitting while a modal dialog is open: which dialogs are open, ending the innermost unanswered, holding the close until they are gone, and `quit_app`'s refusals (unit-tested in `tests/slic3rutils/test_mcp_quit.cpp`); the wx side (modal hook, turn timer) is `OrcaMCPQuitApp.cpp` |
@@ -884,9 +929,14 @@ can clear, so it is **not** in every tool's `active_warnings`: a permanent entry
 are: each object entry's `mesh_warning` / `mesh_warning_reason` (`get_scene_info`, `load_model`'s
 `loaded_objects`), and `get_mesh_health`. Only `get_scene_info` (every flagged object) and `load_model`
 (the flagged objects it added) also add a `warning` of type `MeshErrors`, with `object_id`,
-`object_name` and a `message` that gives the list's reason and what an agent can do -- MCP cannot
-repair, and slicing closes each layer's outline across gaps of up to 2 mm -- in place of the GUI
-tooltip's "Click the icon to repair model object" (`mesh_error_warnings`, `OrcaMCPMeshHealth.cpp`).
+`object_name` and a `message` that gives the list's reason and what an agent can do -- MCP has no
+tool that repairs a mesh, and slicing closes each layer's outline across gaps of up to 2 mm -- in place
+of the GUI tooltip's "Click the icon to repair model object" (`mesh_error_warnings`,
+`OrcaMCPMeshHealth.cpp`). Never a GUI button: no tool text, next step or instruction sends the agent,
+or through it the user, to a button (a security prompt is the only exception); what a user can do, an
+agent must be able to do. "MCP cannot repair a mesh: the GUI's repair is not exposed" was read as "no
+repair exists", and an agent told a user repair works only on Windows; the object list's Repair
+(`ObjectList::fix_through_cgal`, CGAL) runs on every platform.
 
 **Endpoints with active_warnings:** `get_scene_info`, `slice_all`, `get_slicing_status`, `get_print_estimate`, `load_model`, `arrange_objects`, `auto_orient`, all transform tools, `undo`, `redo`
 

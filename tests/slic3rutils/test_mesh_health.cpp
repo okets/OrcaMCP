@@ -10,6 +10,7 @@
 #include "libslic3r/TriangleMesh.hpp"
 
 #include <test_utils.hpp>
+#include "mesh_fixtures.hpp"
 
 #include <string>
 
@@ -22,35 +23,11 @@
 using namespace Slic3r;
 using namespace Slic3r::GUI::OrcaMCP;
 using Catch::Matchers::WithinAbs;
+using namespace mesh_fixtures;
 
 namespace {
 
 const char* const k_hole_tooltip = "Remaining errors:\n\t3 non-manifold edges\n\nClick the icon to repair model object";
-
-// A closed 10 mm cube with its first facet removed: a triangular hole whose three edges each
-// leave one neighbour facet with an open edge.
-indexed_triangle_set cube_missing_facet()
-{
-    indexed_triangle_set its = its_make_cube(10.0, 10.0, 10.0);
-    its.indices.erase(its.indices.begin());
-    return its;
-}
-
-indexed_triangle_set translated(indexed_triangle_set its, const Vec3f& offset)
-{
-    for (Vec3f& v : its.vertices)
-        v += offset;
-    return its;
-}
-
-// `count` separate cubes in one mesh, each 1 mm and 3 mm from the last: `count` shells.
-indexed_triangle_set separate_cubes(int count)
-{
-    indexed_triangle_set its;
-    for (int i = 0; i < count; ++i)
-        its_merge(its, translated(its_make_cube(1.0, 1.0, 1.0), Vec3f(3.f * i, 0.f, 0.f)));
-    return its;
-}
 
 RepairedMeshErrors reversed_facets(int count)
 {
@@ -60,21 +37,6 @@ RepairedMeshErrors reversed_facets(int count)
 }
 
 std::string utf8(const wxString& text) { return text.ToUTF8().data(); }
-
-// One object holding `mesh` as its only part, with one instance, as a load leaves it.
-struct OnePartObject
-{
-    Model        model;
-    ModelObject* object = nullptr;
-
-    explicit OnePartObject(TriangleMesh&& mesh)
-    {
-        object       = model.add_object();
-        object->name = "Test object";
-        object->add_volume(std::move(mesh));
-        object->add_instance();
-    }
-};
 
 } // namespace
 
@@ -419,17 +381,23 @@ TEST_CASE("get_mesh_health leaves the tooltip and reason out of a row without th
 }
 
 // The object list's "Click the icon to repair model object" is advice for a mouse. What an agent is
-// told instead: MCP cannot repair, and what the slicer does with such a mesh.
+// told instead: what MCP has, and what the slicer does with such a mesh.
 TEST_CASE("An agent is told what it can do about a flagged mesh, never to click the icon", "[MeshHealth][orcamcp]")
 {
     OnePartObject hole{TriangleMesh(cube_missing_facet())};
     OnePartObject repaired{TriangleMesh(its_make_cube(10.0, 10.0, 10.0), reversed_facets(1))};
     OnePartObject clean{TriangleMesh(its_make_cube(10.0, 10.0, 10.0))};
 
+    // What MCP has, and what slicing does: never a GUI button for the agent to send the user to.
+    // "MCP cannot repair a mesh: the GUI's repair is not exposed" was read as "no repair exists", and
+    // an agent told a user repair works only on Windows; the object list's Repair runs everywhere.
     const std::string hole_advice = mesh_warning_advice(object_mesh_health(*hole.object));
-    CHECK(hole_advice.find("cannot repair") != std::string::npos);
+    CHECK(hole_advice.find("MCP has no tool that repairs a mesh") != std::string::npos);
     CHECK(hole_advice.find("2 mm") != std::string::npos);  // the slicer's per-layer gap closing
-    CHECK(hole_advice.find("Click") == std::string::npos);
+    for (const char* gui : {"Click", "click", "icon", "the user", "GUI", "Windows"}) {
+        INFO("the advice names " << gui);
+        CHECK(hole_advice.find(gui) == std::string::npos);
+    }
 
     const std::string repaired_advice = mesh_warning_advice(object_mesh_health(*repaired.object));
     CHECK(repaired_advice.find("prints as it is") != std::string::npos);

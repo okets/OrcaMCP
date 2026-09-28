@@ -13,7 +13,7 @@ This guide shows how to combine MCP tools for common 3D printing tasks.
         ↓
 3. slice_all           Start slicing
         ↓
-4. get_slicing_status  Poll until complete (every 2-3 seconds)
+4. wait_for_slice      Returns once the slice is over
         ↓
 5. export_gcode        Save G-code file
 ```
@@ -29,8 +29,8 @@ This guide shows how to combine MCP tools for common 3D printing tasks.
 // Step 3: Slice
 {"name": "slice_all", "arguments": {}}
 
-// Step 4: Poll status (repeat until is_slicing=false)
-{"name": "get_slicing_status", "arguments": {}}
+// Step 4: Wait for the slice (it returns once the run is over)
+{"name": "wait_for_slice", "arguments": {}}
 
 // Step 5: Export
 {"name": "export_gcode", "arguments": {"output_path": "/path/to/output.gcode"}}
@@ -279,11 +279,11 @@ This guide shows how to combine MCP tools for common 3D printing tasks.
 ```
 1. slice_all              Start slicing
         ↓
-2. get_slicing_status     Poll until complete
+2. wait_for_slice         Returns once the slice is over
         ↓
 3. get_printers           Check available printers
         ↓
-4. send_to_printer        Open upload dialog
+4. send_to_printer        Upload AND START the print (start_print: false only uploads)
 ```
 
 **For OctoPrint/Klipper:**
@@ -344,14 +344,13 @@ This guide shows how to combine MCP tools for common 3D printing tasks.
 - Use `set_object_config` with multiple keys
 
 ### Async Operations
-These tools return immediately but work continues in background:
-- `slice_all`
-- `auto_orient`
-- `arrange_objects`
-
-Always poll `get_slicing_status` after calling these.
+`slice_all` and `export_gcode` return at once while the work goes on in the background: call
+`wait_for_slice`, which returns once it is over. `arrange_objects`, `auto_orient`, `flatten_object` and
+`clone_object` answer once their job has been applied; past the bridge's cap they answer
+`finished: false`, and `get_slicing_status`'s `ui_job` says when the job has ended.
 
 ### Object ID Management
 - Object IDs can shift when objects are added/deleted
 - Always re-query `get_scene_info` before transforms if you've made changes
-- Use the stable `id` field for tracking across operations
+- Pass an object's `object_id` (the same number as `object_index`); `internal_id` finds the same
+  object again after the indices shifted, but no tool takes it

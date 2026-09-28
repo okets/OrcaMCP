@@ -32,6 +32,7 @@
     }
   ],
   "generated_from": "The MCP tool registry in src/slic3r/GUI/OrcaMCP. Do not edit by hand: see CLAUDE.md, \"Tool list\", for how to regenerate it.",
+  "instructions": "OrcaMCP drives OrcaSlicer. Before deciding something cannot be done here, call get_server_info: it lists every tool by job.\n\nStart with get_scene_info (plates, objects, each object's object_id). Key tools:\n- Models: load_model (keeps the presets), load_project (replaces them), arrange_objects, auto_orient, move_object, rotate_object, scale_object, cut_object.\n- Mesh: get_mesh_health (holes, open edges), get_object_components (stray shells).\n- Painting: paint_object (color, support, seam, fuzzy_skin).\n- Filaments and colour: get_filaments, set_object_filament, suggest_color_mix.\n- Settings: get_config_values, apply_config, set_object_config (one object), select_preset.\n- Slicing: slice_all, then wait_for_slice (no polling); get_print_estimate, export_gcode.\n- Seeing results: render_plate_view (its layer_view draws a sliced layer's toolpaths).\n- Printers: get_printer_status, send_to_printer.\n\nResponses may carry next_steps: the tool to call next, and why.\n\nCareful:\n- send_to_printer uploads AND STARTS the print on a print host; start_print: false only uploads.\n- save_project without output_path overwrites the file the project is named after.\n- new_project and load_project discard unsaved changes without asking.",
   "server_tools": [
     {
       "category": "Printers",
@@ -139,7 +140,7 @@
     },
     {
       "category": "Config",
-      "description": "Apply print settings. Batch multiple in one call. Types: print | filament | printer | project.",
+      "description": "Change settings of the selected print, filament or printer preset, or of the project -- layer height, supports, infill, walls, speeds, temperatures -- several in one call. Types: print | filament | printer | project. The change stays unsaved in the preset until save_preset. To switch to another preset, use select_preset; for one object only, set_object_config; for a slot's colour on the plate, set_filament_color.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -215,7 +216,7 @@
     },
     {
       "category": "Models",
-      "description": "Orient every object on the current plate for printing, as the plate's Auto Rotate does, and answer once the orient has been applied: status success with objects, each one's placement (position, rotation_degrees, scale, changed, and rotate_object's placement fields). The orient runs in the background while this waits, up to the bridge's cap (15 s below ORCAMCP_TIMEOUT); still running then, status orient_started with finished false, and get_slicing_status's ui_job says when it has finished. status cancelled when the app cancelled it (nothing moved); refused while another job runs.",
+      "description": "Orient every object on the current plate for printing (least overhang to support, most bed contact), as the plate's Auto Rotate does, and answer once the orient has been applied: status success with objects, each one's placement (position, rotation_degrees, scale, changed, and rotate_object's placement fields). The orient runs in the background while this waits, up to the bridge's cap (15 s below ORCAMCP_TIMEOUT); still running then, status orient_started with finished false, and get_slicing_status's ui_job says when it has finished. status cancelled when the app cancelled it (nothing moved); refused while another job runs.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -532,7 +533,7 @@
     },
     {
       "category": "Scene",
-      "description": "Export project as 3MF file.",
+      "description": "Save the project to a 3MF at output_path, like the GUI's Save As: the project is then named after that file, so a later save_project without output_path overwrites it. save_project with output_path does the same.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -547,11 +548,11 @@
         "type": "object"
       },
       "name": "export_3mf",
-      "summary": "Write the project to a 3MF file"
+      "summary": "Save the project as a 3MF (Save As)"
     },
     {
       "category": "Slicing",
-      "description": "Export the selected plate's G-code. The plate must be sliced (slice_all, then wait_for_slice). Refused, as the GUI's Export button is off, when the check its slice ran on its G-code failed: get_slicing_status's plates[].gcode_check names what it found.",
+      "description": "Export the selected plate's G-code. The plate must be sliced (slice_all, then wait_for_slice). status is export_started when the app has begun writing the file in the background -- not a failure: the file is complete once wait_for_slice returns (get_slicing_status's busy is false again), which next_steps says -- or error, with message saying why nothing was written. Refused, as the GUI's Export button is off, when the check its slice ran on its G-code failed: get_slicing_status's plates[].gcode_check names what it found.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -630,7 +631,7 @@
     },
     {
       "category": "Config",
-      "description": "Which presets are selected: with no arguments, the selected printer, print (process) and each filament slot's preset, with a dirty flag for unsaved changes, in about 400 bytes. Pass keys to read just those settings -- a dozen cost well under 1 KB, against 25-48 KB for get_edited_presets -- grouped under where each lives: print, filament (one value per slot), printer or project, the type apply_config takes for it. dirty names the ones whose value differs from the saved preset, with the saved value (for a filament setting, the slots whose preset the Filament tab is editing); dirty_only keeps only those, and with no keys lists every unsaved change of the presets. Project settings have no saved preset to compare with, so they are listed under not_judged instead. Values are the slicer's text, as get_edited_presets shows them and apply_config accepts them. Credentials (printhost_apikey, printhost_password, flashforge_obico_token) are never shown: a set one reads \"<redacted>\", and a changed one is dirty as {changed: true, secret: true}. An unknown key is an error naming it (get_valid_config_keys lists valid ones); a known key that belongs to no preset type nor the project (an object-only setting) is listed under not_in_presets.",
+      "description": "Read settings by key, or which presets are selected: with no arguments, the selected printer, print (process) and each filament slot's preset, with a dirty flag for unsaved changes, in about 400 bytes. Pass keys to read just those settings -- a dozen cost well under 1 KB, against 25-48 KB for get_edited_presets -- grouped under where each lives: print, filament (one value per slot), printer or project, the type apply_config takes for it. dirty names the ones whose value differs from the saved preset, with the saved value (for a filament setting, the slots whose preset the Filament tab is editing); dirty_only keeps only those, and with no keys lists every unsaved change of the presets. Project settings have no saved preset to compare with, so they are listed under not_judged instead. Values are the slicer's text, as get_edited_presets shows them and apply_config accepts them. Credentials (printhost_apikey, printhost_password, flashforge_obico_token) are never shown: a set one reads \"<redacted>\", and a changed one is dirty as {changed: true, secret: true}. An unknown key is an error naming it (get_valid_config_keys lists valid ones); a known key that belongs to no preset type nor the project (an object-only setting) is listed under not_in_presets.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -654,7 +655,7 @@
     },
     {
       "category": "Config",
-      "description": "Get currently edited presets with dirty (modified) options",
+      "description": "Every setting of the selected printer, print and filament presets, with the unsaved (dirty) ones marked: 25-48 KB. For a few settings, or which presets are selected, use get_config_values.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {},
@@ -662,7 +663,7 @@
         "type": "object"
       },
       "name": "get_edited_presets",
-      "summary": "Active presets and their unsaved edits"
+      "summary": "Every setting of the active presets"
     },
     {
       "category": "Filaments & colour",
@@ -690,7 +691,7 @@
     },
     {
       "category": "Models",
-      "description": "Mesh errors behind the object list's warning icon: open edges (holes, non-manifold), repaired facets, and loose parts or stray shells, for one object and each of its volumes. Every row -- the object and each volume -- has mesh_warning (whether the icon shows) and, only when it is true, `tooltip` (the icon's tooltip, exactly as the GUI shows it, in the app's language; its last line is the GUI's \"click the icon\") and mesh_warning_reason (the sidebar's one line). A flagged object also gets `advice`: MCP cannot repair a mesh, and what slicing does with it. The numbers: facets, shells, open_edges, manifold, repaired, errors_repaired and each recorded repair count. An object's open_edges and repairs count every volume, as the list does; its facets, shells and volume_mm3 count model parts only. Repair counts exist only for a mesh loaded from a 3MF that recorded them: an STL is repaired silently on import and records none. A part with more than one shell also gets `shell_list`: the 10 shells with the most facets, each with its area and plate-millimetre bounding box (instance 0); get_object_components lists them all.",
+      "description": "Check an object's mesh for problems: holes and open edges (non-manifold), repaired facets, and loose parts or stray shells, for one object and each of its volumes -- the errors behind the object list's warning icon. Every row -- the object and each volume -- has mesh_warning (whether the icon shows) and, only when it is true, `tooltip` (the icon's tooltip, exactly as the GUI shows it, in the app's language; its last line is the GUI's \"click the icon\") and mesh_warning_reason (the sidebar's one line). A flagged object also gets `advice`: what MCP can do about the mesh, and what slicing does with it. The numbers: facets, shells, open_edges, manifold, repaired, errors_repaired and each recorded repair count. An object's open_edges and repairs count every volume, as the list does; its facets, shells and volume_mm3 count model parts only. Repair counts exist only for a mesh loaded from a 3MF that recorded them: an STL is repaired silently on import and records none. A part with more than one shell also gets `shell_list`: the 10 shells with the most facets, each with its area and plate-millimetre bounding box (instance 0); get_object_components lists them all.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -706,11 +707,11 @@
         "type": "object"
       },
       "name": "get_mesh_health",
-      "summary": "Mesh errors, shells, the warning icon"
+      "summary": "Mesh errors: holes, open edges, repairs"
     },
     {
-      "category": "Painting",
-      "description": "List the connected shells of each MODEL PART's mesh -- component id, facet count, area and a plate-frame bounding box. Parts only: modifiers, negative volumes and support blockers are not listed here, so this is not a census of the object's volumes; get_object_info's `volumes` is, with each volume's type and filament. A generated or assembled model often has a feature (a bag, a wheel) as its own shell; paint_object {selection: \"component\", component: <id>} paints exactly that shell. Ids are stable for a given mesh: discovery order by lowest facet index. Coordinates are PLATE millimetres. On a mesh of millions of facets this takes seconds; it runs off the GUI thread, so other tools keep answering meanwhile.",
+      "category": "Models",
+      "description": "Find loose parts, stray shells and mesh fragments: the connected shells of each MODEL PART's mesh -- component id, facet count, area and a plate-frame bounding box. Parts only: modifiers, negative volumes and support blockers are not listed here, so this is not a census of the object's volumes; get_object_info's `volumes` is, with each volume's type and filament. A generated or assembled model often has a feature (a bag, a wheel) as its own shell; paint_object {selection: \"component\", component: <id>} paints exactly that shell. Ids are stable for a given mesh: discovery order by lowest facet index. Coordinates are PLATE millimetres. On a mesh of millions of facets this takes seconds; it runs off the GUI thread, so other tools keep answering meanwhile.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -736,7 +737,7 @@
         "type": "object"
       },
       "name": "get_object_components",
-      "summary": "List a part's connected mesh shells"
+      "summary": "Loose parts and stray shells of a mesh"
     },
     {
       "category": "Per-Object",
@@ -759,7 +760,7 @@
     },
     {
       "category": "Models",
-      "description": "Get info about a single object: its box and first instance's transform, every volume with its filament, and, as rotate_object reports them, the placement fields: instance_placement (each instance's plate and whether it is inside it), plate_index (instance 0's plate), plate_indices and on_bed (every instance inside its own plate).",
+      "description": "One object's position, rotation, scale and bounding box, every volume (part, modifier, negative volume, support blocker) with its type and filament, and, as rotate_object reports them, the placement fields: instance_placement (each instance's plate and whether it is inside it), plate_index (instance 0's plate), plate_indices and on_bed (every instance inside its own plate).",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -878,7 +879,7 @@
     },
     {
       "category": "Visualization",
-      "description": "Convert preview image to base64. Use only if no filesystem access.",
+      "description": "Read an image file OrcaMCP wrote (render_plate_view, include_preview) back as base64, for a client that cannot read files. It renders nothing: call render_plate_view first.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -893,7 +894,7 @@
         "type": "object"
       },
       "name": "get_preview_base64",
-      "summary": "A preview image as base64"
+      "summary": "An image file OrcaMCP wrote, as base64"
     },
     {
       "category": "Slicing",
@@ -938,7 +939,7 @@
     },
     {
       "category": "Scene",
-      "description": "Get current project state: plates, objects, positions. Call first to get object_ids. Each plate also carries `occupancy`, the complete list of what stands on it in plate millimetres -- every object's printed footprint (brim included), the prime tower's footprint (brim included) when one is printed, and the printer's excluded bed areas. Use `occupancy`, not `model_objects`, to work out where there is free space. An object with instances on several plates is listed under each by the instances there (`instances_on_plate`): its bounding_box, position and footprint are theirs. `unplaced_objects` lists every object with an instance on no plate, and which (`unplaced_instances`). `open_dialogs` names any dialog the app is showing, waiting for the user (tool calls still run under it); `system_dialog_open` is true while a system file chooser or alert is open, `untracked_modal_loop` while a modal window no dialog accounts for runs. Every object carries `mesh_warning`, true when the object list shows its warning icon (open edges or recorded repairs), with `mesh_warning_reason`, the list's one-line reason; each such object also adds a MeshErrors warning to this response's active_warnings, saying what an agent can do about it.",
+      "description": "The scene: every plate (plate_index; is_current marks the plate per-plate tools act on, whose area `bed` is) and the objects on it, with position, size, filaments and mesh_warning. Call it first. An object's object_id is what every tool's object_id takes; object_index is the same number, kept for older readers, and internal_id is the app's own number, which no tool takes. Each plate also carries `occupancy`, the complete list of what stands on it in plate millimetres -- every object's printed footprint (brim included), the prime tower's footprint (brim included) when one is printed, and the printer's excluded bed areas. Use `occupancy`, not `model_objects`, to work out where there is free space. An object with instances on several plates is listed under each by the instances there (`instances_on_plate`): its bounding_box, position and footprint are theirs. `unplaced_objects` lists every object with an instance on no plate, and which (`unplaced_instances`). `open_dialogs` names any dialog the app is showing, waiting for the user (tool calls still run under it); `system_dialog_open` is true while a system file chooser or alert is open, `untracked_modal_loop` while a modal window no dialog accounts for runs. Every object carries `mesh_warning`, true when the object list shows its warning icon (open edges or recorded repairs), with `mesh_warning_reason`, the list's one-line reason; each such object also adds a MeshErrors warning to this response's active_warnings, saying what an agent can do about it. next_steps names get_mesh_health for an object with that icon, and get_object_components for one with a part made of several shells (a loose part or stray fragment, which shows no icon).",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -967,7 +968,7 @@
     },
     {
       "category": "Info",
-      "description": "Get documentation about tools, concepts, and workflows",
+      "description": "Every tool's one-line summary by category, a quick start, and guides (concepts, workflows, examples) to fetch by section: call it to find a tool before deciding one does not exist.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -992,7 +993,7 @@
     },
     {
       "category": "Slicing",
-      "description": "Get the current slicing state: slicing (in progress), done (the last slice_all run is done -- every plate it asked for that has something on it is sliced -- and the selected plate is sliced or empty; before any slice_all, or once none of its plates exists (a new project), the selected plate is sliced) or idle (anything else); a plate deleted after the run does not undo it. Poll until state is done, then get_print_estimate. The plates array reports every plate's slice result and percent (0-100; null for a plate with no result that is not slicing), so a slice_all run can be followed plate by plate; stage is the app's progress text for the running slice (\"Generating support\", in the app's language; null when idle). busy says whether the slicing pipeline is busy, and busy_reason with what: slicing, exporting, uploading, or stopping (the last slice's completion is not taken in yet); slice_all starts nothing while it is, and wait_for_slice waits it out. ui_job names a job holding the app apart from slicing: arranging or orienting (one a tool started and is past its wait), other (one the GUI started), or null; slice_all's busy_job means one. slice_run says how the last slice_all run stands: scope, the plates it asked for, skipped (those of them with nothing on them to slice), and outcome running, done, ended_early or incomplete (also when no plate had anything to slice), judged by its plates still there (null once none is, after new_project or load_project), with a message saying which plates and why when it is not done. When a slice_all run over every plate ends, this restores the plate that was selected when slice_all was called and reports it as restored_selected_plate. Each plate's gcode_check is the check its slice ran on its own G-code (null without a result): {ok: true}, or ok false with problems -- outside_bed, above_printable_height, above_extruder_height, outside_extruder_area, in_wrapping_area, over_printed_mass, toolpath_outside, filament_bed_conflict -- and a message; above_printable_height also gives highest_layer_z_mm and printable_height_mm, and a hint at the usual cause. The GUI keeps a failed plate's Print and Export buttons off, and export_gcode and send_to_printer refuse it.",
+      "description": "Get the current slicing state: slicing (in progress), done (the last slice_all run is done -- every plate it asked for that has something on it is sliced -- and the selected plate is sliced or empty; before any slice_all, or once none of its plates exists (a new project), the selected plate is sliced) or idle (anything else); a plate deleted after the run does not undo it. To wait for a slice to finish, call wait_for_slice rather than polling this; then get_print_estimate. The plates array reports every plate's slice result and percent (0-100; null for a plate with no result that is not slicing), so a slice_all run can be followed plate by plate; stage is the app's progress text for the running slice (\"Generating support\", in the app's language; null when idle). busy says whether the slicing pipeline is busy, and busy_reason with what: slicing, exporting, uploading, or stopping (the last slice's completion is not taken in yet); slice_all starts nothing while it is, and wait_for_slice waits it out. ui_job names a job holding the app apart from slicing: arranging or orienting (one a tool started and is past its wait), other (one the GUI started), or null; slice_all's busy_job means one. slice_run says how the last slice_all run stands: scope, the plates it asked for, skipped (those of them with nothing on them to slice), and outcome running, done, ended_early or incomplete (also when no plate had anything to slice), judged by its plates still there (null once none is, after new_project or load_project), with a message saying which plates and why when it is not done. When a slice_all run over every plate ends, this restores the plate that was selected when slice_all was called and reports it as restored_selected_plate. Each plate's gcode_check is the check its slice ran on its own G-code (null without a result): {ok: true}, or ok false with problems -- outside_bed, above_printable_height, above_extruder_height, outside_extruder_area, in_wrapping_area, over_printed_mass, toolpath_outside, filament_bed_conflict -- and a message; above_printable_height also gives highest_layer_z_mm and printable_height_mm, and a hint at the usual cause. The GUI keeps a failed plate's Print and Export buttons off, and export_gcode and send_to_printer refuse it.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {},
@@ -1000,7 +1001,7 @@
         "type": "object"
       },
       "name": "get_slicing_status",
-      "summary": "Slicing state per plate; poll this"
+      "summary": "Slicing state and progress, per plate"
     },
     {
       "category": "Filaments & colour",
@@ -1016,7 +1017,7 @@
     },
     {
       "category": "Config",
-      "description": "Get valid configuration keys.",
+      "description": "List the setting keys by category, with their descriptions on request: how to find the key for a setting (support_type, sparse_infill_density, wall_loops, ...).",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -1058,7 +1059,7 @@
     },
     {
       "category": "Models",
-      "description": "Import a 3D model file (STL, 3MF, OBJ, STEP, etc.)",
+      "description": "Add a model file's objects (STL, 3MF, OBJ, STEP, ...) to the scene, keeping the current presets: a 3MF brings its geometry only, never its settings, and never renames the project. To open a 3MF as the project, with its settings, use load_project. next_steps names get_mesh_health for a loaded object with the mesh warning icon, and get_object_components for one with a part made of several shells (a loose part or stray fragment).",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -1085,11 +1086,11 @@
         "type": "object"
       },
       "name": "load_model",
-      "summary": "Import STL, 3MF, OBJ or STEP geometry"
+      "summary": "Add a model's geometry; keeps presets"
     },
     {
       "category": "Scene",
-      "description": "Load a 3MF project file. A running slice is cancelled first. Refused while the app's startup \"restore unsaved items?\" prompt waits (get_scene_info's open_dialogs), since it would orphan that backup.",
+      "description": "Open a 3MF as the project: its objects, plates and presets replace the scene and the current settings, and unsaved project changes are discarded without asking. To add a model without changing the settings, use load_model. A running slice is cancelled first. Refused while the app's startup \"restore unsaved items?\" prompt waits (get_scene_info's open_dialogs), since it would orphan that backup.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -1108,7 +1109,7 @@
         "type": "object"
       },
       "name": "load_project",
-      "summary": "Open a 3MF as the project"
+      "summary": "Open a 3MF project, replacing presets"
     },
     {
       "category": "Printers",
@@ -1228,7 +1229,7 @@
     },
     {
       "category": "Scene",
-      "description": "Create a new empty project. A running slice is cancelled first. Refused while the app's startup \"restore unsaved items?\" prompt waits (get_scene_info's open_dialogs), since it would orphan that backup.",
+      "description": "Create a new empty project. Unsaved project changes are discarded without asking. A running slice is cancelled first. Refused while the app's startup \"restore unsaved items?\" prompt waits (get_scene_info's open_dialogs), since it would orphan that backup.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {},
@@ -1240,7 +1241,7 @@
     },
     {
       "category": "Painting",
-      "description": "Paint per-triangle annotations on an object, the same data the GUI paint gizmos write. mode selects which: color (multi-material / MMU segmentation), support, seam or fuzzy_skin. selection selects where: bands along a plate axis (an even split across a list of filaments, or explicit ranges), a box, a sphere, or the whole volume. connected fills the surface region around a seed without crossing an edge sharper than `angle` -- the way to paint a feature such as a bag or a sleeve; component paints one shell by id; state repaints every facet now in one state (match_filament, or match_state outside colour mode) with filament / state and leaves the rest, e.g. everything painted with filament 1 becomes filament 3 (remap_paint renumbers several at once). Very large meshes (millions of facets) take seconds to minutes; the work runs off the GUI thread, but the bridge's ORCAMCP_TIMEOUT (default 120 s) may still need raising. ALL COORDINATES ARE PLATE MILLIMETRES -- the same frame get_object_info reports its bounding_box and position in, not object-local coordinates. But for the numbers, use THIS call's own bounding_box in the response (or get_object_paint's), not get_object_info's: that one spans every instance of the object, and matches this tool's, which is instance_id's alone, only when the object has one instance. A facet belongs to the band or region containing its centroid. Paint lives on the volume, so it applies to every instance; instance_id only says whose transform reads your coordinates. Verify with get_object_paint, undo with undo, reset with clear_object_paint.",
+      "description": "Paint an object's surface as the GUI's paint tools do: filament colours for a multi-colour print, support enforcers and blockers, the seam, or fuzzy skin -- per-triangle data, the same the paint gizmos write. To put a whole object or volume on one filament, use set_object_filament. mode selects which: color (multi-material / MMU segmentation), support, seam or fuzzy_skin. selection selects where: bands along a plate axis (an even split across a list of filaments, or explicit ranges), a box, a sphere, or the whole volume. connected fills the surface region around a seed without crossing an edge sharper than `angle` -- the way to paint a feature such as a bag or a sleeve; component paints one shell by id; state repaints every facet now in one state (match_filament, or match_state outside colour mode) with filament / state and leaves the rest, e.g. everything painted with filament 1 becomes filament 3 (remap_paint renumbers several at once). Very large meshes (millions of facets) take seconds to minutes; the work runs off the GUI thread, but the bridge's ORCAMCP_TIMEOUT (default 120 s) may still need raising. ALL COORDINATES ARE PLATE MILLIMETRES -- the same frame get_object_info reports its bounding_box and position in, not object-local coordinates. But for the numbers, use THIS call's own bounding_box in the response (or get_object_paint's), not get_object_info's: that one spans every instance of the object, and matches this tool's, which is instance_id's alone, only when the object has one instance. A facet belongs to the band or region containing its centroid. Paint lives on the volume, so it applies to every instance; instance_id only says whose transform reads your coordinates. Verify with get_object_paint, undo with undo, reset with clear_object_paint. Painted support enforcers do nothing while enable_support is off: next_steps then names the set_object_config call that turns it on with a (manual) support_type, for support only where painted.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -1712,7 +1713,7 @@
     },
     {
       "category": "Visualization",
-      "description": "Render a plate. Omit views for a contact sheet of iso, top and front fitted to the plate. A view is {preset: iso|top|front|back|left|right|low, fit: \"plate\" | {object_index}} or explicit {camera_position, target} in BED mm (the get_scene_info frame; plate N sits at plates[N].bounding_box) -- or add frame: \"plate_local\" to give them relative to the plate's front-left corner. The requested plate's objects are drawn, including any hanging over its edge, from the 3D scene whichever tab the app shows. Every view returns objects_in_frame, uniform_image (+hint), plate_origin and the camera; overlays (outline, 10 mm grid, origin, labels) are on by default. Use save_to_file=true for PNG paths. layer_view draws a top-down plan instead: \"first_layer\", or any sliced layer as {layer: N} or {z: mm}, filtered by features and filaments, with the layer's height, filaments and extruded areas -- the way to check supports, interfaces and which tool prints what on a given layer.",
+      "description": "Render a picture of a plate, one object, or a sliced layer's toolpaths (layer_view). Omit views for a contact sheet of iso, top and front fitted to the plate. A view is {preset: iso|top|front|back|left|right|low, fit: \"plate\" | {object_index}} or explicit {camera_position, target} in BED mm (the get_scene_info frame; plate N sits at plates[N].bounding_box) -- or add frame: \"plate_local\" to give them relative to the plate's front-left corner. The requested plate's objects are drawn, including any hanging over its edge, from the 3D scene whichever tab the app shows. Every view returns objects_in_frame, uniform_image (+hint), plate_origin and the camera; overlays (outline, 10 mm grid, origin, labels) are on by default. Use save_to_file=true for PNG paths. layer_view draws a top-down plan instead: \"first_layer\", or any sliced layer as {layer: N} or {z: mm}, filtered by features and filaments, with the layer's height, filaments and extruded areas -- the way to check supports, interfaces and which tool prints what on a given layer.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -1996,7 +1997,7 @@
     },
     {
       "category": "Scene",
-      "description": "Save the current project. Saves in place once the project has a file name; pass output_path to name it (or to save a copy under a new name).",
+      "description": "Save the current project. Without output_path it overwrites the file the project is named after (the last load_project, export_3mf or save_project path); pass output_path to name it, or to save under a new name.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -2079,7 +2080,7 @@
     },
     {
       "category": "Config",
-      "description": "Select a printer, filament, or print preset by name. With type 'filament', pass slot (1-based) to set just that filament slot, like the sidebar filament combo; without slot the filament tab switches whichever slot it is on and dirty preset changes are discarded. With type 'printer', the response lists the resulting filaments (slot, preset, colour, previous_color) and, per slot, color_source as observed across the switch: 'unchanged', 'remembered' (the colour last saved for that printer, applied by Remember printer configuration, on by default), 'default' (#26A69A for a slot nothing was saved for) or 'other'. colors_source sums them up, 'mixed' when they differ.",
+      "description": "Select a printer, filament, or print preset by name. With type 'filament', pass slot (1-based) to set just that filament slot, like the sidebar filament combo; without slot the filament tab switches whichever slot it is on and dirty preset changes are discarded. With type 'printer', the response lists the resulting filaments (slot, preset, colour, previous_color) and, per slot, color_source as observed across the switch: 'unchanged', 'remembered' (the colour last saved for that printer, applied by Remember printer configuration, on by default), 'default' (#26A69A for a slot nothing was saved for) or 'other'. colors_source sums them up, 'mixed' when they differ. To change individual settings, use apply_config.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -2317,7 +2318,7 @@
     },
     {
       "category": "Visualization",
-      "description": "Set G-code preview visualization mode. Requires sliced G-code. Available types: feature_type, speed, actual_speed, fan_speed, temperature, flow, actual_flow, layer_height, line_width, layer_time, layer_time_log, pressure_advance, acceleration, jerk, tool, filament",
+      "description": "Set G-code preview visualization mode. Requires sliced G-code. Available types: feature_type, speed, actual_speed, fan_speed, temperature, flow, actual_flow, layer_height, line_width, layer_time, layer_time_log, pressure_advance, acceleration, jerk, tool, filament. This changes only what the app's own Preview tab shows, which no MCP image draws: to see a sliced layer's toolpaths, use render_plate_view's layer_view.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -2402,7 +2403,7 @@
     },
     {
       "category": "Per-Object",
-      "description": "Set per-object setting overrides.",
+      "description": "Override settings for one object only (supports, infill, walls, layer height, ...), leaving the presets and the other objects alone.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -2475,7 +2476,7 @@
     },
     {
       "category": "Filaments & colour",
-      "description": "Assign a filament slot (physical or mixed) to a whole object, or to one volume of it (volume_id). A volume's own slot beats the object's, so the whole-object form also clears the own slot of every part and, unless include_modifiers=false, of every modifier -- otherwise the change is invisible and the plate keeps its prime tower. Read the response, not just status: effective_filaments is every slot the object still prints with (volumes, painted facets, layer ranges); cleared_overrides lists each volume that lost its own slot and what it held; other_slots lists slots its volumes still force. The object is on one filament only when effective_filaments has one entry. get_object_info's `volumes` shows the same per volume; get_scene_info's filaments_used shows it per object. changed: false when the call set what was already there: no undo step, and the plates keep their slice.",
+      "description": "Assign a filament slot (physical or mixed) to a whole object, or to one volume of it (volume_id). A volume's own slot beats the object's, so the whole-object form also clears the own slot of every part and, unless include_modifiers=false, of every modifier -- otherwise the change is invisible and the plate keeps its prime tower. Read the response, not just status: effective_filaments is every slot the object still prints with (volumes, painted facets, layer ranges); cleared_overrides lists each volume that lost its own slot and what it held; other_slots lists slots its volumes still force. The object is on one filament only when effective_filaments has one entry. get_object_info's `volumes` shows the same per volume; get_scene_info's filaments_used shows it per object. changed: false when the call set what was already there: no undo step, and the plates keep their slice. To colour only part of a surface, paint it: paint_object mode color.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -2610,7 +2611,7 @@
     },
     {
       "category": "Slicing",
-      "description": "Slice every plate in the project, the way the GUI's Slice All button does: one plate at a time until all are sliced. Pass all_plates=false to slice only the plate that is currently selected. status says what happened: slicing_started, or not_started with a reason and a message: busy_slicing (the pipeline is busy -- get_slicing_status's busy: a slice or Slice All run, an export, an upload, or the last slice still stopping; nothing is started -- call wait_for_slice, then slice_all again), already_sliced (nothing to do), busy_job (an arrange or an orient holds the app: poll get_slicing_status until ui_job is null, then slice_all again), invalid (the app refuses the plate as it stands -- its validation, an object partly off the plate, a filament check, missing plugins, a broken mixed filament, or a last slice that failed; message says which, in the app's words for a validation failure), nothing_to_slice (no printable object fully on the plates -- one partly off its plate or too tall for the printer does not count -- and no refusal the app gives words for) or unknown. Then call wait_for_slice, or poll get_slicing_status until state is \"done\"; its plates array says which plates have a result. The plate selection walks from the first plate to the last while the run is in progress, and get_slicing_status puts back the plate that was selected here once it ends.",
+      "description": "Slice every plate in the project, the way the GUI's Slice All button does: one plate at a time until all are sliced. Pass all_plates=false to slice only the plate that is currently selected. status says what happened: slicing_started, or not_started with a reason and a message: busy_slicing (the pipeline is busy -- get_slicing_status's busy: a slice or Slice All run, an export, an upload, or the last slice still stopping; nothing is started -- call wait_for_slice, then slice_all again), already_sliced (nothing to do), busy_job (an arrange or an orient holds the app: poll get_slicing_status until ui_job is null, then slice_all again), invalid (the app refuses the plate as it stands -- its validation, an object partly off the plate, a filament check, missing plugins, a broken mixed filament, or a last slice that failed; message says which, in the app's words for a validation failure), nothing_to_slice (no printable object fully on the plates -- one partly off its plate or too tall for the printer does not count -- and no refusal the app gives words for) or unknown. Then call wait_for_slice, which returns once the run is over, with each plate's result; next_steps names the tool to call next. The plate selection walks from the first plate to the last while the run is in progress, and get_slicing_status puts back the plate that was selected here once it ends.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -2632,7 +2633,7 @@
         "additionalProperties": false,
         "properties": {
           "create": {
-            "description": "When true, create the mixed slot via apply_mixed_filament. Default false.",
+            "description": "When true, also create the suggested mix as a new mixed filament slot, as set_mixed_filament does. Default false.",
             "type": "boolean"
           },
           "material_type": {

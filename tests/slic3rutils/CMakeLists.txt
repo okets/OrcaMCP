@@ -56,6 +56,8 @@ add_executable(${_TEST_NAME}_tests
     test_mcp_argument_values.cpp
     test_mcp_ui_job.cpp
     test_mcp_model_load.cpp
+    test_mcp_next_steps.cpp
+    test_mcp_scene_description.cpp
     test_mcp_suppression.cpp
     test_mcp_shutdown.cpp
     test_mcp_quit.cpp
@@ -87,6 +89,11 @@ target_link_libraries(${_TEST_NAME}_tests test_common libslic3r_gui libslic3r py
 set(ORCAMCP_TOOLS_GOLDEN_FILE "${CMAKE_SOURCE_DIR}/scripts/orcamcp_tools.json")
 file(TO_NATIVE_PATH "${ORCAMCP_TOOLS_GOLDEN_FILE}" ORCAMCP_TOOLS_GOLDEN_FILE)
 target_compile_definitions(${_TEST_NAME}_tests PRIVATE ORCAMCP_TOOLS_GOLDEN_FILE=R"\(${ORCAMCP_TOOLS_GOLDEN_FILE}\)")
+# The tools reference, whose get_scene_info example test_mcp_scene_description.cpp holds to the keys a
+# real response has. CI's test jobs check out docs/tools at this same path.
+set(ORCAMCP_REFERENCE_DOC "${CMAKE_SOURCE_DIR}/docs/tools/reference.md")
+file(TO_NATIVE_PATH "${ORCAMCP_REFERENCE_DOC}" ORCAMCP_REFERENCE_DOC)
+target_compile_definitions(${_TEST_NAME}_tests PRIVATE ORCAMCP_REFERENCE_DOC=R"\(${ORCAMCP_REFERENCE_DOC}\)")
 set_property(TARGET ${_TEST_NAME}_tests PROPERTY FOLDER "tests")
 
 orcaslicer_copy_test_dlls()

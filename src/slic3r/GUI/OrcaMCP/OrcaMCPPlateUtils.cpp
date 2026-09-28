@@ -4,6 +4,7 @@
 #include "OrcaMCPPlateOccupancy.hpp"
 #include "OrcaMCPCommon.hpp"
 #include "OrcaMCPMeshHealth.hpp"
+#include "OrcaMCPNextSteps.hpp"
 #include "slic3r/GUI/GLCanvas3D.hpp"
 #include "slic3r/GUI/OpenGLManager.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPRenderOverlay.hpp"
@@ -167,8 +168,10 @@ static void append_render_report(nlohmann::json& entry, const RenderReport& repo
     entry["objects_in_frame"] = in_frame;
     entry.update(OrcaMCP::render_scene_json(report.scene));
     entry["uniform_image"]    = report.uniform_image;
-    if (report.uniform_image)
+    if (report.uniform_image) {
         entry["hint"] = OrcaMCP::uniform_image_hint(report.scene, report.drawn.size(), plate_index, plate);
+        OrcaMCP::add_next_steps(entry, OrcaMCP::uniform_image_next_steps(report.scene.model_volumes, report.drawn.size(), plate_index));
+    }
 }
 
 // The plate's footprint, as tall as its tallest object (at least 10 mm, so an empty plate still
@@ -995,22 +998,104 @@ static OrcaMCP::MeshHealth health_at(const std::vector<OrcaMCP::MeshHealth>& mes
                                                                               OrcaMCP::object_mesh_health(object);
 }
 
+nlohmann::json OrcaMCPPlateUtils::ScenePlateObjectJson(const ModelObject& obj, int object_index, const OrcaMCP::InstancesOnPlate& here,
+                                                       const OrcaMCP::MeshHealth& health, const ObjectFootprint& footprint,
+                                                       bool with_features)
+{
+    // Identity, box, transform and instances_on_plate, all from this plate's copies.
+    nlohmann::json object_info = OrcaMCP::model_object_summary_json(obj, object_index, here, health);
+
+    // The bounding box is the model; the brim is printed plastic beyond it. A neighbour
+    // placed flush against the bounding box collides with the brim, so the printed extent
+    // is reported alongside it rather than left for the caller to work out.
+    object_info["brim"] = {
+        {"type", footprint.brim_type},
+        {"extent_mm", footprint.brim.extent_mm},
+        {"extent_upper_bound_mm", footprint.brim.upper_bound_mm},
+        {"extent_is_exact", footprint.brim.exact}
+    };
+    object_info["printed_footprint"] = rect_to_json(footprint.rect);
+    object_info["printed_footprint_includes_brim"] = footprint.brim.extent_mm > 0.0;
+
+    // Variable Layer Height status
+    object_info["vlh_enabled"] = !obj.layer_height_profile.empty();
+    object_info["vlh_profile_points"] = obj.layer_height_profile.empty() ? 0 :
+        static_cast<int>(obj.layer_height_profile.get().size() / 2);
+
+    // The mesh-health numbers behind mesh_warning. No overhang analysis: a sum of
+    // downward-facing facet area would count the faces standing on the bed and ignore the
+    // support threshold, bridges and self-support, and only slicing answers that.
+    if (with_features)
+        object_info["features"] = OrcaMCP::mesh_features_json(health);
+
+    int  extruder_id     = -1;  // Default extruder ID
+    auto extruder_id_ptr = static_cast<const ConfigOptionInt*>(obj.config.option("extruder"));
+    if (extruder_id_ptr) {
+        extruder_id = *extruder_id_ptr;
+    }
+    object_info["extruder_id"] = extruder_id;
+    // extruder_id is the object's own setting, which a volume's own slot overrides
+    // (ModelVolume::extruder_id). filaments_used is what the object prints with -- the
+    // per-object half of the rule the plate applies for its prime tower -- and is the
+    // field to read; the two agree only when filament_override_count is 0. Added after an
+    // agent read extruder_id == 3 on 45 objects whose modifiers were all still on slot 1.
+    object_info["filaments_used"]          = OrcaMCP::effective_object_filaments(obj);
+    object_info["filament_override_count"] = OrcaMCP::volume_filament_override_count(obj);
+    return object_info;
+}
+
+nlohmann::json OrcaMCPPlateUtils::PlateJson(const PlateEntry& plate)
+{
+    return {
+        {"name", plate.name},
+        {"plate_index", plate.index},
+        {"index", plate.index},  // the same, kept for older readers
+        {"is_current", plate.is_current},
+        {"bounding_box", bbox_to_json(plate.box)},
+        {"model_objects", plate.model_objects},
+        {"prime_tower", plate.prime_tower},
+        {"excluded_areas", plate.excluded_areas},
+        {"occupancy", plate.occupancy},
+        {"occupancy_frame", "plate_mm"}
+    };
+}
+
+nlohmann::json OrcaMCPPlateUtils::SceneJson(const std::string& hash_code, bool sequential_print, const BoundingBoxf3& bed,
+                                            nlohmann::json plates, nlohmann::json unplaced_objects)
+{
+    return {
+        {"hash_code", hash_code},
+        {"sequential_print_enabled", sequential_print},
+        {"bed", {
+            {"origin", "corner"},
+            {"min_x", bed.min.x()},
+            {"min_y", bed.min.y()},
+            {"max_x", bed.max.x()},
+            {"max_y", bed.max.y()},
+            {"max_z", bed.max.z()}
+        }},
+        {"plates", std::move(plates)},
+        {"unplaced_objects", std::move(unplaced_objects)}
+    };
+}
+
 nlohmann::json OrcaMCPPlateUtils::GetPlates(bool with_model_object_features, const std::vector<OrcaMCP::MeshHealth>& mesh_health) {
     nlohmann::json j = nlohmann::json::array();
 
     Plater* plater = wxGetApp().plater();  // Get plater instance
-    const Model& model = plater->model();
 
     // Built once, not per plate: assembling the full config is the expensive half of reading the
     // prime tower's size, and every plate's tower is measured from the same one.
     const DynamicPrintConfig  full_config = wxGetApp().preset_bundle->full_config();
     const DynamicPrintConfig& print_cfg   = wxGetApp().preset_bundle->prints.get_edited_preset().config;
 
-    for (const auto& plate : plater->get_partplate_list().get_plate_list()) {
-        nlohmann::json plate_info;
-        plate_info["name"] = plate->get_plate_name();
-        plate_info["index"] = plate->get_index();
-        plate_info["bounding_box"] = bbox_to_json(plate->get_plate_box());
+    PartPlateList& plate_list = plater->get_partplate_list();
+    for (const auto& plate : plate_list.get_plate_list()) {
+        PlateEntry entry;
+        entry.name       = plate->get_plate_name();
+        entry.index      = plate->get_index();
+        entry.is_current = entry.index == plate_list.get_curr_plate_index();
+        entry.box        = plate->get_plate_box();
 
         // Everything standing on this plate, in one list and one frame: the model objects, the
         // prime tower, and the printer's own excluded bed areas. An agent looking for free space
@@ -1027,53 +1112,11 @@ nlohmann::json OrcaMCPPlateUtils::GetPlates(bool with_model_object_features, con
             // span every plate it had an instance on.
             const OrcaMCP::InstancesOnPlate here = OrcaMCP::instances_on_plate(*obj, object_index, *plate);
             const BoundingBoxf3 box = OrcaMCP::plate_box_of(*obj, here);
-
-            const OrcaMCP::MeshHealth health = health_at(mesh_health, object_index, *obj);
-
-            // Identity, box, transform and instances_on_plate, all from this plate's copies.
-            nlohmann::json object_info = OrcaMCP::model_object_summary_json(*obj, object_index, here, health);
             const Vec3d size = box.size();
-
-            // The bounding box is the model; the brim is printed plastic beyond it. A neighbour
-            // placed flush against the bounding box collides with the brim, so the printed extent
-            // is reported alongside it rather than left for the caller to work out.
             const ObjectFootprint footprint = GetObjectFootprint(*obj, box, print_cfg);
-            object_info["brim"] = {
-                {"type", footprint.brim_type},
-                {"extent_mm", footprint.brim.extent_mm},
-                {"extent_upper_bound_mm", footprint.brim.upper_bound_mm},
-                {"extent_is_exact", footprint.brim.exact}
-            };
-            object_info["printed_footprint"] = rect_to_json(footprint.rect);
-            object_info["printed_footprint_includes_brim"] = footprint.brim.extent_mm > 0.0;
 
-            // Variable Layer Height status
-            object_info["vlh_enabled"] = !obj->layer_height_profile.empty();
-            object_info["vlh_profile_points"] = obj->layer_height_profile.empty() ? 0 :
-                static_cast<int>(obj->layer_height_profile.get().size() / 2);
-
-            // The mesh-health numbers behind mesh_warning. No overhang analysis: a sum of
-            // downward-facing facet area would count the faces standing on the bed and ignore the
-            // support threshold, bridges and self-support, and only slicing answers that.
-            if (with_model_object_features)
-                object_info["features"] = OrcaMCP::mesh_features_json(health);
-
-            auto object_grid_config = &(obj->config);
-            int extruder_id = -1;  // Default extruder ID
-            auto extruder_id_ptr = static_cast<const ConfigOptionInt*>(object_grid_config->option("extruder"));
-            if (extruder_id_ptr) {
-                extruder_id = *extruder_id_ptr;
-            }
-            object_info["extruder_id"] = extruder_id;
-            // extruder_id is the object's own setting, which a volume's own slot overrides
-            // (ModelVolume::extruder_id). filaments_used is what the object prints with -- the
-            // per-object half of the rule the plate applies for its prime tower -- and is the
-            // field to read; the two agree only when filament_override_count is 0. Added after an
-            // agent read extruder_id == 3 on 45 objects whose modifiers were all still on slot 1.
-            object_info["filaments_used"]          = OrcaMCP::effective_object_filaments(*obj);
-            object_info["filament_override_count"] = OrcaMCP::volume_filament_override_count(*obj);
-
-            objects_info.push_back(object_info);
+            objects_info.push_back(ScenePlateObjectJson(*obj, object_index, here, health_at(mesh_health, object_index, *obj),
+                                                        footprint, with_model_object_features));
 
             occupancy.push_back({
                 {"kind", "object"},
@@ -1086,13 +1129,13 @@ nlohmann::json OrcaMCPPlateUtils::GetPlates(bool with_model_object_features, con
                 {"height_mm", size.z()}
             });
         }
-        plate_info["model_objects"] = objects_info;
+        entry.model_objects = std::move(objects_info);
 
         // The prime tower. It is printed plastic standing on the bed exactly as the objects above
         // are, and until this was reported an agent enumerating the plate's occupants simply did
         // not know it was there.
         const PrimeTowerState tower = GetPrimeTowerState(plate->get_index(), full_config, /*measure_unprinted=*/false);
-        plate_info["prime_tower"] = PrimeTowerJson(tower);
+        entry.prime_tower = PrimeTowerJson(tower);
         if (tower.printed) {
             occupancy.push_back({
                 {"kind", "prime_tower"},
@@ -1120,12 +1163,10 @@ nlohmann::json OrcaMCPPlateUtils::GetPlates(bool with_model_object_features, con
                 {"footprint_is_exact", true}
             });
         }
-        plate_info["excluded_areas"] = excluded;
+        entry.excluded_areas = std::move(excluded);
+        entry.occupancy      = std::move(occupancy);
 
-        plate_info["occupancy"] = occupancy;
-        plate_info["occupancy_frame"] = "plate_mm";
-
-        j.push_back(plate_info);
+        j.push_back(PlateJson(entry));
     }
 
     return j;
@@ -1195,22 +1236,8 @@ nlohmann::json OrcaMCPPlateUtils::GetCurrentProject(bool with_model_object_featu
         sequential_print = true;
     }
 
-    nlohmann::json j;
-    j["hash_code"] = hash_code;
-    j["sequential_print_enabled"] = sequential_print;
-    j["bed"] = {
-        {"origin", "corner"},
-        {"min_x", bed_box.min.x()},
-        {"min_y", bed_box.min.y()},
-        {"max_x", bed_box.max.x()},
-        {"max_y", bed_box.max.y()},
-        {"max_z", bed_box.max.z()}
-    };
-    j["plates"] = GetPlates(with_model_object_features, mesh_health);
-
-    j["unplaced_objects"] = UnplacedObjectsJson(model, plater->get_partplate_list(), mesh_health, with_model_object_features);
-
-    return j;
+    return SceneJson(hash_code, sequential_print, bed_box, GetPlates(with_model_object_features, mesh_health),
+                     UnplacedObjectsJson(model, plater->get_partplate_list(), mesh_health, with_model_object_features));
 }
 
 nlohmann::json OrcaMCPPlateUtils::UnplacedObjectsJson(const Model& model, PartPlateList& plates,
@@ -1258,14 +1285,13 @@ nlohmann::json OrcaMCPPlateUtils::UnplacedObjectJson(const ModelObject& object, 
 {
     const Vec3d centre = OrcaMCP::plate_box_of(object, unplaced).center();
     nlohmann::json entry{
-        {"object_index", object_index},
-        {"id", std::to_string(object.id().id)},
         {"name", object.name},
         {"instance_count", object.instances.size()},
         {"unplaced_instances", unplaced.ids},
         {"position", {{"x", centre.x()}, {"y", centre.y()}, {"z", centre.z()}}},
         {"reason", unplaced_reason(unplaced.ids, object.instances.size())}
     };
+    OrcaMCP::add_object_identity(entry, object, object_index);
     OrcaMCP::add_mesh_warning(entry, health);
     if (with_features)
         entry["features"] = OrcaMCP::mesh_features_json(health);

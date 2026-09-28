@@ -180,7 +180,8 @@ void OrcaMCPServer::register_filament_tools()
         "and what it held; other_slots lists slots its volumes still force. The object is on one "
         "filament only when effective_filaments has one entry. get_object_info's `volumes` shows the "
         "same per volume; get_scene_info's filaments_used shows it per object. changed: false when "
-        "the call set what was already there: no undo step, and the plates keep their slice.",
+        "the call set what was already there: no undo step, and the plates keep their slice. To colour "
+        "only part of a surface, paint it: paint_object mode color.",
         {
             {"type", "object"},
             {"properties", {
@@ -401,7 +402,7 @@ void OrcaMCPServer::register_filament_tools()
                 }},
                 {"create", {
                     {"type", "boolean"},
-                    {"description", "When true, create the mixed slot via apply_mixed_filament. Default false."}
+                    {"description", "When true, also create the suggested mix as a new mixed filament slot, as set_mixed_filament does. Default false."}
                 }}
             }},
             {"required", {"target_color"}}

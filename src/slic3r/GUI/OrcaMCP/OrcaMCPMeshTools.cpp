@@ -17,14 +17,15 @@ void OrcaMCPServer::register_mesh_tools()
     register_tool({
         "get_mesh_health",
         ToolCategory::Models,
-        "Mesh errors, shells, the warning icon",
-        "Mesh errors behind the object list's warning icon: open edges (holes, non-manifold), "
-        "repaired facets, and loose parts or stray shells, for one object and each of its volumes. "
+        "Mesh errors: holes, open edges, repairs",
+        "Check an object's mesh for problems: holes and open edges (non-manifold), repaired facets, and "
+        "loose parts or stray shells, for one object and each of its volumes -- the errors behind the "
+        "object list's warning icon. "
         "Every row -- the object and each volume -- has mesh_warning (whether the icon shows) and, only "
         "when it is true, `tooltip` (the icon's tooltip, exactly as the GUI shows it, in the app's "
         "language; its last line is the GUI's \"click the icon\") and mesh_warning_reason (the "
-        "sidebar's one line). A flagged object also gets `advice`: MCP cannot repair a mesh, and what "
-        "slicing does with it. The numbers: facets, shells, open_edges, manifold, repaired, "
+        "sidebar's one line). A flagged object also gets `advice`: what MCP can do about the mesh, "
+        "and what slicing does with it. The numbers: facets, shells, open_edges, manifold, repaired, "
         "errors_repaired and each recorded repair count. An object's open_edges and repairs count every volume, as the "
         "list does; its facets, shells and volume_mm3 count model parts only. Repair counts exist "
         "only for a mesh loaded from a 3MF that recorded them: an STL is repaired silently on import "

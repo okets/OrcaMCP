@@ -64,7 +64,8 @@ nlohmann::json mesh_features_json(const MeshHealth& object_health);
 void add_mesh_warning(nlohmann::json& out, const MeshHealth& object_health);
 
 // What an agent can do about a row with the icon, in place of the tooltip's GUI-only "click the
-// icon": MCP cannot repair a mesh, and what slicing does with one. English; empty without the icon.
+// icon": what MCP can do about the mesh, and what slicing does with it -- never a GUI button to send
+// the user to. English; empty without the icon.
 std::string mesh_warning_advice(const MeshHealth& health);
 
 // A MeshErrors warning for an object the list flags: {level: "warning", type: "MeshErrors",
