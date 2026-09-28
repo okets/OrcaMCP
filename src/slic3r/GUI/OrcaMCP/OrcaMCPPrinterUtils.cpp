@@ -3,6 +3,7 @@
 #include "OrcaMCPCommon.hpp"
 #include "OrcaMCPFilamentUtils.hpp" // color_delta_e_hex -- the one colour metric in this codebase
 #include "OrcaMCPPresetConfigUtils.hpp"
+#include "OrcaMCPPrinterControl.hpp"
 
 #include "libslic3r/Format/bbs_3mf.hpp"
 #include "libslic3r/Preset.hpp"
@@ -266,6 +267,10 @@ nlohmann::json status_to_json(const FlashforgeApi::PrinterStatus& s)
         nozzles.push_back({{"tool", static_cast<int>(i)},
                            {"current", s.nozzles[i].current},
                            {"target", s.nozzles[i].target}});
+    // Only the fields the Device page reads, never the printer's whole `detail`: that carries its
+    // cloud register codes and whatever a later firmware adds, and a tool's answer ends up in
+    // transcripts and logs.
+    const nlohmann::json raw = console_raw_detail(s.raw);
 
     return {
         {"state", s.state},
@@ -294,10 +299,9 @@ nlohmann::json status_to_json(const FlashforgeApi::PrinterStatus& s)
         {"ip", s.ip},
         {"camera_stream_url", s.camera_stream_url},
         {"material_station", {{"present", s.has_material_station}, {"slots", material_slots_json(s.slots)}}},
-        // Only the fields the Device page reads, never the printer's whole `detail`: that carries its
-        // cloud register codes and whatever a later firmware adds, and a tool's answer ends up in
-        // transcripts and logs.
-        {"raw", console_raw_detail(s.raw)}
+        // What printer_control's set_* actions change, named as it takes them.
+        {"controls", printer_controls_json(raw)},
+        {"raw", raw}
     };
 }
 

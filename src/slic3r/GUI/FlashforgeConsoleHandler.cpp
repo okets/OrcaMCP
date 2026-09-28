@@ -103,6 +103,10 @@ constexpr double MAX_NOZZLE_TEMP = 350, MAX_BED_TEMP = 150, MAX_CHAMBER_TEMP = 1
 /// Z compensation is an offset, nudged one step at a time; a whole millimetre is already far more
 /// than a first layer.
 constexpr double MAX_Z_COMPENSATION = 1.0;
+/// The vendor's own Z compensation step, the one the printer's screen and this page nudge by.
+constexpr double Z_COMPENSATION_STEP = 0.025;
+/// A fan speed is a percentage.
+constexpr double MAX_FAN_SPEED = 100;
 
 /// The printer's untouched `detail` object inside a cached snapshot, or null when nothing has
 /// arrived yet.
@@ -187,6 +191,48 @@ bool read_target(const json& params, const char* key, double max_value, const wx
 std::optional<double> to_optional(const json& value)
 {
     return value.is_number() ? std::optional<double>(value.get<double>()) : std::nullopt;
+}
+
+/// A fan speed the caller sent, within 0-100 %. Absent means "keep what the printer reports".
+bool read_fan_speed(const json& params, const char* key, double& value, std::string& error)
+{
+    const auto it = params.find(key);
+    if (it == params.end() || it->is_null())
+        return true;
+    if (!override_number(params, key, value, error))
+        return false;
+    if (value < 0 || value > MAX_FAN_SPEED) {
+        error = into_u8(wxString::Format(_L("'%s' must be a fan speed between 0 and 100 %%."), from_u8(key)));
+        return false;
+    }
+    return true;
+}
+
+/// Whether a caller sent `key` to change.
+bool caller_sets(const json& params, const char* key)
+{
+    const auto it = params.find(key);
+    return it != params.end() && !it->is_null();
+}
+
+/// The page's own test for a job the printer is running (jobPhase in index.html): printing or paused,
+/// or heating or busy with a file.
+bool job_running(const json& snapshot)
+{
+    if (!snapshot.is_object() || !snapshot.contains("printer") || !snapshot["printer"].is_object())
+        return false;
+    const json&       printer = snapshot["printer"];
+    const std::string state   = printer.value("state", std::string());
+    if (state == "printing" || state == "paused")
+        return true;
+    return (state == "heating" || state == "busy") && !printer.value("print_file", std::string()).empty();
+}
+
+/// A Z offset on the vendor's own 0.025 mm steps.
+bool on_z_step(double z)
+{
+    const double steps = z / Z_COMPENSATION_STEP;
+    return std::abs(steps - std::round(steps)) < 1e-6;
 }
 
 /// One run of the poll loop, and everything that outlives the thread it runs on.
@@ -631,33 +677,9 @@ private:
                             json                              operation,
                             int                               id)
     {
-        const Flashforge  host(&config);
-        const std::string kind = operation.value("kind", std::string());
-        wxString          msg;
-        bool              ok = false;
-
-        if (kind == "light") {
-            ok = host.set_light(operation.value("on", false), msg);
-        } else if (kind == "job") {
-            // Explicit, never a ternary's else: an action nobody recognises must not fall through
-            // to cancelling somebody's print.
-            const std::string action = operation.value("action", std::string());
-            if (action == "pause")
-                ok = host.pause_job(msg);
-            else if (action == "resume")
-                ok = host.resume_job(msg);
-            else if (action == "stop")
-                ok = host.cancel_job(msg);
-            else
-                msg = _L("Unknown job action.");
-        } else if (kind == "temperature") {
-            std::vector<std::optional<double>> nozzles;
-            for (const auto& target : operation["nozzles"])
-                nozzles.push_back(to_optional(target));
-            ok = host.set_temperatures(to_optional(operation["bed"]), to_optional(operation["chamber"]), nozzles, msg);
-        } else {
-            ok = host.send_control(operation.value("cmd", std::string()), operation.value("args", json::object()), msg);
-        }
+        const Flashforge host(&config);
+        wxString         msg;
+        const bool       ok = run_console_operation(host, operation, msg);
 
         // The page is showing a pending control until the printer itself confirms the change, so
         // the next snapshot is wanted now rather than at the end of the cadence.
@@ -805,6 +827,11 @@ bool build_console_operation(const json& params, const json& snapshot, json& ope
     }
 
     if (name == "filtration") {
+        // The Pro reports both of its filtration fans; a machine that reports neither has none to switch.
+        if (!raw->contains("internalFanStatus") && !raw->contains("externalFanStatus")) {
+            error = _u8L("This printer reports no filtration fans.");
+            return false;
+        }
         std::string internal, external;
         if (!read_switch(params, *raw, "internal", "internalFanStatus", internal, error) ||
             !read_switch(params, *raw, "external", "externalFanStatus", external, error))
@@ -829,16 +856,30 @@ bool build_console_operation(const json& params, const json& snapshot, json& ope
         const bool changing_speed = params.contains("speed");
         if (!override_number(params, "zAxisCompensation", z, error) ||
             !override_number(params, "speed", speed, error) ||
-            !override_number(params, "chamberFan", chamber_fan, error) ||
-            !override_number(params, "coolingFan", cooling_fan, error))
+            !read_fan_speed(params, "chamberFan", chamber_fan, error) ||
+            !read_fan_speed(params, "coolingFan", cooling_fan, error))
             return false;
 
         if (changing_speed && std::find(std::begin(PRINT_SPEEDS), std::end(PRINT_SPEEDS), speed) == std::end(PRINT_SPEEDS)) {
             error = _u8L("Print speed must be one of 50, 100, 125 or 166 %.");
             return false;
         }
+        // As the page's speed buttons, which are off while nothing prints: the printer applies a speed
+        // only to a running job.
+        if (changing_speed && !job_running(snapshot)) {
+            error = _u8L("Nothing is printing: the printer applies a print speed only while a job runs.");
+            return false;
+        }
         if (std::abs(z) > MAX_Z_COMPENSATION) {
             error = _u8L("Z offset must be within \u00b11 mm.");
+            return false;
+        }
+        if (caller_sets(params, "zAxisCompensation") && !on_z_step(z)) {
+            error = _u8L("Z offset must be a multiple of 0.025 mm, the printer's own step.");
+            return false;
+        }
+        if (caller_sets(params, "chamberFan") && !has_number(*raw, "chamberFanSpeed")) {
+            error = _u8L("This printer reports no chamber fan.");
             return false;
         }
 
@@ -850,9 +891,13 @@ bool build_console_operation(const json& params, const json& snapshot, json& ope
         // Only a machine that reports a left cooling fan is told what to do with one. The Creator 5
         // reports none; a dual-head Flashforge does, and sending a 0 we invented would stop its
         // left part cooling in the middle of a print.
-        if (has_number(*raw, "coolingLeftFanSpeed") || params.contains("coolingLeftFan")) {
+        if (caller_sets(params, "coolingLeftFan") && !has_number(*raw, "coolingLeftFanSpeed")) {
+            error = _u8L("This printer reports no left cooling fan.");
+            return false;
+        }
+        if (has_number(*raw, "coolingLeftFanSpeed")) {
             double cooling_left_fan = json_double(*raw, "coolingLeftFanSpeed", 0);
-            if (!override_number(params, "coolingLeftFan", cooling_left_fan, error))
+            if (!read_fan_speed(params, "coolingLeftFan", cooling_left_fan, error))
                 return false;
             args["coolingLeftFan"] = cooling_left_fan;
         }
@@ -863,6 +908,41 @@ bool build_console_operation(const json& params, const json& snapshot, json& ope
 
     error = into_u8(wxString::Format(_L("Unknown command '%s'."), from_u8(name)));
     return false;
+}
+
+bool run_console_operation(const Flashforge& host, const json& operation, wxString& msg)
+{
+    const std::string kind = operation.value("kind", std::string());
+    if (kind == "light")
+        return host.set_light(operation.value("on", false), msg);
+    if (kind == "job") {
+        // Explicit, never a ternary's else: an action nobody recognises must not fall through
+        // to cancelling somebody's print.
+        const std::string action = operation.value("action", std::string());
+        if (action == "pause")
+            return host.pause_job(msg);
+        if (action == "resume")
+            return host.resume_job(msg);
+        if (action == "stop")
+            return host.cancel_job(msg);
+        msg = _L("Unknown job action.");
+        return false;
+    }
+    if (kind == "temperature") {
+        std::vector<std::optional<double>> nozzles;
+        for (const auto& target : operation["nozzles"])
+            nozzles.push_back(to_optional(target));
+        return host.set_temperatures(to_optional(operation["bed"]), to_optional(operation["chamber"]), nozzles, msg);
+    }
+    if (kind == "control")
+        return host.send_control(operation.value("cmd", std::string()), operation.value("args", json::object()), msg);
+    msg = _L("Unknown command.");
+    return false;
+}
+
+json console_snapshot(const FlashforgeApi::PrinterStatus& status)
+{
+    return json{{"connected", true}, {"printer", printer_json(status)}};
 }
 
 wxString flashforge_console_url()

@@ -3333,6 +3333,11 @@ Live status from the configured print host. Full detail for Flashforge hosts.
 ```
 `obico.configured` says whether the preset names an Obico server; the token is never included.
 
+`printer.controls` names what `printer_control`'s `set_*` actions change, as the printer reports them:
+`print_speed_percent` (null while no job runs), `z_offset_mm`, `chamber_fan_percent`,
+`cooling_fan_percent`, `cooling_left_fan_percent` (only on a printer with that fan), `recirculation`
+and `exhaust` (the filtration fans, on or off); null for what the printer does not report.
+
 `printer.raw` is the printer's own status object cut down to the fields the Device page reads (fan
 states, print speed, Z offset, fan speeds, the material station's progress, ...), the same allowlist the
 page gets. The rest never leaves the app: the printer's cloud register codes, its MAC address, and any
@@ -3363,19 +3368,61 @@ body.
 ---
 
 ### printer_control
-Pause, resume or cancel the Flashforge printer's current job, turn its light on or off, or set its
-target temperatures. It acts on real hardware.
+Control the Flashforge printer as its Device page does: pause, resume or cancel the current job, turn
+its light on or off, set its target temperatures, switch its filtration fans, set its chamber and
+part-cooling fans, the running job's print speed, or its Z offset. It acts on real hardware.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `action` | string | Yes | `pause`, `resume`, `cancel`, `light_on`, `light_off` or `set_temperature` |
-| `bed`, `chamber` | number | No | `set_temperature` only: that heater's target, degrees C |
-| `nozzles` | array | No | `set_temperature` only: `[{tool, temp}]`, tool 0-3. Tools not listed are left unchanged |
+| `action` | string | Yes | `pause`, `resume`, `cancel`, `light_on`, `light_off`, `set_temperature`, `set_filtration`, `set_fans`, `set_print_speed` or `set_z_offset` |
+| `bed`, `chamber` | number | No | `set_temperature` only: that heater's target, degrees C (bed 0-150, chamber 0-100) |
+| `nozzles` | array | No | `set_temperature` only: `[{tool, temp}]`, tool 0-3, 0-350 C. Tools not listed are left unchanged |
+| `recirculation`, `exhaust` | boolean | No | `set_filtration` only: the internal (recirculation) and external (exhaust) filtration fans on or off |
+| `chamber_fan`, `cooling_fan`, `cooling_left_fan` | number | No | `set_fans` only: fan speed, 0-100 %. The left cooling fan only on a printer that reports one |
+| `speed` | integer | No | `set_print_speed` only, required there: 50, 100, 125 or 166 %, the printer's own steps |
+| `z_offset` | number | No | `set_z_offset` only, required there: mm, positive raises the nozzle, -1 to 1 in 0.025 mm steps |
 
-`set_temperature` needs something to set: with none of `bed`, `chamber` or a nozzle (or with an
-empty `nozzles`) it is refused and nothing is sent to the printer. It used to send "no change" for
-every heater and report success. A `nozzles` that is not a list is refused the same way.
+Every action is shaped into the Device page's own command and built by the page's code
+(`build_console_operation`), so the tool and the page send the same commands with the same limits.
+The printer's `/control` request gets, for example:
+
+| Call | Command sent |
+|------|--------------|
+| `set_print_speed {speed: 125}` | `printerCtl_cmd {zAxisCompensation, speed: 125, chamberFan, coolingFan}` |
+| `set_z_offset {z_offset: -0.05}` | `printerCtl_cmd {zAxisCompensation: -0.05, speed, chamberFan, coolingFan}` |
+| `set_fans {chamber_fan: 50}` | `printerCtl_cmd {zAxisCompensation, speed, chamberFan: 50, coolingFan}` |
+| `set_filtration {recirculation: true}` | `circulateCtl_cmd {internal: "open", external}` |
+
+`printerCtl_cmd` and `circulateCtl_cmd` carry every field they own, so a `set_*` action first reads
+the printer's status and sends the fields it does not change as the printer reports them (a speed of 0,
+what an idle printer reports, goes back as 100 %); `coolingLeftFan` only to a printer that reports that
+fan. The answer says what was sent and what the printer reported before:
+
+```json
+{
+  "status": "success",
+  "action": "set_z_offset",
+  "sent": {"cmd": "printerCtl_cmd", "args": {"zAxisCompensation": -0.05, "speed": 100, "chamberFan": 30, "coolingFan": 70}},
+  "before": {"print_speed_percent": null, "z_offset_mm": 0.0, "chamber_fan_percent": 30, "cooling_fan_percent": 70,
+             "recirculation": false, "exhaust": true},
+  "next_steps": [{"tool": "get_printer_status", "why": "the printer applies a command within a few seconds; ..."}]
+}
+```
+
+`get_printer_status`'s `printer.controls` has the same fields, so it reads back what the printer now
+reports. The printer takes a moment to apply a command.
+
+Refused, with nothing sent to the printer:
+- a value the page never sends: a speed that is not one of the four, a Z offset past 1 mm or off the
+  0.025 mm steps, a fan speed outside 0-100, a temperature past its range;
+- a print speed while nothing prints (the page's speed buttons are off then: the printer applies a speed
+  only to a running job);
+- filtration on a printer that reports no filtration fans, a chamber fan on one that reports none, a
+  left cooling fan on one without it;
+- a call that sets nothing (`set_temperature` with none of `bed`, `chamber` or a nozzle, or with an empty
+  `nozzles`; `set_filtration` or `set_fans` with nothing given), and an argument of another action
+  (`speed` with `set_fans`, `bed` with `pause`): before, it was ignored and the call reported done.
 
 ### match_project_to_printer
 Make the project's filament slots say what the Flashforge material station holds: for each loaded
@@ -3579,6 +3626,7 @@ nothing to suggest has no `next_steps`.
 | `fill_bed_with_instances` | `arrange_objects` with `all_plates: true`, and `set_instance_count` (the last instances) or `delete_object` with the highest `instance_id` | the fill added instances its plate's arrange could not fit, which stand on no plate (`instances_on_no_plate`) |
 | `set_plate_settings` | `arrange_objects` with that `plate_index` | the plate now prints by object |
 | | `reset_object_config` with the first object and the vase settings it carries (`why` names every object) | the plate's spiral vase was on and is off, and objects on it still carry the vase's object settings |
+| `printer_control` with a `set_*` action | `get_printer_status` | always: the printer takes a moment to apply a command, and `printer.controls` reads back what it now reports |
 | The bridge's own answers (`list_instances`, `start_orca`, and a tool call it did not forward) | `select_instance` with the `pid` of the first instance that tells who it is (never an older OrcaMCP, which cannot), and `list_instances` | several instances run and this session has not chosen one, or the one it used is gone |
 | | `start_orca` (with `new_instance: true` when others run) | no instance runs, or the one this session used is gone |
 | | `get_scene_info` | the instance this session used restarted, and the session now uses the restarted one: its scene is new |

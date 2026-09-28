@@ -424,7 +424,9 @@ TEST_CASE("Every next step names a real tool, with arguments its schema accepts"
         steps.push_back(std::move(step));
     for (NextStep& step : vase_settings_next_steps({0, 2}, {"sparse_infill_density", "wall_loops"}))
         steps.push_back(std::move(step));
-    REQUIRE(steps.size() == 23);
+    for (NextStep& step : printer_control_next_steps())
+        steps.push_back(std::move(step));
+    REQUIRE(steps.size() == 24);
 
     const mcp_tool_references::ToolNames names(OrcaMCPServer::registered_tools());
     json                                 response = json::object();

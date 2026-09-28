@@ -312,4 +312,10 @@ std::vector<NextStep> vase_settings_next_steps(const std::vector<int>& object_id
              {{"object_id", object_ids.front()}, {"keys", first_keys}}}};
 }
 
+std::vector<NextStep> printer_control_next_steps()
+{
+    return {{"get_printer_status",
+             "the printer applies a command within a few seconds; printer.controls there reads back what it now reports"}};
+}
+
 }}} // namespace Slic3r::GUI::OrcaMCP

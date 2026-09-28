@@ -25,6 +25,7 @@ add_executable(${_TEST_NAME}_tests
     test_flashforge_live.cpp
     test_obico_link.cpp
     test_mcp_printer_answers.cpp
+    test_mcp_printer_control.cpp
     test_print_host_keys.cpp
     test_send_dialog_routing.cpp
     test_project_match.cpp

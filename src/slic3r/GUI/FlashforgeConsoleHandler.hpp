@@ -7,6 +7,8 @@
 #include <nlohmann/json_fwd.hpp>
 
 namespace Slic3r {
+class Flashforge;
+namespace FlashforgeApi { struct PrinterStatus; }
 namespace GUI {
 
 class PrinterWebView;
@@ -61,12 +63,25 @@ nlohmann::json console_raw_detail(const nlohmann::json& detail);
 ///                            "nozzles": [<number|null> x 4]}   // null = leave alone, 0 = off
 ///     {"kind":"control",     "cmd": <printer command>, "args": {...}}
 ///
-/// Returns false with `error` set for an unknown or out-of-range request, or for one whose
-/// untouched fields cannot be filled in because no status has arrived yet.
+/// Returns false with `error` set for an unknown or out-of-range request, for one whose untouched
+/// fields cannot be filled in because no status has arrived yet, and for one the printer, by its
+/// status, cannot act on: a print speed while nothing prints (the page's speed buttons are off then),
+/// filtration or a chamber or left cooling fan it does not report. Fan speeds are 0-100 %, and a Z
+/// offset sent is within ±1 mm on the vendor's 0.025 mm steps.
+///
+/// MCP's printer_control shapes every action into these same params, so the page and the tool build
+/// the same commands with the same limits.
 bool build_console_operation(const nlohmann::json& params,
                              const nlohmann::json& snapshot,
                              nlohmann::json&       operation,
                              std::string&          error);
+
+/// Makes the printer call `operation` (what build_console_operation built) stands for. Blocking network
+/// I/O: never on the GUI thread. False with the printer's or the host's message in `msg`.
+bool run_console_operation(const Flashforge& host, const nlohmann::json& operation, wxString& msg);
+
+/// The snapshot build_console_operation reads, from a status just read: what the page's poller caches.
+nlohmann::json console_snapshot(const FlashforgeApi::PrinterStatus& status);
 
 /// The script-message handler that answers `status` and then keeps pushing. Polls on its own worker
 /// thread (the local API must never be called from the GUI thread) and delivers through CallAfter.

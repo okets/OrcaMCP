@@ -2,6 +2,8 @@
 #include "OrcaMCPServer.hpp"
 #include "OrcaMCPCommon.hpp"
 #include "OrcaMCPGcodeCheck.hpp"
+#include "OrcaMCPNextSteps.hpp"
+#include "OrcaMCPPrinterControl.hpp"
 #include "OrcaMCPPrinterUtils.hpp"
 #include "OrcaMCPProjectMatch.hpp"
 #include "slic3r/GUI/GUI.hpp"
@@ -10,6 +12,7 @@
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/DeviceManager.hpp"
 #include "slic3r/GUI/DeviceCore/DevManager.h"
+#include "slic3r/GUI/FlashforgeConsoleHandler.hpp"
 #include "slic3r/Utils/Flashforge.hpp"
 #include "slic3r/Utils/FlashforgeApi.hpp"
 #include "slic3r/Utils/FlashforgeLocalApi.hpp"
@@ -790,28 +793,37 @@ void OrcaMCPServer::register_printer_tools()
     register_tool({
         "printer_control",
         ToolCategory::Printers,
-        "Pause, resume, cancel, light, temps",
-        "Control the Flashforge printer: pause, resume or cancel the current job, turn the enclosure "
-        "light on/off, or set bed/chamber/nozzle target temperatures.",
+        "Job, light, temps, fans, speed, Z offset",
+        "Control the Flashforge printer as its Device page does: pause, resume or cancel the current job, turn "
+        "the light on or off, set bed/chamber/nozzle target temperatures, switch the filtration fans "
+        "(set_filtration: recirculation, exhaust), set the chamber and part-cooling fans (set_fans, 0-100 %), "
+        "the print speed of the running job (set_print_speed: 50, 100, 125 or 166 %), or the Z offset "
+        "(set_z_offset: mm, positive raises the nozzle, within -1 to 1 in 0.025 mm steps). It acts on the real "
+        "printer. The set_* actions change only what they name: the printer's other settings are read first "
+        "and sent back as it reports them; the answer gives what was sent and the printer's values before, and "
+        "get_printer_status's printer.controls reads them back. Refused, sending nothing: a print speed while "
+        "nothing prints, a fan or filtration the printer does not report, a value out of range, and an "
+        "argument of another action.",
         {
             {"type", "object"},
             {"properties", {
                 {"action", {
                     {"type", "string"},
-                    {"enum", {"pause", "resume", "cancel", "light_on", "light_off", "set_temperature"}},
+                    {"enum", {"pause", "resume", "cancel", "light_on", "light_off", "set_temperature", "set_filtration",
+                              "set_fans", "set_print_speed", "set_z_offset"}},
                     {"description", "Control action to perform"}
                 }},
                 {"bed", {
                     {"type", "number"},
-                    {"description", "set_temperature only: target bed temperature. Omit for no change."}
+                    {"description", "set_temperature only: target bed temperature, 0-150 C. Omit for no change."}
                 }},
                 {"chamber", {
                     {"type", "number"},
-                    {"description", "set_temperature only: target chamber temperature. Omit for no change."}
+                    {"description", "set_temperature only: target chamber temperature, 0-100 C. Omit for no change."}
                 }},
                 {"nozzles", {
                     {"type", "array"},
-                    {"description", "set_temperature only: per-tool target temperatures. Tools not listed are left "
+                    {"description", "set_temperature only: per-tool target temperatures, 0-350 C. Tools not listed are left "
                                     "unchanged. set_temperature needs at least one of bed, chamber or a nozzle."},
                     {"items", {
                         {"type", "object"},
@@ -823,62 +835,44 @@ void OrcaMCPServer::register_printer_tools()
                         // A misspelled key would otherwise send the printer "no change" for that tool.
                         {"additionalProperties", false}
                     }}
+                }},
+                {"recirculation", {
+                    {"type", "boolean"},
+                    {"description", "set_filtration only: the internal (recirculation) filtration fan on or off. Omit to leave it."}
+                }},
+                {"exhaust", {
+                    {"type", "boolean"},
+                    {"description", "set_filtration only: the external (exhaust) filtration fan on or off. Omit to leave it."}
+                }},
+                {"chamber_fan", {
+                    {"type", "number"},
+                    {"description", "set_fans only: chamber fan speed, 0-100 %. Omit to leave it."}
+                }},
+                {"cooling_fan", {
+                    {"type", "number"},
+                    {"description", "set_fans only: part-cooling fan speed, 0-100 %. Omit to leave it."}
+                }},
+                {"cooling_left_fan", {
+                    {"type", "number"},
+                    {"description", "set_fans only: the left part-cooling fan, 0-100 %, on a printer that reports one."}
+                }},
+                {"speed", {
+                    {"type", "integer"},
+                    {"enum", {50, 100, 125, 166}},
+                    {"description", "set_print_speed only: the running job's speed in percent, the printer's own steps."}
+                }},
+                {"z_offset", {
+                    {"type", "number"},
+                    {"description", "set_z_offset only: the Z offset in mm, positive raises the nozzle; -1 to 1 in 0.025 mm steps."}
                 }}
             }},
             {"required", {"action"}}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
-            static const std::vector<std::string> kActions = {"pause", "resume", "cancel", "light_on", "light_off", "set_temperature"};
-            if (!params.contains("action") || !params.at("action").is_string())
-                return error_response("action must be a string");
-            const std::string action = params.at("action").get<std::string>();
-            if (std::find(kActions.begin(), kActions.end(), action) == kActions.end())
-                return error_response("Unknown action '" + action + "'. Supported: " + boost::algorithm::join(kActions, ", "));
-
-            std::optional<double>              bed;
-            std::optional<double>              chamber;
-            std::vector<std::optional<double>> nozzles(4, std::nullopt);
-            if (action == "set_temperature") {
-                // parse_double_param, and an error rather than a skip: this used to ignore a bed
-                // or chamber value that was not a JSON number, so a client sending "60" as a string
-                // got "success" and a printer that never heated.
-                double parsed = 0.0;
-                if (params.contains("bed")) {
-                    if (!parse_double_param(params.at("bed"), parsed))
-                        return error_response("bed must be a finite number, in degrees C");
-                    bed = parsed;
-                }
-                if (params.contains("chamber")) {
-                    if (!parse_double_param(params.at("chamber"), parsed))
-                        return error_response("chamber must be a finite number, in degrees C");
-                    chamber = parsed;
-                }
-                // Not an array used to be skipped in silence, the printer sent "no change" for every tool.
-                if (params.contains("nozzles") && !params.at("nozzles").is_array())
-                    return error_response("nozzles must be an array of {tool, temp}");
-                if (params.contains("nozzles")) {
-                    for (const auto& entry : params.at("nozzles")) {
-                        if (!entry.is_object() || !entry.contains("tool") || !entry.contains("temp"))
-                            return error_response("Each entry in nozzles requires 'tool' and 'temp'");
-                        // parse_integer_param, not is_number_integer(): a client whose JSON layer
-                        // widens numbers sends 0 as 0.0. The sibling temp check below is already
-                        // permissive, so the strict one here refused entries its own pair accepted.
-                        int tool = 0;
-                        if (!parse_integer_param(entry.at("tool"), tool))
-                            return error_response("nozzles[].tool must be an integer");
-                        double temp = 0.0;
-                        if (!parse_double_param(entry.at("temp"), temp))
-                            return error_response("nozzles[].temp must be a finite number, in degrees C");
-                        if (tool < 0 || tool > 3)
-                            return error_response("nozzles[].tool must be between 0 and 3");
-                        nozzles[tool] = temp;
-                    }
-                }
-                // Nothing to set used to reach the printer as "no change" for every heater, and succeed.
-                const bool any_nozzle = std::any_of(nozzles.begin(), nozzles.end(), [](const auto& t) { return t.has_value(); });
-                if (!bed && !chamber && !any_nozzle)
-                    return error_response("set_temperature needs something to set: bed, chamber or nozzles ([{tool, temp}])");
-            }
+            // Everything the call asks is checked before the printer is looked up, let alone sent anything.
+            PrinterControlRequest request;
+            if (const auto refusal = printer_control_request(params, request))
+                return error_response(*refusal);
 
             std::unique_ptr<Slic3r::PrintHost> host;
             Slic3r::Flashforge*                ff = nullptr;
@@ -886,24 +880,34 @@ void OrcaMCPServer::register_printer_tools()
             if (!resolve_flashforge(host, ff, error_out))
                 return error_out;
 
-            wxString msg;
-            bool     ok = false;
-            if (action == "pause")
-                ok = ff->pause_job(msg);
-            else if (action == "resume")
-                ok = ff->resume_job(msg);
-            else if (action == "cancel")
-                ok = ff->cancel_job(msg);
-            else if (action == "light_on")
-                ok = ff->set_light(true, msg);
-            else if (action == "light_off")
-                ok = ff->set_light(false, msg);
-            else // set_temperature
-                ok = ff->set_temperatures(bed, chamber, nozzles, msg);
+            // A control that carries every field it owns sends the ones it does not change as the
+            // printer reports them now, as the Device page does from its last status.
+            nlohmann::json snapshot = nlohmann::json::object();
+            if (request.reads_status) {
+                Slic3r::FlashforgeApi::PrinterStatus status;
+                wxString                             msg;
+                if (!ff->fetch_status(status, msg))
+                    return error_response("Nothing was sent: the printer's current settings could not be read. " +
+                                          (msg.empty() ? std::string("Failed to fetch printer status") : to_std(msg)));
+                snapshot = console_snapshot(status);
+            }
 
-            if (!ok)
-                return error_response(msg.empty() ? ("Failed to perform action '" + action + "'") : to_std(msg));
-            return {{"status", "success"}, {"action", action}};
+            nlohmann::json operation;
+            std::string    error;
+            if (!build_console_operation(request.console_params, snapshot, operation, error))
+                return error_response(error + " Nothing was sent.");
+
+            wxString msg;
+            if (!run_console_operation(*ff, operation, msg))
+                return error_response(msg.empty() ? ("Failed to perform action '" + request.action + "'") : to_std(msg));
+
+            nlohmann::json answer = {{"status", "success"}, {"action", request.action}};
+            if (request.reads_status) {
+                answer["sent"]   = {{"cmd", operation.value("cmd", std::string())}, {"args", operation.value("args", nlohmann::json::object())}};
+                answer["before"] = printer_controls_json(snapshot["printer"]["raw"]);
+                add_next_steps(answer, printer_control_next_steps());
+            }
+            return answer;
         }
     });
 
