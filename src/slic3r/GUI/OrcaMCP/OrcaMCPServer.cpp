@@ -6058,6 +6058,7 @@ void OrcaMCPServer::register_builtin_tools()
     register_part_tools();
     register_arrange_tools();
     register_plate_tools();
+    register_export_tools();
     register_bridge_tools();
 
     BOOST_LOG_TRIVIAL(info) << "OrcaMCPServer: Registered " << s_tools.size() << " tools";

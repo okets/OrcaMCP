@@ -29,7 +29,7 @@ into a call that reports success and changes nothing. See [Error Handling](#erro
 
 | Category | Tools |
 |----------|-------|
-| **Scene** | `get_scene_info`, `new_project`, `load_project`, `save_project`, `export_3mf` |
+| **Scene** | `get_scene_info`, `new_project`, `load_project`, `save_project`, `export_3mf`, `export_stl` |
 | **Models** | `load_model`, `auto_orient`, `arrange_objects`, `get_object_info`, `get_mesh_health`, `repair_mesh`, `get_object_components`, `rename_object`, `set_object_printable`, `split_object`, `add_volume`, `set_volume_type`, `assemble_objects`, `merge_parts`, `invalidate_cut_info` |
 | **Transforms** | `move_object`, `rotate_object`, `scale_object`, `mirror_object`, `flatten_object`, `clone_object`, `set_instance_count`, `fill_bed_with_instances`, `cut_object`, `delete_object`, `transform_objects` |
 | **Plates** | `add_plate`, `select_plate`, `delete_plate`, `set_prime_tower_position`, `set_plate_settings` |
@@ -510,6 +510,43 @@ as the GUI's Save As does.
 `project_renamed_to` is present whenever the call changed the project's name. The rename is not
 cosmetic: it retitles the window, adds the file to Recent Projects, and makes both `save_project`
 and a Cmd-S in the GUI overwrite that file.
+
+---
+
+### export_stl
+Export objects' meshes as STL, or Draco (DRC), as the app's File > Export > Export all objects as one
+STL / as STLs and the object menu's Export as one STL / as STLs write them. The scene does not change:
+no undo step, and the user's selection is put back.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `output_path` | string | Yes | The file, ending in `.stl` or `.drc` (its extension decides the format); with `one_file_per_object`, the existing folder the files go in |
+| `format` | string | No | `stl` (default) or `drc`. For one file it must agree with the extension |
+| `object_ids` | integer[] | No | The objects to export, by `object_id`. Default: every object |
+| `one_file_per_object` | boolean | No | One file per object, named after it, in the folder `output_path` (default false: one file) |
+
+**Returns:**
+```json
+{"status": "success", "format": "stl", "one_file_per_object": true, "object_ids": "all",
+ "files": [{"path": "/tmp/out/cube.stl", "bytes": 684}, {"path": "/tmp/out/cube(1).stl", "bytes": 684}],
+ "active_warnings": {"count": 0, "warnings": []}}
+```
+
+What goes in is the app's: each object's parts with its negative parts cut away (when that boolean
+fails, the parts alone, and `active_warnings` carries the app's notice), no modifiers or support
+volumes. Without `object_ids`, every object with all its instances, in plate coordinates. With
+`object_ids`, those objects, as the object menu exports a selection: one object with one instance is
+written at its own origin. With `one_file_per_object`, one file per object (per instance with
+`object_ids`), each moved back to the object's own origin, named after the object and never
+overwriting: a name already taken gets `(1)`, `(2)`, ... One file at `output_path` is overwritten.
+`files` lists what was written.
+
+Refused before anything is written: no objects; an `object_id` out of range or listed twice; an
+empty `object_ids` (leave it out for every object); a format that is not `stl` or `drc`, or disagrees
+with the file's extension; `one_file_per_object` with a folder that is not there; while an arrange,
+orient or bed fill runs. A file the app could not write is an error with its words ("Export failed
+..."); until v2.5.0.6 the app said nothing then (probe BA).
 
 ---
 

@@ -41,12 +41,9 @@ bool load_stl(const char *path, Model *model, const char *object_name_in, Import
 
 bool store_stl(const char *path, TriangleMesh *mesh, bool binary)
 {
-    if (binary)
-        mesh->write_binary(path);
-    else
-        mesh->write_ascii(path);
-    //FIXME returning false even if write failed.
-    return true;
+    // Orca: whether the file was written. Upstream returned true whatever the write did, so an export
+    // to a folder that is not there, or a file in use, was reported written.
+    return binary ? mesh->write_binary(path) : mesh->write_ascii(path);
 }
 
 bool store_stl(const char *path, ModelObject *model_object, bool binary)

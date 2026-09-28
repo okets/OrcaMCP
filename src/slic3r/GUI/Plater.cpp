@@ -10005,10 +10005,9 @@ wxString Plater::priv::get_export_file(GUI::FileType file_type, const wxString& 
 {
     // MCP automation: a native file dialog is modal and would block the GUI thread forever
     // while the MCP handler waits for this call to return. Report it instead of opening it.
-    if (is_mcp_dialog_suppression_enabled()) {
-        add_mcp_suppressed_answer("Save file: choose where to write it", "Cancel: nothing was written");
-        return wxString();
-    }
+    // A tool that has the path answers it (export_stl's output_path); with none it is cancelled.
+    if (std::vector<std::string> answered; mcp_answer_path_dialog("Save file: choose where to write it", McpPathDialog::file, answered))
+        return answered.empty() ? wxString() : from_u8(answered.front());
 
     wxString wildcard;
     switch (file_type) {
@@ -18935,7 +18934,7 @@ TriangleMesh Plater::combine_mesh_fff(const ModelObject& mo, int instance_id, st
 
 // BBS export with/without boolean, however, stil merge mesh
 #define EXPORT_WITH_BOOLEAN 0
-void Plater::export_stl(bool extended, bool selection_only, bool multi_stls, FileType file_type)
+void Plater::export_stl(bool extended, bool selection_only, bool multi_stls, FileType file_type, std::vector<std::string>* written)
 {
     if (p->model.objects.empty()) { return; }
 
@@ -18953,15 +18952,22 @@ void Plater::export_stl(bool extended, bool selection_only, bool multi_stls, Fil
 
     wxString path;
     if (multi_stls) {
+        // Orca MCP: the tool call's folder answers the dialog, which would block the call for good.
+        if (std::vector<std::string> answered; mcp_answer_path_dialog(into_u8(_L("Choose a directory")), McpPathDialog::folder, answered)) {
+            if (!answered.empty())
+                path = from_u8(answered.front()) + "/";
+        } else {
         wxDirDialog dlg(this, _L("Choose a directory"), from_u8(wxGetApp().app_config->get_last_dir()),
                         wxDD_DEFAULT_STYLE | wxDD_DIR_MUST_EXIST);
         if (dlg.ShowModal() == wxID_OK) {
             path = dlg.GetPath() + "/";
         }
+        }
     } else {
         path = p->get_export_file(file_type);
     }
-    if (path.empty()) { return; }
+    // Orca: a cancelled file dialog answers "<cancel>", which upstream took for the file to write.
+    if (path.empty() || path == "<cancel>") { return; }
     const std::string path_u8 = into_u8(path);
 
     wxBusyCursor wait;
@@ -19120,6 +19126,23 @@ void Plater::export_stl(bool extended, bool selection_only, bool multi_stls, Fil
         return path;
     };
 
+    // Orca: every file is stored through here, which says whether it was written: the files go to
+    // `written` (MCP's export_stl reports them), and a file that was not is the app's Export failed error,
+    // where upstream said nothing.
+    std::vector<std::string> failed;
+    auto store_mesh = [&](const std::string& file, TriangleMesh& mesh) {
+        const bool stored = file_type == FT_DRC ? Slic3r::store_drc(file.c_str(), &mesh, quality) : Slic3r::store_stl(file.c_str(), &mesh, true);
+        if (!stored)
+            failed.push_back(file);
+        else if (written != nullptr)
+            written->push_back(file);
+    };
+    auto report_failures = [&]() {
+        if (!failed.empty())
+            show_error(this, _L("Export failed\nPlease check write permissions or file in use by another application") + "\n" +
+                                 from_u8(failed.front()));
+    };
+
     TriangleMesh mesh;
     if (selection_only) {
         if (selection.is_single_full_object()) {
@@ -19149,11 +19172,9 @@ void Plater::export_stl(bool extended, bool selection_only, bool multi_stls, Fil
                 auto mesh = mesh_to_export(*object, i.second);
                 mesh.translate(-object->origin_translation.cast<float>());
 
-                switch (file_type) {
-                case FT_STL: Slic3r::store_stl(get_save_file(path_u8, object->name).c_str(), &mesh, true); break;
-                case FT_DRC: Slic3r::store_drc(get_save_file(path_u8, object->name).c_str(), &mesh, quality); break;
-                }
+                store_mesh(get_save_file(path_u8, object->name), mesh);
             }
+            report_failures();
             return;
         }
     }
@@ -19166,18 +19187,14 @@ void Plater::export_stl(bool extended, bool selection_only, bool multi_stls, Fil
             auto mesh = mesh_to_export(*o, -1);
             mesh.translate(-o->origin_translation.cast<float>());
 
-            switch (file_type) {
-            case FT_STL: Slic3r::store_stl(get_save_file(path_u8, o->name).c_str(), &mesh, true); break;
-            case FT_DRC: Slic3r::store_drc(get_save_file(path_u8, o->name).c_str(), &mesh, quality); break;
-            }
+            store_mesh(get_save_file(path_u8, o->name), mesh);
         }
+        report_failures();
         return;
     }
 
-    switch (file_type) {
-    case FT_STL: Slic3r::store_stl(path_u8.c_str(), &mesh, true); break;
-    case FT_DRC: Slic3r::store_drc(path_u8.c_str(), &mesh, quality); break;
-    }
+    store_mesh(path_u8, mesh);
+    report_failures();
 }
 
 //BBS: remove amf export
@@ -19575,7 +19592,8 @@ void Plater::export_toolpaths_to_obj() const
         return;
 
     wxString path = p->get_export_file(FT_OBJ);
-    if (path.empty())
+    // Orca: a cancelled file dialog answers "<cancel>", which upstream took for the file to write.
+    if (path.empty() || path == "<cancel>")
         return;
 
     wxBusyCursor wait;

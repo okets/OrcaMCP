@@ -568,7 +568,9 @@ public:
     bool get_pending_published(std::vector<std::string>& out_keys, std::vector<Slic3r::PublishedMaterialEntry>& out_material) const;
     void set_pending_published(const std::vector<std::string>& published_keys, const std::vector<Slic3r::PublishedMaterialEntry>& material_keys);
     static TriangleMesh combine_mesh_fff(const ModelObject& mo, int instance_id, std::function<void(const std::string&)> notify_func = {});
-    void export_stl(bool extended = false, bool selection_only = false, bool multi_stls = false, FileType file_type = FT_STL);
+    // Orca: `written`, when given, gets every file the export wrote (MCP's export_stl reports them).
+    void export_stl(bool extended = false, bool selection_only = false, bool multi_stls = false, FileType file_type = FT_STL,
+                    std::vector<std::string>* written = nullptr);
     //BBS: remove amf
     //void export_amf();
     //BBS add extra param for exporting 3mf silence

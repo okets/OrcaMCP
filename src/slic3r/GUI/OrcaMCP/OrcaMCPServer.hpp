@@ -164,6 +164,8 @@ private:
     static void register_arrange_tools();
     // A plate's own settings: set_plate_settings (OrcaMCPPlateTools.cpp)
     static void register_plate_tools();
+    // Exports that write a file at once: export_stl (OrcaMCPExportTools.cpp)
+    static void register_export_tools();
     // Tools orcamcp-bridge.py answers itself (start_orca)
     static void register_bridge_tools();
 };
