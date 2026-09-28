@@ -233,7 +233,12 @@ What the tests enforce, with no app running:
   in the app's words, and no bridge tool takes a nested object; the Windows path rewrite forwards
   arguments that are not an object untouched, for the app to refuse (`test_bridge_arguments.py`);
   `initialize` answers the file's instructions, app or no app, and still answers without them for a
-  file that has none (`test_bridge_instructions.py`).
+  file that has none (`test_bridge_instructions.py`). No Python test contacts or launches an app: each
+  loads the bridge through `bridge_test_support.load_bridge()`, which gives it an empty instance registry,
+  a default address nothing listens on, and a launch that raises (on 2026-09-28 a test of
+  `start_orca` launched the user's installed app); the fake instances are the tests' own servers. The
+  one comparison with a running app, `test_tools_schema.py`'s, is opt-in: it runs only with
+  `ORCAMCP_LIVE_SCHEMA_TEST_PORT` set to the port of a build started for it, and asks that port alone.
 - `tests/slic3rutils/test_mcp_scene_description.cpp` (`[McpSceneDescription]`): every object
   description carries `object_id` (and `internal_id`, never `id`), every plate `plate_index` and
   `is_current`; and `docs/tools/reference.md`'s `get_scene_info` example (after its

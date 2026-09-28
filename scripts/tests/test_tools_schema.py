@@ -3,10 +3,15 @@
 
 The C++ test tests/slic3rutils/test_mcp_tool_list.cpp fails whenever the file and the registry
 disagree, and it needs no running app, so that is the drift guard CI relies on. These tests pin the
-file's shape and a few entries that were once found stale in the field. The live comparison at the
-end is an extra check against whatever app is running; it skips when none is.
+file's shape and a few entries that were once found stale in the field.
+
+The live comparison at the end is opt-in: it runs only with ORCAMCP_LIVE_SCHEMA_TEST_PORT set to the
+port of an OrcaMCP you started for it, and talks to 127.0.0.1 on that port alone. It used to ask
+whatever answered on 13618, which is the user's own app when one runs (2026-09-28). A plain
+`unittest discover` never contacts an app.
 
 Run from the repo root:  python3 -m unittest discover -s scripts/tests -t scripts
+Live comparison:         ORCAMCP_LIVE_SCHEMA_TEST_PORT=<port of your build> python3 -m unittest discover -s scripts/tests -t scripts
 """
 
 import json
@@ -27,8 +32,12 @@ def server_tools_by_name():
     return {t["name"]: t for t in load_manifest()["server_tools"]}
 
 
-def live_server_tools():
-    url = f"http://{os.environ.get('ORCAMCP_HOST', 'localhost')}:{os.environ.get('ORCAMCP_PORT', '13618')}/mcp"
+# The port of the app the live comparison may ask, and only that one; unset, the comparison is skipped.
+LIVE_PORT_VARIABLE = "ORCAMCP_LIVE_SCHEMA_TEST_PORT"
+
+
+def live_server_tools(port: int):
+    url = f"http://127.0.0.1:{port}/mcp"
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}).encode()
     req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
     try:
@@ -110,13 +119,17 @@ class ValueSchemaAcceptsLists(unittest.TestCase):
 
 
 class RunningServerTests(unittest.TestCase):
-    """Compares the file with the app on port 13618, if one is running. A different build than
-    this checkout answers differently; that is the case the bridge's list_changed notice is for."""
+    """Compares the file with the app on ORCAMCP_LIVE_SCHEMA_TEST_PORT, when it is set: an app started
+    for this, from this checkout's build. A different build answers differently; that is the case the
+    bridge's list_changed notice is for."""
 
     def setUp(self):
-        self.live = live_server_tools()
+        port = os.environ.get(LIVE_PORT_VARIABLE)
+        if not port:
+            self.skipTest(f"opt-in: set {LIVE_PORT_VARIABLE} to the port of an OrcaMCP started for this test")
+        self.live = live_server_tools(int(port))
         if self.live is None:
-            self.skipTest("OrcaMCP server not reachable")
+            self.skipTest(f"nothing answers on 127.0.0.1:{port}")
         self.static = server_tools_by_name()
         self.live_by_name = {t["name"]: t for t in self.live}
 
