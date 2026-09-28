@@ -15,7 +15,7 @@ This guide shows how to combine MCP tools for common 3D printing tasks.
         ↓
 4. wait_for_slice      Returns once the slice is over
         ↓
-5. export_gcode        Save G-code file
+5. export_gcode        Save G-code file (answers once it is written)
 ```
 
 **Example sequence:**
@@ -404,8 +404,10 @@ its parts.
 - Use `set_object_config` with multiple keys
 
 ### Async Operations
-`slice_all` and `export_gcode` return at once while the work goes on in the background: call
-`wait_for_slice`, which returns once it is over. `arrange_objects`, `auto_orient`, `flatten_object` and
+`slice_all` returns at once while the slice goes on in the background: call `wait_for_slice`, which returns
+once it is over. `export_gcode` answers once its file is written (a `.gcode` is written in the background, and
+the call waits for it); past the bridge's cap it answers `export_started` with `finished: false`, and
+`wait_for_slice` returns once the file is complete. `arrange_objects`, `auto_orient`, `flatten_object` and
 `clone_object` answer once their job has been applied; past the bridge's cap they answer
 `finished: false`, and `get_slicing_status`'s `ui_job` says when the job has ended.
 

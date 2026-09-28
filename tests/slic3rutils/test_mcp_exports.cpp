@@ -41,6 +41,52 @@ TEST_CASE("a sliced file is written where it was asked for, whatever the case of
     CHECK(sliced_file_path("/tmp/part.gcode") == "/tmp/part.gcode.3mf");
 }
 
+// A plain .gcode is written in the background, as the app's Export G-code writes it. export_gcode answered
+// export_started at once, and an agent that then read the file read it half written. It now waits for the export
+// (within the call's cap) and answers what became of it.
+TEST_CASE("export_gcode answers once its G-code is written, or why it was not", "[McpExports][orcamcp]")
+{
+    using State = GcodeExportOutcome::State;
+    GcodeExportOutcome written;
+    written.end(State::written);
+    const nlohmann::json done = gcode_export_answer(written, GcodeExportWait::ended, "/tmp/out/box.gcode", std::uintmax_t(81234), 1.5);
+    CHECK(done.at("status") == "success");
+    CHECK(done.at("output_path") == "/tmp/out/box.gcode");
+    CHECK(done.at("bytes") == 81234);
+    CHECK_FALSE(done.contains("next_steps"));
+
+    GcodeExportOutcome failed;
+    failed.end(State::failed, "Copying of the temporary G-code to the output G-code failed.");
+    failed.end(State::written); // only the first end counts
+    const nlohmann::json broke = gcode_export_answer(failed, GcodeExportWait::ended, "/nope/box.gcode", std::nullopt, 0.4);
+    CHECK(broke.at("status") == "error");
+    CHECK(contains(broke.at("message").get<std::string>(), "Copying of the temporary G-code"));
+    CHECK_FALSE(broke.contains("next_steps"));
+
+    for (const State state : {State::cancelled, State::dropped}) {
+        GcodeExportOutcome stopped;
+        stopped.end(state);
+        const nlohmann::json answer = gcode_export_answer(stopped, GcodeExportWait::ended, "/tmp/out/box.gcode", std::nullopt, 0.4);
+        CHECK(answer.at("status") == "error");
+        CHECK(contains(answer.at("message").get<std::string>(), "nothing was written"));
+    }
+}
+
+TEST_CASE("export_gcode past its wait still says the export started, and how to wait for it", "[McpExports][orcamcp]")
+{
+    GcodeExportOutcome   pending;
+    const nlohmann::json late = gcode_export_answer(pending, GcodeExportWait::timed_out, "/tmp/out/box.gcode", std::nullopt, 105.0);
+    CHECK(late.at("status") == "export_started");
+    CHECK(late.at("finished") == false);
+    CHECK(late.at("waited_s") == 105.0);
+    REQUIRE(late.contains("next_steps"));
+    CHECK(late.at("next_steps").at(0).at("tool") == "wait_for_slice");
+
+    const nlohmann::json quitting = gcode_export_answer(pending, GcodeExportWait::quitting, "/tmp/out/box.gcode", std::nullopt, 2.0);
+    CHECK(quitting.at("finished") == false);
+    CHECK(contains(quitting.at("message").get<std::string>(), "quitting"));
+}
+
 TEST_CASE("export_gcode refuses a path it would write as something else, before looking at the plates", "[McpExports][orcamcp]")
 {
     CHECK(contains(*gcode_export_path_refusal("", false), "output_path is required"));

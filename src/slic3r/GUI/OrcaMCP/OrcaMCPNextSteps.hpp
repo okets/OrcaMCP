@@ -99,8 +99,9 @@ std::vector<NextStep> assembled_next_steps(int object_id);
 // tool: its message says what to fix.
 std::vector<NextStep> slice_start_next_steps(const SliceStartReport& report, std::optional<int> sliced_plate);
 
-// What export_gcode's answer leads to: wait_for_slice while the file is written (export_started), which
-// returns once the export is over; nothing for an export that did not start.
+// What export_gcode's answer leads to: wait_for_slice while the file is still being written past the call's own wait
+// (export_started, finished false), which returns once the export is over; nothing for an export that did not start,
+// or that the call saw end.
 std::vector<NextStep> export_next_steps(bool export_started);
 
 // What cancel_slice's answer leads to: wait_for_slice while the cancelled slice is still stopping (its

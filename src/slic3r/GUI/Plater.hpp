@@ -95,7 +95,7 @@ class FinishSyncAmsDialog;
 using t_optgroups = std::vector <std::shared_ptr<ConfigOptionsGroup>>;
 
 class Plater;
-namespace OrcaMCP { struct PlateListChangeDuringSlice; struct SliceAllEndedEarly; struct SliceCancelled; }
+namespace OrcaMCP { struct PlateListChangeDuringSlice; struct SliceAllEndedEarly; struct SliceCancelled; class GcodeExportOutcome; }
 enum class ActionButtonType : int;
 
 // Sentinel filament id meaning "use the slot the sidebar context menu was opened on"
@@ -568,8 +568,10 @@ public:
     void send_to_printer(bool isall = false);
     void export_gcode(bool prefer_removable);
     // Silent G-code export to a specific file path (for MCP automation). Returns why the export did
-    // not start (OrcaMCP::export_not_started), or nullopt when it is being written.
-    std::optional<std::string> export_gcode_to_file(const std::string& output_path);
+    // not start (OrcaMCP::export_not_started), or nullopt when it is being written; `outcome`, when given, is told how
+    // the export ends when its completion is taken in (Orca: MCP's export_gcode waits for it).
+    std::optional<std::string> export_gcode_to_file(const std::string& output_path,
+                                                    std::shared_ptr<OrcaMCP::GcodeExportOutcome> outcome = nullptr);
     // Orca: true once the sliced file was written; MCP's export_gcode answers its file dialog
     // (mcp_answer_path_dialog), and a write that failed says so instead of reporting it exported.
     bool export_gcode_3mf(bool export_all = false);

@@ -184,6 +184,7 @@
 #include "FilamentMapDialog.hpp"
 #include "CloneDialog.hpp"
 #include "PurgeModeDialog.hpp"
+#include "OrcaMCP/OrcaMCPCommon.hpp"
 #include "OrcaMCP/OrcaMCPExports.hpp"
 #include "OrcaMCP/OrcaMCPGcodeCheck.hpp"
 #include "OrcaMCP/OrcaMCPModelLoad.hpp"
@@ -7269,6 +7270,8 @@ struct Plater::priv
     //mutable bool    			ready_to_slice = { false };
     // Flag indicating that the G-code export targets a removable device, therefore the show_action_buttons() needs to be called at any case when the background processing finishes.
     ExportingStatus             exporting_status { NOT_EXPORTING };
+    // Orca: the plain G-code export MCP's export_gcode started and waits for, told how it ends on its completion.
+    std::shared_ptr<OrcaMCP::GcodeExportOutcome> mcp_gcode_export;
     std::string                 last_output_path;
     std::string                 last_output_dir_path;
     //BBS store machine_sn and 3mf_path for PrintJob
@@ -12890,6 +12893,12 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
     this->background_process.stop();
     notification_manager->set_slicing_progress_export_possible();
 
+    // Orca: an export MCP's export_gcode started and waits for answers its error in the call; the app's error dialog
+    // for it would wait for a user nobody asked, open after the call has answered. Its words are captured instead.
+    std::optional<OrcaMCP::McpDialogSuppressionGuard> mcp_export_guard;
+    if (mcp_gcode_export && exporting_status != ExportingStatus::NOT_EXPORTING)
+        mcp_export_guard.emplace();
+
     // Reset the "export G-code path" name, so that the automatic background processing will be enabled again.
     this->background_process.reset_export();
     // This bool stops showing export finished notification even when process_completed_with_error is false
@@ -13026,6 +13035,13 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
         }
     }
 
+    // Orca: tell MCP's export_gcode, which waits for the export it started, how it ended.
+    if (mcp_gcode_export && exporting_status != ExportingStatus::NOT_EXPORTING) {
+        using State = OrcaMCP::GcodeExportOutcome::State;
+        mcp_gcode_export->end(evt.error() ? State::failed : evt.cancelled() ? State::cancelled : State::written,
+                              evt.error() ? evt.format_error_message().first : std::string());
+        mcp_gcode_export.reset();
+    }
     exporting_status = ExportingStatus::NOT_EXPORTING;
 
 
@@ -18506,7 +18522,7 @@ void Plater::export_gcode(bool prefer_removable)
 }
 
 // Silent G-code export to a specific file path (for MCP automation)
-std::optional<std::string> Plater::export_gcode_to_file(const std::string& output_path)
+std::optional<std::string> Plater::export_gcode_to_file(const std::string& output_path, std::shared_ptr<OrcaMCP::GcodeExportOutcome> outcome)
 {
     // The failure of the plate being exported -- the selected one -- validated on that plate's own
     // Print, not on whichever Print the background process last pointed at: after a Slice All walk,
@@ -18563,6 +18579,7 @@ std::optional<std::string> Plater::export_gcode_to_file(const std::string& outpu
         p->exporting_status     = ExportingStatus::EXPORTING_TO_LOCAL;
         p->last_output_path     = output_path;
         p->last_output_dir_path = path.parent_path().string();
+        p->mcp_gcode_export     = std::move(outcome);
     } else {
         attempt.validation_error = validation_error();
     }

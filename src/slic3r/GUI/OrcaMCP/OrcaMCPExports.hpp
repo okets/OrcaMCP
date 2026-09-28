@@ -1,10 +1,15 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPExports.hpp
 #pragma once
 
+#include <atomic>
+#include <cstdint>
 #include <functional>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
+
+#include <nlohmann/json.hpp>
 
 // What export_gcode's sliced-file form and export_stl decide before the app writes anything: which
 // file a path asks for, and why a call is refused. No wx and no Plater: the tests drive it with plain
@@ -57,6 +62,42 @@ std::optional<std::string> sliced_file_refusal(const std::vector<SlicedFilePlate
 std::vector<int> sliced_file_plates(const std::vector<SlicedFilePlate>& plates, bool all_plates, int selected_index);
 
 // ---- export_stl --------------------------------------------------------------------------------
+
+// ---- export_gcode's wait for a plain .gcode ------------------------------------------------------
+
+// How a plain G-code export MCP started ended. The app writes the file in the background, as its Export G-code does, and
+// records here how that went when it takes the export's completion in (Plater::priv::on_process_completed), on the main
+// thread; export_gcode reads it on the HTTP thread while it waits. Only the first end counts.
+class GcodeExportOutcome
+{
+public:
+    enum class State
+    {
+        pending,
+        written,   // the file is written
+        failed,    // the export ended in an error: error() has the app's words
+        cancelled, // cancelled before it was written (cancel_slice, the app's Cancel, a new slice)
+        dropped,   // taken off without a completion (a new project, a project opened, the plate list changed)
+    };
+    State       state() const { return m_state.load(std::memory_order_acquire); }
+    std::string error() const;
+    void        end(State state, const std::string& error = {});
+
+private:
+    std::atomic<State> m_state{State::pending};
+    mutable std::mutex m_mutex;
+    std::string        m_error;
+};
+
+// How export_gcode's wait for its export ended: the export ended, the call's wait cap passed first, or the app began quitting.
+enum class GcodeExportWait { ended, timed_out, quitting };
+
+// export_gcode's answer for a plain .gcode once its wait is over: success with output_path and bytes (the file's size,
+// when it is there) once written; error with why when it failed, was cancelled or was taken off; past the cap, the
+// export_started it answered before it waited, with how long it waited and next_steps to wait_for_slice; the app
+// quitting: export_started, finished false. Without active_warnings, which the caller adds.
+nlohmann::json gcode_export_answer(const GcodeExportOutcome& outcome, GcodeExportWait wait, const std::string& output_path,
+                                   std::optional<std::uintmax_t> bytes, double waited_s);
 
 // export_stl's arguments, as the handler read them.
 struct MeshExportRequest

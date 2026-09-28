@@ -197,8 +197,8 @@ std::vector<NextStep> export_next_steps(bool export_started)
     if (!export_started)
         return {};
     return {{"wait_for_slice",
-             "the export has started, not failed: the G-code is still being written in the background, and "
-             "wait_for_slice returns once it is written",
+             "the export has started, not failed: the G-code is still being written in the background, past how long "
+             "export_gcode waits, and wait_for_slice returns once it is written",
              nullptr}};
 }
 

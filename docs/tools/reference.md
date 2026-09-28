@@ -2684,13 +2684,25 @@ cancel only between phases, so on the unoptimized dev build that wait can take a
 Export sliced G-code: a plain `.gcode` of the selected plate, or the plate sliced file (`.gcode.3mf`)
 of the selected plate or of every plate.
 
-A `.gcode` is written asynchronously, as the GUI's Export G-code writes it, so a successful call
-answers `status: "export_started"`, not `"success"`:
+A `.gcode` is written in the background, as the GUI's Export G-code writes it, and the call waits for it
+(on the call's own thread, within the wait cap the bridge sends from `ORCAMCP_TIMEOUT`, as `arrange_objects`
+waits for its job; a quit releases it):
 
 | `status` | Meaning |
 |----------|---------|
-| `export_started` | The app has begun writing the file in the background: not a failure. It is complete once `wait_for_slice` returns (`get_slicing_status`'s `busy` is false again, `busy_reason` was `exporting`); `next_steps` names `wait_for_slice` |
+| `success` | The file is written: `output_path`, `bytes` (its size), `format: "gcode"`, `waited_s` |
+| `export_started` | Still being written past how long the call waits (`finished: false`, `waited_s`): not a failure. It is complete once `wait_for_slice` returns (`get_slicing_status`'s `busy` is false again, `busy_reason` was `exporting`); `next_steps` names `wait_for_slice`. Also with `finished: false` and a `message` when the app began quitting during the wait |
 | `error` | Nothing was written; `message` says why (below) |
+
+```json
+{"status": "success", "output_path": "/tmp/out/box.gcode", "format": "gcode", "bytes": 162448, "waited_s": 0.6,
+ "active_warnings": {"count": 0, "warnings": []}}
+```
+
+Until v2.5.0.6 the call answered `export_started` as soon as the export was scheduled, and an agent that read
+the file then read it half written. An export that started and then failed is an `error` with the app's
+words ("The G-code export failed: Copying of the temporary G-code to the output G-code failed. ..."), one
+cancelled or taken off before it was written (a new project, a project opened) says so.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
@@ -2700,8 +2712,7 @@ answers `status: "export_started"`, not `"success"`:
 
 A path ending in `.3mf` but not `.gcode.3mf` is refused: a project is `export_3mf`'s.
 
-`status: "export_started"` only when the app scheduled the export. An export that did not start is
-`status: "error"` with the reason as `message`: the scene has no objects, "Another export job is
+An export that did not start is `status: "error"` with the reason as `message`: the scene has no objects, "Another export job is
 running." while the previous export is still writing (call it again once `busy` in
 `get_slicing_status` is false), or "the plate failed validation: ..." with the app's words for the
 plate being exported (the selected one, never another plate's) -- the app's export refuses such a
@@ -4160,7 +4171,7 @@ nothing to suggest has no `next_steps`.
 | `slice_all` | `wait_for_slice` | `slicing_started`, or `not_started` with `busy_slicing` (wait, then `slice_all` again) |
 | | `get_slicing_status` | `busy_job`: an arrange, orient or bed fill holds the app, which `wait_for_slice` does not wait for; `slice_all` again once `ui_job` is null |
 | | `get_print_estimate` with the `plate_index` of a sliced plate (the selected one when it has a result) | `already_sliced` |
-| `export_gcode` | `wait_for_slice` | `export_started`: the file is still being written |
+| `export_gcode` | `wait_for_slice` | `export_started`: the file is still being written, past the call's own wait |
 | `cancel_slice` | `wait_for_slice` | the cancelled slice is still stopping: its completion is not taken in yet |
 | `add_layer_gcode`, `delete_layer_gcode` | `slice_all` | the call changed the plate's layer G-code, so it lost its slice |
 | `show_view` | `wait_for_slice` | switching to the Preview tab started a slice of the selected plate |

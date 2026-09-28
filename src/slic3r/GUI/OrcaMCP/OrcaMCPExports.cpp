@@ -1,5 +1,6 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPExports.cpp
 #include "OrcaMCPExports.hpp"
+#include "OrcaMCPNextSteps.hpp"
 
 #include <algorithm>
 #include <set>
@@ -31,6 +32,60 @@ const SlicedFilePlate* plate_at(const std::vector<SlicedFilePlate>& plates, int 
 }
 
 } // namespace
+
+std::string GcodeExportOutcome::error() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_error;
+}
+
+void GcodeExportOutcome::end(State state, const std::string& error)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (m_state.load(std::memory_order_acquire) != State::pending)
+        return;
+    m_error = error;
+    m_state.store(state, std::memory_order_release);
+}
+
+nlohmann::json gcode_export_answer(const GcodeExportOutcome& outcome, GcodeExportWait wait, const std::string& output_path,
+                                   std::optional<std::uintmax_t> bytes, double waited_s)
+{
+    if (wait == GcodeExportWait::timed_out) {
+        nlohmann::json answer = {{"status", "export_started"},
+                                 {"output_path", output_path},
+                                 {"finished", false},
+                                 {"waited_s", waited_s},
+                                 {"note", "The G-code is still being written, past how long this call waits: it is complete once "
+                                          "wait_for_slice returns."}};
+        add_next_steps(answer, export_next_steps(true));
+        return answer;
+    }
+    if (wait == GcodeExportWait::quitting)
+        return {{"status", "export_started"},
+                {"output_path", output_path},
+                {"finished", false},
+                {"message", "OrcaMCP began quitting while the G-code was being written; the file may not be complete"}};
+
+    const std::string not_written = "The G-code export ended and nothing was written to " + output_path + ": ";
+    switch (outcome.state()) {
+    case GcodeExportOutcome::State::written: {
+        nlohmann::json answer = {{"status", "success"}, {"output_path", output_path}, {"format", "gcode"}, {"waited_s", waited_s}};
+        if (bytes)
+            answer["bytes"] = *bytes;
+        return answer;
+    }
+    case GcodeExportOutcome::State::failed: return {{"status", "error"}, {"message", "The G-code export failed: " + outcome.error()}};
+    case GcodeExportOutcome::State::cancelled:
+        return {{"status", "error"},
+                {"message", not_written + "it was cancelled (cancel_slice, the app's Cancel, or a change that restarted the slice)"}};
+    case GcodeExportOutcome::State::dropped:
+    case GcodeExportOutcome::State::pending:
+        return {{"status", "error"},
+                {"message", not_written + "the app took it off (a new project, a project opened, or the plate list changed)"}};
+    }
+    return {{"status", "error"}, {"message", not_written + "unknown"}};
+}
 
 GcodeExportKind gcode_export_kind(const std::string& output_path)
 {

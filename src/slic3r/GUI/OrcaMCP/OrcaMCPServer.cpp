@@ -3469,9 +3469,10 @@ void OrcaMCPServer::register_builtin_tools()
         ToolCategory::Slicing,
         "Write sliced G-code, or a .gcode.3mf",
         "Export sliced G-code. An output_path ending in .gcode writes the selected plate's G-code, as the GUI's "
-        "Export G-code does: status is export_started when the app has begun writing the file in the background -- "
-        "not a failure: the file is complete once wait_for_slice returns (get_slicing_status's busy is false "
-        "again), which next_steps says. An output_path ending in .gcode.3mf writes the plate sliced file (the "
+        "Export G-code does, in the background: the call waits for it and answers success with output_path and bytes "
+        "once the file is written, or error with why (the app's words when the write failed). Past how long a call "
+        "waits it answers export_started, finished false -- not a failure: the file is complete once wait_for_slice "
+        "returns, which next_steps says. An output_path ending in .gcode.3mf writes the plate sliced file (the "
         "G-code inside a 3MF, which printers and the app open as a sliced project), as Export plate sliced "
         "file does, or with all_plates every sliced plate's, as Export all plate sliced file does: written at "
         "once, status success, with the plates it holds; the project keeps its name. The plates must be "
@@ -3502,7 +3503,8 @@ void OrcaMCPServer::register_builtin_tools()
             if (const auto refusal = OrcaMCP::gcode_export_path_refusal(output_path, all_plates))
                 return error_response(*refusal);
             const bool sliced_file = OrcaMCP::gcode_export_kind(output_path) == OrcaMCP::GcodeExportKind::sliced_file;
-            return run_on_main_thread([output_path, all_plates, sliced_file]() {
+            auto       outcome     = std::make_shared<OrcaMCP::GcodeExportOutcome>();
+            nlohmann::json started = run_on_main_thread([output_path, all_plates, sliced_file, outcome]() {
                 Plater* plater = wxGetApp().plater();
                 // Enable dialog suppression to capture any error messages
                 McpDialogSuppressionGuard suppression_guard;
@@ -3518,13 +3520,11 @@ void OrcaMCPServer::register_builtin_tools()
                 nlohmann::json result;
                 // Silent export to specific path. Not started says why: no objects, another export
                 // running, the plate's validation failure, or the app not scheduling it.
-                const std::optional<std::string> not_started = plater->export_gcode_to_file(output_path);
+                const std::optional<std::string> not_started = plater->export_gcode_to_file(output_path, outcome);
                 auto info_messages = suppression_guard.notices();
 
                 if (!not_started) {
                     result["status"] = "export_started";
-                    result["output_path"] = output_path;
-                    result["note"] = "G-code export started. The file will be written asynchronously.";
                 } else {
                     result["status"] = "error";
                     result["message"] = *not_started;
@@ -3533,12 +3533,11 @@ void OrcaMCPServer::register_builtin_tools()
                     result["info_messages"] = info_messages;
                 }
                 // An export the app answered with an error dialog failed, with its words.
-                result = suppression_guard.fail_on_errors(result);
-                if (result["status"] == "error")
-                    result.erase("note");
-                add_next_steps(result, export_next_steps(result["status"] == "export_started"));
-                return result;
+                return suppression_guard.fail_on_errors(result);
             });
+            if (sliced_file || started.value("status", "") != "export_started")
+                return started;
+            return OrcaMCP::wait_for_gcode_export(*outcome, output_path, started);
         }
     });
 

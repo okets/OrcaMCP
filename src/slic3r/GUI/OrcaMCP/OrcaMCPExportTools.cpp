@@ -6,6 +6,7 @@
 #include "OrcaMCPGcodeCheck.hpp"
 #include "OrcaMCPPartEdits.hpp"
 #include "OrcaMCPServer.hpp"
+#include "OrcaMCPUiJob.hpp"
 
 #include "slic3r/GUI/GLCanvas3D.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
@@ -16,6 +17,9 @@
 #include "libslic3r/Model.hpp"
 
 #include <boost/filesystem.hpp>
+
+#include <chrono>
+#include <cmath>
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
@@ -70,6 +74,43 @@ nlohmann::json export_sliced_file(Plater& plater, McpDialogSuppressionGuard& gua
     }
     answer["active_warnings"] = get_active_warnings_json(&plater);
     return guard.fail_on_errors(guard.report(answer));
+}
+
+nlohmann::json wait_for_gcode_export(GcodeExportOutcome& outcome, const std::string& output_path, const nlohmann::json& started)
+{
+    const auto started_at = std::chrono::steady_clock::now();
+    // Ended when the app has told the outcome, or has taken the export off without a completion (reset_export: a new
+    // project, a project opened), which the scheduled path's going says.
+    const auto ended = [&outcome]() {
+        if (outcome.state() != GcodeExportOutcome::State::pending)
+            return true;
+        bool still_scheduled = true;
+        try {
+            still_scheduled = run_on_main_thread([] { return nlohmann::json(wxGetApp().plater()->is_export_gcode_scheduled()); }).get<bool>();
+        } catch (const McpShuttingDown&) {
+            return false; // the wait's own quit check answers it
+        }
+        if (!still_scheduled)
+            outcome.end(GcodeExportOutcome::State::dropped);
+        return !still_scheduled;
+    };
+    const UiJobWait waited = wait_until(ended, tool_wait_cap(), std::chrono::milliseconds(50), [] { wxWakeUpIdle(); });
+    const double    waited_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - started_at).count();
+    const GcodeExportWait wait = waited == UiJobWait::finished  ? GcodeExportWait::ended :
+                                 waited == UiJobWait::quitting  ? GcodeExportWait::quitting :
+                                                                  GcodeExportWait::timed_out;
+    std::optional<std::uintmax_t> bytes;
+    boost::system::error_code     error;
+    if (const auto size = boost::filesystem::file_size(output_path, error); !error)
+        bytes = size;
+    nlohmann::json answer = gcode_export_answer(outcome, wait, output_path, bytes, std::round(waited_s * 10.) / 10.);
+    if (started.contains("info_messages"))
+        answer["info_messages"] = started.at("info_messages");
+    try {
+        answer["active_warnings"] = run_on_main_thread([] { return get_active_warnings_json(wxGetApp().plater()); });
+    } catch (const McpShuttingDown&) {
+    }
+    return answer;
 }
 
 }}} // namespace Slic3r::GUI::OrcaMCP
