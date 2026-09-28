@@ -265,15 +265,28 @@ bool MCPClientConfig::file_content_differs(const std::string& original, const st
     return read_whole_file(original) != read_whole_file(copy);
 }
 
-MCPClientConfig::BridgeCopyDecision MCPClientConfig::bridge_copy_decision(bool own_data_folder, bool agent_launch,
+bool MCPClientConfig::executable_in_build_tree(const std::string& executable)
+{
+    boost::system::error_code ec;
+    for (boost::filesystem::path folder = boost::filesystem::path(executable).parent_path(); !folder.empty();
+         folder = folder.parent_path()) {
+        if (boost::filesystem::exists(folder / "CMakeCache.txt", ec))
+            return true;
+        if (folder == folder.parent_path())
+            break;
+    }
+    return false;
+}
+
+MCPClientConfig::BridgeCopyDecision MCPClientConfig::bridge_copy_decision(bool own_data_folder, bool build_tree,
                                                                           bool content_differs)
 {
     if (own_data_folder)
-        return {false, "it runs on a data folder of its own (--datadir): a test launch leaves ~/.orcamcp to the "
+        return {false, "it runs on a data folder of its own (--datadir), as every test launch does: ~/.orcamcp is "
+                       "left to the installed app, whose bridge the user's own agent sessions run"};
+    if (build_tree)
+        return {false, "it is a build in a source tree (a CMakeCache.txt above it): ~/.orcamcp is left to the "
                        "installed app, whose bridge the user's own agent sessions run"};
-    if (agent_launch)
-        return {false, "an agent launched it (ORCAMCP_SKIP_CLOUD_LOGIN): an agent's launch leaves ~/.orcamcp to "
-                       "the installed app, whose bridge the user's own agent sessions run"};
     if (!content_differs)
         return {false, "~/.orcamcp already holds this app's bridge and tool list"};
     return {true, "~/.orcamcp's bridge or tool list differs from this app's"};
@@ -328,11 +341,12 @@ bool MCPClientConfig::shared_bridge_differs()
     return false;
 }
 
-void MCPClientConfig::refresh_shared_bridge_at_startup(bool own_data_folder, bool agent_launch)
+void MCPClientConfig::refresh_shared_bridge_at_startup(bool own_data_folder, const std::string& executable)
 {
+    const bool build_tree = executable_in_build_tree(executable);
     // Content is read only when it can decide anything: a test launch never looks.
-    const bool                differs  = !own_data_folder && !agent_launch && shared_bridge_differs();
-    const BridgeCopyDecision decision = bridge_copy_decision(own_data_folder, agent_launch, differs);
+    const bool                differs  = !own_data_folder && !build_tree && shared_bridge_differs();
+    const BridgeCopyDecision decision = bridge_copy_decision(own_data_folder, build_tree, differs);
     if (!decision.copy) {
         BOOST_LOG_TRIVIAL(info) << "MCP bridge: ~/.orcamcp left as it is: " << decision.reason;
         return;

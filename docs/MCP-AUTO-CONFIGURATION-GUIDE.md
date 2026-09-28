@@ -883,7 +883,8 @@ App Bundle (dev or prod)                    Shared Location
 - Different builds have different bundle paths
 - Shared `~/.orcamcp/` works regardless of which OrcaSlicer version runs
 - At startup the app copies its bridge and tool list there when either differs in content, so it
-  matches the app the user runs; a test launch (`--datadir`, or an agent's launch) never touches it
+  matches the app the user runs; a test launch (its own `--datadir`, or a build in a source tree) never
+  touches it
   (see CLAUDE.md, "Where `~/.orcamcp` comes from")
 
 ### C++ Implementation Files
@@ -903,8 +904,8 @@ static std::string get_shared_scripts_dir();
 // Copy the bridge script and its tool list from the app bundle when either differs in content
 static bool ensure_bridge_script_copied(std::string& error);
 
-// At startup: the same copy, except from a test launch (own --datadir, or an agent's launch); logged
-static void refresh_shared_bridge_at_startup(bool own_data_folder, bool agent_launch);
+// At startup: the same copy, except from a test launch (own --datadir, or a build in a source tree); logged
+static void refresh_shared_bridge_at_startup(bool own_data_folder, const std::string& executable);
 
 // Get path to bridge script (in shared location)
 static std::string get_bridge_script_path();

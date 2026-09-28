@@ -503,15 +503,17 @@ nothing and looks like the printer was never saved.
 the "Connect" buttons in Preferences point clients at `~/.orcamcp/orcamcp-bridge.py`, and so may a
 user's `~/.claude.json`. The app puts its own bridge and tool list (`orcamcp_tools.json`, which the
 bridge cannot work without) there at startup, both together, and only when either differs **in content**
-(`MCPClientConfig::refresh_shared_bridge_at_startup`): launching the installed app leaves it matching that
-app. Until 2026-09-28 it copied by file date, so every dev-build launch -- every agent's live check --
-replaced the user's bridge, and the installed app, older by date, never put its own back.
+(`MCPClientConfig::refresh_shared_bridge_at_startup`): launching the installed app, by hand or by an
+agent's `start_orca`, leaves it matching that app. Until 2026-09-28 it copied by file date, so every
+dev-build launch -- every agent's live check -- replaced the user's bridge, and the installed app, older by
+date, never put its own back.
 
-A test launch never touches it: one with a data folder of its own (`--datadir`) or an agent's launch
-(`ORCAMCP_SKIP_CLOUD_LOGIN`, `GUI::is_agent_launch()`), whatever the build. The log says, at info, which
-it did and why ("MCP bridge: ~/.orcamcp left as it is: ..." or "... copied ..."). An installed app that
-an agent launches with `start_orca` leaves it alone too; the next launch by hand brings it up to date.
-Connecting a client in Preferences copies by content as well. The instance registry
+A test launch never touches it: one with a data folder of its own (`--datadir`, which every test launch
+has), or of a build in a source tree (a `CMakeCache.txt` in a folder above the program,
+`MCPClientConfig::executable_in_build_tree`). The log says, at info, which it did and why ("MCP bridge:
+~/.orcamcp left as it is: ..." or "... copied ..."). An agent's launch of the installed app copies too:
+`start_orca` launches nothing else, so skipping those left `~/.orcamcp` on an old bridge after an update
+made that way. Connecting a client in Preferences copies by content as well. The instance registry
 (`~/.orcamcp/instances`) is the one thing a test launch writes there, unless `ORCAMCP_INSTANCES_DIR`
 points elsewhere, as the live checks do.
 

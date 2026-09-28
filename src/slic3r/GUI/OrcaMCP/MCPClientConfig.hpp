@@ -81,10 +81,14 @@ public:
 
     // At startup: whether ~/.orcamcp gets this app's bridge, logged either way. The user's own agent
     // sessions run the bridge there, so a test launch never touches it: one on a data folder of its own
-    // (--datadir) or an agent's launch (ORCAMCP_SKIP_CLOUD_LOGIN). Any other launch -- the installed
-    // app's -- leaves it matching this app, by content: every dev-build launch used to replace it, and
-    // the installed app, older by date, never put its own back.
-    static void refresh_shared_bridge_at_startup(bool own_data_folder, bool agent_launch);
+    // (--datadir, which every test launch has) or of a build in a source tree (`executable` under a
+    // CMakeCache.txt). Any other launch -- the installed app's, an agent's start_orca included -- leaves
+    // it matching this app, by content: every dev-build launch used to replace it, and the installed app,
+    // older by date, never put its own back.
+    static void refresh_shared_bridge_at_startup(bool own_data_folder, const std::string& executable);
+
+    // Whether `executable` is a build in a source tree: a folder above it holds a CMakeCache.txt.
+    static bool executable_in_build_tree(const std::string& executable);
 
     struct BridgeCopyDecision
     {
@@ -92,7 +96,7 @@ public:
         std::string reason; // for the log
     };
     // refresh_shared_bridge_at_startup's decision, apart from the files (tested in test_mcp_client_config.cpp).
-    static BridgeCopyDecision bridge_copy_decision(bool own_data_folder, bool agent_launch, bool content_differs);
+    static BridgeCopyDecision bridge_copy_decision(bool own_data_folder, bool build_tree, bool content_differs);
 
     // Whether `copy` holds other bytes than `original`; a missing copy differs.
     static bool file_content_differs(const std::string& original, const std::string& copy);
