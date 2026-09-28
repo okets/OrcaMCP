@@ -850,10 +850,63 @@ TEST_CASE("A plate's filament changes are taken only by layer, out of vase mode,
     CHECK(off(1, 1, true, false) == ToolChangesOff::one_filament);
     CHECK(off(3, 2, true, false) == ToolChangesOff::several_filaments);
     CHECK(off(2, 1, true, false, CustomGCode::MultiExtruder) == ToolChangesOff::other_mode);
-    // The slider hides the ones that print nothing at all; on one filament they print as color changes (M600).
+    // The slider hides the ones that print nothing by object, in vase mode or on several filaments, and shows the rest,
+    // as upstream does: those on one filament or in another mode write nothing either.
     CHECK(CustomGCode::tool_changes_hidden(ToolChangesOff::spiral_vase));
     CHECK(CustomGCode::tool_changes_hidden(ToolChangesOff::several_filaments));
     CHECK(CustomGCode::tool_changes_hidden(ToolChangesOff::by_object));
     CHECK_FALSE(CustomGCode::tool_changes_hidden(ToolChangesOff::one_filament));
     CHECK_FALSE(CustomGCode::tool_changes_hidden(ToolChangesOff::none));
+}
+
+// Each change, as ToolOrdering::collect_extruders takes them in height order: one to the filament already printing
+// there switches nothing.
+TEST_CASE("A filament change to the filament already printing there switches nothing", "[MultiFilament][Print]")
+{
+    using CustomGCode::ToolChangesOff;
+    CustomGCode::Info info;
+    info.mode   = CustomGCode::MultiAsSingle;
+    info.gcodes = {{2.0, CustomGCode::ToolChange, 2, "", ""}, {4.0, CustomGCode::ToolChange, 2, "", ""}, {6.0, CustomGCode::ToolChange, 1, "", ""}};
+    CHECK(CustomGCode::tool_change_effects(info, 2, {1}, true, false) ==
+          std::vector<ToolChangesOff>{ToolChangesOff::none, ToolChangesOff::same_filament, ToolChangesOff::none});
+    CHECK(CustomGCode::tool_change_effects(info, 2, {2}, true, false) ==
+          std::vector<ToolChangesOff>{ToolChangesOff::same_filament, ToolChangesOff::same_filament, ToolChangesOff::none});
+    // A slot the printer lacks is filament 1, as custom_tool_changes reads it.
+    info.gcodes = {{2.0, CustomGCode::ToolChange, 5, "", ""}};
+    CHECK(CustomGCode::tool_change_effects(info, 2, {1}, true, false) == std::vector<ToolChangesOff>{ToolChangesOff::same_filament});
+    // The plate's reason goes to every change, and a pause is no change.
+    info.gcodes = {{1.0, CustomGCode::PausePrint, 1, "", ""}, {2.0, CustomGCode::ToolChange, 2, "", ""}};
+    CHECK(CustomGCode::tool_change_effects(info, 1, {1}, true, false)[1] == ToolChangesOff::one_filament);
+    CHECK(CustomGCode::tool_change_effects(info, 2, {1, 2}, true, false)[1] == ToolChangesOff::several_filaments);
+}
+
+// What the rule follows, in the slicer's own G-code: no filament change becomes a color change (assign_custom_gcodes
+// skips every one, and GCode's emitter asserts none arrives), and one to the filament already printing switches nothing.
+TEST_CASE("A filament change writes nothing on one filament, or to the filament already printing", "[MultiFilament][Print]")
+{
+    const auto sliced = [](const DynamicPrintConfig& config, int object_filament, int change_to,
+                           CustomGCode::Type type = CustomGCode::ToolChange) {
+        Print print;
+        Model model;
+        const std::vector<std::vector<ConfigBase::SetDeserializeItem>> overrides{{{"extruder", object_filament}}};
+        init_print(std::vector<TriangleMesh>{cube(20)}, print, model, config, &overrides);
+        CustomGCode::Info& plate_gcodes = model.plates_custom_gcodes[model.curr_plate_index];
+        plate_gcodes.mode               = CustomGCode::MultiAsSingle;
+        plate_gcodes.gcodes.push_back({6.0, type, change_to, "", ""});
+        print.apply(model, config);
+        return gcode(print);
+    };
+
+    DynamicPrintConfig one = DynamicPrintConfig::full_print_config();
+    one.set_deserialize_strict({{"color_change_gcode", "M600 ; COLOR CHANGE BY THE TEST"}, {"machine_pause_gcode", "M601 ; PAUSE BY THE TEST"}});
+    // As G-code lines, not the config's dump at the end.
+    const std::string on_one = sliced(one, 1, 1);
+    CHECK(on_one.find("\nM600 ; COLOR CHANGE BY THE TEST") == std::string::npos);
+    CHECK(on_one.find("\nM601 ; PAUSE BY THE TEST") == std::string::npos);
+    // Where the same set-up writes a pause, it is found.
+    CHECK(sliced(one, 1, 1, CustomGCode::PausePrint).find("\nM601 ; PAUSE BY THE TEST") != std::string::npos);
+
+    const DynamicPrintConfig two = multifilament_config(2, {});
+    CHECK(tools_for_role(sliced(two, 2, 2), "") == std::set<int>{1});
+    CHECK(tools_for_role(sliced(two, 2, 1), "") == std::set<int>{0, 1}); // the same set-up, a change that switches
 }

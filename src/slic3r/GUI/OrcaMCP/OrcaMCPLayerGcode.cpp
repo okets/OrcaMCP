@@ -23,9 +23,9 @@ std::vector<CustomGCode::Item>::iterator item_at(CustomGCode::Info& info, const 
                         [&](const CustomGCode::Item& item) { return layer_of(layer_zs, item.print_z) == layer; });
 }
 
-// Why the slicer takes no filament change on this plate, in words, or nullopt when it takes them (on a printer of one
-// filament they print as color changes).
-std::optional<std::string> inactive_reason(CustomGCode::ToolChangesOff off)
+// Why a filament change writes nothing in the G-code, in words (CustomGCode::tool_change_effects), or nullopt when it
+// switches the filament.
+std::optional<std::string> inactive_reason(CustomGCode::ToolChangesOff off, const CustomGCode::Item& item)
 {
     switch (off) {
     case CustomGCode::ToolChangesOff::by_object:
@@ -33,16 +33,38 @@ std::optional<std::string> inactive_reason(CustomGCode::ToolChangesOff off)
     case CustomGCode::ToolChangesOff::spiral_vase:
         return std::string("the plate prints in spiral vase mode, where the slicer takes no filament change; it applies again once "
                            "vase mode is off");
+    case CustomGCode::ToolChangesOff::one_filament:
+        return std::string("the project has one filament, so there is nothing to switch to: the slicer writes nothing for it (it "
+                           "turns no filament change into a color change)");
     case CustomGCode::ToolChangesOff::several_filaments:
         return std::string("the plate's objects print with several filaments, and the slicer takes a filament change only on a plate "
                            "printed with one");
     case CustomGCode::ToolChangesOff::other_mode:
         return std::string("it was recorded in another filament mode (an older project's), which the slicer skips; delete_layer_gcode "
                            "and add_layer_gcode record it anew");
-    case CustomGCode::ToolChangesOff::none:
-    case CustomGCode::ToolChangesOff::one_filament: break;
+    case CustomGCode::ToolChangesOff::same_filament:
+        return "it changes to filament " + std::to_string(item.extruder) +
+               ", which already prints there (the objects' own below the first change, the previous change's above it), so the "
+               "G-code has no switch for it";
+    case CustomGCode::ToolChangesOff::none: break;
     }
     return std::nullopt;
+}
+
+// What each item of `info` writes, as the slicer takes them (CustomGCode::tool_change_effects), or nullopt for a
+// filament change where only the filaments the plate's objects print could tell and they are not known.
+std::vector<std::optional<CustomGCode::ToolChangesOff>> filament_change_effects(const LayerGcodeRules& rules, const CustomGCode::Info& info)
+{
+    if (rules.object_filaments) {
+        const std::vector<CustomGCode::ToolChangesOff> effects =
+            CustomGCode::tool_change_effects(info, rules.slots.slots(), *rules.object_filaments, !rules.by_object, rules.spiral_vase);
+        return {effects.begin(), effects.end()};
+    }
+    std::vector<std::optional<CustomGCode::ToolChangesOff>> effects(info.gcodes.size());
+    if (const std::optional<CustomGCode::ToolChangesOff> plate = filament_changes_off(rules, info.mode))
+        for (std::size_t i = 0; i < info.gcodes.size(); ++i)
+            effects[i] = *plate;
+    return effects;
 }
 
 // What the menu offers for a filament change on this plate (the menu's extruder_num > 1, and IMSlider::m_can_change_color,
@@ -177,7 +199,7 @@ std::optional<std::size_t> layer_of(const std::vector<double>& layer_zs, double 
 std::optional<CustomGCode::ToolChangesOff> filament_changes_off(const LayerGcodeRules& rules, CustomGCode::Mode mode)
 {
     // What does not depend on the objects' filaments comes first in the rule; the rest needs their count.
-    const CustomGCode::ToolChangesOff off = CustomGCode::tool_changes_off(mode, rules.slots.slots(), rules.object_filaments.value_or(1),
+    const CustomGCode::ToolChangesOff off = CustomGCode::tool_changes_off(mode, rules.slots.slots(), rules.object_filaments ? rules.object_filaments->size() : 1,
                                                                           !rules.by_object, rules.spiral_vase);
     if (!rules.object_filaments && (off == CustomGCode::ToolChangesOff::none || off == CustomGCode::ToolChangesOff::other_mode))
         return std::nullopt;
@@ -261,8 +283,7 @@ std::optional<SliceLayersStamp> slice_layers_stamp(const Print& print)
     return stamp;
 }
 
-nlohmann::json layer_gcode_json(const CustomGCode::Item& item, const std::vector<double>* layer_zs, const LayerGcodeRules* rules,
-                                CustomGCode::Mode mode)
+nlohmann::json layer_gcode_json(const CustomGCode::Item& item, const std::vector<double>* layer_zs)
 {
     const std::optional<std::size_t> layer = layer_zs != nullptr ? layer_of(*layer_zs, item.print_z) : std::nullopt;
     nlohmann::json                   json  = {
@@ -274,26 +295,43 @@ nlohmann::json layer_gcode_json(const CustomGCode::Item& item, const std::vector
         json["filament"] = item.extruder;
     if (item.type == CustomGCode::Custom)
         json["gcode"] = item.extra;
-    if (item.type == CustomGCode::ToolChange && rules != nullptr) {
-        const std::optional<CustomGCode::ToolChangesOff> off = filament_changes_off(*rules, mode);
-        if (!off) {
-            json["active"] = nullptr; // known once the plate is the current one, sliced as the settings are now
-        } else if (const std::optional<std::string> why = inactive_reason(*off)) {
-            json["active"]          = false;
-            json["inactive_reason"] = *why;
-        } else {
-            json["active"] = true;
-        }
-    }
     return json;
 }
 
 nlohmann::json layer_gcodes_json(const CustomGCode::Info& info, const std::vector<double>* layer_zs, const LayerGcodeRules* rules)
 {
+    const std::vector<std::optional<CustomGCode::ToolChangesOff>> effects =
+        rules != nullptr ? filament_change_effects(*rules, info) : std::vector<std::optional<CustomGCode::ToolChangesOff>>{};
     nlohmann::json list = nlohmann::json::array();
-    for (const CustomGCode::Item& item : info.gcodes)
-        list.push_back(layer_gcode_json(item, layer_zs, rules, info.mode));
+    for (std::size_t i = 0; i < info.gcodes.size(); ++i) {
+        const CustomGCode::Item& item = info.gcodes[i];
+        nlohmann::json           json = layer_gcode_json(item, layer_zs);
+        if (item.type == CustomGCode::ToolChange && rules != nullptr) {
+            const bool past_last_layer = layer_zs != nullptr && !layer_of(*layer_zs, item.print_z);
+            const std::optional<std::string> why =
+                past_last_layer ? std::optional<std::string>("it is above the plate's last layer, which the slicer never reaches") :
+                effects[i]      ? inactive_reason(*effects[i], item) :
+                                  std::nullopt;
+            if (why) {
+                json["active"]          = false;
+                json["inactive_reason"] = *why;
+            } else {
+                // null: known once the plate is the current one, sliced as the settings are now
+                json["active"] = effects[i] ? nlohmann::json(true) : nlohmann::json(nullptr);
+            }
+        }
+        list.push_back(std::move(json));
+    }
     return list;
+}
+
+nlohmann::json layer_gcode_in(const CustomGCode::Info& info, const CustomGCode::Item& item, const std::vector<double>* layer_zs,
+                              const LayerGcodeRules* rules)
+{
+    const auto at = std::find(info.gcodes.begin(), info.gcodes.end(), item);
+    if (at == info.gcodes.end())
+        return layer_gcode_json(item, layer_zs);
+    return layer_gcodes_json(info, layer_zs, rules).at(std::size_t(at - info.gcodes.begin()));
 }
 
 }}} // namespace Slic3r::GUI::OrcaMCP

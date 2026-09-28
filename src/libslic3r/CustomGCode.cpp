@@ -1,4 +1,6 @@
 #include "CustomGCode.hpp"
+
+#include <algorithm>
 #include "Config.hpp"
 #include "GCode.hpp"
 #include "GCodeWriter.hpp"
@@ -84,6 +86,32 @@ ToolChangesOff tool_changes_off(Mode mode, size_t num_filaments, size_t object_f
     if (mode != MultiAsSingle)
         return ToolChangesOff::other_mode;
     return ToolChangesOff::none;
+}
+
+std::vector<ToolChangesOff> tool_change_effects(const Info& info, size_t num_filaments, const std::vector<int>& object_filaments,
+                                                bool by_layer, bool spiral_vase)
+{
+    std::vector<ToolChangesOff> effects(info.gcodes.size(), ToolChangesOff::none);
+    std::vector<size_t>         changes;
+    for (size_t i = 0; i < info.gcodes.size(); ++i)
+        if (info.gcodes[i].type == ToolChange)
+            changes.push_back(i);
+    const ToolChangesOff plate = tool_changes_off(info.mode, num_filaments, object_filaments.size(), by_layer, spiral_vase);
+    if (plate != ToolChangesOff::none) {
+        for (size_t i : changes)
+            effects[i] = plate;
+        return effects;
+    }
+    std::stable_sort(changes.begin(), changes.end(), [&info](size_t a, size_t b) { return info.gcodes[a].print_z < info.gcodes[b].print_z; });
+    const int objects_own = object_filaments.front();
+    int       printing    = objects_own;
+    for (size_t i : changes) {
+        const int named = info.gcodes[i].extruder;
+        const int to    = named <= 0 ? objects_own : size_t(named) > num_filaments ? 1 : named;
+        effects[i]      = to == printing ? ToolChangesOff::same_filament : ToolChangesOff::none;
+        printing        = to;
+    }
+    return effects;
 }
 
 } // namespace CustomGCode

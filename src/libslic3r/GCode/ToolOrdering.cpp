@@ -3186,10 +3186,7 @@ void ToolOrdering::assign_custom_gcodes(const Print &print)
 	// or vice versa.
 	bool 						ignore_tool_and_color_changes = (mode == CustomGCode::MultiExtruder) != (model_mode == CustomGCode::MultiExtruder);
 	// If printing on a single extruder machine, make the tool changes trigger color change (M600) events.
-	// Orca: not in spiral vase mode, where a plate's filament changes print nothing (CustomGCode::tool_changes_off) and
-	// the Preview's slider hides them.
-	bool 						tool_changes_as_color_changes = mode == CustomGCode::SingleExtruder && model_mode == CustomGCode::MultiAsSingle &&
-	                                                            !print.config().spiral_mode.value;
+	bool 						tool_changes_as_color_changes = mode == CustomGCode::SingleExtruder && model_mode == CustomGCode::MultiAsSingle;
 
 	// From the last layer to the first one:
     coordf_t print_z_above = std::numeric_limits<coordf_t>::lowest();

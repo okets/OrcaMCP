@@ -39,7 +39,8 @@ LayerGcodeRules rules(std::size_t slots = 2, std::vector<int> plate_filaments = 
     // As the slicer would count them, from the plate's filaments (tests with a feature's filament set their own).
     std::vector<int> distinct = rules.plate_filaments;
     std::sort(distinct.begin(), distinct.end());
-    rules.object_filaments      = std::size_t(std::unique(distinct.begin(), distinct.end()) - distinct.begin());
+    distinct.erase(std::unique(distinct.begin(), distinct.end()), distinct.end());
+    rules.object_filaments      = distinct;
     rules.template_gcode_empty  = false;
     return rules;
 }
@@ -109,7 +110,7 @@ TEST_CASE("a filament change is offered only where the slicer would take it", "[
     CustomGCode::Info info;
     LayerGcodeChange  change;
     LayerGcodeRules   walls_on_2 = rules(3, {1});
-    walls_on_2.object_filaments  = 2; // the parts print with filament 1, their walls with filament 2
+    walls_on_2.object_filaments  = std::vector<int>{1, 2}; // the parts print with filament 1, their walls with filament 2
     CHECK(mentions(add_layer_gcode(info, k_layers, 2, change_to(3), walls_on_2, change), "prints with several"));
     // The plate's own vase mode, which the tools read from the plate (PartPlate::get_spiral_vase_mode).
     LayerGcodeRules vase = rules(3, {1});
@@ -167,6 +168,44 @@ TEST_CASE("a filament change says whether the slicer takes it, and why not", "[L
     info.mode = CustomGCode::MultiExtruder;
     CHECK(change_of(rules()).at("active") == false);
     CHECK(change_of(rules()).at("inactive_reason").get<std::string>().find("another filament mode") != std::string::npos);
+}
+
+// The slicer turns no filament change into a color change: ToolOrdering::assign_custom_gcodes skips them all, and
+// GCode's custom G-code emitter asserts none arrives. So on a project of one filament -- after a slot was deleted,
+// say -- a filament change writes nothing, and one to the filament already printing there switches nothing. Both
+// were reported active.
+TEST_CASE("a filament change that writes nothing in the G-code is reported inactive, with why", "[LayerGcode][orcamcp]")
+{
+    CustomGCode::Info info;
+    info.mode   = CustomGCode::MultiAsSingle;
+    info.gcodes = {{1.0, CustomGCode::ToolChange, 1, "#FF0000", ""}};
+
+    // Two slots, the object on slot 2 and a change to slot 1; slot 2 deleted: one slot left, the object on it.
+    const LayerGcodeRules one_slot = rules(1, {1});
+    const nlohmann::json  one      = layer_gcodes_json(info, &k_layers, &one_slot).at(0);
+    CHECK(one.at("active") == false);
+    CHECK(one.at("inactive_reason").get<std::string>().find("one filament") != std::string::npos);
+
+    // Two slots, the objects on slot 1: a change to slot 1 switches nothing.
+    const LayerGcodeRules on_1  = rules(2, {1});
+    const nlohmann::json  same  = layer_gcodes_json(info, &k_layers, &on_1).at(0);
+    CHECK(same.at("active") == false);
+    CHECK(same.at("inactive_reason").get<std::string>().find("already prints") != std::string::npos);
+
+    // To 2, then back to 1: both switch.
+    info.gcodes = {{0.4, CustomGCode::ToolChange, 2, "#00FF00", ""}, {1.0, CustomGCode::ToolChange, 1, "#FF0000", ""}};
+    const nlohmann::json both = layer_gcodes_json(info, &k_layers, &on_1);
+    CHECK(both.at(0).at("active") == true);
+    CHECK(both.at(1).at("active") == true);
+    // To 2 twice: the second switches nothing.
+    info.gcodes[1].extruder = 2;
+    CHECK(layer_gcodes_json(info, &k_layers, &on_1).at(1).at("active") == false);
+
+    // Above the plate's last layer the slicer never reaches it.
+    info.gcodes = {{5.0, CustomGCode::ToolChange, 2, "#00FF00", ""}};
+    const nlohmann::json above = layer_gcodes_json(info, &k_layers, &on_1).at(0);
+    CHECK(above.at("active") == false);
+    CHECK(above.at("inactive_reason").get<std::string>().find("last layer") != std::string::npos);
 }
 
 TEST_CASE("nothing goes at a layer of a plate printed by object", "[LayerGcode][orcamcp]")

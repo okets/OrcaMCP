@@ -232,14 +232,16 @@ not yet applied, or a plate other than the current one, whose layers may be an o
 `type` (`pause`, `filament_change` with its `filament`, `custom` with its `gcode`, `template`, or
 `color_change` from an older project). `add_layer_gcode` and `delete_layer_gcode` change them.
 
-A filament change also says whether the slicer takes it: `active` true, or false with `inactive_reason`,
-or null while not known (a plate other than the current one, whose objects' filaments only its Print can
-count). The slicer takes none on a plate printed by object, in spiral vase mode (the plate's own or the print
-preset's), on a plate whose objects print with several filaments (a part, a painting, a mixed slot's
-components count once, a feature's filament such as its walls' counts where the feature prints), or one
-recorded in another filament mode (an older project's). Those print nothing, and the Preview's layer slider
-hides them, except the last, which it shows; they stay in the project, and a vase plate's apply again once
-vase mode is off. On a printer of one filament a filament change prints as a color change (M600).
+A filament change also says whether the G-code has a switch for it, as the slicer takes them: `active`
+true, or false with `inactive_reason`, or null while not known (a plate other than the current one, whose
+objects' filaments only its Print can count). It has none on a plate printed by object, in spiral vase mode
+(the plate's own or the print preset's), on a plate whose objects print with several filaments (a part, a
+painting, a mixed slot's components count once, a feature's filament such as its walls' counts where the
+feature prints), on a project of one filament (the slicer turns no filament change into a color change), for
+one recorded in another filament mode (an older project's), for one to the filament already printing there
+(the objects' own below the first change, the previous change's above it), and for one above the plate's
+last layer. The Preview's layer slider hides the first three and shows the rest, as upstream does; they all
+stay in the project, and a vase plate's apply again once vase mode is off.
 
 With a prime tower printed, `prime_tower` also carries `position` (the front-left corner of the tower
 body), `position_is`, `size`, `brim_width_mm`, `body`, `footprint`, `footprint_includes_brim` and a

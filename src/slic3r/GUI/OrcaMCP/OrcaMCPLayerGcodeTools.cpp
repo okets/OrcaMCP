@@ -96,8 +96,11 @@ LayerGcodeRules layer_gcode_rules(Plater& plater, PartPlate& plate)
     rules.plate_filaments = plate.get_extruders_without_support();
     // As the Preview's slider decides (Preview::update_layers_slider_mode): the Print's own count, and the plate's
     // own vase mode, else the print preset's.
-    if (plate_print_is_current(plater, plate))
-        rules.object_filaments = plate.fff_print()->object_extruders().size();
+    if (plate_print_is_current(plater, plate)) {
+        std::vector<int>& filaments = rules.object_filaments.emplace();
+        for (unsigned int filament : plate.fff_print()->object_extruders())
+            filaments.push_back(int(filament) + 1);
+    }
     rules.spiral_vase          = plate.get_spiral_vase_mode();
     rules.by_object            = plate.get_real_print_seq() == PrintSequence::ByObject;
     rules.template_gcode_empty = config.opt_string("template_custom_gcode").empty();
@@ -292,9 +295,9 @@ nlohmann::json layer_gcode_on_main_thread(const LayerGcodeCall& call, bool add)
     }
 
     nlohmann::json answer = {{"status", "success"}, {"changed", change.changed}, {"plate_index", plate_index}};
-    answer[add ? "added" : "deleted"] = layer_gcode_json(change.item, &*zs, &rules, info.mode);
+    answer[add ? "added" : "deleted"] = layer_gcode_in(info, change.item, &*zs, &rules);
     if (change.replaced)
-        answer["replaced"] = layer_gcode_json(*change.replaced, &*zs, &rules, info.mode);
+        answer["replaced"] = layer_gcode_json(*change.replaced, &*zs);
     answer["layer_gcodes"]       = layer_gcodes_json(info, &*zs, &rules);
     answer["slice_result_valid"] = plate.is_slice_result_valid();
     if (add && change.item.type == CustomGCode::PausePrint && wxGetApp().preset_bundle->full_config().opt_string("machine_pause_gcode").empty())
