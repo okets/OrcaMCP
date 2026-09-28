@@ -380,8 +380,37 @@ TEST_CASE("a plate's filament change counts as a filament it uses only where the
     by_object.set_deserialize_strict({{"print_sequence", "by object"}});
     CHECK(plate.get_extruders(true, by_object, project) == std::vector<int>{1});
 
+    // In vase mode, the plate's own or the print preset's, the slicer takes no filament change.
+    DynamicPrintConfig vase = by_layer;
+    vase.set_deserialize_strict({{"spiral_mode", 1}});
+    CHECK(plate.get_extruders(true, vase, project) == std::vector<int>{1});
+    plate.config()->set_key_value("spiral_mode", new ConfigOptionBool(true));
+    CHECK(plate.get_extruders(true, by_layer, project) == std::vector<int>{1});
+    plate.config()->erase("spiral_mode");
+
     Vec3d beside = plate_list_fixtures::centre_of(*plates, 0);
     beside.x() += 40.;
     plate_list_fixtures::add_cube(model, *plates, {beside}).config.set_key_value("extruder", new ConfigOptionInt(2));
     CHECK(plate.get_extruders(true, by_layer, project) == std::vector<int>{1, 2});
+}
+
+// A feature's filament (sparse infill, walls, top and bottom surfaces) prints only where the feature does -- no sparse
+// infill at 0 % --, which the slicer knows from each region (Print::object_extruders) and the plate cannot. The plate
+// counted the preset's sparse infill filament as one its objects print, dropped the filament change the slicer takes,
+// and listed a filament that does not print instead. It now decides by the filaments its objects print whatever their
+// features do (their parts' and layer ranges'), so it lists a change the slicer may take rather than miss one it does.
+TEST_CASE("a plate lists a filament change the slicer may take, though a feature names another filament", "[LayerGcode][orcamcp]")
+{
+    Model model;
+    auto  plates = plate_list_fixtures::plate_list_for(model, 1);
+    plate_list_fixtures::add_cube(model, *plates, {plate_list_fixtures::centre_of(*plates, 0)})
+        .config.set_key_value("sparse_infill_density", new ConfigOptionPercent(0));
+    model.plates_custom_gcodes[0] = {CustomGCode::MultiAsSingle, {{6.0, CustomGCode::ToolChange, 3, "#0000FF", ""}}};
+    DynamicPrintConfig project;
+    project.set_key_value("filament_colour", new ConfigOptionStrings({"#FF0000", "#00FF00", "#0000FF"}));
+    DynamicPrintConfig preset = DynamicPrintConfig::full_print_config();
+    preset.set_deserialize_strict({{"sparse_infill_filament_id", 2}});
+
+    const std::vector<int> listed = plates->get_plate(0)->get_extruders(true, preset, project);
+    CHECK(std::find(listed.begin(), listed.end(), 3) != listed.end()); // the slicer prints filament 3 from 6 mm
 }

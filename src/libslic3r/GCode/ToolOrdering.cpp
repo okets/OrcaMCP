@@ -553,8 +553,8 @@ ToolOrdering::ToolOrdering(const Print &print, unsigned int first_extruder, bool
 	if (auto num_filaments = unsigned(print.config().filament_diameter.size());
         // Orca: the one rule, which Print::extruders and PartPlate::get_extruders count the filament changes by too.
         //BBS: replace model custom gcode with current plate custom gcode
-        CustomGCode::tool_changes_apply(print.model().get_curr_plate_custom_gcodes(), num_filaments, print.object_extruders().size(),
-                                        /*by_layer=*/true)) {
+        CustomGCode::tool_changes_apply(print.model().get_curr_plate_custom_gcodes().mode, num_filaments, print.object_extruders().size(),
+                                        /*by_layer=*/true, print.config().spiral_mode.value)) {
 		// Printing a single extruder platter on a printer with more than 1 extruder (or single-extruder multi-material).
 		// There may be custom per-layer tool changes available at the model.
         per_layer_extruder_switches = custom_tool_changes(print.model().get_curr_plate_custom_gcodes(), num_filaments);
@@ -3186,7 +3186,10 @@ void ToolOrdering::assign_custom_gcodes(const Print &print)
 	// or vice versa.
 	bool 						ignore_tool_and_color_changes = (mode == CustomGCode::MultiExtruder) != (model_mode == CustomGCode::MultiExtruder);
 	// If printing on a single extruder machine, make the tool changes trigger color change (M600) events.
-	bool 						tool_changes_as_color_changes = mode == CustomGCode::SingleExtruder && model_mode == CustomGCode::MultiAsSingle;
+	// Orca: not in spiral vase mode, where a plate's filament changes print nothing (CustomGCode::tool_changes_off) and
+	// the Preview's slider hides them.
+	bool 						tool_changes_as_color_changes = mode == CustomGCode::SingleExtruder && model_mode == CustomGCode::MultiAsSingle &&
+	                                                            !print.config().spiral_mode.value;
 
 	// From the last layer to the first one:
     coordf_t print_z_above = std::numeric_limits<coordf_t>::lowest();

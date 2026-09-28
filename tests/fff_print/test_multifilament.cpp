@@ -811,3 +811,49 @@ TEST_CASE("A filament change counts as a filament the plate uses only where the 
         CHECK(print.extruders(true) == std::vector<unsigned int>{0});
     }
 }
+
+// Upstream's Preview erased a plate's filament changes in spiral vase mode, but only once the plate was shown; the
+// slicer took them all the same, with no prime tower (spiral mode has none): a vase plate printed a filament change
+// the slider hides, and a project opened with one printed it without the Preview ever erasing it. The slicer now
+// takes none on a vase plate, whatever was shown, as the slider hides them; they apply again when vase mode is off.
+TEST_CASE("A filament change on a spiral vase plate prints nothing, as the slider hides it", "[MultiFilament][Print]")
+{
+    const DynamicPrintConfig config = multifilament_config(2, {{"spiral_mode", 1},
+                                                               {"wall_loops", 1},
+                                                               {"top_shell_layers", 0},
+                                                               {"sparse_infill_density", "0%"},
+                                                               {"enable_support", 0},
+                                                               {"skirt_loops", 0},
+                                                               {"brim_type", "no_brim"}});
+    Print print;
+    Model model;
+    init_print({cube(20)}, print, model, config);
+    CustomGCode::Info& plate_gcodes = model.plates_custom_gcodes[model.curr_plate_index];
+    plate_gcodes.mode               = CustomGCode::MultiAsSingle;
+    plate_gcodes.gcodes.push_back({6.0, CustomGCode::ToolChange, 2, "#00FF00", ""});
+    print.apply(model, config);
+
+    CHECK(print.extruders(true) == std::vector<unsigned int>{0});
+    CHECK(tools_for_role(gcode(print), "") == std::set<int>{0}); // every extrusion on filament 1
+}
+
+// The one rule the slicer, the plate's filament list, the Preview's slider and MCP's layer_gcodes share.
+TEST_CASE("A plate's filament changes are taken only by layer, out of vase mode, on one of several filaments", "[MultiFilament][Print]")
+{
+    using CustomGCode::ToolChangesOff;
+    const auto off = [](size_t filaments, size_t object_filaments, bool by_layer, bool vase, CustomGCode::Mode mode = CustomGCode::MultiAsSingle) {
+        return CustomGCode::tool_changes_off(mode, filaments, object_filaments, by_layer, vase);
+    };
+    CHECK(off(2, 1, true, false) == ToolChangesOff::none);
+    CHECK(off(2, 1, false, false) == ToolChangesOff::by_object);
+    CHECK(off(2, 1, true, true) == ToolChangesOff::spiral_vase);
+    CHECK(off(1, 1, true, false) == ToolChangesOff::one_filament);
+    CHECK(off(3, 2, true, false) == ToolChangesOff::several_filaments);
+    CHECK(off(2, 1, true, false, CustomGCode::MultiExtruder) == ToolChangesOff::other_mode);
+    // The slider hides the ones that print nothing at all; on one filament they print as color changes (M600).
+    CHECK(CustomGCode::tool_changes_hidden(ToolChangesOff::spiral_vase));
+    CHECK(CustomGCode::tool_changes_hidden(ToolChangesOff::several_filaments));
+    CHECK(CustomGCode::tool_changes_hidden(ToolChangesOff::by_object));
+    CHECK_FALSE(CustomGCode::tool_changes_hidden(ToolChangesOff::one_filament));
+    CHECK_FALSE(CustomGCode::tool_changes_hidden(ToolChangesOff::none));
+}

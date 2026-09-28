@@ -286,6 +286,8 @@ public:
 
     bool has_spiral_mode_config() const;
     bool get_spiral_vase_mode() const;
+    // Orca: the plate's own vase mode, else `global_config`'s (the print preset's, which the no-argument form reads).
+    bool get_spiral_vase_mode(const DynamicPrintConfig& global_config) const;
     void set_spiral_vase_mode(bool spiral_mode, bool as_global);
 
     std::vector<Vec2d> get_plate_wrapping_detection_area() const;

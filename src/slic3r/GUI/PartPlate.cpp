@@ -358,15 +358,16 @@ bool PartPlate::has_spiral_mode_config() const
 
 bool PartPlate::get_spiral_vase_mode() const
 {
+	return get_spiral_vase_mode(wxGetApp().preset_bundle->prints.get_edited_preset().config);
+}
+
+bool PartPlate::get_spiral_vase_mode(const DynamicPrintConfig& global_config) const
+{
 	std::string key = "spiral_mode";
-	if (m_config.has(key)) {
+	if (m_config.has(key))
 		return m_config.opt_bool(key);
-	}
-	else {
-		DynamicPrintConfig* global_config = &wxGetApp().preset_bundle->prints.get_edited_preset().config;
-		if (global_config->has(key))
-			return global_config->opt_bool(key);
-	}
+	if (global_config.has(key))
+		return global_config.opt_bool(key);
 	return false;
 }
 
@@ -1573,8 +1574,11 @@ std::vector<int> PartPlate::get_extruders(bool conside_custom_gcode, const Dynam
 	bool glb_support = glb_config.opt_bool("enable_support");
     glb_support |= glb_config.opt_int("raft_layers") > 0;
 
-	// Orca: support apart, to tell the filaments the objects print with (Print::object_extruders).
-	std::vector<int> support_extruders;
+	// Orca: the filaments the objects print whatever their features do -- their parts' and layer ranges', which
+	// Print::object_extruders counts whatever the regions hold --, to tell whether the slicer may take the plate's
+	// filament changes (below). A feature's filament prints only where the feature does, which only the slicer's
+	// regions know.
+	std::vector<int> object_filaments;
 	for (int obj_idx = 0; obj_idx < m_model->objects.size(); obj_idx++) {
 		// Any instance on the plate counts, as PrintApply does: after an arrange, instance 0
 		// can sit on a different plate.
@@ -1585,13 +1589,16 @@ std::vector<int> PartPlate::get_extruders(bool conside_custom_gcode, const Dynam
 		for (ModelVolume* mv : mo->volumes) {
 			std::vector<int> volume_extruders = mv->get_extruders();
 			plate_extruders.insert(plate_extruders.end(), volume_extruders.begin(), volume_extruders.end());
+			object_filaments.insert(object_filaments.end(), volume_extruders.begin(), volume_extruders.end());
 		}
 
 		// layer range
         for (auto layer_range : mo->layer_config_ranges) {
             if (layer_range.second.has("extruder")) {
-                if (auto id = layer_range.second.option("extruder")->getInt(); id > 0)
+                if (auto id = layer_range.second.option("extruder")->getInt(); id > 0) {
 					plate_extruders.push_back(id);
+					object_filaments.push_back(id);
+				}
 			}
 		}
 
@@ -1613,18 +1620,18 @@ std::vector<int> PartPlate::get_extruders(bool conside_custom_gcode, const Dynam
             if (support_intf_extr_opt != nullptr)
                 obj_support_intf_extr = support_intf_extr_opt->getInt();
             if (obj_support_intf_extr != 0)
-                support_extruders.push_back(obj_support_intf_extr);
+                plate_extruders.push_back(obj_support_intf_extr);
             else if (glb_support_intf_extr != 0)
-                support_extruders.push_back(glb_support_intf_extr);
+                plate_extruders.push_back(glb_support_intf_extr);
 
             int                 obj_support_extr = 0;
             const ConfigOption* support_extr_opt = mo->config.option("support_filament");
             if (support_extr_opt != nullptr)
                 obj_support_extr = support_extr_opt->getInt();
             if (obj_support_extr != 0)
-                support_extruders.push_back(obj_support_extr);
+                plate_extruders.push_back(obj_support_extr);
             else if (glb_support_extr != 0)
-                support_extruders.push_back(glb_support_extr);
+                plate_extruders.push_back(glb_support_extr);
         }
 
 		int obj_outer_wall_extr = 0;
@@ -1688,25 +1695,24 @@ std::vector<int> PartPlate::get_extruders(bool conside_custom_gcode, const Dynam
 
 	}
 
-	std::vector<int> object_filaments = plate_extruders;
 	sort_remove_duplicates(object_filaments);
-	plate_extruders.insert(plate_extruders.end(), support_extruders.begin(), support_extruders.end());
 
 	if (conside_custom_gcode) {
 		//BBS
         int nums_extruders = 0;
         if (const ConfigOptionStrings *color_option = dynamic_cast<const ConfigOptionStrings *>(project_config.option("filament_colour"))) {
             nums_extruders = color_option->values.size();
-			// Orca: only the filament changes the slicer applies (CustomGCode::tool_changes_apply): the others print
-			// nothing, and counted they made a filament the plate never prints used.
+			// Orca: only the filament changes the slicer may take (CustomGCode::tool_changes_apply): the others print
+			// nothing, and counted they made a filament the plate never prints used. The objects' filaments here are
+			// the fewest the slicer counts (a feature's may add one), so a change it may take is listed, never missed.
 			PrintSequence sequence = get_print_seq();
 			if (sequence == PrintSequence::ByDefault)
 				if (const auto* global = glb_config.option<ConfigOptionEnum<PrintSequence>>("print_sequence"))
 					sequence = global->value;
 			const auto plate_gcodes = m_model->plates_custom_gcodes.find(m_plate_index);
 			if (plate_gcodes != m_model->plates_custom_gcodes.end() &&
-				CustomGCode::tool_changes_apply(plate_gcodes->second, size_t(nums_extruders), object_filaments.size(),
-												sequence != PrintSequence::ByObject)) {
+				CustomGCode::tool_changes_apply(plate_gcodes->second.mode, size_t(nums_extruders), object_filaments.size(),
+												sequence != PrintSequence::ByObject, get_spiral_vase_mode(glb_config))) {
 				for (auto item : plate_gcodes->second.gcodes) {
 					if (item.type == CustomGCode::Type::ToolChange && item.extruder <= nums_extruders)
 						plate_extruders.push_back(item.extruder);

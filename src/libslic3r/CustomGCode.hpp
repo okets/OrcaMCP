@@ -124,10 +124,31 @@ extern void check_mode_for_custom_gcode_per_print_z(Info& info);
 // print_z corresponds to the first layer printed with the new extruder.
 std::vector<std::pair<double, unsigned int>> custom_tool_changes(const Info& custom_gcode_per_print_z, size_t num_extruders);
 
-// Orca: whether the slicer takes a plate's filament changes (its ToolChange items) at all: only on a print by
-// layer, on a printer of several filaments, whose objects all print with one filament, recorded in
-// MultiAsSingle mode (ToolOrdering). Any other prints nothing, and is not a filament the plate uses.
-bool tool_changes_apply(const Info& info, size_t num_filaments, size_t object_filaments, bool by_layer);
+// Orca: why the slicer does not take a plate's filament changes (its ToolChange items) as filament switches, or
+// none when it does: only on a print by layer, out of spiral vase mode, on a printer of several filaments, whose
+// objects all print with one filament, recorded in MultiAsSingle mode (ToolOrdering). One rule for the slicer, the
+// filaments a plate lists (Print::extruders, PartPlate::get_extruders), the Preview's slider and MCP.
+enum class ToolChangesOff
+{
+    none,
+    by_object,         // the plate prints one object after another
+    spiral_vase,       // the plate prints in spiral vase mode
+    one_filament,      // the printer has one filament: the changes print as color changes (M600) instead
+    several_filaments, // the plate's objects print with several filaments
+    other_mode,        // recorded in another mode (an older project's), which the slicer skips
+};
+ToolChangesOff tool_changes_off(Mode mode, size_t num_filaments, size_t object_filaments, bool by_layer, bool spiral_vase);
+inline bool    tool_changes_apply(Mode mode, size_t num_filaments, size_t object_filaments, bool by_layer, bool spiral_vase)
+{
+    return tool_changes_off(mode, num_filaments, object_filaments, by_layer, spiral_vase) == ToolChangesOff::none;
+}
+// Whether the plate's filament changes print nothing at all, which the Preview's slider hides: by object, in vase
+// mode, or on a plate that prints with several filaments. A slider that showed them, or hid one that prints, would
+// not show what the plate prints.
+inline bool tool_changes_hidden(ToolChangesOff off)
+{
+    return off == ToolChangesOff::by_object || off == ToolChangesOff::spiral_vase || off == ToolChangesOff::several_filaments;
+}
 
 } // namespace CustomGCode
 

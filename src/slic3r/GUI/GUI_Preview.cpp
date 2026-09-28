@@ -468,15 +468,20 @@ void Preview::update_layers_slider_mode()
     bool can_change_color = true;
     // extruder used for whole model for multi-extruder printer profile
     int only_extruder = -1;
+    const PartPlate* plate = wxGetApp().plater()->get_partplate_list().get_curr_plate();
 
     // BBS
     if (wxGetApp().filaments_cnt() > 1) {
         //const ModelObjectPtrs& objects = wxGetApp().plater()->model().objects;
-        auto plate_extruders = wxGetApp().plater()->get_partplate_list().get_curr_plate()->get_extruders_without_support();
-        for (auto extruder : plate_extruders) {
-            if (extruder != plate_extruders[0])
-                can_change_color = false;
-        }
+        auto plate_extruders = plate->get_extruders_without_support();
+        // Orca: filament changes are offered and shown where the slicer takes them, by its own rule and the filaments
+        // the shown plate's objects print, from its Print (features and mixed slots as it counts them). The plate's
+        // parts' filaments, which upstream compared, hid a change that a mixed slot's plate prints, and showed one
+        // that a feature's filament keeps from printing.
+        const Print& print = *m_process->fff_print();
+        can_change_color   = !CustomGCode::tool_changes_hidden(
+            CustomGCode::tool_changes_off(CustomGCode::MultiAsSingle, size_t(wxGetApp().filaments_cnt()), print.object_extruders().size(),
+                                          plate->get_real_print_seq() != PrintSequence::ByObject, plate->get_spiral_vase_mode()));
         // check if whole model uses just only one extruder
         if (!plate_extruders.empty()) {
             //const int extruder = objects[0]->config.has("extruder") ? objects[0]->config.option("extruder")->getInt() : 0;
@@ -503,9 +508,7 @@ void Preview::update_layers_slider_mode()
 
     IMSlider *m_layers_slider = m_canvas->get_gcode_viewer().get_layers_slider();
     // Orca: the plate's own vase mode, which may differ from the print preset's.
-    const PartPlate *plate = wxGetApp().plater()->get_partplate_list().get_curr_plate();
-    m_layers_slider->SetModeAndOnlyExtruder(one_extruder_printed_model, only_extruder, can_change_color,
-                                            plate != nullptr && plate->get_spiral_vase_mode());
+    m_layers_slider->SetModeAndOnlyExtruder(one_extruder_printed_model, only_extruder, can_change_color, plate->get_spiral_vase_mode());
 }
 
 void Preview::update_layers_slider_from_canvas(wxKeyEvent &event)

@@ -71,9 +71,19 @@ std::vector<std::pair<double, unsigned int>> custom_tool_changes(const Info& cus
     return custom_tool_changes;
 }
 
-bool tool_changes_apply(const Info& info, size_t num_filaments, size_t object_filaments, bool by_layer)
+ToolChangesOff tool_changes_off(Mode mode, size_t num_filaments, size_t object_filaments, bool by_layer, bool spiral_vase)
 {
-    return by_layer && num_filaments > 1 && object_filaments == 1 && info.mode == MultiAsSingle;
+    if (!by_layer)
+        return ToolChangesOff::by_object;
+    if (spiral_vase)
+        return ToolChangesOff::spiral_vase;
+    if (num_filaments <= 1)
+        return ToolChangesOff::one_filament;
+    if (object_filaments != 1)
+        return ToolChangesOff::several_filaments;
+    if (mode != MultiAsSingle)
+        return ToolChangesOff::other_mode;
+    return ToolChangesOff::none;
 }
 
 } // namespace CustomGCode
