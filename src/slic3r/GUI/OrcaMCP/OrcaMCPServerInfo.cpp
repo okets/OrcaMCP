@@ -539,6 +539,7 @@ Start with get_scene_info (plates, objects, each object's object_id). Key tools:
 - Slicing: slice_all, then wait_for_slice (no polling); get_print_estimate, export_gcode.
 - Seeing results: render_plate_view (its layer_view draws a sliced layer's toolpaths).
 - Printers: get_printer_status, send_to_printer.
+- Several OrcaMCP windows: list_instances, select_instance.
 
 Responses may carry next_steps: the tool to call next, and why.
 

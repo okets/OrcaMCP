@@ -27,7 +27,7 @@
 │                         OrcaSlicer Application                               │
 │                                                                              │
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │                    HTTP Server (Port 13618)                          │    │
+│  │              HTTP Server (first free port, 13618-13627)              │    │
 │  │                                                                      │    │
 │  │  Routes:                                                             │    │
 │  │  • /mcp          → OrcaMCPServer (MCP protocol)                     │    │
@@ -127,7 +127,7 @@
 ```
 1. Claude Code sends MCP request to bridge stdin
 2. Bridge reads JSON-RPC request
-3. Bridge POSTs to http://localhost:13618/mcp
+3. Bridge POSTs to the chosen instance, http://127.0.0.1:13618/mcp (or its own port, 13619-13627)
 4. HTTP server routes to OrcaMCPServer::handle_request()
 5. Server parses JSON-RPC, dispatches to tools/call
 6. Tool handler executes via run_on_main_thread()

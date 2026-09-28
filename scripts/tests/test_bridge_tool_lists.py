@@ -116,7 +116,8 @@ class FailedLiveToolsListTests(unittest.TestCase):
     def test_a_live_answer_still_gets_the_bridge_tools(self):
         manifest = load_manifest()
         response = self.bridge.settle_tools_list(simulated_live_response(self.bridge, manifest))
-        self.assertEqual(response["result"]["tools"][0]["name"], "start_orca")
+        bridge_names = [t["name"] for t in manifest["bridge_tools"]]
+        self.assertEqual([t["name"] for t in response["result"]["tools"][:len(bridge_names)]], bridge_names)
 
 
 # Every way the golden file can be unusable. None of them may stop the bridge from starting, or from

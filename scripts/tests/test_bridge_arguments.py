@@ -56,7 +56,7 @@ class BridgeToolArgumentTests(unittest.TestCase):
         with mock.patch.object(self.bridge, "launch_orcamcp") as launch:
             response = call(self.bridge, "start_orca", {"path": "/Applications/OrcaMCP.app"})
         launch.assert_not_called()
-        self.assert_refused(response, 'start_orca has no argument "path". It takes no arguments.')
+        self.assert_refused(response, 'start_orca has no argument "path". Its arguments: new_instance.')
 
     def test_arguments_that_are_not_an_object_are_refused(self):
         for arguments, kind in (([5], "array"), ("5", "string"), (5, "number"), (True, "boolean")):

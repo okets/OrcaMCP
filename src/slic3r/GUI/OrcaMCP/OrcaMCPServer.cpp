@@ -5592,11 +5592,61 @@ void OrcaMCPServer::register_bridge_tools()
         "start_orca",
         ToolCategory::Info,
         "Launch OrcaMCP and wait until it is up",
-        "Start the OrcaMCP application. Use this first when OrcaMCP is not running. The tool will launch "
-        "OrcaMCP and wait for it to be ready. Once started, all other tools become available.",
+        "Start the OrcaMCP application and wait until it is ready; this session's calls then go to it. It "
+        "launches the installed app, or ORCAMCP_APP_PATH, never a build in a source folder. When the "
+        "instance this session uses runs, or exactly one runs and none is chosen yet, it launches nothing "
+        "and answers already_running. When several run and none is chosen, it launches nothing and lists "
+        "them: choose one with select_instance. new_instance: true always launches another window. The "
+        "answer names the instance: its pid, port, program, data folder and open project.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"new_instance", {
+                    {"type", "boolean"},
+                    {"description", "Launch another OrcaMCP window even when one runs (default false). "
+                                    "This session then uses the new one."}
+                }}
+            }}
+        }
+    });
+
+    // list_instances / select_instance - several OrcaMCP windows can run at once, each with its MCP server
+    // on its own port (OrcaMCPPortChoice.hpp). The bridge finds them in the instance registry
+    // (OrcaMCPInstanceRegistry.hpp) and sends every call to the one it chose.
+    register_bridge_tool({
+        "list_instances",
+        ToolCategory::Info,
+        "List the running OrcaMCP windows",
+        "List every running OrcaMCP window (instance): its pid, port, version, program and data folder, "
+        "the project it has open (name, path, unsaved changes), whether it is busy, and which one this "
+        "session's calls go to (selected). Several can run at once, each on its own port from 13618 to "
+        "13627. An OrcaMCP older than 2.5.0.6 is listed as legacy: it tells neither its pid nor its project. "
+        "Instances that share a data folder are marked, since the settings either one saves can overwrite "
+        "the other's. Switch with select_instance.",
         {
             {"type", "object"},
             {"properties", nlohmann::json::object()}
+        }
+    });
+
+    register_bridge_tool({
+        "select_instance",
+        ToolCategory::Info,
+        "Choose which OrcaMCP window to drive",
+        "Send this session's calls to one running OrcaMCP window, chosen by exactly one of pid, port or "
+        "project (its open project's name or full path, as list_instances shows them). It answers with the "
+        "instance, confirmed by its identity, and the one used before. A call that would reach any other "
+        "instance is refused unrun. When the chosen window's build has other tools, tool_list_changed is "
+        "true and the client reloads the tool list.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"pid", {{"type", "integer"}, {"description", "The instance's process id."}}},
+                {"port", {{"type", "integer"}, {"description", "The port its MCP server listens on."}}},
+                {"project", {{"type", "string"},
+                             {"description", "Its open project's name (any case) or full path. Refused when "
+                                             "several instances match."}}}
+            }}
         }
     });
 
