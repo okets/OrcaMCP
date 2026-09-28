@@ -204,7 +204,7 @@ and a stray shell; the object list's warning icon shows for it):
   "untracked_modal_loop": false,
   "active_warnings": {"count": 1, "warnings": [{
     "level": "warning", "type": "MeshErrors", "object_id": 0, "object_name": "gallows.stl",
-    "message": "Error: 3 non-manifold edges. MCP cannot repair a mesh: the GUI's repair is not exposed. Slicing closes each layer's outline across gaps of up to 2 mm, so a hole that small usually prints closed; a wider one can leave that outline out of a layer, so check the sliced preview there. Details: get_mesh_health {object_id: 0}."}]},
+    "message": "Error: 3 non-manifold edges. MCP has no repair tool, but the user can repair the object in the app, on every platform: the object list's warning icon runs Repair, which splits the mesh into its parts, drops parts with no volume and closes each part's holes. Slicing also closes each layer's outline across gaps of up to 2 mm, so a hole that small usually prints closed; a wider one can leave that outline out of a layer, so check the sliced preview there. Details: get_mesh_health {object_id: 0}."}]},
   "next_steps": [
     {"tool": "get_mesh_health", "arguments": {"object_id": 0},
      "why": "object 0 (\"gallows.stl\") shows the mesh warning icon: Error: 3 non-manifold edges."},
@@ -629,7 +629,9 @@ The icon state and its tooltip come from the object list's own code (`mesh_error
 open edges or recorded repairs. `tooltip` is the icon's tooltip word for word, in the app's
 language -- its last line, "Click the icon to repair model object", is for the GUI;
 `mesh_warning_reason` is the one line the sidebar shows. A flagged object also gets `advice`, what an
-agent can do: MCP cannot repair a mesh, and slicing closes each layer's outline across gaps of up to
+agent can do: MCP has no repair tool, but the user can repair the object from the object list's
+warning icon (Repair, CGAL-based, on every platform: it splits the mesh into its parts, drops parts with
+no volume and closes each part's holes); and slicing closes each layer's outline across gaps of up to
 2 mm (`TriangleMeshSlicer`), so a small hole usually prints closed and a wider one may not. A mesh
 that is only repaired (no open edges) prints as it is.
 
@@ -663,7 +665,7 @@ that is only repaired (no open edges) prints as it is.
   "mesh_warning": true,
   "tooltip": "Remaining errors:\n\t3 non-manifold edges\n\nClick the icon to repair model object",
   "mesh_warning_reason": "Error: 3 non-manifold edges.",
-  "advice": "MCP cannot repair a mesh: the GUI's repair is not exposed. Slicing closes each layer's outline across gaps of up to 2 mm, so a hole that small usually prints closed; a wider one can leave that outline out of a layer, so check the sliced preview there.",
+  "advice": "MCP has no repair tool, but the user can repair the object in the app, on every platform: the object list's warning icon runs Repair, which splits the mesh into its parts, drops parts with no volume and closes each part's holes. Slicing also closes each layer's outline across gaps of up to 2 mm, so a hole that small usually prints closed; a wider one can leave that outline out of a layer, so check the sliced preview there.",
   "summary": {"facets": 1215, "shells": 2, "open_edges": 3, "manifold": false, "repaired": false,
               "errors_repaired": 0,
               "repaired_errors": {"edges_fixed": 0, "degenerate_facets": 0, "facets_removed": 0,
@@ -3012,7 +3014,7 @@ Many tools return an `active_warnings` section in their response, providing visi
 | `SlicingSeriousWarning` | Serious slicing issue |
 | `ValidateError` | Validation failed |
 | `PlaterWarning` | General plater warning |
-| `MeshErrors` | The object list shows its warning icon for an object: open edges or recorded repairs. Only `get_scene_info` (every flagged object) and `load_model` (the flagged objects it added) report it, because no tool can clear it. `message` gives the list's reason and what an agent can do (MCP cannot repair; slicing closes each layer's outline across gaps up to 2 mm); the entry also carries `object_id` and `object_name`. `get_mesh_health` has the numbers |
+| `MeshErrors` | The object list shows its warning icon for an object: open edges or recorded repairs. Only `get_scene_info` (every flagged object) and `load_model` (the flagged objects it added) report it, because no tool can clear it. `message` gives the list's reason and what an agent can do (MCP has no repair tool, but the user can repair the object from the object list's warning icon, on every platform; slicing closes each layer's outline across gaps up to 2 mm); the entry also carries `object_id` and `object_name`. `get_mesh_health` has the numbers |
 
 **Note:** The `count` field is always present (even when 0) to help agents confirm issues have been resolved.
 

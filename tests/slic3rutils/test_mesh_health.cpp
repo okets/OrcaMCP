@@ -381,15 +381,20 @@ TEST_CASE("get_mesh_health leaves the tooltip and reason out of a row without th
 }
 
 // The object list's "Click the icon to repair model object" is advice for a mouse. What an agent is
-// told instead: MCP cannot repair, and what the slicer does with such a mesh.
+// told instead: MCP has no repair tool, the user's Repair, and what the slicer does with such a mesh.
 TEST_CASE("An agent is told what it can do about a flagged mesh, never to click the icon", "[MeshHealth][orcamcp]")
 {
     OnePartObject hole{TriangleMesh(cube_missing_facet())};
     OnePartObject repaired{TriangleMesh(its_make_cube(10.0, 10.0, 10.0), reversed_facets(1))};
     OnePartObject clean{TriangleMesh(its_make_cube(10.0, 10.0, 10.0))};
 
+    // MCP has no repair tool, but the user has one on every platform: the object list's Repair (CGAL,
+    // ObjectList::fix_through_cgal). "Cannot repair" alone was read as "no repair exists", and an agent
+    // told a user repair works only on Windows.
     const std::string hole_advice = mesh_warning_advice(object_mesh_health(*hole.object));
-    CHECK(hole_advice.find("cannot repair") != std::string::npos);
+    CHECK(hole_advice.find("no repair tool") != std::string::npos);
+    CHECK(hole_advice.find("the user") != std::string::npos);
+    CHECK(hole_advice.find("every platform") != std::string::npos);
     CHECK(hole_advice.find("2 mm") != std::string::npos);  // the slicer's per-layer gap closing
     CHECK(hole_advice.find("Click") == std::string::npos);
 
