@@ -131,7 +131,7 @@ nlohmann::json delete_filament_slot(DeleteSlotRequest request)
     nlohmann::json answer = {{"status", "success"},
                              {"deleted_slot", request.slot},
                              {"renumbered", renumbered_after_delete(before.slots(), request.slot)},
-                             {"objects_changed", objects_changed(filaments_before, objects_filaments())}};
+                             {"objects_changed", objects_changed(filaments_before, objects_filaments(), request.slot)}};
     if (request.merge_into) {
         answer["merged_into"]     = *request.merge_into;
         // The slot it merged into, as numbered now.
@@ -203,7 +203,8 @@ void OrcaMCPServer::register_filament_tools()
         "Delete a filament slot, physical or mixed, as its Delete in the sidebar does: its objects, parts and painted facets "
         "move to slot 1, and every later slot moves down one (objects and paint with it). With merge_into, as its Merge with "
         "does: its objects and paint move to that slot instead. Answers deleted_slot, renumbered ({from, to}), objects_changed "
-        "(each object whose filaments changed, before and after), merged_into / merged_into_now, and filaments. Every plate "
+        "(each object that printed with the slot: its filaments before, and after, as numbered then), merged_into / "
+        "merged_into_now, and filaments. Every plate "
         "loses its slice; no undo step, as in the app. Refused: the last physical slot; a physical slot of a printer with "
         "one filament per extruder; a slot a mixed slot is made of, which breaks the mix, unless allow_breaking_mix; deleting slot 1 "
         "(or the only slot using the Filament settings' preset) while those settings have unsaved changes, which the app "

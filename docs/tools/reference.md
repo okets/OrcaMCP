@@ -2934,8 +2934,10 @@ wrote a part's number into its object).
   "filaments": [...]
 }
 ```
-`objects_changed` is every object whose effective filaments changed, before and after. Every plate
-loses its slice; no undo step, as in the app.
+`objects_changed` is every object that printed with the deleted slot (a part, a modifier or painted
+facets on it count): its effective filaments before, and after, numbered as they are then. An object on
+other slots only is renumbered, which `renumbered` says. Every plate loses its slice; no undo step, as
+in the app.
 
 Refused, changing nothing: a slot out of range, or `merge_into` out of range or the slot itself; the
 project's last physical slot; a physical slot of a printer whose slots follow its extruders; a slot a

@@ -67,8 +67,10 @@ bool delete_reselects_edited_preset(const FilamentSlotsState& state, std::size_t
 nlohmann::json renumbered_after_add(const FilamentSlotsState& before);
 nlohmann::json renumbered_after_delete(std::size_t slots_before, int deleted_slot);
 
-// [{object_id, filaments_before, filaments_after}] for every object whose effective filaments changed.
-nlohmann::json objects_changed(const std::vector<std::vector<int>>& before, const std::vector<std::vector<int>>& after);
+// [{object_id, filaments_before, filaments_after}] for every object that printed with the deleted slot
+// `deleted_slot` (1-based): its effective filaments before the delete, and after, numbered as they are
+// then. An object on other slots only is renumbered, not changed: `renumbered` says how.
+nlohmann::json objects_changed(const std::vector<std::vector<int>>& before, const std::vector<std::vector<int>>& after, int deleted_slot);
 
 // Which slot's preset apply_config's filament settings go to, as the slot's Edit points the Filament
 // settings at it.

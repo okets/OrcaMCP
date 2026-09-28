@@ -269,9 +269,11 @@ TEST_CASE("an add or a delete says which slots it renumbered", "[FilamentSlots]"
     CHECK(renumbered_after_delete(4, 2) == json::array({{{"from", 3}, {"to", 2}}, {{"from", 4}, {"to", 3}}}));
     CHECK(renumbered_after_delete(4, 4) == json::array());
 
-    CHECK(objects_changed({{1}, {1, 3}, {2}}, {{1}, {1, 2}, {1}}) ==
-          json::array({{{"object_id", 1}, {"filaments_before", {1, 3}}, {"filaments_after", {1, 2}}},
-                       {{"object_id", 2}, {"filaments_before", {2}}, {"filaments_after", {1}}}}));
+    // Slot 2 goes: object 2 printed with it and moved to slot 1; object 1's slot 3 is renumbered, not changed.
+    CHECK(objects_changed({{1}, {1, 3}, {2}}, {{1}, {1, 2}, {1}}, 2) ==
+          json::array({{{"object_id", 2}, {"filaments_before", {2}}, {"filaments_after", {1}}}}));
+    // Merged into slot 3, which is 2 now: the same number, another filament, and still a change.
+    CHECK(objects_changed({{2}}, {{2}}, 2) == json::array({{{"object_id", 0}, {"filaments_before", {2}}, {"filaments_after", {2}}}}));
 }
 
 TEST_CASE("a slot's filament settings are edited in that slot's preset", "[FilamentSlots]")

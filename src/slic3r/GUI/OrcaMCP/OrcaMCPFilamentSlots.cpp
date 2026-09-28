@@ -154,11 +154,11 @@ json renumbered_after_delete(std::size_t slots_before, int deleted_slot)
     return moves;
 }
 
-json objects_changed(const std::vector<std::vector<int>>& before, const std::vector<std::vector<int>>& after)
+json objects_changed(const std::vector<std::vector<int>>& before, const std::vector<std::vector<int>>& after, int deleted_slot)
 {
     json changed = json::array();
     for (std::size_t i = 0; i < before.size() && i < after.size(); ++i)
-        if (before[i] != after[i])
+        if (std::find(before[i].begin(), before[i].end(), deleted_slot) != before[i].end())
             changed.push_back({{"object_id", int(i)}, {"filaments_before", before[i]}, {"filaments_after", after[i]}});
     return changed;
 }
