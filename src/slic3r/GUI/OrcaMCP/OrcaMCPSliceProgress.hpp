@@ -430,7 +430,7 @@ inline SliceStartReport judge_slice_start(const SliceStartSignals& signals)
                 "get_print_estimate reads it."};
     if (signals.ui_job_running)
         return {SliceStart::not_started, "busy_job",
-                "Another job (an arrange or an orient) is running, so the slice could not start: poll "
+                "Another job (an arrange, an orient or a bed fill) is running, so the slice could not start: poll "
                 "get_slicing_status until ui_job is null, then call slice_all again."};
     if (const std::optional<SliceStartReport> refusal = pre_slice_refusal(signals))
         return *refusal;

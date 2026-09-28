@@ -182,7 +182,7 @@ std::vector<NextStep> slice_start_next_steps(const SliceStartReport& report, std
                  nullptr}};
     if (report.reason == "busy_job")
         return {{"get_slicing_status",
-                 "an arrange or an orient holds the app, which wait_for_slice does not wait for: call slice_all again once "
+                 "an arrange, an orient or a bed fill holds the app, which wait_for_slice does not wait for: call slice_all again once "
                  "get_slicing_status's ui_job is null",
                  nullptr}};
     if (report.reason == "already_sliced" && sliced_plate)

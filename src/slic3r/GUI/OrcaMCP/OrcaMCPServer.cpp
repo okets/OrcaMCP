@@ -3009,8 +3009,8 @@ void OrcaMCPServer::register_builtin_tools()
         "selected. status says what happened: slicing_started, or not_started with a reason and a "
         "message: busy_slicing (the pipeline is busy -- get_slicing_status's busy: a slice or Slice All "
         "run, an export, an upload, or the last slice still stopping; nothing is started -- call "
-        "wait_for_slice, then slice_all again), already_sliced (nothing to do), busy_job (an arrange or an "
-        "orient holds the app: poll get_slicing_status until ui_job is null, then slice_all again), "
+        "wait_for_slice, then slice_all again), already_sliced (nothing to do), busy_job (an arrange, an "
+        "orient or a bed fill holds the app: poll get_slicing_status until ui_job is null, then slice_all again), "
         "invalid (the app refuses the plate as it stands -- its validation, an object "
         "partly off the plate, a filament check, missing plugins, a broken mixed filament, or a last "
         "slice that failed; message says which, in the app's words for a validation failure), "
@@ -3427,8 +3427,8 @@ void OrcaMCPServer::register_builtin_tools()
         "language; null when idle). busy says whether the slicing pipeline is busy, and busy_reason "
         "with what: slicing, exporting, uploading, or stopping (the last slice's completion is not "
         "taken in yet); slice_all starts nothing while it is, and wait_for_slice waits it out. ui_job "
-        "names a job holding the app apart from slicing: arranging or orienting (one a tool started and "
-        "is past its wait), other (one the GUI started), or null; slice_all's busy_job means one. "
+        "names a job holding the app apart from slicing: arranging, orienting or filling_bed (one a tool "
+        "started and is past its wait), other (one the GUI started, or the arrange a bed fill starts), or null; slice_all's busy_job means one. "
         "slice_run says how the last slice_all run stands: scope, the "
         "plates it asked for, skipped (those of them with nothing on them to slice), and outcome running, "
         "done, ended_early or incomplete (also when no plate had anything to slice), judged by its plates "
@@ -4932,7 +4932,7 @@ void OrcaMCPServer::register_builtin_tools()
         ToolCategory::Transforms,
         "Copy an object as instances or objects",
         "Clone object. duplicate=true for independent copies. The copies are placed by an arrange of the "
-        "destination plate, and the answer comes once it has been applied: objects lists every object on "
+        "destination plate, one undo step with the copies, and the answer comes once it has been applied: objects lists every object on "
         "that plate with its placement. Past the bridge's cap the arrange is still running (status "
         "arrange_started, finished false; get_slicing_status's ui_job says when it has finished); refused, "
         "with nothing copied, while another job runs.",
@@ -5010,10 +5010,14 @@ void OrcaMCPServer::register_builtin_tools()
                         throw std::runtime_error("Invalid destination_plate: " + std::to_string(actual_destination) +
                                                  " (only " + std::to_string(plate_count) + " plates exist)");
                     }
-                    // Select destination plate before cloning
+                    // Select destination plate before cloning; selecting is not an edit of its own.
+                    Plater::SuppressSnapshots not_an_edit(plater);
                     plater->select_plate(actual_destination);
                 }
 
+                // One undo step for the copies and the arrange that places them, taken before either: the
+                // arrange's own step came after the copies, so undo took back only the arrange.
+                plater->take_snapshot("Selection-clone");
                 ModelObject* obj = model.objects[object_id];
 
                 if (duplicate) {
@@ -5052,7 +5056,7 @@ void OrcaMCPServer::register_builtin_tools()
 
                     // Arrange to place the new objects on the destination plate
                     scope   = current_plate_objects(*plater);
-                    outcome = start_ui_job(*plater, UiJobKind::arrange, Job::PREPARE_STATE_MENU);
+                    outcome = start_ui_job(*plater, UiJobKind::arrange, Job::PREPARE_STATE_MENU, /*take_snapshot=*/false);
 
                     // Build enhanced response with clear metadata
                     result = {
@@ -5105,7 +5109,7 @@ void OrcaMCPServer::register_builtin_tools()
 
                     // Arrange to place the new instances on the destination plate
                     scope   = current_plate_objects(*plater);
-                    outcome = start_ui_job(*plater, UiJobKind::arrange, Job::PREPARE_STATE_MENU);
+                    outcome = start_ui_job(*plater, UiJobKind::arrange, Job::PREPARE_STATE_MENU, /*take_snapshot=*/false);
 
                     // Build enhanced response with clear metadata
                     result = {

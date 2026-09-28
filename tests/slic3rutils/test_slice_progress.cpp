@@ -116,7 +116,7 @@ TEST_CASE("a run whose plates all have a result is done", "[orcamcp][SliceProgre
 
 TEST_CASE("a Slice All run that stopped early reports that, with the app's reason", "[orcamcp][SliceProgress]")
 {
-    const std::string       reason = "Slice All stopped at plate 1: another job (an arrange or an orient) was running";
+    const std::string       reason = "Slice All stopped at plate 1: another job (an arrange, an orient or a bed fill) was running";
     const SliceRunJudgement judged = judge_slice_run(/*run_known=*/true, /*slicing=*/false, {sliced_plate(0), unsliced_plate(1)}, reason);
     CHECK(judged.outcome == SliceRunOutcome::ended_early);
     CHECK(judged.message == reason);

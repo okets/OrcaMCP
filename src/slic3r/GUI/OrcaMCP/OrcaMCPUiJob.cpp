@@ -16,10 +16,30 @@ constexpr std::chrono::milliseconds k_default_tool_wait_cap{105000};
 constexpr double                    k_max_tool_wait_cap_s = 3600.0;
 thread_local std::chrono::milliseconds t_tool_wait_cap{k_default_tool_wait_cap};
 
-// "arrange" / "orient", as the tools' statuses spell it.
-const char* noun(UiJobKind kind) { return kind == UiJobKind::arrange ? "arrange" : "orient"; }
-// "arranging" / "orienting", as get_slicing_status's ui_job spells it.
-const char* running_name(UiJobKind kind) { return kind == UiJobKind::arrange ? "arranging" : "orienting"; }
+// "arrange" / "orient" / "fill_bed", as the tools' statuses spell it.
+const char* status_noun(UiJobKind kind)
+{
+    switch (kind) {
+    case UiJobKind::orient: return "orient";
+    case UiJobKind::fill_bed: return "fill_bed";
+    case UiJobKind::arrange: break;
+    }
+    return "arrange";
+}
+// "arrange" / "orient" / "bed fill", as the messages say it.
+const char* noun(UiJobKind kind) { return kind == UiJobKind::fill_bed ? "bed fill" : status_noun(kind); }
+// "arranging" / "orienting" / "filling_bed", as get_slicing_status's ui_job spells it.
+const char* running_name(UiJobKind kind)
+{
+    switch (kind) {
+    case UiJobKind::orient: return "orienting";
+    case UiJobKind::fill_bed: return "filling_bed";
+    case UiJobKind::arrange: break;
+    }
+    return "arranging";
+}
+// The same in words: "filling the bed".
+std::string running_words(UiJobKind kind) { return kind == UiJobKind::fill_bed ? "filling the bed" : running_name(kind); }
 
 std::string what(const std::exception_ptr& eptr)
 {
@@ -81,20 +101,15 @@ void ReportingJob::finalize(bool canceled, std::exception_ptr& eptr)
                    error);
 }
 
-UiJobWait wait_for_ui_job(const UiJobOutcome&          outcome,
-                          std::chrono::milliseconds    cap,
-                          std::chrono::milliseconds    poll,
-                          const std::function<void()>& nudge)
+UiJobWait wait_until(const std::function<bool()>& done,
+                     std::chrono::milliseconds    cap,
+                     std::chrono::milliseconds    poll,
+                     const std::function<void()>& nudge)
 {
     const auto deadline = std::chrono::steady_clock::now() + cap;
     for (;;) {
-        switch (outcome.state()) {
-        case UiJobOutcome::State::finished: return UiJobWait::finished;
-        case UiJobOutcome::State::cancelled: return UiJobWait::cancelled;
-        case UiJobOutcome::State::failed: return UiJobWait::failed;
-        case UiJobOutcome::State::dropped: return UiJobWait::dropped;
-        case UiJobOutcome::State::pending: break;
-        }
+        if (done())
+            return UiJobWait::finished;
         if (this_thread_cancelled())
             return UiJobWait::quitting;
         const auto now = std::chrono::steady_clock::now();
@@ -106,9 +121,27 @@ UiJobWait wait_for_ui_job(const UiJobOutcome&          outcome,
     }
 }
 
+UiJobWait wait_for_ui_job(const UiJobOutcome&          outcome,
+                          std::chrono::milliseconds    cap,
+                          std::chrono::milliseconds    poll,
+                          const std::function<void()>& nudge)
+{
+    const UiJobWait waited = wait_until([&outcome] { return outcome.state() != UiJobOutcome::State::pending; }, cap, poll, nudge);
+    if (waited != UiJobWait::finished)
+        return waited;
+    switch (outcome.state()) {
+    case UiJobOutcome::State::cancelled: return UiJobWait::cancelled;
+    case UiJobOutcome::State::failed: return UiJobWait::failed;
+    case UiJobOutcome::State::dropped: return UiJobWait::dropped;
+    default: break;
+    }
+    return UiJobWait::finished;
+}
+
 nlohmann::json ui_job_unfinished_json(UiJobKind kind, UiJobWait wait, double waited_s, const std::string& error)
 {
     const std::string job = noun(kind);
+    const std::string status = std::string(status_noun(kind)) + "_started";
     switch (wait) {
     case UiJobWait::cancelled:
         return {{"status", "cancelled"},
@@ -121,14 +154,14 @@ nlohmann::json ui_job_unfinished_json(UiJobKind kind, UiJobWait wait, double wai
     case UiJobWait::failed: return {{"status", "error"}, {"message", "The " + job + " failed: " + error}};
     case UiJobWait::timed_out: {
         const std::string running = running_name(kind);
-        return {{"status", job + "_started"},
+        return {{"status", status},
                 {"finished", false},
                 {"ui_job", running},
-                {"message", "Still " + running + " after " + seconds_text(waited_s) + " s: get_slicing_status's ui_job stays \"" +
+                {"message", "Still " + running_words(kind) + " after " + seconds_text(waited_s) + " s: get_slicing_status's ui_job stays \"" +
                                 running + "\" until it has finished; then get_scene_info reads the result."}};
     }
     case UiJobWait::quitting:
-        return {{"status", job + "_started"},
+        return {{"status", status},
                 {"finished", false},
                 {"message", "OrcaMCP began quitting while the " + job + " ran, so it may not have finished."}};
     case UiJobWait::finished: break;
@@ -138,7 +171,7 @@ nlohmann::json ui_job_unfinished_json(UiJobKind kind, UiJobWait wait, double wai
 
 std::string ui_job_busy_message(const std::string& tool)
 {
-    return "another job (an arrange or an orient) is running: poll get_slicing_status until ui_job is null, then call " + tool +
+    return "another job (an arrange, an orient or a bed fill) is running: poll get_slicing_status until ui_job is null, then call " + tool +
            " again";
 }
 

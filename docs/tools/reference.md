@@ -373,7 +373,7 @@ call `wait_for_slice` rather than polling this.
 | `plates` | Every plate's slice-result flag and `percent`, so a multi-plate run can be followed plate by plate (and a plate that failed can be identified). `percent` is 0-100 while a plate slices and 100 once it has a result; `null` for a plate with no result that nothing is slicing. The GUI drops progress updates while another job (an arrange, an orient) runs, so a percent can stand still then. An MCP change to an object's settings, layer ranges, adaptive layers, name, filament or printable state, or to the project's colours, flush volumes, mixed filaments or a plate's prime tower, marks the plates it touches not sliced at once, the unselected ones too (the app alone would find out only when the plate is next selected). Slicing again takes back the result of a plate the change did not affect without slicing it |
 | `plates[].gcode_check` | The check the plate's slice ran on its own G-code, `null` without a slice result: `{"ok": true}`, or `ok: false` with `problems` and a `message` in words. The problems: `outside_bed` (a toolpath outside the bed's printable area), `above_printable_height` (above the printer's printable height: the highest layer an extrusion prints at is above it, and both are given in mm as `highest_layer_z_mm` / `printable_height_mm`, with a `hint`. The check before slicing already refuses an object whose own top layer is above the printable height, so what gets here is almost always lifted by a raft, which that check leaves out; a `printable_height` of 0 sets no limit), `above_extruder_height` (above the printable height of the extruder the filament is on), `outside_extruder_area` (outside the area that extruder can reach), `in_wrapping_area`, `over_printed_mass` (heavier than the printer's maximum printed mass), `toolpath_outside` (outside the printable volume), `filament_bed_conflict` (a filament the plate type has no first-layer bed temperature for), and `check_bit_<n>` for a check this list does not name yet. The GUI keeps a failed plate's Print, Send and Export buttons off, and `export_gcode` and `send_to_printer` refuse it. Until v2.5.0.6 the height checks never tripped on a non-Bambu printer |
 | `busy` / `busy_reason` | Whether the slicing pipeline is busy, and with what: `slicing` (a slice or Slice All run), `exporting` (the background process writes G-code), `uploading` (it sends G-code to a printer) or `stopping` (the last slice finished or was cancelled, and its completion is not taken in yet). `slice_all` starts nothing while it is busy, and `wait_for_slice` waits until it is not. `is_slicing` is only the first of these |
-| `ui_job` | A job holding the app apart from slicing: `arranging` or `orienting` (one a tool started, still running past its wait), `other` (one the GUI started), or `null`. Kept out of `busy`: `slice_all` answers `busy_job` while one runs, and `wait_for_slice` does not wait for it |
+| `ui_job` | A job holding the app apart from slicing: `arranging`, `orienting` or `filling_bed` (one a tool started, still running past its wait), `other` (one the GUI started, or the arrange a bed fill starts), or `null`. Kept out of `busy`: `slice_all` answers `busy_job` while one runs, and `wait_for_slice` does not wait for it |
 | `stage` | While slicing: the app's progress text for the running slice ("Generating walls", "Generating support", ...), in the app's language. `null` when nothing is slicing |
 | `plates_sliced` / `plates_total` | How many of the plates have a valid result |
 | `restored_selected_plate` | Present only on the poll that ends a `slice_all` run over every plate: the plate that was selected when `slice_all` was called has been selected again |
@@ -621,9 +621,9 @@ preview, show the placement the job left, and no other call can land before it h
 | `cancelled` | The app cancelled the job before applying it (another job, a deleted object or a new project cancels it), or another job replaced it before it started: nothing moved, and its undo step restores nothing |
 | `error` | The job failed; `message` says why |
 
-While another job (an arrange or an orient) holds the app, each of these refuses to start: "another
-job (an arrange or an orient) is running: poll get_slicing_status until ui_job is null, then call
-auto_orient again".
+While another job (an arrange, an orient or a bed fill) holds the app, each of these refuses to start:
+"another job (an arrange, an orient or a bed fill) is running: poll get_slicing_status until ui_job is
+null, then call auto_orient again".
 
 ---
 
@@ -1281,8 +1281,9 @@ Create copies of an object.
 The copies are placed by an arrange of the destination plate, and the answer comes once it has been
 applied: besides `copies_created`, `new_object_ids` (duplicates) or `total_instances` (instances), it
 lists `objects`, every object on that plate with its placement, as `arrange_objects` does (see
-[Waiting for the job](#waiting-for-the-job)). While another job runs it is refused before anything is
-copied.
+[Waiting for the job](#waiting-for-the-job)). The copies and their arrange are one undo step (the
+arrange's own step used to come after the copies, so an undo took back only the arrange). While
+another job runs it is refused before anything is copied.
 
 ---
 
@@ -2166,7 +2167,7 @@ Slice every plate in the project, one after another, exactly as the GUI's **Slic
 |----------|---------|
 | `busy_slicing` | The pipeline is busy (`get_slicing_status`'s `busy`): a slice or Slice All run, a G-code export, an upload, or the last slice still stopping. `message` says which, e.g. "Slice All is slicing plate_index 2 of 5 plate(s)" or "a G-code export is running". Nothing was started: call `wait_for_slice`, which waits the same state out, then `slice_all` again. Started then, a slice would be stopped by the previous one's completion |
 | `already_sliced` | Every plate asked for already has a valid result: nothing to do, and `wait_for_slice` reports `done` |
-| `busy_job` | An arrange or orient holds the app: poll `get_slicing_status` until `ui_job` is null, then call `slice_all` again |
+| `busy_job` | An arrange, orient or bed fill holds the app: poll `get_slicing_status` until `ui_job` is null, then call `slice_all` again |
 | `nothing_to_slice` | No printable object fully on the plates asked for: an object marked unprintable, or partly outside its plate, does not count (`get_object_info`'s `on_bed` and `placement_warning` say which), and neither does one taller than the printable height, which the app leaves out of the slice (`active_warnings`: "laid over the boundary of plate or exceeds the height limit"). A refusal the app gives words for comes first: with a `printable_height` of 0, which the build volume takes for no limit, the object stays in the slice and the app's validation refuses it, reported as `invalid` with its words ("The object ... exceeds the maximum build volume height.") |
 | `invalid` | The app refuses a plate it was asked for as it stands, the way the GUI greys its Slice button, ahead of `nothing_to_slice`; `message` says which check, the first that applies: its validation (the plate's validation result, not a guess from `active_warnings`; `message` gives the app's words, e.g. "Prime Tower is partially outside the printable area"), plugins slicing needs but that are missing, a mixed filament that lost a component, a plate not ready to slice (an object partly off the plate or over its height, or a filament that cannot print where it is), or the plate's last slice having failed, which the app does not retry until something on the plate changes. A setting fixed just before the call counts: the app takes in a settings change 0.5 s after it, and `slice_all` applies one still waiting first (so do `get_slicing_status`, `get_print_estimate` and `export_gcode`), so it is not refused on the failure the fix removed |
 | `unknown` | No signal explains it; `active_warnings` may |
@@ -3397,7 +3398,7 @@ nothing to suggest has no `next_steps`.
 | `get_mesh_health` | `repair_mesh` for that object | the object has open edges. Not for a closed mesh whose icon shows repairs recorded at load: a repair leaves it as it is |
 | | `get_object_components` | a model part of the object is more than one shell: a loose part or a stray fragment, which leaves no warning icon when it is closed |
 | `slice_all` | `wait_for_slice` | `slicing_started`, or `not_started` with `busy_slicing` (wait, then `slice_all` again) |
-| | `get_slicing_status` | `busy_job`: an arrange or orient holds the app, which `wait_for_slice` does not wait for; `slice_all` again once `ui_job` is null |
+| | `get_slicing_status` | `busy_job`: an arrange, orient or bed fill holds the app, which `wait_for_slice` does not wait for; `slice_all` again once `ui_job` is null |
 | | `get_print_estimate` with the `plate_index` of a sliced plate (the selected one when it has a result) | `already_sliced` |
 | `export_gcode` | `wait_for_slice` | `export_started`: the file is still being written |
 | `render_plate_view`, on each view whose `uniform_image` is true (beside its `hint`) | `get_scene_info` | nothing printable on that plate was drawn |

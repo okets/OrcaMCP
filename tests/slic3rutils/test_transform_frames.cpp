@@ -589,7 +589,7 @@ TEST_CASE("flatten_object orients an object only when the orient job would orien
     using Locked = std::vector<int>;
     CHECK_FALSE(flatten_refusal(2, /*printable=*/true, /*instances=*/2, /*on_locked_plates=*/Locked{}, /*job_running=*/false).has_value());
     CHECK(flatten_refusal(2, true, 1, Locked{}, /*job_running=*/true) ==
-          "another job (an arrange or an orient) is running: poll get_slicing_status until ui_job is null, then call "
+          "another job (an arrange, an orient or a bed fill) is running: poll get_slicing_status until ui_job is null, then call "
           "flatten_object again");
     CHECK(flatten_refusal(2, /*printable=*/false, 1, Locked{}, false) ==
           "object 2 is marked not printable, and only printable objects are oriented: turn it with rotate_object instead");
