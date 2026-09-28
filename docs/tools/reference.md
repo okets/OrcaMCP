@@ -144,52 +144,80 @@ Get current project state including plates, objects, and positions.
 {"name": "get_scene_info", "arguments": {"with_model_object_features": false}}
 ```
 
-**Returns:**
+**Returns** (captured from a real response on 2026-09-28: one object, a column with an arm, a hole
+and a stray shell; the object list's warning icon shows for it):
+
+<!-- get_scene_info example: test_mcp_scene_description.cpp holds its keys to what the response writes -->
 ```json
 {
-  "bed": {"origin": "corner", "min_x": 0, "max_x": 310, "min_y": 0, "max_y": 310, "max_z": 350},
+  "hash_code": "03fcaebe3e7327f107f130f92019a838",
+  "sequential_print_enabled": false,
+  "bed": {"origin": "corner", "min_x": -0.0001, "min_y": -0.0001, "max_x": 256.0001, "max_y": 256.0001, "max_z": 256.0001},
   "plates": [{
+    "name": "",
     "plate_index": 0,
+    "index": 0,
     "is_current": true,
+    "bounding_box": {"min": {"x": -0.0001, "y": -0.0001, "z": -0.0001}, "max": {"x": 256.0001, "y": 256.0001, "z": 256.0001}},
     "model_objects": [{
+      "object_id": 0,
       "object_index": 0,
-      "id": "abc123",
-      "name": "benchy.stl",
-      "position": [155, 155, 0],
-      "rotation_degrees": [0, 0, 0],
-      "scale": [1, 1, 1],
-      "bounding_box": {"min": [...], "max": [...], "size": [...]},
-      "brim": {"type": "auto_brim", "extent_mm": 0.0, "extent_upper_bound_mm": 18.0, "extent_is_exact": false},
-      "printed_footprint": {"min_x": 145, "min_y": 145, "max_x": 165, "max_y": 165, "size_x": 20, "size_y": 20},
-      "printed_footprint_includes_brim": false,
+      "internal_id": "65",
+      "name": "gallows.stl",
       "instance_count": 1,
-      "mesh_warning": false
+      "instances_on_plate": [0],
+      "volume_count": 1,
+      "position": {"x": 128.0, "y": 128.0, "z": 12.5},
+      "rotation_degrees": {"x": 0.0, "y": -0.0, "z": 0.0},
+      "scale": {"x": 1.0, "y": 1.0, "z": 1.0},
+      "bounding_box": {"min": {"x": 104.0, "y": 123.0, "z": 0.0}, "max": {"x": 152.0, "y": 133.0, "z": 25.0},
+                       "size_x": 48.0, "size_y": 10.0, "size_z": 25.0},
+      "brim": {"type": "no_brim", "extent_mm": 0.0, "extent_upper_bound_mm": 0.0, "extent_is_exact": true},
+      "printed_footprint": {"min_x": 104.0, "min_y": 123.0, "max_x": 152.0, "max_y": 133.0, "size_x": 48.0, "size_y": 10.0},
+      "printed_footprint_includes_brim": false,
+      "vlh_enabled": false,
+      "vlh_profile_points": 0,
+      "extruder_id": 1,
+      "filaments_used": [1],
+      "filament_override_count": 0,
+      "mesh_warning": true,
+      "mesh_warning_reason": "Error: 3 non-manifold edges."
     }],
     "prime_tower": {
-      "printed": true,
-      "reason": "printed",
-      "reason_detail": "A prime tower is printed on this plate and occupies the reported footprint.",
+      "printed": false,
+      "reason": "single_filament_plate",
+      "reason_detail": "This plate uses a single filament, so no tower is generated even though the project is multi-filament.",
       "frame": "plate_mm",
-      "stored_position": {"x": 165.0, "y": 250.0, "frame": "plate_local_mm"},
-      "position": {"x": 165.0, "y": 250.0},
-      "position_is": "front_left_corner_of_tower_body",
-      "size": {"x": 60.0, "y": 42.5, "z": 31.2},
-      "brim_width": 3.0,
-      "body": {"min_x": 165, "min_y": 250, "max_x": 225, "max_y": 292.5, "size_x": 60, "size_y": 42.5},
-      "footprint": {"min_x": 162, "min_y": 247, "max_x": 228, "max_y": 295.5, "size_x": 66, "size_y": 48.5},
-      "footprint_includes_brim": true
+      "stored_position": {"x": 165.0, "y": 225.09014892578125, "frame": "plate_local_mm"}
     },
     "excluded_areas": [],
     "occupancy_frame": "plate_mm",
     "occupancy": [
-      {"kind": "object", "name": "benchy.stl", "object_index": 0, "footprint": {...},
-       "includes_brim": false, "footprint_is_exact": false, "height_mm": 48.0},
-      {"kind": "prime_tower", "name": "Prime tower", "footprint": {...},
-       "includes_brim": true, "footprint_is_exact": true, "height_mm": 31.2}
+      {"kind": "object", "name": "gallows.stl", "object_index": 0, "instances_on_plate": [0],
+       "footprint": {"min_x": 104.0, "min_y": 123.0, "max_x": 152.0, "max_y": 133.0, "size_x": 48.0, "size_y": 10.0},
+       "includes_brim": false, "footprint_is_exact": true, "height_mm": 25.0}
     ]
-  }]
+  }],
+  "unplaced_objects": [],
+  "open_dialogs": [],
+  "system_dialog_open": false,
+  "untracked_modal_loop": false,
+  "active_warnings": {"count": 1, "warnings": [{
+    "level": "warning", "type": "MeshErrors", "object_id": 0, "object_name": "gallows.stl",
+    "message": "Error: 3 non-manifold edges. MCP cannot repair a mesh: the GUI's repair is not exposed. Slicing closes each layer's outline across gaps of up to 2 mm, so a hole that small usually prints closed; a wider one can leave that outline out of a layer, so check the sliced preview there. Details: get_mesh_health {object_id: 0}."}]},
+  "next_steps": [
+    {"tool": "get_mesh_health", "arguments": {"object_id": 0},
+     "why": "object 0 (\"gallows.stl\") shows the mesh warning icon: Error: 3 non-manifold edges."},
+    {"tool": "get_object_components", "arguments": {"object_id": 0},
+     "why": "part \"gallows.stl\" of object 0 (\"gallows.stl\") has 2 shells: a loose part or stray fragment may be one of them"}
+  ]
 }
 ```
+
+With a prime tower printed, `prime_tower` also carries `position` (the front-left corner of the tower
+body), `position_is`, `size`, `brim_width_mm`, `body`, `footprint`, `footprint_includes_brim` and a
+`note`, and `occupancy` a `prime_tower` entry. `with_model_object_features` adds `features` to every
+object; `include_preview` adds `preview_path` and `preview_hint`.
 
 #### Object and plate numbers
 

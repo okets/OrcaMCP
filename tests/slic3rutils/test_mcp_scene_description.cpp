@@ -29,6 +29,38 @@ using json = nlohmann::json;
 
 namespace {
 
+std::set<std::string> keys_of(const json& object)
+{
+    std::set<std::string> keys;
+    for (auto it = object.begin(); it != object.end(); ++it)
+        keys.insert(it.key());
+    return keys;
+}
+
+std::string listed(const std::set<std::string>& keys)
+{
+    std::string out;
+    for (const std::string& key : keys)
+        out += (out.empty() ? "" : ", ") + key;
+    return out;
+}
+
+// `example`'s keys are every key `real` always has, plus at most some of `optional`.
+void check_keys(const std::string& where, const json& example, const json& real, const std::set<std::string>& optional = {})
+{
+    const std::set<std::string> have = keys_of(example), want = keys_of(real);
+    std::set<std::string>       missing, invented;
+    for (const std::string& key : want)
+        if (have.count(key) == 0 && optional.count(key) == 0)
+            missing.insert(key);
+    for (const std::string& key : have)
+        if (want.count(key) == 0 && optional.count(key) == 0)
+            invented.insert(key);
+    INFO(where << ": the example lacks {" << listed(missing) << "} and has keys no response has {" << listed(invented) << "}");
+    CHECK(missing.empty());
+    CHECK(invented.empty());
+}
+
 // A one-part object whose one instance stands on the plate being described.
 struct PlateObject : OnePartObject
 {
@@ -53,6 +85,28 @@ json plate_entry(bool is_current)
     plate.is_current = is_current;
     plate.box        = BoundingBoxf3(Vec3d(0, 0, 0), Vec3d(256, 256, 256));
     return OrcaMCPPlateUtils::PlateJson(plate);
+}
+
+// The ```json block that follows `marker` in docs/tools/reference.md.
+json reference_example(const std::string& marker)
+{
+    std::ifstream in(ORCAMCP_REFERENCE_DOC, std::ios::binary);
+    REQUIRE(in.good());
+    std::stringstream text;
+    text << in.rdbuf();
+    const std::string doc   = text.str();
+    const size_t      at    = doc.find(marker);
+    INFO("marker \"" << marker << "\" in " << ORCAMCP_REFERENCE_DOC);
+    REQUIRE(at != std::string::npos);
+    const size_t open = doc.find("```json\n", at);
+    REQUIRE(open != std::string::npos);
+    const size_t start = open + 8;
+    const size_t close = doc.find("```", start);
+    REQUIRE(close != std::string::npos);
+    const json example = json::parse(doc.substr(start, close - start), nullptr, /*allow_exceptions=*/false);
+    INFO("the example is not valid JSON:\n" << doc.substr(start, close - start));
+    REQUIRE_FALSE(example.is_discarded());
+    return example;
 }
 
 } // namespace
@@ -100,4 +154,35 @@ TEST_CASE("get_slicing_status's plates say plate_index too, keeping index", "[Mc
     CHECK(plate.at("slice_result_valid") == true);
     CHECK(plate.at("percent") == 100);
     CHECK(plate_slicing_json(0, false, std::nullopt, nullptr).at("percent").is_null());
+}
+
+TEST_CASE("get_scene_info's reference example has the keys a real response has", "[McpSceneDescription][orcamcp]")
+{
+    const json example = reference_example("<!-- get_scene_info example");
+
+    // The handler adds the open dialogs and the active warnings to what the scene describes.
+    json top = OrcaMCPPlateUtils::SceneJson("hash", false, BoundingBoxf3(Vec3d(0, 0, 0), Vec3d(1, 1, 1)), json::array(), json::array());
+    add_open_dialogs(top, ModalState{});
+    top["active_warnings"] = {{"count", 0}, {"warnings", json::array()}};
+    check_keys("top level", example, top, {"next_steps", "preview_path", "preview_hint"});
+    check_keys("bed", example.at("bed"), top.at("bed"));
+
+    REQUIRE_FALSE(example.at("plates").empty());
+    const json& plate = example.at("plates").at(0);
+    check_keys("plates[0]", plate, plate_entry(true));
+
+    REQUIRE_FALSE(plate.at("model_objects").empty());
+    check_keys("plates[0].model_objects[0]", plate.at("model_objects").at(0), PlateObject().entry(),
+               {"mesh_warning_reason", "features"});
+
+    PrimeTowerState tower;
+    tower.printed = true;
+    check_keys("plates[0].prime_tower", plate.at("prime_tower"),
+               OrcaMCPPlateUtils::PrimeTowerJson(plate.at("prime_tower").value("printed", false) ? tower : PrimeTowerState{}));
+
+    for (const json& occupant : plate.at("occupancy")) {
+        INFO("occupancy entry " << occupant.dump());
+        CHECK(occupant.contains("kind"));
+        CHECK(occupant.contains("footprint"));
+    }
 }

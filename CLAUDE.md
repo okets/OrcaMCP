@@ -224,6 +224,13 @@ What the tests enforce, with no app running:
   arguments that are not an object untouched, for the app to refuse (`test_bridge_arguments.py`);
   `initialize` answers the file's instructions, app or no app, and still answers without them for a
   file that has none (`test_bridge_instructions.py`).
+- `tests/slic3rutils/test_mcp_scene_description.cpp` (`[McpSceneDescription]`): every object
+  description carries `object_id` (and `internal_id`, never `id`), every plate `plate_index` and
+  `is_current`; and `docs/tools/reference.md`'s `get_scene_info` example (after its
+  `<!-- get_scene_info example` marker) has exactly the keys the response's builders write, at the top
+  level, per plate, per object and in `prime_tower`. Change the response and the example with it.
+  CI's test jobs check out `docs/tools` for it; a reference-only change does not start CI, so run
+  `[McpSceneDescription]` locally.
 - CI: Build all also runs on a change to `scripts/orcamcp_tools.json` alone, since only its C++
   tests can compare the file with the registry.
 
