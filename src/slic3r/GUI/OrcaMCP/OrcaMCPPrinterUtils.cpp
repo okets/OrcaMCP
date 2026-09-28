@@ -8,6 +8,7 @@
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/ProjectTask.hpp"
+#include "slic3r/GUI/FlashforgeConsoleHandler.hpp" // console_raw_detail: the one allowlist of the printer's own fields
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/GUI/Plater.hpp"
@@ -225,12 +226,7 @@ std::string tool_id_list(const std::vector<int>& tool_ids)
 // The response shared by add_physical_printer and select_printer: whatever the edited preset now is.
 nlohmann::json print_host_response(const std::string& name)
 {
-    const DynamicPrintConfig& config = edited_printer_config();
-    return {{"status", "success"},
-            {"physical_printer", name},
-            {"printer_preset", name},
-            {"host_type", print_host_type_name(config)},
-            {"print_host", config_string(config, "print_host")}};
+    return print_host_response_json(name, edited_printer_config());
 }
 
 } // namespace
@@ -298,8 +294,37 @@ nlohmann::json status_to_json(const FlashforgeApi::PrinterStatus& s)
         {"ip", s.ip},
         {"camera_stream_url", s.camera_stream_url},
         {"material_station", {{"present", s.has_material_station}, {"slots", material_slots_json(s.slots)}}},
-        {"raw", s.raw}
+        // Only the fields the Device page reads, never the printer's whole `detail`: that carries its
+        // cloud register codes and whatever a later firmware adds, and a tool's answer ends up in
+        // transcripts and logs.
+        {"raw", console_raw_detail(s.raw)}
     };
+}
+
+nlohmann::json cached_station_json(const FlashforgeLocalApi::CachedStatus& cached)
+{
+    return {{"source", "cached"},
+            {"age_s", cached.age_s},
+            {"material_station",
+             {{"present", cached.status.has_material_station}, {"slots", material_slots_json(cached.status.slots)}}}};
+}
+
+nlohmann::json print_host_preset_json(const std::string& name, const DynamicPrintConfig& config, bool is_selected)
+{
+    return {{"name", name},
+            {"print_host", config_string(config, "print_host")},
+            {"host_type", print_host_type_name(config)},
+            {"has_credentials", has_print_host_credentials(config)},
+            {"is_selected", is_selected}};
+}
+
+nlohmann::json print_host_response_json(const std::string& name, const DynamicPrintConfig& config)
+{
+    return {{"status", "success"},
+            {"physical_printer", name},
+            {"printer_preset", name},
+            {"host_type", print_host_type_name(config)},
+            {"print_host", config_string(config, "print_host")}};
 }
 
 nlohmann::json material_slots_json(const std::vector<FlashforgeApi::MaterialSlot>& slots)
@@ -546,17 +571,9 @@ nlohmann::json print_host_presets_json()
     nlohmann::json presets = nlohmann::json::array();
     for (const Preset& preset : printers) {
         const DynamicPrintConfig& config = live_printer_config(preset);
-        const std::string         host   = config_string(config, "print_host");
-        if (host.empty())
+        if (config_string(config, "print_host").empty())
             continue;
-
-        presets.push_back({
-            {"name", preset.name},
-            {"print_host", host},
-            {"host_type", print_host_type_name(config)},
-            {"has_credentials", has_print_host_credentials(config)},
-            {"is_selected", preset.name == selected_name}
-        });
+        presets.push_back(print_host_preset_json(preset.name, config, preset.name == selected_name));
     }
     return presets;
 }

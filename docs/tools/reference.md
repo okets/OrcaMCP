@@ -3333,6 +3333,13 @@ Live status from the configured print host. Full detail for Flashforge hosts.
 ```
 `obico.configured` says whether the preset names an Obico server; the token is never included.
 
+`printer.raw` is the printer's own status object cut down to the fields the Device page reads (fan
+states, print speed, Z offset, fan speeds, the material station's progress, ...), the same allowlist the
+page gets. The rest never leaves the app: the printer's cloud register codes, its MAC address, and any
+field a later firmware adds. No printer tool answers with a credential: `get_printers` says only
+`has_credentials`, and `discover_printers`' `serial_number` is the one identifier a tool returns, since
+`add_physical_printer` needs it.
+
 **When the printer cannot be reached:** a connection that was never made is tried once more after
 500 ms (not on the GUI thread, which must not sleep). If that fails too, the error names the host
 and port and the next step, and `cached` carries the material station from the printer's last

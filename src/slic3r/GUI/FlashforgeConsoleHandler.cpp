@@ -88,12 +88,8 @@ std::chrono::milliseconds cadence_for(const FlashforgeApi::PrinterStatus& status
                                                                                               : POLL_IDLE;
 }
 
-json printer_json(const FlashforgeApi::PrinterStatus& status)
-{
-    json printer = OrcaMCP::status_to_json(status);
-    printer["raw"] = console_raw_detail(printer["raw"]);
-    return printer;
-}
+// status_to_json already cuts `raw` down to console_raw_detail, for MCP's get_printer_status too.
+json printer_json(const FlashforgeApi::PrinterStatus& status) { return OrcaMCP::status_to_json(status); }
 
 // ── Command shaping ──────────────────────────────────────────────────────────────────────────
 

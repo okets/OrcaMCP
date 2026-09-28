@@ -185,15 +185,6 @@ nlohmann::json open_send_dialog(bool all_plates)
     });
 }
 
-// The material station from the printer's last answer, for a response whose live read failed.
-nlohmann::json cached_station_json(const FlashforgeLocalApi::CachedStatus& cached)
-{
-    return {{"source", "cached"},
-            {"age_s", cached.age_s},
-            {"material_station",
-             {{"present", cached.status.has_material_station}, {"slots", material_slots_json(cached.status.slots)}}}};
-}
-
 // match_project_to_printer when the live read failed: plan from the printer's last answer, and change
 // the project only when the caller opted in, since a spool may have been swapped since.
 nlohmann::json match_from_cached_status(const FlashforgeLocalApi::CachedStatus& cached,
