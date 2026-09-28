@@ -196,6 +196,11 @@ check "Connect AI strings are present" \
     't12[78]' \
     "The home page's Connect AI / Setup MCP agents entry points."
 
+check "unit tests check out the tools reference" \
+    .github/workflows/unit_tests.yml \
+    '^[[:space:]]+docs/tools$' \
+    "test_mcp_scene_description.cpp reads docs/tools/reference.md's get_scene_info example; without the checkout it fails on every platform."
+
 check "the bridge script is packaged" \
     CMakeLists.txt \
     'orcamcp-bridge\.py' \
