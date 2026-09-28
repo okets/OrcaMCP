@@ -256,8 +256,8 @@ namespace {
 
 // Response fields and status words tool descriptions name that look like tool names ("slice_run",
 // "arrange_started"). A response has no schema to read them from, so they are listed here.
-const std::set<std::string> response_words_named_in_descriptions{"slice_run", "reset_count", "arrange_started", "export_started",
-                                                                  "new_object_ids"};
+const std::set<std::string> response_words_named_in_descriptions{"slice_run",      "reset_count",              "arrange_started",
+                                                                  "export_started", "cut_info_invalidated_for", "new_object_ids"};
 
 } // namespace
 

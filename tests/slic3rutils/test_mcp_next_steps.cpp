@@ -301,6 +301,37 @@ TEST_CASE("Blockers, erased support paint, or supports already on point nowhere"
     CHECK(support_paint_next_steps(3, /*support_enabled=*/true, /*enforcers_painted=*/true, "normal(auto)").empty());
 }
 
+TEST_CASE("A split to parts points at get_object_components, to find a fragment among the pieces", "[McpNextSteps][orcamcp]")
+{
+    const std::vector<NextStep> steps = split_parts_next_steps(4, 1, {1, 2, 3});
+    REQUIRE(steps.size() == 1);
+    CHECK(steps[0].tool == "get_object_components");
+    CHECK(steps[0].arguments == json{{"object_id", 4}});
+    CHECK(mentions(steps[0].why, "volumes 1, 2 and 3"));
+    CHECK(split_parts_next_steps(4, 1, {1}).empty());
+}
+
+TEST_CASE("A new primitive is pointed at move_object, and a modifier at its settings", "[McpNextSteps][orcamcp]")
+{
+    const std::vector<NextStep> primitive = new_volume_next_steps(2, 3, "modifier", /*beside_object=*/true);
+    REQUIRE(primitive.size() == 2);
+    CHECK(primitive[0].tool == "move_object");
+    CHECK(primitive[0].arguments == json{{"object_id", 2}, {"volume_id", 3}});
+    CHECK(primitive[1].tool == "set_object_config");
+    CHECK(primitive[1].arguments == json{{"object_id", 2}, {"volume_id", 3}});
+    // A part from a file stands where its file puts it; a retyped negative volume needs neither.
+    CHECK(new_volume_next_steps(2, 3, "part", false).empty());
+    CHECK(new_volume_next_steps(2, 3, "negative_volume", false).empty());
+}
+
+TEST_CASE("An assembly is pointed at get_object_info, to list its volumes", "[McpNextSteps][orcamcp]")
+{
+    const std::vector<NextStep> steps = assembled_next_steps(5);
+    REQUIRE(steps.size() == 1);
+    CHECK(steps[0].tool == "get_object_info");
+    CHECK(steps[0].arguments == json{{"object_id", 5}});
+}
+
 TEST_CASE("Every next step names a real tool, with arguments its schema accepts", "[McpNextSteps][orcamcp]")
 {
     std::vector<NextStep> steps = Scene({cube_missing_facet(), separate_cubes(2)}).steps();
@@ -318,7 +349,13 @@ TEST_CASE("Every next step names a real tool, with arguments its schema accepts"
     const Scene hole({cube_missing_facet()});
     for (NextStep& step : mesh_repair_next_steps(*hole.model.objects[0], 0, object_mesh_health(*hole.model.objects[0])))
         steps.push_back(std::move(step));
-    REQUIRE(steps.size() == 11);
+    for (NextStep& step : split_parts_next_steps(0, 0, {0, 1}))
+        steps.push_back(std::move(step));
+    for (NextStep& step : new_volume_next_steps(0, 1, "modifier", true))
+        steps.push_back(std::move(step));
+    for (NextStep& step : assembled_next_steps(0))
+        steps.push_back(std::move(step));
+    REQUIRE(steps.size() == 15);
 
     const mcp_tool_references::ToolNames names(OrcaMCPServer::registered_tools());
     json                                 response = json::object();

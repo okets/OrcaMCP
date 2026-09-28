@@ -8337,9 +8337,10 @@ void read_binary_stl(const std::string& filename, std::string& model_id, std::st
 // BBS: backup & restore
 // MCP automation: StepMeshDialog is modal and would block the GUI thread while the MCP handler
 // waits. Answer it with the caller's configured deflection defaults instead of showing it.
-// Returns true when the dialog was skipped and the out parameters were filled.
-static bool mcp_skip_step_mesh_dialog(double linear, double angle, bool split_compound,
-                                      double& linear_value, double& angle_value, bool& is_split)
+// Returns true when the dialog was skipped and the out parameters were filled. Declared in GUI.hpp:
+// the object list's part loader (ObjectList::load_modifier) asks it too.
+bool mcp_skip_step_mesh_dialog(double linear, double angle, bool split_compound,
+                               double& linear_value, double& angle_value, bool& is_split)
 {
     if (!is_mcp_dialog_suppression_enabled())
         return false;
@@ -10465,6 +10466,7 @@ void Plater::priv::split_object(int obj_idx, bool auto_drop /* = true */)
         if (current_model_object->instances[0]->auto_drop && is_atleast_one_floating()) {
             MessageDialog dlg(q, _L("Disable Auto-Drop to preserve Z positioning?\n"),
                                   _L("Object with floating parts was detected"), wxICON_QUESTION | wxYES_NO);
+            dlg.set_mcp_prompt_key(MCP_PROMPT_SPLIT_FLOATING); // Orca MCP: split_object's keep_height answers it
 
             if (dlg.ShowModal() == wxID_YES)
                 split_auto_drop = false;
@@ -21212,6 +21214,8 @@ void Plater::center_selection()             { p->center_selection(); }
 void Plater::drop_selection()               { p->drop_selection(); }
 void Plater::mirror(Axis axis)              { p->mirror(axis); }
 void Plater::split_object(bool auto_drop)   { p->split_object(auto_drop); }
+// Orca MCP: declared upstream but never defined; split_object's by-index form (the menu's, for object obj_idx).
+void Plater::split_object(int obj_idx, bool auto_drop) { p->split_object(obj_idx, auto_drop); }
 void Plater::split_volume()                 { p->split_volume(); }
 void Plater::optimize_rotation()
 {

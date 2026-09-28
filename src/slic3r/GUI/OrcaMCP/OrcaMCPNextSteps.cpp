@@ -137,6 +137,41 @@ std::vector<NextStep> mesh_repair_next_steps(const ModelObject& object, int obje
     return {{"repair_mesh", std::move(why), {{"object_id", object_id}}}};
 }
 
+std::vector<NextStep> split_parts_next_steps(int object_id, int volume_id, const std::vector<int>& pieces)
+{
+    if (pieces.size() < 2)
+        return {};
+    return {{"get_object_components",
+             "volume " + std::to_string(volume_id) + " of object " + std::to_string(object_id) + " is now " +
+                 std::to_string(pieces.size()) + " parts (volumes " + listed_ids(pieces) +
+                 "): this gives each part's facets and box, to find a fragment; delete_object with volume_id deletes one",
+             {{"object_id", object_id}}}};
+}
+
+std::vector<NextStep> new_volume_next_steps(int object_id, int volume_id, const std::string& type_name, bool beside_object)
+{
+    std::vector<NextStep> steps;
+    const nlohmann::json  target = {{"object_id", object_id}, {"volume_id", volume_id}};
+    if (beside_object)
+        steps.push_back({"move_object",
+                         "the new " + type_name + " (volume " + std::to_string(volume_id) +
+                             ") stands beside object " + std::to_string(object_id) +
+                             ", at its right-front corner: move_object and scale_object with volume_id place and size it",
+                         target});
+    if (type_name == "modifier")
+        steps.push_back({"set_object_config",
+                         "a modifier changes only the settings it is given: set_object_config with volume_id " +
+                             std::to_string(volume_id) + " gives them, for the part of the object inside it",
+                         target});
+    return steps;
+}
+
+std::vector<NextStep> assembled_next_steps(int object_id)
+{
+    return {{"get_object_info", "object " + std::to_string(object_id) + " is the assembly: this lists its volumes, with their boxes",
+             {{"object_id", object_id}}}};
+}
+
 std::vector<NextStep> slice_start_next_steps(const SliceStartReport& report, std::optional<int> sliced_plate)
 {
     if (report.status == SliceStart::started)

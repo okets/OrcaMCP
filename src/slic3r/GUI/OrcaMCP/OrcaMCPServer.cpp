@@ -5,6 +5,8 @@
 #include "OrcaMCPPlateUtils.hpp"
 #include "OrcaMCPImageFiles.hpp"
 #include "OrcaMCPInstanceRegistry.hpp"
+#include "OrcaMCPPartEdits.hpp"
+#include "OrcaMCPPartTools.hpp"
 #include "OrcaMCPConfigKeys.hpp"
 #include "OrcaMCPConfigValues.hpp"
 #include "OrcaMCPFilamentUtils.hpp"
@@ -1837,21 +1839,33 @@ void OrcaMCPServer::register_builtin_tools()
     register_tool({
         "get_object_config",
         ToolCategory::PerObject,
-        "An object's setting overrides",
-        "Get per-object setting overrides.",
+        "Setting overrides of an object or part",
+        "Get per-object setting overrides, or with volume_id those of one part or modifier.",
         {
             {"type", "object"},
             {"properties", {
                 {"object_id", {
                     {"type", "integer"},
                     {"description", "Object index (0-based)"}
+                }},
+                {"volume_id", {
+                    {"type", "integer"},
+                    {"minimum", 0},
+                    {"description", "This volume's overrides (as get_object_info lists them) instead of the object's"}
                 }}
             }},
             {"required", {"object_id"}}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
             int object_id = params["object_id"];
-            return run_on_main_thread([object_id]() {
+            std::optional<int> volume_id;
+            if (params.contains("volume_id")) {
+                int given = -1;
+                if (!parse_integer_param(params["volume_id"], given))
+                    return error_response("volume_id must be a whole number, as get_object_info lists the volumes");
+                volume_id = given;
+            }
+            return run_on_main_thread([object_id, volume_id]() {
                 Plater* plater = wxGetApp().plater();
                 Model& model = plater->model();
 
@@ -1860,19 +1874,29 @@ void OrcaMCPServer::register_builtin_tools()
                 }
 
                 ModelObject* obj = model.objects[object_id];
-                const DynamicPrintConfig& cfg = obj->config.get();
+                if (volume_id)
+                    if (const auto error = OrcaMCP::volume_id_error(object_id, *obj, *volume_id))
+                        return error_response(*error);
+                const ModelVolume*        volume = volume_id ? obj->volumes[size_t(*volume_id)] : nullptr;
+                const DynamicPrintConfig& cfg    = volume ? volume->config.get() : obj->config.get();
 
                 nlohmann::json config_json = nlohmann::json::object();
                 for (const std::string& key : cfg.keys()) {
                     config_json[key] = cfg.opt_serialize(key);
                 }
 
-                return nlohmann::json{
+                nlohmann::json answer = {
                     {"object_id", object_id},
                     {"object_name", obj->name},
                     {"config", config_json},
                     {"has_overrides", !cfg.keys().empty()}
                 };
+                if (volume) {
+                    answer["volume_id"]   = *volume_id;
+                    answer["volume_name"] = volume->name;
+                    answer["volume_type"] = OrcaMCP::volume_type_name(volume->type());
+                }
+                return answer;
             });
         }
     });
@@ -1883,13 +1907,23 @@ void OrcaMCPServer::register_builtin_tools()
         ToolCategory::PerObject,
         "Override settings for one object",
         "Override settings for one object only (supports, infill, walls, layer height, ...), leaving the "
-        "presets and the other objects alone.",
+        "presets and the other objects alone -- or, with volume_id, for one part or modifier (region settings: "
+        "walls, infill, speeds, ...; a modifier changes only the settings it is given). An object takes the "
+        "settings its tab in the app offers (object and region settings, and extruder), a part region settings "
+        "only; any other key -- a printer, filament or whole-print setting, never read per object -- is refused "
+        "into rejected_values with the reason and where it belongs, as is an object-only key on a part. A "
+        "negative volume, blocker or enforcer takes none.",
         {
             {"type", "object"},
             {"properties", {
                 {"object_id", {
                     {"type", "integer"},
                     {"description", "Object index (0-based)"}
+                }},
+                {"volume_id", {
+                    {"type", "integer"},
+                    {"minimum", 0},
+                    {"description", "Set these on this volume (as get_object_info lists them) instead of the object"}
                 }},
                 {"settings", {
                     {"type", "array"},
@@ -1915,6 +1949,7 @@ void OrcaMCPServer::register_builtin_tools()
                         {"type", "object"},
                         {"properties", {
                             {"object_id", {{"type", "integer"}}},
+                            {"volume_id", {{"type", "integer"}, {"minimum", 0}}},
                             {"settings", {
                                 {"type", "array"},
                                 {"items", {
@@ -1935,25 +1970,40 @@ void OrcaMCPServer::register_builtin_tools()
             }}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
-            // Build list of configs to process
-            std::vector<std::pair<int, nlohmann::json>> config_list;
+            // Build list of configs to process: an object, or one of its volumes, and its settings.
+            struct ConfigTarget
+            {
+                int                object_id = -1;
+                std::optional<int> volume_id;
+                nlohmann::json     settings;
+            };
+            std::vector<ConfigTarget> config_list;
 
             // One object's settings, read the way every tool reads them (parse_integer_param,
             // parse_settings_param): a malformed one is refused with what is wrong, not the JSON
             // library's type_error.
             std::string read_error;
             const auto  read_config = [&config_list, &read_error](const nlohmann::json& item, const std::string& at) {
-                int            object_id = -1;
-                nlohmann::json settings;
+                int                object_id = -1;
+                std::optional<int> volume_id;
+                nlohmann::json     settings;
                 if (!item.contains("object_id") || !parse_integer_param(item["object_id"], object_id)) {
                     read_error = at + "object_id must be an integer";
                     return false;
+                }
+                if (item.contains("volume_id")) {
+                    int given = -1;
+                    if (!parse_integer_param(item["volume_id"], given)) {
+                        read_error = at + "volume_id must be an integer";
+                        return false;
+                    }
+                    volume_id = given;
                 }
                 if (!parse_settings_param(item.value("settings", nlohmann::json()), settings, read_error)) {
                     read_error = at + read_error;
                     return false;
                 }
-                config_list.push_back({object_id, settings});
+                config_list.push_back({object_id, volume_id, settings});
                 return true;
             };
             if (params.contains("configs")) {
@@ -1983,7 +2033,9 @@ void OrcaMCPServer::register_builtin_tools()
                 // One undo step for the whole call, before its first change, as the GUI takes one per edit.
                 SnapshotOnce snapshot([plater] { plater->take_snapshot("Change object settings"); });
 
-                for (const auto& [object_id, settings] : config_list) {
+                for (const ConfigTarget& target : config_list) {
+                    const int             object_id = target.object_id;
+                    const nlohmann::json& settings  = target.settings;
                     nlohmann::json obj_result;
                     obj_result["object_id"] = object_id;
 
@@ -1994,6 +2046,24 @@ void OrcaMCPServer::register_builtin_tools()
                         continue;
                     }
                     ModelObject* obj = model.objects[object_id];
+                    // The object's settings, or with volume_id one volume's: a part or modifier takes region
+                    // settings only (its tab in the app), a negative or support volume none.
+                    ModelVolume* volume = nullptr;
+                    if (target.volume_id) {
+                        obj_result["volume_id"] = *target.volume_id;
+                        std::optional<std::string> refusal = OrcaMCP::volume_id_error(object_id, *obj, *target.volume_id);
+                        if (!refusal)
+                            refusal = OrcaMCP::volume_settings_refusal(object_id, *target.volume_id, *obj->volumes[size_t(*target.volume_id)]);
+                        if (refusal) {
+                            obj_result["status"]  = "error";
+                            obj_result["message"] = *refusal;
+                            results.push_back(obj_result);
+                            continue;
+                        }
+                        volume = obj->volumes[size_t(*target.volume_id)];
+                    }
+                    ModelConfig&                  own_config = volume ? static_cast<ModelConfig&>(volume->config) : static_cast<ModelConfig&>(obj->config);
+                    const OrcaMCP::SettingsHolder holder     = volume ? OrcaMCP::SettingsHolder::part : OrcaMCP::SettingsHolder::object;
                     // Read apart first, so the snapshot is taken only when a value really changes.
                     DynamicPrintConfig parsed;
                     std::vector<std::string> applied_keys;
@@ -2015,6 +2085,13 @@ void OrcaMCPServer::register_builtin_tools()
                         if (def == nullptr) {
                             invalid_keys.push_back(key);
                             unknown_keys.push_back(key);
+                            continue;
+                        }
+                        // A key the object's (or the part's) tab in the app does not offer is stored but never
+                        // read per object: refused, with where it belongs.
+                        if (const auto misplaced = OrcaMCP::setting_key_refusal(key, holder)) {
+                            invalid_keys.push_back(key);
+                            rejected_values.push_back({{"key", key}, {"reason", *misplaced}});
                             continue;
                         }
                         // Same shaping apply_config uses (config_value_to_string): a list-typed key
@@ -2041,13 +2118,13 @@ void OrcaMCPServer::register_builtin_tools()
 
                     bool changed = false;
                     for (const std::string& key : parsed.keys()) {
-                        const ConfigOption* now = obj->config.option(key);
+                        const ConfigOption* now = own_config.option(key);
                         if (now == nullptr || !(*now == *parsed.option(key))) {
                             snapshot.before_change();
-                            obj->config.set_key_value(key, parsed.option(key)->clone());
+                            own_config.set_key_value(key, parsed.option(key)->clone());
                             changed = true;
                         }
-                        if (obj->config.has(key)) {
+                        if (own_config.has(key)) {
                             applied_keys.push_back(key);
                         } else {
                             invalid_keys.push_back(key);
@@ -2058,6 +2135,9 @@ void OrcaMCPServer::register_builtin_tools()
                     }
 
                     if (changed) {
+                        // The object list's settings row too, as the settings tab brings it up to date
+                        // (TabPrintModel::notify_changed).
+                        wxGetApp().obj_list()->object_config_options_changed({obj, volume});
                         wxGetApp().obj_list()->changed_object(object_id);
                         mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
                         any_changes = true;
@@ -2102,8 +2182,8 @@ void OrcaMCPServer::register_builtin_tools()
     register_tool({
         "reset_object_config",
         ToolCategory::PerObject,
-        "Remove an object's setting overrides",
-        "Remove per-object setting overrides.",
+        "Remove an object's or part's overrides",
+        "Remove per-object setting overrides, or with volume_id those of one part or modifier.",
         {
             {"type", "object"},
             {"properties", {
@@ -2118,6 +2198,12 @@ void OrcaMCPServer::register_builtin_tools()
                                     "reset_count says how many were cleared; a reset that clears nothing changes "
                                     "nothing."},
                     {"items", {{"type", "string"}}}
+                }},
+                {"volume_id", {
+                    {"type", "integer"},
+                    {"minimum", 0},
+                    {"description", "Reset this volume's overrides (as get_object_info lists them) instead of the object's; "
+                                    "its filament (extruder) stays, as the part's reset in the app leaves it"}
                 }}
             }},
             {"required", {"object_id"}}
@@ -2139,7 +2225,14 @@ void OrcaMCPServer::register_builtin_tools()
                     keys.push_back(key.get<std::string>());
                 }
             }
-            return run_on_main_thread([object_id, keys]() {
+            std::optional<int> volume_id;
+            if (params.contains("volume_id")) {
+                int given = -1;
+                if (!parse_integer_param(params["volume_id"], given))
+                    return error_response("volume_id must be a whole number, as get_object_info lists the volumes");
+                volume_id = given;
+            }
+            return run_on_main_thread([object_id, keys, volume_id]() {
                 Plater* plater = wxGetApp().plater();
                 Model& model = plater->model();
 
@@ -2148,14 +2241,19 @@ void OrcaMCPServer::register_builtin_tools()
                 }
 
                 ModelObject* obj = model.objects[object_id];
-                // With no keys named, every override but the object's filament (extruder), which the
-                // GUI's reset keeps too; with keys, those of them the object overrides.
+                if (volume_id)
+                    if (const auto error = OrcaMCP::volume_id_error(object_id, *obj, *volume_id))
+                        return error_response(*error);
+                ModelVolume* volume     = volume_id ? obj->volumes[size_t(*volume_id)] : nullptr;
+                ModelConfig& own_config = volume ? static_cast<ModelConfig&>(volume->config) : static_cast<ModelConfig&>(obj->config);
+                // With no keys named, every override but the filament (extruder), which the GUI's reset
+                // keeps too; with keys, those of them the object (or the volume) overrides.
                 std::vector<std::string> reset_keys;
                 if (keys.empty())
-                    reset_keys = object_overrides_to_reset(obj->config.get().keys());
+                    reset_keys = object_overrides_to_reset(own_config.get().keys());
                 else
                     for (const std::string& key : keys)
-                        if (obj->config.has(key) && std::find(reset_keys.begin(), reset_keys.end(), key) == reset_keys.end())
+                        if (own_config.has(key) && std::find(reset_keys.begin(), reset_keys.end(), key) == reset_keys.end())
                             reset_keys.push_back(key);
                 const int reset_count = int(reset_keys.size());
 
@@ -2164,19 +2262,23 @@ void OrcaMCPServer::register_builtin_tools()
                     // undo puts the settings back; none for a reset that clears nothing.
                     plater->take_snapshot(std::string("Reset Options"));
                     for (const auto& key : reset_keys)
-                        obj->config.erase(key);
+                        own_config.erase(key);
 
-                    // Notify UI of changes
+                    // Notify UI of changes: the object list's settings row too (TabPrintModel::notify_changed).
+                    wxGetApp().obj_list()->object_config_options_changed({obj, volume});
                     wxGetApp().obj_list()->changed_object(object_id);
                     mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
                     plater->update();
                 }
 
-                return nlohmann::json{
+                nlohmann::json answer = {
                     {"status", "success"},
                     {"object_id", object_id},
                     {"reset_count", reset_count}
                 };
+                if (volume_id)
+                    answer["volume_id"] = *volume_id;
+                return answer;
             });
         }
     });
@@ -4103,7 +4205,10 @@ void OrcaMCPServer::register_builtin_tools()
         "own \"position\" report, and independent of how the object is rotated. Moving an object "
         "into another plate's area re-homes it onto that plate, and the response carries rotate_object's "
         "placement fields. Every instance of the object moves by the same amount, so a multi-instance "
-        "object keeps its arrangement.",
+        "object keeps its arrangement. With volume_id, that volume (a part or modifier) moves within the "
+        "object instead, in plate mm on instance 0, its box's centre as \"position\"; then, as the GUI does "
+        "after a part moves, a floating object drops onto the bed (dropped_to_bed_mm). A one-volume "
+        "object has no part to move on its own, and a cut object's solid parts wait for invalidate_cut_info.",
         {
             {"type", "object"},
             {"properties", {
@@ -4128,6 +4233,11 @@ void OrcaMCPServer::register_builtin_tools()
                     {"type", "boolean"},
                     {"description", "true (default)=offset, false=absolute position"}
                 }},
+                {"volume_id", {
+                    {"type", "integer"},
+                    {"minimum", 0},
+                    {"description", "Move this volume (as get_object_info lists them) within the object instead of the whole object"}
+                }},
                 {"include_preview", {
                     {"type", "boolean"},
                     {"description", "Return turntable preview path"}
@@ -4144,6 +4254,8 @@ void OrcaMCPServer::register_builtin_tools()
             {"required", {"object_id"}}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
+            if (params.contains("volume_id"))
+                return OrcaMCP::transform_volume(params, OrcaMCP::VolumeTransformKind::move);
             int object_id = params["object_id"];
             PlateAxes axes;
             if (const auto error = read_plate_axes(params, "", axes))
@@ -4248,7 +4360,9 @@ void OrcaMCPServer::register_builtin_tools()
         "order X, then Y, then Z, about the object's bounding-box centre so it turns in place, then, "
         "as the GUI does, dropped back onto the bed (Z=0) unless it was sinking below it before. The "
         "resulting rotation_degrees are the instance's, the same numbers get_object_info reports. "
-        "The response reports, for afterwards, the placement fields: instance_placement (each instance's plate and whether it is inside it), plate_index (instance 0's plate), plate_indices and on_bed (every instance inside its own plate).",
+        "The response reports, for afterwards, the placement fields: instance_placement (each instance's plate and whether it is inside it), plate_index (instance 0's plate), plate_indices and on_bed (every instance inside its own plate). "
+        "With volume_id, that volume (a part or modifier) turns about its own centre within the object, in the plate's "
+        "axes on instance 0, and the object is dropped as the GUI drops it (dropped_to_bed_mm).",
         {
             {"type", "object"},
             {"properties", {
@@ -4274,6 +4388,11 @@ void OrcaMCPServer::register_builtin_tools()
                                     "absolute rotation is not supported, so work out the change from "
                                     "rotation_degrees in get_object_info."}
                 }},
+                {"volume_id", {
+                    {"type", "integer"},
+                    {"minimum", 0},
+                    {"description", "Rotate this volume (as get_object_info lists them) within the object instead of the whole object"}
+                }},
                 {"include_preview", {
                     {"type", "boolean"},
                     {"description", "Return turntable preview path"}
@@ -4290,6 +4409,8 @@ void OrcaMCPServer::register_builtin_tools()
             {"required", {"object_id"}}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
+            if (params.contains("volume_id"))
+                return OrcaMCP::transform_volume(params, OrcaMCP::VolumeTransformKind::rotate);
             int object_id = params["object_id"];
             PlateAxes axes;
             if (const auto error = read_plate_axes(params, "", axes))
@@ -4382,7 +4503,9 @@ void OrcaMCPServer::register_builtin_tools()
         "unless it was sinking below it before. Factors must be positive; use mirror_object to flip "
         "an axis. A non-uniform scale along plate axes on an object whose rotation is not a multiple "
         "of 90 degrees is a shear -- it is applied, and the response says so in skew_warning. The "
-        "response carries rotate_object's placement fields.",
+        "response carries rotate_object's placement fields. With volume_id, that volume (a part or "
+        "modifier) scales about its own centre within the object, along the plate's axes on instance 0, "
+        "and the object is dropped as the GUI drops it (dropped_to_bed_mm).",
         {
             {"type", "object"},
             {"properties", {
@@ -4406,6 +4529,11 @@ void OrcaMCPServer::register_builtin_tools()
                     {"type", "boolean"},
                     {"description", "If true, x scales every axis, so give x (default: false)"}
                 }},
+                {"volume_id", {
+                    {"type", "integer"},
+                    {"minimum", 0},
+                    {"description", "Scale this volume (as get_object_info lists them) within the object instead of the whole object"}
+                }},
                 {"include_preview", {
                     {"type", "boolean"},
                     {"description", "Return turntable preview path"}
@@ -4422,6 +4550,8 @@ void OrcaMCPServer::register_builtin_tools()
             {"required", {"object_id"}}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
+            if (params.contains("volume_id"))
+                return OrcaMCP::transform_volume(params, OrcaMCP::VolumeTransformKind::scale);
             int object_id = params["object_id"];
             PlateAxes axes;
             if (const auto error = read_plate_axes(params, "", axes))
@@ -4701,7 +4831,8 @@ void OrcaMCPServer::register_builtin_tools()
         "Mirror an object across a plate axis, not the object's own: axis=z flips it top to bottom "
         "on the bed whatever its rotation. Mirroring is about the object's bounding-box centre, so "
         "it stays where it is, and a resting object stays on the bed (Z=0), as in the GUI. The "
-        "response carries rotate_object's placement fields.",
+        "response carries rotate_object's placement fields. With volume_id, that volume (a part or "
+        "modifier) is mirrored about its own centre within the object, across the plate axis on instance 0.",
         {
             {"type", "object"},
             {"properties", {
@@ -4713,6 +4844,11 @@ void OrcaMCPServer::register_builtin_tools()
                     {"type", "string"},
                     {"enum", {"x", "y", "z"}},
                     {"description", "Plate axis to mirror across: x, y, or z"}
+                }},
+                {"volume_id", {
+                    {"type", "integer"},
+                    {"minimum", 0},
+                    {"description", "Mirror this volume (as get_object_info lists them) within the object instead of the whole object"}
                 }},
                 {"include_preview", {
                     {"type", "boolean"},
@@ -4730,6 +4866,8 @@ void OrcaMCPServer::register_builtin_tools()
             {"required", {"object_id", "axis"}}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
+            if (params.contains("volume_id"))
+                return OrcaMCP::transform_volume(params, OrcaMCP::VolumeTransformKind::mirror);
             int object_id = params["object_id"];
             std::string axis_str = params["axis"];
             bool include_preview = params.value("include_preview", false);
@@ -5013,7 +5151,7 @@ void OrcaMCPServer::register_builtin_tools()
         ToolCategory::Models,
         "One object's transform, volumes, slots",
         "One object's position, rotation, scale and bounding box, every volume (part, modifier, negative "
-        "volume, support blocker) with its type and filament, and, as rotate_object reports them, the placement fields: instance_placement (each instance's plate and whether it is inside it), plate_index (instance 0's plate), plate_indices and on_bed (every instance inside its own plate).",
+        "volume, support blocker) with its type, filament, and bounding_box and position in plate mm on instance 0, and, as rotate_object reports them, the placement fields: instance_placement (each instance's plate and whether it is inside it), plate_index (instance 0's plate), plate_indices and on_bed (every instance inside its own plate).",
         {
             {"type", "object"},
             {"properties", {
@@ -5084,17 +5222,8 @@ void OrcaMCPServer::register_builtin_tools()
                 // modifiers carry a filament too, and one pinned to another slot keeps the plate
                 // multi-filament however the object is set. own_filament is null when the
                 // volume inherits the object's; effective_filament is what prints.
-                nlohmann::json volumes = nlohmann::json::array();
-                for (const OrcaMCP::VolumeFilament& v : OrcaMCP::describe_volume_filaments(*obj)) {
-                    volumes.push_back({
-                        {"volume_id", v.volume_id},
-                        {"name", v.name},
-                        {"type", v.type},
-                        {"own_filament", v.own_filament > 0 ? nlohmann::json(v.own_filament) : nlohmann::json(nullptr)},
-                        {"effective_filament", v.effective_filament}
-                    });
-                }
-                result["volumes"]        = volumes;
+                // Each with its box and position on instance 0, which move_object and friends take with volume_id.
+                result["volumes"]        = OrcaMCP::volume_rows_json(*obj);
                 result["filament"]       = obj->config.has("extruder") ? obj->config.extruder() : 1;
                 result["filaments_used"] = OrcaMCP::effective_object_filaments(*obj);
 
@@ -5103,12 +5232,14 @@ void OrcaMCPServer::register_builtin_tools()
         }
     });
 
-    // rename_object - Rename an object
+    // rename_object - Rename an object, or one of its volumes (OrcaMCPPartTools.cpp)
     register_tool({
         "rename_object",
         ToolCategory::Models,
-        "Rename an object",
-        "Rename an object for identification purposes",
+        "Rename an object or one of its parts",
+        "Rename an object, or with volume_id one of its volumes, as the object list's Rename does: the "
+        "name of a one-part object's part follows the object's. Refused empty, or with a character the "
+        "list refuses (<>:/\\|?*\"). changed: false for the name it already has: no undo step.",
         {
             {"type", "object"},
             {"properties", {
@@ -5119,57 +5250,42 @@ void OrcaMCPServer::register_builtin_tools()
                 {"new_name", {
                     {"type", "string"},
                     {"description", "New name"}
+                }},
+                {"volume_id", {
+                    {"type", "integer"},
+                    {"minimum", 0},
+                    {"description", "Rename this volume (as get_object_info lists them) instead of the object"}
                 }}
             }},
             {"required", {"object_id", "new_name"}}
         },
-        [](const nlohmann::json& params) -> nlohmann::json {
-            int object_id = params["object_id"];
-            std::string new_name = params["new_name"];
-            return run_on_main_thread([object_id, new_name]() {
-                Plater* plater = wxGetApp().plater();
-                Model& model = plater->model();
-
-                if (object_id < 0 || object_id >= static_cast<int>(model.objects.size())) {
-                    throw std::runtime_error("Invalid object_id: " + std::to_string(object_id));
-                }
-
-                std::string old_name = model.objects[object_id]->name;
-                if (new_name == old_name)
-                    return nlohmann::json{{"status", "success"}, {"object_id", object_id}, {"old_name", old_name}, {"new_name", new_name},
-                                          {"changed", false}};
-                plater->take_snapshot(_u8L("Rename Object")); // the object list's, so undo puts the name back
-                model.objects[object_id]->name = new_name;
-
-                // Update the object list UI to reflect the new name. The name is in the G-code (its
-                // object labels), so the plates holding it no longer have its result; Print::apply
-                // invalidates the G-code export step for a renamed object, and the next slice writes it again.
-                wxGetApp().obj_list()->update_name_for_items();
-                mark_object_plates_unsliced(plater->get_partplate_list(), object_id);
-
-                return nlohmann::json{
-                    {"status", "success"},
-                    {"object_id", object_id},
-                    {"old_name", old_name},
-                    {"new_name", new_name},
-                    {"changed", true}
-                };
-            });
-        }
+        [](const nlohmann::json& params) -> nlohmann::json { return OrcaMCP::rename_in_object_list(params); }
     });
 
-    // delete_object - Remove an object from the scene
+    // delete_object - Remove an object, or one of its volumes, as the object list's Delete does
+    // (OrcaMCPPartTools.cpp)
     register_tool({
         "delete_object",
         ToolCategory::Transforms,
-        "Remove an object from the scene",
-        "Remove an object from the scene",
+        "Remove an object or one of its parts",
+        "Remove an object from the scene, or with volume_id one of its volumes (a part, modifier, negative "
+        "or support volume), as the object list's Delete does, in one undo step. Objects after a deleted "
+        "one move down by one. Deleting a piece of a cut ends the cut's link for its other pieces "
+        "(cut_info_invalidated_for). An object's last solid part is not deleted on its own (delete the "
+        "object), nor a cut object's solid part until invalidate_cut_info. When deleting a volume leaves "
+        "one, its settings move to the object (settings_moved_to_object), as the list does. An open toolbar "
+        "tool is closed first (closed_toolbar_tool). Refused while an arrange or orient runs.",
         {
             {"type", "object"},
             {"properties", {
                 {"object_id", {
                     {"type", "integer"},
                     {"description", "Object index (0-based)"}
+                }},
+                {"volume_id", {
+                    {"type", "integer"},
+                    {"minimum", 0},
+                    {"description", "Delete this volume (as get_object_info lists them) instead of the object"}
                 }},
                 {"include_preview", {
                     {"type", "boolean"},
@@ -5178,33 +5294,7 @@ void OrcaMCPServer::register_builtin_tools()
             }},
             {"required", {"object_id"}}
         },
-        [](const nlohmann::json& params) -> nlohmann::json {
-            int object_id = params["object_id"];
-            bool include_preview = params.value("include_preview", false);
-            return run_on_main_thread([object_id, include_preview]() {
-                Plater* plater = wxGetApp().plater();
-                Model& model = plater->model();
-
-                if (object_id < 0 || object_id >= static_cast<int>(model.objects.size())) {
-                    throw std::runtime_error("Invalid object_id: " + std::to_string(object_id));
-                }
-
-                std::string deleted_name = model.objects[object_id]->name;
-                plater->remove(object_id);
-
-                nlohmann::json result = {
-                    {"status", "success"},
-                    {"deleted_object_id", object_id},
-                    {"deleted_object_name", deleted_name},
-                    {"active_warnings", get_active_warnings_json(plater)}
-                };
-
-                // Add turntable preview if requested
-                add_turntable_preview_if_requested(result, include_preview);
-
-                return result;
-            });
-        }
+        [](const nlohmann::json& params) -> nlohmann::json { return OrcaMCP::delete_in_object_list(params); }
     });
 
     // set_object_printable - Toggle whether an object is included when slicing
@@ -5564,6 +5654,7 @@ void OrcaMCPServer::register_builtin_tools()
     register_printer_tools();
     register_paint_tools();
     register_mesh_tools();
+    register_part_tools();
     register_bridge_tools();
 
     BOOST_LOG_TRIVIAL(info) << "OrcaMCPServer: Registered " << s_tools.size() << " tools";

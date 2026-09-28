@@ -40,6 +40,7 @@ json quick_start()
             {"load_and_slice", "load_model -> slice_all -> wait_for_slice -> get_print_estimate -> export_gcode"},
             {"supports", "apply_config enable_support, support_type (set_object_config: one object); paint_object mode support; render_plate_view layer_view"},
             {"modify_object", "get_scene_info (object_id) -> transform tools"},
+            {"parts", "split_object, add_volume, set_volume_type, assemble_objects, merge_parts; transforms, delete_object and set_object_config take volume_id"},
             {"visualize", "render_plate_view save_to_file=true; check uniform_image first"}
         }}
     };
@@ -114,6 +115,23 @@ json suggested_flows()
                 {"example", R"({"object_id": 0, "settings": [{"key": "sparse_infill_density", "value": "30%"}, {"key": "enable_support", "value": "1"}]})"},
                 {"step3", "3. Verify with get_object_config"},
                 {"step4", "4. Reset if needed with reset_object_config"}
+            }}
+        }},
+        {"parts_workflow", {
+            {"description", "Remove a stray fragment and join the rest, or give one region its own settings"},
+            {"steps", {
+                {"step", "1. Split a part into one part per shell"},
+                {"tool", "split_object"},
+                {"example", R"({"object_id": 0, "to": "parts"})"},
+                {"step2", "2. Find the fragment by size, then delete it"},
+                {"tool2", "get_object_components"},
+                {"tool3", "delete_object"},
+                {"example3", R"({"object_id": 0, "volume_id": 2})"},
+                {"step4", "3. Join the rest into one part"},
+                {"tool4", "merge_parts"},
+                {"step5", "Or: a modifier placed and given its settings"},
+                {"tools", "add_volume, move_object, scale_object, set_object_config"},
+                {"example5", R"({"object_id": 0, "type": "modifier", "shape": "cube"})"}
             }}
         }},
         {"layer_range_workflow", {

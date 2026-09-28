@@ -158,6 +158,8 @@ private:
     static void register_paint_tools();
     // Mesh errors and the object list's warning icon (OrcaMCPMeshTools.cpp)
     static void register_mesh_tools();
+    // Parts and mesh edits: split, add volumes, change their type, assemble, merge (OrcaMCPPartTools.cpp)
+    static void register_part_tools();
     // Tools orcamcp-bridge.py answers itself (start_orca)
     static void register_bridge_tools();
 };

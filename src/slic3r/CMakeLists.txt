@@ -448,6 +448,10 @@ set(SLIC3R_GUI_SOURCES
     GUI/OrcaMCP/OrcaMCPMeshHealth.cpp
     GUI/OrcaMCP/OrcaMCPMeshRepair.hpp
     GUI/OrcaMCP/OrcaMCPMeshRepair.cpp
+    GUI/OrcaMCP/OrcaMCPPartEdits.hpp
+    GUI/OrcaMCP/OrcaMCPPartEdits.cpp
+    GUI/OrcaMCP/OrcaMCPPartTools.hpp
+    GUI/OrcaMCP/OrcaMCPPartTools.cpp
     GUI/OrcaMCP/OrcaMCPNextSteps.hpp
     GUI/OrcaMCP/OrcaMCPNextSteps.cpp
     GUI/OrcaMCP/OrcaMCPMeshTools.cpp

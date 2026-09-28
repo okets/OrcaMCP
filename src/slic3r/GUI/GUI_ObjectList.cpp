@@ -2374,6 +2374,9 @@ void ObjectList::load_modifier(const wxArrayString& input_files, ModelObject& mo
                     input_file, LoadStrategy::LoadModel, nullptr, nullptr,
                     [&is_user_cancel, &linear, &angle, &split_compound](Slic3r::Step& file, double& linear_value,
                                                                                      double& angle_value, bool& is_split) -> int {
+                        // Orca MCP: under dialog suppression the configured deflection answers the dialog.
+                        if (mcp_skip_step_mesh_dialog(linear, angle, split_compound, linear_value, angle_value, is_split))
+                            return 1;
                         if (wxGetApp().app_config->get_bool("enable_step_mesh_setting")) {
                             StepMeshDialog mesh_dlg(nullptr, file, linear, angle);
                             if (mesh_dlg.ShowModal() == wxID_OK) {

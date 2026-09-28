@@ -149,6 +149,54 @@
       "summary": "Add a new plate"
     },
     {
+      "category": "Models",
+      "description": "Add a volume to an object, as the object list's Add Part / Negative Part / Modifier / Support Blocker / Support Enforcer does: a primitive (shape) or a model file (file_path). A primitive is sized a tenth of the bed's longest side and stands beside the object at its right-front corner, on the bed: move_object and scale_object with volume_id place and size it. As the object list does, adding a primitive moves the object's rotation and scale from its instance into its volumes (instance_transform_moved_to_volumes says when). A file's volume keeps the position its file gives it. A modifier changes only the settings set_object_config with volume_id gives it. The answer: the new volume (volume_id, box and position in plate mm) and every volume. One undo step. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange or orient runs.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "file_path": {
+            "description": "A model file (STL, 3MF, STEP, OBJ, ...) whose meshes become the volume; or give shape",
+            "type": "string"
+          },
+          "object_id": {
+            "description": "Object index (0-based)",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "shape": {
+            "description": "A primitive, as the object list's submenu offers them; or give file_path",
+            "enum": [
+              "cube",
+              "cylinder",
+              "sphere",
+              "cone",
+              "disc",
+              "torus"
+            ],
+            "type": "string"
+          },
+          "type": {
+            "description": "What the volume is",
+            "enum": [
+              "part",
+              "negative_volume",
+              "modifier",
+              "support_blocker",
+              "support_enforcer"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "object_id",
+          "type"
+        ],
+        "type": "object"
+      },
+      "name": "add_volume",
+      "summary": "Add a part, modifier or support volume"
+    },
+    {
       "category": "Adaptive",
       "description": "Apply Variable Layer Height based on geometry.",
       "inputSchema": {
@@ -243,6 +291,29 @@
       },
       "name": "arrange_objects",
       "summary": "Arrange the current plate's objects"
+    },
+    {
+      "category": "Models",
+      "description": "Assemble two or more objects into one object with their volumes as its parts, as the object list's Assemble does: each keeps its place, settings and filament; the new object, named Assembly, takes each object's first instance (assembled_from says how many others were left out). The assembly is the last object afterwards, and the objects after each assembled one move down. A piece of a cut is refused until invalidate_cut_info. One undo step. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange or orient runs.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "object_ids": {
+            "description": "Two or more objects, by object_id",
+            "items": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "object_ids"
+        ],
+        "type": "object"
+      },
+      "name": "assemble_objects",
+      "summary": "Assemble objects into one multi-part"
     },
     {
       "category": "Filaments & colour",
@@ -462,7 +533,7 @@
     },
     {
       "category": "Transforms",
-      "description": "Remove an object from the scene",
+      "description": "Remove an object from the scene, or with volume_id one of its volumes (a part, modifier, negative or support volume), as the object list's Delete does, in one undo step. Objects after a deleted one move down by one. Deleting a piece of a cut ends the cut's link for its other pieces (cut_info_invalidated_for). An object's last solid part is not deleted on its own (delete the object), nor a cut object's solid part until invalidate_cut_info. When deleting a volume leaves one, its settings move to the object (settings_moved_to_object), as the list does. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange or orient runs.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -473,6 +544,11 @@
           "object_id": {
             "description": "Object index (0-based)",
             "type": "integer"
+          },
+          "volume_id": {
+            "description": "Delete this volume (as get_object_info lists them) instead of the object",
+            "minimum": 0,
+            "type": "integer"
           }
         },
         "required": [
@@ -481,7 +557,7 @@
         "type": "object"
       },
       "name": "delete_object",
-      "summary": "Remove an object from the scene"
+      "summary": "Remove an object or one of its parts"
     },
     {
       "category": "Layer Ranges",
@@ -783,12 +859,17 @@
     },
     {
       "category": "Per-Object",
-      "description": "Get per-object setting overrides.",
+      "description": "Get per-object setting overrides, or with volume_id those of one part or modifier.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
           "object_id": {
             "description": "Object index (0-based)",
+            "type": "integer"
+          },
+          "volume_id": {
+            "description": "This volume's overrides (as get_object_info lists them) instead of the object's",
+            "minimum": 0,
             "type": "integer"
           }
         },
@@ -798,11 +879,11 @@
         "type": "object"
       },
       "name": "get_object_config",
-      "summary": "An object's setting overrides"
+      "summary": "Setting overrides of an object or part"
     },
     {
       "category": "Models",
-      "description": "One object's position, rotation, scale and bounding box, every volume (part, modifier, negative volume, support blocker) with its type and filament, and, as rotate_object reports them, the placement fields: instance_placement (each instance's plate and whether it is inside it), plate_index (instance 0's plate), plate_indices and on_bed (every instance inside its own plate).",
+      "description": "One object's position, rotation, scale and bounding box, every volume (part, modifier, negative volume, support blocker) with its type, filament, and bounding_box and position in plate mm on instance 0, and, as rotate_object reports them, the placement fields: instance_placement (each instance's plate and whether it is inside it), plate_index (instance 0's plate), plate_indices and on_bed (every instance inside its own plate).",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -1089,6 +1170,26 @@
       "summary": "Discover setting keys by category"
     },
     {
+      "category": "Models",
+      "description": "End the link the app keeps between the pieces of a cut, as the object list's Invalidate cut info does: until then a piece's solid parts and connectors cannot be moved or deleted on their own, and its pieces cannot be assembled. It ends it for every piece of that cut (objects lists them). An object that is not part of a cut changes nothing. One undo step.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "object_id": {
+            "description": "Object index (0-based): any piece of the cut",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "object_id"
+        ],
+        "type": "object"
+      },
+      "name": "invalidate_cut_info",
+      "summary": "End a cut's link between its pieces"
+    },
+    {
       "category": "Printers",
       "description": "List G-code files stored on the Flashforge printer.",
       "inputSchema": {
@@ -1183,8 +1284,32 @@
       "summary": "Match slots to the printer's filaments"
     },
     {
+      "category": "Models",
+      "description": "Merge an object's parts into one part, as the object list's Mesh boolean does: its solid parts are joined by a union and its negative volumes subtracted; its modifiers and support volumes, its parts' own settings and filaments, its layer ranges and brim ears are not carried (not_carried lists them); its name and object settings are. Every instance of the object becomes part of one mesh in one instance (instances_merged says so). When the union fails, the parts are joined without it (boolean says so). The merged object is the last object afterwards. Painting is cleared unless keep_painting keeps it. One undo step. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange or orient runs.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "keep_painting": {
+            "description": "Remap the painting (colour, supports, seams, fuzzy skin) onto the new meshes instead of clearing it; the app calls this experimental. Left out: the app's \"Keep painted feature after mesh change\" setting, which the answer's keep_painting_from names",
+            "type": "boolean"
+          },
+          "object_id": {
+            "description": "Object index (0-based)",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "object_id"
+        ],
+        "type": "object"
+      },
+      "name": "merge_parts",
+      "summary": "Merge an object's parts into one part"
+    },
+    {
       "category": "Transforms",
-      "description": "Mirror an object across a plate axis, not the object's own: axis=z flips it top to bottom on the bed whatever its rotation. Mirroring is about the object's bounding-box centre, so it stays where it is, and a resting object stays on the bed (Z=0), as in the GUI. The response carries rotate_object's placement fields.",
+      "description": "Mirror an object across a plate axis, not the object's own: axis=z flips it top to bottom on the bed whatever its rotation. Mirroring is about the object's bounding-box centre, so it stays where it is, and a resting object stays on the bed (Z=0), as in the GUI. The response carries rotate_object's placement fields. With volume_id, that volume (a part or modifier) is mirrored about its own centre within the object, across the plate axis on instance 0.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -1212,6 +1337,11 @@
           "preview_views": {
             "description": "Views: 4 or 8 (default: 4)",
             "type": "integer"
+          },
+          "volume_id": {
+            "description": "Mirror this volume (as get_object_info lists them) within the object instead of the whole object",
+            "minimum": 0,
+            "type": "integer"
           }
         },
         "required": [
@@ -1225,7 +1355,7 @@
     },
     {
       "category": "Transforms",
-      "description": "Move object by offset (relative) or to position (relative=false). X/Y/Z are plate millimetres along the plate's own axes -- the same frame get_object_info and this tool's own \"position\" report, and independent of how the object is rotated. Moving an object into another plate's area re-homes it onto that plate, and the response carries rotate_object's placement fields. Every instance of the object moves by the same amount, so a multi-instance object keeps its arrangement.",
+      "description": "Move object by offset (relative) or to position (relative=false). X/Y/Z are plate millimetres along the plate's own axes -- the same frame get_object_info and this tool's own \"position\" report, and independent of how the object is rotated. Moving an object into another plate's area re-homes it onto that plate, and the response carries rotate_object's placement fields. Every instance of the object moves by the same amount, so a multi-instance object keeps its arrangement. With volume_id, that volume (a part or modifier) moves within the object instead, in plate mm on instance 0, its box's centre as \"position\"; then, as the GUI does after a part moves, a floating object drops onto the bed (dropped_to_bed_mm). A one-volume object has no part to move on its own, and a cut object's solid parts wait for invalidate_cut_info.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -1248,6 +1378,11 @@
           "relative": {
             "description": "true (default)=offset, false=absolute position",
             "type": "boolean"
+          },
+          "volume_id": {
+            "description": "Move this volume (as get_object_info lists them) within the object instead of the whole object",
+            "minimum": 0,
+            "type": "integer"
           },
           "x": {
             "description": "Plate X in mm: a displacement along the plate's X axis when relative, else the X the bounding-box centre ends at",
@@ -1732,7 +1867,7 @@
     },
     {
       "category": "Models",
-      "description": "Rename an object for identification purposes",
+      "description": "Rename an object, or with volume_id one of its volumes, as the object list's Rename does: the name of a one-part object's part follows the object's. Refused empty, or with a character the list refuses (<>:/\\|?*\"). changed: false for the name it already has: no undo step.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -1743,6 +1878,11 @@
           "object_id": {
             "description": "Object index (0-based)",
             "type": "integer"
+          },
+          "volume_id": {
+            "description": "Rename this volume (as get_object_info lists them) instead of the object",
+            "minimum": 0,
+            "type": "integer"
           }
         },
         "required": [
@@ -1752,7 +1892,7 @@
         "type": "object"
       },
       "name": "rename_object",
-      "summary": "Rename an object"
+      "summary": "Rename an object or one of its parts"
     },
     {
       "category": "Visualization",
@@ -1944,7 +2084,7 @@
     },
     {
       "category": "Per-Object",
-      "description": "Remove per-object setting overrides.",
+      "description": "Remove per-object setting overrides, or with volume_id those of one part or modifier.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -1958,6 +2098,11 @@
           "object_id": {
             "description": "Object index (0-based)",
             "type": "integer"
+          },
+          "volume_id": {
+            "description": "Reset this volume's overrides (as get_object_info lists them) instead of the object's; its filament (extruder) stays, as the part's reset in the app leaves it",
+            "minimum": 0,
+            "type": "integer"
           }
         },
         "required": [
@@ -1966,7 +2111,7 @@
         "type": "object"
       },
       "name": "reset_object_config",
-      "summary": "Remove an object's setting overrides"
+      "summary": "Remove an object's or part's overrides"
     },
     {
       "category": "Config",
@@ -1994,7 +2139,7 @@
     },
     {
       "category": "Transforms",
-      "description": "Rotate object around the plate's X, Y and Z axes (degrees), not the object's own axes: a z=90 turns the object about the vertical whatever its current rotation is. Applied in the order X, then Y, then Z, about the object's bounding-box centre so it turns in place, then, as the GUI does, dropped back onto the bed (Z=0) unless it was sinking below it before. The resulting rotation_degrees are the instance's, the same numbers get_object_info reports. The response reports, for afterwards, the placement fields: instance_placement (each instance's plate and whether it is inside it), plate_index (instance 0's plate), plate_indices and on_bed (every instance inside its own plate).",
+      "description": "Rotate object around the plate's X, Y and Z axes (degrees), not the object's own axes: a z=90 turns the object about the vertical whatever its current rotation is. Applied in the order X, then Y, then Z, about the object's bounding-box centre so it turns in place, then, as the GUI does, dropped back onto the bed (Z=0) unless it was sinking below it before. The resulting rotation_degrees are the instance's, the same numbers get_object_info reports. The response reports, for afterwards, the placement fields: instance_placement (each instance's plate and whether it is inside it), plate_index (instance 0's plate), plate_indices and on_bed (every instance inside its own plate). With volume_id, that volume (a part or modifier) turns about its own centre within the object, in the plate's axes on instance 0, and the object is dropped as the GUI drops it (dropped_to_bed_mm).",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -2017,6 +2162,11 @@
           "relative": {
             "description": "true (the default): x, y and z are the change in degrees. false is refused: absolute rotation is not supported, so work out the change from rotation_degrees in get_object_info.",
             "type": "boolean"
+          },
+          "volume_id": {
+            "description": "Rotate this volume (as get_object_info lists them) within the object instead of the whole object",
+            "minimum": 0,
+            "type": "integer"
           },
           "x": {
             "description": "Rotation about the plate's X axis (degrees)",
@@ -2086,7 +2236,7 @@
     },
     {
       "category": "Transforms",
-      "description": "Scale object along the plate's X, Y and Z axes, not the object's own: with uniform=false, z is the object's height above the bed whatever its rotation. uniform=true uses x for all axes and is frame-independent. Scaling is about the object's bounding-box centre, so it grows in place, and then, as the GUI does, the object is dropped back onto the bed (Z=0) unless it was sinking below it before. Factors must be positive; use mirror_object to flip an axis. A non-uniform scale along plate axes on an object whose rotation is not a multiple of 90 degrees is a shear -- it is applied, and the response says so in skew_warning. The response carries rotate_object's placement fields.",
+      "description": "Scale object along the plate's X, Y and Z axes, not the object's own: with uniform=false, z is the object's height above the bed whatever its rotation. uniform=true uses x for all axes and is frame-independent. Scaling is about the object's bounding-box centre, so it grows in place, and then, as the GUI does, the object is dropped back onto the bed (Z=0) unless it was sinking below it before. Factors must be positive; use mirror_object to flip an axis. A non-uniform scale along plate axes on an object whose rotation is not a multiple of 90 degrees is a shear -- it is applied, and the response says so in skew_warning. The response carries rotate_object's placement fields. With volume_id, that volume (a part or modifier) scales about its own centre within the object, along the plate's axes on instance 0, and the object is dropped as the GUI drops it (dropped_to_bed_mm).",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -2109,6 +2259,11 @@
           "uniform": {
             "description": "If true, x scales every axis, so give x (default: false)",
             "type": "boolean"
+          },
+          "volume_id": {
+            "description": "Scale this volume (as get_object_info lists them) within the object instead of the whole object",
+            "minimum": 0,
+            "type": "integer"
           },
           "x": {
             "description": "Scale factor along the plate's X axis (must be > 0)",
@@ -2475,7 +2630,7 @@
     },
     {
       "category": "Per-Object",
-      "description": "Override settings for one object only (supports, infill, walls, layer height, ...), leaving the presets and the other objects alone.",
+      "description": "Override settings for one object only (supports, infill, walls, layer height, ...), leaving the presets and the other objects alone -- or, with volume_id, for one part or modifier (region settings: walls, infill, speeds, ...; a modifier changes only the settings it is given). An object takes the settings its tab in the app offers (object and region settings, and extruder), a part region settings only; any other key -- a printer, filament or whole-print setting, never read per object -- is refused into rejected_values with the reason and where it belongs, as is an object-only key on a part. A negative volume, blocker or enforcer takes none.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -2505,6 +2660,10 @@
                     "type": "object"
                   },
                   "type": "array"
+                },
+                "volume_id": {
+                  "minimum": 0,
+                  "type": "integer"
                 }
               },
               "required": [
@@ -2538,6 +2697,11 @@
               "type": "object"
             },
             "type": "array"
+          },
+          "volume_id": {
+            "description": "Set these on this volume (as get_object_info lists them) instead of the object",
+            "minimum": 0,
+            "type": "integer"
           }
         },
         "required": [],
@@ -2682,6 +2846,44 @@
       "summary": "Move a plate's prime tower"
     },
     {
+      "category": "Models",
+      "description": "Change a volume's type, as the object list's Change Type does: part, negative_volume, modifier, support_blocker or support_enforcer. The object's last solid part stays a part, and a text or SVG volume never becomes a support volume. The list keeps volumes sorted by type, so the volume's index can change: volume_id in the answer is the new one, previous_volume_id the old. The same type changes nothing. One undo step. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange or orient runs.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "object_id": {
+            "description": "Object index (0-based)",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": {
+            "description": "Its new type",
+            "enum": [
+              "part",
+              "negative_volume",
+              "modifier",
+              "support_blocker",
+              "support_enforcer"
+            ],
+            "type": "string"
+          },
+          "volume_id": {
+            "description": "The volume, as get_object_info lists them",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "object_id",
+          "volume_id",
+          "type"
+        ],
+        "type": "object"
+      },
+      "name": "set_volume_type",
+      "summary": "Change a volume's type: part, modifier"
+    },
+    {
       "category": "Slicing",
       "description": "Slice every plate in the project, the way the GUI's Slice All button does: one plate at a time until all are sliced. Pass all_plates=false to slice only the plate that is currently selected. status says what happened: slicing_started, or not_started with a reason and a message: busy_slicing (the pipeline is busy -- get_slicing_status's busy: a slice or Slice All run, an export, an upload, or the last slice still stopping; nothing is started -- call wait_for_slice, then slice_all again), already_sliced (nothing to do), busy_job (an arrange or an orient holds the app: poll get_slicing_status until ui_job is null, then slice_all again), invalid (the app refuses the plate as it stands -- its validation, an object partly off the plate, a filament check, missing plugins, a broken mixed filament, or a last slice that failed; message says which, in the app's words for a validation failure), nothing_to_slice (no printable object fully on the plates -- one partly off its plate or too tall for the printer does not count -- and no refusal the app gives words for) or unknown. Then call wait_for_slice, which returns once the run is over, with each plate's result; next_steps names the tool to call next. The plate selection walks from the first plate to the last while the run is in progress, and get_slicing_status puts back the plate that was selected here once it ends.",
       "inputSchema": {
@@ -2697,6 +2899,48 @@
       },
       "name": "slice_all",
       "summary": "Slice every plate, or the selected one"
+    },
+    {
+      "category": "Models",
+      "description": "Split an object as the object list's Split does. to: \"objects\" makes one object per solid part of a multi-part object, or per shell of a one-part object; its modifiers, negative volumes and support volumes are not carried (dropped_volumes lists them), and each piece keeps its place. When a piece would float and the object drops to the bed, keep_height (default true) keeps each piece at its height, false drops them onto the bed. The pieces are the last objects afterwards and every object after the split one moves down by one. to: \"parts\" splits one volume into one part per shell (name it with volume_id in a multi-part object); the pieces are named <name>_1, _2, ..., keep its filament, and stay in place. Painting is cleared unless keep_painting keeps it. One undo step. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange or orient runs.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "keep_height": {
+            "description": "to objects: keep a floating piece at its height (default true) or drop it onto the bed (false), the app's own question about floating pieces",
+            "type": "boolean"
+          },
+          "keep_painting": {
+            "description": "Remap the painting (colour, supports, seams, fuzzy skin) onto the new meshes instead of clearing it; the app calls this experimental. Left out: the app's \"Keep painted feature after mesh change\" setting, which the answer's keep_painting_from names",
+            "type": "boolean"
+          },
+          "object_id": {
+            "description": "Object index (0-based)",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "to": {
+            "description": "objects: one object per solid part, or per shell of a one-part object; parts: one part per shell of a volume",
+            "enum": [
+              "objects",
+              "parts"
+            ],
+            "type": "string"
+          },
+          "volume_id": {
+            "description": "to parts: the volume to split, as get_object_info lists them; needed when the object has more than one volume",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "object_id",
+          "to"
+        ],
+        "type": "object"
+      },
+      "name": "split_object",
+      "summary": "Split an object into objects or parts"
     },
     {
       "category": "Filaments & colour",
