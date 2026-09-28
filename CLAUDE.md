@@ -1267,6 +1267,7 @@ echo "AL the object list's re-listing clears a copy of an object's row map / the
 echo "AM deleting an object removes only its first instance from the plates / the object list's instance delete / its delete of every instance but the first tell the plates nothing (rel2506/12; 0 = bug for the second): $(U src/slic3r/GUI/PartPlate.cpp | awk '/^int PartPlateList::notify_instance_removed/{f=1} f&&/remove_object_instances|for \(.*instance.*<.*instances/{print "no"; exit} f&&/update_object_index/{print "yes"; exit}') / $(U src/slic3r/GUI/GUI_ObjectList.cpp | grep -A10 'else if (type == itInstance) {' | grep -c 'partplate_list') / $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^void ObjectList::del_instances_from_object/{f=1} f&&/partplate_list/{print "no"; exit} f&&/^}/{print "yes"; exit}')"
 echo "AN a plate's spiral vase gives the print preset's differing settings to its first object only (rel2506/12): $(U src/slic3r/GUI/PartPlate.cpp | grep -c 'applying_keys = config.get().diff(new_conf);')"
 echo "AO deleting a filament writes a volume's renumbered support filament into its object's config (rel2506/13): $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/volumes\[id\]->config.opt_int\(key\) > filament_id/{f=1} f&&/object->config.set_key_value\(key, new ConfigOptionInt\(new_value\)\)/{print "yes"; d=1; exit} END{if(!d) print "no"}')"
+echo "AP the physical filament's Merge with checks the menu's unresolved -2 for a mixed filament that lists it, so it never warns (rel2506/13): $(U src/slic3r/GUI/Plater.cpp | awk '/^void Sidebar::change_filament/{f=1} f&&/m_menu_filament_id/{print "no"; d=1; exit} f&&/is_mixed_filament\(from_id\)/{print "yes"; d=1; exit} END{if(!d) print "unknown"}')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -1611,6 +1612,15 @@ none past the last) and the object gained a support filament it never had. And a
 filament kept the old number in its row. Ours renumbers each config in place through the free function
 `renumber_support_filaments_after_delete` (`GUI_ObjectList.cpp`, tested without the app) and labels the
 row with the filament it moved to. On "no", take upstream's and re-run `slic3rutils_tests "[FilamentSlots]"`.
+
+Item AP: a physical filament slot's "Merge with" menu calls `Sidebar::change_filament(-2, to)`, -2
+meaning the slot the menu was opened on, which `delete_filament` resolves. Upstream's warning -- the
+target is a mixed filament that lists this slot as a component, and merging deletes it -- tested -2
+itself, which is never a component, so it never showed and the mix was broken silently. Ours resolves
+-2 first, and the check is `PresetBundle::merge_breaks_mixed_filament`, which MCP's
+`delete_filament_slot` asks too. Its `wxMessageBox` is native, so under MCP suppression it is answered
+at its call site (`MCP_PROMPT_MERGE_INTO_MIX`): Cancel unless the tool chose OK. On "no", take
+upstream's and re-run `slic3rutils_tests "[FilamentSlots]"`; keep the suppression branch around the box.
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices

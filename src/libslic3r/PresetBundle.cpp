@@ -3568,6 +3568,17 @@ void PresetBundle::update_num_filaments(unsigned int to_del_flament_id)
     update_multi_material_filament_presets(to_del_flament_id);
 }
 
+bool PresetBundle::merge_breaks_mixed_filament(size_t from_id, size_t to_id) const
+{
+    if (is_mixed_filament(from_id) || !is_mixed_filament(to_id))
+        return false;
+    const auto* components = project_config.option<ConfigOptionStrings>("filament_mixed_components");
+    if (components == nullptr || to_id >= components->values.size())
+        return false;
+    const std::vector<unsigned int> listed = parse_mixed_components(components->values[to_id]);
+    return std::find(listed.begin(), listed.end(), static_cast<unsigned int>(from_id + 1)) != listed.end();
+}
+
 bool PresetBundle::is_mixed_filament(size_t idx) const
 {
     auto *opt = project_config.option<ConfigOptionBools>("filament_is_mixed");

@@ -5466,34 +5466,28 @@ void Sidebar::delete_filament(size_t filament_id, int replace_filament_id) {
 
 void Sidebar::change_filament(size_t from_id, size_t to_id)
 {
+    // Orca: the physical slot's "Merge with" menu passes -2 for the slot it was opened on, which
+    // delete_filament resolves; the check below must read that same slot, not -2.
+    if (from_id == size_t(-2))
+        from_id = p->m_menu_filament_id;
+
     // Merging a physical filament into a mixed one that lists it as a component would delete
     // the very filament the mix depends on, leaving it broken. Warn before doing so.
-    auto& pb = *wxGetApp().preset_bundle;
-    bool from_is_physical = !pb.is_mixed_filament(from_id);
-    bool to_is_mixed = pb.is_mixed_filament(to_id);
-
-    if (from_is_physical && to_is_mixed) {
-        auto* comp_opt = pb.project_config.option<ConfigOptionStrings>("filament_mixed_components");
-        if (comp_opt && to_id < comp_opt->values.size()) {
-            auto comps = Slic3r::parse_mixed_components(comp_opt->values[to_id]);
-            unsigned int from_1based = (unsigned int)from_id + 1;
-            bool target_uses_source = false;
-            for (unsigned int c : comps) {
-                if (c == from_1based) {
-                    target_uses_source = true;
-                    break;
-                }
-            }
-            if (target_uses_source) {
-                int ret = wxMessageBox(
-                    _L("The target mixed filament uses this physical filament as a component. "
-                       "Merging will remove this physical filament and may invalidate the mixed filament. Continue?"),
-                    _L("Warning"),
-                    wxOK | wxCANCEL | wxICON_WARNING);
-                if (ret != wxOK)
-                    return;
-            }
-        }
+    if (wxGetApp().preset_bundle->merge_breaks_mixed_filament(from_id, to_id)) {
+        const wxString message = _L("The target mixed filament uses this physical filament as a component. "
+                                    "Merging will remove this physical filament and may invalidate the mixed filament. Continue?");
+        int ret = wxCANCEL;
+        if (is_mcp_dialog_suppression_enabled()) {
+            // Orca MCP: a native box, which suppression does not catch: answered here, Cancel unless the
+            // tool chose OK (delete_filament_slot's allow_breaking_mix).
+            record_mcp_prompt_asked(MCP_PROMPT_MERGE_INTO_MIX);
+            const std::optional<McpAnswer> chosen = mcp_chosen_answer(MCP_PROMPT_MERGE_INTO_MIX);
+            add_mcp_suppressed_answer(into_u8(message), chosen ? chosen->text : mcp_answer_label(wxID_CANCEL));
+            ret = chosen && chosen->id == wxID_OK ? wxOK : wxCANCEL;
+        } else
+            ret = wxMessageBox(message, _L("Warning"), wxOK | wxCANCEL | wxICON_WARNING);
+        if (ret != wxOK)
+            return;
     }
 
     delete_filament(from_id, int(to_id));

@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "libslic3r/Model.hpp"
+#include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/TriangleMesh.hpp"
 #include "slic3r/GUI/GUI_ObjectList.hpp"
 
@@ -54,4 +55,18 @@ TEST_CASE("deleting a filament leaves the support filaments before it as they ar
     CHECK(support_filament(object->config, "support_filament") == 1);
     CHECK(support_filament(object->volumes[1]->config, "support_interface_filament") == 2);
     CHECK_FALSE(object->volumes[0]->config.has("support_filament"));
+}
+
+TEST_CASE("merging a filament into a mixed filament that lists it breaks the mix", "[FilamentSlots]")
+{
+    PresetBundle bundle;
+    // Three physical slots and a mixed slot 4 of slots 1 and 3.
+    bundle.project_config.option<ConfigOptionBools>("filament_is_mixed", true)->values           = {false, false, false, true};
+    bundle.project_config.option<ConfigOptionStrings>("filament_mixed_components", true)->values = {"", "", "", "1,3"};
+
+    CHECK(bundle.merge_breaks_mixed_filament(0, 3));
+    CHECK(bundle.merge_breaks_mixed_filament(2, 3));
+    CHECK_FALSE(bundle.merge_breaks_mixed_filament(1, 3)); // not a component
+    CHECK_FALSE(bundle.merge_breaks_mixed_filament(3, 0)); // a mixed filament merged away breaks nothing
+    CHECK_FALSE(bundle.merge_breaks_mixed_filament(0, 1)); // into a physical one
 }

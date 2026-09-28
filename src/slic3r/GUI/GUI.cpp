@@ -161,6 +161,13 @@ bool mcp_answer_path_dialog(const std::string& title, McpPathDialog kind, std::v
     return true;
 }
 
+std::optional<McpAnswer> mcp_chosen_answer(const std::string& prompt_key) {
+    const auto it = s_mcp_prompt_answers.find(prompt_key);
+    if (it == s_mcp_prompt_answers.end())
+        return std::nullopt;
+    return McpAnswer{it->second.id, mcp_answer_label(it->second.id) + (it->second.note.empty() ? "" : "; " + it->second.note)};
+}
+
 McpAnswer mcp_answer_for(long style, const std::string& prompt_key) {
     if (!prompt_key.empty())
         if (auto it = s_mcp_prompt_answers.find(prompt_key); it != s_mcp_prompt_answers.end()) {

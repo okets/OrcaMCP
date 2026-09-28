@@ -558,6 +558,10 @@ public:
     size_t                      num_mixed_filaments() const;
     // How many slots hold a real filament, i.e. everything ahead of the mixed tail.
     size_t                      num_physical_filaments() const;
+    // Orca: whether merging filament `from_id` into `to_id` (both 0-based) deletes a physical filament the
+    // mixed filament `to_id` lists as a component -- the merge Sidebar::change_filament warns about, and
+    // MCP's delete_filament_slot refuses without allow_breaking_mix.
+    bool                        merge_breaks_mixed_filament(size_t from_id, size_t to_id) const;
 
     void                        on_extruders_count_changed(int extruder_count);
 

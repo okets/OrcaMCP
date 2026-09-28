@@ -104,6 +104,22 @@ TEST_CASE("a keyed answer can say how to get the other outcome", "[McpSuppressio
     clear_mcp_prompt_answers();
 }
 
+// A native box (wxMessageBox) is answered at its call site, where the default is its own safe answer
+// rather than mcp_default_answer's: the site needs to know whether the tool chose one at all.
+TEST_CASE("a native box reads only the answer its tool chose", "[McpSuppression][orcamcp][suppression]")
+{
+    clear_mcp_prompt_answers();
+    CHECK_FALSE(mcp_chosen_answer(MCP_PROMPT_MERGE_INTO_MIX).has_value());
+
+    set_mcp_prompt_answer(MCP_PROMPT_MERGE_INTO_MIX, wxID_OK, "allow_breaking_mix was true");
+    const std::optional<McpAnswer> chosen = mcp_chosen_answer(MCP_PROMPT_MERGE_INTO_MIX);
+    REQUIRE(chosen.has_value());
+    CHECK(chosen->id == wxID_OK);
+    CHECK(chosen->text == "OK; allow_breaking_mix was true");
+    CHECK_FALSE(mcp_chosen_answer(MCP_PROMPT_MULTIPART).has_value());
+    clear_mcp_prompt_answers();
+}
+
 // A modal dialog that no specific MCP handler answers blocks the GUI thread, and with it the MCP
 // call, until someone clicks it: the texture importer and the sync-printer tips were found that
 // way, one at a time. Every DPIDialog now falls back to Cancel under suppression.
