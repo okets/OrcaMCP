@@ -23,9 +23,23 @@ std::vector<CustomGCode::Item>::iterator item_at(CustomGCode::Info& info, const 
                         [&](const CustomGCode::Item& item) { return layer_of(layer_zs, item.print_z) == layer; });
 }
 
+// "filament N", N the filament the slicer takes a change to `item` for (CustomGCode::tool_change_target), and how the slot
+// it names was mapped when that differs.
+std::string target_words(const CustomGCode::Item& item, const LayerGcodeRules& rules)
+{
+    const int objects_own = rules.object_filaments && !rules.object_filaments->empty() ? rules.object_filaments->front() : 1;
+    const int target      = CustomGCode::tool_change_target(item.extruder, rules.slots.slots(), objects_own);
+    std::string words     = "filament " + std::to_string(target);
+    if (item.extruder <= 0)
+        words += " (it names no slot, so the objects' own filament)";
+    else if (target != item.extruder)
+        words += " (it names slot " + std::to_string(item.extruder) + ", which the project lacks, and the slicer takes filament 1 for it)";
+    return words;
+}
+
 // Why a filament change writes nothing in the G-code, in words (CustomGCode::tool_change_effects), or nullopt when it
 // switches the filament.
-std::optional<std::string> inactive_reason(CustomGCode::ToolChangesOff off, const CustomGCode::Item& item)
+std::optional<std::string> inactive_reason(CustomGCode::ToolChangesOff off, const CustomGCode::Item& item, const LayerGcodeRules& rules)
 {
     switch (off) {
     case CustomGCode::ToolChangesOff::by_object:
@@ -43,7 +57,7 @@ std::optional<std::string> inactive_reason(CustomGCode::ToolChangesOff off, cons
         return std::string("it was recorded in another filament mode (an older project's), which the slicer skips; delete_layer_gcode "
                            "and add_layer_gcode record it anew");
     case CustomGCode::ToolChangesOff::same_filament:
-        return "it changes to filament " + std::to_string(item.extruder) +
+        return "it changes to " + target_words(item, rules) +
                ", which already prints there (the objects' own below the first change, the previous change's above it), so the "
                "G-code has no switch for it";
     case CustomGCode::ToolChangesOff::none: break;
@@ -307,17 +321,22 @@ nlohmann::json layer_gcodes_json(const CustomGCode::Info& info, const std::vecto
         const CustomGCode::Item& item = info.gcodes[i];
         nlohmann::json           json = layer_gcode_json(item, layer_zs);
         if (item.type == CustomGCode::ToolChange && rules != nullptr) {
-            const bool past_last_layer = layer_zs != nullptr && !layer_of(*layer_zs, item.print_z);
+            // Whether the slicer reaches the change's height: by the plate's layers when they are known, else by the top
+            // of its highest object, which every layer the slicer makes reaches (above it, a raft may lift the last one).
+            const std::optional<bool> reached =
+                layer_zs != nullptr                                                       ? std::optional<bool>(layer_of(*layer_zs, item.print_z).has_value()) :
+                rules->objects_top_mm && item.print_z <= *rules->objects_top_mm + EPSILON ? std::optional<bool>(true) :
+                                                                                            std::nullopt;
             const std::optional<std::string> why =
-                past_last_layer ? std::optional<std::string>("it is above the plate's last layer, which the slicer never reaches") :
-                effects[i]      ? inactive_reason(*effects[i], item) :
-                                  std::nullopt;
+                reached == false ? std::optional<std::string>("it is above the plate's last layer, which the slicer never reaches") :
+                effects[i]       ? inactive_reason(*effects[i], item, *rules) :
+                                   std::nullopt;
             if (why) {
                 json["active"]          = false;
                 json["inactive_reason"] = *why;
             } else {
                 // null: known once the plate is the current one, sliced as the settings are now
-                json["active"] = effects[i] ? nlohmann::json(true) : nlohmann::json(nullptr);
+                json["active"] = effects[i] && reached ? nlohmann::json(true) : nlohmann::json(nullptr);
             }
         }
         list.push_back(std::move(json));

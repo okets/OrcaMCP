@@ -3,6 +3,7 @@
 
 #include "OrcaMCPCommon.hpp"
 #include "OrcaMCPFilamentUtils.hpp"
+#include "OrcaMCPInstanceBox.hpp"
 #include "OrcaMCPLayerGcode.hpp"
 #include "OrcaMCPLayerPlan.hpp"
 #include "OrcaMCPNextSteps.hpp"
@@ -17,6 +18,7 @@
 #include "libslic3r/Print.hpp"
 #include "libslic3r/PresetBundle.hpp"
 
+#include <algorithm>
 #include <map>
 #include <string>
 #include <vector>
@@ -107,6 +109,18 @@ LayerGcodeRules layer_gcode_rules(Plater& plater, PartPlate& plate)
     return rules;
 }
 
+std::optional<double> plate_objects_top(PartPlate& plate)
+{
+    const Model&          model  = wxGetApp().plater()->model();
+    const BuildVolume     volume = plate.slicing_build_volume();
+    std::optional<double> top;
+    for (std::size_t o = 0; o < model.objects.size(); ++o)
+        for (std::size_t i = 0; i < model.objects[o]->instances.size(); ++i)
+            if (plate.slicer_prints_instance(int(o), int(i), volume))
+                top = std::max(top.value_or(0.), instance_box(*model.objects[o], i).max.z());
+    return top;
+}
+
 nlohmann::json plate_layer_gcodes_json(PartPlate& plate)
 {
     Plater&      plater = *wxGetApp().plater();
@@ -115,7 +129,12 @@ nlohmann::json plate_layer_gcodes_json(PartPlate& plate)
     if (info == model.plates_custom_gcodes.end())
         return nlohmann::json::array();
     const std::optional<std::vector<double>> zs    = plate_layer_zs(plate);
-    const LayerGcodeRules                    rules = layer_gcode_rules(plater, plate);
+    LayerGcodeRules                          rules = layer_gcode_rules(plater, plate);
+    // The objects' top tells a filament change the slicer reaches while the plate's layers are not known.
+    const bool has_changes = std::any_of(info->second.gcodes.begin(), info->second.gcodes.end(),
+                                         [](const CustomGCode::Item& item) { return item.type == CustomGCode::ToolChange; });
+    if (!zs && has_changes)
+        rules.objects_top_mm = plate_objects_top(plate);
     return layer_gcodes_json(info->second, zs ? &*zs : nullptr, &rules);
 }
 

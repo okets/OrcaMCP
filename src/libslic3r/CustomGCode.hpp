@@ -151,6 +151,9 @@ inline bool tool_changes_hidden(ToolChangesOff off)
 {
     return off == ToolChangesOff::by_object || off == ToolChangesOff::spiral_vase || off == ToolChangesOff::several_filaments;
 }
+// Orca: the filament a filament change naming `named` switches to, as the slicer takes it: a slot the printer lacks is
+// filament 1 (custom_tool_changes), and 0 or less the objects' own (no override, ToolOrdering::collect_extruders).
+int tool_change_target(int named, size_t num_filaments, int objects_own);
 // What each of a plate's filament changes writes in the G-code, one entry per item of `info` (none for an item that is
 // no filament change): none where it switches the filament, else why it writes nothing -- the plate's reason
 // (tool_changes_off), or same_filament, a change to the filament already printing there: the objects' own below the

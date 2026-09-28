@@ -208,6 +208,42 @@ TEST_CASE("a filament change that writes nothing in the G-code is reported inact
     CHECK(above.at("inactive_reason").get<std::string>().find("last layer") != std::string::npos);
 }
 
+// Before a plate is sliced its layers are not known, and a change above its objects was reported active though the
+// slicer never reaches it (a 3MF with a change at 15 mm on an object scaled to 10 mm). Every layer the slicer makes
+// reaches the top of the highest object it prints, so a change at or under it is reached; above it, the last layer
+// (a raft lifts it) is known only once the plate is sliced.
+TEST_CASE("a filament change above the plate's objects is not reported active before the plate is sliced", "[LayerGcode][orcamcp]")
+{
+    CustomGCode::Info info;
+    info.mode   = CustomGCode::MultiAsSingle;
+    info.gcodes = {{5.0, CustomGCode::ToolChange, 2, "#00FF00", ""}, {15.0, CustomGCode::ToolChange, 1, "#FF0000", ""}};
+    LayerGcodeRules plate = rules(2, {1});
+    plate.objects_top_mm  = 10.0;
+    const nlohmann::json unsliced = layer_gcodes_json(info, nullptr, &plate);
+    CHECK(unsliced.at(0).at("active") == true);
+    CHECK(unsliced.at(1).at("active").is_null());
+    plate.objects_top_mm.reset();
+    CHECK(layer_gcodes_json(info, nullptr, &plate).at(0).at("active").is_null());
+}
+
+// A change to a slot the project lacks is taken for filament 1 (custom_tool_changes); the reason named the slot it
+// was stored with, "filament 5" on a project of two.
+TEST_CASE("a filament change that switches nothing names the filament the slicer takes it for", "[LayerGcode][orcamcp]")
+{
+    CustomGCode::Info info;
+    info.mode                   = CustomGCode::MultiAsSingle;
+    info.gcodes                 = {{1.0, CustomGCode::ToolChange, 5, "", ""}};
+    const LayerGcodeRules on_1  = rules(2, {1});
+    const std::string     why   = layer_gcodes_json(info, &k_layers, &on_1).at(0).at("inactive_reason").get<std::string>();
+    CHECK(why.find("filament 1") != std::string::npos);
+    CHECK(why.find("filament 5") == std::string::npos);
+    CHECK(why.find("slot 5") != std::string::npos); // how it was mapped
+    info.gcodes[0].extruder = 1;
+    const std::string plain = layer_gcodes_json(info, &k_layers, &on_1).at(0).at("inactive_reason").get<std::string>();
+    CHECK(plain.find("filament 1") != std::string::npos);
+    CHECK(plain.find("slot") == std::string::npos);
+}
+
 TEST_CASE("nothing goes at a layer of a plate printed by object", "[LayerGcode][orcamcp]")
 {
     CustomGCode::Info info;

@@ -31,6 +31,10 @@ bool plate_layers_may_be_known(PartPlate& plate);
 // the slicer counts them when its Print is current. Main thread.
 LayerGcodeRules layer_gcode_rules(Plater& plater, PartPlate& plate);
 
+// The top of the highest instance the slicer prints on `plate` (PartPlate::slicer_prints_instance), in mm from the bed,
+// or nullopt when it prints none. Main thread.
+std::optional<double> plate_objects_top(PartPlate& plate);
+
 // get_scene_info's layer_gcodes of plate `plate`: its G-code at a layer, each with its layer number when
 // the plate's layers are known (plate_layer_zs), null otherwise, and a filament change with whether the slicer
 // takes it (layer_gcode_json). Main thread.

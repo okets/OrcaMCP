@@ -41,6 +41,9 @@ struct LayerGcodeRules
     // The filaments the plate's objects print, 1-based, as the slicer counts them (Print::object_extruders, which the
     // Preview's slider decides by): known from the plate's Print only while it is current and up to date.
     std::optional<std::vector<int>> object_filaments;
+    // The top of the highest object the slicer prints on the plate, in mm from the bed: every layer the slicer makes
+    // reaches at least that high. Tells a change at a layer the slicer reaches before the plate's layers are known.
+    std::optional<double> objects_top_mm;
     bool                       spiral_vase          = false; // the plate's own vase mode, else the print preset's
     bool                       by_object            = false; // the plate prints one object after another
     bool                       template_gcode_empty = true;  // the printer's template_custom_gcode
