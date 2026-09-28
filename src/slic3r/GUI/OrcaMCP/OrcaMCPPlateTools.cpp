@@ -115,15 +115,6 @@ std::vector<NextStep> vase_left_behind_steps(PartPlate& plate)
     return vase_settings_next_steps(object_ids, first_keys);
 }
 
-// Makes `plate_index` the current plate, as the plate's settings icon does first; not an undo step.
-void make_current(Plater& plater, int plate_index)
-{
-    if (plater.get_partplate_list().get_curr_plate_index() == plate_index)
-        return;
-    Plater::SuppressSnapshots not_an_edit(&plater);
-    plater.select_plate(plate_index);
-}
-
 // The dialog's OK (Plater::open_platesettings_dialog's EVT_SET_BED_TYPE_CONFIRM handler), for the settings
 // the request changes, in its order. A plate follows the global spiral vase when it is on.
 void apply_dialog_settings(Plater& plater, PartPlate& plate, const PlateSettingsRequest& request, const std::vector<std::string>& changes)
@@ -193,7 +184,7 @@ nlohmann::json set_plate_settings_on_main_thread(const nlohmann::json& params)
         {
             Plater::TakeSnapshot snapshot(plater, "Plate Settings");
             if (changes_slicing(changes)) {
-                make_current(*plater, plate_index);
+                make_plate_current(*plater, plate_index);
                 apply_dialog_settings(*plater, plate, *request, changes);
                 mark_plate_unsliced(plates, plate_index);
             }

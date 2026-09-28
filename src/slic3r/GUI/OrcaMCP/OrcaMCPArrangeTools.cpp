@@ -154,15 +154,6 @@ void add_options_report(nlohmann::json& answer, const OptionsChange& change)
 
 // ---- Plates ----
 
-// Makes `plate_index` the current plate, as a plate's own icons do first; not an undo step of its own.
-void make_current(Plater& plater, int plate_index)
-{
-    if (plater.get_partplate_list().get_curr_plate_index() == plate_index)
-        return;
-    Plater::SuppressSnapshots not_an_edit(&plater);
-    plater.select_plate(plate_index);
-}
-
 // The plates the A key's arrange leaves as they are (ArrangeJob::prepare_all): locked ones, and those
 // whose own print sequence differs from the global one, which it locks while it runs.
 nlohmann::json plates_not_arranged(GUI::PartPlateList& plates)
@@ -418,7 +409,7 @@ nlohmann::json start_fill_bed(const nlohmann::json& params, const ArrangeOptions
         return *refusal;
 
     save_options(*plater, start.options);
-    make_current(*plater, start.plate_index);
+    make_plate_current(*plater, start.plate_index);
     if (const auto refusal = select_instance(*plater, object_id, instance_id))
         return with_closed_tool(error_response(*refusal), start.closed_tool);
     start.scope   = current_plate_objects(*plater);
@@ -522,7 +513,7 @@ nlohmann::json arrange_objects(const nlohmann::json& params)
             facts = {{"scope", "all_plates"}, {"plate_count_before", plates.get_plate_count()}, {"plates_not_arranged", plates_not_arranged(plates)}};
             scope = scene_objects(*plater);
         } else {
-            make_current(*plater, target);
+            make_plate_current(*plater, target);
             facts = {{"scope", "plate"}, {"plate_index", target}};
             if (const auto note = automatic_spacing_note(*plates.get_plate(target), options.after))
                 facts["spacing_note"] = *note;

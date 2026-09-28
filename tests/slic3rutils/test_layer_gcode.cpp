@@ -6,6 +6,9 @@
 #include <vector>
 
 #include "slic3r/GUI/OrcaMCP/OrcaMCPLayerGcode.hpp"
+#include "fff_print/test_helpers.hpp"
+#include "libslic3r/Model.hpp"
+#include "libslic3r/Print.hpp"
 
 // G-code at a layer as the Preview's layer slider adds, edits and deletes it (IMSlider's menus,
 // TickCodeInfo): add_layer_gcode and delete_layer_gcode edit the plate's CustomGCode::Info by the
@@ -32,11 +35,11 @@ LayerGcodeRules rules(std::size_t slots = 2, std::vector<int> plate_filaments = 
     return rules;
 }
 
-LayerGcodeRequest pause() { return {LayerGcodeKind::pause, 0, {}}; }
+LayerGcodeRequest a_pause() { return {LayerGcodeKind::pause, 0, {}}; }
 LayerGcodeRequest change_to(int filament) { return {LayerGcodeKind::filament_change, filament, {}}; }
 LayerGcodeRequest custom(std::string gcode) { return {LayerGcodeKind::custom, 0, std::move(gcode)}; }
 
-bool contains(const std::optional<std::string>& text, const std::string& part) { return text && text->find(part) != std::string::npos; }
+bool mentions(const std::optional<std::string>& text, const std::string& part) { return text && text->find(part) != std::string::npos; }
 
 } // namespace
 
@@ -44,7 +47,7 @@ TEST_CASE("a pause goes at the start of the layer, at its height, with the plate
 {
     CustomGCode::Info info;
     LayerGcodeChange  change;
-    REQUIRE_FALSE(add_layer_gcode(info, k_layers, /*layer=*/4, pause(), rules(2, {2}), change));
+    REQUIRE_FALSE(add_layer_gcode(info, k_layers, /*layer=*/4, a_pause(), rules(2, {2}), change));
     CHECK(change.changed);
     REQUIRE(info.gcodes.size() == 1);
     CHECK(info.gcodes[0].type == CustomGCode::PausePrint);
@@ -59,7 +62,7 @@ TEST_CASE("on a project of one filament the slider's mode is single extruder, an
 {
     CustomGCode::Info info;
     LayerGcodeChange  change;
-    REQUIRE_FALSE(add_layer_gcode(info, k_layers, 0, pause(), rules(1, {1}), change));
+    REQUIRE_FALSE(add_layer_gcode(info, k_layers, 0, a_pause(), rules(1, {1}), change));
     CHECK(info.mode == CustomGCode::SingleExtruder);
     CHECK(info.gcodes[0].extruder == 1);
 }
@@ -78,14 +81,14 @@ TEST_CASE("the slider offers no filament change where it greys the menu", "[Laye
 {
     CustomGCode::Info info;
     LayerGcodeChange  change;
-    CHECK(contains(add_layer_gcode(info, k_layers, 2, change_to(1), rules(1), change), "one filament"));
-    CHECK(contains(add_layer_gcode(info, k_layers, 2, change_to(2), rules(2, {1, 2}), change), "prints with several"));
+    CHECK(mentions(add_layer_gcode(info, k_layers, 2, change_to(1), rules(1), change), "one filament"));
+    CHECK(mentions(add_layer_gcode(info, k_layers, 2, change_to(2), rules(2, {1, 2}), change), "prints with several"));
     LayerGcodeRules vase = rules();
     vase.spiral_vase     = true;
-    CHECK(contains(add_layer_gcode(info, k_layers, 2, change_to(2), vase, change), "spiral vase"));
+    CHECK(mentions(add_layer_gcode(info, k_layers, 2, change_to(2), vase, change), "spiral vase"));
     // A slot the project lacks, as set_object_config refuses one.
-    CHECK(contains(add_layer_gcode(info, k_layers, 2, change_to(3), rules(), change), "filament 3 names no filament slot: the project has 2"));
-    CHECK(contains(add_layer_gcode(info, k_layers, 2, change_to(0), rules(), change), "filament 0 names no filament slot"));
+    CHECK(mentions(add_layer_gcode(info, k_layers, 2, change_to(3), rules(), change), "filament 3 names no filament slot: the project has 2"));
+    CHECK(mentions(add_layer_gcode(info, k_layers, 2, change_to(0), rules(), change), "filament 0 names no filament slot"));
     CHECK(info.gcodes.empty());
 }
 
@@ -95,7 +98,7 @@ TEST_CASE("nothing goes at a layer of a plate printed by object", "[LayerGcode][
     LayerGcodeChange  change;
     LayerGcodeRules   by_object = rules();
     by_object.by_object         = true;
-    CHECK(contains(add_layer_gcode(info, k_layers, 2, pause(), by_object, change), "print_sequence \"by layer\""));
+    CHECK(mentions(add_layer_gcode(info, k_layers, 2, a_pause(), by_object, change), "print_sequence \"by layer\""));
     CHECK(info.gcodes.empty());
 }
 
@@ -103,8 +106,8 @@ TEST_CASE("custom G-code needs text of at most the slider's 1023 characters", "[
 {
     CustomGCode::Info info;
     LayerGcodeChange  change;
-    CHECK(contains(add_layer_gcode(info, k_layers, 1, custom(""), rules(), change), "must not be empty"));
-    CHECK(contains(add_layer_gcode(info, k_layers, 1, custom(std::string(1024, 'M')), rules(), change), "at most 1023"));
+    CHECK(mentions(add_layer_gcode(info, k_layers, 1, custom(""), rules(), change), "must not be empty"));
+    CHECK(mentions(add_layer_gcode(info, k_layers, 1, custom(std::string(1024, 'M')), rules(), change), "at most 1023"));
     REQUIRE_FALSE(add_layer_gcode(info, k_layers, 1, custom("M117 hello"), rules(), change));
     CHECK(info.gcodes[0].extra == "M117 hello");
     CHECK(info.gcodes[0].type == CustomGCode::Custom);
@@ -116,7 +119,7 @@ TEST_CASE("the template is offered only when the printer has one", "[LayerGcode]
     LayerGcodeChange  change;
     LayerGcodeRules   none = rules();
     none.template_gcode_empty = true;
-    CHECK(contains(add_layer_gcode(info, k_layers, 1, {LayerGcodeKind::template_gcode, 0, {}}, none, change), "no template G-code"));
+    CHECK(mentions(add_layer_gcode(info, k_layers, 1, {LayerGcodeKind::template_gcode, 0, {}}, none, change), "no template G-code"));
     REQUIRE_FALSE(add_layer_gcode(info, k_layers, 1, {LayerGcodeKind::template_gcode, 0, {}}, rules(), change));
     CHECK(info.gcodes[0].type == CustomGCode::Template);
 }
@@ -136,7 +139,7 @@ TEST_CASE("a layer that has G-code is edited only where the slider's Edit would"
     CHECK(info.gcodes[0].extra == "M117 b");
 
     // A pause there: the slider offers only Delete on a custom G-code's layer, besides Edit.
-    CHECK(contains(add_layer_gcode(info, k_layers, 3, pause(), rules(), change), "already has a custom"));
+    CHECK(mentions(add_layer_gcode(info, k_layers, 3, a_pause(), rules(), change), "already has a custom"));
     CHECK(info.gcodes.size() == 1);
 }
 
@@ -156,9 +159,9 @@ TEST_CASE("asking for what a layer already has changes nothing", "[LayerGcode][o
 {
     CustomGCode::Info info;
     LayerGcodeChange  change;
-    REQUIRE_FALSE(add_layer_gcode(info, k_layers, 7, pause(), rules(), change));
+    REQUIRE_FALSE(add_layer_gcode(info, k_layers, 7, a_pause(), rules(), change));
     const CustomGCode::Info before = info;
-    REQUIRE_FALSE(add_layer_gcode(info, k_layers, 7, pause(), rules(), change));
+    REQUIRE_FALSE(add_layer_gcode(info, k_layers, 7, a_pause(), rules(), change));
     CHECK_FALSE(change.changed);
     CHECK(info == before);
     REQUIRE_FALSE(add_layer_gcode(info, k_layers, 2, custom("G4 S1"), rules(), change));
@@ -170,7 +173,7 @@ TEST_CASE("items stay in height order, and each is found at its layer", "[LayerG
 {
     CustomGCode::Info info;
     LayerGcodeChange  change;
-    REQUIRE_FALSE(add_layer_gcode(info, k_layers, 8, pause(), rules(), change));
+    REQUIRE_FALSE(add_layer_gcode(info, k_layers, 8, a_pause(), rules(), change));
     REQUIRE_FALSE(add_layer_gcode(info, k_layers, 1, custom("M117 x"), rules(), change));
     REQUIRE(info.gcodes.size() == 2);
     CHECK(info.gcodes[0].print_z < info.gcodes[1].print_z);
@@ -183,13 +186,13 @@ TEST_CASE("the slider's Delete removes a layer's item, and a layer with none say
 {
     CustomGCode::Info info;
     LayerGcodeChange  change;
-    REQUIRE_FALSE(add_layer_gcode(info, k_layers, 4, pause(), rules(), change));
-    CHECK(contains(delete_layer_gcode(info, k_layers, 5, change), "layer 6 has no G-code"));
+    REQUIRE_FALSE(add_layer_gcode(info, k_layers, 4, a_pause(), rules(), change));
+    CHECK(mentions(delete_layer_gcode(info, k_layers, 5, change), "layer 6 has no G-code"));
     REQUIRE_FALSE(delete_layer_gcode(info, k_layers, 4, change));
     CHECK(change.changed);
     CHECK(change.item.type == CustomGCode::PausePrint);
     CHECK(info.gcodes.empty());
-    CHECK(contains(delete_layer_gcode(info, k_layers, 10, change), "does not exist"));
+    CHECK(mentions(delete_layer_gcode(info, k_layers, 10, change), "does not exist"));
 }
 
 TEST_CASE("an item is described by layer number, height, type and what it carries", "[LayerGcode][orcamcp]")
@@ -216,4 +219,34 @@ TEST_CASE("every kind has the name the tools take and report", "[LayerGcode][orc
     CHECK(layer_gcode_type_name(CustomGCode::PausePrint) == "pause");
     CHECK(layer_gcode_type_name(CustomGCode::Template) == "template");
     CHECK(layer_gcode_type_name(CustomGCode::ColorChange) == "color_change");
+}
+
+// The heights add_layer_gcode puts G-code at are read from the plate's G-code, and kept for the edits made
+// before the next slice, while the Print's layers are still that slice's. "Its slicing steps are done" also
+// held for another slice's: a changed layer height sliced again answered the same. Each object's steps
+// carry the stamp they took when done, and a step done again takes a new one.
+TEST_CASE("layers read from a slice are that slice's until an object's layers are sliced again", "[LayerGcode][orcamcp]")
+{
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_deserialize_strict({{"layer_height", 0.2}, {"initial_layer_print_height", 0.2}, {"enable_support", 0}});
+    Print print;
+    Model model;
+    Test::init_print({make_cube(20, 20, 10)}, print, model, config);
+    print.process();
+    const std::optional<SliceLayersStamp> sliced = slice_layers_stamp(print);
+    REQUIRE(sliced.has_value());
+
+    // A change of the G-code only (what a layer G-code edit is): the layers are the same.
+    config.set_deserialize_strict({{"machine_start_gcode", "G28 ; another start"}});
+    print.apply(model, config);
+    CHECK(slice_layers_stamp(print) == sliced);
+
+    // Another layer height: not sliced until the next slice, then another slice's layers.
+    config.set_deserialize_strict({{"layer_height", 0.3}});
+    print.apply(model, config);
+    CHECK_FALSE(slice_layers_stamp(print).has_value());
+    print.process();
+    const std::optional<SliceLayersStamp> resliced = slice_layers_stamp(print);
+    REQUIRE(resliced.has_value());
+    CHECK(*resliced != *sliced);
 }

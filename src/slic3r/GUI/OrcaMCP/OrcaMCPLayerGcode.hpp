@@ -1,6 +1,7 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPLayerGcode.hpp
 #pragma once
 
+#include <array>
 #include <optional>
 #include <string>
 #include <vector>
@@ -18,7 +19,9 @@
 // the slider's rules, and then run what the slider's change runs (Plater::on_layer_gcodes_changed). No wx:
 // the tests drive it with plain values (tests/slic3rutils/test_layer_gcode.cpp).
 
-namespace Slic3r { namespace GUI { namespace OrcaMCP {
+namespace Slic3r {
+class Print;
+namespace GUI { namespace OrcaMCP {
 
 // What add_layer_gcode's `type` takes, as the slider's menu names them.
 enum class LayerGcodeKind { pause, filament_change, custom, template_gcode };
@@ -78,6 +81,19 @@ std::optional<std::string> add_layer_gcode(CustomGCode::Info& info, const std::v
 // Removes the item at layer `layer`, as the slider's Delete does, or says there is none.
 std::optional<std::string> delete_layer_gcode(CustomGCode::Info& info, const std::vector<double>& layer_zs, std::size_t layer,
                                               LayerGcodeChange& change);
+
+// Which slice a plate's layers were read from: each object's slicing and support steps, with the stamp each
+// took when it was last done. A step done again takes a new stamp, so the same stamps are the same layers;
+// "the steps are done", which is all the Print tells otherwise, holds for another slice's layers too.
+struct SliceLayersStamp
+{
+    std::vector<std::array<std::size_t, 3>> objects; // {model object id, slicing step's stamp, support step's stamp}
+    bool operator==(const SliceLayersStamp& other) const { return objects == other.objects; }
+    bool operator!=(const SliceLayersStamp& other) const { return !(*this == other); }
+};
+
+// The stamp of `print`'s layers, or nullopt while an object's layers or support are not done.
+std::optional<SliceLayersStamp> slice_layers_stamp(const Print& print);
 
 // One item as get_scene_info's layer_gcodes and the tools' answers give it: {layer (1-based, null when
 // the plate's layers are not known), z_mm, type, filament (a filament change), gcode (custom)}.

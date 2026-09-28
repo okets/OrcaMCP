@@ -25,9 +25,25 @@ namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
 std::optional<std::vector<double>> plate_layer_zs(PartPlate& plate)
 {
-    // The layers read last, by the plate's print index (PartPlateList never reuses one): an edit of the
-    // plate's layer G-code takes its G-code away, and a second edit before the next slice still needs them.
-    static std::map<int, std::vector<double>> s_read;
+    // Only the current plate, with no settings change waiting for the background timer: its Print is the one
+    // the slicing process has applied the settings to as they are now. Another plate's Print was last brought
+    // up to date when it was current, and keeps layers a settings change since has made another slice's.
+    Plater& plater = *wxGetApp().plater();
+    if (&plate != plater.get_partplate_list().get_curr_plate() || plater.is_background_process_update_scheduled())
+        return std::nullopt;
+    const Print* print = plate.fff_print();
+    const std::optional<SliceLayersStamp> stamp = print != nullptr ? slice_layers_stamp(*print) : std::nullopt;
+    if (!stamp)
+        return std::nullopt;
+    // The layers read last, with the slice they came from, by the plate's print index (PartPlateList never
+    // reuses one): an edit of the plate's layer G-code takes its G-code away, and a second edit before the
+    // next slice still needs them -- while the Print's layers are still that slice's.
+    struct Read
+    {
+        SliceLayersStamp    stamp;
+        std::vector<double> zs;
+    };
+    static std::map<int, Read> s_read;
     int print_index = -1;
     plate.get_print(nullptr, nullptr, &print_index);
     // Read only from a finished result: a plate being sliced has none, and its moves are being written.
@@ -36,14 +52,13 @@ std::optional<std::vector<double>> plate_layer_zs(PartPlate& plate)
         std::vector<double> zs;
         for (const GcodeLayer& layer : gcode_layers(result->moves))
             zs.push_back(layer.z);
-        s_read[print_index] = zs;
+        s_read[print_index] = {*stamp, zs};
         return zs;
     }
-    const auto  read  = s_read.find(print_index);
-    const Print* print = plate.fff_print();
-    if (read == s_read.end() || print == nullptr || !print->is_step_done(posSlice) || !print->is_step_done(posSupportMaterial))
+    const auto read = s_read.find(print_index);
+    if (read == s_read.end() || read->second.stamp != *stamp)
         return std::nullopt;
-    return read->second;
+    return read->second.zs;
 }
 
 nlohmann::json plate_layer_gcodes_json(PartPlate& plate)
@@ -172,17 +187,23 @@ nlohmann::json layer_gcode_on_main_thread(const LayerGcodeCall& call, bool add)
                               std::to_string(plates.get_plate_count() - 1));
     if (const auto refusal = state_refusal(*plater, tool))
         return error_response(*refusal);
+
+    // The layer slider edits the plate the Preview shows, the current one, whose Print is brought up to the
+    // settings as they are now: the layers are that slice's, or not known.
+    McpDialogSuppressionGuard guard;
+    make_plate_current(*plater, plate_index);
+    apply_pending_settings(*plater, guard);
     PartPlate&                               plate = *plates.get_plate(plate_index);
     const std::optional<std::vector<double>> zs    = plate_layer_zs(plate);
     if (!zs || zs->empty())
-        return error_response("plate_index " + std::to_string(plate_index) +
-                              " has no sliced layers to put G-code at (never sliced, or an edit since changed its layers), as the Preview's "
-                              "layer slider needs: slice_all, then wait_for_slice, first");
+        return guard.report(error_response("plate_index " + std::to_string(plate_index) +
+                                           " has no slice of its layers as the settings are now (never sliced, or a change since "
+                                           "made its layers another slice's), which the Preview's layer slider needs: slice_all, then "
+                                           "wait_for_slice, first"));
     std::size_t layer = 0;
     if (const auto refusal = layer_index(call, *zs, layer))
-        return error_response(*refusal);
+        return guard.report(error_response(*refusal));
 
-    McpDialogSuppressionGuard guard;
     Model&                    model = plater->model();
     CustomGCode::Info         info  = model.plates_custom_gcodes[plate_index];
     LayerGcodeChange          change;
@@ -190,7 +211,7 @@ nlohmann::json layer_gcode_on_main_thread(const LayerGcodeCall& call, bool add)
     const auto                refusal = add ? add_layer_gcode(info, *zs, layer, call.request, rules, change)
                                             : delete_layer_gcode(info, *zs, layer, change);
     if (refusal)
-        return error_response(*refusal);
+        return guard.report(error_response(*refusal));
     if (change.changed) {
         model.plates_custom_gcodes[plate_index] = info;
         plater->on_layer_gcodes_changed(plate_index, change.item.type);
@@ -242,8 +263,8 @@ void Slic3r::GUI::OrcaMCPServer::register_layer_gcode_tools()
         "Add a pause or G-code at a sliced layer",
         "Add G-code at the start of a sliced layer, as the Preview's layer slider's menu does: a pause, a filament change "
         "(filament: the slot to change to), custom G-code (gcode) or the printer's template G-code. The layer is given by its "
-        "number (layer, as the slider numbers them) or height (z), on the current plate or plate_index, which must have "
-        "been sliced. The slider's rules hold: nothing at a layer while the plate prints by object; a filament change only on "
+        "number (layer, as the slider numbers them) or height (z), on the current plate or plate_index (made current first: "
+        "the slider edits the plate shown), which must have been sliced as the settings are now. The slider's rules hold: nothing at a layer while the plate prints by object; a filament change only on "
         "a project of several filaments, a plate printed with one, and not in spiral vase; the template only when the "
         "printer has one; custom G-code of 1 to 1023 characters. On a layer that already has G-code, a custom G-code's text "
         "and a filament change's filament are changed (replaced says what was there); anything else there must be deleted "
@@ -262,7 +283,8 @@ void Slic3r::GUI::OrcaMCPServer::register_layer_gcode_tools()
         ToolCategory::Slicing,
         "Remove the pause or G-code at a layer",
         "Delete the G-code at a layer -- a pause, filament change, custom or template G-code -- as the Preview's layer "
-        "slider's Delete does. The layer is given by number (layer) or height (z), on the current plate or plate_index; "
+        "slider's Delete does. The layer is given by number (layer) or height (z), on the current plate or plate_index (made "
+        "current first); "
         "get_scene_info's plates[].layer_gcodes lists them. The plate loses its slice (slice it again: next_steps). Not an "
         "undo step, as the slider's edits are not.",
         layer_arguments(false),

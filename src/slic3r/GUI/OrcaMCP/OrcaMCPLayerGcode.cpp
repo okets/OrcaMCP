@@ -5,6 +5,7 @@
 #include <cmath>
 
 #include "slic3r/GUI/IMSlider.hpp"
+#include "libslic3r/Print.hpp"
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
@@ -204,6 +205,19 @@ std::optional<std::string> delete_layer_gcode(CustomGCode::Info& info, const std
     change.changed = true;
     info.gcodes.erase(there);
     return std::nullopt;
+}
+
+std::optional<SliceLayersStamp> slice_layers_stamp(const Print& print)
+{
+    SliceLayersStamp stamp;
+    for (const PrintObject* object : print.objects()) {
+        const PrintStateBase::StateWithTimeStamp slice   = object->step_state_with_timestamp(posSlice);
+        const PrintStateBase::StateWithTimeStamp support = object->step_state_with_timestamp(posSupportMaterial);
+        if (slice.state != PrintStateBase::DONE || support.state != PrintStateBase::DONE)
+            return std::nullopt;
+        stamp.objects.push_back({object->model_object()->id().id, slice.timestamp, support.timestamp});
+    }
+    return stamp;
 }
 
 nlohmann::json layer_gcode_json(const CustomGCode::Item& item, const std::vector<double>* layer_zs)

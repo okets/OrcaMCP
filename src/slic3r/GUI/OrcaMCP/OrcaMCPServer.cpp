@@ -280,16 +280,6 @@ std::vector<OrcaMCP::SliceRunPlate> slice_run_plates(PartPlateList& plate_list)
     return plates;
 }
 
-// Applies a settings change the background timer has not taken in yet, while the pipeline is idle
-// (OrcaMCP::apply_pending_update), so what the caller does next -- slice, report a slice, export one
-// -- goes by the settings as they are now. Under the caller's `guard`, which captures what it says.
-void apply_pending_settings(Plater& plater, const McpDialogSuppressionGuard& guard)
-{
-    OrcaMCP::apply_pending_update(guard, OrcaMCP::pipeline_state(plater, plater.get_partplate_list().get_plate_count()),
-                                  plater.is_background_process_update_scheduled(),
-                                  [&plater] { plater.apply_pending_background_update(); });
-}
-
 // The app's words for why its own validation refused the selected plate, the one reslice() works on, or
 // nullopt when it did not or has none now. The verdict is the plate's (PartPlate::is_apply_result_invalid,
 // which update_background_process sets as it validates); the words are the app's validation of it, whose
@@ -6182,6 +6172,20 @@ void record_selected_plate_slice_run(PartPlateList& plate_list)
 {
     s_slice_all_restore_print_index = -1;
     record_slice_run(plate_list, /*every_plate=*/false, plate_list.get_curr_plate_index());
+}
+
+void apply_pending_settings(Plater& plater, const McpDialogSuppressionGuard& guard)
+{
+    apply_pending_update(guard, pipeline_state(plater, plater.get_partplate_list().get_plate_count()),
+                         plater.is_background_process_update_scheduled(), [&plater] { plater.apply_pending_background_update(); });
+}
+
+void make_plate_current(Plater& plater, int plate_index)
+{
+    if (plater.get_partplate_list().get_curr_plate_index() == plate_index)
+        return;
+    Plater::SuppressSnapshots not_an_edit(&plater);
+    plater.select_plate(plate_index);
 }
 
 } // namespace OrcaMCP

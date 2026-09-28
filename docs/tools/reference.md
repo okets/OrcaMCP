@@ -227,7 +227,8 @@ and a stray shell; the object list's warning icon shows for it):
 ```
 
 Each plate's `layer_gcodes` is its G-code at a layer, as the Preview's layer slider shows it: `layer`
-(1-based, `null` while the plate's layers are not known -- never sliced, or changed since), `z_mm`,
+(1-based, `null` while the plate's layers are not known -- never sliced, changed since, a settings change
+not yet applied, or a plate other than the current one, whose layers may be an older slice's), `z_mm`,
 `type` (`pause`, `filament_change` with its `filament`, `custom` with its `gcode`, `template`, or
 `color_change` from an older project). `add_layer_gcode` and `delete_layer_gcode` change them.
 
@@ -2821,7 +2822,7 @@ Filament, Add Custom G-code, Add Custom Template).
 | `type` | string | Yes | `pause`, `filament_change`, `custom` or `template` |
 | `layer` | integer | One of these two | The layer, as the slider numbers them (1 is the first) |
 | `z` | number | | Or its height in mm: the printed layer nearest to it |
-| `plate_index` | integer | No | The plate (default: the current one). It must have been sliced |
+| `plate_index` | integer | No | The plate (default: the current one), made current first, as the slider edits the plate the Preview shows. It must have been sliced as the settings are now |
 | `filament` | integer | With `filament_change` | The filament slot to change to (1-based) |
 | `gcode` | string | With `custom` | The G-code, 1 to 1023 characters (the slider's window holds 1023) |
 
@@ -2851,8 +2852,12 @@ The slider's rules hold, and a call they rule out is refused before anything cha
 A pause records the plate's filament, a filament change the slot and its colour, as the slider does.
 `printer_gcode_empty` says when the printer's pause G-code is empty, so the pause writes nothing.
 
-The plate loses its slice, as in the app; `next_steps` names `slice_all`. The plate's layers stay known
-until the next slice, so several can be added in a row. Refused while the slicing pipeline is busy or an
+The layers are the current plate's slice, once a settings change the app has not taken in yet has been
+applied: another plate's Print keeps the layers it was last sliced with until it is current again, and
+a changed layer height or object makes them another slice's, so the call is refused then, asking for a
+slice. The plate loses its slice, as in the app; `next_steps` names `slice_all`. Its layers stay known
+until the next slice, while the Print's layers are still that slice's (each object's slicing and support
+steps, by the stamp they took when done), so several can be added in a row. Refused while the slicing pipeline is busy or an
 arrange, orient or bed fill runs, and on a G-code preview. **Not an undo step**: the app's undo history
 does not hold layer G-code, so an undo neither removes nor restores it.
 
