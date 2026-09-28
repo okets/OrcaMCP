@@ -7111,7 +7111,8 @@ struct Plater::priv
     void export_gcode(fs::path output_path, bool output_path_on_removable_media);
     void export_gcode(fs::path output_path, bool output_path_on_removable_media, PrintHostJob upload_job);
 
-    void reload_from_disk();
+    // Orca: `snapshot_name` names the undo step it takes before its first change ("Reload from disk" when empty).
+    void reload_from_disk(const std::string& snapshot_name = {});
     bool replace_volume_with_stl(int object_idx, int volume_idx, const fs::path& new_path, const std::string& snapshot = "");
     void replace_with_stl();
     void replace_all_with_stl();
@@ -11245,11 +11246,19 @@ void Plater::priv::replace_with_stl()
 
     wxString title = _L("Select a new file");
     title += ":";
+    fs::path out_path;
+    // Orca MCP: the tool call's file_path answers the dialog, which would block the call for good.
+    if (std::vector<std::string> answered; mcp_answer_path_dialog(into_u8(title), McpPathDialog::file, answered)) {
+        if (answered.empty())
+            return;
+        out_path = answered.front();
+    } else {
     wxFileDialog dialog(q, title, "", from_u8(input_path.filename().string()), file_wildcards(FT_MODEL), wxFD_OPEN | wxFD_FILE_MUST_EXIST);
     if (dialog.ShowModal() != wxID_OK)
         return;
 
-    fs::path out_path = dialog.GetPath().ToUTF8().data();
+    out_path = dialog.GetPath().ToUTF8().data();
+    }
     if (out_path.empty()) {
         MessageDialog dlg(q, _L("File for the replacement wasn\'t selected"), _L("Error during replacement"), wxOK | wxOK_DEFAULT | wxICON_WARNING);
         dlg.ShowModal();
@@ -11329,11 +11338,19 @@ void Plater::priv::replace_all_with_stl()
 
     wxString title = _L("Select folder to replace from");
     title += ":";
+    fs::path out_path;
+    // Orca MCP: the tool call's folder answers the dialog, which would block the call for good.
+    if (std::vector<std::string> answered; mcp_answer_path_dialog(into_u8(title), McpPathDialog::folder, answered)) {
+        if (answered.empty())
+            return;
+        out_path = answered.front();
+    } else {
     wxDirDialog dialog(q, title, from_u8(input_path.parent_path().string()), wxDD_DEFAULT_STYLE | wxDD_DIR_MUST_EXIST);
     if (dialog.ShowModal() != wxID_OK)
         return;
 
-    fs::path out_path = dialog.GetPath().ToUTF8().data();
+    out_path = dialog.GetPath().ToUTF8().data();
+    }
     if (out_path.empty()) {
         MessageDialog dlg(q, _L("Directory for the replace wasn't selected"), _L("Error during replacement"), wxOK | wxOK_DEFAULT | wxICON_WARNING);
         dlg.ShowModal();
@@ -11394,6 +11411,42 @@ void Plater::priv::replace_all_with_stl()
     dlg.ShowModal();
 }
 
+// Orca: which volumes Reload from disk reloads, and where it finds their files, out of reloadable_volumes and
+// reload_from_disk, so MCP's reload_from_disk decides as they do before it asks (Plater.hpp).
+bool is_reloadable_volume(const ModelVolume& volume)
+{
+    return !volume.source.is_from_builtin_objects && !volume.source.input_file.empty() &&
+           !fs::path(volume.source.input_file).extension().string().empty();
+}
+
+ReloadSources reload_sources(const Model& model, const std::vector<std::pair<int, int>>& volumes)
+{
+    ReloadSources sources;
+    for (auto [obj_idx, vol_idx] : volumes) {
+        const ModelObject *object = model.objects[obj_idx];
+        const ModelVolume *volume = object->volumes[vol_idx];
+        if (fs::exists(volume->source.input_file))
+            sources.input_paths.push_back(volume->source.input_file);
+        else {
+            // searches the source in the same folder containing the object
+            bool found = false;
+            if (!object->input_file.empty()) {
+                fs::path object_path = fs::path(object->input_file).remove_filename();
+                if (!object_path.empty()) {
+                    object_path /= fs::path(volume->source.input_file).filename();
+                    if (fs::exists(object_path)) {
+                        sources.input_paths.push_back(object_path);
+                        found = true;
+                    }
+                }
+            }
+            if (!found)
+                sources.missing.push_back(volume->source.input_file);
+        }
+    }
+    return sources;
+}
+
 #if ENABLE_RELOAD_FROM_DISK_REWORK
 static std::vector<std::pair<int, int>> reloadable_volumes(const Model &model, const Selection &selection)
 {
@@ -11407,7 +11460,7 @@ static std::vector<std::pair<int, int>> reloadable_volumes(const Model &model, c
             const int          v_idx = v.volume_idx();
             if (0 <= v_idx && v_idx < int(obj->volumes.size())) {
                 const ModelVolume *vol = obj->volumes[v_idx];
-                if (!vol->source.is_from_builtin_objects && !vol->source.input_file.empty() && !fs::path(vol->source.input_file).extension().string().empty())
+                if (is_reloadable_volume(*vol))
                     ret.push_back({o_idx, v_idx});
             }
         }
@@ -11416,7 +11469,7 @@ static std::vector<std::pair<int, int>> reloadable_volumes(const Model &model, c
 }
 #endif // ENABLE_RELOAD_FROM_DISK_REWORK
 
-void Plater::priv::reload_from_disk()
+void Plater::priv::reload_from_disk(const std::string& snapshot_name)
 {
 #if ENABLE_RELOAD_FROM_DISK_REWORK
     // collect selected reloadable ModelVolumes
@@ -11472,27 +11525,10 @@ void Plater::priv::reload_from_disk()
     std::vector<fs::path> missing_input_paths;
 #if ENABLE_RELOAD_FROM_DISK_REWORK
     std::vector<std::pair<fs::path, fs::path>> replace_paths;
-    for (auto [obj_idx, vol_idx] : selected_volumes) {
-        const ModelObject *object = model.objects[obj_idx];
-        const ModelVolume *volume = object->volumes[vol_idx];
-        if (fs::exists(volume->source.input_file))
-            input_paths.push_back(volume->source.input_file);
-        else {
-            // searches the source in the same folder containing the object
-            bool found = false;
-            if (!object->input_file.empty()) {
-                fs::path object_path = fs::path(object->input_file).remove_filename();
-                if (!object_path.empty()) {
-                    object_path /= fs::path(volume->source.input_file).filename();
-                    if (fs::exists(object_path)) {
-                        input_paths.push_back(object_path);
-                        found = true;
-                    }
-                }
-            }
-            if (!found)
-                missing_input_paths.push_back(volume->source.input_file);
-        }
+    {
+        ReloadSources sources = reload_sources(model, selected_volumes); // Orca: moved out, for MCP to ask too
+        input_paths           = std::move(sources.input_paths);
+        missing_input_paths   = std::move(sources.missing);
     }
 #else
     std::vector<fs::path> replace_paths;
@@ -11537,11 +11573,21 @@ void Plater::priv::reload_from_disk()
         title += " (" + from_u8(search.filename().string()) + ")";
 #endif // __APPLE__
         title += ":";
+        std::string sel_filename_path;
+        // Orca MCP: the tool call's file_path answers the dialog, once: a file still missing after it gets no
+        // answer, which cancels the reload before anything changed, as a cancel does.
+        if (std::vector<std::string> answered; mcp_answer_path_dialog(into_u8(title), McpPathDialog::file, answered)) {
+            set_mcp_path_answer(McpPathDialog::file, {});
+            if (answered.empty())
+                return;
+            sel_filename_path = answered.front();
+        } else {
         wxFileDialog dialog(q, title, "", from_u8(search.filename().string()), file_wildcards(FT_MODEL), wxFD_OPEN | wxFD_FILE_MUST_EXIST);
         if (dialog.ShowModal() != wxID_OK)
             return;
 
-        std::string sel_filename_path = dialog.GetPath().ToUTF8().data();
+        sel_filename_path = dialog.GetPath().ToUTF8().data();
+        }
         std::string sel_filename = fs::path(sel_filename_path).filename().string();
         if (boost::algorithm::iequals(search.filename().string(), sel_filename)) {
             input_paths.push_back(sel_filename_path);
@@ -11582,7 +11628,13 @@ void Plater::priv::reload_from_disk()
     replace_paths.erase(std::unique(replace_paths.begin(), replace_paths.end()), replace_paths.end());
 
 #if ENABLE_RELOAD_FROM_DISK_REWORK
-    Plater::TakeSnapshot snapshot(q, _u8L("Reload from disk"));
+    // Orca: the undo step is taken right before the first volume changes, not before loading: a reload
+    // whose files all fail to load changed nothing and left an empty undo step.
+    std::optional<Plater::TakeSnapshot> snapshot;
+    const auto before_change = [&]() {
+        if (!snapshot)
+            snapshot.emplace(q, snapshot_name.empty() ? _u8L("Reload from disk") : snapshot_name);
+    };
 #endif // ENABLE_RELOAD_FROM_DISK_REWORK
 
     std::vector<wxString> fail_list;
@@ -11639,7 +11691,10 @@ void Plater::priv::reload_from_disk()
         catch (std::exception&)
         {
             // error while loading
-            return;
+            // Orca: the others are still reloaded, the scene is updated for those already done, and the file
+            // is named below; upstream returned, leaving the scene stale and an undo step for nothing.
+            fail_list.push_back(from_u8(path));
+            continue;
         }
 
 #if ENABLE_RELOAD_FROM_DISK_REWORK
@@ -11707,6 +11762,7 @@ void Plater::priv::reload_from_disk()
                     continue;
                 }
 
+                before_change();
                 ModelVolume *new_volume = nullptr;
                 // BBS: step model
                 if (new_volume_idx < 0 && new_object_idx >= 0) {
@@ -11831,9 +11887,11 @@ void Plater::priv::reload_from_disk()
 #if ENABLE_RELOAD_FROM_DISK_REWORK
     for (auto [src, dest] : replace_paths) {
         for (auto [obj_idx, vol_idx] : selected_volumes) {
-            if (boost::algorithm::iequals(model.objects[obj_idx]->volumes[vol_idx]->source.input_file, src.string()))
+            if (boost::algorithm::iequals(model.objects[obj_idx]->volumes[vol_idx]->source.input_file, src.string())) {
+                before_change();
                 // When an error occurs, either the dest parsing error occurs, or the number of objects in the dest is greater than 1 and cannot be replaced, and cannot be replaced in this loop.
                 if (!replace_volume_with_stl(obj_idx, vol_idx, dest, "")) break;
+            }
         }
     }
 #else
@@ -11875,14 +11933,13 @@ void Plater::priv::reload_all_from_disk()
     if (model.objects.empty())
         return;
 
-    Plater::TakeSnapshot snapshot(q, _u8L("Reload all"));
-    Plater::SuppressSnapshots suppress(q);
-
+    // Orca: the reload takes the undo step, named for this, right before its first change (not up front,
+    // which left an empty step when nothing reloaded).
     Selection& selection = get_selection();
     Selection::IndicesList curr_idxs = selection.get_volume_idxs();
     // reload from disk uses selection
     select_all();
-    reload_from_disk();
+    reload_from_disk(_u8L("Reload all"));
     // restore previous selection
     selection.clear();
     for (unsigned int idx : curr_idxs) {

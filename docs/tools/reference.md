@@ -30,7 +30,7 @@ into a call that reports success and changes nothing. See [Error Handling](#erro
 | Category | Tools |
 |----------|-------|
 | **Scene** | `get_scene_info`, `new_project`, `load_project`, `save_project`, `export_3mf`, `export_stl` |
-| **Models** | `load_model`, `auto_orient`, `arrange_objects`, `get_object_info`, `get_mesh_health`, `repair_mesh`, `get_object_components`, `rename_object`, `set_object_printable`, `split_object`, `add_volume`, `set_volume_type`, `assemble_objects`, `merge_parts`, `invalidate_cut_info` |
+| **Models** | `load_model`, `auto_orient`, `arrange_objects`, `get_object_info`, `get_mesh_health`, `repair_mesh`, `get_object_components`, `rename_object`, `set_object_printable`, `split_object`, `add_volume`, `set_volume_type`, `assemble_objects`, `merge_parts`, `invalidate_cut_info`, `reload_from_disk`, `replace_volume_with_file` |
 | **Transforms** | `move_object`, `rotate_object`, `scale_object`, `mirror_object`, `flatten_object`, `clone_object`, `set_instance_count`, `fill_bed_with_instances`, `cut_object`, `delete_object`, `transform_objects` |
 | **Plates** | `add_plate`, `select_plate`, `delete_plate`, `set_prime_tower_position`, `set_plate_settings` |
 | **Config** | `get_presets`, `install_presets`, `get_edited_presets`, `get_config_values`, `select_preset`, `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset`, `get_valid_config_keys` |
@@ -1037,6 +1037,71 @@ tools refuse them, naming this call. An object that is not part of a cut changes
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `object_id` | integer | Yes | Any piece of the cut |
+
+---
+
+### reload_from_disk
+Reload parts from the files they were loaded from, as the object list's Reload from disk does -- or,
+without `object_id`, every object, as the plate menu's Reload All does. Each part takes its file's mesh
+as it is now and keeps its place, settings, filament and type (painting as the app's "Keep painted
+feature after mesh change" setting says).
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `object_id` | integer | No | The object (default: every object) |
+| `volume_id` | integer | No | One part of `object_id` |
+| `file_path` | string | No | Where a source file that moved or was deleted is now, or another file to load into the part |
+
+**Returns:**
+```json
+{"status": "success",
+ "reloaded": [{"object_id": 0, "volume_id": 0, "name": "bracket.stl", "source_file": "/tmp/models/bracket.stl"}],
+ "objects": [{"object_id": 0, "plate_index": 0, "on_bed": true, "...": "..."}],
+ "active_warnings": {"count": 0, "warnings": []}}
+```
+
+The app finds a file where it was loaded from, else beside the object's own file (a project's folder).
+When it is in neither place the app asks for it; `file_path` answers, as the user's pick would: a file of
+the same name (its folder is then searched for the other missing ones), or another file, which replaces
+the part ("Do you want to replace it?", answered Yes). The answer is used once: a file still missing after
+it cancels the reload before anything changed, and the error names it. Without `file_path`, a missing file
+is refused, naming it; with `file_path` and nothing missing, it is refused too (to load another file, use
+`replace_volume_with_file`).
+
+Refused: a part not loaded from a file (a shape added in the app); a piece of a cut, which a reload would
+turn back into the whole model -- and Reload All while one is in the scene; while an arrange, orient or bed
+fill runs. A file that fails to load is named in `info_messages` ("Unable to reload"), and the others are
+still reloaded. `objects` gives each changed object's placement; `next_steps` names `get_mesh_health` /
+`get_object_components` for a reloaded mesh that needs a look. One undo step, taken right before the first
+part changes; none when nothing did (until v2.5.0.6 a failed load left one, and a scene not updated for the
+parts already reloaded: probe BC).
+
+---
+
+### replace_volume_with_file
+Replace a part's mesh with another 3D file, as the object list's Replace 3D file does; with `folder`,
+every part whose source file's name the folder holds, as Replace all with 3D files does.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `object_id` | integer | Yes | The object |
+| `volume_id` | integer | No | The part (needed with `file_path` when the object has several) |
+| `file_path` | string | One of these two | The new file (STL, 3MF, STEP, OBJ, ...), holding one part |
+| `folder` | string | | A folder holding a file of each part's source file name |
+
+**Returns:** `replaced` (the parts loaded anew: `object_id`, `volume_id`, `name`, `source_file`),
+`object_name`, `objects` (placement), `closed_toolbar_tool` when an open toolbar tool was closed first,
+`active_warnings`, `next_steps` as `reload_from_disk`.
+
+The new mesh takes the part's place, settings, filament, type and name -- the object's name too when it
+has one part -- and its painting as the app's "Keep painted feature" setting says. A file of more than one
+part is an error ("Unable to replace with more than one volume"), and nothing changes. With `folder`, a
+part whose file is not there, or is its own source file, is skipped, as the menu skips it (the app's list
+of what it replaced and skipped is in `info_messages`); a folder with no such file for any part is refused
+before anything changes. One undo step, for the folder too (the menu takes one per part). Refused: a piece
+of a cut; `file_path` and `folder` both or neither; while an arrange, orient or bed fill runs.
 
 ---
 

@@ -170,6 +170,8 @@ private:
     static void register_layer_gcode_tools();
     // What the user sees: show_view (OrcaMCPViewTools.cpp)
     static void register_view_tools();
+    // Source files: reload_from_disk, replace_volume_with_file (OrcaMCPSourceFileTools.cpp)
+    static void register_source_file_tools();
     // Tools orcamcp-bridge.py answers itself (start_orca)
     static void register_bridge_tools();
 };

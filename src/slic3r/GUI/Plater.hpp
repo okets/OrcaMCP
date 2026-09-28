@@ -337,6 +337,18 @@ struct SendGcodeError
     bool        monospaced = false;
 };
 
+// Orca: which volumes the object list's Reload from disk reloads (loaded from a file with an extension, not a
+// built-in shape), and where it finds their files: where they were loaded from, else beside the object's own
+// file; `missing` the ones found nowhere, for which it asks the user. MCP's reload_from_disk asks the same.
+bool is_reloadable_volume(const ModelVolume& volume);
+struct ReloadSources
+{
+    std::vector<boost::filesystem::path> input_paths;
+    std::vector<boost::filesystem::path> missing;
+};
+// `volumes`: (object, volume) indices into `model`.
+ReloadSources reload_sources(const Model& model, const std::vector<std::pair<int, int>>& volumes);
+
 class Plater: public wxPanel
 {
 public:
