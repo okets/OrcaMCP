@@ -233,9 +233,11 @@ What the tests enforce, with no app running:
   in the app's words, and no bridge tool takes a nested object; the Windows path rewrite forwards
   arguments that are not an object untouched, for the app to refuse (`test_bridge_arguments.py`);
   `initialize` answers the file's instructions, app or no app, and still answers without them for a
-  file that has none (`test_bridge_instructions.py`). No Python test contacts or launches an app: each
-  loads the bridge through `bridge_test_support.load_bridge()`, which gives it an empty instance registry,
-  a default address nothing listens on, and a launch that raises (on 2026-09-28 a test of
+  file that has none (`test_bridge_instructions.py`). No Python test contacts or launches an app, nor
+  depends on the shell's environment: each loads the bridge through `bridge_test_support.load_bridge()`,
+  which gives it none of the shell's `ORCAMCP_*` settings (a test that needs one passes it:
+  `load_bridge(ORCAMCP_PORT="13625")`; `test_bridge_environment.py`), an empty instance registry, a
+  default address nothing listens on, and a launch that raises (on 2026-09-28 a test of
   `start_orca` launched the user's installed app); the fake instances are the tests' own servers. The
   one comparison with a running app, `test_tools_schema.py`'s, is opt-in: it runs only with
   `ORCAMCP_LIVE_SCHEMA_TEST_PORT` set to the port of a build started for it, and asks that port alone.

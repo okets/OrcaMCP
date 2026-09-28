@@ -118,18 +118,21 @@ def install_tools_manifest(path: str = TOOLS_FILE):
 install_tools_manifest()
 
 # Configuration
+# The environment the bridge reads its ORCAMCP_* settings from, here and when a tool runs. The tests load
+# the bridge with their own, so no setting of the shell that runs them changes what they test.
+ENV = os.environ
 # Several OrcaMCP instances can run at once, each with its MCP server on its own port from 13618
 # (OrcaMCPPortChoice.hpp). The bridge finds them in the instance registry and sends every call to the
 # one this session chose (see "Instances" below). ORCAMCP_URL is where it looks before any is chosen:
 # 13618, the port every OrcaMCP tries first and every older one listens on, or ORCAMCP_PORT's.
 FIRST_MCP_PORT = 13618
-ORCAMCP_HOST = os.environ.get("ORCAMCP_HOST", "127.0.0.1")
-PINNED_PORT = int(os.environ["ORCAMCP_PORT"]) if os.environ.get("ORCAMCP_PORT") else None
+ORCAMCP_HOST = ENV.get("ORCAMCP_HOST", "127.0.0.1")
+PINNED_PORT = int(ENV["ORCAMCP_PORT"]) if ENV.get("ORCAMCP_PORT") else None
 ORCAMCP_PORT = PINNED_PORT or FIRST_MCP_PORT
 ORCAMCP_URL = f"http://{ORCAMCP_HOST}:{ORCAMCP_PORT}/mcp"
-TIMEOUT = int(os.environ.get("ORCAMCP_TIMEOUT", "120"))  # 2 minute default for slicing
+TIMEOUT = int(ENV.get("ORCAMCP_TIMEOUT", "120"))  # 2 minute default for slicing
 # Where every running instance publishes an entry, <pid>.json (OrcaMCPInstanceRegistry.hpp).
-INSTANCES_DIR = os.environ.get("ORCAMCP_INSTANCES_DIR") or os.path.join(os.path.expanduser("~"), ".orcamcp", "instances")
+INSTANCES_DIR = ENV.get("ORCAMCP_INSTANCES_DIR") or os.path.join(os.path.expanduser("~"), ".orcamcp", "instances")
 
 # What a tool call gets while nothing answers at ORCAMCP_URL.
 NOT_RUNNING_MESSAGE = "OrcaMCP is not running. Use the 'start_orca' tool to start it, then try again."
@@ -178,7 +181,7 @@ def get_orcamcp_executable() -> str | None:
     paths = []
 
     # First priority: environment variable
-    custom_path = os.environ.get("ORCAMCP_APP_PATH")
+    custom_path = ENV.get("ORCAMCP_APP_PATH")
     if custom_path:
         paths.append(custom_path)
 
@@ -313,7 +316,7 @@ def launch_orcamcp(new_instance: bool = False) -> dict:
 
 def log_debug(message: str):
     """Log debug message to stderr (won't interfere with stdout protocol)"""
-    if os.environ.get("ORCAMCP_DEBUG"):
+    if ENV.get("ORCAMCP_DEBUG"):
         print(f"[orcamcp-bridge] {message}", file=sys.stderr)
 
 

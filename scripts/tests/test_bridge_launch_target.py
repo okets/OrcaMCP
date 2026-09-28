@@ -17,15 +17,12 @@ class LaunchTargetTests(unittest.TestCase):
     def test_start_orca_never_launches_a_build_in_a_source_folder(self):
         """A build found in the repo would run on the user's real data folder (the user, 2026-09-28)."""
         bridge = load_bridge()
-        with mock.patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("ORCAMCP_APP_PATH", None)
-            with mock.patch.object(bridge.os.path, "isfile", side_effect=lambda path: path.startswith(REPO_ROOT)):
-                self.assertIsNone(bridge.get_orcamcp_executable())
+        with mock.patch.object(bridge.os.path, "isfile", side_effect=lambda path: path.startswith(REPO_ROOT)):
+            self.assertIsNone(bridge.get_orcamcp_executable())
 
     def test_orcamcp_app_path_is_launched_when_set(self):
-        bridge = load_bridge()
-        with mock.patch.dict(os.environ, {"ORCAMCP_APP_PATH": "/opt/test/OrcaSlicer"}), \
-                mock.patch.object(bridge.os.path, "isfile", return_value=True):
+        bridge = load_bridge(ORCAMCP_APP_PATH="/opt/test/OrcaSlicer")
+        with mock.patch.object(bridge.os.path, "isfile", return_value=True):
             self.assertEqual(bridge.get_orcamcp_executable(), "/opt/test/OrcaSlicer")
 
 

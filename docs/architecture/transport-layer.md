@@ -40,7 +40,7 @@ Translate MCP stdio transport to HTTP requests.
 Environment variables:
 ```bash
 ORCAMCP_HOST=127.0.0.1    # where to look before an instance is chosen: 127.0.0.1 or localhost (the app listens on 127.0.0.1 only)
-ORCAMCP_PORT=13618        # optional: the instance on this port is used first (several can run, on 13618-13627)
+ORCAMCP_PORT=13618        # optional: use the instance on this port, and only that one (several can run, on 13618-13627)
 ORCAMCP_INSTANCES_DIR=... # optional: the instance registry folder (default ~/.orcamcp/instances)
 ORCAMCP_TIMEOUT=120       # Request timeout (seconds)
 ORCAMCP_DEBUG=1           # Enable debug logging to stderr
