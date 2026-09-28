@@ -89,12 +89,12 @@ TEST_CASE("reload_from_disk refuses a volume without its object, and ids out of 
     ReloadRequest volume_only;
     volume_only.volume_id = 0;
     CHECK(mentions(plan_reload(volume_only, scene).refusal, "needs the object_id"));
-    ReloadRequest far;
-    far.object_id = 4;
-    CHECK(mentions(plan_reload(far, scene).refusal, "Invalid object_id 4"));
-    far.object_id = 0;
-    far.volume_id = 2;
-    CHECK(mentions(plan_reload(far, scene).refusal, "Invalid volume_id 2"));
+    ReloadRequest out_of_range;
+    out_of_range.object_id = 4;
+    CHECK(mentions(plan_reload(out_of_range, scene).refusal, "Invalid object_id 4"));
+    out_of_range.object_id = 0;
+    out_of_range.volume_id = 2;
+    CHECK(mentions(plan_reload(out_of_range, scene).refusal, "Invalid volume_id 2"));
     CHECK(mentions(plan_reload(ReloadRequest{}, {}).refusal, "no objects"));
 }
 
