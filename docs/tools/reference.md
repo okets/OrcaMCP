@@ -232,6 +232,15 @@ not yet applied, or a plate other than the current one, whose layers may be an o
 `type` (`pause`, `filament_change` with its `filament`, `custom` with its `gcode`, `template`, or
 `color_change` from an older project). `add_layer_gcode` and `delete_layer_gcode` change them.
 
+A filament change also says whether the slicer takes it: `active` true, or false with `inactive_reason`,
+or null while not known (a plate other than the current one, whose objects' filaments only its Print can
+count). The slicer takes none on a plate printed by object, in spiral vase mode (the plate's own or the print
+preset's), on a plate whose objects print with several filaments (a part, a painting, a mixed slot's
+components count once, a feature's filament such as its walls' counts where the feature prints), or one
+recorded in another filament mode (an older project's). Those print nothing, and the Preview's layer slider
+hides them, except the last, which it shows; they stay in the project, and a vase plate's apply again once
+vase mode is off. On a printer of one filament a filament change prints as a color change (M600).
+
 With a prime tower printed, `prime_tower` also carries `position` (the front-left corner of the tower
 body), `position_is`, `size`, `brim_width_mm`, `body`, `footprint`, `footprint_includes_brim` and a
 `note`, and `occupancy` a `prime_tower` entry. `with_model_object_features` adds `features` to every
@@ -2847,9 +2856,10 @@ Filament, Add Custom G-code, Add Custom Template).
 The slider's rules hold, and a call they rule out is refused before anything changes:
 
 - Nothing at a layer while the plate prints by object (`set_plate_settings` `print_sequence: "by layer"` first).
-- A filament change only on a project of several filaments, on a plate that prints with one of them
-  (a plate painted or set to several has no single filament to change from), not in spiral vase mode,
-  and to a slot the project has.
+- A filament change only where the slicer takes one: on a project of several filaments, on a plate whose
+  objects print with one of them as the slicer counts them (a part, a painting, a feature's filament such
+  as its walls' or infill's make several; a mixed slot counts once), not in spiral vase mode (the plate's
+  own, else the print preset's), and to a slot the project has.
 - The template only when the printer has template G-code (`template_custom_gcode`).
 - On a layer that already has G-code: custom G-code's text and a filament change's filament are
   edited in place, and `replaced` says what was there; any other kind there must be deleted first
@@ -2864,16 +2874,22 @@ applied: another plate's Print keeps the layers it was last sliced with until it
 a changed layer height or object makes them another slice's, so the call is refused then, asking for a
 slice. The plate loses its slice, as in the app; `next_steps` names `slice_all`. Its layers stay known
 until the next slice, while the Print's layers are still that slice's (each object's slicing and support
-steps, by the stamp they took when done), so several can be added in a row. Refused while the slicing pipeline is busy or an
-arrange, orient or bed fill runs, and on a G-code preview. **Not an undo step**: the app's undo history
-does not hold layer G-code, so an undo neither removes nor restores it.
+steps, by the stamp they took when done), so several can be added in a row. Refused while the slicing
+pipeline is busy or an arrange, orient or bed fill runs, and on a G-code preview. **Not an undo step**: the
+app's undo history does not hold layer G-code, so an undo neither removes nor restores it.
+
+What needs no layer is checked before the plate is made current, so such a refusal (by object, vase mode,
+a template the printer lacks, a plate never sliced, nothing to delete) changes nothing. Once the call has
+made the plate current, or brought its Print up to settings changed since, every answer says so, success
+or refusal: `plate_made_current` {`previous_plate_index`, `switched`, `slice_invalidated`: the plate's slice
+was made with other settings and is gone}.
 
 ---
 
 ### delete_layer_gcode
 Delete the G-code at a layer, as the slider's Delete does (Delete Pause, Delete Custom G-code, ...).
-Takes `layer` or `z`, and `plate_index`; answers as `add_layer_gcode`, with `deleted`. A layer with no
-G-code of its own is refused. Not an undo step.
+Takes `layer` or `z`, and `plate_index`; answers as `add_layer_gcode`, with `deleted`. A plate with no
+G-code at a layer is refused before it is made current, a layer with none of its own after. Not an undo step.
 
 ---
 

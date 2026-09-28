@@ -37,10 +37,13 @@ struct LayerGcodeRules
 {
     FilamentSlotsState       slots;            // the project's filament slots, which the menu lists
     std::vector<std::string> filament_colors;  // one per slot (filament_colour): a filament change's colour
-    std::vector<int>         plate_filaments;  // PartPlate::get_extruders_without_support, 1-based
-    bool                     spiral_vase          = false;
-    bool                     by_object            = false; // the plate prints one object after another
-    bool                     template_gcode_empty = true;  // the printer's template_custom_gcode
+    std::vector<int>         plate_filaments;  // PartPlate::get_extruders_without_support, 1-based: what a pause records
+    // How many filaments the plate's objects print, as the slicer counts them (Print::object_extruders, which the
+    // Preview's slider decides by): known from the plate's Print only while it is current and up to date.
+    std::optional<std::size_t> object_filaments;
+    bool                       spiral_vase          = false; // the plate's own vase mode, else the print preset's
+    bool                       by_object            = false; // the plate prints one object after another
+    bool                       template_gcode_empty = true;  // the printer's template_custom_gcode
 };
 
 // The slider's mode, which it writes into the plate's Info with every change: MultiAsSingle when the
@@ -60,6 +63,15 @@ struct LayerGcodeRequest
     int            filament = 0;  // filament_change: 1-based slot
     std::string    gcode;         // custom
 };
+
+// How the slicer takes a filament change recorded in `mode` on this plate (CustomGCode::tool_changes_off, the rule the
+// Preview's slider shows them by), or nullopt when only the filaments its objects print could tell and they are not known.
+std::optional<CustomGCode::ToolChangesOff> filament_changes_off(const LayerGcodeRules& rules, CustomGCode::Mode mode);
+
+// Why add_layer_gcode refuses `request` on this plate whatever the layer, or nullopt: a plate printed by object, and the
+// kind's own rules (a template the printer lacks, custom G-code's length, a filament change the slider does not offer).
+// A filament change on a plate whose objects' filaments are not known yet is refused only once they are.
+std::optional<std::string> layer_gcode_request_refusal(const LayerGcodeRequest& request, const LayerGcodeRules& rules);
 
 // What an add or a delete did: the item it wrote or removed, and one it replaced.
 struct LayerGcodeChange
@@ -96,8 +108,11 @@ struct SliceLayersStamp
 std::optional<SliceLayersStamp> slice_layers_stamp(const Print& print);
 
 // One item as get_scene_info's layer_gcodes and the tools' answers give it: {layer (1-based, null when
-// the plate's layers are not known), z_mm, type, filament (a filament change), gcode (custom)}.
-nlohmann::json layer_gcode_json(const CustomGCode::Item& item, const std::vector<double>* layer_zs);
-nlohmann::json layer_gcodes_json(const CustomGCode::Info& info, const std::vector<double>* layer_zs);
+// the plate's layers are not known), z_mm, type, filament (a filament change), gcode (custom)}. With the plate's
+// rules, a filament change also says whether the slicer takes it: active (true, false or null when not known) and,
+// when false, inactive_reason. The Preview's slider hides one that is not.
+nlohmann::json layer_gcode_json(const CustomGCode::Item& item, const std::vector<double>* layer_zs, const LayerGcodeRules* rules = nullptr,
+                                CustomGCode::Mode mode = CustomGCode::MultiAsSingle);
+nlohmann::json layer_gcodes_json(const CustomGCode::Info& info, const std::vector<double>* layer_zs, const LayerGcodeRules* rules = nullptr);
 
 }}} // namespace Slic3r::GUI::OrcaMCP

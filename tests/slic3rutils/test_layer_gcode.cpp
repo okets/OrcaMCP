@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <optional>
@@ -35,6 +36,10 @@ LayerGcodeRules rules(std::size_t slots = 2, std::vector<int> plate_filaments = 
     rules.filament_colors       = {"#FF0000", "#00FF00", "#0000FF", "#FFFFFF"};
     rules.filament_colors.resize(slots);
     rules.plate_filaments       = std::move(plate_filaments);
+    // As the slicer would count them, from the plate's filaments (tests with a feature's filament set their own).
+    std::vector<int> distinct = rules.plate_filaments;
+    std::sort(distinct.begin(), distinct.end());
+    rules.object_filaments      = std::size_t(std::unique(distinct.begin(), distinct.end()) - distinct.begin());
     rules.template_gcode_empty  = false;
     return rules;
 }
@@ -94,6 +99,74 @@ TEST_CASE("the slider offers no filament change where it greys the menu", "[Laye
     CHECK(mentions(add_layer_gcode(info, k_layers, 2, change_to(3), rules(), change), "filament 3 names no filament slot: the project has 2"));
     CHECK(mentions(add_layer_gcode(info, k_layers, 2, change_to(0), rules(), change), "filament 0 names no filament slot"));
     CHECK(info.gcodes.empty());
+}
+
+// The slider shows and offers filament changes by the slicer's rule (CustomGCode::tool_changes_off), with the
+// filaments the plate's objects print as the slicer counts them: a feature's filament counts though the parts
+// print with one, and a vase plate takes none. MCP decides by the same rule.
+TEST_CASE("a filament change is offered only where the slicer would take it", "[LayerGcode][orcamcp]")
+{
+    CustomGCode::Info info;
+    LayerGcodeChange  change;
+    LayerGcodeRules   walls_on_2 = rules(3, {1});
+    walls_on_2.object_filaments  = 2; // the parts print with filament 1, their walls with filament 2
+    CHECK(mentions(add_layer_gcode(info, k_layers, 2, change_to(3), walls_on_2, change), "prints with several"));
+    // The plate's own vase mode, which the tools read from the plate (PartPlate::get_spiral_vase_mode).
+    LayerGcodeRules vase = rules(3, {1});
+    vase.spiral_vase     = true;
+    CHECK(mentions(add_layer_gcode(info, k_layers, 2, change_to(3), vase, change), "spiral vase"));
+    CHECK(info.gcodes.empty());
+}
+
+// add_layer_gcode's checks that need no layer run before the tools make the plate current, so a refused call does
+// not switch plates. The filaments a plate's objects print are known only once it is current: that one waits.
+TEST_CASE("a request is refused without its layer, and one that needs the plate's filaments waits for them", "[LayerGcode][orcamcp]")
+{
+    LayerGcodeRules by_object = rules();
+    by_object.by_object       = true;
+    CHECK(mentions(layer_gcode_request_refusal(a_pause(), by_object), "by object"));
+    LayerGcodeRules vase = rules();
+    vase.spiral_vase     = true;
+    CHECK(mentions(layer_gcode_request_refusal(change_to(2), vase), "spiral vase"));
+    CHECK(mentions(layer_gcode_request_refusal(custom(""), rules()), "must not be empty"));
+
+    LayerGcodeRules not_current = rules(2, {1, 2});
+    not_current.object_filaments.reset();
+    CHECK_FALSE(layer_gcode_request_refusal(change_to(2), not_current).has_value());
+    CHECK(mentions(layer_gcode_request_refusal(change_to(2), rules(2, {1, 2})), "prints with several"));
+}
+
+// Whether the slicer takes a filament change goes with it, where the slider hides one it does not: on a vase plate,
+// by object, on a plate whose objects print with several filaments, and in another mode (an older project's).
+TEST_CASE("a filament change says whether the slicer takes it, and why not", "[LayerGcode][orcamcp]")
+{
+    CustomGCode::Info info;
+    info.mode   = CustomGCode::MultiAsSingle;
+    info.gcodes = {{0.4, CustomGCode::PausePrint, 1, "", ""}, {1.0, CustomGCode::ToolChange, 2, "#00FF00", ""}};
+    const auto change_of = [&info](const LayerGcodeRules& plate) { return layer_gcodes_json(info, &k_layers, &plate).at(1); };
+
+    CHECK(change_of(rules()).at("active") == true);
+    CHECK_FALSE(change_of(rules()).contains("inactive_reason"));
+    CHECK_FALSE(layer_gcodes_json(info, &k_layers, nullptr).at(1).contains("active"));
+    const LayerGcodeRules plain = rules();
+    CHECK_FALSE(layer_gcodes_json(info, &k_layers, &plain).at(0).contains("active")); // a pause
+
+    LayerGcodeRules vase = rules();
+    vase.spiral_vase     = true;
+    vase.object_filaments.reset(); // known or not, a vase plate takes none
+    CHECK(change_of(vase).at("active") == false);
+    CHECK(change_of(vase).at("inactive_reason").get<std::string>().find("spiral vase") != std::string::npos);
+
+    CHECK(change_of(rules(2, {1, 2})).at("active") == false);
+    CHECK(change_of(rules(2, {1, 2})).at("inactive_reason").get<std::string>().find("several filaments") != std::string::npos);
+
+    LayerGcodeRules not_current = rules();
+    not_current.object_filaments.reset();
+    CHECK(change_of(not_current).at("active").is_null());
+
+    info.mode = CustomGCode::MultiExtruder;
+    CHECK(change_of(rules()).at("active") == false);
+    CHECK(change_of(rules()).at("inactive_reason").get<std::string>().find("another filament mode") != std::string::npos);
 }
 
 TEST_CASE("nothing goes at a layer of a plate printed by object", "[LayerGcode][orcamcp]")
