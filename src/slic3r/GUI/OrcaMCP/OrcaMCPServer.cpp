@@ -272,26 +272,12 @@ std::vector<OrcaMCP::SliceRunPlate> slice_run_plates(PartPlateList& plate_list)
     return plates;
 }
 
-// What the app shows about its slicing pipeline, for OrcaMCP::pipeline_busy.
-OrcaMCP::PipelineState pipeline_state(Plater& plater, int plate_count)
-{
-    const BackgroundSlicingProcess& process = plater.background_process();
-    const auto                      state   = process.state();
-    return {plater.is_background_process_slicing(),
-            state == BackgroundSlicingProcess::STATE_STARTED || state == BackgroundSlicingProcess::STATE_RUNNING,
-            state == BackgroundSlicingProcess::STATE_FINISHED || state == BackgroundSlicingProcess::STATE_CANCELED,
-            process.is_export_scheduled(),
-            process.is_upload_scheduled(),
-            plater.slice_all_plate_in_progress(),
-            plate_count};
-}
-
 // Applies a settings change the background timer has not taken in yet, while the pipeline is idle
 // (OrcaMCP::apply_pending_update), so what the caller does next -- slice, report a slice, export one
 // -- goes by the settings as they are now. Under the caller's `guard`, which captures what it says.
 void apply_pending_settings(Plater& plater, const McpDialogSuppressionGuard& guard)
 {
-    OrcaMCP::apply_pending_update(guard, pipeline_state(plater, plater.get_partplate_list().get_plate_count()),
+    OrcaMCP::apply_pending_update(guard, OrcaMCP::pipeline_state(plater, plater.get_partplate_list().get_plate_count()),
                                   plater.is_background_process_update_scheduled(),
                                   [&plater] { plater.apply_pending_background_update(); });
 }
@@ -2971,7 +2957,7 @@ void OrcaMCPServer::register_builtin_tools()
                 // slice -- nothing is started: a slice started now would be stopped by the previous one's
                 // completion. This also covers all_plates=false during a Slice All run, which would end
                 // that run half done.
-                if (const auto refusal = OrcaMCP::refuse_while_busy(pipeline_state(*plater, plate_count))) {
+                if (const auto refusal = OrcaMCP::refuse_while_busy(OrcaMCP::pipeline_state(*plater, plate_count))) {
                     answer(*refusal, get_active_warnings_json(plater));
                     return result;
                 }
@@ -3400,7 +3386,7 @@ void OrcaMCPServer::register_builtin_tools()
                 }
 
                 // The one answer slice_all's refusal and wait_for_slice go by (OrcaMCP::pipeline_busy).
-                const OrcaMCP::PipelineBusy busy = OrcaMCP::pipeline_busy(pipeline_state(*plater, plate_count));
+                const OrcaMCP::PipelineBusy busy = OrcaMCP::pipeline_busy(OrcaMCP::pipeline_state(*plater, plate_count));
                 result["busy"]               = busy != OrcaMCP::PipelineBusy::idle;
                 result["busy_reason"]        = busy == OrcaMCP::PipelineBusy::idle ? nlohmann::json(nullptr)
                                                                                    : nlohmann::json(OrcaMCP::pipeline_busy_name(busy));

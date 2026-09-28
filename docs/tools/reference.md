@@ -29,7 +29,7 @@ into a call that reports success and changes nothing. See [Error Handling](#erro
 | Category | Tools |
 |----------|-------|
 | **Scene** | `get_scene_info`, `new_project`, `load_project`, `save_project`, `export_3mf` |
-| **Models** | `load_model`, `auto_orient`, `arrange_objects`, `get_object_info`, `get_mesh_health`, `get_object_components`, `rename_object`, `set_object_printable` |
+| **Models** | `load_model`, `auto_orient`, `arrange_objects`, `get_object_info`, `get_mesh_health`, `repair_mesh`, `get_object_components`, `rename_object`, `set_object_printable` |
 | **Transforms** | `move_object`, `rotate_object`, `scale_object`, `mirror_object`, `flatten_object`, `clone_object`, `cut_object`, `delete_object`, `transform_objects` |
 | **Plates** | `add_plate`, `select_plate`, `delete_plate`, `set_prime_tower_position` |
 | **Config** | `get_presets`, `get_edited_presets`, `get_config_values`, `select_preset`, `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset`, `get_valid_config_keys` |
@@ -204,7 +204,7 @@ and a stray shell; the object list's warning icon shows for it):
   "untracked_modal_loop": false,
   "active_warnings": {"count": 1, "warnings": [{
     "level": "warning", "type": "MeshErrors", "object_id": 0, "object_name": "gallows.stl",
-    "message": "Error: 3 non-manifold edges. MCP has no tool that repairs a mesh. Slicing closes each layer's outline across gaps of up to 2 mm, so a hole that small usually prints closed; a wider one can leave that outline out of a layer, so check the sliced preview there. Details: get_mesh_health {object_id: 0}."}]},
+    "message": "Error: 3 non-manifold edges. repair_mesh repairs it with the app's own repair, on every platform: it splits the mesh into its parts, drops parts with no volume and closes each part's holes; painting is cleared unless keep_painting keeps it. Slicing also closes each layer's outline across gaps of up to 2 mm, so a hole that small usually prints closed; a wider one can leave that outline out of a layer, so check the sliced preview there. Details: get_mesh_health {object_id: 0}; repair: repair_mesh {object_id: 0}."}]},
   "next_steps": [
     {"tool": "get_mesh_health", "arguments": {"object_id": 0},
      "why": "object 0 (\"gallows.stl\") shows the mesh warning icon: Error: 3 non-manifold edges."},
@@ -625,14 +625,15 @@ parts or stray shells, for one object and each of its volumes -- the errors behi
 warning icon.
 
 The icon state and its tooltip come from the object list's own code (`mesh_errors_info` in
-`GUI_ObjectList.cpp`), so this reports exactly what the GUI shows: the icon appears when a mesh has
-open edges or recorded repairs. `tooltip` is the icon's tooltip word for word, in the app's
-language -- its last line, "Click the icon to repair model object", is for the GUI;
-`mesh_warning_reason` is the one line the sidebar shows. A flagged object also gets `advice`, what an
-agent can do: MCP has no tool that repairs a mesh, and slicing closes each layer's outline across
-gaps of up to 2 mm (`TriangleMeshSlicer`), so a small hole usually prints closed and a wider one may
-not. A mesh
-that is only repaired (no open edges) prints as it is.
+`GUI_ObjectList.cpp`), so this reports what the GUI shows: the icon appears when a mesh has open
+edges or recorded repairs. `tooltip` is the icon's tooltip in the app's language, as the list builds
+it, less its last line: the GUI's "Click the icon to repair model object", which agents passed on to
+users as an instruction. `mesh_warning_reason` is the one line the sidebar shows. A flagged object
+also gets `advice`, what an agent can do: `repair_mesh` repairs open edges, and slicing closes each
+layer's outline across gaps of up to 2 mm (`TriangleMeshSlicer`), so a small hole usually prints
+closed and a wider one may not. An object with open edges also gets `next_steps`, naming
+`repair_mesh`. A mesh that is only repaired (no open edges) prints as it is, and a repair leaves its
+recorded repairs as they are.
 
 - An object's `open_edges` and repairs count every volume, modifiers included, as the list does. Its
   `facets`, `shells` and `volume_mm3` count model parts only.
@@ -662,9 +663,9 @@ that is only repaired (no open edges) prints as it is.
   "object_id": 0,
   "object_name": "bracket",
   "mesh_warning": true,
-  "tooltip": "Remaining errors:\n\t3 non-manifold edges\n\nClick the icon to repair model object",
+  "tooltip": "Remaining errors:\n\t3 non-manifold edges",
   "mesh_warning_reason": "Error: 3 non-manifold edges.",
-  "advice": "MCP has no tool that repairs a mesh. Slicing closes each layer's outline across gaps of up to 2 mm, so a hole that small usually prints closed; a wider one can leave that outline out of a layer, so check the sliced preview there.",
+  "advice": "repair_mesh repairs it with the app's own repair, on every platform: it splits the mesh into its parts, drops parts with no volume and closes each part's holes; painting is cleared unless keep_painting keeps it. Slicing also closes each layer's outline across gaps of up to 2 mm, so a hole that small usually prints closed; a wider one can leave that outline out of a layer, so check the sliced preview there.",
   "summary": {"facets": 1215, "shells": 2, "open_edges": 3, "manifold": false, "repaired": false,
               "errors_repaired": 0,
               "repaired_errors": {"edges_fixed": 0, "degenerate_facets": 0, "facets_removed": 0,
@@ -676,7 +677,7 @@ that is only repaired (no open edges) prints as it is.
      "errors_repaired": 0, "repaired_errors": {"edges_fixed": 0, "degenerate_facets": 0,
      "facets_removed": 0, "facets_reversed": 0, "backwards_edges": 0},
      "mesh_warning": true,
-     "tooltip": "Remaining errors:\n\t3 non-manifold edges\n\nClick the icon to repair model object",
+     "tooltip": "Remaining errors:\n\t3 non-manifold edges",
      "mesh_warning_reason": "Error: 3 non-manifold edges.",
      "shell_list": {"total": 2, "listed": 2, "coordinate_frame": "plate", "instance_id": 0,
                     "shells": [{"component": 0, "facet_count": 1203, "area_mm2": 600.2,
@@ -686,12 +687,112 @@ that is only repaired (no open edges) prints as it is.
                                 "bounding_box": {"min": {"x": 137.0, "y": 127.5, "z": 0.0},
                                                  "max": {"x": 138.0, "y": 128.5, "z": 1.0}}}],
                     "note": "Most facets first, at most 10; area_mm2 and bounding_box say which is small. get_object_components lists every shell; its ids are these, the ones paint_object {selection: \"component\"} takes."}}
+  ],
+  "next_steps": [
+    {"tool": "repair_mesh", "arguments": {"object_id": 0},
+     "why": "object 0 (\"bracket\") has 3 open edges: repair_mesh closes its holes, after splitting each volume into its shells and dropping those with no volume; painting is cleared unless keep_painting keeps it"}
   ]
 }
 ```
 
 Every row, the object and each volume, has `mesh_warning`; `tooltip` and `mesh_warning_reason` are
 there only when it is `true`, the same shape `get_scene_info` and `load_model` use for their objects.
+
+---
+
+### repair_mesh
+Repair an object's mesh: close its holes (open edges, non-manifold) with the app's own repair -- the
+object list's Repair (`ObjectList::fix_through_cgal`, CGAL), on every platform, and the same code.
+
+What it does, as the object list's Repair does:
+- Each volume made of several shells is split into one volume per shell, named `<name>_1`, `<name>_2`
+  ..., each with the filament the whole had. The object keeps its place on the plate.
+- A shell with no volume -- flat, empty, or thinner than 1e-4 mm -- is deleted. A closed stray shell,
+  however small, is kept, as a volume of its own (`get_object_components` lists shells).
+- Every shell with open edges has its holes closed. The repaired mesh records no repairs, so its
+  warning goes; a closed one-shell mesh whose warning shows repairs recorded at load is left as it is.
+- The object is then dropped onto the bed.
+- Painting is cleared unless `keep_painting` keeps it: remapped onto the repaired mesh, which the app
+  calls experimental. Left out, the app's "Keep painted feature after mesh change" setting decides,
+  and `keep_painting_from` says `app_setting`.
+
+It changes nothing when there is nothing to repair (`changed: false` and a `message`), when it is
+refused, when a part's repair fails, when it would leave the object no part to print, or when the
+repair takes longer than this call may wait (a little under the bridge's `ORCAMCP_TIMEOUT`). Otherwise
+it is one undo step, "Repairing model object". When there is a repair to apply, an open toolbar tool
+(gizmo) is closed first, as the Repair needs, and named in `closed_toolbar_tool`; closing a painting
+tool records its own undo step, as when the user closes it. A `volume_id` the object does not have,
+negative included, is refused.
+
+The CGAL work, the remap of kept painting and the repaired parts' convex hulls run off the app's main
+thread, so the app stays responsive; the main thread only applies the result (the split, with a
+convex hull per new part). On the unoptimised dev build a 20,000-facet sphere with a hole took 0.8 s,
+100,000 facets 3.9 s, 500,000 facets 28 s, of which 0.2 s on the main thread. Keeping painting is slow:
+about 12 minutes for 10,000 painted facets on that build, all of it off the main thread.
+
+Refused while a slice, an export or an upload runs (`wait_for_slice` first), while an arrange or orient
+runs, and while the app's own Repair runs.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `object_id` | integer | Yes | Object index (0-based) |
+| `volume_id` | integer | No | Repair only this volume, as `get_mesh_health`'s `volumes` number them. Left out: every volume |
+| `keep_painting` | boolean | No | Remap the painting onto the repaired mesh instead of clearing it. Left out: the app's setting |
+
+**Example:**
+```json
+{"name": "repair_mesh", "arguments": {"object_id": 0}}
+```
+
+**Response** (a 20 mm cube with a flat stray sheet beside it: the sheet is dropped, and the cube stays
+where it was -- `position` is the box centre, which the sheet had widened):
+```json
+{
+  "status": "success",
+  "changed": true,
+  "object_id": 0,
+  "object_name": "Object_1",
+  "keep_painting": false,
+  "keep_painting_from": "app_setting",
+  "volumes_before": 1,
+  "volumes_after": 1,
+  "parts": {"split": 2, "dropped": 1, "repaired": 0},
+  "before": {"facets": 14, "shells": 2, "open_edges": 4, "manifold": false, "repaired": false,
+             "errors_repaired": 0,
+             "repaired_errors": {"edges_fixed": 0, "degenerate_facets": 0, "facets_removed": 0,
+                                 "facets_reversed": 0, "backwards_edges": 0},
+             "mesh_warning": true, "volumes": 1, "painted": false,
+             "position": {"x": 128.0, "y": 128.0, "z": 10.0}},
+  "after": {"facets": 12, "shells": 1, "open_edges": 0, "manifold": true, "repaired": false,
+            "errors_repaired": 0,
+            "repaired_errors": {"edges_fixed": 0, "degenerate_facets": 0, "facets_removed": 0,
+                                "facets_reversed": 0, "backwards_edges": 0},
+            "mesh_warning": false, "volumes": 1, "painted": false,
+            "position": {"x": 118.0, "y": 128.0, "z": 10.0}},
+  "volumes": [
+    {"volume_id": 0, "name": "Object_1_1", "type": "part", "facets": 12, "shells": 1, "open_edges": 0,
+     "manifold": true, "repaired": false, "errors_repaired": 0,
+     "repaired_errors": {"edges_fixed": 0, "degenerate_facets": 0, "facets_removed": 0,
+                         "facets_reversed": 0, "backwards_edges": 0},
+     "mesh_warning": false}
+  ],
+  "plate_index": 0,
+  "plate_indices": [0],
+  "on_bed": true,
+  "instance_placement": [{"instance_id": 0, "plate_index": 0, "on_bed": true,
+                          "position": {"x": 118.0, "y": 128.0, "z": 10.0}}],
+  "active_warnings": {"count": 0, "warnings": []}
+}
+```
+
+- `parts.split`: the parts the splits made (0: no volume had several shells); `dropped`: the parts
+  with no volume deleted; `repaired`: the parts whose holes were closed.
+- `before` / `after`: `get_mesh_health`'s numbers for the object, `mesh_warning`, how many `volumes`,
+  whether any is `painted`, and `position` (the centre of its box, plate mm).
+- `volumes`: `get_mesh_health`'s rows after the repair; with `volume_id`, `volume_ids_after` lists the
+  volumes that one became.
+- The placement fields are the transform tools'.
 
 ---
 
@@ -3014,7 +3115,7 @@ Many tools return an `active_warnings` section in their response, providing visi
 | `SlicingSeriousWarning` | Serious slicing issue |
 | `ValidateError` | Validation failed |
 | `PlaterWarning` | General plater warning |
-| `MeshErrors` | The object list shows its warning icon for an object: open edges or recorded repairs. Only `get_scene_info` (every flagged object) and `load_model` (the flagged objects it added) report it, because no tool can clear it. `message` gives the list's reason and what an agent can do (MCP has no tool that repairs a mesh; slicing closes each layer's outline across gaps up to 2 mm); the entry also carries `object_id` and `object_name`. `get_mesh_health` has the numbers |
+| `MeshErrors` | The object list shows its warning icon for an object: open edges or recorded repairs. Only `get_scene_info` (every flagged object) and `load_model` (the flagged objects it added) report it, because it stays until the mesh is repaired. `message` gives the list's reason and what an agent can do (`repair_mesh {object_id: N}` for open edges; slicing closes each layer's outline across gaps up to 2 mm); the entry also carries `object_id` and `object_name`. `get_mesh_health` has the numbers |
 
 **Note:** The `count` field is always present (even when 0) to help agents confirm issues have been resolved.
 
@@ -3039,6 +3140,7 @@ nothing to suggest has no `next_steps`.
 | Response | Step | When |
 |----------|------|------|
 | `load_model` (the objects it added), `get_scene_info` (every object) | `get_mesh_health` | an object shows the object list's mesh warning icon (open edges, or repairs a 3MF recorded) |
+| `get_mesh_health` | `repair_mesh` for that object | the object has open edges. Not for a closed mesh whose icon shows repairs recorded at load: a repair leaves it as it is |
 | | `get_object_components` | a model part of the object is more than one shell: a loose part or a stray fragment, which leaves no warning icon when it is closed |
 | `slice_all` | `wait_for_slice` | `slicing_started`, or `not_started` with `busy_slicing` (wait, then `slice_all` again) |
 | | `get_slicing_status` | `busy_job`: an arrange or orient holds the app, which `wait_for_slice` does not wait for; `slice_all` again once `ui_job` is null |

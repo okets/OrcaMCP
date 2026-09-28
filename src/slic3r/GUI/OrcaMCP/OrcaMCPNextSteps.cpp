@@ -126,6 +126,17 @@ std::vector<NextStep> mesh_next_steps(const Model& model, const std::vector<Mesh
     return mesh_next_steps(model, every_object, health);
 }
 
+std::vector<NextStep> mesh_repair_next_steps(const ModelObject& object, int object_id, const MeshHealth& health)
+{
+    if (health.manifold())
+        return {};
+    const int   edges = health.open_edges();
+    std::string why   = object_label(object, object_id) + " has " + std::to_string(edges) + (edges == 1 ? " open edge" : " open edges") +
+                      ": repair_mesh closes its holes, after splitting each volume into its shells and dropping those with no "
+                      "volume; painting is cleared unless keep_painting keeps it";
+    return {{"repair_mesh", std::move(why), {{"object_id", object_id}}}};
+}
+
 std::vector<NextStep> slice_start_next_steps(const SliceStartReport& report, std::optional<int> sliced_plate)
 {
     if (report.status == SliceStart::started)

@@ -28,6 +28,9 @@ using namespace mesh_fixtures;
 namespace {
 
 const char* const k_hole_tooltip = "Remaining errors:\n\t3 non-manifold edges\n\nClick the icon to repair model object";
+// MCP's copy: the list's own tooltip without its last line, the GUI's "click the icon", which agents
+// passed on to users as an instruction. repair_mesh is what repairs the mesh.
+const char* const k_hole_tooltip_for_agents = "Remaining errors:\n\t3 non-manifold edges";
 
 RepairedMeshErrors reversed_facets(int count)
 {
@@ -143,9 +146,9 @@ TEST_CASE("Mesh health reports a hole's numbers with the list's icon and tooltip
     CHECK_FALSE(h.repaired());
     CHECK(h.errors_repaired() == 0);
     CHECK(h.warning);
-    // The list's own text, word for word, from the same function the list calls.
-    CHECK(mesh_warning_tooltip(h) == utf8(GUI::mesh_errors_info(f.object->get_object_stl_stats()).tooltip));
-    CHECK(mesh_warning_tooltip(h) == k_hole_tooltip);
+    // The list's own text, word for word, from the same function the list calls, less its last line.
+    CHECK(utf8(GUI::mesh_errors_info(f.object->get_object_stl_stats()).tooltip) == k_hole_tooltip);
+    CHECK(mesh_warning_tooltip(h) == k_hole_tooltip_for_agents);
     CHECK(mesh_warning_reason(h) == "Error: 3 non-manifold edges.");
 }
 
@@ -185,7 +188,7 @@ TEST_CASE("Recorded repairs are reported field by field, with the list's count",
     CHECK(h.repaired());
     CHECK(h.manifold());
     CHECK(h.warning);
-    CHECK(mesh_warning_tooltip(h) == "1 error repaired\n\nClick the icon to repair model object");
+    CHECK(mesh_warning_tooltip(h) == "1 error repaired");
     CHECK(mesh_warning_reason(h) == "1 error repaired");
 }
 
@@ -237,7 +240,7 @@ TEST_CASE("An object's health counts every volume's errors and only the parts' f
     CHECK(volume_mesh_health(*f.object, 1).shells() == 2);
     CHECK(volume_mesh_health(*f.object, 1).facets() == 24);
     CHECK(volume_mesh_health(*f.object, 2).open_edges() == 3);
-    CHECK(mesh_warning_tooltip(volume_mesh_health(*f.object, 2)) == k_hole_tooltip);
+    CHECK(mesh_warning_tooltip(volume_mesh_health(*f.object, 2)) == k_hole_tooltip_for_agents);
 }
 
 TEST_CASE("A model's mesh health is one reading per object, by object index", "[MeshHealth][orcamcp]")
@@ -349,11 +352,11 @@ TEST_CASE("get_mesh_health reports a hole's icon, tooltip and reason for the obj
 
     const nlohmann::json& r = report.response;
     CHECK(r["mesh_warning"] == true);
-    CHECK(r["tooltip"] == k_hole_tooltip);
+    CHECK(r["tooltip"] == k_hole_tooltip_for_agents);
     CHECK(r["mesh_warning_reason"] == "Error: 3 non-manifold edges.");
     CHECK(r["summary"]["open_edges"] == 3);
     CHECK(r["volumes"][0]["mesh_warning"] == true);
-    CHECK(r["volumes"][0]["tooltip"] == k_hole_tooltip);
+    CHECK(r["volumes"][0]["tooltip"] == k_hole_tooltip_for_agents);
     CHECK(r["volumes"][0]["mesh_warning_reason"] == "Error: 3 non-manifold edges.");
     CHECK(r["volumes"][0]["open_edges"] == 3);
 }
@@ -381,18 +384,19 @@ TEST_CASE("get_mesh_health leaves the tooltip and reason out of a row without th
 }
 
 // The object list's "Click the icon to repair model object" is advice for a mouse. What an agent is
-// told instead: what MCP has, and what the slicer does with such a mesh.
+// told instead: the tool that repairs the mesh, and what the slicer does with such a mesh.
 TEST_CASE("An agent is told what it can do about a flagged mesh, never to click the icon", "[MeshHealth][orcamcp]")
 {
     OnePartObject hole{TriangleMesh(cube_missing_facet())};
     OnePartObject repaired{TriangleMesh(its_make_cube(10.0, 10.0, 10.0), reversed_facets(1))};
     OnePartObject clean{TriangleMesh(its_make_cube(10.0, 10.0, 10.0))};
 
-    // What MCP has, and what slicing does: never a GUI button for the agent to send the user to.
+    // repair_mesh, and what slicing does: never a GUI button for the agent to send the user to.
     // "MCP cannot repair a mesh: the GUI's repair is not exposed" was read as "no repair exists", and
-    // an agent told a user repair works only on Windows; the object list's Repair runs everywhere.
+    // an agent told a user repair works only on Windows; the app's repair runs everywhere.
     const std::string hole_advice = mesh_warning_advice(object_mesh_health(*hole.object));
-    CHECK(hole_advice.find("MCP has no tool that repairs a mesh") != std::string::npos);
+    CHECK(hole_advice.rfind("repair_mesh repairs it", 0) == 0);
+    CHECK(hole_advice.find("keep_painting") != std::string::npos);
     CHECK(hole_advice.find("2 mm") != std::string::npos);  // the slicer's per-layer gap closing
     for (const char* gui : {"Click", "click", "icon", "the user", "GUI", "Windows"}) {
         INFO("the advice names " << gui);
@@ -402,6 +406,7 @@ TEST_CASE("An agent is told what it can do about a flagged mesh, never to click 
     const std::string repaired_advice = mesh_warning_advice(object_mesh_health(*repaired.object));
     CHECK(repaired_advice.find("prints as it is") != std::string::npos);
     CHECK(repaired_advice.find("Click") == std::string::npos);
+    CHECK(repaired_advice.find("repair_mesh") == std::string::npos); // a repair leaves recorded repairs as they are
 
     CHECK(mesh_warning_advice(object_mesh_health(*clean.object)).empty());
 }
@@ -428,6 +433,7 @@ TEST_CASE("A MeshErrors warning names the object, the list's reason and what to 
     CHECK(message.rfind("Error: 3 non-manifold edges. ", 0) == 0);  // the list's reason first
     CHECK(message.find(mesh_warning_advice(health[1])) != std::string::npos);
     CHECK(message.find("get_mesh_health {object_id: 1}") != std::string::npos);
+    CHECK(message.find("repair: repair_mesh {object_id: 1}") != std::string::npos);
     CHECK(message.find("Click") == std::string::npos);
 
     // load_model's form: only the objects it names, read on the spot -- the flagged ones among the
@@ -459,7 +465,7 @@ TEST_CASE("get_mesh_health tells an agent what it can do about a flagged object"
     OnePartObject hole{TriangleMesh(cube_missing_facet())};
     const nlohmann::json r = mesh_health_report(*hole.object, 0).response;
     CHECK(r["advice"] == mesh_warning_advice(object_mesh_health(*hole.object)));
-    CHECK(r["tooltip"] == k_hole_tooltip);  // the GUI's own text stays exact
+    CHECK(r["tooltip"] == k_hole_tooltip_for_agents);  // the GUI's own text, without its click line
 
     OnePartObject clean{TriangleMesh(its_make_cube(10.0, 10.0, 10.0))};
     CHECK_FALSE(mesh_health_report(*clean.object, 0).response.contains("advice"));

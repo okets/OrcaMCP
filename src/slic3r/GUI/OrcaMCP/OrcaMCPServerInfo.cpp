@@ -503,7 +503,7 @@ const std::string& server_instructions()
 
 Start with get_scene_info (plates, objects, each object's object_id). Key tools:
 - Models: load_model (keeps the presets), load_project (replaces them), arrange_objects, auto_orient, move_object, rotate_object, scale_object, cut_object.
-- Mesh: get_mesh_health (holes, open edges), get_object_components (stray shells).
+- Mesh: get_mesh_health (holes, open edges), get_object_components (stray shells), repair_mesh.
 - Painting: paint_object (color, support, seam, fuzzy_skin).
 - Filaments and colour: get_filaments, set_object_filament, suggest_color_mix.
 - Settings: get_config_values, apply_config, set_object_config (one object), select_preset.

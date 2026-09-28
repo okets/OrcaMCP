@@ -2,6 +2,7 @@
 #include "OrcaMCPMeshHealth.hpp"
 
 #include "OrcaMCPFilamentModel.hpp"
+#include "OrcaMCPNextSteps.hpp"
 #include "OrcaMCPPaintModel.hpp"
 
 #include "slic3r/GUI/GUI.hpp"
@@ -84,7 +85,16 @@ std::vector<MeshHealth> model_mesh_health(const Model& model)
 
 std::string mesh_warning_tooltip(const MeshHealth& health)
 {
-    return health.warning ? into_u8(mesh_errors_info(health.stats).tooltip) : std::string();
+    if (!health.warning)
+        return {};
+    // The list builds the tooltip without its last line, the GUI's "Click the icon to repair model
+    // object", when it is also asked for the sidebar's line; agents passed that line on to users as an
+    // instruction. repair_mesh is what repairs the mesh.
+    wxString    sidebar;
+    std::string tooltip = into_u8(mesh_errors_info(health.stats, &sidebar).tooltip);
+    while (!tooltip.empty() && tooltip.back() == '\n')
+        tooltip.pop_back();
+    return tooltip;
 }
 
 std::string mesh_warning_reason(const MeshHealth& health)
@@ -127,13 +137,15 @@ std::string mesh_warning_advice(const MeshHealth& health)
         return {};
     if (health.manifold())
         return "The repairs were made when the mesh was loaded; it is closed and prints as it is.";
-    // TriangleMeshSlicer's make_loops closes each layer's open outlines across gaps of up to 2 mm
-    // (chain_open_polylines_close_gaps, max_gap); an outline it cannot close is left out of that layer.
-    // What MCP can do about the mesh itself (nothing yet: prompt 08b adds a repair tool, named here
-    // then), and what slicing does with it. Never a GUI button: an agent must not send the user to one.
-    return "MCP has no tool that repairs a mesh. Slicing closes each layer's outline across gaps of up to 2 mm, "
-           "so a hole that small usually prints closed; a wider one can leave that outline out of a layer, so "
-           "check the sliced preview there.";
+    // What MCP can do about the mesh itself -- repair_mesh, the object list's own repair
+    // (FixModelByCgal.cpp) -- and what slicing does with it. TriangleMeshSlicer's make_loops closes each
+    // layer's open outlines across gaps of up to 2 mm (chain_open_polylines_close_gaps, max_gap); an
+    // outline it cannot close is left out of that layer. Never a GUI button: an agent must not send the
+    // user to one.
+    return "repair_mesh repairs it with the app's own repair, on every platform: it splits the mesh into its parts, "
+           "drops parts with no volume and closes each part's holes; painting is cleared unless keep_painting keeps it. "
+           "Slicing also closes each layer's outline across gaps of up to 2 mm, so a hole that small usually prints "
+           "closed; a wider one can leave that outline out of a layer, so check the sliced preview there.";
 }
 
 nlohmann::json mesh_error_warning(const ModelObject& object, int object_id, const MeshHealth& health)
@@ -143,7 +155,9 @@ nlohmann::json mesh_error_warning(const ModelObject& object, int object_id, cons
             {"object_id", object_id},
             {"object_name", object.name},
             {"message", mesh_warning_reason(health) + " " + mesh_warning_advice(health) + " Details: get_mesh_health {object_id: " +
-                            std::to_string(object_id) + "}."}};
+                            std::to_string(object_id) + "}" +
+                            (health.manifold() ? std::string() : "; repair: repair_mesh {object_id: " + std::to_string(object_id) + "}") +
+                            "."}};
 }
 
 nlohmann::json mesh_error_warnings(const Model& model, const std::vector<MeshHealth>& health)
@@ -177,6 +191,14 @@ std::vector<int> flagged_object_indices(const nlohmann::json& objects)
     return indices;
 }
 
+nlohmann::json mesh_volume_rows_json(const ModelObject& object)
+{
+    nlohmann::json rows = nlohmann::json::array();
+    for (std::size_t i = 0; i < object.volumes.size(); ++i)
+        rows.push_back(volume_json(*object.volumes[i], int(i), volume_mesh_health(object, int(i))));
+    return rows;
+}
+
 MeshHealthReport mesh_health_report(const ModelObject& object, int object_id)
 {
     MeshHealthReport report;
@@ -187,18 +209,16 @@ MeshHealthReport mesh_health_report(const ModelObject& object, int object_id)
     if (object_health.warning)
         r["advice"] = mesh_warning_advice(object_health);
     r["summary"] = mesh_features_json(object_health);
+    r["volumes"] = mesh_volume_rows_json(object);
 
-    nlohmann::json volumes = nlohmann::json::array();
     for (std::size_t i = 0; i < object.volumes.size(); ++i) {
         const ModelVolume& volume = *object.volumes[i];
-        const MeshHealth   health = volume_mesh_health(object, int(i));
-        volumes.push_back(volume_json(volume, int(i), health));
         // The shells get_object_components lists: model parts only, and only when there is more
         // than one -- a single shell is the whole part, and the flood fill is the slow half.
-        if (volume.is_model_part() && health.shells() > 1)
+        if (volume.is_model_part() && volume_mesh_health(object, int(i)).shells() > 1)
             report.shell_jobs.push_back({i, volume.mesh_ptr(), volume_to_plate(object, volume, 0)});
     }
-    r["volumes"] = std::move(volumes);
+    add_next_steps(r, mesh_repair_next_steps(object, object_id, object_health));
     return report;
 }
 
