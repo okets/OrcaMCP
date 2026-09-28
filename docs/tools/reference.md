@@ -2024,6 +2024,19 @@ each has its own field now:
 | `unknown_keys` | No such config key. Check `get_valid_config_keys`. |
 | `rejected_values` | The key exists; this value was not accepted. Each entry is `{"key", "reason", "expected"}`, where `expected` names the shape that would have worked. |
 
+Two more refusals land in `rejected_values`:
+
+- **A filament slot the project cannot take there.** A setting that names a slot by its number
+  (`support_filament`, `support_interface_filament`, `wipe_tower_filament`, the per-feature
+  `*_filament_id` keys) takes 0 (the default) or a slot the project has; support and the wipe tower take
+  a physical slot only, as the Print settings' lists offer them (a mixed slot would reach the slicer
+  unresolved). `set_object_config` and `set_object_layer_range` refuse the same, and `extruder` there too.
+  Before v2.5.0.6 the objects and ranges stored any number, and `apply_config` reported a mixed support
+  filament applied while the Print settings put the default back.
+- **A value the settings' own rules changed right after it was written** (the rules the Print, Filament
+  and Printer settings apply as a user edits them, such as a support style the support type does not
+  have): the entry's `reason` says what the value is now, and the key is not in `applied_keys`.
+
 ```json
 {
   "status": "partial",

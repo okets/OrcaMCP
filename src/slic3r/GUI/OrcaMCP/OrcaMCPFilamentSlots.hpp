@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -15,6 +16,8 @@
 // sidebar's "+" button, a slot's Delete and Merge with), and which slot's preset apply_config edits
 // (the slot's Edit). The tools run the sidebar's own code (Sidebar::add_custom_filament,
 // delete_filament, change_filament) in OrcaMCPFilamentTools.cpp.
+
+namespace Slic3r { class DynamicPrintConfig; }
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
@@ -105,5 +108,21 @@ std::optional<std::string> slot_needed_refusal(const FilamentSlotsState& state, 
 
 // The slots (1-based) whose preset is `preset`.
 std::vector<int> slots_using(const FilamentSlotsState& state, const std::string& preset);
+
+// Why a setting that names a filament slot by its number ("extruder" and filament_number_settings) must not
+// take `value`, or nothing: 0 is the default, else a slot the project has, and a physical one for support
+// and the wipe tower (physical_only_filament_setting), which the slicer reads as they are. The app's lists
+// offer nothing else (ConfigManipulation resets the print preset's). Nothing for any other key.
+std::optional<std::string> filament_number_refusal(const FilamentSlotsState& state, const std::string& key, int value);
+
+// Whether `key` names a filament slot by its number: "extruder" or one of filament_number_settings.
+bool names_filament_slot(const std::string& key);
+
+// The settings in `settings` that name a filament slot they may not (filament_number_refusal), in the
+// config's key order, each with why: what set_object_config, set_object_layer_range and apply_config refuse.
+std::vector<std::pair<std::string, std::string>> refused_filament_numbers(const FilamentSlotsState& state, const DynamicPrintConfig& settings);
+
+// What such a setting takes, for a refusal's `expected`.
+std::string filament_number_expected();
 
 }}} // namespace Slic3r::GUI::OrcaMCP

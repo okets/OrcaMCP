@@ -1605,9 +1605,11 @@ void OrcaMCPServer::register_builtin_tools()
                 std::vector<int> flattened_slots;
                 std::vector<std::string> color_errors;
 
+                std::vector<std::pair<std::string, std::vector<std::pair<std::string, std::string>>>> written;
                 for (const auto& type : type_order) {
                     nlohmann::json config_item = {{"type", type}, {"settings", grouped_settings[type]}};
                     ApplyConfigResult result = OrcaMCPPresetConfigUtils::ApplyConfig(config_item);
+                    written.emplace_back(type, result.written);
                     if (!result.error.empty()) {
                         has_error = true;
                     }
@@ -1626,6 +1628,15 @@ void OrcaMCPServer::register_builtin_tools()
                     color_errors.insert(color_errors.end(), result.color_errors.begin(), result.color_errors.end());
                 }
                 OrcaMCPPresetConfigUtils::UpdatePresetTabs();
+                // A value the settings' own rules changed right after it was written did not take: it is
+                // reported with what it is now, not as applied.
+                for (const auto& [type, values] : written)
+                    for (const auto& changed : OrcaMCPPresetConfigUtils::ChangedAfterWrite(type, values)) {
+                        applied_keys.erase(std::remove(applied_keys.begin(), applied_keys.end(), changed.key), applied_keys.end());
+                        invalid_keys.push_back(changed.key);
+                        rejected_values.push_back({{"key", changed.key}, {"reason", changed.reason}, {"expected", changed.expected}});
+                        has_invalid = true;
+                    }
 
                 std::string status = has_error ? "error" : (has_invalid ? "partial" : "success");
 
@@ -2349,6 +2360,13 @@ void OrcaMCPServer::register_builtin_tools()
                                                        {"expected", config_value_expected_shape(def->type)}});
                         }
                     }
+                    // A filament slot the project does not have, or a mixed one for support, as the app's lists
+                    // never offer it: the slicer would read it as it is.
+                    for (const auto& [key, reason] : refused_filament_numbers(filament_slots_state(), parsed)) {
+                        parsed.erase(key);
+                        invalid_keys.push_back(key);
+                        rejected_values.push_back({{"key", key}, {"reason", reason}, {"expected", filament_number_expected()}});
+                    }
 
                     bool changed = false;
                     for (const std::string& key : parsed.keys()) {
@@ -2816,6 +2834,13 @@ void OrcaMCPServer::register_builtin_tools()
                                                    {"reason", std::string("could not be read as a value: ") + e.what()},
                                                    {"expected", config_value_expected_shape(def->type)}});
                     }
+                }
+                // A filament slot the project does not have, or a mixed one for support (as set_object_config).
+                for (const auto& [key, reason] : refused_filament_numbers(filament_slots_state(), written)) {
+                    written.erase(key);
+                    applied_keys.erase(std::remove(applied_keys.begin(), applied_keys.end(), key), applied_keys.end());
+                    invalid_keys.push_back(key);
+                    rejected_values.push_back({{"key", key}, {"reason", reason}, {"expected", filament_number_expected()}});
                 }
 
                 // The range as it would be stored: what it has, this call's settings, and what it still

@@ -7029,12 +7029,12 @@ std::optional<int> FilamentRenumbering::number(int value, bool physical_only) co
     return value > changed ? value - 1 : value;
 }
 
-namespace {
-
 bool physical_only_filament_setting(const std::string& key)
 {
     return key == "support_filament" || key == "support_interface_filament" || key == "wipe_tower_filament";
 }
+
+namespace {
 
 // A config's filament number settings, and with `extruder` its "extruder" too, as `change` renumbers them.
 void renumber_config(ModelConfig& config, const FilamentRenumbering& change, bool extruder)

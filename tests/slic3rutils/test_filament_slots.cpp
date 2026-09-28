@@ -426,3 +426,54 @@ TEST_CASE("pointing the Filament settings at a slot leaves an open settings wind
     CHECK(editing_slot_after_pointing(0, 2) == 2);
     CHECK(editing_slot_after_pointing(2, 2) == 2);
 }
+
+TEST_CASE("a setting that names a filament slot takes only a slot the project has", "[FilamentSlots]")
+{
+    const FilamentSlotsState project = multi_material_project(4, 1); // slots 1-4 physical, 5 mixed
+
+    // 0 is the default (the object's own filament), and every slot the project has is a value.
+    for (const char* key : {"support_filament", "sparse_infill_filament_id", "extruder"}) {
+        CHECK_FALSE(filament_number_refusal(project, key, 0).has_value());
+        CHECK_FALSE(filament_number_refusal(project, key, 4).has_value());
+    }
+    // A slot past the last one would reach the slicer as a filament that does not exist: the app's own
+    // lists never offer it.
+    const auto past = filament_number_refusal(project, "sparse_infill_filament_id", 6);
+    REQUIRE(past.has_value());
+    CHECK(mentions(*past, "5 filament slots"));
+    CHECK(filament_number_refusal(project, "extruder", 9).has_value());
+    CHECK(filament_number_refusal(project, "support_filament", -1).has_value());
+    // Settings that name no filament are not this rule's.
+    CHECK_FALSE(filament_number_refusal(project, "wall_loops", 9).has_value());
+}
+
+TEST_CASE("support and the wipe tower take a physical slot, the per-feature filaments a mixed one too", "[FilamentSlots]")
+{
+    const FilamentSlotsState project = multi_material_project(4, 1); // slot 5 is mixed
+
+    for (const char* key : {"support_filament", "support_interface_filament", "wipe_tower_filament"}) {
+        const auto refusal = filament_number_refusal(project, key, 5);
+        REQUIRE(refusal.has_value());
+        CHECK(mentions(*refusal, "mixed"));
+        CHECK(mentions(*refusal, "1-4"));
+    }
+    // The per-feature filaments are resolved layer by layer, and an object prints with a mix as its filament.
+    CHECK_FALSE(filament_number_refusal(project, "top_surface_filament_id", 5).has_value());
+    CHECK_FALSE(filament_number_refusal(project, "extruder", 5).has_value());
+}
+
+TEST_CASE("the filament numbers a batch of settings may not take are named with why, the rest left alone", "[FilamentSlots]")
+{
+    const FilamentSlotsState project = multi_material_project(2, 1); // slot 3 is mixed
+    DynamicPrintConfig       settings;
+    settings.set_key_value("support_filament", new ConfigOptionInt(3));          // mixed: refused
+    settings.set_key_value("sparse_infill_filament_id", new ConfigOptionInt(3)); // mixed: fine
+    settings.set_key_value("outer_wall_filament_id", new ConfigOptionInt(4));    // no slot 4: refused
+    settings.set_key_value("wall_loops", new ConfigOptionInt(40));               // names no filament
+
+    const auto refused = refused_filament_numbers(project, settings);
+    REQUIRE(refused.size() == 2);
+    CHECK(refused[0].first == "outer_wall_filament_id");
+    CHECK(refused[1].first == "support_filament");
+    CHECK(mentions(refused[1].second, "mixed"));
+}

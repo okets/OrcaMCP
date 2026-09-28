@@ -1,6 +1,8 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPFilamentSlots.cpp
 #include "OrcaMCPFilamentSlots.hpp"
 #include "OrcaMCPUiJob.hpp"
+#include "slic3r/GUI/GUI_ObjectList.hpp" // filament_number_settings, physical_only_filament_setting
+#include "libslic3r/PrintConfig.hpp"
 
 #include <algorithm>
 
@@ -180,6 +182,42 @@ std::vector<int> slots_using(const FilamentSlotsState& state, const std::string&
         if (!state.is_mixed[i] && state.slot_presets[i] == preset)
             slots.push_back(int(i + 1));
     return slots;
+}
+
+bool names_filament_slot(const std::string& key)
+{
+    const std::vector<std::string>& numbered = filament_number_settings();
+    return key == "extruder" || std::find(numbered.begin(), numbered.end(), key) != numbered.end();
+}
+
+std::optional<std::string> filament_number_refusal(const FilamentSlotsState& state, const std::string& key, int value)
+{
+    if (!names_filament_slot(key))
+        return std::nullopt;
+    const std::string named = key + " " + std::to_string(value);
+    if (value < 0 || std::size_t(value) > state.slots())
+        return named + " names no filament slot: 0 is the default (the object's own filament), and " + slot_range(state.slots());
+    if (value > 0 && physical_only_filament_setting(key) && state.is_mixed[std::size_t(value - 1)]) {
+        const std::size_t physical = state.physical_slots();
+        return named + " is a mixed slot, and support and the wipe tower print from one physical filament: 0 (the default) or " +
+               (physical == 1 ? std::string("slot 1") : "a physical slot, 1-" + std::to_string(physical));
+    }
+    return std::nullopt;
+}
+
+std::vector<std::pair<std::string, std::string>> refused_filament_numbers(const FilamentSlotsState& state, const DynamicPrintConfig& settings)
+{
+    std::vector<std::pair<std::string, std::string>> refused;
+    for (const std::string& key : settings.keys())
+        if (names_filament_slot(key))
+            if (const auto refusal = filament_number_refusal(state, key, settings.opt_int(key)))
+                refused.emplace_back(key, *refusal);
+    return refused;
+}
+
+std::string filament_number_expected()
+{
+    return "0 (the default) or a filament slot the project has (get_filaments); a physical one for support and the wipe tower";
 }
 
 std::optional<std::string> slot_edit_refusal(const FilamentSlotsState& state, int slot, bool include_sharing_slots, SlotEdit& plan)

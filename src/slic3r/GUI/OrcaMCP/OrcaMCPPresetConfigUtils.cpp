@@ -402,6 +402,26 @@ void OrcaMCPPresetConfigUtils::UpdatePresetTabs() {
     }
 }
 
+std::vector<ApplyConfigResult::RejectedValue> OrcaMCPPresetConfigUtils::ChangedAfterWrite(
+    const std::string& type, const std::vector<std::pair<std::string, std::string>>& written)
+{
+    std::vector<ApplyConfigResult::RejectedValue> changed;
+    if (written.empty()) // nothing written, or a type ApplyConfig refused
+        return changed;
+    Tab* tab = wxGetApp().get_tab(GetPresetTypeFromString(type));
+    const DynamicPrintConfig* config = tab != nullptr ? tab->get_config() : nullptr;
+    if (config == nullptr)
+        return changed;
+    for (const auto& [key, value] : written) {
+        const std::string now = config->has(key) ? config->opt_serialize(key) : std::string();
+        if (now != value)
+            changed.push_back({key, "written, then the " + type + " settings' own rules set it to \"" + now +
+                                        "\" (a value that does not go with the other settings as they are)",
+                               "a value that goes with the other " + type + " settings, or those changed first"});
+    }
+    return changed;
+}
+
 namespace {
 
 // Why apply_config cannot set the global bed type as `type` gives it, or nothing with `bed_type` set: it is
@@ -425,6 +445,19 @@ std::optional<ApplyConfigResult::RejectedValue> global_bed_type_refusal_for(cons
                                                 selectable ? "one of " + OrcaMCP::listed_bed_types(offered) : "\"" + OrcaMCP::bed_type_value(current) + "\""};
     bed_type = parsed;
     return std::nullopt;
+}
+
+// Why a print setting that names a filament slot must not take `value`, or nothing (OrcaMCP::filament_number_refusal).
+// Throws what reading the value throws.
+std::optional<std::string> print_filament_number_refusal(const std::string& type, const std::string& key, const std::string& value,
+                                                         ConfigSubstitutionContext& context)
+{
+    if (type != "print" || !OrcaMCP::names_filament_slot(key))
+        return std::nullopt;
+    DynamicPrintConfig written;
+    written.set_deserialize(key, value, context);
+    const auto refused = OrcaMCP::refused_filament_numbers(OrcaMCP::filament_slots_state(), written);
+    return refused.empty() ? std::nullopt : std::optional<std::string>(refused.front().second);
 }
 
 } // namespace
@@ -509,6 +542,14 @@ ApplyConfigResult OrcaMCPPresetConfigUtils::ApplyConfig(const nlohmann::json& it
         if (is_color && config->option(key) != nullptr)
             previous.reset(config->option(key)->clone());
         try {
+            // A filament slot the project does not have, or a mixed one for support and the wipe tower: the print
+            // settings' lists never offer it, and their own check (ConfigManipulation) would put back the default
+            // right after this reported it applied.
+            if (const auto refusal = print_filament_number_refusal(type, key, value_str, context)) {
+                result.invalid.push_back(key);
+                result.rejected.push_back({key, *refusal, OrcaMCP::filament_number_expected()});
+                continue;
+            }
             config->set_deserialize(key, value_str, context);
         } catch (const std::exception& e) {
             BOOST_LOG_TRIVIAL(error) << "ApplyConfig: '" << key << ":" << value_str << "' failed: " << e.what();
@@ -534,6 +575,8 @@ ApplyConfigResult OrcaMCPPresetConfigUtils::ApplyConfig(const nlohmann::json& it
             continue;
         }
         result.applied.push_back(key);
+        if (type != "project")
+            result.written.emplace_back(key, config->opt_serialize(key));
     }
 
     if (type == "project") {

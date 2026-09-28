@@ -103,6 +103,10 @@ void bake_instance_transform_into_volumes(ModelObject& model_object, bool need_u
 // Orca: the settings besides "extruder" that name a filament slot by its number, 0 meaning the default
 // (the object's own filament): support, support interface, wipe tower, and the per-feature filaments.
 const std::vector<std::string>& filament_number_settings();
+// Orca: whether a filament number setting takes a physical slot only: support and the wipe tower, which the
+// slicer reads as they are (ConfigManipulation resets a mixed one), while the per-feature filaments are
+// resolved layer by layer.
+bool physical_only_filament_setting(const std::string& key);
 
 // Orca: how the filament slots' numbers change when one is deleted or inserted.
 struct FilamentRenumbering

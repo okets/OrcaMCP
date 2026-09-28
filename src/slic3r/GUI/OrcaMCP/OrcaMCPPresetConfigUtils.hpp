@@ -146,6 +146,9 @@ struct ApplyConfigResult {
     };
     std::vector<std::string>   unknown;
     std::vector<RejectedValue> rejected;
+    // Each key written into a preset (types print, filament, printer), with its value as written: the
+    // settings' own rules (ConfigManipulation, run by UpdatePresetTabs) may change it right after.
+    std::vector<std::pair<std::string, std::string>> written;
 };
 
 class OrcaMCPPresetConfigUtils {
@@ -162,6 +165,10 @@ public:
     static nlohmann::json GetEditedPresetJson(Preset::Type type);
     static void DiscardCurrentPresetChanges();
     static void UpdatePresetTabs();
+    // After UpdatePresetTabs: the keys of `written` (ApplyConfigResult::written) whose value the settings'
+    // own rules changed since, each with what it is now. Main thread.
+    static std::vector<ApplyConfigResult::RejectedValue> ChangedAfterWrite(const std::string& type,
+                                                                            const std::vector<std::pair<std::string, std::string>>& written);
     // item = {"type": "print"|"filament"|"printer"|"project", "settings": {key: value, ...}}
     static ApplyConfigResult ApplyConfig(const nlohmann::json& item);
     // Refreshes derived UI/state after a direct write to preset_bundle->project_config
