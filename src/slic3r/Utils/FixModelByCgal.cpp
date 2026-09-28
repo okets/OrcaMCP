@@ -163,11 +163,11 @@ void set_painting(ModelVolume &volume, const CgalRepairPainting &painting)
 // OrcaMCP: one part's repair in the loop: the plan's, worked out off the main thread, with the painting
 // to give it. A part the plan did not foresee (or a plan made from an input alone) is repaired here, as
 // upstream repaired every part.
-bool repair_part(TriangleMesh &mesh, CgalRepairPlan &plan, CgalRepairResult &result, std::string &error,
+bool repair_part(TriangleMesh &mesh, const ObjectID &target, CgalRepairPlan &plan, CgalRepairResult &result, std::string &error,
                  std::optional<TriangleMesh> &hull, std::optional<CgalRepairPainting> &painting)
 {
     TriangleMesh planned_hull;
-    switch (plan.take_repaired(mesh, planned_hull, painting)) {
+    switch (plan.take_repaired(target, mesh, planned_hull, painting)) {
     case CgalRepairPlan::Part::planned: hull = std::move(planned_hull); return true;
     case CgalRepairPlan::Part::failed: error = plan.error; return false;
     case CgalRepairPlan::Part::unplanned: break;
@@ -179,16 +179,22 @@ bool repair_part(TriangleMesh &mesh, CgalRepairPlan &plan, CgalRepairResult &res
 }
 
 // OrcaMCP: the loop's two tests of a part, taken from the plan when it foresaw the part.
-bool drops(const CgalRepairPlan &plan, const TriangleMesh &mesh)
+bool drops(const CgalRepairPlan &plan, const ObjectID &target, const TriangleMesh &mesh)
 {
-    const CgalRepairPlan::PlannedPart *part = plan.find_part(mesh.its);
+    const CgalRepairPlan::PlannedPart *part = plan.find_part(target, mesh.its);
     return part != nullptr ? part->dropped : is_not_3dimensional_part(mesh);
 }
 
-bool has_open_edges(const CgalRepairPlan &plan, const TriangleMesh &mesh)
+bool has_open_edges(const CgalRepairPlan &plan, const ObjectID &target, const TriangleMesh &mesh)
 {
-    const CgalRepairPlan::PlannedPart *part = plan.find_part(mesh.its);
+    const CgalRepairPlan::PlannedPart *part = plan.find_part(target, mesh.its);
     return part != nullptr ? part->open || part->failed : its_num_open_edges(mesh.its) != 0;
+}
+
+std::array<ObjectWithTimestamp::Timestamp, 4> painting_stamps(const ModelVolume &volume)
+{
+    return {volume.supported_facets.timestamp(), volume.seam_facets.timestamp(), volume.mmu_segmentation_facets.timestamp(),
+            volume.fuzzy_skin_facets.timestamp()};
 }
 
 // OrcaMCP: the Repair dialogs running, which let other main-thread work through. Main thread only.
@@ -219,6 +225,7 @@ CgalRepairInput capture_cgal_repair(const ModelObject &object, int volume_idx, b
         const ModelVolume *volume = object.volumes[i];
         if (input.whole_object || int(i) == volume_idx) {
             CgalRepairVolume target{i, volume->id(), volume->mesh_ptr(), volume->is_splittable(), volume->is_model_part()};
+            target.painting_stamps = painting_stamps(*volume);
             // What ModelVolume::save_painting keeps.
             if (keep_painting && volume->is_any_painted() && volume->is_model_part() && !volume->mesh().empty())
                 target.painting = painting_of(*volume);
@@ -265,32 +272,52 @@ void CgalRepairPlan::add_part(PlannedPart part)
     m_parts.push_back(std::move(part));
 }
 
-const CgalRepairPlan::PlannedPart *CgalRepairPlan::find_part(const indexed_triangle_set &its) const
+const CgalRepairPlan::PlannedPart *CgalRepairPlan::find_part(const ObjectID &target, const indexed_triangle_set &its) const
 {
     const size_t hash = mesh_hash(its);
     for (size_t i = 0; i < m_parts.size(); ++i)
-        if (m_hashes[i] == hash && same_mesh(its, m_parts[i].its))
+        if (m_parts[i].target == target && m_hashes[i] == hash && same_mesh(its, m_parts[i].its))
             return &m_parts[i];
     return nullptr;
 }
 
-const std::optional<CgalRepairPainting> *CgalRepairPlan::take_split_painting(const indexed_triangle_set &its)
+const std::optional<CgalRepairPainting> *CgalRepairPlan::take_split_painting(const ObjectID &target, const indexed_triangle_set &its)
 {
     const size_t hash = mesh_hash(its);
     for (size_t i = 0; i < m_parts.size(); ++i)
-        if (PlannedPart &part = m_parts[i]; !part.painting_taken && m_hashes[i] == hash && same_mesh(its, part.its)) {
+        if (PlannedPart &part = m_parts[i];
+            !part.painting_taken && part.target == target && m_hashes[i] == hash && same_mesh(its, part.its)) {
             part.painting_taken = true;
             return &part.painting;
         }
     return nullptr;
 }
 
-CgalRepairPlan::Part CgalRepairPlan::take_repaired(TriangleMesh &part, TriangleMesh &hull, std::optional<CgalRepairPainting> &painting)
+const CgalRepairVolume *CgalRepairPlan::target_of(const ModelVolume &volume) const
+{
+    for (const CgalRepairVolume &target : m_input.targets)
+        if (target.id == volume.id())
+            return &target;
+    for (const CgalRepairVolume &target : m_input.targets)
+        if (target.mesh == volume.mesh_ptr())
+            return &target;
+    return nullptr;
+}
+
+bool CgalRepairPlan::painting_unchanged(const ModelVolume &volume) const
+{
+    const CgalRepairVolume *target = target_of(volume);
+    return target != nullptr && target->painting_stamps == painting_stamps(volume);
+}
+
+CgalRepairPlan::Part CgalRepairPlan::take_repaired(const ObjectID &target, TriangleMesh &part, TriangleMesh &hull,
+                                                   std::optional<CgalRepairPainting> &painting)
 {
     const size_t hash = mesh_hash(part.its);
     for (size_t i = 0; i < m_parts.size(); ++i) {
         PlannedPart &planned = m_parts[i];
-        if (planned.taken || !(planned.open || planned.failed) || m_hashes[i] != hash || !same_mesh(part.its, planned.its))
+        if (planned.taken || !(planned.open || planned.failed) || planned.target != target || m_hashes[i] != hash ||
+            !same_mesh(part.its, planned.its))
             continue;
         if (planned.failed)
             return Part::failed;
@@ -343,6 +370,7 @@ CgalRepairPlan plan_cgal_repair(CgalRepairInput input, const CgalRepairProgress 
             }
             for (TriangleMesh &part : split.parts) {
                 CgalRepairPlan::PlannedPart planned;
+                planned.target = volume.id;
                 // The painting ModelVolume::split leaves on the part (remapped onto it), or the whole's.
                 if (volume.painting && split.split) {
                     if (canceled()) {
@@ -443,12 +471,19 @@ CgalRepairResult apply_cgal_repair(ModelObject &model_object, bool keep_painting
                 break;
 
             ModelVolume *volume = model_object.volumes[ivolume];
+            // OrcaMCP: the captured volume these parts are (the split gives this one a new id, and so
+            // does deleting every other volume of the object), and
+            // whether its painting is still what the plan remapped: painting written since the capture
+            // is remapped here, in place, as upstream remapped it.
+            const CgalRepairVolume *target               = plan.target_of(*volume);
+            const ObjectID          target_id            = target != nullptr ? target->id : volume->id();
+            const bool              use_planned_painting = painting_planned && plan.painting_unchanged(*volume);
 
             // Orca: Split splittable volumes into parts for individual processing.
             size_t parts_count = 1;
             const bool splittable = volume->is_splittable();
             if (splittable)
-                parts_count = volume->split(1, keep_painting && !painting_planned);
+                parts_count = volume->split(1, keep_painting && !use_planned_painting);
 
             size_t part_end = std::min(ivolume + parts_count - 1, model_object.volumes.size() - 1);
             if (volume_idx != -1)
@@ -456,10 +491,10 @@ CgalRepairResult apply_cgal_repair(ModelObject &model_object, bool keep_painting
 
             // OrcaMCP: the painting the split would have remapped onto each part, from the plan. Also when
             // the split left one part (it drops parts without a convex hull), which it remapped too.
-            if (painting_planned && splittable)
+            if (use_planned_painting && splittable)
                 for (size_t part_idx = ivolume; part_idx <= part_end; ++part_idx) {
                     ModelVolume *part_volume = model_object.volumes[part_idx];
-                    const std::optional<CgalRepairPainting> *painting = plan.take_split_painting(part_volume->mesh().its);
+                    const std::optional<CgalRepairPainting> *painting = plan.take_split_painting(target_id, part_volume->mesh().its);
                     if (painting == nullptr)
                         BOOST_LOG_TRIVIAL(warning) << "Mesh repair: a part the plan did not foresee keeps no painting";
                     else if (*painting)
@@ -470,7 +505,7 @@ CgalRepairResult apply_cgal_repair(ModelObject &model_object, bool keep_painting
             for (size_t idx = part_end + 1; idx > ivolume; --idx) {
                 const size_t part_idx = idx - 1;
                 const ModelVolume *part_volume = model_object.volumes[part_idx];
-                if (!drops(plan, part_volume->mesh()))
+                if (!drops(plan, target_id, part_volume->mesh()))
                     continue;
                 // OrcaMCP: never the object's last model part. Upstream deleted it too, leaving an
                 // object with no volume.
@@ -500,7 +535,7 @@ CgalRepairResult apply_cgal_repair(ModelObject &model_object, bool keep_painting
             for (size_t part_idx = ivolume; part_idx <= part_end && part_idx < model_object.volumes.size(); ++part_idx) {
                 ModelVolume *part_volume = model_object.volumes[part_idx];
                 TriangleMesh mesh = part_volume->mesh();
-                if (has_open_edges(plan, mesh)) {
+                if (has_open_edges(plan, target_id, mesh)) {
 
                     // Save painting for later remap
                     const std::optional<TriangleSelector::SavedPainting> saved_painting = keep_painting ?
@@ -510,7 +545,7 @@ CgalRepairResult apply_cgal_repair(ModelObject &model_object, bool keep_painting
                     std::string error;
                     std::optional<TriangleMesh>       planned_hull;
                     std::optional<CgalRepairPainting> planned_painting;
-                    if (!repair_part(mesh, plan, result, error, planned_hull, planned_painting))
+                    if (!repair_part(mesh, target_id, plan, result, error, planned_hull, planned_painting))
                         throw Slic3r::RuntimeError(error.empty() ? L("Repair failed") : error);
 
                     part_volume->set_mesh(std::move(mesh));
@@ -524,7 +559,7 @@ CgalRepairResult apply_cgal_repair(ModelObject &model_object, bool keep_painting
 
                     // Remap paint back. OrcaMCP: the plan remapped it off the main thread; a part it did
                     // not foresee is remapped here.
-                    if (painting_planned && planned_painting)
+                    if (use_planned_painting && planned_painting)
                         set_painting(*part_volume, *planned_painting);
                     else
                         part_volume->restore_painting(saved_painting);

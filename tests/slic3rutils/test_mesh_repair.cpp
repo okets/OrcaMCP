@@ -269,6 +269,91 @@ TEST_CASE("A one-volume repair captured for a volume the object does not have re
     CHECK(open_edges(*f.object) == 3);
 }
 
+// The object's first volume painted with `filament` on every facet.
+void paint_first_volume_with(ModelObject& object, EnforcerBlockerType filament)
+{
+    ModelVolume&     volume = *object.volumes.front();
+    TriangleSelector colour(volume.mesh());
+    for (size_t i = 0; i < volume.mesh().its.indices.size(); ++i)
+        colour.set_facet(int(i), filament);
+    volume.mmu_segmentation_facets.set(colour);
+}
+
+void check_same_painting(const ModelObject& a, const ModelObject& b)
+{
+    REQUIRE(a.volumes.size() == b.volumes.size());
+    for (size_t i = 0; i < a.volumes.size(); ++i) {
+        INFO("volume " << i);
+        CHECK((a.volumes[i]->mmu_segmentation_facets.get_data() == b.volumes[i]->mmu_segmentation_facets.get_data()));
+        CHECK((a.volumes[i]->supported_facets.get_data() == b.volumes[i]->supported_facets.get_data()));
+    }
+}
+
+// The painting the plan remapped is the painting captured. Paint written before the repair is applied
+// -- a paint tool, a stroke in the gizmo -- is remapped in place instead, as upstream's loop would, so
+// the repair keeps the painting as it is when applied.
+TEST_CASE("Painting changed between capture and apply is remapped as it is when applied", "[MeshRepair]")
+{
+    const std::string fixture = GENERATE(as<std::string>{}, "hole", "holed stray shell");
+    INFO("fixture: " << fixture);
+    OnePartObject planned_object{TriangleMesh(fixture_mesh(fixture))};
+    OnePartObject reference{TriangleMesh(fixture_mesh(fixture))};
+    paint_first_volume_with(*planned_object.object, EnforcerBlockerType::Extruder2);
+
+    CgalRepairPlan plan = planned(*planned_object.object, -1, /*keep_painting=*/true);
+    // Painted again, with another filament, after the capture.
+    paint_first_volume_with(*planned_object.object, EnforcerBlockerType::Extruder3);
+    CHECK_FALSE(plan.painting_unchanged(*planned_object.object->volumes.front()));
+    REQUIRE(apply_cgal_repair(*planned_object.object, true, plan).error.empty());
+
+    paint_first_volume_with(*reference.object, EnforcerBlockerType::Extruder3);
+    CgalRepairPlan nothing_planned{capture_cgal_repair(*reference.object, -1, true)};
+    REQUIRE(apply_cgal_repair(*reference.object, true, nothing_planned).error.empty());
+
+    check_same_painting(*planned_object.object, *reference.object);
+    for (const ModelVolume* volume : planned_object.object->volumes)
+        CHECK(volume->is_mm_painted());
+}
+
+// Two volumes can hold the same mesh -- here the first volume is bit for bit the first part the second
+// one splits into -- with different painting; each part takes its own volume's.
+TEST_CASE("Parts with the same mesh in different volumes keep their own volume's painting", "[MeshRepair]")
+{
+    auto build = [](OnePartObject& f) {
+        // The second volume: a cube and a holed stray shell. The first: that cube, as the split makes it.
+        const TriangleMesh whole(cube_with(cube_missing_facet()));
+        f.object->add_volume(TriangleMesh(whole));
+        std::vector<TriangleMesh> parts = whole.split();
+        REQUIRE(parts.size() == 2);
+        f.object->volumes.front()->set_mesh(TriangleMesh(parts.front().its));
+        f.object->volumes.front()->center_geometry_after_creation();
+        // Colour: filament 2 on the first volume, 3 on the second.
+        for (size_t v = 0; v < 2; ++v) {
+            ModelVolume&     volume = *f.object->volumes[v];
+            TriangleSelector colour(volume.mesh());
+            for (size_t i = 0; i < volume.mesh().its.indices.size(); ++i)
+                colour.set_facet(int(i), v == 0 ? EnforcerBlockerType::Extruder2 : EnforcerBlockerType::Extruder3);
+            volume.mmu_segmentation_facets.set(colour);
+        }
+    };
+    OnePartObject planned_object{TriangleMesh(its_make_cube(1.0, 1.0, 1.0))};
+    OnePartObject reference{TriangleMesh(its_make_cube(1.0, 1.0, 1.0))};
+    build(planned_object);
+    build(reference);
+
+    CgalRepairPlan         plan = planned(*planned_object.object, -1, true);
+    const CgalRepairResult result = apply_cgal_repair(*planned_object.object, true, plan);
+    CHECK(result.error.empty());
+    CHECK(result.parts_repaired_here == 0);
+    CgalRepairPlan nothing_planned{capture_cgal_repair(*reference.object, -1, true)};
+    REQUIRE(apply_cgal_repair(*reference.object, true, nothing_planned).error.empty());
+
+    REQUIRE(planned_object.object->volumes.size() == 3);
+    check_same_painting(*planned_object.object, *reference.object);
+    CHECK_FALSE((planned_object.object->volumes[0]->mmu_segmentation_facets.get_data() ==
+                 planned_object.object->volumes[1]->mmu_segmentation_facets.get_data()));
+}
+
 TEST_CASE("A volume the repair drops first does not make it skip the next one", "[MeshRepair]")
 {
     OnePartObject f{TriangleMesh(flat_square())};
@@ -277,6 +362,7 @@ TEST_CASE("A volume the repair drops first does not make it skip the next one", 
 
     const CgalRepairResult result = repaired(*f.object);
     CHECK(result.error.empty());
+    CHECK(result.parts_repaired_here == 0); // found in the plan although the drop gave it a new id
     REQUIRE(f.object->volumes.size() == 1);
     CHECK(open_edges(*f.object) == 0);
 }

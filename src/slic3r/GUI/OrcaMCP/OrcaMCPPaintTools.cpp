@@ -6,6 +6,7 @@
 #include "OrcaMCPFilamentModel.hpp"
 #include "OrcaMCPNextSteps.hpp"
 
+#include "slic3r/Utils/FixModelByCgal.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/GUI_ObjectList.hpp"
@@ -89,6 +90,13 @@ bool resolve_paint_target(const nlohmann::json&  params,
                           std::string&           error,
                           const PaintTargetNeeds needs = {})
 {
+    // The app's own Repair lets calls through its dialog while it works out the repair, and gives the
+    // painting it captured to the repaired parts; paint written meanwhile is remapped in place, but a
+    // repair_mesh refuses then too, and so does a paint write.
+    if (Slic3r::cgal_repair_dialog_running()) {
+        error = "The app is running its own mesh repair, so no paint was written: call again once it has finished";
+        return false;
+    }
     int object_id = -1;
     out.object    = resolve_object_id(params, wxGetApp().plater()->model(), object_id, error);
     if (out.object == nullptr)

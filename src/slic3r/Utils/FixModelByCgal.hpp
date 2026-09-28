@@ -1,6 +1,7 @@
 #ifndef slic3r_GUI_Utils_FixModelByCgal_hpp_
 #define slic3r_GUI_Utils_FixModelByCgal_hpp_
 
+#include <array>
 #include <cstddef>
 #include <functional>
 #include <memory>
@@ -17,6 +18,7 @@ namespace Slic3r {
 
 class Model;
 class ModelObject;
+class ModelVolume;
 class Print;
 
 // OrcaMCP: the repair in two halves, so that only the main thread ever changes the model.
@@ -45,6 +47,9 @@ struct CgalRepairVolume
     bool                                splittable = false;
     bool                                model_part = false;
     std::optional<CgalRepairPainting>   painting;  // captured to keep: a painted model part
+    // Its painting's timestamps (supports, seams, colour, fuzzy skin) when captured: painting written
+    // since (a paint tool, the gizmo) makes the plan's remap of it stale.
+    std::array<ObjectWithTimestamp::Timestamp, 4> painting_stamps{};
 };
 
 // What repairing an object reads: every volume, or the one volume asked for.
@@ -104,11 +109,18 @@ public:
     bool applies_to(const ModelObject& object) const;
     // The index in `object` of the one volume planned for; -1 for a whole-object plan.
     int volume_index_in(const ModelObject& object) const;
+    // The captured volume `volume` is: the one with its id or, failing that, its mesh (deleting an
+    // object's other volumes gives the last one a new id); nullptr for one the plan did not read.
+    const CgalRepairVolume* target_of(const ModelVolume& volume) const;
+    // Whether `volume` is one the plan read and its painting is still as captured, so the painting the
+    // plan remapped can be given to its parts. Painting written since is remapped in place instead.
+    bool painting_unchanged(const ModelVolume& volume) const;
 
     // One part as the loop will find it -- a volume's mesh whole, or one ModelVolume::split made of it
     // -- and what the plan worked out for it.
     struct PlannedPart
     {
+        ObjectID                          target; // the captured volume it is, or was split from
         indexed_triangle_set              its;
         bool                              dropped = false; // no volume: the loop deletes it
         bool                              open    = false; // open edges: the loop repairs it
@@ -121,18 +133,20 @@ public:
         bool                              painting_taken = false;
     };
     void add_part(PlannedPart part);
-    // The planned part with this mesh, or nullptr: one the plan did not foresee.
-    const PlannedPart* find_part(const indexed_triangle_set& its) const;
-    // The painting the split leaves on the part with this mesh, from the first such planned part not yet
-    // asked (parts with the same mesh, whose painting differs, keep their order); nullptr for a part the
-    // plan did not foresee.
-    const std::optional<CgalRepairPainting>* take_split_painting(const indexed_triangle_set& its);
+    // Each lookup is by the captured volume a part is, or was split from, and its mesh: two volumes
+    // can hold the same mesh with different painting.
+    // The planned part of `target` with this mesh, or nullptr: one the plan did not foresee.
+    const PlannedPart* find_part(const ObjectID& target, const indexed_triangle_set& its) const;
+    // The painting the split leaves on the part of `target` with this mesh, from the first such planned
+    // part not yet asked (parts with the same mesh, whose painting differs, keep their order); nullptr
+    // for a part the plan did not foresee.
+    const std::optional<CgalRepairPainting>* take_split_painting(const ObjectID& target, const indexed_triangle_set& its);
 
     // The part as planned: replaced by its repaired mesh, with its convex hull and the painting to give
     // it (planned), its repair's failure (failed), or a part the plan did not foresee (unplanned), which
     // the caller repairs itself.
     enum class Part { planned, failed, unplanned };
-    Part take_repaired(TriangleMesh& part, TriangleMesh& hull, std::optional<CgalRepairPainting>& painting);
+    Part take_repaired(const ObjectID& target, TriangleMesh& part, TriangleMesh& hull, std::optional<CgalRepairPainting>& painting);
 
     // The error is a part's repair failing, rather than the plan itself.
     bool has_failed_part() const;

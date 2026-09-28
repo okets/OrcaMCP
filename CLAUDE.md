@@ -639,7 +639,11 @@ once it has been applied, with the placement it left (`OrcaMCPUiJob.hpp`, the ap
   "Repairing model object" snapshot, upstream's loop taking each part's verdicts, repaired mesh and
   painting from the plan, and what the object list's Repair does after (`ensure_on_bed`, `changed_mesh`,
   the list), with every instance re-homed as MCP's transforms do. Anything else changes nothing and
-  says why. The plan also works out each repaired part's convex hull, which apply sets
+  says why. A volume whose painting was written since the capture (a paint tool, a gizmo stroke; its
+  facet timestamps say so) has it remapped in place, as upstream's loop does, rather than given the
+  plan's stale remap; the paint tools refuse while the app's own Repair dialog runs, as `repair_mesh`
+  does. Planned parts are looked up by the captured volume they came from, so two volumes holding the
+  same mesh keep their own painting. The plan also works out each repaired part's convex hull, which apply sets
   (`ModelVolume::set_convex_hull`, a setter ours adds to upstream's `Model.hpp`). What stays on the main
   thread is `ModelVolume::split`, with a convex hull per new part. On the -O0 build, apply took 0.2 s
   for a 500,000-facet sphere with a hole (2.7 s before the plan took the verdicts and the hull) and
@@ -1359,7 +1363,9 @@ main thread, taking each part's repaired mesh from the plan), which the object l
 gizmo and MCP's `repair_mesh` all run. The loop skips nothing and never deletes the last model part;
 the list captures every selected object or volume before its first dialog, plans each under it, then,
 the dialog no longer updated, takes one snapshot and applies them, finding objects and volumes by
-pointer and id; kept painting is remapped, and each repaired part's convex hull worked out, in the plan,
+pointer and id; kept painting is remapped, and each repaired part's convex hull worked out, in the plan
+(painting written between capture and apply is remapped in place instead, from each volume's facet
+timestamps; the paint tools refuse while the Repair dialog runs),
 the hull set through `ModelVolume::set_convex_hull`, which ours adds to `Model.hpp` (additive: the fifth
 count is upstream's own, 0 while it has none; on a non-zero, take upstream's and drop ours). On a "no" or 0, upstream fixed that part: take its version, keep the
 plan/apply split around it, and re-run `slic3rutils_tests "[MeshRepair]"`, whose "planned repair builds
