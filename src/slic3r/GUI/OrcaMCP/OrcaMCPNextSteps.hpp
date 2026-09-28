@@ -57,5 +57,15 @@ std::vector<NextStep> slice_start_next_steps(const SliceStartReport& report);
 // returns once the export is over; nothing for an export that did not start.
 std::vector<NextStep> export_next_steps(bool export_started);
 
+// What a render_plate_view view whose picture came out one flat colour leads to (uniform_image_hint
+// says why in words): get_scene_info when nothing on plate `plate_index` was drawn (`drawn` 0: no model
+// volume in the 3D view, or none printable on that plate), render_plate_view of that plate without
+// views, fitted to it, when its objects were drawn but the camera looked elsewhere.
+std::vector<NextStep> uniform_image_next_steps(size_t model_volumes, size_t drawn, int plate_index);
+
+// What paint_object's support paint leads to while enable_support is off for the object: painted
+// enforcers and blockers do nothing then, so set_object_config turns it on for that object.
+std::vector<NextStep> support_paint_next_steps(int object_id, bool support_enabled);
+
 }} // namespace GUI::OrcaMCP
 } // namespace Slic3r

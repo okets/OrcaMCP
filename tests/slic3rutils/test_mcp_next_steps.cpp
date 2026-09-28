@@ -211,6 +211,35 @@ TEST_CASE("An export that started is waited for, and one that did not suggests n
     CHECK(export_next_steps(false).empty());
 }
 
+TEST_CASE("A flat render of a plate its objects are not on points at get_scene_info", "[McpNextSteps][orcamcp]")
+{
+    for (const size_t model_volumes : {size_t(0), size_t(4)}) {
+        INFO("model volumes " << model_volumes);
+        const std::vector<NextStep> steps = uniform_image_next_steps(model_volumes, /*drawn=*/0, /*plate_index=*/2);
+        REQUIRE(steps.size() == 1);
+        CHECK(steps[0].tool == "get_scene_info");
+        CHECK(mentions(steps[0].why, "plate 2"));
+    }
+}
+
+TEST_CASE("A flat render that missed the plate's objects renders the plate without views", "[McpNextSteps][orcamcp]")
+{
+    const std::vector<NextStep> steps = uniform_image_next_steps(/*model_volumes=*/4, /*drawn=*/3, /*plate_index=*/1);
+    REQUIRE(steps.size() == 1);
+    CHECK(steps[0].tool == "render_plate_view");
+    CHECK(steps[0].arguments == json{{"plate_index", 1}, {"save_to_file", true}});
+}
+
+TEST_CASE("Support painted while supports are off points at enable_support for that object", "[McpNextSteps][orcamcp]")
+{
+    const std::vector<NextStep> off = support_paint_next_steps(/*object_id=*/3, /*support_enabled=*/false);
+    REQUIRE(off.size() == 1);
+    CHECK(off[0].tool == "set_object_config");
+    CHECK(off[0].arguments == json{{"object_id", 3}, {"settings", {{{"key", "enable_support"}, {"value", "1"}}}}});
+    CHECK(mentions(off[0].why, "enable_support"));
+    CHECK(support_paint_next_steps(3, true).empty());
+}
+
 TEST_CASE("Every next step names a real tool, with arguments its schema accepts", "[McpNextSteps][orcamcp]")
 {
     std::vector<NextStep> steps = Scene({cube_missing_facet(), separate_cubes(2)}).steps();
@@ -220,6 +249,12 @@ TEST_CASE("Every next step names a real tool, with arguments its schema accepts"
             steps.push_back(std::move(step));
     for (NextStep& step : export_next_steps(true))
         steps.push_back(std::move(step));
+    for (const size_t drawn : {size_t(0), size_t(2)})
+        for (NextStep& step : uniform_image_next_steps(2, drawn, 0))
+            steps.push_back(std::move(step));
+    for (NextStep& step : support_paint_next_steps(0, false))
+        steps.push_back(std::move(step));
+    REQUIRE(steps.size() == 10);
 
     const mcp_tool_references::ToolNames names(OrcaMCPServer::registered_tools());
     json                                 response = json::object();

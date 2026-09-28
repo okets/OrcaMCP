@@ -4,6 +4,7 @@
 #include "OrcaMCPPaintModel.hpp"
 #include "OrcaMCPPaintSelect.hpp"
 #include "OrcaMCPFilamentModel.hpp"
+#include "OrcaMCPNextSteps.hpp"
 
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Plater.hpp"
@@ -535,28 +536,43 @@ const Slic3r::ConfigOption* effective_print_option(const Slic3r::DynamicPrintCon
     return option ? option : global.option(key);
 }
 
+// The object's own setting `key`, else the process preset's.
+const Slic3r::ConfigOption* effective_print_option(const Slic3r::ModelObject& obj, const char* key)
+{
+    return effective_print_option(obj.config.get(), wxGetApp().preset_bundle->prints.get_edited_preset().config, key);
+}
+
+// Whether painted support enforcers and blockers do anything on `obj`: only while enable_support is on.
+bool painted_support_prints(const Slic3r::ModelObject& obj)
+{
+    const Slic3r::ConfigOption* option = effective_print_option(obj, "enable_support");
+    return option == nullptr || option->getBool();
+}
+
 // Painted supports and painted fuzzy skin do nothing unless the corresponding setting is on.
 // The gizmos say so on screen (GLGizmoFdmSupports.cpp, GLGizmoFuzzySkin.cpp); over MCP the
 // equivalent is an info message, or the caller paints, slices, and sees no difference.
 std::vector<std::string> paint_prerequisite_messages(const Slic3r::ModelObject& obj, PaintMode mode)
 {
     std::vector<std::string> messages;
-    const Slic3r::DynamicPrintConfig& global     = wxGetApp().preset_bundle->prints.get_edited_preset().config;
-    const Slic3r::DynamicPrintConfig& object_cfg = obj.config.get();
-
-    if (mode == PaintMode::Support) {
-        const Slic3r::ConfigOption* option = effective_print_option(object_cfg, global, "enable_support");
-        if (option && !option->getBool())
-            messages.push_back("Painted support enforcers and blockers have no effect while "
-                               "enable_support is false. Set it with apply_config or set_object_config.");
-    }
+    if (mode == PaintMode::Support && !painted_support_prints(obj))
+        messages.push_back("Painted support enforcers and blockers have no effect while "
+                           "enable_support is false. Set it with apply_config or set_object_config.");
     if (mode == PaintMode::FuzzySkin) {
-        const Slic3r::ConfigOption* option = effective_print_option(object_cfg, global, "fuzzy_skin");
+        const Slic3r::ConfigOption* option = effective_print_option(obj, "fuzzy_skin");
         if (option && option->getInt() == int(Slic3r::FuzzySkinType::Disabled_fuzzy))
             messages.push_back("Painted fuzzy skin has no effect while fuzzy_skin is 'disabled_fuzzy' "
                                "(the default). Set fuzzy_skin to 'none' to use painted regions only.");
     }
     return messages;
+}
+
+// The call that makes support painted on object `object_id` count, as next_steps (support_paint_next_steps).
+std::vector<NextStep> paint_prerequisite_steps(const Slic3r::ModelObject& obj, int object_id, PaintMode mode)
+{
+    if (mode != PaintMode::Support)
+        return {};
+    return support_paint_next_steps(object_id, painted_support_prints(obj));
 }
 
 // ---- Renumbering painted states: remap_paint, and paint_object's selection "state" -------------
@@ -705,6 +721,7 @@ nlohmann::json run_paint_remap(const nlohmann::json& params, const PaintRemapReq
         // What paint_object says for every other selection: painted supports need enable_support, ...
         if (const std::vector<std::string> messages = paint_prerequisite_messages(*target.object, request.mode); !messages.empty())
             result["info_messages"] = messages;
+        add_next_steps(result, paint_prerequisite_steps(*target.object, target.object_id, request.mode));
         return result;
     });
 }
@@ -1309,6 +1326,7 @@ void OrcaMCPServer::register_paint_tools()
                 }
                 if (!messages.empty())
                     result["info_messages"] = messages;
+                add_next_steps(result, paint_prerequisite_steps(*target.object, target.object_id, mode));
 
                 return result;
             });

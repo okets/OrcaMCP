@@ -2977,6 +2977,9 @@ nothing to suggest has no `next_steps`.
 | | `get_slicing_status` | `busy_job`: an arrange or orient holds the app, which `wait_for_slice` does not wait for; `slice_all` again once `ui_job` is null |
 | | `get_print_estimate` | `already_sliced` |
 | `export_gcode` | `wait_for_slice` | `export_started`: the file is still being written |
+| `render_plate_view`, on each view whose `uniform_image` is true (beside its `hint`) | `get_scene_info` | nothing printable on that plate was drawn |
+| | `render_plate_view` with `{plate_index, save_to_file: true}` | the plate's objects were drawn but the camera looked elsewhere: no views gives a contact sheet fitted to the plate |
+| `paint_object` with `mode: support` | `set_object_config` with `enable_support` `"1"` for that object | `enable_support` is off for the object, so painted enforcers and blockers do nothing (`info_messages` says so too) |
 
 ---
 

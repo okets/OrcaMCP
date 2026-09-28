@@ -4,6 +4,7 @@
 #include "OrcaMCPPlateOccupancy.hpp"
 #include "OrcaMCPCommon.hpp"
 #include "OrcaMCPMeshHealth.hpp"
+#include "OrcaMCPNextSteps.hpp"
 #include "slic3r/GUI/GLCanvas3D.hpp"
 #include "slic3r/GUI/OpenGLManager.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPRenderOverlay.hpp"
@@ -167,8 +168,10 @@ static void append_render_report(nlohmann::json& entry, const RenderReport& repo
     entry["objects_in_frame"] = in_frame;
     entry.update(OrcaMCP::render_scene_json(report.scene));
     entry["uniform_image"]    = report.uniform_image;
-    if (report.uniform_image)
+    if (report.uniform_image) {
         entry["hint"] = OrcaMCP::uniform_image_hint(report.scene, report.drawn.size(), plate_index, plate);
+        OrcaMCP::add_next_steps(entry, OrcaMCP::uniform_image_next_steps(report.scene.model_volumes, report.drawn.size(), plate_index));
+    }
 }
 
 // The plate's footprint, as tall as its tallest object (at least 10 mm, so an empty plate still

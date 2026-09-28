@@ -154,4 +154,26 @@ std::vector<NextStep> export_next_steps(bool export_started)
              nullptr}};
 }
 
+std::vector<NextStep> uniform_image_next_steps(size_t model_volumes, size_t drawn, int plate_index)
+{
+    const std::string plate = "plate " + std::to_string(plate_index);
+    if (model_volumes == 0)
+        return {{"get_scene_info", "the 3D view holds no model, so " + plate + " drew nothing: it shows what the scene holds", nullptr}};
+    if (drawn == 0)
+        return {{"get_scene_info", "nothing printable stands on " + plate + ": it lists the plate each object is on", nullptr}};
+    return {{"render_plate_view",
+             plate + "'s objects were drawn, but outside this view: without views it renders a contact sheet fitted to the plate",
+             {{"plate_index", plate_index}, {"save_to_file", true}}}};
+}
+
+std::vector<NextStep> support_paint_next_steps(int object_id, bool support_enabled)
+{
+    if (support_enabled)
+        return {};
+    return {{"set_object_config",
+             "painted support enforcers and blockers do nothing while enable_support is off: this turns it on for object " +
+                 std::to_string(object_id) + " (apply_config turns it on for every object)",
+             {{"object_id", object_id}, {"settings", {{{"key", "enable_support"}, {"value", "1"}}}}}}};
+}
+
 }}} // namespace Slic3r::GUI::OrcaMCP
