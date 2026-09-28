@@ -32,7 +32,7 @@
     }
   ],
   "generated_from": "The MCP tool registry in src/slic3r/GUI/OrcaMCP. Do not edit by hand: see CLAUDE.md, \"Tool list\", for how to regenerate it.",
-  "instructions": "OrcaMCP drives OrcaSlicer. Before deciding something cannot be done here, call get_server_info: it lists every tool by job.\n\nStart with get_scene_info (plates, objects, each object's object_id). Key tools:\n- Models: load_model (keeps the presets), load_project (replaces them), arrange_objects, auto_orient, move_object, rotate_object, scale_object, cut_object.\n- Mesh: get_mesh_health (holes, open edges), get_object_components (stray shells).\n- Painting: paint_object (color, support, seam, fuzzy_skin).\n- Filaments and colour: get_filaments, set_object_filament, suggest_color_mix.\n- Settings: get_config_values, apply_config, set_object_config (one object), select_preset.\n- Slicing: slice_all, then wait_for_slice (no polling); get_print_estimate, export_gcode.\n- Seeing results: render_plate_view (its layer_view draws a sliced layer's toolpaths).\n- Printers: get_printer_status, send_to_printer.\n\nResponses may carry next_steps: the tool to call next, and why.\n\nCareful:\n- send_to_printer uploads AND STARTS the print on a print host; start_print: false only uploads.\n- save_project without output_path overwrites the file the project is named after.\n- new_project and load_project discard unsaved changes without asking.",
+  "instructions": "OrcaMCP drives OrcaSlicer. Before deciding something cannot be done here, call get_server_info: it lists every tool by job.\n\nStart with get_scene_info (plates, objects, each object's object_id). Key tools:\n- Models: load_model (keeps the presets), load_project (replaces them), arrange_objects, auto_orient, move_object, rotate_object, scale_object, cut_object.\n- Mesh: get_mesh_health (holes, open edges), get_object_components (stray shells), repair_mesh.\n- Painting: paint_object (color, support, seam, fuzzy_skin).\n- Filaments and colour: get_filaments, set_object_filament, suggest_color_mix.\n- Settings: get_config_values, apply_config, set_object_config (one object), select_preset.\n- Slicing: slice_all, then wait_for_slice (no polling); get_print_estimate, export_gcode.\n- Seeing results: render_plate_view (its layer_view draws a sliced layer's toolpaths).\n- Printers: get_printer_status, send_to_printer.\n\nResponses may carry next_steps: the tool to call next, and why.\n\nCareful:\n- send_to_printer uploads AND STARTS the print on a print host; start_print: false only uploads.\n- save_project without output_path overwrites the file the project is named after.\n- new_project and load_project discard unsaved changes without asking.",
   "server_tools": [
     {
       "category": "Printers",
@@ -691,7 +691,7 @@
     },
     {
       "category": "Models",
-      "description": "Check an object's mesh for problems: holes and open edges (non-manifold), repaired facets, and loose parts or stray shells, for one object and each of its volumes -- the errors behind the object list's warning icon. Every row -- the object and each volume -- has mesh_warning (whether the icon shows) and, only when it is true, `tooltip` (the icon's tooltip, exactly as the GUI shows it, in the app's language; its last line is the GUI's \"click the icon\") and mesh_warning_reason (the sidebar's one line). A flagged object also gets `advice`: what MCP can do about the mesh, and what slicing does with it. The numbers: facets, shells, open_edges, manifold, repaired, errors_repaired and each recorded repair count. An object's open_edges and repairs count every volume, as the list does; its facets, shells and volume_mm3 count model parts only. Repair counts exist only for a mesh loaded from a 3MF that recorded them: an STL is repaired silently on import and records none. A part with more than one shell also gets `shell_list`: the 10 shells with the most facets, each with its area and plate-millimetre bounding box (instance 0); get_object_components lists them all.",
+      "description": "Check an object's mesh for problems: holes and open edges (non-manifold), repaired facets, and loose parts or stray shells, for one object and each of its volumes -- the errors behind the object list's warning icon. Every row -- the object and each volume -- has mesh_warning (whether the icon shows) and, only when it is true, `tooltip` (the icon's tooltip in the app's language, as the GUI builds it, less its last line, the GUI's \"click the icon\") and mesh_warning_reason (the sidebar's one line). A flagged object also gets `advice`: what MCP can do about the mesh, and what slicing does with it; one with open edges also gets next_steps: repair_mesh, which repairs it. The numbers: facets, shells, open_edges, manifold, repaired, errors_repaired and each recorded repair count. An object's open_edges and repairs count every volume, as the list does; its facets, shells and volume_mm3 count model parts only. Repair counts exist only for a mesh loaded from a 3MF that recorded them: an STL is repaired silently on import and records none. A part with more than one shell also gets `shell_list`: the 10 shells with the most facets, each with its area and plate-millimetre bounding box (instance 0); get_object_components lists them all.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -1869,6 +1869,35 @@
       },
       "name": "render_plate_view",
       "summary": "Render a plate, object or sliced layer"
+    },
+    {
+      "category": "Models",
+      "description": "Repair an object's mesh: close its holes (open edges, non-manifold) with the app's own repair -- the object list's Repair, CGAL-based, on every platform. Each volume made of several shells is split into one volume per shell; shells with no volume (flat or empty) are deleted; every shell with open edges has its holes closed. A closed stray shell is not deleted: it becomes a volume of its own (get_object_components lists shells). The object is then dropped onto the bed. Painting is cleared unless keep_painting keeps it. An open toolbar tool (gizmo) is closed first, as the Repair needs; the answer names it. One undo step. Nothing changes when there is nothing to repair, when the call is refused or fails, or when the repair takes longer than this call may wait (a little under the bridge's ORCAMCP_TIMEOUT). The answer: get_mesh_health's numbers before and after, the volumes before and after, the parts split, dropped and repaired, whether painting was kept, and the object's placement. Refused while a slice, an export or an upload runs (wait_for_slice first), or an arrange or orient. A large mesh can take minutes.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "keep_painting": {
+            "description": "Remap the object's painting (colour, supports, seams, fuzzy skin) onto the repaired mesh instead of clearing it; the app calls this experimental. Left out: the app's \"Keep painted feature after mesh change\" setting, which the answer's keep_painting_from names",
+            "type": "boolean"
+          },
+          "object_id": {
+            "description": "Object index (0-based)",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "volume_id": {
+            "description": "Repair only this volume (0-based, as get_mesh_health's volumes list them), as the object list's Repair does for a selected part. Left out: every volume",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "object_id"
+        ],
+        "type": "object"
+      },
+      "name": "repair_mesh",
+      "summary": "Repair a mesh: close holes, open edges"
     },
     {
       "category": "Per-Object",

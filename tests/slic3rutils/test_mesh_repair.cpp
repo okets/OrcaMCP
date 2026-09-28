@@ -2,6 +2,8 @@
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "slic3r/GUI/OrcaMCP/OrcaMCPMeshRepair.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPUiJob.hpp"
 #include "slic3r/Utils/FixModelByCgal.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/TriangleMesh.hpp"
@@ -19,8 +21,10 @@
 // meshes are built with known defects: a hole, a flat stray sheet, a closed stray shell.
 
 using namespace Slic3r;
+using namespace Slic3r::GUI::OrcaMCP;
 using namespace mesh_fixtures;
 using Catch::Matchers::WithinAbs;
+using json = nlohmann::json;
 
 namespace {
 
@@ -308,4 +312,131 @@ TEST_CASE("The plan reports the progress the Repair dialog shows", "[MeshRepair]
     CHECK(std::find(messages.begin(), messages.end(), "Split into 2 parts") != messages.end());
     CHECK(messages.back() == "Repair finished");
     CHECK(percents.back() == 100);
+}
+
+// ---- repair_mesh's decisions and answer ---------------------------------------------------------
+
+TEST_CASE("repair_mesh is refused while the pipeline is busy, a job runs or the app's own Repair runs", "[MeshRepair][orcamcp]")
+{
+    PipelineState idle;
+    CHECK_FALSE(repair_refusal(idle, false, false));
+
+    PipelineState slicing;
+    slicing.process_working = true;
+    slicing.is_slicing      = true;
+    const auto busy         = repair_refusal(slicing, false, false);
+    REQUIRE(busy);
+    CHECK(busy->find("a slice is in progress") != std::string::npos);
+    CHECK(busy->find("call wait_for_slice, then repair_mesh again") != std::string::npos);
+
+    const auto job = repair_refusal(idle, true, false);
+    REQUIRE(job);
+    CHECK(*job == ui_job_busy_message("repair_mesh"));
+
+    const auto dialog = repair_refusal(idle, false, true);
+    REQUIRE(dialog);
+    CHECK(dialog->find("call repair_mesh again once it has finished") != std::string::npos);
+}
+
+TEST_CASE("repair_mesh refuses a volume_id the object does not have", "[MeshRepair][orcamcp]")
+{
+    CHECK_FALSE(repair_volume_error(0, 2, -1)); // none given: the whole object
+    CHECK_FALSE(repair_volume_error(0, 2, 1));
+    const auto error = repair_volume_error(3, 2, 2);
+    REQUIRE(error);
+    CHECK(*error == "volume_id 2 is out of range: object 3 has 2 volumes, volume_id 0 to 1");
+}
+
+TEST_CASE("repair_mesh applies only a finished plan that changes something, in time", "[MeshRepair][orcamcp]")
+{
+    OnePartObject hole{TriangleMesh(cube_missing_facet())};
+    OnePartObject clean{TriangleMesh(its_make_cube(10.0, 10.0, 10.0))};
+    OnePartObject sheet{TriangleMesh(flat_square())};
+
+    CHECK(repair_step(planned(*hole.object), false) == RepairStep::apply);
+    // The one step that changes the object is the only one with an undo snapshot.
+    CHECK(repair_step(planned(*clean.object), false) == RepairStep::nothing_to_repair);
+    CHECK(repair_step(planned(*hole.object), true) == RepairStep::timed_out);
+    CHECK(repair_step(planned(*sheet.object), false) == RepairStep::leaves_nothing);
+
+    CgalRepairPlan canceled = planned(*hole.object);
+    canceled.canceled       = true;
+    CHECK(repair_step(canceled, false) == RepairStep::timed_out);
+    CgalRepairPlan failed = planned(*hole.object);
+    failed.error          = "Repair failed: mesh still open after hole filling.";
+    failed.error_volume   = 0;
+    CHECK(repair_step(failed, false) == RepairStep::failed);
+}
+
+TEST_CASE("repair_mesh says why nothing was changed, and what to call instead", "[MeshRepair][orcamcp]")
+{
+    OnePartObject clean{TriangleMesh(its_make_cube(10.0, 10.0, 10.0), reversed_facets(1))};
+    OnePartObject hole{TriangleMesh(cube_missing_facet())};
+    OnePartObject sheet{TriangleMesh(flat_square())};
+
+    const std::string nothing = repair_step_message(RepairStep::nothing_to_repair, planned(*clean.object), 0, -1, 105.0,
+                                                    repair_facts_json(*clean.object));
+    CHECK(nothing.find("Nothing to repair") != std::string::npos);
+    CHECK(nothing.find("1 repair recorded when the mesh was loaded") != std::string::npos);
+
+    const std::string timed_out = repair_step_message(RepairStep::timed_out, planned(*hole.object), 0, -1, 105.0,
+                                                      repair_facts_json(*hole.object));
+    CHECK(timed_out.find("105 s") != std::string::npos);
+    CHECK(timed_out.find("ORCAMCP_TIMEOUT") != std::string::npos);
+    CHECK(timed_out.find("nothing was changed") != std::string::npos);
+
+    CgalRepairPlan failed = planned(*hole.object);
+    failed.error          = "Repair failed: mesh still open after hole filling.";
+    failed.error_volume   = 0;
+    CHECK(repair_step_message(RepairStep::failed, failed, 0, -1, 105.0, json::object()) ==
+          "Repairing object 0 failed on volume 0: Repair failed: mesh still open after hole filling. Nothing was changed.");
+
+    const std::string leaves = repair_step_message(RepairStep::leaves_nothing, planned(*sheet.object), 0, -1, 105.0,
+                                                   repair_facts_json(*sheet.object));
+    CHECK(leaves.find("flat or empty") != std::string::npos);
+    CHECK(leaves.find("delete_object") != std::string::npos);
+
+    // Never a GUI button: what an agent is told to do, it can do itself.
+    for (const std::string& message : {nothing, timed_out, leaves})
+        for (const char* gui : {"click", "Click", "the user", "GUI", "button"}) {
+            INFO(message << " names " << gui);
+            CHECK(message.find(gui) == std::string::npos);
+        }
+}
+
+TEST_CASE("repair_mesh's answer carries the numbers before and after, the parts, painting and volumes", "[MeshRepair][orcamcp]")
+{
+    OnePartObject  f{TriangleMesh(cube_with(flat_square()))};
+    const json     before = repair_facts_json(*f.object);
+    CgalRepairPlan plan   = planned(*f.object);
+    REQUIRE(apply_cgal_repair(*f.object, false, plan).error.empty());
+    const json after = repair_facts_json(*f.object);
+
+    for (const char* key : {"facets", "shells", "open_edges", "manifold", "repaired", "errors_repaired", "repaired_errors",
+                            "mesh_warning", "volumes", "painted", "position"})
+        CHECK(before.contains(key));
+    CHECK(before["open_edges"] == 4);
+    CHECK(before["mesh_warning"] == true);
+    CHECK(after["open_edges"] == 0);
+    CHECK(after["shells"] == 1);
+    CHECK(after["mesh_warning"] == false);
+
+    const json answer = repair_answer_json(0, "Test object", -1, false, false, before, after, plan);
+    CHECK(answer["status"] == "success");
+    CHECK(answer["changed"] == true);
+    CHECK(answer["object_id"] == 0);
+    CHECK(answer["object_name"] == "Test object");
+    CHECK_FALSE(answer.contains("volume_id"));
+    CHECK(answer["keep_painting"] == false);
+    CHECK(answer["keep_painting_from"] == "app_setting");
+    CHECK(answer["volumes_before"] == 1);
+    CHECK(answer["volumes_after"] == 1);
+    CHECK(answer["parts"] == json{{"split", 2}, {"dropped", 1}, {"repaired", 0}});
+    CHECK(answer["before"] == before);
+    CHECK(answer["after"] == after);
+
+    const json one_volume = repair_answer_json(0, "Test object", 0, true, true, before, after, plan);
+    CHECK(one_volume["volume_id"] == 0);
+    CHECK(one_volume["keep_painting"] == true);
+    CHECK(one_volume["keep_painting_from"] == "argument");
 }

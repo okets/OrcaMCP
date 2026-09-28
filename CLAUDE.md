@@ -99,9 +99,9 @@ cd build && ctest --output-on-failure
 
 **Status**: Complete & Tested ✓
 
-### MCP Tools (82 in the app, 84 reachable)
+### MCP Tools (83 in the app, 85 reachable)
 
-The registry holds 84: the app serves 82 through `tools/list`, and two are registered as
+The registry holds 85: the app serves 83 through `tools/list`, and two are registered as
 bridge-only and served by the bridge: `start_orca`, which launches OrcaSlicer and so cannot be
 answered by it, and `wait_for_slice`, a wait the app's one request thread could not do without
 stalling every other call.
@@ -114,7 +114,7 @@ grep -hA1 -E '^\s*register_(bridge_)?tool\(\{' src/slic3r/GUI/OrcaMCP/*.cpp | gr
 | Category | Tools |
 |----------|-------|
 | **Scene** | `get_scene_info` (plates, each with `plate_index` and `is_current` (the plate per-plate tools act on; `index` kept), objects, each with `object_id` (the index every tool takes; `object_index` the same, kept; `internal_id` the app's ObjectID, stable while the app runs, taken by no tool -- it was `id`, which an agent passed as the object_id), `filaments_used` — read that, not `extruder_id` — and `mesh_warning` (the object list's warning icon, with its reason; `with_model_object_features` adds the mesh-health numbers), and each plate's full occupancy: object footprints with brim, the prime tower, excluded bed areas; `unplaced_objects`: every object with an instance on no plate, and which (`unplaced_instances`); `open_dialogs` / `system_dialog_open` / `untracked_modal_loop`: a dialog waiting for the user), `new_project`, `load_project` (both cancel a running slice; refused while the startup restore prompt waits), `save_project`, `export_3mf` |
-| **Models** | `load_model` (a 3MF is always geometry only: never its presets, never a rename; `.gcode` / `.gcode.3mf` only onto an empty scene, as a preview; returns `loaded_objects` in `get_scene_info`'s object shape, `filaments_added`; `multipart: merge\|separate`), `auto_orient` / `arrange_objects` (the current plate's objects; answered once the job has been applied, with `objects`, each one's placement, or `finished: false` past the wait's cap, `status: cancelled` when the app cancelled it; see "Waiting for a UI job"), `get_object_info` (incl. every volume with its type and filament), `get_mesh_health` (mesh errors behind the object list's warning icon: the icon state, its exact tooltip, open edges, recorded repairs, shells, per object and per volume), `get_object_components` (loose parts, stray shells: every shell of each model part), `rename_object`, `set_object_printable` |
+| **Models** | `load_model` (a 3MF is always geometry only: never its presets, never a rename; `.gcode` / `.gcode.3mf` only onto an empty scene, as a preview; returns `loaded_objects` in `get_scene_info`'s object shape, `filaments_added`; `multipart: merge\|separate`), `auto_orient` / `arrange_objects` (the current plate's objects; answered once the job has been applied, with `objects`, each one's placement, or `finished: false` past the wait's cap, `status: cancelled` when the app cancelled it; see "Waiting for a UI job"), `get_object_info` (incl. every volume with its type and filament), `get_mesh_health` (mesh errors behind the object list's warning icon: the icon state, its tooltip less the GUI's "click the icon" line, open edges, recorded repairs, shells, per object and per volume; an object with open edges gets `next_steps` to `repair_mesh`), `repair_mesh` (the object list's own Repair, CGAL, on every platform: each volume of several shells split into one volume per shell, shells with no volume deleted, the holes of every shell with open edges closed, the object dropped onto the bed; `volume_id` for one volume, `keep_painting` (default: the app's setting, stated as `keep_painting_from`); an open gizmo is closed first (`closed_toolbar_tool`); one undo step, none for nothing to repair; answers `before` / `after` (`get_mesh_health`'s numbers, `volumes`, `painted`, `position`), `parts` {split, dropped, repaired} and the placement; refused while the pipeline is busy, a job runs or the app's own Repair runs; nothing applied past the call's wait cap, or when a part fails; see "Mesh repair"), `get_object_components` (loose parts, stray shells: every shell of each model part), `rename_object`, `set_object_printable` |
 | **Transforms** | Every transform, and `get_object_info`, reports each instance's placement (`instance_placement`: its plate and whether it is inside it), `plate_index` (instance 0's plate), `plate_indices` and `on_bed` (every instance inside the plate it is on). `move_object`, `rotate_object` (a change in degrees; `relative: false` is refused), `scale_object`, `mirror_object`, `flatten_object` (the named object only, which replaces the selection, as the GUI's Orient does for a selection; an object with an instance on a locked plate is refused; answered once its orient has been applied), `clone_object` (answered once its arrange has been applied, with `objects`), `cut_object`, `delete_object`, `transform_objects` (rotate, scale, mirror and transform drop a resting object back onto the bed like the GUI; an explicit Z is kept) |
 | **Plates** | `add_plate`, `select_plate`, `delete_plate`, `set_prime_tower_position` |
 | **Config** | `get_presets`, `get_edited_presets` (25-48 KB), `get_config_values` (no arguments: the selected printer, print and per-slot filament presets with dirty flags, ~400 B; `keys`: just those settings, grouped by `apply_config` type, with `dirty` saved values; `dirty_only`), `select_preset` (`type: printer` returns the resulting `filaments`, each with its observed `color_source`: `unchanged`/`remembered`/`default`/`other`), `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset`, `get_valid_config_keys` |
@@ -454,7 +454,9 @@ gh release upload v2.3.2.10 ./path/to/new/artifact.exe -R okets/OrcaMCP
 | `src/slic3r/GUI/HttpServer.hpp` | HTTP server with JSON responses; listens on 127.0.0.1 only |
 | `src/slic3r/GUI/HttpServer.cpp` | POST body reading, ResponseJson, the stop that waits for handlers and lets replies out |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPNextSteps.cpp` | A response's `next_steps`: the one shape and helper (`add_next_steps`), and the builders that decide which follow-up a result implies (see "Server instructions and next steps"; unit-tested in `tests/slic3rutils/test_mcp_next_steps.cpp`) |
-| `src/slic3r/GUI/OrcaMCP/OrcaMCPMeshHealth.cpp` | Mesh health as the object list reports it: the warning icon and its exact tooltip through the list's own `mesh_errors_info` (`GUI_ObjectList.cpp`), the numbers behind them, and `get_mesh_health`'s shell lists (unit-tested in `tests/slic3rutils/test_mesh_health.cpp`); the tool itself is `OrcaMCPMeshTools.cpp` |
+| `src/slic3r/GUI/OrcaMCP/OrcaMCPMeshHealth.cpp` | Mesh health as the object list reports it: the warning icon and its tooltip (less the GUI's click line) through the list's own `mesh_errors_info` (`GUI_ObjectList.cpp`), the numbers behind them, and `get_mesh_health`'s shell lists (unit-tested in `tests/slic3rutils/test_mesh_health.cpp`); the tool itself is `OrcaMCPMeshTools.cpp` |
+| `src/slic3r/Utils/FixModelByCgal.cpp` | The object list's Repair in three steps -- capture (main thread), plan (pure mesh work, any thread), apply (upstream's loop, main thread) -- which the object list, the cut gizmo and `repair_mesh` all run (see "Mesh repair" and probe AI; unit-tested in `tests/slic3rutils/test_mesh_repair.cpp`) |
+| `src/slic3r/GUI/OrcaMCP/OrcaMCPMeshRepair.cpp` | `repair_mesh`'s decisions apart from the app: its refusals, which step a plan leads to, the words for each, and its answer (unit-tested in `tests/slic3rutils/test_mesh_repair.cpp`); the tool's three steps are in `OrcaMCPMeshTools.cpp` |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPMainThreadGate.hpp` | How a call hands work to the main thread and waits, and how quitting releases it: the gate is `QueuedCalls` (`src/slic3r/Utils/QueuedCall.hpp`), with `call_through` for a tool's json (see "Threading Model"; unit-tested in `tests/slic3rutils/test_mcp_shutdown.cpp`, `test_queued_call.cpp`) |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPQuit.cpp` | Quitting while a modal dialog is open: which dialogs are open, ending the innermost unanswered, holding the close until they are gone, and `quit_app`'s refusals (unit-tested in `tests/slic3rutils/test_mcp_quit.cpp`); the wx side (modal hook, turn timer) is `OrcaMCPQuitApp.cpp` |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPLoginServer.cpp` | Where the cloud login's callback is answered: a second port of the MCP server, on its thread (unit-tested in `tests/slic3rutils/test_http_server.cpp`) |
@@ -613,6 +615,29 @@ once it has been applied, with the placement it left (`OrcaMCPUiJob.hpp`, the ap
 - **Unit-tested without the app** in `tests/slic3rutils/test_mcp_ui_job.cpp`, on a real
   `BoostThreadWorker` whose messages the test thread delivers, as the plater's idle handler does.
 
+### Mesh repair: CGAL off the main thread, the model on it
+
+`repair_mesh` runs the object list's own Repair (`FixModelByCgal.hpp`) in three steps
+(`OrcaMCPMeshTools.cpp`, its decisions in `OrcaMCPMeshRepair.cpp`):
+
+- **Capture, main thread.** The call is checked (refused while the pipeline is busy, a UI job runs or
+  the app's own Repair dialog runs), an open gizmo is closed as the user would close it (the Repair
+  needs it closed: its undo snapshot would land in the gizmo's own stack), and the meshes and ids the
+  repair reads are captured (`capture_cgal_repair`).
+- **Plan, HTTP thread.** `plan_cgal_repair` is pure mesh work on those meshes, never a `Model`, a
+  `ModelVolume` or wx: the parts `ModelVolume::split` will make, the ones it drops, and CGAL's repair
+  of each part with open edges. The main thread stays free. It stops between parts once
+  `this_thread_cancelled()` (a quit) or the call's wait cap (`tool_wait_cap`, the bridge's) says so; a
+  part CGAL is repairing runs to its end (see "Shutdown").
+- **Apply, main thread.** The object is found again by pointer and id and checked unchanged
+  (`CgalRepairPlan::applies_to`); only a plan that changes something, has no failure, leaves the object
+  a part to print and finished within the cap is applied, under one "Repairing model object" snapshot,
+  followed by what the object list's Repair does after (`ensure_on_bed`, `changed_mesh`, the list), with
+  every instance re-homed as MCP's transforms do. Anything else changes nothing and says why.
+
+The object list's Repair runs the same steps (plan under its dialog, then one snapshot and the apply),
+and a test holds the plan to upstream's in-place loop (probe AI).
+
 ### Shutdown: never wait on something that waits on the main thread
 
 Quitting joins the HTTP thread from the main thread (`GUI_App::stop_http_server` ->
@@ -634,7 +659,9 @@ that call in flight waited forever: on 2026-09-26 `quit_app`, with a script poll
   `GUI_App`'s route) aborts synchronous `Http` transfers within about a second, stops
   `discover_printers`, and ends a `TCPConsole` exchange (legacy Flashforge, MKS) within 100 ms. A new
   blocking call on that thread must honour `this_thread_cancelled()` or go through `Http`/`TCPConsole`.
-  What cannot be cancelled -- the Bambu network plugin's calls inside a login callback -- is bounded:
+  What cannot be cancelled -- the Bambu network plugin's calls inside a login callback, and the one
+  mesh part CGAL is repairing inside a `repair_mesh` call (its plan stops between parts, and uses only
+  its own copies of the meshes) -- is bounded:
   `GUI_App::stop_http_server` gives `HttpServer::stop` 5 s, and when a request still holds the thread
   then, the server is left alone and the process ends at once (`end_process_under_running_server_thread`:
   config saved, logs flushed, `std::_Exit(0)`), without the teardown the stuck call could be using.
@@ -748,6 +775,9 @@ The bridge sends no `Origin` and names `localhost` or `127.0.0.1` (`scripts/test
    `BackgroundSlicingProcess::stop`): usually well under a second, but organic tree supports check
    for a cancel only between phases, and on the -O0 dev build one wait took 47 s
 5. **Local only**: the MCP server listens on 127.0.0.1; it cannot be reached from another machine
+6. **Mesh repair time**: `repair_mesh` applies nothing when its CGAL work takes longer than the call may
+   wait (a little under the bridge's `ORCAMCP_TIMEOUT`); a larger mesh needs a larger timeout, or
+   `volume_id` one volume at a time. CGAL is header-only, so the -O0 dev build runs it unoptimised
 
 ---
 
@@ -923,22 +953,23 @@ type `SliceAllEndedEarly` naming the plate, until the next slice, plate-list cha
 slice the plate list's safety net cancelled (see probe P) is told once, as a `warning` of type
 `SliceCancelled` naming the path that freed its plate.
 
-The object list's mesh warning icon (open edges, or repairs a 3MF recorded) is scene state no MCP tool
-can clear, so it is **not** in every tool's `active_warnings`: a permanent entry there would keep
-`count` above 0 on every call, `get_slicing_status`'s polls included. It is reported where objects
+The object list's mesh warning icon (open edges, or repairs a 3MF recorded) is scene state that stays
+until the mesh is repaired (`repair_mesh`; recorded repairs on a closed mesh stay even then), so it is
+**not** in every tool's `active_warnings`: a permanent entry there would keep `count` above 0 on every
+call, `get_slicing_status`'s polls included. It is reported where objects
 are: each object entry's `mesh_warning` / `mesh_warning_reason` (`get_scene_info`, `load_model`'s
 `loaded_objects`), and `get_mesh_health`. Only `get_scene_info` (every flagged object) and `load_model`
 (the flagged objects it added) also add a `warning` of type `MeshErrors`, with `object_id`,
-`object_name` and a `message` that gives the list's reason and what an agent can do -- MCP has no
-tool that repairs a mesh, and slicing closes each layer's outline across gaps of up to 2 mm -- in place
-of the GUI tooltip's "Click the icon to repair model object" (`mesh_error_warnings`,
-`OrcaMCPMeshHealth.cpp`). Never a GUI button: no tool text, next step or instruction sends the agent,
+`object_name` and a `message` that gives the list's reason and what an agent can do -- `repair_mesh
+{object_id: N}` for open edges, and that slicing closes each layer's outline across gaps of up to 2 mm
+-- in place of the GUI tooltip's "Click the icon to repair model object", which `get_mesh_health`'s
+`tooltip` leaves out too (`mesh_error_warnings`, `mesh_warning_tooltip`, `OrcaMCPMeshHealth.cpp`). Never a GUI button: no tool text, next step or instruction sends the agent,
 or through it the user, to a button (a security prompt is the only exception); what a user can do, an
 agent must be able to do. "MCP cannot repair a mesh: the GUI's repair is not exposed" was read as "no
 repair exists", and an agent told a user repair works only on Windows; the object list's Repair
 (`ObjectList::fix_through_cgal`, CGAL) runs on every platform.
 
-**Endpoints with active_warnings:** `get_scene_info`, `slice_all`, `get_slicing_status`, `get_print_estimate`, `load_model`, `arrange_objects`, `auto_orient`, all transform tools, `undo`, `redo`
+**Endpoints with active_warnings:** `get_scene_info`, `slice_all`, `get_slicing_status`, `get_print_estimate`, `load_model`, `arrange_objects`, `auto_orient`, all transform tools, `repair_mesh`, `undo`, `redo`
 
 The `count` field is always present (even when 0) to help confirm issues have been resolved.
 

@@ -45,8 +45,9 @@ MeshHealth volume_mesh_health(const ModelObject& object, int volume_idx);
 // Every object's row, indexed as model.objects: what a scene-wide report reads once and passes on.
 std::vector<MeshHealth> model_mesh_health(const Model& model);
 
-// The icon's tooltip, exactly as the list shows it (its last line is the GUI's "click the icon"),
-// and the list's sidebar line, on one line. In the app's language; empty for a row without the icon.
+// The icon's tooltip as the list builds it, less its last line, the GUI's "click the icon" (which
+// agents passed on to users as an instruction), and the list's sidebar line, on one line. In the
+// app's language; empty for a row without the icon.
 std::string mesh_warning_tooltip(const MeshHealth& health);
 std::string mesh_warning_reason(const MeshHealth& health);
 
@@ -64,14 +65,15 @@ nlohmann::json mesh_features_json(const MeshHealth& object_health);
 void add_mesh_warning(nlohmann::json& out, const MeshHealth& object_health);
 
 // What an agent can do about a row with the icon, in place of the tooltip's GUI-only "click the
-// icon": what MCP can do about the mesh, and what slicing does with it -- never a GUI button to send
-// the user to. English; empty without the icon.
+// icon": repair_mesh for open edges, and what slicing does with the mesh -- never a GUI button to
+// send the user to. English; empty without the icon.
 std::string mesh_warning_advice(const MeshHealth& health);
 
 // A MeshErrors warning for an object the list flags: {level: "warning", type: "MeshErrors",
-// object_id, object_name, message: <the reason, the advice, and where the numbers are>}. The icon is
-// scene state no MCP tool can clear, so only get_scene_info and load_model report these, never
-// every tool's active_warnings.
+// object_id, object_name, message: <the reason, the advice, where the numbers are and, for open edges,
+// the repair_mesh call>}. The icon is scene state that stays until someone repairs the mesh (a
+// closed mesh's recorded repairs stay even then), so only get_scene_info and load_model report
+// these, never every tool's active_warnings.
 nlohmann::json mesh_error_warning(const ModelObject& object, int object_id, const MeshHealth& health);
 // One for every object of `model` whose icon shows, from its health read once (model_mesh_health)...
 nlohmann::json mesh_error_warnings(const Model& model, const std::vector<MeshHealth>& health);
@@ -94,7 +96,8 @@ struct ShellListJob
 // get_mesh_health's response before the shell lists, and the parts that still need one. Built on
 // the GUI thread; add_shell_lists does the flood fill, which can take seconds, off it. Every row --
 // the object and each volume -- has mesh_warning, and tooltip and mesh_warning_reason only when it
-// is true: the one shape every per-object description uses.
+// is true: the one shape every per-object description uses. An object with open edges also gets
+// next_steps: repair_mesh (mesh_repair_next_steps).
 struct MeshHealthReport
 {
     nlohmann::json            response;
@@ -102,6 +105,10 @@ struct MeshHealthReport
 };
 
 MeshHealthReport mesh_health_report(const ModelObject& object, int object_id);
+
+// get_mesh_health's `volumes` rows without the shell lists: {volume_id, name, type, the numbers,
+// mesh_warning, and tooltip and mesh_warning_reason when it is true}. repair_mesh answers with them.
+nlohmann::json mesh_volume_rows_json(const ModelObject& object);
 
 // Each job's part gets `shell_list`: {total, listed, coordinate_frame: "plate", instance_id: 0,
 // shells: [component_json...] (the `max_listed` with the most facets, most first), note}.

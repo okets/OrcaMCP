@@ -164,6 +164,43 @@ TEST_CASE("A modifier's shells are not a stray part", "[McpNextSteps][orcamcp]")
     CHECK(step_for(scene.steps(), "get_object_components") == nullptr);
 }
 
+TEST_CASE("get_mesh_health points an object with open edges at repair_mesh, by its object_id", "[McpNextSteps][orcamcp]")
+{
+    const Scene scene({clean_cube(), cube_missing_facet()});
+    const ModelObject& object = *scene.model.objects[1];
+
+    const std::vector<NextStep> steps = mesh_repair_next_steps(object, 1, object_mesh_health(object));
+    REQUIRE(steps.size() == 1);
+    CHECK(steps[0].tool == "repair_mesh");
+    CHECK(steps[0].arguments == json{{"object_id", 1}});
+    CHECK(mentions(steps[0].why, "object 1 (\"object 1\")"));
+    CHECK(mentions(steps[0].why, "3 open edges"));
+    CHECK(mentions(steps[0].why, "keep_painting"));
+    CHECK(unusable(steps[0]) == std::nullopt);
+
+    // get_mesh_health's answer carries it.
+    const json report = mesh_health_report(object, 1).response;
+    REQUIRE(report.contains("next_steps"));
+    CHECK(report["next_steps"][0]["tool"] == "repair_mesh");
+}
+
+TEST_CASE("A closed object, even one with recorded repairs, is not pointed at repair_mesh", "[McpNextSteps][orcamcp]")
+{
+    RepairedMeshErrors reversed;
+    reversed.facets_reversed = 1;
+    Model        model;
+    ModelObject* recorded = model.add_object();
+    recorded->add_volume(TriangleMesh(clean_cube(), reversed));
+    recorded->add_instance();
+    REQUIRE(object_mesh_health(*recorded).warning);
+
+    // A repair leaves a closed one-shell mesh, and the repairs it records, as they are.
+    CHECK(mesh_repair_next_steps(*recorded, 0, object_mesh_health(*recorded)).empty());
+    CHECK_FALSE(mesh_health_report(*recorded, 0).response.contains("next_steps"));
+    const Scene clean({clean_cube()});
+    CHECK(mesh_repair_next_steps(*clean.model.objects[0], 0, object_mesh_health(*clean.model.objects[0])).empty());
+}
+
 TEST_CASE("A slice that started is waited for with wait_for_slice", "[McpNextSteps][orcamcp]")
 {
     const std::vector<NextStep> steps = slice_start_next_steps({SliceStart::started, "", ""}, std::nullopt);
@@ -278,7 +315,10 @@ TEST_CASE("Every next step names a real tool, with arguments its schema accepts"
             steps.push_back(std::move(step));
     for (NextStep& step : support_paint_next_steps(0, false, true, "normal(auto)"))
         steps.push_back(std::move(step));
-    REQUIRE(steps.size() == 10);
+    const Scene hole({cube_missing_facet()});
+    for (NextStep& step : mesh_repair_next_steps(*hole.model.objects[0], 0, object_mesh_health(*hole.model.objects[0])))
+        steps.push_back(std::move(step));
+    REQUIRE(steps.size() == 11);
 
     const mcp_tool_references::ToolNames names(OrcaMCPServer::registered_tools());
     json                                 response = json::object();

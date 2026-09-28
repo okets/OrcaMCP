@@ -440,6 +440,10 @@ private:
     bool                  m_taken = false;
 };
 
+// What the app shows about its slicing pipeline, for pipeline_busy: plater's background process, its
+// Slice All run, and `plate_count` plates. Main thread.
+PipelineState pipeline_state(Plater& plater, int plate_count);
+
 // Applies a settings change the slicer has not taken in yet (`apply`: Plater::apply_pending_background_update)
 // when should_apply_pending_update says so, and says whether it did. The update can raise an error
 // dialog (show_error), and one raised with no suppression open is a modal that blocks every later

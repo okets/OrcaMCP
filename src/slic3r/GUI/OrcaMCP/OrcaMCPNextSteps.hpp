@@ -12,6 +12,7 @@
 
 namespace Slic3r {
 class Model;
+class ModelObject;
 namespace GUI { namespace OrcaMCP {
 
 // What a response suggests calling next, when what it found implies a follow-up: a loaded object with
@@ -47,6 +48,11 @@ std::string listed_ids(const std::vector<int>& ids, size_t max_listed = 10);
 std::vector<NextStep> mesh_next_steps(const Model& model, const std::vector<int>& object_indices, const std::vector<MeshHealth>& health);
 // The same for every object of `model`.
 std::vector<NextStep> mesh_next_steps(const Model& model, const std::vector<MeshHealth>& health);
+
+// What get_mesh_health's answer about object `object_id` leads to: repair_mesh when its row has open
+// edges. Nothing for a closed object, even one whose warning shows repairs recorded at load: a repair
+// leaves a closed one-shell mesh, and that record, as they are.
+std::vector<NextStep> mesh_repair_next_steps(const ModelObject& object, int object_id, const MeshHealth& health);
 
 // What slice_all's answer leads to: wait_for_slice for a slice that started, or for a busy pipeline
 // (then slice_all again); get_slicing_status while an arrange or an orient holds the app (its ui_job;

@@ -5,6 +5,7 @@
 #include "OrcaMCPQuit.hpp"
 #include "OrcaMCPSliceCredit.hpp"
 #include "OrcaMCPUiJob.hpp"
+#include "slic3r/GUI/BackgroundSlicingProcess.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/GUI/NotificationManager.hpp"
@@ -219,6 +220,19 @@ ModelObject* resolve_object_id(const nlohmann::json& params, Model& model, int& 
         return nullptr;
     }
     return model.objects[std::size_t(object_id)];
+}
+
+PipelineState pipeline_state(Plater& plater, int plate_count)
+{
+    const BackgroundSlicingProcess& process = plater.background_process();
+    const auto                      state   = process.state();
+    return {plater.is_background_process_slicing(),
+            state == BackgroundSlicingProcess::STATE_STARTED || state == BackgroundSlicingProcess::STATE_RUNNING,
+            state == BackgroundSlicingProcess::STATE_FINISHED || state == BackgroundSlicingProcess::STATE_CANCELED,
+            process.is_export_scheduled(),
+            process.is_upload_scheduled(),
+            plater.slice_all_plate_in_progress(),
+            plate_count};
 }
 
 bool object_within_plate(const BoundingBoxf3& object_bbox, const BoundingBoxf3& plate_box, double z_tolerance)
