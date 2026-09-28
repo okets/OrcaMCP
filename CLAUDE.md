@@ -1755,8 +1755,10 @@ old file again. Ours returns whether it wrote the file, shows the app's "Export 
 and clears the status after the (synchronous) export; its file dialog takes MCP's path
 (`mcp_answer_path_dialog`). And it added ".3mf" to a chosen name unless it ended in exactly ".3mf": X.GCODE.3MF
 was written as X.GCODE.3MF.3mf. Ours adds it unless the name ends in .3mf in any case
-(`OrcaMCP::sliced_file_path`, which MCP's `export_gcode` answer reads too, so it names the file written). On "no", take upstream's and keep the dialog's MCP branch; export a sliced file to
-a folder that does not exist, then slice: no "Exported successfully".
+(`OrcaMCP::sliced_file_path`, which MCP's `export_gcode` answer reads too, so it names the file written). On
+"no", take upstream's and keep the dialog's MCP branch; export a sliced file to a folder that does not exist,
+then slice: no "Exported successfully". On "no" for the second, upstream compares without case: take its line
+and keep `sliced_file_path` for the answer.
 
 Item BA: `store_stl` (`Format/STL.cpp`) returned true whatever `write_binary` / `write_ascii` did (its own
 FIXME), and `Plater::export_stl` ignored what `store_stl` and `store_drc` returned: an STL or DRC export to a
@@ -1787,8 +1789,8 @@ it?") is changed by `replace_volume_with_stl`, which loads the file first: ours 
 is taken, so it takes it only once the file loaded (`ReloadUndoStep`), and a replacement that fails is named
 among the failed files, where upstream's loop broke off silently. Which volumes it reloads
 (`is_reloadable_volume`) and where it finds their files (`reload_sources`) move out of it, unchanged, so MCP's
-`reload_from_disk` decides as it does before asking;
-its locate dialog, Replace 3D file's and Replace all with 3D files' dialogs, and the export dialogs of items
+`reload_from_disk` decides as it does before asking; its locate dialog, Replace 3D file's and Replace all with
+3D files' dialogs, and the export dialogs of items
 AZ and BA take the tool call's path under MCP (`mcp_answer_path_dialog`: six sites; the locate dialog clears
 the answer once read, so a second missing file cancels the reload before anything changed). On "no" or a
 non-zero, take upstream's and keep the MCP branches; re-run `slic3rutils_tests "[McpSourceFiles]"`, then
