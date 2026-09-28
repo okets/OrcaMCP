@@ -202,3 +202,23 @@ TEST_CASE("Deleting the last instance renumbers nothing and leaves the other pla
     CHECK(plates->get_plate(0)->is_slice_result_valid());
     CHECK_FALSE(plates->get_plate(1)->is_slice_result_valid());
 }
+
+TEST_CASE("Every object on a plate that turns spiral vase on gets the vase settings", "[PlateInstances][orcamcp]")
+{
+    // PartPlate::set_vase_mode_related_object_config over the edited print preset; upstream gave the
+    // preset's differing settings to the first object only.
+    Slic3r::Model                   model;
+    Slic3r::DynamicPrintConfig      preset = Slic3r::DynamicPrintConfig::full_print_config();
+    preset.set_key_value("wall_loops", new Slic3r::ConfigOptionInt(3));
+    preset.set_key_value("top_shell_layers", new Slic3r::ConfigOptionInt(5));
+    Slic3r::ModelObjectPtrs objects = {model.add_object(), model.add_object()};
+    objects[1]->config.set_key_value("sparse_infill_density", new Slic3r::ConfigOptionPercent(40));
+
+    Slic3r::GUI::PartPlate::apply_vase_mode_object_config(preset, objects);
+
+    for (const Slic3r::ModelObject* object : objects) {
+        CHECK(object->config.get().opt_int("wall_loops") == 1);
+        CHECK(object->config.get().opt_int("top_shell_layers") == 0);
+    }
+    CHECK(objects[1]->config.get().option<Slic3r::ConfigOptionPercent>("sparse_infill_density")->value == 0);
+}

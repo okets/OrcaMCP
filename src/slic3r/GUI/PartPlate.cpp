@@ -3146,6 +3146,44 @@ bool PartPlate::renumber_instances_after(int obj_id, int instance_id_removed)
 	return held;
 }
 
+// Orca: the object settings a vase plate gives its objects, apart so MCP reports the same list.
+const DynamicPrintConfig& PartPlate::vase_mode_object_config()
+{
+	static const DynamicPrintConfig config = [] {
+		DynamicPrintConfig new_conf;
+		new_conf.set_key_value("wall_loops", new ConfigOptionInt(1));
+		new_conf.set_key_value("top_shell_layers", new ConfigOptionInt(0));
+		new_conf.set_key_value("sparse_infill_density", new ConfigOptionPercent(0));
+		new_conf.set_key_value("enable_support", new ConfigOptionBool(false));
+		new_conf.set_key_value("enforce_support_layers", new ConfigOptionInt(0));
+		new_conf.set_key_value("detect_thin_wall", new ConfigOptionBool(false));
+		new_conf.set_key_value("timelapse_type", new ConfigOptionEnum<TimelapseType>(tlTraditional));
+		new_conf.set_key_value("overhang_reverse", new ConfigOptionBool(false));
+		return new_conf;
+	}();
+	return config;
+}
+
+// Orca: each object gets the vase settings the print preset lacks, and those of its own that differ.
+// Upstream reused one list for both, so every object after the first got only its own.
+void PartPlate::apply_vase_mode_object_config(const DynamicPrintConfig& print_preset, const ModelObjectPtrs& objects)
+{
+	const DynamicPrintConfig& new_conf = vase_mode_object_config();
+	const auto applying_keys = print_preset.diff(new_conf);
+
+	for (ModelObject* object : objects) {
+		ModelConfigObject& config = object->config;
+
+		for (auto opt_key : applying_keys) {
+			config.set_key_value(opt_key, new_conf.option(opt_key)->clone());
+		}
+
+		for (auto opt_key : config.get().diff(new_conf)) {
+			config.set_key_value(opt_key, new_conf.option(opt_key)->clone());
+		}
+	}
+}
+
 void PartPlate::set_vase_mode_related_object_config(int obj_id) {
 	ModelObjectPtrs obj_ptrs;
 	if (obj_id != -1) {
@@ -3155,30 +3193,7 @@ void PartPlate::set_vase_mode_related_object_config(int obj_id) {
 	else
 		obj_ptrs = get_objects_on_this_plate();
 
-	DynamicPrintConfig* global_config = &wxGetApp().preset_bundle->prints.get_edited_preset().config;
-	DynamicPrintConfig new_conf;
-	new_conf.set_key_value("wall_loops", new ConfigOptionInt(1));
-	new_conf.set_key_value("top_shell_layers", new ConfigOptionInt(0));
-	new_conf.set_key_value("sparse_infill_density", new ConfigOptionPercent(0));
-	new_conf.set_key_value("enable_support", new ConfigOptionBool(false));
-	new_conf.set_key_value("enforce_support_layers", new ConfigOptionInt(0));
-	new_conf.set_key_value("detect_thin_wall", new ConfigOptionBool(false));
-	new_conf.set_key_value("timelapse_type", new ConfigOptionEnum<TimelapseType>(tlTraditional));
-	new_conf.set_key_value("overhang_reverse", new ConfigOptionBool(false));
-	auto applying_keys = global_config->diff(new_conf);
-
-	for (ModelObject* object : obj_ptrs) {
-		ModelConfigObject& config = object->config;
-
-		for (auto opt_key : applying_keys) {
-			config.set_key_value(opt_key, new_conf.option(opt_key)->clone());
-		}
-
-		applying_keys = config.get().diff(new_conf);
-		for (auto opt_key : applying_keys) {
-			config.set_key_value(opt_key, new_conf.option(opt_key)->clone());
-		}
-	}
+	apply_vase_mode_object_config(wxGetApp().preset_bundle->prints.get_edited_preset().config, obj_ptrs);
 	//wxGetApp().obj_list()->update_selections();
 }
 

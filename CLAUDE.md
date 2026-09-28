@@ -1238,6 +1238,7 @@ echo "AJ upstream's acceptor takes asio's SO_REUSEADDR on Windows, which lets a 
 echo "AK adding a primitive part or modifier resets only instance 0 and moves every instance by its offset (rel2506/11): $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^void ObjectList::apply_object_instance_transfrom_to_all_volumes/{f=1} f&&/translate_instances\(original_instance_center\)/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
 echo "AL the object list's re-listing clears a copy of an object's row map / the maps stay under an object's index when it is deleted or moved (rel2506/11; 0 = bug for the second): $(U src/slic3r/GUI/GUI_ObjectList.cpp | grep -c 'for (auto item : ui_and_3d_volume_map)') / $(U src/slic3r/GUI/ObjectDataViewModel.cpp | grep -c 'ui_and_3d_volume_map')"
 echo "AM deleting an object removes only its first instance from the plates / the object list's instance delete tells the plates nothing (rel2506/12; 0 = bug for the second): $(U src/slic3r/GUI/PartPlate.cpp | awk '/^int PartPlateList::notify_instance_removed/{f=1} f&&/remove_object_instances|for \(.*instance.*<.*instances/{print "no"; exit} f&&/update_object_index/{print "yes"; exit}') / $(U src/slic3r/GUI/GUI_ObjectList.cpp | grep -A10 'else if (type == itInstance) {' | grep -c 'partplate_list')"
+echo "AN a plate's spiral vase gives the print preset's differing settings to its first object only (rel2506/12): $(U src/slic3r/GUI/PartPlate.cpp | grep -c 'applying_keys = config.get().diff(new_conf);')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -1560,6 +1561,14 @@ instance delete calls `PartPlateList::notify_instance_deleted`, which removes th
 each later one under its new index (`PartPlate::renumber_instances_after`); a plate whose instances
 changed loses its slice (`instances_changed_on`). On "no" / a non-zero second count, take upstream's
 and re-run `slic3rutils_tests "[PlateInstances]"`, which calls both as the app does.
+
+Item AN: turning a plate's spiral vase on gives every object on it the object settings the vase needs
+(`PartPlate::set_vase_mode_related_object_config`: one wall, no top shell, no infill, no support). Upstream
+reused one key list for the settings the print preset lacks and for each object's own differing ones, so
+after the first object the list held only that object's own, and every later object kept its walls and
+infill on a vase plate. Ours keeps the two apart (`PartPlate::apply_vase_mode_object_config`, with the
+settings in `PartPlate::vase_mode_object_config`, which MCP's `set_plate_settings` reports from). On 0, take
+upstream's and re-run `slic3rutils_tests "[PlateInstances]"`.
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices

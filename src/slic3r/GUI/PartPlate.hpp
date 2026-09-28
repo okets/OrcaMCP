@@ -410,6 +410,10 @@ public:
 
     // set objects configs when enabling spiral vase mode.
     void set_vase_mode_related_object_config(int obj_id = -1);
+    // Orca: the object settings spiral vase mode needs, and their application to `objects` over the print
+    // preset `print_preset` (what set_vase_mode_related_object_config does with the edited print preset).
+    static const DynamicPrintConfig& vase_mode_object_config();
+    static void                      apply_vase_mode_object_config(const DynamicPrintConfig& print_preset, const ModelObjectPtrs& objects);
 
     //whether it is empty
     bool empty() { return obj_to_instance_set.empty(); }
