@@ -3109,6 +3109,43 @@ void PartPlate::update_object_index(int obj_idx_removed, int obj_idx_max)
 
 }
 
+// Orca: the entries of object `obj_id` leave `entries`; whether there were any.
+static bool erase_object_entries(std::set<std::pair<int, int>>& entries, int obj_id)
+{
+	const size_t before = entries.size();
+	for (auto it = entries.begin(); it != entries.end();)
+		it = it->first == obj_id ? entries.erase(it) : std::next(it);
+	return entries.size() != before;
+}
+
+// Orca: the entries of object `obj_id` after instance `removed` move down one; whether any did.
+static bool renumber_object_entries(std::set<std::pair<int, int>>& entries, int obj_id, int removed)
+{
+	std::set<std::pair<int, int>> renumbered;
+	bool                          changed = false;
+	for (const std::pair<int, int>& entry : entries) {
+		const bool later = entry.first == obj_id && entry.second > removed;
+		renumbered.insert(later ? std::pair(entry.first, entry.second - 1) : entry);
+		changed |= later;
+	}
+	entries.swap(renumbered);
+	return changed;
+}
+
+bool PartPlate::remove_object_instances(int obj_id)
+{
+	const bool held = erase_object_entries(obj_to_instance_set, obj_id);
+	erase_object_entries(instance_outside_set, obj_id);
+	return held;
+}
+
+bool PartPlate::renumber_instances_after(int obj_id, int instance_id_removed)
+{
+	const bool held = renumber_object_entries(obj_to_instance_set, obj_id, instance_id_removed);
+	renumber_object_entries(instance_outside_set, obj_id, instance_id_removed);
+	return held;
+}
+
 void PartPlate::set_vase_mode_related_object_config(int obj_id) {
 	ModelObjectPtrs obj_ptrs;
 	if (obj_id != -1) {
@@ -5544,6 +5581,12 @@ int PartPlateList::notify_instance_removed(int obj_id, int instance_id)
 	}
 
 	if (instance_id == -1) {
+		// Orca: the object's other instances leave their plates too, before the later objects move down.
+		for (PartPlate* plate : m_plate_list)
+			if (plate->remove_object_instances(obj_id))
+				instances_changed_on(plate);
+		unprintable_plate.remove_object_instances(obj_id);
+
 		//update all the obj_ids which is bigger
 		for (unsigned int i = 0; i < (unsigned int)m_plate_list.size(); ++i)
 		{
@@ -5559,6 +5602,27 @@ int PartPlateList::notify_instance_removed(int obj_id, int instance_id)
 		m_plater->mark_plate_toolbar_image_dirty();
 
 	return 0;
+}
+
+// Orca: see the declaration.
+int PartPlateList::notify_instance_deleted(int obj_id, int instance_id)
+{
+	notify_instance_removed(obj_id, instance_id);
+	for (PartPlate* plate : m_plate_list)
+		if (plate->renumber_instances_after(obj_id, instance_id))
+			instances_changed_on(plate);
+	unprintable_plate.renumber_instances_after(obj_id, instance_id);
+	return 0;
+}
+
+// Orca: a plate whose instances changed has no slice of them, nor thumbnails.
+void PartPlateList::instances_changed_on(PartPlate* plate)
+{
+	plate->update_slice_result_valid_state();
+	plate->thumbnail_data.reset();
+	plate->no_light_thumbnail_data.reset();
+	plate->top_thumbnail_data.reset();
+	plate->pick_thumbnail_data.reset();
 }
 
 //add instance to special plate, need to remove from the original plate

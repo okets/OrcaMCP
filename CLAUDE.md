@@ -1237,6 +1237,7 @@ echo "AI the Repair's worker changes the object itself, off the main thread / a 
 echo "AJ upstream's acceptor takes asio's SO_REUSEADDR on Windows, which lets a second process bind a port the first listens on (rel2506/09; 0 = bug): $( { U src/slic3r/GUI/HttpServer.hpp; U src/slic3r/GUI/HttpServer.cpp; } | grep -c 'EXCLUSIVEADDRUSE')"
 echo "AK adding a primitive part or modifier resets only instance 0 and moves every instance by its offset (rel2506/11): $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^void ObjectList::apply_object_instance_transfrom_to_all_volumes/{f=1} f&&/translate_instances\(original_instance_center\)/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
 echo "AL the object list's re-listing clears a copy of an object's row map / the maps stay under an object's index when it is deleted or moved (rel2506/11; 0 = bug for the second): $(U src/slic3r/GUI/GUI_ObjectList.cpp | grep -c 'for (auto item : ui_and_3d_volume_map)') / $(U src/slic3r/GUI/ObjectDataViewModel.cpp | grep -c 'ui_and_3d_volume_map')"
+echo "AM deleting an object removes only its first instance from the plates / the object list's instance delete tells the plates nothing (rel2506/12; 0 = bug for the second): $(U src/slic3r/GUI/PartPlate.cpp | awk '/^int PartPlateList::notify_instance_removed/{f=1} f&&/remove_object_instances|for \(.*instance.*<.*instances/{print "no"; exit} f&&/update_object_index/{print "yes"; exit}') / $(U src/slic3r/GUI/GUI_ObjectList.cpp | grep -A10 'else if (type == itInstance) {' | grep -c 'partplate_list')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -1545,6 +1546,20 @@ object's map before re-listing it, drops and shifts the maps when the list delet
 (`erase_object_from_volume_maps`, `move_object_in_volume_maps`, free functions in
 `ObjectDataViewModel.cpp` tested without the app) and clears them with the list. On "no" / a non-zero
 second count, take upstream's and re-run `slic3rutils_tests "[PartEdits]"`.
+
+Item AM: the plate list files every instance under its (object, instance) index. Upstream's
+`PartPlateList::notify_instance_removed(object, -1)`, which every object delete calls after
+`Model::delete_object`, removed only the object's first instance and then moved every entry from that
+object on down by one object: a second instance stayed filed under the object before it -- under
+object -1 for object 0, which `PartPlate::get_objects_on_this_plate` indexes unchecked (MCP's
+`get_scene_info` calls it for every plate) -- and the plate it stood on kept its slice. And the object
+list's delete of one instance (`ObjectList::del_subobject_from_object`, the Delete key on an instance)
+told the plates nothing, so every later instance stayed filed under its old index. Ours removes every
+instance of a deleted object from every plate first (`PartPlate::remove_object_instances`), and the
+instance delete calls `PartPlateList::notify_instance_deleted`, which removes the instance and files
+each later one under its new index (`PartPlate::renumber_instances_after`); a plate whose instances
+changed loses its slice (`instances_changed_on`). On "no" / a non-zero second count, take upstream's
+and re-run `slic3rutils_tests "[PlateInstances]"`, which calls both as the app does.
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices

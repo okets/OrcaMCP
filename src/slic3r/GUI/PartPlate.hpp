@@ -403,6 +403,10 @@ public:
 
     //update object's index caused by original object deleted
     void update_object_index(int obj_idx_removed, int obj_idx_max);
+    // Orca: every instance of the object leaves this plate; whether it held one.
+    bool remove_object_instances(int obj_id);
+    // Orca: the object's instances after `instance_id_removed` move down one index; whether it held one.
+    bool renumber_instances_after(int obj_id, int instance_id_removed);
 
     // set objects configs when enabling spiral vase mode.
     void set_vase_mode_related_object_config(int obj_id = -1);
@@ -852,7 +856,17 @@ public:
     void notify_object_added(int obj_id);
 
     //notify instance is removed
+    // Orca: with instance_id -1 (the object was deleted) every instance of the object leaves every
+    // plate, and each plate that held one loses its slice; upstream removed only the first instance and
+    // moved the others onto the object before it (update_object_index).
     int notify_instance_removed(int obj_id, int instance_id);
+    // Orca: instance `instance_id` of the object is about to be deleted (ModelObject::delete_instance),
+    // so every later instance moves down one index: it leaves its plate, and the later ones are filed
+    // under their new index on theirs, which lose their slice. Upstream told the plates nothing, and
+    // each later instance stayed filed under its old index.
+    int notify_instance_deleted(int obj_id, int instance_id);
+    // Orca: marks a plate whose instances changed: no slice, no thumbnails.
+    static void instances_changed_on(PartPlate* plate);
 
     //add instance to special plate, need to remove from the original plate
     int add_to_plate(int obj_id, int instance_id, int plate_id);

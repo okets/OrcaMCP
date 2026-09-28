@@ -109,3 +109,96 @@ TEST_CASE("A later instance on a spiral-vase plate is placed without giving the 
     CHECK_FALSE(cube.config.has("wall_loops"));
     CHECK_FALSE(cube.config.has("sparse_infill_density"));
 }
+
+// Deleting an object or one of its instances. The plate list files every instance under its (object,
+// instance) index, so a delete owes it more than the one entry: upstream removed only the deleted
+// object's first instance and then moved every entry of that object and the later ones down by one
+// object, so a second instance was left filed under the object before it -- or under object -1, which
+// PartPlate::get_objects_on_this_plate reads without a check -- and the plate it stood on kept its
+// slice. Deleting an instance other than the last left every later instance filed under its old index.
+// These call what the app calls: PartPlateList::notify_instance_removed(object, -1) after
+// Model::delete_object (Plater::priv::remove), and PartPlateList::notify_instance_deleted before
+// ModelObject::delete_instance (ObjectList::del_subobject_from_object, which needs the app itself).
+
+namespace {
+
+// Every plate's slice marked valid, as after a slice.
+void mark_sliced(PartPlateList& plates)
+{
+    for (int i = 0; i < plates.get_plate_count(); ++i)
+        plates.get_plate(i)->update_slice_result_valid_state(true);
+}
+
+Vec3d beside(const Vec3d& position) { return position + Vec3d(40.0, 0.0, 0.0); }
+
+} // namespace
+
+TEST_CASE("Deleting an object with an instance on each of two plates leaves neither plate holding it", "[PlateInstances][orcamcp]")
+{
+    Slic3r::Model                        model;
+    const std::unique_ptr<PartPlateList> plates = plate_list_for(model, 2);
+    add_cube(model, *plates, {centre_of(*plates, 0), centre_of(*plates, 1)});
+    add_cube(model, *plates, {beside(centre_of(*plates, 0))});
+    mark_sliced(*plates);
+
+    model.delete_object(size_t(0));
+    plates->notify_instance_removed(0, -1);
+
+    CHECK(plates->find_instance(0, 0) == 0);
+    CHECK_FALSE(plates->get_plate(0)->contain_instance(0, 1));
+    CHECK(plates->get_plate(1)->empty());
+    CHECK_FALSE(plates->get_plate(1)->contain_instance(-1, 1));
+    CHECK_FALSE(plates->get_plate(0)->is_slice_result_valid());
+    CHECK_FALSE(plates->get_plate(1)->is_slice_result_valid());
+}
+
+TEST_CASE("Deleting an object with two instances on one plate leaves the plate holding only the others", "[PlateInstances][orcamcp]")
+{
+    Slic3r::Model                        model;
+    const std::unique_ptr<PartPlateList> plates = plate_list_for(model, 2);
+    add_cube(model, *plates, {centre_of(*plates, 1)});
+    add_cube(model, *plates, {centre_of(*plates, 0), beside(centre_of(*plates, 0))});
+    add_cube(model, *plates, {centre_of(*plates, 0) - Vec3d(40.0, 0.0, 0.0)});
+
+    model.delete_object(size_t(1));
+    plates->notify_instance_removed(1, -1);
+
+    CHECK(plates->find_instance(0, 0) == 1);
+    CHECK(plates->find_instance(1, 0) == 0);
+    CHECK_FALSE(plates->get_plate(0)->contain_instance(1, 1));
+    CHECK_FALSE(plates->get_plate(0)->contain_instance(0, 1));
+}
+
+TEST_CASE("Deleting an instance keeps every later instance on its plate, under its new index", "[PlateInstances][orcamcp]")
+{
+    Slic3r::Model                        model;
+    const std::unique_ptr<PartPlateList> plates = plate_list_for(model, 2);
+    Slic3r::ModelObject& cube = add_cube(model, *plates, {centre_of(*plates, 0), beside(centre_of(*plates, 0)), centre_of(*plates, 1)});
+    mark_sliced(*plates);
+
+    plates->notify_instance_deleted(0, 0);
+    cube.delete_instance(0);
+
+    REQUIRE(cube.instances.size() == 2);
+    CHECK(plates->find_instance(0, 0) == 0);
+    CHECK(plates->find_instance(0, 1) == 1);
+    CHECK(plates->find_instance(0, 2) == -1);
+    CHECK_FALSE(plates->get_plate(0)->is_slice_result_valid());
+    CHECK_FALSE(plates->get_plate(1)->is_slice_result_valid());
+}
+
+TEST_CASE("Deleting the last instance renumbers nothing and leaves the other plates sliced", "[PlateInstances][orcamcp]")
+{
+    Slic3r::Model                        model;
+    const std::unique_ptr<PartPlateList> plates = plate_list_for(model, 2);
+    Slic3r::ModelObject& cube = add_cube(model, *plates, {centre_of(*plates, 0), centre_of(*plates, 1)});
+    mark_sliced(*plates);
+
+    plates->notify_instance_deleted(0, 1);
+    cube.delete_instance(1);
+
+    CHECK(plates->find_instance(0, 0) == 0);
+    CHECK(plates->get_plate(1)->empty());
+    CHECK(plates->get_plate(0)->is_slice_result_valid());
+    CHECK_FALSE(plates->get_plate(1)->is_slice_result_valid());
+}
