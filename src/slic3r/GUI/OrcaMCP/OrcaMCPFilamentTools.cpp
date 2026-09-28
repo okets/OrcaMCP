@@ -333,7 +333,11 @@ void OrcaMCPServer::register_filament_tools()
                 if (it == mixed.end())
                     return nlohmann::json{{"status", "error"}, {"message", "slot is not a mixed filament"}};
 
+                const size_t slots_before = wxGetApp().preset_bundle->filament_presets.size();
                 wxGetApp().sidebar().delete_mixed_filament_at(size_t(it - mixed.begin()));
+                // The sidebar returns without a word when it deletes nothing: say so rather than succeed.
+                if (wxGetApp().preset_bundle->filament_presets.size() != slots_before - 1)
+                    return nlohmann::json{{"status", "error"}, {"message", "The app did not delete mixed slot " + std::to_string(slot) + "."}};
                 // A filament slot changed for every plate: none keeps a result made with it.
                 wxGetApp().plater()->get_partplate_list().invalid_all_slice_result();
                 return with_filaments({{"status", "success"}});

@@ -5408,7 +5408,10 @@ void Sidebar::add_filament() {
 
 void Sidebar::delete_filament(size_t filament_id, int replace_filament_id) {
     if (is_new_project_in_gcode3mf()) { return; }
-    if (p->combos_filament.size() <= 1) return;
+    // Orca: the last physical slot stays (below, once the slot is known); a mixed one goes however many
+    // physical slots are left. Upstream returned here with one physical slot, so a mix broken by the
+    // delete of its other component could not be deleted at all.
+    if (p->combos_filament.empty()) return;
 
     size_t filament_count = p->combos_filament.size() - 1;
     if (filament_id == size_t(-2)) {
@@ -5425,6 +5428,8 @@ void Sidebar::delete_filament(size_t filament_id, int replace_filament_id) {
         return;
 
     bool is_mixed = (filament_id >= p->combos_filament.size());
+    if (!is_mixed && p->combos_filament.size() <= 1)
+        return;
 
     if (!is_mixed) {
         if (wxGetApp().preset_bundle->is_the_only_edited_filament(filament_id) || (filament_id == 0)) {
