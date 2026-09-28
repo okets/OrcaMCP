@@ -5,6 +5,7 @@
 #include "libslic3r/CustomGCode.hpp"
 #include "libslic3r/TriangleMesh.hpp"
 #include "slic3r/GUI/GUI_ObjectList.hpp"
+#include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPFilamentSlots.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPServer.hpp"
 
@@ -544,4 +545,27 @@ TEST_CASE("a merge moves colour changes and every other item to the target too, 
     // And an add before slot 3 moves every one of them up, whatever its type.
     CHECK(gcodes_after(items, GUI::FilamentRenumbering::insertion(2)) ==
           Items{"colour 4", "pause 4", "colour 5"});
+}
+
+TEST_CASE("a plate's own filament maps take a new physical slot where the project's do, before the mixed ones", "[FilamentSlots]")
+{
+    // Slots 1 and 2 physical, on extruders 1 and 2; slot 3 mixed, on extruder 2. The new physical slot goes in
+    // at 3 (index 2), as Sidebar::add_custom_filament puts it into the project's maps.
+    DynamicPrintConfig plate;
+    plate.set_key_value("filament_map", new ConfigOptionInts({1, 2, 2}));
+    plate.set_key_value("filament_nozzle_map", new ConfigOptionInts({0, 1, 1}));
+    plate.set_key_value("filament_volume_map", new ConfigOptionInts({0, 1, 1}));
+
+    GUI::insert_filament_into_plate_maps(plate, 2, /*volume_type=*/0);
+
+    CHECK(plate.option<ConfigOptionInts>("filament_map")->values == std::vector<int>{1, 2, 1, 2});
+    CHECK(plate.option<ConfigOptionInts>("filament_nozzle_map")->values == std::vector<int>{0, 1, 0, 1});
+    CHECK(plate.option<ConfigOptionInts>("filament_volume_map")->values == std::vector<int>{0, 1, 0, 1});
+
+    // A new mixed slot is the last one; a plate that keeps no maps of its own gains none.
+    GUI::insert_filament_into_plate_maps(plate, 4, 0);
+    CHECK(plate.option<ConfigOptionInts>("filament_map")->values == std::vector<int>{1, 2, 1, 2, 1});
+    DynamicPrintConfig none;
+    GUI::insert_filament_into_plate_maps(none, 0, 0);
+    CHECK_FALSE(none.has("filament_map"));
 }

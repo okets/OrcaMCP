@@ -4794,7 +4794,8 @@ int Sidebar::apply_mixed_filament(const MixedFilamentResult& result,
             presets[slot_idx] = presets[result.components[0] - 1];
 
         size_t filament_count = wxGetApp().preset_bundle->filament_presets.size();
-        wxGetApp().plater()->get_partplate_list().on_filament_added(filament_count);
+        // Orca: a new mixed slot is the last one
+        wxGetApp().plater()->get_partplate_list().on_filament_added(filament_count, filament_count - 1);
         wxGetApp().plater()->on_filament_count_change(filament_count);
         wxGetApp().get_tab(Preset::TYPE_PRINT)->update();
         wxGetApp().preset_bundle->export_selections(*wxGetApp().app_config);
@@ -5579,7 +5580,8 @@ void Sidebar::add_custom_filament(wxColour new_col, const std::string& preset_na
         wxGetApp().preset_bundle->filament_presets[insert_pos] = preset_name;
     }
 
-    wxGetApp().plater()->get_partplate_list().on_filament_added(filament_count);
+    // Orca: each plate's own maps take the slot where the project's did, before the mixed ones
+    wxGetApp().plater()->get_partplate_list().on_filament_added(filament_count, insert_pos);
     wxGetApp().plater()->on_filament_count_change(filament_count);
     wxGetApp().get_tab(Preset::TYPE_PRINT)->update();
     wxGetApp().preset_bundle->export_selections(*wxGetApp().app_config);

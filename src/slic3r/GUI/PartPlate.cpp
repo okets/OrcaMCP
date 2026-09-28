@@ -4122,33 +4122,29 @@ void PartPlate::set_filament_count(int filament_count)
     }
 }
 
-void PartPlate::on_filament_added()
+void insert_filament_into_plate_maps(DynamicPrintConfig& plate_config, size_t slot, int volume_type)
 {
-    if (m_config.has("filament_map")) {
-        std::vector<int>& filament_maps = m_config.option<ConfigOptionInts>("filament_map")->values;
-        filament_maps.push_back(1);
-    }
+    for (const auto& [key, value] : {std::pair<const char*, int>{"filament_map", 1}, {"filament_nozzle_map", 0}, {"filament_volume_map", volume_type}})
+        if (auto* map = plate_config.option<ConfigOptionInts>(key)) {
+            std::vector<int>& values = map->values;
+            values.insert(values.begin() + std::min(slot, values.size()), value);
+        }
+}
 
-    if (m_config.has("filament_nozzle_map")) {
-        std::vector<int>& filament_nozzle_map = m_config.option<ConfigOptionInts>("filament_nozzle_map")->values;
-        filament_nozzle_map.push_back(0);
-    }
+void PartPlate::on_filament_added(size_t slot)
+{
+    // A new filament defaults onto the first extruder, so seed its volume value from
+    // that extruder's flow type.
+    int volume_type = static_cast<int>(NozzleVolumeType::nvtStandard);
+    auto nozzle_volumes = wxGetApp().preset_bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type");
+    if (nozzle_volumes && !nozzle_volumes->values.empty())
+        volume_type = nozzle_volumes->values[0];
+    // Orca: never store the Hybrid marker as a per-filament value; on a Hybrid extruder
+    // each filament still prints with a concrete flow, defaulting to Standard.
+    if (volume_type == static_cast<int>(NozzleVolumeType::nvtHybrid))
+        volume_type = static_cast<int>(NozzleVolumeType::nvtStandard);
 
-    if (m_config.has("filament_volume_map")) {
-        std::vector<int>& filament_volume_map = m_config.option<ConfigOptionInts>("filament_volume_map")->values;
-        // A new filament defaults onto the first extruder, so seed its volume value from
-        // that extruder's flow type.
-        int volume_type = static_cast<int>(NozzleVolumeType::nvtStandard);
-        auto nozzle_volumes = wxGetApp().preset_bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type");
-        if (nozzle_volumes && !nozzle_volumes->values.empty())
-            volume_type = nozzle_volumes->values[0];
-        // Orca: never store the Hybrid marker as a per-filament value; on a Hybrid extruder
-        // each filament still prints with a concrete flow, defaulting to Standard.
-        if (volume_type == static_cast<int>(NozzleVolumeType::nvtHybrid))
-            volume_type = static_cast<int>(NozzleVolumeType::nvtStandard);
-
-        filament_volume_map.push_back(volume_type);
-    }
+    insert_filament_into_plate_maps(m_config, slot, volume_type);
 }
 
 void PartPlate::on_filament_deleted(int filament_count, int filament_id)
@@ -7307,12 +7303,12 @@ void PartPlateList::set_filament_count(int filament_count)
     BOOST_LOG_TRIVIAL(info) << boost::format("%1%: filament_count=%2%")% __FUNCTION__ %filament_count;
 }
 
-void PartPlateList::on_filament_added(int filament_count)
+void PartPlateList::on_filament_added(int filament_count, size_t slot)
 {
     m_filament_count++;
     for (unsigned int i = 0; i < (unsigned int)m_plate_list.size(); ++i)
     {
-        m_plate_list[i]->on_filament_added();
+        m_plate_list[i]->on_filament_added(slot);
     }
     BOOST_LOG_TRIVIAL(info) << boost::format("%1%: filament_count=%2%")% __FUNCTION__ %filament_count;
 }

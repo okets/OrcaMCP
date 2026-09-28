@@ -2906,8 +2906,10 @@ Add a physical filament slot, as the sidebar's **+** button does (`Sidebar::add_
 
 The new slot goes after the last physical slot: mixed slots, which sit at the end, move up one, and so
 does everything that names one -- objects, parts, painted facets, layer ranges, the per-feature filaments
-of objects, parts, layer ranges and the print preset, and a tool change in the layer list (probe AT:
-upstream moved the objects, parts and paint only). Only a printer that changes filaments on one extruder
+of objects, parts, layer ranges and the print preset, and every item of the layer list's custom G-code
+(probe AT: upstream moved the objects, parts and paint only), and the slot takes its place in each plate's
+own filament mapping as in the project's (probe AW: upstream appended it there, so on a plate mapped by
+hand the new slot took the first mixed slot's extruder). Only a printer that changes filaments on one extruder
 (`single_extruder_multi_material`) or a Bambu Lab printer takes more slots, as only those show the
 button; on any other printer each extruder holds one filament and the slots follow the extruders.
 
