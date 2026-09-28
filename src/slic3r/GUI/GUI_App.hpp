@@ -340,7 +340,7 @@ private:
     std::chrono::steady_clock::time_point m_last_401_error_time;
     bool             m_show_error_msgdlg{false};
     wxString         m_info_dialog_content;
-    HttpServer       m_http_server;    // MCP, on LOCALHOST_PORT
+    HttpServer       m_http_server;    // MCP, on the first free port from LOCALHOST_PORT (OrcaMCPPortChoice.hpp)
     // The cloud login's loopback callback: a second port of m_http_server, served on its thread.
     OrcaMCP::LoginCallbackServer m_login_server{m_http_server, &HttpServer::auth_handle_request, ORCA_CLOUD_PROVIDER,
                                                 OrcaMCP::main_thread_gate()};

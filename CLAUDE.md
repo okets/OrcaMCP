@@ -71,7 +71,7 @@ cd build && ctest --output-on-failure
 ```
 ┌─────────────────┐         ┌──────────────────────┐         ┌─────────────────┐
 │   Claude Code   │  stdio  │  orcamcp-bridge.py   │  HTTP   │   OrcaSlicer    │
-│      CLI        │◄───────►│     (Python)         │◄───────►│  Port 13618     │
+│      CLI        │◄───────►│     (Python)         │◄───────►│  13618-13627    │
 └─────────────────┘         └──────────────────────┘         └─────────────────┘
                                                                       │
                                                                       ▼
@@ -89,7 +89,7 @@ cd build && ctest --output-on-failure
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
 | Transport | HTTP + stdio bridge | OrcaSlicer is a GUI app; pure stdio doesn't work |
-| Server location | Embedded in OrcaSlicer | Reuse existing HTTP server on port 13618 |
+| Server location | Embedded in OrcaSlicer | Reuse existing HTTP server, from port 13618; several instances each take their own port (see "Several instances at once") |
 | Protocol | JSON-RPC 2.0 over HTTP | Standard MCP protocol |
 | Threading | Main thread via CallAfter | OpenGL/GUI operations require main thread |
 
@@ -468,12 +468,14 @@ gh release upload v2.3.2.10 ./path/to/new/artifact.exe -R okets/OrcaMCP
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPMainThreadGate.hpp` | How a call hands work to the main thread and waits, and how quitting releases it: the gate is `QueuedCalls` (`src/slic3r/Utils/QueuedCall.hpp`), with `call_through` for a tool's json (see "Threading Model"; unit-tested in `tests/slic3rutils/test_mcp_shutdown.cpp`, `test_queued_call.cpp`) |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPQuit.cpp` | Quitting while a modal dialog is open: which dialogs are open, ending the innermost unanswered, holding the close until they are gone, and `quit_app`'s refusals (unit-tested in `tests/slic3rutils/test_mcp_quit.cpp`); the wx side (modal hook, turn timer) is `OrcaMCPQuitApp.cpp` |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPLoginServer.cpp` | Where the cloud login's callback is answered: a second port of the MCP server, on its thread (unit-tested in `tests/slic3rutils/test_http_server.cpp`) |
+| `src/slic3r/GUI/OrcaMCP/OrcaMCPPortChoice.cpp` | Which port the MCP server takes: the first of 13618-13627 nothing accepts a connection on at 127.0.0.1 or [::1] (see "Several instances at once"; unit-tested in `tests/slic3rutils/test_mcp_port_choice.cpp`) |
+| `src/slic3r/GUI/OrcaMCP/OrcaMCPInstanceRegistry.cpp` | Who this instance is: its entry in `~/.orcamcp/instances` (identity, open project), stale entries, the -32004 check on a call meant for another instance, and the user's notices; `OrcaMCPInstanceRegistryApp.cpp` reads the project from the Plater and shows them (unit-tested in `tests/slic3rutils/test_instance_registry.cpp`) |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPUiJob.cpp` | The UI worker's jobs a tool waits for (arrange, orient): the reported outcome, the wait on the HTTP thread and its answers, `get_slicing_status`'s `ui_job`, the bridge's cap; `OrcaMCPUiJobApp.cpp` starts them and reads the placement they left (see "Waiting for a UI job"; unit-tested in `tests/slic3rutils/test_mcp_ui_job.cpp`) |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPToolArguments.cpp` | Which tool calls reach a handler: an argument the tool's schema does not declare, a required one left out, or arguments that are not an object are refused with -32602 (see "Tool list"; unit-tested in `tests/slic3rutils/test_mcp_tool_arguments.cpp`) |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPRequestGuard.cpp` | Which requests the server answers: no web page's and no DNS-rebound one on `/mcp`, login callbacks only where a login listens (see "Security"; unit-tested in `tests/slic3rutils/test_mcp_request_guard.cpp`) |
 | `src/slic3r/Utils/ThreadCancel.cpp` | The per-request cancel check a quit applies to blocking network calls on the HTTP thread (unit-tested in `tests/slic3rutils/test_thread_cancel.cpp`) |
-| `src/slic3r/GUI/GUI_App.cpp` | MCP route registration, HTTP server startup, and the shutdown order (`stop_http_server`) |
-| `scripts/orcamcp-bridge.py` | stdio-to-HTTP bridge for Claude Code |
+| `src/slic3r/GUI/GUI_App.cpp` | MCP route registration, HTTP server startup on the first free port, and the shutdown order (`stop_http_server`) |
+| `scripts/orcamcp-bridge.py` | stdio-to-HTTP bridge for Claude Code; finds the running instances and sends every call to the chosen one (its "Instances" section) |
 
 ### Where the app's data lives
 
@@ -673,7 +675,8 @@ that call in flight waited forever: on 2026-09-26 `quit_app`, with a script poll
   sets `set_closing(true)`, once the close can no longer be vetoed (`MainFrame.cpp`). That closes the
   gate: the waiting call is released with `McpShuttingDown`, work still queued is never run, and
   every later tool call is refused with JSON-RPC **-32002** ("OrcaMCP is quitting, so this call was
-  not run. Use start_orca to start it again."). `McpShuttingDown` is a `JsonRpcError`
+  not run. Use start_orca to start it again."), and the instance's registry entry is removed (see
+  "Several instances at once"). `McpShuttingDown` is a `JsonRpcError`
   (`OrcaMCPJsonRpcError.hpp`), so it takes the one `JsonRpcError` path. A call whose work has already
   started is waited for, since its work may still use what the caller owns.
 - **Never abandon a handler, and still bound the quit.** A handler still running may use what the app
@@ -741,7 +744,8 @@ that call in flight waited forever: on 2026-09-26 `quit_app`, with a script poll
   closed. Anything else that stops or restarts an `HttpServer` from the main thread needs the same
   care.
 
-Both servers listen on **127.0.0.1 only**: MCP has no authentication and can start prints.
+Both servers listen on **127.0.0.1 only**, on whichever port the MCP server took (see "Several instances
+at once"): MCP has no authentication and can start prints.
 
 ### Security: web pages never reach MCP
 

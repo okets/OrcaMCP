@@ -4,6 +4,7 @@
 #include "OrcaMCPPresetConfigUtils.hpp"
 #include "OrcaMCPPlateUtils.hpp"
 #include "OrcaMCPImageFiles.hpp"
+#include "OrcaMCPInstanceRegistry.hpp"
 #include "OrcaMCPConfigKeys.hpp"
 #include "OrcaMCPConfigValues.hpp"
 #include "OrcaMCPFilamentUtils.hpp"
@@ -483,6 +484,8 @@ void OrcaMCPServer::shut_down()
 {
     if (main_thread_gate().close())
         BOOST_LOG_TRIVIAL(info) << "OrcaMCPServer: the app is quitting; tool calls are refused from now on";
+    // A quitting instance is no longer one an agent can choose.
+    instance_registry().withdraw();
 }
 
 bool OrcaMCPServer::defer_until_tool_call_returns(std::function<void()> task)
@@ -519,6 +522,10 @@ std::shared_ptr<HttpServer::Response> OrcaMCPServer::handle_request(
             {"protocol", "mcp"},
             {"description", "OrcaSlicer 3D Slicer MCP Server for Claude Code integration"}
         };
+        // Who answers: the bridge confirms the instance it chose by this (OrcaMCPInstanceRegistry.hpp).
+        // Answered here, on the HTTP thread, so it never waits for the main thread.
+        if (const auto self = instance_registry().identity())
+            info["instance"] = to_json(*self);
         return std::make_shared<HttpServer::ResponseJson>(info.dump());
     }
 
@@ -564,6 +571,10 @@ std::shared_ptr<HttpServer::Response> OrcaMCPServer::handle_request(
         } else if (rpc_method == "tools/list") {
             result = handle_tools_list();
         } else if (rpc_method == "tools/call") {
+            // First: a call meant for another instance must not be answered as this one's, not even
+            // with "quitting" or "starting up".
+            if (const auto refusal = wrong_instance_refusal(params, instance_registry().identity()))
+                throw WrongInstance(*refusal);
             if (main_thread_gate().is_closed())
                 throw McpShuttingDown();
             std::string not_ready_reason;
@@ -574,6 +585,7 @@ std::shared_ptr<HttpServer::Response> OrcaMCPServer::handle_request(
                 return std::make_shared<HttpServer::ResponseJson>(error.dump(), 200);
             }
             result = handle_tools_call(params);
+            request_project_refresh(); // the instance entry shows what the call did to the project at once
         } else if (rpc_method == "ping") {
             result = nlohmann::json::object();  // Empty response for ping
         } else {

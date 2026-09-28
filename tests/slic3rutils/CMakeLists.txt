@@ -69,6 +69,8 @@ add_executable(${_TEST_NAME}_tests
     test_http_server.cpp
     test_thread_cancel.cpp
     test_mcp_request_guard.cpp
+    test_mcp_port_choice.cpp
+    test_instance_registry.cpp
     test_mesh_health.cpp
     test_mesh_repair.cpp
     ../fff_print/test_helpers.cpp

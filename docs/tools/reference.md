@@ -60,7 +60,9 @@ each tool's one-line summary is the `tool_summaries` section.
 |-----------|------|----------|-------------|
 | `section` | string | No | `tool_summaries`, `concepts`, `suggested_flows`, `tool_examples`, `warnings_and_best_practices`, `settings`, or `all`. Omit for the default response. |
 
-**Returns:** Without `section` (about 3 KB): `server` (name, version from `version.inc`),
+**Returns:** Without `section` (about 3 KB): `server` (name, version from `version.inc`,
+`endpoint`, the address this instance answers at, and `instance`, which instance it is: the same
+object as its registry entry and `GET /mcp`, see `list_instances`),
 `quick_start`, `tools` (every tool's name, grouped by category: `{"Models": ["auto_orient", ...]}`),
 `bridge_only` (tools the bridge answers itself), and `sections` (each section's name and size in
 bytes). With a section name, just that section: `tool_summaries` is every tool's one-line summary,

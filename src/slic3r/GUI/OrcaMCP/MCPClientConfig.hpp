@@ -79,9 +79,11 @@ public:
     // Called on startup to auto-update the bridge script when app is updated
     static bool ensure_bridge_script_copied(std::string& error);
 
-private:
-    // Shared scripts directory management
+    // The per-user ~/.orcamcp folder (%USERPROFILE%\.orcamcp on Windows): the bridge script, and the
+    // instance registry's entries (OrcaMCPInstanceRegistry.hpp). Empty without a home folder.
     static std::string get_shared_scripts_dir();
+
+private:
 
     // Platform-specific path resolution
     static std::string resolve_config_path(const std::string& path_template);
