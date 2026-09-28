@@ -2879,7 +2879,7 @@ Add a physical filament slot, as the sidebar's **+** button does (`Sidebar::add_
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `color` | string | No | The slot's colour on the plate, `#RRGGBB`. Default: the sidebar's next colour, as the button takes |
-| `preset` | string | No | A filament preset for the slot (compatible with the selected printer). Default: the last physical slot's |
+| `preset` | string | No | A filament preset for the slot (compatible with the selected printer). Default: the last slot's, as the button gives it |
 
 The new slot goes after the last physical slot: mixed slots, which sit at the end, move up one, and so
 do objects on them. Only a printer that changes filaments on one extruder

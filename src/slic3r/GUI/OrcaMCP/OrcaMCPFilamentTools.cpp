@@ -165,7 +165,7 @@ void OrcaMCPServer::register_filament_tools()
         ToolCategory::FilamentsColour,
         "Add a physical filament slot",
         "Add a physical filament slot, as the sidebar's + button does: after the last physical slot (mixed slots move up "
-        "one, and so do objects on them), with the preset of the last physical slot unless preset names another, and the "
+        "one, and so do objects on them), with the preset the + button gives it (the last slot's) unless preset names another, and the "
         "sidebar's next colour unless color gives one. Only a printer that changes filaments on one extruder, or a Bambu Lab "
         "printer, takes more slots: a printer with one filament per extruder has as many slots as extruders. Answers slot "
         "(the new slot's number), preset, color, renumbered ({from, to} for moved mixed slots) and filaments. Every plate "
@@ -176,7 +176,7 @@ void OrcaMCPServer::register_filament_tools()
             {"type", "object"},
             {"properties", {
                 {"color", {{"type", "string"}, {"description", "The slot's colour on the plate, #RRGGBB. Default: the sidebar's next colour."}}},
-                {"preset", {{"type", "string"}, {"description", "A filament preset for the slot (get_presets type filament). Default: the last physical slot's."}}}
+                {"preset", {{"type", "string"}, {"description", "A filament preset for the slot (get_presets type filament). Default: the last slot's, as the + button gives it."}}}
             }}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
