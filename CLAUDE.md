@@ -212,8 +212,9 @@ What the tests enforce, with no app running:
     (`tests/slic3rutils/mcp_tool_references.hpp`, reusable for other text), and so is every one a
     tool's own summary, description and schema text names (a schema's enum values, and the few
     response fields and status words descriptions name, are not tool references);
-  - `initialize` answers the server instructions, which fit in 2048 ASCII characters, name only
-    real tools, and name the tools agents missed without them; the golden file's copy matches.
+  - `initialize` answers the server instructions, which fit in 2048 ASCII characters (and under
+    1,600, to leave room), name only real tools, and name the tools agents missed without them; the
+    golden file's copy matches.
 - `scripts/tests/` (`python3 -m unittest discover -s scripts/tests -t scripts`, run by the fork's
   `Python tests` workflow on pushes to `mcp`): the bridge's offline and online lists are identical
   in names, descriptions and order; no bridge tool's text appears in the bridge; every
@@ -251,12 +252,14 @@ loaded was picked by exact name, and the ones nothing named (`get_mesh_health`,
   file's `instructions`, which the bridge's `initialize` answers. The bridge answers `initialize`
   itself even while the app runs, so what a client shows is always the golden file's copy; the
   `[orcamcp][tools]` golden-file test keeps the two equal.
-- **The limit is 2048 characters.** Claude Code cuts a server's instructions there ("... [truncated]",
-  measured on another server's on 2026-09-28), so they are ASCII (characters = bytes), at most 2048,
-  most important lines first: one line per job naming its key tools, the canonical workflow, the
-  footguns (`send_to_printer` starts the print, `save_project` without a path overwrites, `load_project`
-  and `new_project` discard), and `get_server_info` for the rest. A test enforces the limit and checks
-  every snake_case name in them.
+- **The limit is 2048 characters; the text stays under 1,600.** Claude Code cuts a server's
+  instructions at 2048 characters ("... [truncated]", measured on another server's on 2026-09-28), so
+  they are ASCII (characters = bytes) and most important first. They were 1,228 on 2026-09-28, shortened
+  on the user's word so later tools fit: `get_server_info` first, `get_scene_info`, one line per job
+  naming only its key tools, `next_steps`, and the footguns (`send_to_printer` starts the print,
+  `save_project` without a path overwrites, `new_project` and `load_project` discard). Tests hold them to
+  2048 (the hard cut) and 1,600 (raise only deliberately: a line that needs more room means another goes,
+  or moves to `get_server_info`), and check every snake_case name in them.
 - **Next steps.** A response whose result implies a follow-up carries `next_steps`:
   `[{"tool", "arguments" (left out when none), "why"}]`, built by `add_next_steps` from the builders in
   `OrcaMCPNextSteps.cpp`, never by hand in a handler. At most one step per tool (`arguments` names the

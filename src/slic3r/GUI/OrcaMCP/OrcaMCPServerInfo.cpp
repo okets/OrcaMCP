@@ -496,29 +496,27 @@ json unknown_section(const std::string& requested)
 
 const std::string& server_instructions()
 {
-    // Most important first: Claude Code shows only the first 2048 characters. Every snake_case name
-    // in it is checked to be a tool, a tool parameter or a config key ([orcamcp][tools]).
-    static const std::string instructions = R"INSTRUCTIONS(OrcaMCP drives OrcaSlicer. Key tools by job are below; call get_server_info before deciding something cannot be done here.
+    // Most important first: Claude Code shows only the first 2048 characters, and the text stays under
+    // 1,600 so later tools fit (both checked in [orcamcp][tools], with every snake_case name in it).
+    // The key tool per job only: get_server_info lists the rest.
+    static const std::string instructions = R"INSTRUCTIONS(OrcaMCP drives OrcaSlicer. Before deciding something cannot be done here, call get_server_info: it lists every tool by job.
 
-- Scene and projects: get_scene_info (call first: plates, objects, each object's object_id), new_project, load_project, save_project, export_3mf.
-- Models and transforms: load_model, arrange_objects, auto_orient, move_object, rotate_object, scale_object, cut_object.
-- Mesh inspection: get_mesh_health (holes, open edges, repairs, the warning icon), get_object_components (loose parts, stray shells).
-- Painting: paint_object modes color, support (enforcer or blocker; needs enable_support), seam, fuzzy_skin; get_object_paint.
-- Presets and config: get_config_values (reads the keys you name), apply_config, set_object_config (one object), select_preset, get_valid_config_keys.
-- Filaments and colour: get_filaments, set_object_filament, set_filament_color, suggest_color_mix.
-- Slicing: slice_all, then wait_for_slice (no polling), get_print_estimate, export_gcode.
-- Seeing results: render_plate_view (save_to_file: true); its layer_view draws a sliced layer's toolpaths and supports.
-- Printers: get_printers, get_printer_status, match_project_to_printer, send_to_printer.
+Start with get_scene_info (plates, objects, each object's object_id). Key tools:
+- Models: load_model (keeps the presets), load_project (replaces them), arrange_objects, auto_orient, move_object, rotate_object, scale_object, cut_object.
+- Mesh: get_mesh_health (holes, open edges), get_object_components (stray shells).
+- Painting: paint_object (color, support, seam, fuzzy_skin).
+- Filaments and colour: get_filaments, set_object_filament, suggest_color_mix.
+- Settings: get_config_values, apply_config, set_object_config (one object), select_preset.
+- Slicing: slice_all, then wait_for_slice (no polling); get_print_estimate, export_gcode.
+- Seeing results: render_plate_view (its layer_view draws a sliced layer's toolpaths).
+- Printers: get_printer_status, send_to_printer.
 
-Workflow: load_model -> get_mesh_health, get_object_components -> apply_config -> slice_all -> wait_for_slice -> get_print_estimate -> render_plate_view -> save_project. Responses may carry next_steps: the tool to call next, and why.
-Re-importing: load_model keeps the presets (a 3MF adds geometry only); load_project replaces the scene and presets.
+Responses may carry next_steps: the tool to call next, and why.
 
 Careful:
-- send_to_printer uploads AND STARTS the print on a print host (Flashforge, Moonraker, OctoPrint); start_print: false only uploads.
-- save_project without output_path overwrites the file the project is named after (load_project and export_3mf name it).
-- load_project and new_project discard unsaved changes without asking.
-
-Call get_server_info for the full catalogue and guides.)INSTRUCTIONS";
+- send_to_printer uploads AND STARTS the print on a print host; start_print: false only uploads.
+- save_project without output_path overwrites the file the project is named after.
+- new_project and load_project discard unsaved changes without asking.)INSTRUCTIONS";
     return instructions;
 }
 

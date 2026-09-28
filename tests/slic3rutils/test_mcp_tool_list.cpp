@@ -300,6 +300,16 @@ TEST_CASE("The server instructions fit the 2048 characters Claude Code shows, in
     CHECK(std::all_of(instructions.begin(), instructions.end(), [](char c) { return c == '\n' || (c >= 0x20 && c < 0x7f); }));
 }
 
+TEST_CASE("The server instructions leave room to grow, so each addition is a choice", "[orcamcp][tools]")
+{
+    // 2048 is the hard cut. The text is kept well under it (1,228 characters on 2026-09-28) so that later
+    // tools fit; a line that takes it past 1,600 means something else should go, or move to
+    // get_server_info. Raise this only deliberately.
+    const std::string& instructions = Slic3r::GUI::OrcaMCP::server_instructions();
+    INFO("the instructions are " << instructions.size() << " characters");
+    CHECK(instructions.size() <= 1600);
+}
+
 TEST_CASE("Every tool the server instructions name is a real tool", "[orcamcp][tools]")
 {
     const mcp_tool_references::ToolNames names(OrcaMCPServer::registered_tools());
