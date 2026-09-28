@@ -567,12 +567,27 @@ std::vector<std::string> paint_prerequisite_messages(const Slic3r::ModelObject& 
     return messages;
 }
 
+// Whether any volume of `obj` now carries painted support enforcers.
+bool has_painted_enforcers(const Slic3r::ModelObject& obj)
+{
+    return std::any_of(obj.volumes.begin(), obj.volumes.end(), [](const Slic3r::ModelVolume* volume) {
+        return volume->supported_facets.has_facets(*volume, Slic3r::EnforcerBlockerType::ENFORCER);
+    });
+}
+
+// The object's support_type as the config writes it ("normal(auto)"), its own else the process preset's.
+std::string effective_support_type(const Slic3r::ModelObject& obj)
+{
+    const Slic3r::ConfigOption* option = effective_print_option(obj, "support_type");
+    return option != nullptr ? option->serialize() : std::string();
+}
+
 // The call that makes support painted on object `object_id` count, as next_steps (support_paint_next_steps).
 std::vector<NextStep> paint_prerequisite_steps(const Slic3r::ModelObject& obj, int object_id, PaintMode mode)
 {
     if (mode != PaintMode::Support)
         return {};
-    return support_paint_next_steps(object_id, painted_support_prints(obj));
+    return support_paint_next_steps(object_id, painted_support_prints(obj), has_painted_enforcers(obj), effective_support_type(obj));
 }
 
 // ---- Renumbering painted states: remap_paint, and paint_object's selection "state" -------------
@@ -774,9 +789,9 @@ void OrcaMCPServer::register_paint_tools()
         "which is instance_id's alone, only when the object has one instance. A facet "
         "belongs to the band or region containing its centroid. Paint lives on the volume, so it "
         "applies to every instance; instance_id only says whose transform reads your "
-        "coordinates. Verify with get_object_paint, undo with undo, reset with clear_object_paint. Support "
-        "paint does nothing while enable_support is off: next_steps then names the set_object_config call "
-        "that turns it on.",
+        "coordinates. Verify with get_object_paint, undo with undo, reset with clear_object_paint. Painted "
+        "support enforcers do nothing while enable_support is off: next_steps then names the set_object_config "
+        "call that turns it on with a (manual) support_type, for support only where painted.",
         {
             {"type", "object"},
             {"properties", {

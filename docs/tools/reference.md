@@ -1818,7 +1818,7 @@ Slice every plate in the project, one after another, exactly as the GUI's **Slic
 
 **Note:** Async operation. Call `wait_for_slice`, which returns once the run is over; `next_steps`
 names it (for `slicing_started` and `busy_slicing`), `get_slicing_status` for `busy_job`, and
-`get_print_estimate` for `already_sliced`. `get_slicing_status` reads the state at any moment.
+`get_print_estimate` with a sliced plate's `plate_index` for `already_sliced`. `get_slicing_status` reads the state at any moment.
 
 **Plate selection.** Slicing every plate is driven by the slicer's own per-plate chaining, which
 selects each plate in turn, so the selection moves while the run is in progress. The first
@@ -2409,9 +2409,10 @@ the other.
 ### paint_object
 Paint an object's surface as the GUI's paint tools do: filament colours for a multi-colour print,
 support enforcers and blockers, the seam, or fuzzy skin -- per-triangle paint, the same data the paint
-gizmos write. To put a whole object or volume on one filament, use `set_object_filament`. Support paint
-does nothing while `enable_support` is off; `next_steps` then names the `set_object_config` call that
-turns it on.
+gizmos write. To put a whole object or volume on one filament, use `set_object_filament`. Painted
+support enforcers do nothing while `enable_support` is off; `next_steps` then names the
+`set_object_config` call that turns it on with a `(manual)` `support_type`, for support only where
+painted.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
@@ -3041,11 +3042,11 @@ nothing to suggest has no `next_steps`.
 | | `get_object_components` | a model part of the object is more than one shell: a loose part or a stray fragment, which leaves no warning icon when it is closed |
 | `slice_all` | `wait_for_slice` | `slicing_started`, or `not_started` with `busy_slicing` (wait, then `slice_all` again) |
 | | `get_slicing_status` | `busy_job`: an arrange or orient holds the app, which `wait_for_slice` does not wait for; `slice_all` again once `ui_job` is null |
-| | `get_print_estimate` | `already_sliced` |
+| | `get_print_estimate` with the `plate_index` of a sliced plate (the selected one when it has a result) | `already_sliced` |
 | `export_gcode` | `wait_for_slice` | `export_started`: the file is still being written |
 | `render_plate_view`, on each view whose `uniform_image` is true (beside its `hint`) | `get_scene_info` | nothing printable on that plate was drawn |
 | | `render_plate_view` with `{plate_index, save_to_file: true}` | the plate's objects were drawn but the camera looked elsewhere: no views gives a contact sheet fitted to the plate |
-| `paint_object` with `mode: support` | `set_object_config` with `enable_support` `"1"` for that object | `enable_support` is off for the object, so painted enforcers and blockers do nothing (`info_messages` says so too) |
+| `paint_object` with `mode: support` | `set_object_config` for that object: `enable_support` `"1"` and `support_type` `normal(manual)` (or `tree(manual)` when its type is a tree one), for support only where painted | the object has painted enforcers and `enable_support` is off for it, so they do nothing (`info_messages` says so too). Not for blockers alone or erased paint: turning support on is the opposite of what a blocker asks; and not with an `(auto)` type, which would also support every other overhang |
 
 ---
 

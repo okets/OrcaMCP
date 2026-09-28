@@ -1,6 +1,7 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPNextSteps.hpp
 #pragma once
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -49,9 +50,11 @@ std::vector<NextStep> mesh_next_steps(const Model& model, const std::vector<Mesh
 
 // What slice_all's answer leads to: wait_for_slice for a slice that started, or for a busy pipeline
 // (then slice_all again); get_slicing_status while an arrange or an orient holds the app (its ui_job;
-// wait_for_slice does not wait for those); get_print_estimate for plates already sliced. A refusal
-// the app explains (invalid, nothing_to_slice, unknown) leads to no tool: its message says what to fix.
-std::vector<NextStep> slice_start_next_steps(const SliceStartReport& report);
+// wait_for_slice does not wait for those); get_print_estimate of `sliced_plate` for plates already
+// sliced -- by its plate_index, since the selected plate may be an empty one with no result, and none
+// when no plate has one. A refusal the app explains (invalid, nothing_to_slice, unknown) leads to no
+// tool: its message says what to fix.
+std::vector<NextStep> slice_start_next_steps(const SliceStartReport& report, std::optional<int> sliced_plate);
 
 // What export_gcode's answer leads to: wait_for_slice while the file is written (export_started), which
 // returns once the export is over; nothing for an export that did not start.
@@ -63,9 +66,13 @@ std::vector<NextStep> export_next_steps(bool export_started);
 // views, fitted to it, when its objects were drawn but the camera looked elsewhere.
 std::vector<NextStep> uniform_image_next_steps(size_t model_volumes, size_t drawn, int plate_index);
 
-// What paint_object's support paint leads to while enable_support is off for the object: painted
-// enforcers and blockers do nothing then, so set_object_config turns it on for that object.
-std::vector<NextStep> support_paint_next_steps(int object_id, bool support_enabled);
+// What paint_object's support paint leads to: only when the object has painted enforcers and
+// enable_support is off for it, set_object_config turns support on for that object with the (manual)
+// variant of its support_type (`support_type`, the object's effective value), which generates support
+// only where painted; enable_support with an (auto) type would support the whole object. Blockers
+// alone, or erased paint, lead nowhere: turning support on is the opposite of what a blocker asks.
+std::vector<NextStep> support_paint_next_steps(int object_id, bool support_enabled, bool enforcers_painted,
+                                               const std::string& support_type);
 
 }} // namespace GUI::OrcaMCP
 } // namespace Slic3r

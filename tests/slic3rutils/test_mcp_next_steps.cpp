@@ -166,7 +166,7 @@ TEST_CASE("A modifier's shells are not a stray part", "[McpNextSteps][orcamcp]")
 
 TEST_CASE("A slice that started is waited for with wait_for_slice", "[McpNextSteps][orcamcp]")
 {
-    const std::vector<NextStep> steps = slice_start_next_steps({SliceStart::started, "", ""});
+    const std::vector<NextStep> steps = slice_start_next_steps({SliceStart::started, "", ""}, std::nullopt);
     REQUIRE(steps.size() == 1);
     CHECK(steps[0].tool == "wait_for_slice");
     CHECK(steps[0].arguments.is_null());
@@ -174,30 +174,36 @@ TEST_CASE("A slice that started is waited for with wait_for_slice", "[McpNextSte
 
 TEST_CASE("A slice refused while the pipeline is busy waits it out, then slices again", "[McpNextSteps][orcamcp]")
 {
-    const std::vector<NextStep> busy = slice_start_next_steps({SliceStart::not_started, "busy_slicing", "the pipeline is busy"});
+    const std::vector<NextStep> busy = slice_start_next_steps({SliceStart::not_started, "busy_slicing", "the pipeline is busy"}, std::nullopt);
     REQUIRE(busy.size() == 1);
     CHECK(busy[0].tool == "wait_for_slice");
     CHECK(mentions(busy[0].why, "slice_all again"));
 
     // An arrange or an orient is not the slicing pipeline: wait_for_slice would not wait for it.
-    const std::vector<NextStep> job = slice_start_next_steps({SliceStart::not_started, "busy_job", "an arrange runs"});
+    const std::vector<NextStep> job = slice_start_next_steps({SliceStart::not_started, "busy_job", "an arrange runs"}, std::nullopt);
     REQUIRE(job.size() == 1);
     CHECK(job[0].tool == "get_slicing_status");
     CHECK(mentions(job[0].why, "ui_job"));
 }
 
-TEST_CASE("Plates already sliced point at their estimate", "[McpNextSteps][orcamcp]")
+TEST_CASE("Plates already sliced point at a sliced plate's estimate, by its plate_index", "[McpNextSteps][orcamcp]")
 {
-    const std::vector<NextStep> steps = slice_start_next_steps({SliceStart::not_started, "already_sliced", "nothing to do"});
+    // With plate 0 sliced and an empty plate 1 selected, get_print_estimate without plate_index read
+    // plate 1, said "run slice_all", and slice_all said already_sliced again.
+    const std::vector<NextStep> steps =
+        slice_start_next_steps({SliceStart::not_started, "already_sliced", "nothing to do"}, /*sliced_plate=*/0);
     REQUIRE(steps.size() == 1);
     CHECK(steps[0].tool == "get_print_estimate");
+    CHECK(steps[0].arguments == json{{"plate_index", 0}});
+    // No plate with a result: nothing to estimate.
+    CHECK(slice_start_next_steps({SliceStart::not_started, "already_sliced", "nothing to do"}, std::nullopt).empty());
 }
 
 TEST_CASE("A slice the app refuses suggests no tool: its message says what to fix", "[McpNextSteps][orcamcp]")
 {
     for (const char* reason : {"invalid", "nothing_to_slice", "unknown"}) {
         INFO("reason " << reason);
-        CHECK(slice_start_next_steps({SliceStart::not_started, reason, "why"}).empty());
+        CHECK(slice_start_next_steps({SliceStart::not_started, reason, "why"}, 0).empty());
     }
 }
 
@@ -230,14 +236,32 @@ TEST_CASE("A flat render that missed the plate's objects renders the plate witho
     CHECK(steps[0].arguments == json{{"plate_index", 1}, {"save_to_file", true}});
 }
 
-TEST_CASE("Support painted while supports are off points at enable_support for that object", "[McpNextSteps][orcamcp]")
+TEST_CASE("Enforcers painted while supports are off point at support where painted, for that object", "[McpNextSteps][orcamcp]")
 {
-    const std::vector<NextStep> off = support_paint_next_steps(/*object_id=*/3, /*support_enabled=*/false);
+    // enable_support alone, with an (auto) support_type, generates support over the whole object: more
+    // than an enforcer asks. A (manual) type of the same style generates support only where painted.
+    const std::vector<NextStep> off = support_paint_next_steps(/*object_id=*/3, /*support_enabled=*/false,
+                                                               /*enforcers_painted=*/true, "normal(auto)");
     REQUIRE(off.size() == 1);
     CHECK(off[0].tool == "set_object_config");
-    CHECK(off[0].arguments == json{{"object_id", 3}, {"settings", {{{"key", "enable_support"}, {"value", "1"}}}}});
-    CHECK(mentions(off[0].why, "enable_support"));
-    CHECK(support_paint_next_steps(3, true).empty());
+    CHECK(off[0].arguments == json{{"object_id", 3},
+                                   {"settings", {{{"key", "enable_support"}, {"value", "1"}},
+                                                 {{"key", "support_type"}, {"value", "normal(manual)"}}}}});
+    CHECK(mentions(off[0].why, "only where painted"));
+
+    const std::vector<NextStep> tree = support_paint_next_steps(3, false, true, "tree(auto)");
+    REQUIRE(tree.size() == 1);
+    CHECK(tree[0].arguments.at("settings").at(1).at("value") == "tree(manual)");
+    const std::vector<NextStep> manual = support_paint_next_steps(3, false, true, "tree(manual)");
+    REQUIRE(manual.size() == 1);
+    CHECK(manual[0].arguments.at("settings").at(1).at("value") == "tree(manual)");
+}
+
+TEST_CASE("Blockers, erased support paint, or supports already on point nowhere", "[McpNextSteps][orcamcp]")
+{
+    // Turning supports on for an object painted only with blockers is the opposite of what they ask.
+    CHECK(support_paint_next_steps(3, /*support_enabled=*/false, /*enforcers_painted=*/false, "normal(auto)").empty());
+    CHECK(support_paint_next_steps(3, /*support_enabled=*/true, /*enforcers_painted=*/true, "normal(auto)").empty());
 }
 
 TEST_CASE("Every next step names a real tool, with arguments its schema accepts", "[McpNextSteps][orcamcp]")
@@ -245,14 +269,14 @@ TEST_CASE("Every next step names a real tool, with arguments its schema accepts"
     std::vector<NextStep> steps = Scene({cube_missing_facet(), separate_cubes(2)}).steps();
     REQUIRE(steps.size() == 2);
     for (const char* reason : {"", "busy_slicing", "busy_job", "already_sliced"})
-        for (NextStep& step : slice_start_next_steps({*reason ? SliceStart::not_started : SliceStart::started, reason, ""}))
+        for (NextStep& step : slice_start_next_steps({*reason ? SliceStart::not_started : SliceStart::started, reason, ""}, 0))
             steps.push_back(std::move(step));
     for (NextStep& step : export_next_steps(true))
         steps.push_back(std::move(step));
     for (const size_t drawn : {size_t(0), size_t(2)})
         for (NextStep& step : uniform_image_next_steps(2, drawn, 0))
             steps.push_back(std::move(step));
-    for (NextStep& step : support_paint_next_steps(0, false))
+    for (NextStep& step : support_paint_next_steps(0, false, true, "normal(auto)"))
         steps.push_back(std::move(step));
     REQUIRE(steps.size() == 10);
 

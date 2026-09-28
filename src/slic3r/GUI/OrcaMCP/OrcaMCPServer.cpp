@@ -361,6 +361,19 @@ nlohmann::json slice_run_json(Plater& plater, PartPlateList& plate_list, const O
     return run;
 }
 
+// A plate whose slice result get_print_estimate can read: the selected one when it has one, else the
+// first that does, or none.
+std::optional<int> plate_with_result(PartPlateList& plate_list)
+{
+    const PartPlate* selected = plate_list.get_curr_plate();
+    if (selected != nullptr && selected->is_slice_result_valid())
+        return plate_list.get_curr_plate_index();
+    for (int i = 0; i < plate_list.get_plate_count(); ++i)
+        if (plate_list.get_plate(i)->is_slice_result_valid())
+            return i;
+    return std::nullopt;
+}
+
 // The selected plate, as OrcaMCP::slice_state reads it.
 OrcaMCP::SliceRunPlate selected_plate_state(PartPlateList& plate_list)
 {
@@ -2944,14 +2957,14 @@ void OrcaMCPServer::register_builtin_tools()
                     {"plates_to_slice", slice_every_plate ? plate_count : 1},
                     {"selected_plate_at_call", plate_at_call}
                 };
-                const auto answer = [&result](const OrcaMCP::SliceStartReport& report, nlohmann::json active_warnings) {
+                const auto answer = [&result, &plate_list](const OrcaMCP::SliceStartReport& report, nlohmann::json active_warnings) {
                     result["status"] = OrcaMCP::slice_start_status_name(report.status);
                     if (!report.reason.empty()) {
                         result["reason"]  = report.reason;
                         result["message"] = report.message;
                     }
                     result["active_warnings"] = std::move(active_warnings);
-                    add_next_steps(result, slice_start_next_steps(report));
+                    add_next_steps(result, slice_start_next_steps(report, plate_with_result(plate_list)));
                 };
 
                 // While the pipeline is busy -- slicing, exporting, uploading, or still taking in the last

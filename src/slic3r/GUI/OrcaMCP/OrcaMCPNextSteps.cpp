@@ -126,7 +126,7 @@ std::vector<NextStep> mesh_next_steps(const Model& model, const std::vector<Mesh
     return mesh_next_steps(model, every_object, health);
 }
 
-std::vector<NextStep> slice_start_next_steps(const SliceStartReport& report)
+std::vector<NextStep> slice_start_next_steps(const SliceStartReport& report, std::optional<int> sliced_plate)
 {
     if (report.status == SliceStart::started)
         return {{"wait_for_slice", "the slice runs in the background: wait_for_slice returns once it is over, with each plate's result",
@@ -139,8 +139,10 @@ std::vector<NextStep> slice_start_next_steps(const SliceStartReport& report)
                  "an arrange or an orient holds the app, which wait_for_slice does not wait for: call slice_all again once "
                  "get_slicing_status's ui_job is null",
                  nullptr}};
-    if (report.reason == "already_sliced")
-        return {{"get_print_estimate", "the plates are already sliced: it reads the time and filament of the selected one", nullptr}};
+    if (report.reason == "already_sliced" && sliced_plate)
+        return {{"get_print_estimate",
+                 "the plates are already sliced: it reads plate " + std::to_string(*sliced_plate) + "'s time and filament",
+                 {{"plate_index", *sliced_plate}}}};
     return {};
 }
 
@@ -166,14 +168,28 @@ std::vector<NextStep> uniform_image_next_steps(size_t model_volumes, size_t draw
              {{"plate_index", plate_index}, {"save_to_file", true}}}};
 }
 
-std::vector<NextStep> support_paint_next_steps(int object_id, bool support_enabled)
+namespace {
+
+// The (manual) support type of the same style: support only where enforcers are painted.
+std::string manual_support_type(const std::string& support_type)
 {
-    if (support_enabled)
+    return support_type.rfind("tree", 0) == 0 ? "tree(manual)" : "normal(manual)";
+}
+
+} // namespace
+
+std::vector<NextStep> support_paint_next_steps(int object_id, bool support_enabled, bool enforcers_painted,
+                                               const std::string& support_type)
+{
+    if (support_enabled || !enforcers_painted)
         return {};
+    const std::string manual = manual_support_type(support_type);
     return {{"set_object_config",
-             "painted support enforcers and blockers do nothing while enable_support is off: this turns it on for object " +
-                 std::to_string(object_id) + " (apply_config turns it on for every object)",
-             {{"object_id", object_id}, {"settings", {{{"key", "enable_support"}, {"value", "1"}}}}}}};
+             "painted support enforcers do nothing while enable_support is off: this turns it on for object " +
+                 std::to_string(object_id) + " with support_type " + manual +
+                 ", so support is generated only where painted (an (auto) type would also support every other overhang)",
+             {{"object_id", object_id},
+              {"settings", {{{"key", "enable_support"}, {"value", "1"}}, {{"key", "support_type"}, {"value", manual}}}}}}};
 }
 
 }}} // namespace Slic3r::GUI::OrcaMCP
