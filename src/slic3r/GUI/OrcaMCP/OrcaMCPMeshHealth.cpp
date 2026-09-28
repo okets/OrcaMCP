@@ -129,14 +129,11 @@ std::string mesh_warning_advice(const MeshHealth& health)
         return "The repairs were made when the mesh was loaded; it is closed and prints as it is.";
     // TriangleMeshSlicer's make_loops closes each layer's open outlines across gaps of up to 2 mm
     // (chain_open_polylines_close_gaps, max_gap); an outline it cannot close is left out of that layer.
-    // The object list's Repair is ObjectList::fix_through_cgal (FixModelByCgal.cpp), CGAL-based, on
-    // every platform: it splits each volume into its parts, drops the parts with no volume, and closes
-    // the holes of the rest.
-    return "MCP has no repair tool, but the user can repair the object in the app, on every platform: the "
-           "object list's warning icon runs Repair, which splits the mesh into its parts, drops parts with no "
-           "volume and closes each part's holes. Slicing also closes each layer's outline across gaps of up "
-           "to 2 mm, so a hole that small usually prints closed; a wider one can leave that outline out of a "
-           "layer, so check the sliced preview there.";
+    // What MCP can do about the mesh itself (nothing yet: prompt 08b adds a repair tool, named here
+    // then), and what slicing does with it. Never a GUI button: an agent must not send the user to one.
+    return "MCP has no tool that repairs a mesh. Slicing closes each layer's outline across gaps of up to 2 mm, "
+           "so a hole that small usually prints closed; a wider one can leave that outline out of a layer, so "
+           "check the sliced preview there.";
 }
 
 nlohmann::json mesh_error_warning(const ModelObject& object, int object_id, const MeshHealth& health)

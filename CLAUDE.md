@@ -927,12 +927,13 @@ are: each object entry's `mesh_warning` / `mesh_warning_reason` (`get_scene_info
 `loaded_objects`), and `get_mesh_health`. Only `get_scene_info` (every flagged object) and `load_model`
 (the flagged objects it added) also add a `warning` of type `MeshErrors`, with `object_id`,
 `object_name` and a `message` that gives the list's reason and what an agent can do -- MCP has no
-repair tool, but the user can repair the object from the list's warning icon (Repair:
-`ObjectList::fix_through_cgal`, CGAL-based, on every platform; it splits the mesh into its parts, drops
-parts with no volume and closes each part's holes), and slicing closes each layer's outline across gaps
-of up to 2 mm -- in place of the GUI tooltip's "Click the icon to repair model object"
-(`mesh_error_warnings`, `OrcaMCPMeshHealth.cpp`). "MCP cannot repair" alone was read as "no repair
-exists": an agent told a user repair works only on Windows (PrusaSlicer's Netfabb repair was).
+tool that repairs a mesh, and slicing closes each layer's outline across gaps of up to 2 mm -- in place
+of the GUI tooltip's "Click the icon to repair model object" (`mesh_error_warnings`,
+`OrcaMCPMeshHealth.cpp`). Never a GUI button: no tool text, next step or instruction sends the agent,
+or through it the user, to a button (a security prompt is the only exception); what a user can do, an
+agent must be able to do. "MCP cannot repair a mesh: the GUI's repair is not exposed" was read as "no
+repair exists", and an agent told a user repair works only on Windows; the object list's Repair
+(`ObjectList::fix_through_cgal`, CGAL) runs on every platform.
 
 **Endpoints with active_warnings:** `get_scene_info`, `slice_all`, `get_slicing_status`, `get_print_estimate`, `load_model`, `arrange_objects`, `auto_orient`, all transform tools, `undo`, `redo`
 

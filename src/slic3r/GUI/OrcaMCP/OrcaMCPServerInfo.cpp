@@ -78,7 +78,7 @@ json suggested_flows()
                 {"tool", "apply_config"},
                 {"example", R"({"settings": [{"type": "print", "key": "layer_height", "value": "0.15"}, {"type": "print", "key": "sparse_infill_density", "value": "20%"}]})"}
             }},
-            {"note", "Settings become 'dirty' until user saves preset in UI"}
+            {"note", "Settings stay 'dirty' (unsaved) until save_preset saves them"}
         }},
         {"object_manipulation_workflow", {
             {"description", "Transform objects (move, rotate, scale, cut)"},
@@ -259,7 +259,7 @@ json concepts()
             {"description", "When you modify a setting, it becomes 'dirty' - meaning it differs from the saved preset. Dirty values are tracked in the 'dirty_options' array."},
             {"example", "If you change layer_height from 0.2 to 0.22, 'layer_height' appears in dirty_options"},
             {"persistence", "Dirty values are NOT automatically saved. They exist only in the current editing session."},
-            {"saving", "To save dirty values permanently, the user must save the preset through the UI (Ctrl+S or right-click preset -> Save)"},
+            {"saving", "save_preset saves dirty values into the preset, or as a new preset with a name"},
             {"use_case", "Dirty tracking lets you experiment with settings without modifying saved presets. You can always revert by reloading the preset."}
         }},
         {"plates", {
@@ -382,7 +382,7 @@ json warnings_and_best_practices()
             {"object_id_shifts", "After a delete, object_id values shift. Re-read get_scene_info; internal_id finds the same object again."},
             {"async_operations", "slice_all and export_gcode run in the background: call wait_for_slice. arrange_objects, auto_orient, flatten_object and clone_object answer once their job is applied (finished: false past the bridge's cap: then get_slicing_status's ui_job)."},
             {"cut_object_caution", "Cut removes original and creates new object(s). Use undo if result is wrong."},
-            {"settings_not_saved", "apply_config creates dirty values. User must save preset in UI to persist."},
+            {"settings_not_saved", "apply_config creates dirty values: save_preset keeps them."},
             {"undo_limits", "Undo history is limited. Save project before destructive operations."},
             {"positioning", "For absolute move_object: unspecified axes preserve current position. To spread objects, use relative=true with offsets, or arrange_objects."}
         }},
