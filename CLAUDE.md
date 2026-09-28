@@ -648,8 +648,12 @@ once it has been applied, with the placement it left (`OrcaMCPUiJob.hpp`, the ap
   busy (`ui_job_busy_message`).
 - **A bed fill is two jobs, one undo step.** `FillBedJob`'s finalize starts the plate's arrange
   (`Plater::arrange`), which no outcome reports: the tool waits for the fill's outcome, then for the
-  worker to go idle (`wait_until`, asking the main thread each turn), within the same cap, and its
-  `ui_job` reads `filling_bed`, then `other`. The fill is wrapped so its finalize takes no snapshot
+  worker to be done (`worker_done`, asked on the main thread each turn: it delivers what the worker has
+  sent, the arrange's finalize among it, then asks `is_idle`, which counts undelivered messages too),
+  within the same cap, so the answer is built after the arrange's finalize has applied the placement;
+  its `ui_job` reads `filling_bed`, then `other`. `[McpUiJob]` holds the chained job in its process, so
+  the test does not depend on how fast the follow-up runs (it failed on fast Linux and Windows runners,
+  whose test loop delivered the follow-up's finalize before its check). The fill is wrapped so its finalize takes no snapshot
   (`FinalizeWithoutSnapshots`): the tool's one "Arrange" step undoes both, where the GUI's Fill bed
   takes two. `clone_object` takes its "Selection-clone" step before copying and starts its arrange
   without one (`start_ui_job`'s `take_snapshot`).

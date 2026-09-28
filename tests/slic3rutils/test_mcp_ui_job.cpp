@@ -461,31 +461,87 @@ TEST_CASE("Waiting until something is done ends when it is, at the cap, or on a 
     CHECK(wait_until([] { return false; }, k_bound) == UiJobWait::quitting);
 }
 
-TEST_CASE("A job whose finalize starts another leaves the worker busy after it is reported finished", "[McpUiJob][orcamcp]")
+namespace {
+
+// A job whose finalize starts `next`, as a bed fill's finalize starts the plate's arrange (Plater::arrange).
+struct Chaining : Job
 {
-    // A bed fill's finalize starts the plate's arrange (Plater::arrange): its outcome says finished while
-    // the arrange is queued, so the tool waits for the worker to go idle too.
-    BoostThreadWorker worker{nullptr, "test"};
-    auto              follow_up = std::make_shared<RecordingJob>();
-    struct Chaining : Job
-    {
-        Worker&                       worker;
-        std::shared_ptr<RecordingJob> next;
-        Chaining(Worker& worker, std::shared_ptr<RecordingJob> next) : worker(worker), next(std::move(next)) {}
-        void process(Ctl&) override {}
-        void finalize(bool, std::exception_ptr&) override { worker.push(next); }
-    };
-    auto outcome = std::make_shared<UiJobOutcome>(UiJobKind::fill_bed);
-    worker.push(std::make_shared<ReportingJob>(std::make_unique<Chaining>(worker, follow_up), outcome));
-    const auto deadline = std::chrono::steady_clock::now() + k_bound;
-    while (outcome->state() == State::pending && std::chrono::steady_clock::now() < deadline) {
+    Worker&                       worker;
+    std::shared_ptr<RecordingJob> next;
+    Chaining(Worker& worker, std::shared_ptr<RecordingJob> next) : worker(worker), next(std::move(next)) {}
+    void process(Ctl&) override {}
+    void finalize(bool, std::exception_ptr&) override { worker.push(next); }
+};
+
+// Delivers the worker's messages on this thread until `outcome` has ended; false when `timeout` passes first.
+bool pump_until_ended(Worker& worker, const UiJobOutcome& outcome, std::chrono::milliseconds timeout)
+{
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (outcome.state() == State::pending) {
+        if (std::chrono::steady_clock::now() > deadline)
+            return false;
         worker.process_events();
         std::this_thread::sleep_for(2ms);
     }
-    REQUIRE(outcome->state() == State::finished);
-    CHECK_FALSE(worker.is_idle());
-    REQUIRE(pump_until_idle(worker, k_bound));
+    return true;
+}
+
+} // namespace
+
+TEST_CASE("A job whose finalize starts another is done only once the other's finalize has run", "[McpUiJob][orcamcp]")
+{
+    // The follow-up is held in its process, so what the wait sees does not depend on how fast it runs.
+    BoostThreadWorker worker{nullptr, "test"};
+    auto              follow_up = std::make_shared<RecordingJob>();
+    follow_up->hold.store(true);
+    auto outcome = std::make_shared<UiJobOutcome>(UiJobKind::fill_bed);
+    worker.push(std::make_shared<ReportingJob>(std::make_unique<Chaining>(worker, follow_up), outcome));
+
+    REQUIRE(pump_until_ended(worker, *outcome, k_bound));
+    CHECK(outcome->state() == State::finished);
+    // The bed fill is reported finished while the arrange it started is queued or running.
+    CHECK_FALSE(worker_done(worker));
+    CHECK_FALSE(follow_up->finalized);
+
+    follow_up->hold.store(false);
+    // Done means the follow-up's finalize has run, whenever its process ended: worker_done delivers what
+    // the worker has sent before it says so.
+    REQUIRE(wait_until([&worker] { return worker_done(worker); }, k_bound, 2ms) == UiJobWait::finished);
     CHECK(follow_up->finalized);
+}
+
+TEST_CASE("A chained job's answer is built only after its finalize ran, however fast it runs", "[McpUiJob][orcamcp]")
+{
+    // The wait answer_after_ui_job makes for a bed fill: the fill's outcome, then worker_done. A follow-up
+    // with an instant process can end before the fill's finalize is even delivered; the answer must still
+    // come after the follow-up's finalize.
+    for (int run = 0; run < 50; ++run) {
+        BoostThreadWorker worker{nullptr, "test"};
+        auto              follow_up = std::make_shared<RecordingJob>();
+        auto              outcome   = std::make_shared<UiJobOutcome>(UiJobKind::fill_bed);
+        worker.push(std::make_shared<ReportingJob>(std::make_unique<Chaining>(worker, follow_up), outcome));
+
+        REQUIRE(pump_until_ended(worker, *outcome, k_bound));
+        REQUIRE(wait_until([&worker] { return worker_done(worker); }, k_bound, 1ms) == UiJobWait::finished);
+        // What the answer reads here (the placement the follow-up applied) is final.
+        CHECK(follow_up->finalized);
+    }
+}
+
+TEST_CASE("A worker with nothing queued, running or undelivered is done", "[McpUiJob][orcamcp]")
+{
+    BoostThreadWorker worker{nullptr, "test"};
+    CHECK(worker_done(worker));
+
+    auto job = std::make_shared<RecordingJob>();
+    job->hold.store(true);
+    worker.push(job);
+    CHECK_FALSE(worker_done(worker));
+    job->hold.store(false);
+    job->processed.get_future().wait();
+    // Its process has returned, its finalize not yet delivered: worker_done delivers it.
+    REQUIRE(wait_until([&worker] { return worker_done(worker); }, k_bound, 1ms) == UiJobWait::finished);
+    CHECK(job->finalized);
 }
 
 TEST_CASE("Every object an arrange re-sorted is named, those on plates it did not arrange too", "[McpUiJob][orcamcp]")
