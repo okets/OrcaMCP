@@ -57,6 +57,9 @@ struct InstanceIdentity
     std::string executable;
     std::string data_dir;
     std::string started_at;    // UTC, ISO 8601 with milliseconds: the bridge orders launches by it
+    // No other instance of this program ran on this data folder when it started: only then can it be a
+    // restart of one that quit, which the bridge follows. A second window opened beside it is not.
+    bool        alone_at_start = false;
     ProjectInfo project;
 };
 
@@ -76,30 +79,40 @@ boost::filesystem::path default_instances_dir();
 
 // Whether a process with this pid is running.
 bool process_is_alive(unsigned pid);
+// The program a running process runs, as a full path; empty when it cannot be read.
+std::string process_executable(unsigned pid);
+// Whether the instance an entry names still runs: its pid is alive and runs the entry's program (a
+// crashed instance's pid can be reused by anything). A program that cannot be read counts as running.
+bool instance_process_runs(const InstanceIdentity& entry);
 
 class InstanceRegistry
 {
 public:
-    using IsAlive = std::function<bool(unsigned pid)>;
+    using IsAlive = std::function<bool(const InstanceIdentity& entry)>;
 
     explicit InstanceRegistry(boost::filesystem::path dir);
 
     // Writes this instance's entry, after removing the entries of processes that are gone and any
-    // other entry claiming its port. The identity is kept even when the file cannot be written (GET /mcp
-    // and the call check still use it). Empty on success, otherwise why the file was not written.
-    std::string publish(const InstanceIdentity& identity, const IsAlive& is_alive = process_is_alive);
+    // other entry claiming its port, and notes whether another of its program ran on its data folder
+    // (alone_at_start). The identity is kept even when the file cannot be written (GET /mcp and the call
+    // check still use it), and the next update_project writes it. Empty on success, otherwise why not.
+    std::string publish(const InstanceIdentity& identity, const IsAlive& is_alive = instance_process_runs);
 
-    // Rewrites the entry when `project` differs from the one it holds. True when it changed.
+    // The project as it is now. True when it changed. The entry is rewritten whenever it does not hold
+    // it yet: a write that failed (Windows refuses the rename while the bridge reads the file) is tried
+    // again on the next call, which comes once a second.
     bool update_project(const ProjectInfo& project);
 
-    // Removes the entry and forgets the identity: the instance is quitting.
+    // Removes the entry: the instance is quitting, and no agent should choose it now. Its identity is
+    // kept, since it answers calls until it is gone: one stamped for it gets "quitting" (-32002), not
+    // "meant for another instance" (-32004). The entry is never written again.
     void withdraw();
 
     // This instance, once published. Safe from any thread: the HTTP thread reads it.
     std::optional<InstanceIdentity> identity() const;
 
     // The other entries in the folder whose process runs, e.g. to name who holds a port.
-    std::vector<InstanceIdentity> others(const IsAlive& is_alive = process_is_alive) const;
+    std::vector<InstanceIdentity> others(const IsAlive& is_alive = instance_process_runs) const;
 
     boost::filesystem::path entry_path(unsigned pid) const;
 
@@ -107,10 +120,13 @@ private:
     std::vector<InstanceIdentity> read_entries() const;
     void                          remove_stale_entries(const InstanceIdentity& identity, const IsAlive& is_alive) const;
     std::string                   write_entry(const InstanceIdentity& identity) const;
+    std::string                   write_project(const InstanceIdentity& identity);
 
     boost::filesystem::path         m_dir;
     mutable std::mutex              m_mutex;
     std::optional<InstanceIdentity> m_identity;
+    std::optional<ProjectInfo>      m_written_project; // what the entry on disk holds, once written
+    bool                            m_withdrawn = false;
 };
 
 // The app's registry, in default_instances_dir().

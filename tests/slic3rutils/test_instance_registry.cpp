@@ -3,6 +3,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <boost/dll/runtime_symbol_info.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/nowide/fstream.hpp>
 #include <nlohmann/json.hpp>
@@ -51,10 +52,10 @@ void write_entry(const fs::path& dir, const InstanceIdentity& entry)
     out << to_json(entry).dump();
 }
 
-// Every pid in `alive` runs; any other is gone.
+// The entries whose pid is in `alive` still run; any other is gone.
 InstanceRegistry::IsAlive running(std::set<unsigned> alive)
 {
-    return [alive](unsigned pid) { return alive.count(pid) != 0; };
+    return [alive](const InstanceIdentity& entry) { return alive.count(entry.pid) != 0; };
 }
 
 // The JSON a response carries, after its headers.
@@ -139,16 +140,70 @@ TEST_CASE("nothing is written before the instance is published", "[InstanceRegis
     CHECK(entry_files(dir.path()).empty());
 }
 
-TEST_CASE("a quitting instance's entry is removed", "[InstanceRegistry]")
+TEST_CASE("a quitting instance's entry is removed, and it still answers as itself", "[InstanceRegistry]")
 {
+    // Until it is gone it answers calls: a call stamped for it must get "quitting" (-32002), not "meant
+    // for another instance" (-32004), and GET /mcp must not make it look like an older OrcaMCP.
     ScopedTemporaryDir dir("orcamcp-instances");
     InstanceRegistry   registry(dir.path());
     REQUIRE(registry.publish(identity(4242, 13618), running({4242})).empty());
     registry.withdraw();
     CHECK_FALSE(fs::exists(registry.entry_path(4242)));
-    CHECK_FALSE(registry.identity());
-    CHECK_FALSE(registry.update_project({"later", "", true})); // withdrawn: nothing comes back
+    REQUIRE(registry.identity());
+    CHECK(registry.identity()->instance_id == "id-4242");
+    CHECK_FALSE(wrong_instance_refusal(json{{"_meta", {{instance_meta_key, "id-4242"}}}}, registry.identity()));
+    CHECK_FALSE(registry.update_project({"later", "", true})); // withdrawn: the entry never comes back
     CHECK_FALSE(fs::exists(registry.entry_path(4242)));
+}
+
+#ifndef _WIN32 // a folder's permissions do not keep Windows from writing in it
+TEST_CASE("a project change the entry could not take is written on the next refresh", "[InstanceRegistry]")
+{
+    // On Windows the rename fails while the bridge has the file open; the change must not be lost.
+    ScopedTemporaryDir dir("orcamcp-instances");
+    InstanceRegistry   registry(dir.path());
+    REQUIRE(registry.publish(identity(4242, 13618, "Untitled"), running({4242})).empty());
+    const ProjectInfo saved{"bracket", "/prints/bracket.3mf", false};
+
+    fs::permissions(dir.path(), fs::owner_read | fs::owner_exe); // no writing in the folder
+    registry.update_project(saved);
+    fs::permissions(dir.path(), fs::owner_all);
+    CHECK(read_entry(registry.entry_path(4242)).at("project").at("name") == "Untitled"); // not written yet
+
+    registry.update_project(saved); // the next refresh, nothing changed since
+    CHECK(read_entry(registry.entry_path(4242)).at("project").at("name") == "bracket");
+}
+#endif
+
+TEST_CASE("an instance knows whether it started beside another of its program on its data folder", "[InstanceRegistry]")
+{
+    // A restart has none: only then may the bridge take it for the instance that quit, and not for a
+    // second window someone opened while the first ran.
+    ScopedTemporaryDir dir("orcamcp-instances");
+    InstanceIdentity   other_folder = identity(1003, 13620);
+    other_folder.data_dir           = "/copies/OrcaMCP";
+    write_entry(dir.path(), other_folder);
+    InstanceRegistry alone(dir.path());
+    REQUIRE(alone.publish(identity(4242, 13618), running({1003, 4242})).empty());
+    CHECK(alone.identity()->alone_at_start);
+    CHECK(read_entry(alone.entry_path(4242)).at("alone_at_start") == true);
+
+    write_entry(dir.path(), identity(1002, 13619)); // the same program on the same data folder, running
+    InstanceRegistry beside(dir.path());
+    REQUIRE(beside.publish(identity(4243, 13621), running({1002, 1003, 4243})).empty());
+    CHECK_FALSE(beside.identity()->alone_at_start);
+}
+
+TEST_CASE("an entry whose pid now runs another program is stale", "[InstanceRegistry]")
+{
+    // A crashed instance's pid can be reused by anything: the entry is kept only while that pid runs the
+    // program the entry names.
+    InstanceIdentity self = identity(Slic3r::get_current_pid(), 13618);
+    self.executable       = boost::dll::program_location().string();
+    CHECK(instance_process_runs(self));
+    self.executable = "/Applications/SomethingElse.app/Contents/MacOS/SomethingElse";
+    CHECK_FALSE(instance_process_runs(self));
+    CHECK_FALSE(instance_process_runs(identity(0, 13618)));
 }
 
 TEST_CASE("publishing clears the entries of crashed instances and keeps the running ones", "[InstanceRegistry]")
