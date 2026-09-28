@@ -3136,6 +3136,9 @@ bool PartPlate::remove_object_instances(int obj_id)
 {
 	const bool held = erase_object_entries(obj_to_instance_set, obj_id);
 	erase_object_entries(instance_outside_set, obj_id);
+	// As remove_instance does: an instance partly outside no longer keeps the plate from slicing.
+	if (held)
+		update_states();
 	return held;
 }
 
@@ -3143,6 +3146,8 @@ bool PartPlate::renumber_instances_after(int obj_id, int instance_id_removed)
 {
 	const bool held = renumber_object_entries(obj_to_instance_set, obj_id, instance_id_removed);
 	renumber_object_entries(instance_outside_set, obj_id, instance_id_removed);
+	if (held)
+		update_states();
 	return held;
 }
 
@@ -5628,6 +5633,15 @@ int PartPlateList::notify_instance_deleted(int obj_id, int instance_id)
 			instances_changed_on(plate);
 	unprintable_plate.renumber_instances_after(obj_id, instance_id);
 	return 0;
+}
+
+// Orca: see the declaration. From the last, so no later instance is renumbered.
+void PartPlateList::notify_instances_deleted_from(int obj_id, int first_instance)
+{
+	if (obj_id < 0 || obj_id >= int(m_model->objects.size()))
+		return;
+	for (int i = int(m_model->objects[obj_id]->instances.size()) - 1; i >= first_instance; --i)
+		notify_instance_deleted(obj_id, i);
 }
 
 // Orca: a plate whose instances changed has no slice of them, nor thumbnails.

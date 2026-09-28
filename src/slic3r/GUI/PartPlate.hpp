@@ -869,6 +869,9 @@ public:
     // under their new index on theirs, which lose their slice. Upstream told the plates nothing, and
     // each later instance stayed filed under its old index.
     int notify_instance_deleted(int obj_id, int instance_id);
+    // Orca: every instance of the object from `first_instance` on is about to be deleted
+    // (ObjectList::del_instances_from_object keeps only the first): each leaves its plate.
+    void notify_instances_deleted_from(int obj_id, int first_instance);
     // Orca: marks a plate whose instances changed: no slice, no thumbnails.
     static void instances_changed_on(PartPlate* plate);
 

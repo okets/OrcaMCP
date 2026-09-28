@@ -238,3 +238,41 @@ TEST_CASE("Every object on a plate that turns spiral vase on gets the vase setti
     }
     CHECK(objects[1]->config.get().option<Slic3r::ConfigOptionPercent>("sparse_infill_density")->value == 0);
 }
+
+TEST_CASE("Deleting every instance but the first leaves the plates holding only the first", "[PlateInstances][orcamcp]")
+{
+    // The object list's Delete on an object's "Instances" row (ObjectList::del_instances_from_object)
+    // pops every instance after the first; upstream told the plates nothing.
+    Slic3r::Model                        model;
+    const std::unique_ptr<PartPlateList> plates = plate_list_for(model, 2);
+    Slic3r::ModelObject& cube = add_cube(model, *plates, {centre_of(*plates, 0), beside(centre_of(*plates, 0)), centre_of(*plates, 1)});
+    mark_sliced(*plates);
+
+    plates->notify_instances_deleted_from(0, 1);
+    while (cube.instances.size() > 1)
+        cube.delete_last_instance();
+
+    CHECK(plates->find_instance(0, 0) == 0);
+    CHECK_FALSE(plates->get_plate(0)->contain_instance(0, 1));
+    CHECK(plates->get_plate(1)->empty());
+    CHECK_FALSE(plates->get_plate(1)->is_slice_result_valid());
+}
+
+TEST_CASE("Deleting an object partly off a plate leaves that plate ready to slice", "[PlateInstances][orcamcp]")
+{
+    // A plate holding an instance partly outside it cannot be sliced (PartPlate::update_states); once the
+    // object is deleted the plate can, whether or not it is the current one.
+    // Its first instance stands on plate 0, its second partly off plate 1: the plate the delete does not
+    // reach through the first instance.
+    Slic3r::Model                        model;
+    const std::unique_ptr<PartPlateList> plates = plate_list_for(model, 2);
+    add_cube(model, *plates, {centre_of(*plates, 1)});
+    add_cube(model, *plates, {centre_of(*plates, 0), centre_of(*plates, 1) + Vec3d(k_plate_size / 2.0, 0.0, 0.0)});
+    REQUIRE_FALSE(plates->get_plate(1)->can_slice());
+
+    model.delete_object(size_t(1));
+    plates->notify_instance_removed(1, -1);
+
+    CHECK(plates->get_plate(1)->can_slice());
+    CHECK(plates->find_instance(0, 0) == 1);
+}
