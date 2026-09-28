@@ -1284,6 +1284,7 @@ echo "AT adding a filament slot before mixed ones shifts objects' and volumes' e
 echo "AU merging a filament slot drops the support filaments that named it instead of moving them to the target (rel2506/13): $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^void ObjectList::update_filament_values_for_items_when_delete_filament/{f=1} f&&/config.opt_int\(key\) == filament_id \+ 1/{print "yes"; d=1; exit} f&&/^}/{print "no"; d=1; exit} END{if(!d) print "unknown"}')"
 echo "AV deleting or merging a filament slot renumbers tool changes only, moves only the first to a merge's target and numbers it twice (rel2506/13): $(U src/slic3r/GUI/Plater.cpp | awk '/^void Plater::on_filaments_delete/{f=1} f&&/renumber_custom_gcodes/{print "no"; d=1; exit} f&&/iter->extruder = replace_filament_id \+ 1/{print "yes"; d=1; exit} f&&/^}/{print "no"; d=1; exit} END{if(!d) print "unknown"}')"
 echo "AW a plate's own filament maps append a new slot, after the mixed ones the project's maps put it before (rel2506/13): $(U src/slic3r/GUI/PartPlate.cpp | awk '/^void PartPlate::on_filament_added/{f=1} f&&/insert_filament_into_plate_maps/{print "no"; d=1; exit} f&&/push_back/{print "yes"; d=1; exit} f&&/^}/{print "no"; d=1; exit} END{if(!d) print "unknown"}')"
+echo "AX a new project after one with its own presets puts a slot on the first visible filament, which the printer may not list (rel2506/13): $(U src/libslic3r/PresetBundle.cpp | awk '/^void PresetBundle::reset_project_embedded_presets/{f=1} f&&/first_visible\(\)\.name/{print "yes"; d=1; exit} f&&/^}/{print "no"; d=1; exit} END{if(!d) print "unknown"}')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -1700,6 +1701,18 @@ slot's extruder, and every mixed slot the one before it. Ours inserts it at the 
 (`insert_filament_into_plate_maps`, `PartPlate.cpp`, tested without the app; `PartPlateList::on_filament_added`
 takes the slot, the last one for a new mixed slot). On "no", take upstream's and re-run
 `slic3rutils_tests "[FilamentSlots]"`.
+
+Item AX: a new project after one that carried presets of its own (a 3MF's) drops them
+(`PresetBundle::reset_project_embedded_presets`). Upstream gives a slot left on one the printer's preferred
+filament when it is visible, else the first visible filament (`first_visible_idx`): the filament library's
+first PLA, "Generic PLA @System", whatever the printer. A printer with its own Generic PLA shadows
+the library's (it does not list it), so the slot sat on a filament the printer does not show, and a
+multi-tool printer copied it to every slot (`set_num_filaments`); the Filament settings then showed another.
+Seen on the Creator 5 Pro: [1 "Generic PLA @FF C5P", 2-4 "Generic PLA @System"]. Ours takes the preferred
+filament only when the printer lists it, else the first compatible one by the match `update_compatible`
+gives the Filament settings (PLA first), which ours moves from inside `update_compatible` to file scope
+(`PreferedFilamentsProfileMatch`, unchanged). On "no", take upstream's, keep the class where upstream has it,
+and re-run `libslic3r_tests "A slot left on a project's own filament*"`.
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices

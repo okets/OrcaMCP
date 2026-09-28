@@ -5584,3 +5584,36 @@ TEST_CASE("Installing filaments by merge keeps the filament slot 1 had", "[Prese
     CHECK(app_config.get_section(AppConfig::SECTION_FILAMENTS).count("Generic PETG @System") == 1);
     CHECK(app_config.get_section(AppConfig::SECTION_FILAMENTS).count("Generic PLA @System") == 1);
 }
+
+TEST_CASE("A slot left on a project's own filament takes one the printer shows when the project goes", "[Preset][Bundle][Regression]")
+{
+    // Printer A shows its own Generic PLA, which shadows the library's; the filament it prefers is not
+    // installed. A new project after one that carried its own filament (a 3MF's) used to put the slot on the
+    // first visible library PLA -- "Generic PLA @System", which Printer A does not show -- and the extra slots
+    // of a multi-tool printer copied it.
+    MachineFilaments f;
+    f.add_filament(f.library, "Generic PLA @System", "Generic PLA", {});
+    f.add_filament(f.vendor, "Generic PLA @Printer A", "Generic PLA", {"Printer A 0.4 nozzle"});
+    f.bundle.filaments.find_preset("Generic PLA @System")->m_excluded_from.insert("Printer A 0.4 nozzle");
+    for (const char* abs : {"Generic ABS @System", "Generic ABS @Printer A", "FilAr ABS @System"})
+        f.bundle.filaments.find_preset(abs)->config.option<ConfigOptionStrings>("filament_type", true)->values = {"ABS"};
+    Preset* printer = f.bundle.printers.find_preset("Printer A 0.4 nozzle");
+    printer->config.option<ConfigOptionStrings>("default_filament_profile", true)->values = {"Vendor PLA @Not Installed"};
+    REQUIRE(f.bundle.printers.select_preset_by_name("Printer A 0.4 nozzle", true));
+    f.bundle.update_compatible(PresetSelectCompatibleType::Never);
+    REQUIRE_FALSE(f.bundle.filaments.find_preset("Generic PLA @System")->is_compatible);
+
+    // The project's own filament on slot 1, as a 3MF load adds it.
+    ScopedTemporaryDir     temp_dir;
+    const DynamicPrintConfig config = f.bundle.filaments.default_preset().config;
+    const auto [embedded, modified] = f.bundle.filaments.load_external_preset((temp_dir.path() / "fixture.3mf").string(), "fixture.3mf",
+                                                                               "Fixture PETG", config, {},
+                                                                               PresetCollection::LoadAndSelect::Always);
+    REQUIRE(embedded != nullptr);
+    REQUIRE(embedded->is_project_embedded);
+    f.bundle.filament_presets = {embedded->name};
+
+    f.bundle.reset_project_embedded_presets();
+
+    CHECK(f.bundle.filament_presets.front() == "Generic PLA @Printer A");
+}

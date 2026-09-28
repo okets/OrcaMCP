@@ -402,6 +402,11 @@ and a later launch would not offer it again. Answer the prompt, or `quit_app`, w
 error dialog the app raised on the way is listed in `error_messages`; the call is `success` whenever
 the new project was started.
 
+After a project that carried presets of its own (a 3MF's), those presets go, and a slot left on one takes
+the filament the printer prefers, else the one the Filament settings would pick for it, always one the
+printer lists (probe AX: upstream fell back on the library's Generic PLA, which a printer with its own
+Generic PLA does not list, and a multi-tool printer copied it to every slot).
+
 **Parameters:** None
 
 **Example:**
@@ -1793,8 +1798,7 @@ default materials) too. The printer is not selected, unlike the wizard's Finish:
 filament slots and their colours, so it is its own call (`next_steps`). `selection_kept` says whether the
 reload left the printer, print preset and filament slots selected as they were. It keeps each preset the
 printer still shows and replaces one it does not (upstream's `load_selections`) -- a slot left on a
-preset the printer does not show, for instance, which `new_project` can leave after a project that
-carried its own presets -- and `selection_changed` names each: `{"preset": "printer" | "print" | "filament", "slot"
+preset the printer does not show, for instance -- and `selection_changed` names each: `{"preset": "printer" | "print" | "filament", "slot"
 (a filament's), "before", "after"}`. The reload gives every
 slot extruder 1 again (upstream's `load_selections`); the install puts the project's filament maps back
 (which extruder, nozzle and nozzle volume each slot prints with), and `filament_maps_restored` names them.
