@@ -109,16 +109,43 @@ LayerGcodeRules layer_gcode_rules(Plater& plater, PartPlate& plate)
     return rules;
 }
 
-std::optional<double> plate_objects_top(PartPlate& plate)
+void add_objects_reach(PartPlate& plate, LayerGcodeRules& rules)
 {
-    const Model&          model  = wxGetApp().plater()->model();
-    const BuildVolume     volume = plate.slicing_build_volume();
-    std::optional<double> top;
-    for (std::size_t o = 0; o < model.objects.size(); ++o)
-        for (std::size_t i = 0; i < model.objects[o]->instances.size(); ++i)
-            if (plate.slicer_prints_instance(int(o), int(i), volume))
-                top = std::max(top.value_or(0.), instance_box(*model.objects[o], i).max.z());
-    return top;
+    const Model&              model  = wxGetApp().plater()->model();
+    const DynamicPrintConfig  config = wxGetApp().preset_bundle->full_config();
+    const BuildVolume         volume = plate.slicing_build_volume();
+    const auto                largest = [](const ConfigOptionFloats* heights) {
+        return heights == nullptr || heights->values.empty() ? 0. : *std::max_element(heights->values.begin(), heights->values.end());
+    };
+    const double printer_max_layer = largest(config.option<ConfigOptionFloats>("max_layer_height"));
+    const double preset_layer      = config.opt_float("layer_height");
+    const double first_layer       = config.opt_float("initial_layer_print_height");
+    for (std::size_t o = 0; o < model.objects.size(); ++o) {
+        const ModelObject& object  = *model.objects[o];
+        bool               printed = false;
+        for (std::size_t i = 0; i < object.instances.size(); ++i)
+            if (plate.slicer_prints_instance(int(o), int(i), volume)) {
+                printed              = true;
+                rules.objects_top_mm = std::max(rules.objects_top_mm.value_or(0.), instance_box(object, i).max.z());
+            }
+        if (!printed)
+            continue;
+        // The largest layer the object can print with: its own layer height, a layer range's, the first layer's (an
+        // object one layer tall), and with a variable or adaptive profile the printer's largest.
+        double layer = object.config.has("layer_height") ? object.config.opt_float("layer_height") : preset_layer;
+        layer        = std::max(layer, first_layer);
+        for (const auto& [range, range_config] : object.layer_config_ranges)
+            if (range_config.has("layer_height"))
+                layer = std::max(layer, range_config.opt_float("layer_height"));
+        if (!object.layer_height_profile.empty())
+            layer = std::max(layer, printer_max_layer);
+        rules.largest_layer_mm = std::max(rules.largest_layer_mm, layer);
+    }
+    // Print::shrinkage_compensation: 100 / the first filament's percent when every filament has the same, else none.
+    // The largest of them is the shortest the slicer can make the objects.
+    if (const auto* shrinkage = config.option<ConfigOptionPercents>("filament_shrinkage_compensation_z"); shrinkage != nullptr)
+        for (double percent : shrinkage->values)
+            rules.z_shrinkage_percent = std::max(rules.z_shrinkage_percent, percent);
 }
 
 nlohmann::json plate_layer_gcodes_json(PartPlate& plate)
@@ -134,7 +161,7 @@ nlohmann::json plate_layer_gcodes_json(PartPlate& plate)
     const bool has_changes = std::any_of(info->second.gcodes.begin(), info->second.gcodes.end(),
                                          [](const CustomGCode::Item& item) { return item.type == CustomGCode::ToolChange; });
     if (!zs && has_changes)
-        rules.objects_top_mm = plate_objects_top(plate);
+        add_objects_reach(plate, rules);
     return layer_gcodes_json(info->second, zs ? &*zs : nullptr, &rules);
 }
 

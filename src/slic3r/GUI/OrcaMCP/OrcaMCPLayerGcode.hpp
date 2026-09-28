@@ -41,9 +41,13 @@ struct LayerGcodeRules
     // The filaments the plate's objects print, 1-based, as the slicer counts them (Print::object_extruders, which the
     // Preview's slider decides by): known from the plate's Print only while it is current and up to date.
     std::optional<std::vector<int>> object_filaments;
-    // The top of the highest object the slicer prints on the plate, in mm from the bed: every layer the slicer makes
-    // reaches at least that high. Tells a change at a layer the slicer reaches before the plate's layers are known.
+    // The top of the highest object the slicer prints on the plate, in mm from the bed, the largest layer height an
+    // object on it can print with, and the largest Z shrinkage compensation of its filaments (%, 100 without): the
+    // slicer's layers reach at least the top as it scales it less half such a layer (layers_reach_mm). Tells a change
+    // at a layer the slicer reaches before the plate's layers are known.
     std::optional<double> objects_top_mm;
+    double                largest_layer_mm    = 0.;
+    double                z_shrinkage_percent = 100.;
     bool                       spiral_vase          = false; // the plate's own vase mode, else the print preset's
     bool                       by_object            = false; // the plate prints one object after another
     bool                       template_gcode_empty = true;  // the printer's template_custom_gcode
@@ -75,6 +79,12 @@ std::optional<CustomGCode::ToolChangesOff> filament_changes_off(const LayerGcode
 // kind's own rules (a template the printer lacks, custom G-code's length, a filament change the slider does not offer).
 // A filament change on a plate whose objects' filaments are not known yet is refused only once they are.
 std::optional<std::string> layer_gcode_request_refusal(const LayerGcodeRequest& request, const LayerGcodeRules& rules);
+
+// The height the slicer's layers reach at least, before the plate is sliced: the top of its highest object as the slicer
+// slices it -- scaled by 100 / `z_shrinkage_percent` (Print::shrinkage_compensation) -- less half the largest layer an
+// object can print with there, since generate_object_layers stops once the next layer's middle would pass the top. A
+// raft only lifts the layers. Z shrinkage under 100 % is not counted: the slicer uses none when the filaments differ.
+double layers_reach_mm(double objects_top_mm, double z_shrinkage_percent, double largest_layer_mm);
 
 // What an add or a delete did: the item it wrote or removed, and one it replaced.
 struct LayerGcodeChange

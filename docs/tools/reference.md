@@ -234,9 +234,11 @@ not yet applied, or a plate other than the current one, whose layers may be an o
 
 A filament change also says whether the G-code has a switch for it, as the slicer takes them: `active`
 true, or false with `inactive_reason`, or null while not known: on a plate other than the current one, whose
-objects' filaments only its Print can count, and, before the plate is sliced, above the top of its highest
-object (every layer the slicer makes reaches that top; a raft may lift the last one past it). It is never
-true for a change the slicer does not reach. It has none on a plate printed by object, in spiral vase mode
+objects' filaments only its Print can count, and, before the plate is sliced, above where the slicer's layers
+must reach: the top of its highest object as the slicer slices it (scaled by its Z shrinkage compensation, which
+over 100 % slices it shorter) less half the largest layer an object there can print with, since the slicer stops
+once the next layer's middle would pass the top (a raft may lift the last layer past that). It is never true
+for a change the slicer does not reach. It has none on a plate printed by object, in spiral vase mode
 (the plate's own or the print preset's), on a plate whose objects print with several filaments (a part, a
 painting, a mixed slot's components count once, a feature's filament such as its walls' counts where the
 feature prints), on a project of one filament (the slicer turns no filament change into a color change), for

@@ -226,6 +226,29 @@ TEST_CASE("a filament change above the plate's objects is not reported active be
     CHECK(layer_gcodes_json(info, nullptr, &plate).at(0).at("active").is_null());
 }
 
+// The slicer's last layer can stop short of the top: generate_object_layers ends once the next layer's middle would pass
+// the top, up to half a layer below it, and Z shrinkage compensation over 100 % slices the object shorter (a 50 mm
+// object at 110 % ends at 45.45 mm). A change at the top was taken for reached, and ToolOrdering never applies it.
+TEST_CASE("a filament change is reported reached only below where the slicer's last layer may stop", "[LayerGcode][orcamcp]")
+{
+    CustomGCode::Info info;
+    info.mode   = CustomGCode::MultiAsSingle;
+    info.gcodes = {{9.95, CustomGCode::ToolChange, 2, "#00FF00", ""}, {10.05, CustomGCode::ToolChange, 1, "#FF0000", ""}};
+    LayerGcodeRules plate  = rules(2, {1});
+    plate.objects_top_mm   = 10.09; // 0.2 mm layers end at 10.0
+    plate.largest_layer_mm = 0.2;
+    const nlohmann::json half_layer = layer_gcodes_json(info, nullptr, &plate);
+    CHECK(half_layer.at(0).at("active") == true); // 9.95 <= 10.09 - 0.1
+    CHECK(half_layer.at(1).at("active").is_null());
+
+    info.gcodes              = {{45.0, CustomGCode::ToolChange, 2, "#00FF00", ""}, {46.0, CustomGCode::ToolChange, 1, "#FF0000", ""}};
+    plate.objects_top_mm     = 50.0;
+    plate.z_shrinkage_percent = 110.0; // sliced to 45.45 mm
+    const nlohmann::json shrunk = layer_gcodes_json(info, nullptr, &plate);
+    CHECK(shrunk.at(0).at("active") == true);
+    CHECK(shrunk.at(1).at("active").is_null());
+}
+
 // A change to a slot the project lacks is taken for filament 1 (custom_tool_changes); the reason named the slot it
 // was stored with, "filament 5" on a project of two.
 TEST_CASE("a filament change that switches nothing names the filament the slicer takes it for", "[LayerGcode][orcamcp]")

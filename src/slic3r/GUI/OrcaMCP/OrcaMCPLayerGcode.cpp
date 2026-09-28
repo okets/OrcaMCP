@@ -297,6 +297,11 @@ std::optional<SliceLayersStamp> slice_layers_stamp(const Print& print)
     return stamp;
 }
 
+double layers_reach_mm(double objects_top_mm, double z_shrinkage_percent, double largest_layer_mm)
+{
+    return objects_top_mm * 100. / std::max(100., z_shrinkage_percent) - 0.5 * largest_layer_mm;
+}
+
 nlohmann::json layer_gcode_json(const CustomGCode::Item& item, const std::vector<double>* layer_zs)
 {
     const std::optional<std::size_t> layer = layer_zs != nullptr ? layer_of(*layer_zs, item.print_z) : std::nullopt;
@@ -321,12 +326,14 @@ nlohmann::json layer_gcodes_json(const CustomGCode::Info& info, const std::vecto
         const CustomGCode::Item& item = info.gcodes[i];
         nlohmann::json           json = layer_gcode_json(item, layer_zs);
         if (item.type == CustomGCode::ToolChange && rules != nullptr) {
-            // Whether the slicer reaches the change's height: by the plate's layers when they are known, else by the top
-            // of its highest object, which every layer the slicer makes reaches (above it, a raft may lift the last one).
+            // Whether the slicer reaches the change's height: by the plate's layers when they are known, else by where the
+            // slicer's layers reach at least (layers_reach_mm); above that only the slice tells (a raft may lift them).
             const std::optional<bool> reached =
-                layer_zs != nullptr                                                       ? std::optional<bool>(layer_of(*layer_zs, item.print_z).has_value()) :
-                rules->objects_top_mm && item.print_z <= *rules->objects_top_mm + EPSILON ? std::optional<bool>(true) :
-                                                                                            std::nullopt;
+                layer_zs != nullptr ? std::optional<bool>(layer_of(*layer_zs, item.print_z).has_value()) :
+                rules->objects_top_mm &&
+                        item.print_z <= layers_reach_mm(*rules->objects_top_mm, rules->z_shrinkage_percent, rules->largest_layer_mm) ?
+                                      std::optional<bool>(true) :
+                                      std::nullopt;
             const std::optional<std::string> why =
                 reached == false ? std::optional<std::string>("it is above the plate's last layer, which the slicer never reaches") :
                 effects[i]       ? inactive_reason(*effects[i], item, *rules) :
