@@ -47,9 +47,9 @@ struct DeleteSlotRequest
     int                slot = 0;
     std::optional<int> merge_into;
     bool               allow_breaking_mix = false;
-    // The merge deletes a physical filament mixed slot `merge_into` lists (PresetBundle::merge_breaks_mixed_filament),
-    // with those components for the message.
-    bool                      breaks_mix = false;
+    // A mixed slot (1-based) made of the slot being deleted, which the delete breaks
+    // (PresetBundle::mixed_filaments_using), with its components for the message.
+    std::optional<int>        breaks_mix;
     std::vector<unsigned int> mix_components;
 };
 

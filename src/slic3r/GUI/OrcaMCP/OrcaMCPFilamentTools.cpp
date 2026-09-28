@@ -100,13 +100,18 @@ nlohmann::json delete_filament_slot(DeleteSlotRequest request)
     McpDialogSuppressionGuard guard;
     const FilamentSlotsState  before = filament_slots_state();
     PresetBundle&             bundle = *wxGetApp().preset_bundle;
-    if (request.merge_into && request.slot >= 1 && size_t(request.slot) <= before.slots() && *request.merge_into >= 1 &&
-        size_t(*request.merge_into) <= before.slots()) {
-        const size_t from = size_t(request.slot - 1), to = size_t(*request.merge_into - 1);
-        request.breaks_mix = bundle.merge_breaks_mixed_filament(from, to);
-        if (request.breaks_mix)
+    if (request.slot >= 1 && size_t(request.slot) <= before.slots()) {
+        // A mix made of the slot breaks when it goes: the one it is merged into first, which the app asks about.
+        const size_t              from  = size_t(request.slot - 1);
+        const std::vector<size_t> mixes = bundle.mixed_filaments_using(from);
+        if (!mixes.empty()) {
+            size_t mix = mixes.front();
+            if (request.merge_into && *request.merge_into >= 1 && bundle.merge_breaks_mixed_filament(from, size_t(*request.merge_into - 1)))
+                mix = size_t(*request.merge_into - 1);
+            request.breaks_mix = int(mix + 1);
             if (const auto* components = bundle.project_config.option<ConfigOptionStrings>("filament_mixed_components"))
-                request.mix_components = parse_mixed_components(components->get_at(to));
+                request.mix_components = parse_mixed_components(components->get_at(mix));
+        }
     }
     if (const auto refusal = delete_slot_refusal(before, request, current_pipeline(), ui_job_running()))
         return error_response(*refusal);
@@ -114,7 +119,7 @@ nlohmann::json delete_filament_slot(DeleteSlotRequest request)
     const std::vector<std::vector<int>> filaments_before = objects_filaments();
     Sidebar&                            sidebar          = wxGetApp().sidebar();
     if (request.merge_into) {
-        if (request.breaks_mix)
+        if (request.breaks_mix && request.allow_breaking_mix)
             guard.answer_prompt(MCP_PROMPT_MERGE_INTO_MIX, wxID_OK, "allow_breaking_mix was true");
         sidebar.change_filament(size_t(request.slot - 1), size_t(*request.merge_into - 1));
     } else
@@ -200,7 +205,7 @@ void OrcaMCPServer::register_filament_tools()
         "does: its objects and paint move to that slot instead. Answers deleted_slot, renumbered ({from, to}), objects_changed "
         "(each object whose filaments changed, before and after), merged_into / merged_into_now, and filaments. Every plate "
         "loses its slice; no undo step, as in the app. Refused: the last physical slot; a physical slot of a printer with "
-        "one filament per extruder; merging a slot into a mixed slot made of it, unless allow_breaking_mix; deleting slot 1 "
+        "one filament per extruder; a slot a mixed slot is made of, which breaks the mix, unless allow_breaking_mix; deleting slot 1 "
         "(or the only slot using the Filament settings' preset) while those settings have unsaved changes, which the app "
         "would re-select (save_preset or reset_preset first); while slicing or while a job runs. delete_mixed_filament "
         "deletes a mixed slot too.",
@@ -209,7 +214,7 @@ void OrcaMCPServer::register_filament_tools()
             {"properties", {
                 {"slot", {{"type", "integer"}, {"description", "The slot to delete, 1-based"}}},
                 {"merge_into", {{"type", "integer"}, {"description", "Move its objects and paint to this slot (1-based, numbered as before the delete) instead of slot 1"}}},
-                {"allow_breaking_mix", {{"type", "boolean"}, {"description", "Merge into a mixed slot made of the deleted slot anyway; the mix loses that component. Default false."}}}
+                {"allow_breaking_mix", {{"type", "boolean"}, {"description", "Delete or merge a slot a mixed slot is made of anyway; the mix loses that component. Default false."}}}
             }},
             {"required", {"slot"}}
         },

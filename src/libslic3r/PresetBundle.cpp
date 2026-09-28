@@ -3568,15 +3568,26 @@ void PresetBundle::update_num_filaments(unsigned int to_del_flament_id)
     update_multi_material_filament_presets(to_del_flament_id);
 }
 
+std::vector<size_t> PresetBundle::mixed_filaments_using(size_t physical_id) const
+{
+    std::vector<size_t> mixes;
+    const auto*         components = project_config.option<ConfigOptionStrings>("filament_mixed_components");
+    if (components == nullptr || is_mixed_filament(physical_id))
+        return mixes;
+    for (size_t mix = 0; mix < components->values.size(); ++mix) {
+        if (!is_mixed_filament(mix))
+            continue;
+        const std::vector<unsigned int> listed = parse_mixed_components(components->values[mix]);
+        if (std::find(listed.begin(), listed.end(), static_cast<unsigned int>(physical_id + 1)) != listed.end())
+            mixes.push_back(mix);
+    }
+    return mixes;
+}
+
 bool PresetBundle::merge_breaks_mixed_filament(size_t from_id, size_t to_id) const
 {
-    if (is_mixed_filament(from_id) || !is_mixed_filament(to_id))
-        return false;
-    const auto* components = project_config.option<ConfigOptionStrings>("filament_mixed_components");
-    if (components == nullptr || to_id >= components->values.size())
-        return false;
-    const std::vector<unsigned int> listed = parse_mixed_components(components->values[to_id]);
-    return std::find(listed.begin(), listed.end(), static_cast<unsigned int>(from_id + 1)) != listed.end();
+    const std::vector<size_t> mixes = mixed_filaments_using(from_id);
+    return std::find(mixes.begin(), mixes.end(), to_id) != mixes.end();
 }
 
 bool PresetBundle::is_mixed_filament(size_t idx) const

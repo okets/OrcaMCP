@@ -126,10 +126,10 @@ std::optional<std::string> delete_slot_refusal(const FilamentSlotsState& state, 
         return "Slot " + std::to_string(request.slot) + " is the project's only physical filament slot: a project keeps at least one";
     if (request.breaks_mix && !request.allow_breaking_mix) {
         std::vector<int> components(request.mix_components.begin(), request.mix_components.end());
-        return "Merging slot " + std::to_string(request.slot) + " into slot " + std::to_string(*request.merge_into) +
-               " deletes slot " + std::to_string(request.slot) + ", which mixed slot " + std::to_string(*request.merge_into) +
-               " is made of (" + named_slots(components) + "): the mix would lose it. Pass allow_breaking_mix: true to merge "
-               "anyway, or merge into another slot";
+        return "Slot " + std::to_string(request.slot) + " is one of the filaments mixed slot " + std::to_string(*request.breaks_mix) +
+               " is made of (" + named_slots(components) + "): " + (request.merge_into ? "merging" : "deleting") +
+               " it breaks the mix. Pass allow_breaking_mix: true to go on anyway, or delete_mixed_filament {slot: " +
+               std::to_string(*request.breaks_mix) + "} first";
     }
     if (state.edited_dirty && delete_reselects_edited_preset(state, index))
         return "Deleting slot " + std::to_string(request.slot) + " makes the app re-select the Filament settings' preset, and " +

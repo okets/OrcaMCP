@@ -142,6 +142,10 @@ TEST_CASE("a filament a mixed filament lists is one whose delete breaks it", "[F
     CHECK_FALSE(bundle.merge_breaks_mixed_filament(1, 3)); // not a component
     CHECK_FALSE(bundle.merge_breaks_mixed_filament(3, 0)); // a mixed filament merged away breaks nothing
     CHECK_FALSE(bundle.merge_breaks_mixed_filament(0, 1)); // into a physical one
+
+    CHECK(bundle.mixed_filaments_using(0) == std::vector<size_t>{3});
+    CHECK(bundle.mixed_filaments_using(1).empty());
+    CHECK(bundle.mixed_filaments_using(3).empty()); // a mixed filament is no component
 }
 
 TEST_CASE("a slot is added only where the sidebar offers its + button", "[FilamentSlots]")
@@ -206,21 +210,29 @@ TEST_CASE("a slot is deleted as its Delete and Merge with allow", "[FilamentSlot
     CHECK(mentions(refusal_text(delete_slot_refusal(toolchanger, last, idle_pipeline, false)), "follow its extruders"));
 }
 
-TEST_CASE("merging a slot into a mix made of it waits for allow_breaking_mix", "[FilamentSlots]")
+TEST_CASE("deleting or merging a slot a mix is made of waits for allow_breaking_mix", "[FilamentSlots]")
 {
     const FilamentSlotsState project = multi_material_project(3, 1);
     DeleteSlotRequest        request;
     request.slot           = 1;
     request.merge_into     = 4;
-    request.breaks_mix     = true;
+    request.breaks_mix     = 4;
     request.mix_components = {1, 3};
 
     const std::string refusal = refusal_text(delete_slot_refusal(project, request, idle_pipeline, false));
-    CHECK(mentions(refusal, "mixed slot 4 is made of (slots 1 and 3)"));
+    CHECK(mentions(refusal, "mixed slot 4 is made of (slots 1 and 3): merging it breaks the mix"));
     CHECK(mentions(refusal, "allow_breaking_mix: true"));
+    CHECK(mentions(refusal, "delete_mixed_filament {slot: 4}"));
 
     request.allow_breaking_mix = true;
     CHECK_FALSE(delete_slot_refusal(project, request, idle_pipeline, false).has_value());
+
+    // A plain delete of a slot a mix is made of breaks it too, which the app does not ask about.
+    DeleteSlotRequest plain;
+    plain.slot           = 3;
+    plain.breaks_mix     = 4;
+    plain.mix_components = {1, 3};
+    CHECK(mentions(refusal_text(delete_slot_refusal(project, plain, idle_pipeline, false)), "deleting it breaks the mix"));
 }
 
 TEST_CASE("a delete that re-selects the Filament settings waits for their unsaved changes", "[FilamentSlots]")

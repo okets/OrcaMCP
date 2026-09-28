@@ -577,12 +577,12 @@
     },
     {
       "category": "Filaments & colour",
-      "description": "Delete a filament slot, physical or mixed, as its Delete in the sidebar does: its objects, parts and painted facets move to slot 1, and every later slot moves down one (objects and paint with it). With merge_into, as its Merge with does: its objects and paint move to that slot instead. Answers deleted_slot, renumbered ({from, to}), objects_changed (each object whose filaments changed, before and after), merged_into / merged_into_now, and filaments. Every plate loses its slice; no undo step, as in the app. Refused: the last physical slot; a physical slot of a printer with one filament per extruder; merging a slot into a mixed slot made of it, unless allow_breaking_mix; deleting slot 1 (or the only slot using the Filament settings' preset) while those settings have unsaved changes, which the app would re-select (save_preset or reset_preset first); while slicing or while a job runs. delete_mixed_filament deletes a mixed slot too.",
+      "description": "Delete a filament slot, physical or mixed, as its Delete in the sidebar does: its objects, parts and painted facets move to slot 1, and every later slot moves down one (objects and paint with it). With merge_into, as its Merge with does: its objects and paint move to that slot instead. Answers deleted_slot, renumbered ({from, to}), objects_changed (each object whose filaments changed, before and after), merged_into / merged_into_now, and filaments. Every plate loses its slice; no undo step, as in the app. Refused: the last physical slot; a physical slot of a printer with one filament per extruder; a slot a mixed slot is made of, which breaks the mix, unless allow_breaking_mix; deleting slot 1 (or the only slot using the Filament settings' preset) while those settings have unsaved changes, which the app would re-select (save_preset or reset_preset first); while slicing or while a job runs. delete_mixed_filament deletes a mixed slot too.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
           "allow_breaking_mix": {
-            "description": "Merge into a mixed slot made of the deleted slot anyway; the mix loses that component. Default false.",
+            "description": "Delete or merge a slot a mixed slot is made of anyway; the mix loses that component. Default false.",
             "type": "boolean"
           },
           "merge_into": {

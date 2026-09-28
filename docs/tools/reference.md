@@ -2915,7 +2915,7 @@ as its **Merge with** does (`Sidebar::delete_filament`, `change_filament`).
 |-----------|------|----------|-------------|
 | `slot` | integer | Yes | The slot to delete, 1-based |
 | `merge_into` | integer | No | Move its objects, parts and painted facets to this slot (1-based, numbered as before the delete). Default: slot 1, as Delete does |
-| `allow_breaking_mix` | boolean | No | Merge into a mixed slot made of the deleted slot anyway (default false) |
+| `allow_breaking_mix` | boolean | No | Delete or merge a slot a mixed slot is made of anyway (default false) |
 
 The app renumbers everything after the deleted slot: objects, parts, painted facets, layer ranges,
 a plate's filament order, a tool change in the layer list, and every setting that names a slot by its
@@ -2938,9 +2938,10 @@ wrote a part's number into its object).
 loses its slice; no undo step, as in the app.
 
 Refused, changing nothing: a slot out of range, or `merge_into` out of range or the slot itself; the
-project's last physical slot; a physical slot of a printer whose slots follow its extruders; merging
-a slot into a mixed slot made of it, unless `allow_breaking_mix: true` (the app warns about it in a box
-that MCP answers, never opens: probe AP); deleting slot 1, or the only slot using the Filament
+project's last physical slot; a physical slot of a printer whose slots follow its extruders; a slot a
+mixed slot is made of, which the delete breaks (the mix loses that component), unless
+`allow_breaking_mix: true` -- the app warns only when the slot is merged into that mix, in a box MCP
+answers, never opens (probe AP), and breaks it silently on a plain delete; deleting slot 1, or the only slot using the Filament
 settings' preset, while those settings have unsaved changes -- the app would re-select that preset and
 ask what to do with them -- `save_preset` or `reset_preset` first; a G-code preview on the plate; while
 slicing or while an arrange, orient or bed fill runs. `delete_mixed_filament` deletes a mixed slot too.
