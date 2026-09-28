@@ -1304,7 +1304,7 @@ echo "BE the object menu's Export as STLs of one object writes to the folder's o
 echo "BF Reload from disk and Reload All run under an open toolbar tool, whose painting then lands on the new meshes (rel2506/14): $(U src/slic3r/GUI/Plater.cpp | awk '/^void Plater::priv::reload_from_disk\(/{f=1} f&&/check_gizmos_closed_except/{print "no"; d=1; exit} f&&/^}/{print "yes"; d=1; exit} END{if(!d) print "unknown"}')"
 echo "BG the Preview's layer slider erases every filament change of the plate it shows once that plate prints with several filaments, and writes that to the project (rel2506/14): $(U src/slic3r/GUI/IMSlider.cpp | grep -c 'm_ticks.erase_all_ticks_with_code(ToolChange);')"
 echo "BH a static last vase mode clears the ticks of whichever plate is shown next after any vase toggle / the slider takes the print preset's vase mode, not the plate's / STUDIO-2621's clears go through the slider's deferred change event, which a second slider update loses (rel2506/14): $(U src/slic3r/GUI/IMSlider.cpp | grep -c 'static bool last_spiral_vase_status') / $(U src/slic3r/GUI/IMSlider.cpp | awk '/^void IMSlider::SetModeAndOnlyExtruder/{f=1} f&&/spiral_mode/{print "yes"; d=1; exit} f&&/^}/{print "no"; d=1; exit} END{if(!d) print "unknown"}') / $(U src/slic3r/GUI/IMSlider.cpp | awk '/^void IMSlider::SetTicksValues/{f=1} f&&/dmSequentialFffPrint/{print "yes"; d=1; exit} f&&/^}/{print "no"; d=1; exit} END{if(!d) print "unknown"}')"
-echo "BI a plate's filament changes count as filaments it uses (Print::extruders, PartPlate::get_extruders) though the slicer applies none on a plate printing with several filaments or by object / a vase plate's filament changes print as filament switches the slider hides (rel2506/14; 0 = bug): $(U src/libslic3r/CustomGCode.hpp | grep -c 'tool_changes_apply') / $(U src/libslic3r/CustomGCode.hpp | grep -c 'spiral_vase')"
+echo "BI a plate's filament changes count as filaments it uses (Print::extruders, PartPlate::get_extruders) though the slicer applies none on a plate printing with several filaments or by object / a vase plate's filament changes print as filament switches the slider hides / the plate counts the filaments of objects the slicer does not print (rel2506/14; 0 = bug): $(U src/libslic3r/CustomGCode.hpp | grep -c 'tool_changes_apply') / $(U src/libslic3r/CustomGCode.hpp | grep -c 'spiral_vase') / $(U src/slic3r/GUI/PartPlate.hpp | grep -c 'slicer_prints_object')"
 echo "BJ the Preview's slider shows or hides a plate's filament changes by its parts' filaments, not by the slicer's rule: a mixed slot's plate hid a change it prints (rel2506/14): $(U src/slic3r/GUI/GUI_Preview.cpp | awk '/^void Preview::update_layers_slider_mode/{f=1} f&&/tool_changes_off/{print "no"; d=1; exit} f&&/extruder != plate_extruders\[0\]/{print "yes"; d=1; exit} END{if(!d) print "unknown"}')"
 echo "BK Save's steps after its file dialog are inline in save_project, which MCP's save_project and export_3mf need to run too (rel2506/14; a move): $(U src/slic3r/GUI/Plater.cpp | grep -c '^int Plater::save_project_as')"
 ```
@@ -1884,10 +1884,12 @@ becomes a color change: `ToolOrdering::assign_custom_gcodes` skips every one (it
 never read for them), so one on a project of one filament, like one to the filament already printing there, writes
 nothing (`CustomGCode::tool_change_effects`, which MCP reports by). The plate cannot tell which feature filaments print
 (walls, infill, top and bottom surfaces: only the slicer's regions know), so it counts its objects' filaments from
-their parts and layer ranges (`ModelVolume::get_extruders`, as `Print::object_extruders` reads them). That is the
-fewest filaments the slicer counts, so the plate lists a change the slicer may take rather than miss one it takes;
-where a feature's filament keeps the slicer from taking it, the plate lists a filament that does not print, as
-upstream lists every change. On 0, take upstream's and re-run
+their parts and layer ranges (`ModelVolume::get_extruders`, as `Print::object_extruders` reads them), and only of
+the objects the slicer prints: an instance here that is printable -- the object's flag, the instance's, inside the
+plate's build volume by the same test (`PartPlate::slicer_prints_object`, `ModelInstance::calc_print_volume_state`);
+instances on other plates are outside it. That is the fewest filaments the slicer counts, so the plate lists a
+change the slicer may take and never misses one it takes; where a feature's filament keeps the slicer from taking it,
+the plate lists a filament that does not print, as upstream lists every change. On 0, take upstream's and re-run
 `fff_print_tests "[MultiFilament]"` and `slic3rutils_tests "[LayerGcode]"`.
 
 Item BJ: the Preview's slider hides a plate's filament changes when its parts print with more than one filament

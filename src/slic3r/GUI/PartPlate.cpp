@@ -1574,11 +1574,12 @@ std::vector<int> PartPlate::get_extruders(bool conside_custom_gcode, const Dynam
 	bool glb_support = glb_config.opt_bool("enable_support");
     glb_support |= glb_config.opt_int("raft_layers") > 0;
 
-	// Orca: the filaments the objects print whatever their features do -- their parts' and layer ranges', which
-	// Print::object_extruders counts whatever the regions hold --, to tell whether the slicer may take the plate's
-	// filament changes (below). A feature's filament prints only where the feature does, which only the slicer's
-	// regions know.
-	std::vector<int> object_filaments;
+	// Orca: the filaments of the objects the slicer prints (slicer_prints_object), whatever their features do -- their
+	// parts' and layer ranges', which Print::object_extruders counts whatever the regions hold --, to tell whether the
+	// slicer may take the plate's filament changes (below). A feature's filament prints only where the feature does,
+	// which only the slicer's regions know. Filled for the objects on the plate; which of them the slicer prints is
+	// asked only when there is a filament change to decide.
+	std::vector<std::pair<int, std::vector<int>>> filaments_by_object;
 	for (int obj_idx = 0; obj_idx < m_model->objects.size(); obj_idx++) {
 		// Any instance on the plate counts, as PrintApply does: after an arrange, instance 0
 		// can sit on a different plate.
@@ -1586,6 +1587,7 @@ std::vector<int> PartPlate::get_extruders(bool conside_custom_gcode, const Dynam
 			continue;
 
 		ModelObject* mo = m_model->objects[obj_idx];
+		std::vector<int>& object_filaments = filaments_by_object.emplace_back(obj_idx, std::vector<int>()).second;
 		for (ModelVolume* mv : mo->volumes) {
 			std::vector<int> volume_extruders = mv->get_extruders();
 			plate_extruders.insert(plate_extruders.end(), volume_extruders.begin(), volume_extruders.end());
@@ -1695,8 +1697,6 @@ std::vector<int> PartPlate::get_extruders(bool conside_custom_gcode, const Dynam
 
 	}
 
-	sort_remove_duplicates(object_filaments);
-
 	if (conside_custom_gcode) {
 		//BBS
         int nums_extruders = 0;
@@ -1705,12 +1705,21 @@ std::vector<int> PartPlate::get_extruders(bool conside_custom_gcode, const Dynam
 			// Orca: only the filament changes the slicer may take (CustomGCode::tool_changes_apply): the others print
 			// nothing, and counted they made a filament the plate never prints used. The objects' filaments here are
 			// the fewest the slicer counts (a feature's may add one), so a change it may take is listed, never missed.
+			const auto plate_gcodes = m_model->plates_custom_gcodes.find(m_plate_index);
+			const bool has_changes  = plate_gcodes != m_model->plates_custom_gcodes.end() &&
+			                         std::any_of(plate_gcodes->second.gcodes.begin(), plate_gcodes->second.gcodes.end(),
+			                                     [](const CustomGCode::Item& item) { return item.type == CustomGCode::ToolChange; });
+			std::vector<int> object_filaments;
+			if (has_changes)
+				for (const auto& [obj_idx, filaments] : filaments_by_object)
+					if (slicer_prints_object(obj_idx))
+						object_filaments.insert(object_filaments.end(), filaments.begin(), filaments.end());
+			sort_remove_duplicates(object_filaments);
 			PrintSequence sequence = get_print_seq();
 			if (sequence == PrintSequence::ByDefault)
 				if (const auto* global = glb_config.option<ConfigOptionEnum<PrintSequence>>("print_sequence"))
 					sequence = global->value;
-			const auto plate_gcodes = m_model->plates_custom_gcodes.find(m_plate_index);
-			if (plate_gcodes != m_model->plates_custom_gcodes.end() &&
+			if (has_changes &&
 				CustomGCode::tool_changes_apply(plate_gcodes->second.mode, size_t(nums_extruders), object_filaments.size(),
 												sequence != PrintSequence::ByObject, get_spiral_vase_mode(glb_config))) {
 				for (auto item : plate_gcodes->second.gcodes) {
@@ -2784,6 +2793,24 @@ bool PartPlate::contain_instance_totally(int obj_id, int instance_id) const
 	}
 
 	return result;
+}
+
+// Orca: whether the slicer prints object `obj_id` when it slices this plate: some instance of it on the plate that is
+// printable -- the object's flag, the instance's, and inside the plate's build volume, computed as the plater computes
+// it for the Print (Plater::priv::update_print_volume_state, ModelInstance::is_printable), which leaves out every other.
+bool PartPlate::slicer_prints_object(int obj_id) const
+{
+	if (obj_id < 0 || obj_id >= int(m_model->objects.size()) || !m_model->objects[obj_id]->printable)
+		return false;
+	const ModelObject* object = m_model->objects[obj_id];
+	const BuildVolume  build_volume(get_shape(), m_height, m_extruder_areas, m_extruder_heights);
+	for (int instance_id = 0; instance_id < int(object->instances.size()); ++instance_id) {
+		const ModelInstance* instance = object->instances[instance_id];
+		if (obj_to_instance_set.count({obj_id, instance_id}) != 0 && instance->printable &&
+			instance->calc_print_volume_state(build_volume) == ModelInstancePVS_Inside)
+			return true;
+	}
+	return false;
 }
 
 //judge whether any of the object's instances is totally included in plate or not

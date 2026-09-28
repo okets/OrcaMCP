@@ -506,6 +506,56 @@ TEST_CASE("a plate's filament change counts as a filament it uses only where the
     CHECK(plate.get_extruders(true, by_layer, project) == std::vector<int>{1, 2});
 }
 
+// The slicer leaves out every instance that is not printable -- the object's flag, the instance's, or not inside the
+// plate's build volume (ModelInstance::is_printable, PrintApply's print_objects_from_model_object) -- and so do the
+// filaments such an object prints. The plate counted them among its objects' filaments, took a filament change for
+// one the slicer does not take, and left out the filament it switches to.
+TEST_CASE("a plate's objects the slicer does not print do not keep a filament change from being listed", "[LayerGcode][orcamcp]")
+{
+    Model model;
+    auto  plates = plate_list_fixtures::plate_list_for(model, 1);
+    Vec3d at     = plate_list_fixtures::centre_of(*plates, 0);
+    plate_list_fixtures::add_cube(model, *plates, {at});
+    at.x() += 40.;
+    ModelObject& other = plate_list_fixtures::add_cube(model, *plates, {at});
+    other.config.set_key_value("extruder", new ConfigOptionInt(2));
+    model.plates_custom_gcodes[0] = {CustomGCode::MultiAsSingle, {{10.0, CustomGCode::ToolChange, 3, "#0000FF", ""}}};
+    DynamicPrintConfig project;
+    project.set_key_value("filament_colour", new ConfigOptionStrings({"#FF0000", "#00FF00", "#0000FF"}));
+    const DynamicPrintConfig preset = DynamicPrintConfig::full_print_config();
+    GUI::PartPlate&          plate  = *plates->get_plate(0);
+    const auto               lists  = [&](int filament) {
+        const std::vector<int> listed = plate.get_extruders(true, preset, project);
+        return std::find(listed.begin(), listed.end(), filament) != listed.end();
+    };
+    REQUIRE_FALSE(lists(3)); // two objects on two filaments: the slicer takes no change
+
+    other.printable = false; // the object list's Printable off
+    CHECK(lists(3));
+    CHECK(lists(1));
+    other.printable                = true;
+    other.instances[0]->printable = false; // one instance's
+    CHECK(lists(3));
+    other.instances[0]->printable = true;
+    // Standing across the plate's edge: on the plate, but not inside its build volume (and the plate cannot be sliced).
+    other.instances[0]->set_offset(Vec3d(plate_list_fixtures::k_plate_size - 5., at.y(), at.z()));
+    plates->notify_instance_update(1, 0);
+    CHECK(lists(3));
+}
+
+TEST_CASE("an object on another plate does not keep a plate's filament change from being listed", "[LayerGcode][orcamcp]")
+{
+    Model model;
+    auto  plates = plate_list_fixtures::plate_list_for(model, 2);
+    plate_list_fixtures::add_cube(model, *plates, {plate_list_fixtures::centre_of(*plates, 0)});
+    plate_list_fixtures::add_cube(model, *plates, {plate_list_fixtures::centre_of(*plates, 1)})
+        .config.set_key_value("extruder", new ConfigOptionInt(2));
+    model.plates_custom_gcodes[0] = {CustomGCode::MultiAsSingle, {{10.0, CustomGCode::ToolChange, 3, "#0000FF", ""}}};
+    DynamicPrintConfig project;
+    project.set_key_value("filament_colour", new ConfigOptionStrings({"#FF0000", "#00FF00", "#0000FF"}));
+    CHECK(plates->get_plate(0)->get_extruders(true, DynamicPrintConfig::full_print_config(), project) == std::vector<int>{1, 3});
+}
+
 // A feature's filament (sparse infill, walls, top and bottom surfaces) prints only where the feature does -- no sparse
 // infill at 0 % --, which the slicer knows from each region (Print::object_extruders) and the plate cannot. The plate
 // counted the preset's sparse infill filament as one its objects print, dropped the filament change the slicer takes,
