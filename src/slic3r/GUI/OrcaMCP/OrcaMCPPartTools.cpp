@@ -4,6 +4,7 @@
 #include "OrcaMCPServer.hpp"
 #include "OrcaMCPCommon.hpp"
 #include "OrcaMCPFilamentModel.hpp"
+#include "OrcaMCPInstanceEdits.hpp"
 #include "OrcaMCPMeshHealth.hpp"
 #include "OrcaMCPNextSteps.hpp"
 #include "OrcaMCPPartEdits.hpp"
@@ -398,6 +399,39 @@ nlohmann::json delete_volume_on_main_thread(Plater& plater, int object_id, Model
     return with_closed_tool(guard.report(std::move(answer)), closed_tool);
 }
 
+nlohmann::json delete_instance_on_main_thread(Plater& plater, int object_id, ModelObject& object, int instance_id)
+{
+    if (const auto refusal = ui_job_refusal(plater, "delete_object"))
+        return error_response(*refusal);
+    const std::size_t before = object.instances.size();
+
+    std::string closed_tool;
+    if (const auto refusal = close_toolbar_tool_before_change(plater, object_id, object.volumes.size(), closed_tool))
+        return *refusal;
+    McpDialogSuppressionGuard guard;
+    {
+        // The Delete key's undo step (Plater::remove_selected) on a selected instance; the list's own inside
+        // it is suppressed. The list tells the plates, which file every later instance under its new index.
+        Plater::TakeSnapshot snapshot(&plater, "Delete Selected Objects");
+        wxGetApp().obj_list()->delete_from_model_and_list(itInstance, object_id, instance_id);
+    }
+    if (object.instances.size() == before)
+        return with_closed_tool(guard.fail_on_errors(error_response("The object list did not delete instance " + std::to_string(instance_id) +
+                                                                    " of object " + std::to_string(object_id))),
+                                closed_tool);
+
+    nlohmann::json answer = {{"status", "success"},
+                             {"object_id", object_id},
+                             {"object_name", object.name},
+                             {"deleted_instance_id", instance_id},
+                             {"instance_count", object.instances.size()}};
+    if (std::size_t(instance_id) < object.instances.size())
+        answer["instance_ids_shifted"] = "instances after " + std::to_string(instance_id) + " moved down by one";
+    report_placement(answer, object_id);
+    answer["active_warnings"] = get_active_warnings_json(&plater);
+    return with_closed_tool(guard.report(std::move(answer)), closed_tool);
+}
+
 nlohmann::json delete_object_on_main_thread(Plater& plater, int object_id, ModelObject& object, bool include_preview)
 {
     if (const auto refusal = ui_job_refusal(plater, "delete_object"))
@@ -517,9 +551,18 @@ nlohmann::json delete_in_object_list(const nlohmann::json& params)
         ModelObject* object = resolve_object_id(params, plater->model(), object_id, error);
         if (object == nullptr)
             return error_response(error);
-        const std::optional<int> volume_id = read_volume_id(params, error);
+        const std::optional<int> volume_id   = read_volume_id(params, error);
+        const std::optional<int> instance_id = read_instance_id(params, error);
         if (!error.empty())
             return error_response(error);
+        if (instance_id) {
+            if (const auto refusal = instance_delete_refusal(object_id, *object, *instance_id, volume_id.has_value()))
+                return error_response(*refusal);
+            nlohmann::json answer = delete_instance_on_main_thread(*plater, object_id, *object, *instance_id);
+            if (answer.value("status", "") == "success")
+                add_turntable_preview_if_requested(answer, include_preview);
+            return answer;
+        }
         if (volume_id)
             return delete_volume_on_main_thread(*plater, object_id, *object, *volume_id);
         return delete_object_on_main_thread(*plater, object_id, *object, include_preview);

@@ -230,7 +230,7 @@
     },
     {
       "category": "Config",
-      "description": "Change settings of the selected print, filament or printer preset, or of the project -- layer height, supports, infill, walls, speeds, temperatures -- several in one call. Types: print | filament | printer | project. The change stays unsaved in the preset until save_preset. To switch to another preset, use select_preset; for one object only, set_object_config; for a slot's colour on the plate, set_filament_color.",
+      "description": "Change settings of the selected print, filament or printer preset, or of the project -- layer height, supports, infill, walls, speeds, temperatures -- several in one call. Types: print | filament | printer | project. The change stays unsaved in the preset until save_preset. To switch to another preset, use select_preset; for one object only, set_object_config; for a slot's colour on the plate, set_filament_color. The global bed type is project key curr_bed_type, set as the sidebar's bed-type list sets it (the plates that follow it lose their slice, and the printer remembers it); a bed type the printer does not offer is refused, and so is any change on a printer with one bed type, where the sidebar greys the list out. A plate's own bed type: set_plate_settings.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -277,20 +277,54 @@
     },
     {
       "category": "Models",
-      "description": "Arrange every object on the current plate, as the plate's Arrange does, and answer once the arrange has been applied: status success with objects, each one's placement (position, rotation_degrees, scale, changed, and rotate_object's placement fields). The arrange runs in the background while this waits, up to the bridge's cap (15 s below ORCAMCP_TIMEOUT); still running then, status arrange_started with finished false, and get_slicing_status's ui_job says when it has finished. status cancelled when the app cancelled it (nothing moved); refused while another job runs.",
+      "description": "Arrange the objects on a plate -- the current one, or plate_index, made current first as the plate's own Arrange icon does -- or with all_plates every object on every plate that is not locked, as the A key does (it may add plates, and move unprintable objects to a plate after the last). The arrange menu's options this call gives (spacing_mm, auto_rotate, allow_multiple_materials, align_to_y_axis, avoid_calibration_region, reset_options) are saved as the menu saves them, and every later arrange uses them, clone_object's and fill_bed_with_instances' too; arrange_options reports the ones in force. Answered once the arrange has been applied: status success with objects, each one's placement (position, rotation_degrees, scale, changed, and rotate_object's placement fields, and previous_object_id when the arrange moved it in the object list: an arrange re-sorts the objects, so re-read object_id). The arrange runs in the background while this waits, up to the bridge's cap (15 s below ORCAMCP_TIMEOUT); still running then, status arrange_started with finished false, and get_slicing_status's ui_job says when it has finished. status cancelled when the app cancelled it (nothing moved). Refused for a locked plate (set_plate_settings unlocks it) and while another job runs.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
+          "align_to_y_axis": {
+            "description": "Line objects up along Y (Align to Y axis); not with auto_rotate. Kept until the app restarts or the printer changes, as the menu keeps it",
+            "type": "boolean"
+          },
+          "all_plates": {
+            "description": "Arrange every object on every plate that is not locked, as the A key and the arrange menu's Arrange do; it may add plates, and moves unprintable objects to a plate after the last. Default false: one plate",
+            "type": "boolean"
+          },
+          "allow_multiple_materials": {
+            "description": "Let objects of different filaments share a plate (Allow multiple materials on same plate). Saved as the arrange menu saves it: every later arrange uses it.",
+            "type": "boolean"
+          },
+          "auto_rotate": {
+            "description": "Turn objects about Z to fit more (Auto rotate for arrangement). Saved as the arrange menu saves it: every later arrange uses it.",
+            "type": "boolean"
+          },
+          "avoid_calibration_region": {
+            "description": "Keep clear of the extrusion calibration area; only on a Bambu Lab printer that scans its first layer. Saved as the arrange menu saves it: every later arrange uses it.",
+            "type": "boolean"
+          },
           "include_preview": {
             "description": "Return turntable preview path, drawn once the arrange has been applied",
             "type": "boolean"
+          },
+          "plate_index": {
+            "description": "The plate to arrange, made the current plate first as the plate's own Arrange icon does. Default: the current plate",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reset_options": {
+            "description": "The arrange menu's Reset, before the options this call gives: automatic spacing, no auto-rotate, several materials allowed, align to Y as the printer's default",
+            "type": "boolean"
+          },
+          "spacing_mm": {
+            "description": "Gap between objects in mm, 0 for automatic spacing (the arrange menu's Spacing), for the current print sequence's set. Saved as the arrange menu saves it: every later arrange uses it.",
+            "minimum": 0,
+            "type": "number"
           }
         },
         "required": [],
         "type": "object"
       },
       "name": "arrange_objects",
-      "summary": "Arrange the current plate's objects"
+      "summary": "Arrange a plate's objects or all plates"
     },
     {
       "category": "Models",
@@ -533,13 +567,18 @@
     },
     {
       "category": "Transforms",
-      "description": "Remove an object from the scene, or with volume_id one of its volumes (a part, modifier, negative or support volume), as the object list's Delete does, in one undo step. Objects after a deleted one move down by one. Deleting a piece of a cut ends the cut's link for its other pieces (cut_info_invalidated_for). An object's last solid part is not deleted on its own (delete the object), nor a cut object's solid part until invalidate_cut_info. When deleting a volume leaves one, its settings move to the object (settings_moved_to_object), as the list does. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange or orient runs.",
+      "description": "Remove an object from the scene, or with volume_id one of its volumes (a part, modifier, negative or support volume), or with instance_id one of its instances (linked copies), as the object list's Delete does, in one undo step. Objects after a deleted one move down by one, and so do instances after a deleted instance; an object's only instance is the object (delete it without instance_id). Deleting a piece of a cut ends the cut's link for its other pieces (cut_info_invalidated_for). An object's last solid part is not deleted on its own (delete the object), nor a cut object's solid part until invalidate_cut_info. When deleting a volume leaves one, its settings move to the object (settings_moved_to_object), as the list does. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange or orient runs.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
           "include_preview": {
             "description": "Return turntable preview path",
             "type": "boolean"
+          },
+          "instance_id": {
+            "description": "Delete this instance (as get_object_info's instance_placement lists them) instead of the object; not with volume_id",
+            "minimum": 0,
+            "type": "integer"
           },
           "object_id": {
             "description": "Object index (0-based)",
@@ -557,7 +596,7 @@
         "type": "object"
       },
       "name": "delete_object",
-      "summary": "Remove an object or one of its parts"
+      "summary": "Remove an object, a part or an instance"
     },
     {
       "category": "Layer Ranges",
@@ -686,6 +725,59 @@
       },
       "name": "export_gcode",
       "summary": "Write the sliced plate's G-code"
+    },
+    {
+      "category": "Transforms",
+      "description": "Fill the free space of a plate with instances (linked copies) of an object, as the GUI's Fill bed with instances does: the plate the instance stands on, made current first, gets as many as fit, then its objects are arranged; one undo step (the GUI's takes two). The arrange menu's options this call gives are saved and used, as the menu's are. Answered once the fill and its arrange have been applied, with instances_added (0 when nothing more fits) and every object on the plate with its placement (previous_object_id when the arrange moved one in the object list). Past the bridge's cap: status fill_bed_started with finished false, and get_slicing_status's ui_job says when it has ended. Refused for an object with an unprintable instance or a piece of a cut, an instance on no plate, and while another job runs; an open toolbar tool is closed first (closed_toolbar_tool).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "align_to_y_axis": {
+            "description": "Line objects up along Y (Align to Y axis); not with auto_rotate. Kept until the app restarts or the printer changes, as the menu keeps it",
+            "type": "boolean"
+          },
+          "allow_multiple_materials": {
+            "description": "Let objects of different filaments share a plate (Allow multiple materials on same plate). Saved as the arrange menu saves it: every later arrange uses it.",
+            "type": "boolean"
+          },
+          "auto_rotate": {
+            "description": "Turn objects about Z to fit more (Auto rotate for arrangement). Saved as the arrange menu saves it: every later arrange uses it.",
+            "type": "boolean"
+          },
+          "avoid_calibration_region": {
+            "description": "Keep clear of the extrusion calibration area; only on a Bambu Lab printer that scans its first layer. Saved as the arrange menu saves it: every later arrange uses it.",
+            "type": "boolean"
+          },
+          "include_preview": {
+            "description": "Return turntable preview path, drawn once the fill has been applied",
+            "type": "boolean"
+          },
+          "instance_id": {
+            "description": "The instance whose plate is filled, and whose placement the new ones copy (default 0), as get_object_info's instance_placement lists them",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "object_id": {
+            "description": "Object index (0-based)",
+            "type": "integer"
+          },
+          "reset_options": {
+            "description": "The arrange menu's Reset, before the options this call gives: automatic spacing, no auto-rotate, several materials allowed, align to Y as the printer's default",
+            "type": "boolean"
+          },
+          "spacing_mm": {
+            "description": "Gap between objects in mm, 0 for automatic spacing (the arrange menu's Spacing), for the current print sequence's set. Saved as the arrange menu saves it: every later arrange uses it.",
+            "minimum": 0,
+            "type": "number"
+          }
+        },
+        "required": [
+          "object_id"
+        ],
+        "type": "object"
+      },
+      "name": "fill_bed_with_instances",
+      "summary": "Fill a plate with an object's instances"
     },
     {
       "category": "Transforms",
@@ -2581,6 +2673,36 @@
       "summary": "Choose the G-code preview color mode"
     },
     {
+      "category": "Transforms",
+      "description": "Set how many instances (linked copies: one mesh, each placed on its own) an object has, as the GUI's Set number of instances does, in one undo step: new ones are added a small step from the last one, as Add instance places them (they may overlap: next_steps then names arrange_objects), and a lower count removes the last ones. count is 1 to 1000; to remove the object, delete_object; to remove one chosen instance, delete_object with instance_id. Answers the instances added or removed and each instance's placement; the same count is changed: false, with no undo step. Refused for an object with an unprintable instance or a piece of a cut, as the GUI's menu is, and while an arrange, orient or bed fill runs. An open toolbar tool is closed first (closed_toolbar_tool).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "description": "How many instances, 1 to 1000",
+            "maximum": 1000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "include_preview": {
+            "description": "Return turntable preview path",
+            "type": "boolean"
+          },
+          "object_id": {
+            "description": "Object index (0-based)",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "object_id",
+          "count"
+        ],
+        "type": "object"
+      },
+      "name": "set_instance_count",
+      "summary": "Set how many instances an object has"
+    },
+    {
       "category": "Filaments & colour",
       "description": "Create or edit a mixed (virtual) filament slot that alternates two or three physical filaments by layer ratio. Requires a multi-filament printer profile.",
       "inputSchema": {
@@ -2816,6 +2938,102 @@
       },
       "name": "set_object_printable",
       "summary": "Include or skip an object when slicing"
+    },
+    {
+      "category": "Plates",
+      "description": "Change a plate's own settings, as its settings dialog, name editor and lock icon do: bed_type, print_sequence, the filament order of the first layer and of later layer ranges, spiral_vase, name and locked (a locked plate's objects stay put when arranging). Only what the call gives changes, in one undo step; the answer's settings are in this tool's argument shape (sent back, they change nothing), effective says what applies. \"global\" follows the printer's and print settings. A plate whose slicing settings change is made the current plate first, as the dialog does. spiral_vase \"on\" is the dialog's Enable answered Yes: every object on the plate gets the vase's object settings (one wall, no top shell, no infill, no support), which are the object's, so its copies on other plates print with them too (vase_settings_applied lists them); \"off\" and \"global\" leave those settings on the objects. A plate's own bed_type is offered for Bambu Lab printers only (elsewhere the plate follows the global one, apply_config's project curr_bed_type). The same settings again: changed false, no undo step.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "bed_type": {
+            "description": "\"global\", or a bed type the printer offers, as the config spells it: \"Cool Plate\", \"Engineering Plate\", \"High Temp Plate\", \"Textured PEI Plate\", \"Textured Cool Plate\", \"Supertack Plate\"",
+            "type": "string"
+          },
+          "first_layer_filament_order": {
+            "description": "\"auto\", or every filament number (1-based) once, in the order the first layer prints them",
+            "items": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "type": [
+              "string",
+              "array"
+            ]
+          },
+          "locked": {
+            "description": "Lock the plate: arranging and auto-orient leave its objects where they are",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "The plate's name, up to 250 characters; \"\" for none",
+            "type": "string"
+          },
+          "other_layers_filament_order": {
+            "description": "\"auto\", or layer ranges from layer 2 on, each with every filament number once in printing order; ranges may not share a layer",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "from_layer": {
+                  "description": "First layer of the range, 2 or more",
+                  "minimum": 2,
+                  "type": "integer"
+                },
+                "order": {
+                  "description": "Every filament number once, in printing order",
+                  "items": {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "type": "array"
+                },
+                "to_layer": {
+                  "description": "Last layer of the range; null or left out: the last layer",
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "from_layer",
+                "order"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "string",
+              "array"
+            ]
+          },
+          "plate_index": {
+            "description": "Plate index (0-based). Default: the current plate",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "print_sequence": {
+            "description": "Print the plate by layer or by object",
+            "enum": [
+              "global",
+              "by layer",
+              "by object"
+            ],
+            "type": "string"
+          },
+          "spiral_vase": {
+            "description": "\"on\" also gives every object on the plate the vase's object settings (see the description); \"global\" follows the print settings",
+            "enum": [
+              "global",
+              "on",
+              "off"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "set_plate_settings",
+      "summary": "Change a plate's settings, name or lock"
     },
     {
       "category": "Plates",

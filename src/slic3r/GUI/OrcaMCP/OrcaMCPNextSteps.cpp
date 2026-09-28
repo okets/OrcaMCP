@@ -238,4 +238,51 @@ std::vector<NextStep> support_paint_next_steps(int object_id, bool support_enabl
               {"settings", {{{"key", "enable_support"}, {"value", "1"}}, {{"key", "support_type"}, {"value", manual}}}}}}};
 }
 
+namespace {
+
+// "instance 3" / "instances 3 and 4".
+std::string named_ids(const std::string& noun, const std::vector<int>& ids)
+{
+    return noun + (ids.size() == 1 ? " " : "s ") + listed_ids(ids);
+}
+
+} // namespace
+
+std::vector<NextStep> added_instances_next_steps(int object_id, int plate_index, const std::vector<int>& crowded,
+                                                 const std::vector<int>& off_plate)
+{
+    if (crowded.empty() && off_plate.empty())
+        return {};
+    std::string why = "the GUI's Add instance puts each new instance a small step from the last one, not where there is room: ";
+    if (!crowded.empty())
+        why += named_ids("instance", crowded) + " of object " + std::to_string(object_id) + (crowded.size() == 1 ? " overlaps" : " overlap") +
+               " another";
+    if (!off_plate.empty())
+        why += std::string(crowded.empty() ? "" : ", and ") + named_ids("instance", off_plate) + (off_plate.size() == 1 ? " stands" : " stand") +
+               " off the plate";
+    if (plate_index < 0)
+        return {{"arrange_objects", why + ": it arranges the current plate's objects", nullptr}};
+    return {{"arrange_objects", why + ": it spaces plate " + std::to_string(plate_index) + "'s objects", {{"plate_index", plate_index}}}};
+}
+
+std::vector<NextStep> print_by_object_next_steps(int plate_index)
+{
+    return {{"arrange_objects",
+             "plate " + std::to_string(plate_index) + " now prints by object, each object whole before the next, so the print head must "
+             "clear the ones already printed: an arrange of the plate spaces them for it, as the app's notice suggests",
+             {{"plate_index", plate_index}}}};
+}
+
+std::vector<NextStep> vase_settings_next_steps(const std::vector<int>& object_ids, const std::vector<std::string>& first_keys)
+{
+    if (object_ids.empty() || first_keys.empty())
+        return {};
+    return {{"reset_object_config",
+             named_ids("object", object_ids) + (object_ids.size() == 1 ? " still carries" : " still carry") +
+                 " the object settings spiral vase gives (one wall, no top shell, no infill), which print thin and open without "
+                 "the vase: this removes them from object " + std::to_string(object_ids.front()) +
+                 (object_ids.size() > 1 ? "; call it for each" : ""),
+             {{"object_id", object_ids.front()}, {"keys", first_keys}}}};
+}
+
 }}} // namespace Slic3r::GUI::OrcaMCP

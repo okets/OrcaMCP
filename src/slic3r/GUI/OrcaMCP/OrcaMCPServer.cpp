@@ -6,6 +6,7 @@
 #include "OrcaMCPImageFiles.hpp"
 #include "OrcaMCPInstanceRegistry.hpp"
 #include "OrcaMCPPartEdits.hpp"
+#include "OrcaMCPArrangeTools.hpp"
 #include "OrcaMCPPartTools.hpp"
 #include "OrcaMCPConfigKeys.hpp"
 #include "OrcaMCPConfigValues.hpp"
@@ -1386,7 +1387,10 @@ void OrcaMCPServer::register_builtin_tools()
         "height, supports, infill, walls, speeds, temperatures -- several in one call. Types: print | "
         "filament | printer | project. The change stays unsaved in the preset until save_preset. To switch "
         "to another preset, use select_preset; for one object only, set_object_config; for a slot's colour "
-        "on the plate, set_filament_color.",
+        "on the plate, set_filament_color. The global bed type is project key curr_bed_type, set as the "
+        "sidebar's bed-type list sets it (the plates that follow it lose their slice, and the printer "
+        "remembers it); a bed type the printer does not offer is refused, and so is any change on a printer "
+        "with one bed type, where the sidebar greys the list out. A plate's own bed type: set_plate_settings.",
         {
             {"type", "object"},
             {"properties", {
@@ -1765,30 +1769,27 @@ void OrcaMCPServer::register_builtin_tools()
         }
     });
 
-    // arrange_objects - Arrange objects on plate
+    // arrange_objects - Arrange one plate, or every plate, with the arrange menu's options (OrcaMCPArrangeTools.cpp)
     register_tool({
         "arrange_objects",
         ToolCategory::Models,
-        "Arrange the current plate's objects",
-        "Arrange every object on the current plate, as the plate's Arrange does, and answer once the "
-        "arrange has been applied: status success with objects, each one's placement (position, "
-        "rotation_degrees, scale, changed, and rotate_object's placement fields). The arrange runs in the background while "
-        "this waits, up to the bridge's cap (15 s below ORCAMCP_TIMEOUT); still running then, status "
-        "arrange_started with finished false, and get_slicing_status's ui_job says when it has finished. "
-        "status cancelled when the app cancelled it (nothing moved); refused while another job runs.",
+        "Arrange a plate's objects or all plates",
+        "Arrange the objects on a plate -- the current one, or plate_index, made current first as the plate's own Arrange icon does -- "
+        "or with all_plates every object on every plate that is not locked, as the A key does (it may add plates, and move "
+        "unprintable objects to a plate after the last). The arrange menu's options this call gives (spacing_mm, auto_rotate, "
+        "allow_multiple_materials, align_to_y_axis, avoid_calibration_region, reset_options) are saved as the menu saves them, and "
+        "every later arrange uses them, clone_object's and fill_bed_with_instances' too; arrange_options reports the ones in force. "
+        "Answered once the arrange has been applied: status success with objects, each one's placement (position, rotation_degrees, "
+        "scale, changed, and rotate_object's placement fields, and previous_object_id when the arrange moved it in the object list: "
+        "an arrange re-sorts the objects, so re-read object_id). The arrange runs in the background while this waits, up to the "
+        "bridge's cap (15 s below ORCAMCP_TIMEOUT); still running then, status arrange_started with finished false, and "
+        "get_slicing_status's ui_job says when it has finished. status cancelled when the app cancelled it (nothing moved). Refused "
+        "for a locked plate (set_plate_settings unlocks it) and while another job runs.",
         {
             {"type", "object"},
-            {"properties", {
-                {"include_preview", {
-                    {"type", "boolean"},
-                    {"description", "Return turntable preview path, drawn once the arrange has been applied"}
-                }}
-            }}
+            {"properties", arrange_objects_properties()}
         },
-        [](const nlohmann::json& params) -> nlohmann::json {
-            return run_plate_ui_job("arrange_objects", UiJobKind::arrange, params.value("include_preview", false),
-                                    "Check the preview image to see the new arrangement of objects on the plate.");
-        }
+        [](const nlohmann::json& params) -> nlohmann::json { return arrange_objects(params); }
     });
 
     // undo - Undo last operation
@@ -5271,10 +5272,12 @@ void OrcaMCPServer::register_builtin_tools()
     register_tool({
         "delete_object",
         ToolCategory::Transforms,
-        "Remove an object or one of its parts",
+        "Remove an object, a part or an instance",
         "Remove an object from the scene, or with volume_id one of its volumes (a part, modifier, negative "
-        "or support volume), as the object list's Delete does, in one undo step. Objects after a deleted "
-        "one move down by one. Deleting a piece of a cut ends the cut's link for its other pieces "
+        "or support volume), or with instance_id one of its instances (linked copies), as the object list's "
+        "Delete does, in one undo step. Objects after a deleted one move down by one, and so do instances "
+        "after a deleted instance; an object's only instance is the object (delete it without instance_id). "
+        "Deleting a piece of a cut ends the cut's link for its other pieces "
         "(cut_info_invalidated_for). An object's last solid part is not deleted on its own (delete the "
         "object), nor a cut object's solid part until invalidate_cut_info. When deleting a volume leaves "
         "one, its settings move to the object (settings_moved_to_object), as the list does. An open toolbar "
@@ -5290,6 +5293,12 @@ void OrcaMCPServer::register_builtin_tools()
                     {"type", "integer"},
                     {"minimum", 0},
                     {"description", "Delete this volume (as get_object_info lists them) instead of the object"}
+                }},
+                {"instance_id", {
+                    {"type", "integer"},
+                    {"minimum", 0},
+                    {"description", "Delete this instance (as get_object_info's instance_placement lists them) instead of the "
+                                    "object; not with volume_id"}
                 }},
                 {"include_preview", {
                     {"type", "boolean"},
@@ -5670,6 +5679,8 @@ void OrcaMCPServer::register_builtin_tools()
     register_paint_tools();
     register_mesh_tools();
     register_part_tools();
+    register_arrange_tools();
+    register_plate_tools();
     register_bridge_tools();
 
     BOOST_LOG_TRIVIAL(info) << "OrcaMCPServer: Registered " << s_tools.size() << " tools";

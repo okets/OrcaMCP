@@ -332,6 +332,41 @@ TEST_CASE("An assembly is pointed at get_object_info, to list its volumes", "[Mc
     CHECK(steps[0].arguments == json{{"object_id", 5}});
 }
 
+TEST_CASE("Added instances that overlap or stand off the plate point at an arrange of their plate", "[McpNextSteps][orcamcp]")
+{
+    const std::vector<NextStep> steps = added_instances_next_steps(3, 1, {2, 3}, {});
+    REQUIRE(steps.size() == 1);
+    CHECK(steps[0].tool == "arrange_objects");
+    CHECK(steps[0].arguments == json{{"plate_index", 1}});
+    CHECK(steps[0].why.find("instances 2 and 3 of object 3 overlap another") != std::string::npos);
+    CHECK(added_instances_next_steps(3, 1, {}, {4})[0].why.find("instance 4 stands off the plate") != std::string::npos);
+    // On no plate: the current plate's arrange, with no arguments.
+    CHECK(added_instances_next_steps(3, -1, {}, {4})[0].arguments.is_null());
+}
+
+TEST_CASE("Added instances that stand clear need no next step", "[McpNextSteps][orcamcp]")
+{
+    CHECK(added_instances_next_steps(3, 1, {}, {}).empty());
+}
+
+TEST_CASE("A plate that now prints by object points at an arrange of that plate", "[McpNextSteps][orcamcp]")
+{
+    const std::vector<NextStep> steps = print_by_object_next_steps(2);
+    REQUIRE(steps.size() == 1);
+    CHECK(steps[0].tool == "arrange_objects");
+    CHECK(steps[0].arguments == json{{"plate_index", 2}});
+}
+
+TEST_CASE("Vase settings left on objects point at their reset, naming every object", "[McpNextSteps][orcamcp]")
+{
+    const std::vector<NextStep> steps = vase_settings_next_steps({1, 4}, {"top_shell_layers", "wall_loops"});
+    REQUIRE(steps.size() == 1);
+    CHECK(steps[0].tool == "reset_object_config");
+    CHECK(steps[0].arguments == json{{"object_id", 1}, {"keys", {"top_shell_layers", "wall_loops"}}});
+    CHECK(steps[0].why.find("objects 1 and 4 still carry") != std::string::npos);
+    CHECK(vase_settings_next_steps({}, {}).empty());
+}
+
 TEST_CASE("Every next step names a real tool, with arguments its schema accepts", "[McpNextSteps][orcamcp]")
 {
     std::vector<NextStep> steps = Scene({cube_missing_facet(), separate_cubes(2)}).steps();
@@ -355,7 +390,14 @@ TEST_CASE("Every next step names a real tool, with arguments its schema accepts"
         steps.push_back(std::move(step));
     for (NextStep& step : assembled_next_steps(0))
         steps.push_back(std::move(step));
-    REQUIRE(steps.size() == 15);
+    for (const int plate : {1, -1})
+        for (NextStep& step : added_instances_next_steps(0, plate, {1}, {2}))
+            steps.push_back(std::move(step));
+    for (NextStep& step : print_by_object_next_steps(1))
+        steps.push_back(std::move(step));
+    for (NextStep& step : vase_settings_next_steps({0, 2}, {"sparse_infill_density", "wall_loops"}))
+        steps.push_back(std::move(step));
+    REQUIRE(steps.size() == 19);
 
     const mcp_tool_references::ToolNames names(OrcaMCPServer::registered_tools());
     json                                 response = json::object();

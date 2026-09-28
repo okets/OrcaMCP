@@ -31,8 +31,8 @@ into a call that reports success and changes nothing. See [Error Handling](#erro
 |----------|-------|
 | **Scene** | `get_scene_info`, `new_project`, `load_project`, `save_project`, `export_3mf` |
 | **Models** | `load_model`, `auto_orient`, `arrange_objects`, `get_object_info`, `get_mesh_health`, `repair_mesh`, `get_object_components`, `rename_object`, `set_object_printable`, `split_object`, `add_volume`, `set_volume_type`, `assemble_objects`, `merge_parts`, `invalidate_cut_info` |
-| **Transforms** | `move_object`, `rotate_object`, `scale_object`, `mirror_object`, `flatten_object`, `clone_object`, `cut_object`, `delete_object`, `transform_objects` |
-| **Plates** | `add_plate`, `select_plate`, `delete_plate`, `set_prime_tower_position` |
+| **Transforms** | `move_object`, `rotate_object`, `scale_object`, `mirror_object`, `flatten_object`, `clone_object`, `set_instance_count`, `fill_bed_with_instances`, `cut_object`, `delete_object`, `transform_objects` |
+| **Plates** | `add_plate`, `select_plate`, `delete_plate`, `set_prime_tower_position`, `set_plate_settings` |
 | **Config** | `get_presets`, `get_edited_presets`, `get_config_values`, `select_preset`, `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset`, `get_valid_config_keys` |
 | **Per-Object** | `get_object_config`, `set_object_config`, `reset_object_config` |
 | **Layer Ranges** | `get_object_layer_ranges`, `set_object_layer_range`, `delete_object_layer_range` |
@@ -204,7 +204,10 @@ and a stray shell; the object list's warning icon shows for it):
       {"kind": "object", "name": "gallows.stl", "object_index": 0, "instances_on_plate": [0],
        "footprint": {"min_x": 104.0, "min_y": 123.0, "max_x": 152.0, "max_y": 133.0, "size_x": 48.0, "size_y": 10.0},
        "includes_brim": false, "footprint_is_exact": true, "height_mm": 25.0}
-    ]
+    ],
+    "settings": {"name": "", "locked": false, "bed_type": "global", "print_sequence": "global",
+                 "first_layer_filament_order": "auto", "other_layers_filament_order": "auto", "spiral_vase": "global"},
+    "effective": {"bed_type": "Textured PEI Plate", "print_sequence": "by layer", "spiral_vase": false}
   }],
   "unplaced_objects": [],
   "open_dialogs": [],
@@ -234,12 +237,15 @@ Every object description -- `model_objects`, `unplaced_objects`, and `load_model
 the same number, kept for older readers. `internal_id` is the app's own number for the object: stable
 while the app runs, never saved in the project, and taken by no tool (it was called `id`, and an agent
 reading `"id": "71"` beside `"object_index": 0` passed 71). An object's `object_id` shifts when an
-object before it is deleted.
+object before it is deleted, and when an arrange re-sorts the objects (its answer gives
+`previous_object_id`). An object with several instances on a plate is listed once there, with
+`instances_on_plate`.
 
 Every plate carries `plate_index` (what `select_plate`, `render_plate_view` and the other plate tools
 take; `index`, the same number, is kept) and `is_current`: true for the plate per-plate tools act on
 (`export_gcode`, `get_print_estimate` without `plate_index`, `send_to_printer`), whose printable area
-`bed` gives.
+`bed` gives. `settings` are the plate's own settings in `set_plate_settings`' argument shape, and
+`effective` the bed type, print sequence and spiral vase that apply on it.
 
 #### Which filament an object prints with
 
@@ -596,34 +602,60 @@ turned it. Before v2.5.0.6 this answered `orient_started` as soon as the orient 
 ---
 
 ### arrange_objects
-Arrange every object on the current plate, as the plate's **Arrange** does.
+Arrange the objects on a plate, as the plate's own **Arrange** icon does, or on every plate, as the
+**A** key does, with the arrange menu's options.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
+| `plate_index` | integer | No | The plate to arrange, made the current plate first, as the plate's icon does. Default: the current plate |
+| `all_plates` | boolean | No | Every object on every plate that is not locked (the A key). It may add plates, and moves unprintable objects to a plate after the last. Not with `plate_index` |
+| `spacing_mm` | number | No | Gap between objects, 0 for automatic spacing (the menu's Spacing), for the current print sequence's set |
+| `auto_rotate` | boolean | No | Turn objects about Z to fit more (Auto rotate for arrangement) |
+| `allow_multiple_materials` | boolean | No | Let objects of different filaments share a plate |
+| `align_to_y_axis` | boolean | No | Line objects up along Y; not with `auto_rotate`. Kept until the app restarts or the printer changes, as the menu keeps it |
+| `avoid_calibration_region` | boolean | No | Keep clear of the extrusion calibration area; only on a Bambu Lab printer that scans its first layer |
+| `reset_options` | boolean | No | The menu's Reset, before the options this call gives |
 | `include_preview` | boolean | No | Include a preview, drawn once the arrange has been applied |
+
+The options are the arrange menu's, and are saved as the menu saves them: the app config's `arrange`
+section, spacing and auto-rotate per print sequence (by layer, by object), align to Y in memory only.
+Every later arrange uses them -- the GUI's, `clone_object`'s, `fill_bed_with_instances`'.
+`arrange_options` reports the ones in force, with `for_print_sequence`, and `options_changed` which
+this call changed. A plate whose own print sequence differs from the global one is arranged with
+automatic spacing, as the plate's icon does (`spacing_note`).
 
 Answered once the arrange has been applied, with `objects` as `auto_orient` gives them: each one's
 `position`, `plate_index` and `changed` where the arrange put it (see
-[Waiting for the job](#waiting-for-the-job)).
+[Waiting for the job](#waiting-for-the-job)). **An arrange re-sorts the objects**, so an object can
+have another `object_id` afterwards though it did not move: `previous_object_id` says which it had.
+With `all_plates`: `plate_count_before`, `plate_count`, and `plates_not_arranged` (`locked`, or
+`print_sequence_differs`: plates the A key leaves as they are). Refused for a locked plate (unlock it
+with `set_plate_settings`), with nothing to arrange, and while another job runs.
 
 ### Waiting for the job
 
-`arrange_objects`, `auto_orient`, `flatten_object` and `clone_object` start a job the app runs in the
-background (an arrange or an orient) and wait for it before they answer, so their answer, and its
+`arrange_objects`, `auto_orient`, `flatten_object`, `clone_object` and `fill_bed_with_instances` start a
+job the app runs in the background (an arrange, an orient or a bed fill) and wait for it before they
+answer, so their answer, and its
 preview, show the placement the job left, and no other call can land before it has been applied.
 
 | `status` | When |
 |----------|------|
 | `success` | The job was applied: the placement it left |
-| `arrange_started` / `orient_started`, `finished: false`, `ui_job` | Still running when the wait ran out: "Still arranging after 105.0 s: get_slicing_status's ui_job stays \"arranging\" until it has finished; then get_scene_info reads the result." The wait is the bridge's cap: 15 s below `ORCAMCP_TIMEOUT` (105 s at the default 120 s), a quarter below it under 60 s, none under 2 s. The bridge sends it with every tool call as `params._meta["orcamcp/wait_cap_s"]`; without it the app waits up to 105 s |
-| `arrange_started` / `orient_started`, `finished: false` | The app began quitting during the wait |
+| `arrange_started` / `orient_started` / `fill_bed_started`, `finished: false`, `ui_job` | Still running when the wait ran out: "Still arranging after 105.0 s: get_slicing_status's ui_job stays \"arranging\" until it has finished; then get_scene_info reads the result." The wait is the bridge's cap: 15 s below `ORCAMCP_TIMEOUT` (105 s at the default 120 s), a quarter below it under 60 s, none under 2 s. The bridge sends it with every tool call as `params._meta["orcamcp/wait_cap_s"]`; without it the app waits up to 105 s |
+| `arrange_started` / `orient_started` / `fill_bed_started`, `finished: false` | The app began quitting during the wait |
 | `cancelled` | The app cancelled the job before applying it (another job, a deleted object or a new project cancels it), or another job replaced it before it started: nothing moved, and its undo step restores nothing |
 | `error` | The job failed; `message` says why |
 
 While another job (an arrange, an orient or a bed fill) holds the app, each of these refuses to start:
 "another job (an arrange, an orient or a bed fill) is running: poll get_slicing_status until ui_job is
 null, then call auto_orient again".
+
+A bed fill is two jobs: the fill, then the arrange of its plate, which the fill starts when it is
+applied. `fill_bed_with_instances` waits for both; past the cap in the second, it answers
+`fill_bed_started` with `ui_job` `other`, and `get_slicing_status`'s `ui_job` is null once it has ended.
+Its one undo step undoes both, where the GUI's Fill bed takes two.
 
 ---
 
@@ -1287,6 +1319,54 @@ another job runs it is refused before anything is copied.
 
 ---
 
+### set_instance_count
+Set how many instances (linked copies: one mesh, each placed on its own) an object has, as the GUI's
+**Set number of instances** does, without its number dialog.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `object_id` | integer | Yes | Object index |
+| `count` | integer | Yes | How many instances, 1 to 1000 |
+| `include_preview` | boolean | No | Include preview |
+
+New instances go a small step from the last one, as **Add instance** puts them, not where there is
+room: when one overlaps another instance on its plate, or stands off every plate, `next_steps` names
+`arrange_objects` for that plate. A lower count removes the last instances (**Remove instance**); to
+remove a chosen one, `delete_object` with `instance_id`; to remove the object, `delete_object`. The
+answer gives `instance_count_before`, `instance_count`, `added_instance_ids` or
+`removed_instance_ids`, and each instance's placement (`instance_placement`). One undo step; the same
+count is `changed: false`, with none. Refused, as the GUI's menu is, for an object with an unprintable
+instance (make it printable with `set_object_printable`) and for a piece of a cut (`invalidate_cut_info`
+ends the cut), and while an arrange, orient or bed fill runs. An open toolbar tool is closed first
+(`closed_toolbar_tool`). A new instance that lands on a spiral-vase plate gives the object the vase's
+settings, as in the GUI; the app's notice is in `info_messages`.
+
+---
+
+### fill_bed_with_instances
+Fill the free space of a plate with instances of an object, as the GUI's **Fill bed with instances**
+does.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `object_id` | integer | Yes | Object index |
+| `instance_id` | integer | No | The instance whose plate is filled and whose placement the new ones copy (default 0) |
+| `spacing_mm`, `auto_rotate`, `allow_multiple_materials`, `align_to_y_axis`, `avoid_calibration_region`, `reset_options` | | No | The arrange menu's options, as `arrange_objects` takes and saves them |
+| `include_preview` | boolean | No | Include preview, drawn once the fill has been applied |
+
+The plate the instance stands on is made current, the fill adds as many instances as its estimate of
+the free area allows, then the plate's objects are arranged, as the GUI's fill does. The answer comes
+once both are applied: `plate_index`, `instances_added` (0 when nothing more fits), `instance_count`,
+`arrange_options`, and every object on the plate with its placement (`previous_object_id` when the
+arrange re-sorted one). The fill's estimate can add more than the arrange then fits: those instances
+stand on no plate, and the object's `placement_warning` names them. One undo step undoes both, where
+the GUI's takes two. Refused for an object with an unprintable instance or a piece of a cut, for an
+instance on no plate, and while another job runs; see [Waiting for the job](#waiting-for-the-job).
+
+---
+
 ### cut_object
 Cut an object at a specified Z height.
 
@@ -1319,8 +1399,8 @@ deletes); an open toolbar tool is closed first (`closed_toolbar_tool`).
 ---
 
 ### delete_object
-Remove an object from the project, or with `volume_id` one of its volumes, as the object list's
-Delete does, in one undo step ("Delete Selected Objects"). Before v2.5.0.6 deleting an object took no
+Remove an object from the project, or with `volume_id` one of its volumes, or with `instance_id` one of
+its instances, as the object list's Delete does, in one undo step ("Delete Selected Objects"). Before v2.5.0.6 deleting an object took no
 undo step, so an undo after it also undid the call before it.
 
 **Parameters:**
@@ -1328,6 +1408,7 @@ undo step, so an undo after it also undid the call before it.
 |-----------|------|----------|-------------|
 | `object_id` | integer | Yes | Object index |
 | `volume_id` | integer | No | Delete this volume (a part, modifier, negative or support volume) instead of the object |
+| `instance_id` | integer | No | Delete this instance (as `get_object_info`'s `instance_placement` lists them) instead of the object; not with `volume_id` |
 | `include_preview` | boolean | No | Include preview |
 
 - **An object:** the objects after it move down by one. A piece of a cut asks, in the app, whether to
@@ -1338,6 +1419,12 @@ undo step, so an undo after it also undid the call before it.
   them. When one volume is left, its own settings move to the object, as the list moves them
   (`settings_moved_to_object`), and its transform moves into the instances. The answer lists the
   deleted volume and the volumes left, with the object's placement.
+- **An instance:** the object list's Delete on that instance's row. The instances after it move down
+  by one (`instance_ids_shifted`), and each stays on its plate: before v2.5.0.6 the plates kept every
+  later instance under its old number (probe AM). Refused for the object's only instance, which is the
+  object (the list's "Last instance of an object cannot be deleted"): delete the object. The answer
+  gives `instance_count` and the placement of the instances left. To remove the last instances,
+  `set_instance_count`.
 
 An open toolbar tool is closed first (`closed_toolbar_tool`); refused while an arrange or orient runs.
 
@@ -1491,6 +1578,49 @@ resolved.
   "active_warnings": {"count": 0, "warnings": []}
 }
 ```
+
+---
+
+### set_plate_settings
+Change a plate's own settings, as its settings dialog, its name editor and its lock icon do.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `plate_index` | integer | No | The plate (default: the current plate) |
+| `name` | string | No | The plate's name, up to 250 characters; `""` for none |
+| `locked` | boolean | No | A locked plate's objects stay where they are when arranging and orienting |
+| `bed_type` | string | No | `"global"`, or a bed type the printer offers, as the config spells it: `"Cool Plate"`, `"Engineering Plate"`, `"High Temp Plate"`, `"Textured PEI Plate"`, `"Textured Cool Plate"`, `"Supertack Plate"` |
+| `print_sequence` | string | No | `"global"`, `"by layer"` or `"by object"` |
+| `first_layer_filament_order` | `"auto"` or array | No | Every filament number (1-based) once, in the order the first layer prints them |
+| `other_layers_filament_order` | `"auto"` or array | No | Ranges `{from_layer (2 or more), to_layer (null or left out: the last layer), order}`, each with every filament once; ranges may not share a layer |
+| `spiral_vase` | string | No | `"global"`, `"on"` or `"off"` |
+
+Only what the call gives changes, in one undo step ("Plate Settings"); the same settings again answer
+`changed: false`, with none. The answer's `settings` are in this tool's own argument shape -- sent back
+as they are, they change nothing -- `effective` says what applies (the plate's own setting, else the
+global one: the project's bed type, the print settings' sequence and vase), and `changed_settings`
+which changed. `get_scene_info` reports both for every plate.
+
+- **The plate made current:** a change to a slicing setting (all but `name` and `locked`) first makes
+  the plate the current one, as its settings icon does (`current_plate_index`), and the plate loses its
+  slice. `print_sequence: "by object"` leads to `arrange_objects` of the plate (`next_steps`), as the
+  app's notice suggests.
+- **Spiral vase:** `"on"` is the dialog's Enable, answered Yes to its question ("Change these settings
+  automatically?"; its No cancels the vase, so no argument asks for it; the question is in
+  `info_messages`): every object on the plate gets the object settings the vase needs -- one wall, no
+  top shell, no infill, no support, traditional timelapse. They are the object's, so its copies on other
+  plates print with them too: `vase_settings_applied` lists each object changed, its settings and
+  `also_on_plates`. Before v2.5.0.6 only the plate's first object got them (probe AN). `"off"` and
+  `"global"` leave those settings on the objects; `next_steps` then names `reset_object_config` for
+  them. On a plate that follows a vase turned on in the print settings, `"on"` changes nothing (the
+  plate keeps following it; `spiral_vase_note`).
+- **Refused, before anything changes:** a plate's own bed type on a printer that is not Bambu Lab's (the
+  dialog greys it out there; the plate follows the global bed type, `apply_config`'s project
+  `curr_bed_type`), a bed type the printer does not offer, a filament order that does not list each
+  filament once, a custom order while the project has mixed filaments (the dialog turns it off), a
+  range starting before layer 2, ending before it starts or overlapping another, and a name over 250
+  characters.
 
 ---
 
@@ -1731,6 +1861,16 @@ half its writes silently. `set_object_config` reports the same array per object.
 **Colours:** a colour-typed key (`filament_colour`, `extruder_colour`, ...) must be `#RRGGBB` or
 `#RRGGBBAA`; an empty value means "no colour". Anything else (`B17C38`, `#GGGGGG`) is rejected into
 `invalid_keys` with the previous value kept, instead of being stored and later decoded as black.
+
+**The global bed type:** `curr_bed_type`, type `project`, is set as the sidebar's bed-type list sets it
+(`Plater::priv::on_select_bed_type`): the list and the bed picture follow, the plates that follow the
+global bed type lose their slice (a plate with its own keeps it; `set_plate_settings` sets a plate's),
+and the printer remembers it, so it survives a restart and a switch to another printer and back. Before
+v2.5.0.6 only the value was written, and a restart brought the old one back. **Behaviour change:** a
+value the printer's list does not offer is rejected (`rejected_values`, with the offered ones), and so
+is any change on a printer with one bed type -- neither Bambu Lab's nor `support_multi_bed_types` --
+where the sidebar greys its list out; its own bed type is accepted as no change. `curr_bed_type` sent
+with any other type is rejected: it is the project's.
 
 **Lists:** a key that `get_valid_config_keys` reports as `strings` / `ints` / `bools` / `floats` takes
 a JSON array, and the joined string form keeps working:
@@ -3409,6 +3549,9 @@ nothing to suggest has no `next_steps`.
 | `add_volume` | `move_object` with `object_id` and `volume_id` | a primitive: it stands beside the object |
 | `add_volume`, `set_volume_type` | `set_object_config` with `object_id` and `volume_id` | the volume is a modifier, which changes only the settings it is given |
 | `assemble_objects` | `get_object_info` of the assembly | always: its volumes, with their boxes |
+| `set_instance_count` | `arrange_objects` with the `plate_index` of the new instances (none when they are on no plate: the current plate) | an added instance overlaps another instance on its plate, or stands off every plate: Add instance puts each a small step from the last |
+| `set_plate_settings` | `arrange_objects` with that `plate_index` | the plate now prints by object |
+| | `reset_object_config` with the first object and the vase settings it carries (`why` names every object) | the plate's spiral vase was on and is off, and objects on it still carry the vase's object settings |
 | The bridge's own answers (`list_instances`, `start_orca`, and a tool call it did not forward) | `select_instance` with the `pid` of the first instance that tells who it is (never an older OrcaMCP, which cannot), and `list_instances` | several instances run and this session has not chosen one, or the one it used is gone |
 | | `start_orca` (with `new_instance: true` when others run) | no instance runs, or the one this session used is gone |
 | | `get_scene_info` | the instance this session used restarted, and the session now uses the restarted one: its scene is new |

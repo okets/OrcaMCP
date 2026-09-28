@@ -75,6 +75,9 @@ add_executable(${_TEST_NAME}_tests
     test_mesh_health.cpp
     test_mesh_repair.cpp
     test_part_edits.cpp
+    test_arrange_options.cpp
+    test_instance_edits.cpp
+    test_plate_settings.cpp
     ../fff_print/test_helpers.cpp
     )
 

@@ -3,6 +3,7 @@
 
 #include "slic3r/GUI/OrcaMCP/OrcaMCPJsonRpcError.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPPaintModel.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPPlateSettings.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPPrinterUtils.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPServer.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPServerInfo.hpp"
@@ -230,6 +231,20 @@ TEST_CASE("The position, rotation and scale an object reports are taken back by 
     const json reported = {{"x", 128.0}, {"y", 128.0}, {"z", 10.0}};
     CHECK(refusal("transform_objects",
                   {{"transforms", {{{"object_id", 0}, {"position", reported}, {"rotation", reported}, {"scale", reported}}}}}) == "");
+}
+
+TEST_CASE("The settings a plate reports are taken back by set_plate_settings", "[McpToolArguments][orcamcp][tools]")
+{
+    // get_scene_info and set_plate_settings report a plate's settings in set_plate_settings' own shape.
+    Slic3r::GUI::OrcaMCP::PlateSettings settings;
+    settings.name               = "Left";
+    settings.first_layer_order  = {2, 1};
+    settings.other_layers_order = {{{2, 9}, {1, 2}}, {{10, Slic3r::GUI::OrcaMCP::k_last_layer}, {2, 1}}};
+    json arguments              = Slic3r::GUI::OrcaMCP::plate_settings_json(settings);
+    arguments["plate_index"]    = 0;
+    CHECK(refusal("set_plate_settings", arguments) == "");
+    CHECK(contains(refusal("set_plate_settings", {{"other_layers_filament_order", {{{"from_layer", 2}, {"layers", 3}, {"order", {1}}}}}}),
+                   "has no key \"layers\""));
 }
 
 TEST_CASE("A printer status nozzle entry is refused as a nozzles target, not read as no change",

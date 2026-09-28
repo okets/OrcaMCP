@@ -359,7 +359,8 @@ std::optional<std::string> flatten_refusal(int object_id, bool printable, size_t
     if (instances == 0)
         return object + " has no instance to orient";
     if (instances_on_locked_plates.size() == instances)
-        return object + " is on a locked plate, which is never oriented: unlock the plate, or turn it with rotate_object";
+        return object + " is on a locked plate, which is never oriented: unlock the plate (set_plate_settings locked: false), or turn it with "
+                        "rotate_object";
     if (!instances_on_locked_plates.empty()) {
         const bool  one = instances_on_locked_plates.size() == 1;
         std::string ids;
@@ -367,7 +368,8 @@ std::optional<std::string> flatten_refusal(int object_id, bool printable, size_t
             ids += (ids.empty() ? "" : ", ") + std::to_string(id);
         return object + " has " + (one ? "instance " : "instances ") + ids +
                " on a locked plate, which the orient would move up or down with the others without turning " +
-               (one ? "it: unlock its plate, or move it" : "them: unlock their plate, or move them") +
+               (one ? "it: unlock its plate (set_plate_settings locked: false), or move it" :
+                     "them: unlock their plate (set_plate_settings locked: false), or move them") +
                " to another plate, then call flatten_object again";
     }
     return std::nullopt;

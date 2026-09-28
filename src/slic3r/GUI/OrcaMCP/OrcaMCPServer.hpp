@@ -160,6 +160,10 @@ private:
     static void register_mesh_tools();
     // Parts and mesh edits: split, add volumes, change their type, assemble, merge (OrcaMCPPartTools.cpp)
     static void register_part_tools();
+    // Instances: set_instance_count, fill_bed_with_instances (OrcaMCPArrangeTools.cpp)
+    static void register_arrange_tools();
+    // A plate's own settings: set_plate_settings (OrcaMCPPlateTools.cpp)
+    static void register_plate_tools();
     // Tools orcamcp-bridge.py answers itself (start_orca)
     static void register_bridge_tools();
 };
