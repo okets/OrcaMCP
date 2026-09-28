@@ -341,8 +341,9 @@ inline std::string join_lines(const std::vector<std::string>& lines)
 
 // RAII: suppress modal dialogs for the lifetime of the guard and collect their messages.
 // Nest-safe: an inner guard keeps the outer guard's messages and restores its state.
-// answer_prompt chooses the answer for one keyed prompt (MsgDialog::set_mcp_prompt_key) until the
-// outermost guard ends, so no later call inherits it.
+// answer_prompt chooses the answer for one keyed prompt (MsgDialog::set_mcp_prompt_key), and
+// answer_file / answer_files / answer_folder the path a native file or folder dialog gets
+// (mcp_answer_path_dialog), until the outermost guard ends, so no later call inherits them.
 struct McpDialogSuppressionGuard
 {
     McpDialogSuppressionGuard() : m_was_enabled(is_mcp_dialog_suppression_enabled())
@@ -350,13 +351,16 @@ struct McpDialogSuppressionGuard
         if (!m_was_enabled) {
             clear_mcp_suppressed_messages();
             clear_mcp_prompt_answers();
+            clear_mcp_path_answers();
         }
         set_mcp_dialog_suppression(true);
     }
     ~McpDialogSuppressionGuard()
     {
-        if (!m_was_enabled)
+        if (!m_was_enabled) {
             clear_mcp_prompt_answers();
+            clear_mcp_path_answers();
+        }
         set_mcp_dialog_suppression(m_was_enabled);
     }
     // Everything the suppressed dialogs said, errors included.
@@ -399,6 +403,11 @@ struct McpDialogSuppressionGuard
     {
         set_mcp_prompt_answer(key, answer_id, note);
     }
+    // The path a native file or folder dialog of this call gets instead of opening
+    // (mcp_answer_path_dialog), until the outermost guard ends.
+    void answer_file(const std::string& path) { answer_files({path}); }
+    void answer_files(const std::vector<std::string>& paths) { set_mcp_path_answer(McpPathDialog::file, paths); }
+    void answer_folder(const std::string& path) { set_mcp_path_answer(McpPathDialog::folder, {path}); }
 
 private:
     bool m_was_enabled;

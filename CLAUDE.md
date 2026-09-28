@@ -993,6 +993,7 @@ given: `"<prompt> (auto-answered <answer>)"`. OK-only notices are captured as th
 | `UnsavedChangesDialog` (modified presets on new/load project, preset switch) | Discard the preset changes; the message names up to eight changed keys, `(auto-answered Discard: the changes were lost)` |
 | `ProjectDropDialog` (project load behaviour) | Never shown under MCP, whatever `project_load_behaviour` says and whether the scene is empty: `load_model` always imports a 3MF as geometry only (no presets applied, no scene reset, no rename; decided by `OrcaMCP::choose_3mf_load`). `load_project` opens a 3MF as a project. |
 | Native file dialogs (`wxFileDialog` via `Plater::priv::get_export_file`) | Never opened (`auto-answered Cancel`). `save_project` without a name returns an error asking for `output_path`; `export_gcode` / `export_3mf` without `output_path` return an error asking for a path. |
+| Native file and folder dialogs that read the call's path (`mcp_answer_path_dialog`, `GUI.cpp`): the model chooser of `GUI_App::import_model` (the object list's Load… of a part or modifier) | Never opened. The tool sets the path on its guard (`answer_file` / `answer_files` / `answer_folder`) and the dialog gets it: `"<dialog title> (auto-answered <path>)"`. With no answer set it is cancelled (`auto-answered Cancel`). `add_volume`'s `file_path` answers the model chooser |
 | Archive contents picker (`FileArchiveDialog`, loading a .zip) | Not opened; the ZIP is not imported (`auto-answered Cancel`), and `load_model` returns an error |
 | `StepMeshDialog` (STEP/STP import tessellation) | Not opened; imported with the configured linear/angle deflection, which the message states |
 | `TextureImportDialog` (textured or vertex-coloured OBJ, GLB, GLTF, FBX) | Not opened; imported as plain geometry, colours not mapped (`auto-answered Skip`) |
@@ -1006,8 +1007,15 @@ given: `"<prompt> (auto-answered <answer>)"`. OK-only notices are captured as th
 
 Dialog suppression is implemented in:
 - `GUI.hpp/cpp`: `set_mcp_dialog_suppression()`, `is_mcp_dialog_suppression_enabled()`,
-  `add_mcp_suppressed_answer()` (the `(auto-answered …)` format every site uses), and the per-prompt
-  answers (`set_mcp_prompt_answer()`, `mcp_answer_for()`)
+  `add_mcp_suppressed_answer()` (the `(auto-answered …)` format every site uses), the per-prompt
+  answers (`set_mcp_prompt_answer()`, `mcp_answer_for()`), and the per-call file and folder answers
+  (`set_mcp_path_answer()`, `mcp_answer_path_dialog()`)
+- Native file and folder dialogs: the call site asks `mcp_answer_path_dialog(title, McpPathDialog::file`
+  or `folder, paths)` first; when it returns true (suppression is on) it uses `paths` -- the path the
+  tool set with `McpDialogSuppressionGuard::answer_file()`, `answer_files()` or `answer_folder()`, or
+  none, which is Cancel -- and never opens its dialog. The answers last until the outermost guard ends.
+  A file answer never answers a folder dialog, nor the reverse. Wired at `GUI_App::import_model`; a new
+  native dialog on an MCP path needs only its call site
 - `MsgDialog.cpp`: `ShowModal()` override checks suppression flag; a dialog tagged with
   `set_mcp_prompt_key()` takes the answer the tool set with `McpDialogSuppressionGuard::answer_prompt()`,
   and one tagged `set_mcp_error()` is recorded as an error

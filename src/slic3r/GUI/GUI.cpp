@@ -54,6 +54,7 @@ struct McpPromptAnswer
     std::string note;
 };
 static std::map<std::string, McpPromptAnswer> s_mcp_prompt_answers;
+static std::map<McpPathDialog, std::vector<std::string>> s_mcp_path_answers;
 
 // Note: this only flips the flag. Clearing the collected messages is McpDialogSuppressionGuard's
 // job, so that a nested guard does not discard the messages its caller is still collecting.
@@ -125,6 +126,27 @@ void set_mcp_prompt_answer(const std::string& key, int answer_id, const std::str
 
 void clear_mcp_prompt_answers() {
     s_mcp_prompt_answers.clear();
+}
+
+void set_mcp_path_answer(McpPathDialog kind, const std::vector<std::string>& paths) {
+    s_mcp_path_answers[kind] = paths;
+}
+
+void clear_mcp_path_answers() {
+    s_mcp_path_answers.clear();
+}
+
+bool mcp_answer_path_dialog(const std::string& title, McpPathDialog kind, std::vector<std::string>& paths) {
+    if (!is_mcp_dialog_suppression_enabled())
+        return false;
+    const auto it = s_mcp_path_answers.find(kind);
+    paths         = it != s_mcp_path_answers.end() ? it->second : std::vector<std::string>();
+    std::string answer;
+    for (const std::string& path : paths)
+        answer += (answer.empty() ? "" : ", ") + path;
+    add_mcp_suppressed_answer(title.empty() ? std::string(kind == McpPathDialog::file ? "A file dialog" : "A folder dialog") : title,
+                              answer.empty() ? mcp_answer_label(wxID_CANCEL) : answer);
+    return true;
 }
 
 McpAnswer mcp_answer_for(long style, const std::string& prompt_key) {

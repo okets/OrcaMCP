@@ -265,3 +265,68 @@ TEST_CASE("a load that changed nothing fails, with the error dialogs' words or i
     CHECK(failed["message"] == "Loading of a model file failed.");
     CHECK(failed["error_messages"] == nlohmann::json::array({"Loading of a model file failed."}));
 }
+
+// A native file or folder dialog is not a MsgDialog or a DPIDialog, so suppression never caught it: one
+// opened inside a tool call blocks it for good. The tool that has the path sets it on its guard, and the
+// dialog's call site reads it instead of opening (mcp_answer_path_dialog).
+TEST_CASE("a file dialog under MCP gets the call's file, and is never opened", "[McpSuppression][orcamcp][suppression]")
+{
+    Slic3r::GUI::OrcaMCP::McpDialogSuppressionGuard guard;
+    guard.answer_file("/tmp/part.stl");
+    std::vector<std::string> paths;
+    CHECK(mcp_answer_path_dialog("Choose one or more files", McpPathDialog::file, paths));
+    CHECK(paths == std::vector<std::string>{"/tmp/part.stl"});
+    CHECK(guard.messages() == std::vector<std::string>{"Choose one or more files (auto-answered /tmp/part.stl)"});
+
+    guard.answer_files({"/tmp/a.stl", "/tmp/b.stl"});
+    CHECK(mcp_answer_path_dialog("Choose one or more files", McpPathDialog::file, paths));
+    CHECK(paths == std::vector<std::string>{"/tmp/a.stl", "/tmp/b.stl"});
+    CHECK(guard.messages().back() == "Choose one or more files (auto-answered /tmp/a.stl, /tmp/b.stl)");
+}
+
+TEST_CASE("a file or folder dialog under MCP with no answer set is cancelled", "[McpSuppression][orcamcp][suppression]")
+{
+    Slic3r::GUI::OrcaMCP::McpDialogSuppressionGuard guard;
+    std::vector<std::string> paths{"left over"};
+    CHECK(mcp_answer_path_dialog("Choose a folder", McpPathDialog::folder, paths));
+    CHECK(paths.empty());
+    CHECK(guard.messages() == std::vector<std::string>{"Choose a folder (auto-answered Cancel)"});
+    CHECK(mcp_answer_path_dialog("", McpPathDialog::file, paths));
+    CHECK(guard.messages().back() == "A file dialog (auto-answered Cancel)");
+}
+
+TEST_CASE("a file answer never answers a folder dialog, nor a folder answer a file dialog", "[McpSuppression][orcamcp][suppression]")
+{
+    Slic3r::GUI::OrcaMCP::McpDialogSuppressionGuard guard;
+    guard.answer_file("/tmp/part.stl");
+    std::vector<std::string> paths;
+    CHECK(mcp_answer_path_dialog("Choose a folder", McpPathDialog::folder, paths));
+    CHECK(paths.empty());
+
+    guard.answer_folder("/tmp/out");
+    CHECK(mcp_answer_path_dialog("Choose a folder", McpPathDialog::folder, paths));
+    CHECK(paths == std::vector<std::string>{"/tmp/out"});
+    CHECK(mcp_answer_path_dialog("Choose one or more files", McpPathDialog::file, paths));
+    CHECK(paths == std::vector<std::string>{"/tmp/part.stl"});
+}
+
+TEST_CASE("a path answer lasts until the outermost guard ends, and a dialog outside MCP opens", "[McpSuppression][orcamcp][suppression]")
+{
+    std::vector<std::string> paths;
+    {
+        Slic3r::GUI::OrcaMCP::McpDialogSuppressionGuard outer;
+        outer.answer_file("/tmp/part.stl");
+        {
+            Slic3r::GUI::OrcaMCP::McpDialogSuppressionGuard inner;
+        }
+        // An inner guard keeps its caller's answer.
+        CHECK(mcp_answer_path_dialog("Choose one or more files", McpPathDialog::file, paths));
+        CHECK(paths == std::vector<std::string>{"/tmp/part.stl"});
+    }
+    // No suppression: the site opens its dialog.
+    CHECK_FALSE(mcp_answer_path_dialog("Choose one or more files", McpPathDialog::file, paths));
+    // The next call starts with no answer.
+    Slic3r::GUI::OrcaMCP::McpDialogSuppressionGuard next;
+    CHECK(mcp_answer_path_dialog("Choose one or more files", McpPathDialog::file, paths));
+    CHECK(paths.empty());
+}

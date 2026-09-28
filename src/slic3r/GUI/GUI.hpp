@@ -92,6 +92,21 @@ struct McpAnswer
 void set_mcp_prompt_answer(const std::string& key, int answer_id, const std::string& note = std::string());
 void clear_mcp_prompt_answers();
 McpAnswer mcp_answer_for(long style, const std::string& prompt_key);
+inline constexpr const char* MCP_PROMPT_SPLIT_FLOATING = "split_floating"; // split to objects: keep floating pieces' height?
+// Per-call file and folder answers, for the native file and folder dialogs suppression cannot catch
+// (a modal opened inside a tool call blocks it for good). A tool that has the path such a dialog would
+// ask for sets it for the rest of its McpDialogSuppressionGuard (answer_file, answer_files,
+// answer_folder), and the dialog's call site reads it with mcp_answer_path_dialog instead of opening
+// the dialog. With no answer set the site behaves as if the dialog were cancelled. Files and folders
+// are kept apart: a file answer never answers a folder dialog, nor the other way round.
+enum class McpPathDialog { file, folder };
+void set_mcp_path_answer(McpPathDialog kind, const std::vector<std::string>& paths);
+void clear_mcp_path_answers();
+// For the call site of a native file or folder dialog titled `title`. Under suppression: `paths` gets
+// the answer set for `kind` (empty: Cancel), the answer is recorded as "<title> (auto-answered <paths>)"
+// or "(auto-answered Cancel)", and it returns true -- the site must not open its dialog. Without
+// suppression it returns false, and the site opens its dialog as usual.
+bool mcp_answer_path_dialog(const std::string& title, McpPathDialog kind, std::vector<std::string>& paths);
 // The fallback for a modal DPIDialog that no specific handler answered (see DPIAware::ShowModal):
 // under suppression it is not shown, answers Cancel and is recorded as
 // "<title> was suppressed (auto-answered Cancel)". Not suppressed: shown as usual.
