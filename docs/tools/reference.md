@@ -1515,10 +1515,14 @@ Add a new build plate to the project.
 
 **Returns:** New plate index
 
+Refused while an arrange, orient or bed fill runs: the job places objects by the plates as they were
+when it started, and a new plate can re-flow the plate grid.
+
 ---
 
 ### select_plate
-Switch to a different plate.
+Switch to a different plate. Refused while an arrange, orient or bed fill runs: a plate's arrange
+applies its result to the current plate, so a plate selected under it would take the arranged objects.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
@@ -1531,7 +1535,7 @@ Switch to a different plate.
 Remove a plate from the project. A slice in progress is cancelled first, and a Slice All run with it:
 the response then carries `slice_cancelled: true` and an `info_messages` line saying so; call
 `slice_all` again. Plates sliced before keep their results. A call that deletes nothing (an index out
-of range, the last plate) leaves the slice running.
+of range, the last plate) leaves the slice running. Refused while an arrange, orient or bed fill runs.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
@@ -1624,12 +1628,17 @@ which changed. `get_scene_info` reports both for every plate.
   `"global"` leave those settings on the objects; `next_steps` then names `reset_object_config` for
   them. On a plate that follows a vase turned on in the print settings, `"on"` changes nothing (the
   plate keeps following it; `spiral_vase_note`).
-- **Refused, before anything changes:** a plate's own bed type on a printer that is not Bambu Lab's (the
-  dialog greys it out there; the plate follows the global bed type, `apply_config`'s project
-  `curr_bed_type`), a bed type the printer does not offer, a filament order that does not list each
-  filament once, a custom order while the project has mixed filaments (the dialog turns it off), a
+- **Refused, before anything changes:** a change to a plate's own bed type on a printer that is not
+  Bambu Lab's (the dialog greys it out there; the plate follows the global bed type, `apply_config`'s
+  project `curr_bed_type`), a bed type the printer does not offer, a filament order that does not list
+  each filament once, a custom order while the project has mixed filaments (the dialog turns it off), a
   range starting before layer 2, ending before it starts or overlapping another, and a name over 250
-  characters.
+  characters. A value the plate already has is never refused, whatever the printer offers now (a plate
+  from a Bambu Lab project keeps its bed type): the settings a plate reports can always be sent back.
+- **Refused while an arrange, orient or bed fill runs:** an arrange of every plate locks the plates whose
+  print sequence differs while it runs and unlocks them after, and a plate's arrange applies its result
+  to the current plate. `select_plate`, `add_plate` and `delete_plate` are refused then too, and
+  `get_slicing_status` puts back the plate a Slice All run moved from only once no such job runs.
 
 ---
 

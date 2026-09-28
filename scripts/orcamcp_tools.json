@@ -138,7 +138,7 @@
     },
     {
       "category": "Plates",
-      "description": "Create a new plate.",
+      "description": "Create a new plate. Refused while an arrange, orient or bed fill runs: it places objects by the plates as they were.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {},
@@ -150,7 +150,7 @@
     },
     {
       "category": "Models",
-      "description": "Add a volume to an object, as the object list's Add Part / Negative Part / Modifier / Support Blocker / Support Enforcer does: a primitive (shape) or a model file (file_path). A primitive is sized a tenth of the bed's longest side and stands beside the object at its right-front corner, on the bed: move_object and scale_object with volume_id place and size it. As the object list does, adding a primitive moves the object's rotation and scale from its instance into its volumes (instance_transform_moved_to_volumes says when). A file's volume keeps the position its file gives it. A modifier changes only the settings set_object_config with volume_id gives it. The answer: the new volume (volume_id, box and position in plate mm) and every volume. One undo step. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange or orient runs.",
+      "description": "Add a volume to an object, as the object list's Add Part / Negative Part / Modifier / Support Blocker / Support Enforcer does: a primitive (shape) or a model file (file_path). A primitive is sized a tenth of the bed's longest side and stands beside the object at its right-front corner, on the bed: move_object and scale_object with volume_id place and size it. As the object list does, adding a primitive moves the object's rotation and scale from its instance into its volumes (instance_transform_moved_to_volumes says when). A file's volume keeps the position its file gives it. A modifier changes only the settings set_object_config with volume_id gives it. The answer: the new volume (volume_id, box and position in plate mm) and every volume. One undo step. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange, orient or bed fill runs.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -328,7 +328,7 @@
     },
     {
       "category": "Models",
-      "description": "Assemble two or more objects into one object with their volumes as its parts, as the object list's Assemble does: each keeps its place, settings and filament; the new object, named Assembly, takes each object's first instance (assembled_from says how many others were left out). The assembly is the last object afterwards, and the objects after each assembled one move down. A piece of a cut is refused until invalidate_cut_info. One undo step. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange or orient runs.",
+      "description": "Assemble two or more objects into one object with their volumes as its parts, as the object list's Assemble does: each keeps its place, settings and filament; the new object, named Assembly, takes each object's first instance (assembled_from says how many others were left out). The assembly is the last object afterwards, and the objects after each assembled one move down. A piece of a cut is refused until invalidate_cut_info. One undo step. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange, orient or bed fill runs.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -511,7 +511,7 @@
     },
     {
       "category": "Transforms",
-      "description": "Cut object at a Z height measured in plate mm (height above the bed), the same frame get_object_info reports -- the object's own rotation is accounted for. keep: below, above, or both. The app's own cut: the pieces are the last objects afterwards (new_object_ids), each on the plate, and the original's index is free, so every object after it moves down by one. One undo step. Refused while an arrange or orient runs; an open toolbar tool is closed first (closed_toolbar_tool).",
+      "description": "Cut object at a Z height measured in plate mm (height above the bed), the same frame get_object_info reports -- the object's own rotation is accounted for. keep: below, above, or both. The app's own cut: the pieces are the last objects afterwards (new_object_ids), each on the plate, and the original's index is free, so every object after it moves down by one. One undo step. Refused while an arrange, orient or bed fill runs; an open toolbar tool is closed first (closed_toolbar_tool).",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -567,7 +567,7 @@
     },
     {
       "category": "Transforms",
-      "description": "Remove an object from the scene, or with volume_id one of its volumes (a part, modifier, negative or support volume), or with instance_id one of its instances (linked copies), as the object list's Delete does, in one undo step. Objects after a deleted one move down by one, and so do instances after a deleted instance; an object's only instance is the object (delete it without instance_id). Deleting a piece of a cut ends the cut's link for its other pieces (cut_info_invalidated_for). An object's last solid part is not deleted on its own (delete the object), nor a cut object's solid part until invalidate_cut_info. When deleting a volume leaves one, its settings move to the object (settings_moved_to_object), as the list does. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange or orient runs.",
+      "description": "Remove an object from the scene, or with volume_id one of its volumes (a part, modifier, negative or support volume), or with instance_id one of its instances (linked copies), as the object list's Delete does, in one undo step. Objects after a deleted one move down by one, and so do instances after a deleted instance; an object's only instance is the object (delete it without instance_id). Deleting a piece of a cut ends the cut's link for its other pieces (cut_info_invalidated_for). An object's last solid part is not deleted on its own (delete the object), nor a cut object's solid part until invalidate_cut_info. When deleting a volume leaves one, its settings move to the object (settings_moved_to_object), as the list does. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange, orient or bed fill runs.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -627,7 +627,7 @@
     },
     {
       "category": "Plates",
-      "description": "Delete a plate. Cannot delete the last plate. Objects on it are NOT deleted and NOT moved to another plate: they are moved outside every plate, where get_scene_info lists them under unplaced_objects. Delete them first if you do not want them. A slice in progress is cancelled, a Slice All run with it (the response says so; call slice_all again).",
+      "description": "Delete a plate. Cannot delete the last plate; refused while an arrange, orient or bed fill runs. Objects on it are NOT deleted and NOT moved to another plate: they are moved outside every plate, where get_scene_info lists them under unplaced_objects. Delete them first if you do not want them. A slice in progress is cancelled, a Slice All run with it (the response says so; call slice_all again).",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -1377,7 +1377,7 @@
     },
     {
       "category": "Models",
-      "description": "Merge an object's parts into one part, as the object list's Mesh boolean does: its solid parts are joined by a union and its negative volumes subtracted; its modifiers and support volumes, its parts' own settings and filaments, its layer ranges and brim ears are not carried (not_carried lists them); its name and object settings are. Every instance of the object becomes part of one mesh in one instance (instances_merged says so). When the union fails, the parts are joined without it (boolean says so). The merged object is the last object afterwards. Painting is cleared unless keep_painting keeps it. One undo step. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange or orient runs.",
+      "description": "Merge an object's parts into one part, as the object list's Mesh boolean does: its solid parts are joined by a union and its negative volumes subtracted; its modifiers and support volumes, its parts' own settings and filaments, its layer ranges and brim ears are not carried (not_carried lists them); its name and object settings are. Every instance of the object becomes part of one mesh in one instance (instances_merged says so). When the union fails, the parts are joined without it (boolean says so). The merged object is the last object afterwards. Painting is cleared unless keep_painting keeps it. One undo step. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange, orient or bed fill runs.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -2380,7 +2380,7 @@
     },
     {
       "category": "Plates",
-      "description": "Select a plate as current.",
+      "description": "Select a plate as current. Refused while an arrange, orient or bed fill runs: a plate's arrange applies its result to the current plate.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -2941,7 +2941,7 @@
     },
     {
       "category": "Plates",
-      "description": "Change a plate's own settings, as its settings dialog, name editor and lock icon do: bed_type, print_sequence, the filament order of the first layer and of later layer ranges, spiral_vase, name and locked (a locked plate's objects stay put when arranging). Only what the call gives changes, in one undo step; the answer's settings are in this tool's argument shape (sent back, they change nothing), effective says what applies. \"global\" follows the printer's and print settings. A plate whose slicing settings change is made the current plate first, as the dialog does. spiral_vase \"on\" is the dialog's Enable answered Yes: every object on the plate gets the vase's object settings (one wall, no top shell, no infill, no support), which are the object's, so its copies on other plates print with them too (vase_settings_applied lists them); \"off\" and \"global\" leave those settings on the objects. A plate's own bed_type is offered for Bambu Lab printers only (elsewhere the plate follows the global one, apply_config's project curr_bed_type). The same settings again: changed false, no undo step.",
+      "description": "Change a plate's own settings, as its settings dialog, name editor and lock icon do: bed_type, print_sequence, the filament order of the first layer and of later layer ranges, spiral_vase, name and locked (a locked plate's objects stay put when arranging). Only what the call gives changes, in one undo step; the answer's settings are in this tool's argument shape (sent back, they change nothing), effective says what applies. \"global\" follows the printer's and print settings. A plate whose slicing settings change is made the current plate first, as the dialog does. spiral_vase \"on\" is the dialog's Enable answered Yes: every object on the plate gets the vase's object settings (one wall, no top shell, no infill, no support), which are the object's, so its copies on other plates print with them too (vase_settings_applied lists them); \"off\" and \"global\" leave those settings on the objects. A plate's own bed_type is offered for Bambu Lab printers only (elsewhere the plate follows the global one, apply_config's project curr_bed_type). The same settings again: changed false, no undo step; a value the plate already has is never refused. Refused while an arrange, orient or bed fill runs (an arrange of every plate locks and unlocks plates as it runs).",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -3065,7 +3065,7 @@
     },
     {
       "category": "Models",
-      "description": "Change a volume's type, as the object list's Change Type does: part, negative_volume, modifier, support_blocker or support_enforcer. The object's last solid part stays a part, and a text or SVG volume never becomes a support volume. The list keeps volumes sorted by type, so the volume's index can change: volume_id in the answer is the new one, previous_volume_id the old. The same type changes nothing. One undo step. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange or orient runs.",
+      "description": "Change a volume's type, as the object list's Change Type does: part, negative_volume, modifier, support_blocker or support_enforcer. The object's last solid part stays a part, and a text or SVG volume never becomes a support volume. The list keeps volumes sorted by type, so the volume's index can change: volume_id in the answer is the new one, previous_volume_id the old. The same type changes nothing. One undo step. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange, orient or bed fill runs.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -3120,7 +3120,7 @@
     },
     {
       "category": "Models",
-      "description": "Split an object as the object list's Split does. to: \"objects\" makes one object per solid part of a multi-part object, or per shell of a one-part object; its modifiers, negative volumes and support volumes are not carried (dropped_volumes lists them), and each piece keeps its place. When a piece would float and the object drops to the bed, keep_height (default true) keeps each piece at its height, false drops them onto the bed. The pieces are the last objects afterwards and every object after the split one moves down by one. to: \"parts\" splits one volume into one part per shell (name it with volume_id in a multi-part object); the pieces are named <name>_1, _2, ..., keep its filament, and stay in place. Painting is cleared unless keep_painting keeps it. One undo step. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange or orient runs.",
+      "description": "Split an object as the object list's Split does. to: \"objects\" makes one object per solid part of a multi-part object, or per shell of a one-part object; its modifiers, negative volumes and support volumes are not carried (dropped_volumes lists them), and each piece keeps its place. When a piece would float and the object drops to the bed, keep_height (default true) keeps each piece at its height, false drops them onto the bed. The pieces are the last objects afterwards and every object after the split one moves down by one. to: \"parts\" splits one volume into one part per shell (name it with volume_id in a multi-part object); the pieces are named <name>_1, _2, ..., keep its filament, and stay in place. Painting is cleared unless keep_painting keeps it. One undo step. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange, orient or bed fill runs.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {

@@ -8,6 +8,7 @@
 
 #include "OrcaMCPCommon.hpp"
 #include "OrcaMCPNextSteps.hpp"
+#include "OrcaMCPPartEdits.hpp"
 #include "OrcaMCPServer.hpp"
 
 #include "slic3r/GUI/GUI_App.hpp"
@@ -164,9 +165,15 @@ nlohmann::json set_plate_settings_on_main_thread(const nlohmann::json& params)
     const int plate_index = plate_arg.value_or(plates.get_curr_plate_index());
     if (const auto refusal = plate_index_error(plate_index, plates.get_plate_count()))
         return error_response(*refusal);
-    auto request = read_plate_settings(params, plate_settings_offer(), error);
+    auto request = read_plate_settings(params, plate_settings_offer(), plate_settings_of(*plates.get_plate(plate_index)), error);
     if (!request)
         return error_response(error);
+    // An arrange of every plate locks the plates whose print sequence differs while it runs, and unlocks
+    // them after; a plate's arrange applies its result to the current plate. Neither is read or changed
+    // under one.
+    if (asks_anything(*request))
+        if (const auto refusal = edit_job_refusal(!plater->get_ui_job_worker().is_idle(), "set_plate_settings"))
+            return error_response(*refusal);
 
     PartPlate&          plate  = *plates.get_plate(plate_index);
     const PlateSettings before = plate_settings_of(plate);
@@ -249,7 +256,8 @@ void Slic3r::GUI::OrcaMCPServer::register_plate_tools()
         "support), which are the object's, so its copies on other plates print with them too (vase_settings_applied lists them); "
         "\"off\" and \"global\" leave those settings on the objects. A plate's own bed_type is offered for Bambu Lab printers only "
         "(elsewhere the plate follows the global one, apply_config's project curr_bed_type). The same settings again: changed "
-        "false, no undo step.",
+        "false, no undo step; a value the plate already has is never refused. Refused while an arrange, orient or bed fill runs "
+        "(an arrange of every plate locks and unlocks plates as it runs).",
         {{"type", "object"},
          {"properties",
           {{"plate_index", {{"type", "integer"}, {"minimum", 0}, {"description", "Plate index (0-based). Default: the current plate"}}},

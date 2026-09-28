@@ -33,18 +33,18 @@ PlateSettingsOffer bambu_offer(int filaments = 3)
     return offer;
 }
 
-std::string refusal_of(const json& params, const PlateSettingsOffer& offer = bambu_offer())
+std::string refusal_of(const json& params, const PlateSettingsOffer& offer = bambu_offer(), const PlateSettings& current = {})
 {
     std::string error;
-    const auto  request = read_plate_settings(params, offer, error);
+    const auto  request = read_plate_settings(params, offer, current, error);
     CHECK_FALSE(request);
     return error;
 }
 
-PlateSettingsRequest request_of(const json& params, const PlateSettingsOffer& offer = bambu_offer())
+PlateSettingsRequest request_of(const json& params, const PlateSettingsOffer& offer = bambu_offer(), const PlateSettings& current = {})
 {
     std::string error;
-    const auto  request = read_plate_settings(params, offer, error);
+    const auto  request = read_plate_settings(params, offer, current, error);
     INFO(error);
     REQUIRE(request);
     return *request;
@@ -70,7 +70,7 @@ TEST_CASE("A plate with no settings of its own follows the global ones, and send
     CHECK(reported["other_layers_filament_order"] == "auto");
     CHECK(reported["spiral_vase"] == "global");
     CHECK(reported["locked"] == false);
-    CHECK(plate_settings_changes(settings, request_of(reported)).empty());
+    CHECK(plate_settings_changes(settings, request_of(reported, bambu_offer(), settings)).empty());
 }
 
 TEST_CASE("A plate's own settings are read as the plate holds them, and round-trip", "[PlateSettings][orcamcp]")
@@ -94,7 +94,7 @@ TEST_CASE("A plate's own settings are read as the plate holds them, and round-tr
     CHECK(reported["first_layer_filament_order"] == json{2, 1, 3});
     CHECK(reported["other_layers_filament_order"][0] == json{{"from_layer", 2}, {"to_layer", 10}, {"order", {3, 1, 2}}});
     CHECK(reported["other_layers_filament_order"][1]["to_layer"].is_null());
-    CHECK(plate_settings_changes(settings, request_of(reported)).empty());
+    CHECK(plate_settings_changes(settings, request_of(reported, bambu_offer(), settings)).empty());
 }
 
 TEST_CASE("Only what a call gives is a change, and a name or lock alone does not reach the slice", "[PlateSettings][orcamcp]")
@@ -106,6 +106,26 @@ TEST_CASE("Only what a call gives is a change, and a name or lock alone does not
     const auto sequenced = plate_settings_changes(now, request_of({{"print_sequence", "by object"}, {"bed_type", "global"}}));
     CHECK(sequenced == std::vector<std::string>{"print_sequence"});
     CHECK(changes_slicing(sequenced));
+}
+
+TEST_CASE("Settings a plate holds are taken back unchanged, whatever the printer and project offer now", "[PlateSettings][orcamcp]")
+{
+    // A plate from a Bambu Lab project, opened for another printer with mixed filaments: its own bed type,
+    // a custom order and ranges that share a layer, none of which the dialog would give it now.
+    PlateSettings held;
+    held.bed_type           = Slic3r::btSuperTack;
+    held.first_layer_order  = {2, 1, 3};
+    held.other_layers_order = {{{5, 20}, {3, 2, 1}}, {{2, 10}, {1, 2, 3}}};
+    PlateSettingsOffer offer = bambu_offer();
+    offer.plate_bed_type     = false;
+    offer.mixed_filaments    = true;
+    const json sent_back     = plate_settings_json(held);
+
+    CHECK(plate_settings_changes(held, request_of(sent_back, offer, held)).empty());
+    // A change is still refused.
+    CHECK(refusal_of({{"bed_type", "Cool Plate"}}, offer, held).find("Bambu Lab printers only") != std::string::npos);
+    CHECK(refusal_of({{"first_layer_filament_order", {1, 2, 3}}}, offer, held).find("mixed filaments") != std::string::npos);
+    CHECK(request_of({{"bed_type", "global"}}, offer, held).bed_type == Slic3r::btDefault);
 }
 
 TEST_CASE("A bed type must be one the printer offers", "[PlateSettings][orcamcp]")

@@ -78,9 +78,16 @@ struct PlateSettingsOffer
     std::vector<BedType> bed_types;               // the bed types the printer offers (the sidebar's list)
 };
 
-// The request the call's arguments make, or why they make none: a value the dialog does not offer, an
-// order that does not list each filament once, overlapping or out-of-range layer ranges, a name too long.
-std::optional<PlateSettingsRequest> read_plate_settings(const nlohmann::json& params, const PlateSettingsOffer& offer, std::string& error);
+// The request the call's arguments make against the plate's `current` settings, or why they make none: a
+// value of the wrong shape, or a change to what the dialog does not offer -- a bed type, an order that does
+// not list each filament once or while mixed filaments exist, out-of-range or overlapping layer ranges, a
+// name too long. A value the plate already has is never refused, whatever the dialog offers now: sent
+// back, the settings a plate reports change nothing.
+std::optional<PlateSettingsRequest> read_plate_settings(const nlohmann::json& params, const PlateSettingsOffer& offer,
+                                                        const PlateSettings& current, std::string& error);
+
+// Whether the request gives any setting.
+bool asks_anything(const PlateSettingsRequest& request);
 
 // `settings` with the request's changes.
 PlateSettings with_request(PlateSettings settings, const PlateSettingsRequest& request);

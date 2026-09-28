@@ -49,7 +49,7 @@ std::string string_arg(const nlohmann::json& params, const std::string& key, std
     return read_text(params, key, error).value_or(std::string());
 }
 
-// Why an edit must wait (edit_job_refusal): an arrange or orient job runs.
+// Why an edit must wait (edit_job_refusal): an arrange, orient or bed fill runs.
 std::optional<std::string> ui_job_refusal(Plater& plater, const std::string& tool)
 {
     return edit_job_refusal(!plater.get_ui_job_worker().is_idle(), tool);
@@ -1102,7 +1102,7 @@ void Slic3r::GUI::OrcaMCPServer::register_part_tools()
         "last objects afterwards and every object after the split one moves down by one. to: \"parts\" splits one volume "
         "into one part per shell (name it with volume_id in a multi-part object); the pieces are named <name>_1, _2, ..., "
         "keep its filament, and stay in place. Painting is cleared unless keep_painting keeps it. One undo step. An open "
-        "toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange or orient runs.",
+        "toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange, orient or bed fill runs.",
         {
             {"type", "object"},
             {"properties", {
@@ -1136,7 +1136,7 @@ void Slic3r::GUI::OrcaMCPServer::register_part_tools()
         "from its instance into its volumes (instance_transform_moved_to_volumes says when). A file's volume keeps the "
         "position its file gives it. A modifier changes only the settings set_object_config with volume_id gives it. The "
         "answer: the new volume (volume_id, box and position in plate mm) and every volume. One undo step. An open toolbar "
-        "tool is closed first (closed_toolbar_tool). Refused while an arrange or orient runs.",
+        "tool is closed first (closed_toolbar_tool). Refused while an arrange, orient or bed fill runs.",
         {
             {"type", "object"},
             {"properties", {
@@ -1162,7 +1162,7 @@ void Slic3r::GUI::OrcaMCPServer::register_part_tools()
         "support_enforcer. The object's last solid part stays a part, and a text or SVG volume never becomes a support "
         "volume. The list keeps volumes sorted by type, so the volume's index can change: volume_id in the answer is the new "
         "one, previous_volume_id the old. The same type changes nothing. One undo step. An open toolbar tool is closed first "
-        "(closed_toolbar_tool). Refused while an arrange or orient runs.",
+        "(closed_toolbar_tool). Refused while an arrange, orient or bed fill runs.",
         {
             {"type", "object"},
             {"properties", {
@@ -1185,7 +1185,7 @@ void Slic3r::GUI::OrcaMCPServer::register_part_tools()
         "each keeps its place, settings and filament; the new object, named Assembly, takes each object's first instance "
         "(assembled_from says how many others were left out). The assembly is the last object afterwards, and the objects "
         "after each assembled one move down. A piece of a cut is refused until invalidate_cut_info. One undo step. An open "
-        "toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange or orient runs.",
+        "toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange, orient or bed fill runs.",
         {
             {"type", "object"},
             {"properties", {
@@ -1209,7 +1209,7 @@ void Slic3r::GUI::OrcaMCPServer::register_part_tools()
         "are. Every instance of the object becomes part of one mesh in one instance (instances_merged says so). When the "
         "union fails, the parts are joined without it (boolean says so). The merged object is the last object afterwards. "
         "Painting is cleared unless keep_painting keeps it. One undo step. An open toolbar tool is closed first "
-        "(closed_toolbar_tool). Refused while an arrange or orient runs.",
+        "(closed_toolbar_tool). Refused while an arrange, orient or bed fill runs.",
         {
             {"type", "object"},
             {"properties", {

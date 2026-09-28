@@ -63,44 +63,38 @@ std::string filament_order_hint(int filament_count)
     return "each of filaments 1 to " + std::to_string(filament_count) + " exactly once, in printing order, e.g. " + nlohmann::json(example).dump();
 }
 
-// A custom filament order: every filament once, or `error` naming `what`.
-std::optional<std::vector<int>> read_filament_order(const nlohmann::json& value, int filament_count, const std::string& what,
-                                                    std::string& error)
+// ---- A value's shape, read before what the dialog offers is asked ----
+
+std::string order_hint_error(const std::string& what, int filament_count, const nlohmann::json& given)
 {
-    std::vector<int> order;
+    return what + " must list " + filament_order_hint(filament_count) + ", or be \"auto\"; got " + given.dump();
+}
+
+// A list of filament numbers, or nothing when `value` is not one (`error` names `what`).
+std::optional<std::vector<int>> read_filament_numbers(const nlohmann::json& value, const std::string& what, int filament_count,
+                                                      std::string& error)
+{
+    std::vector<int> numbers;
     if (value.is_array())
         for (const nlohmann::json& item : value) {
-            int filament = 0;
-            if (!parse_integer_param(item, filament)) {
-                order.clear();
-                break;
+            int number = 0;
+            if (!parse_integer_param(item, number)) {
+                error = order_hint_error(what, filament_count, value);
+                return std::nullopt;
             }
-            order.push_back(filament);
+            numbers.push_back(number);
         }
-    std::vector<int> sorted = order;
-    std::sort(sorted.begin(), sorted.end());
-    std::vector<int> every(std::size_t(std::max(filament_count, 0)));
-    std::iota(every.begin(), every.end(), 1);
-    if (!value.is_array() || sorted != every) {
-        error = what + " must list " + filament_order_hint(filament_count) + ", or be \"auto\"; got " + value.dump();
+    else {
+        error = order_hint_error(what, filament_count, value);
         return std::nullopt;
     }
-    return order;
+    return numbers;
 }
 
 bool is_auto(const nlohmann::json& value) { return value.is_string() && value.get<std::string>() == "auto"; }
 
-std::optional<std::vector<int>> read_first_layer_order(const nlohmann::json& params, const PlateSettingsOffer& offer, std::string& error)
-{
-    const nlohmann::json& value = params.at("first_layer_filament_order");
-    if (is_auto(value))
-        return std::vector<int>();
-    return read_filament_order(value, offer.filament_count, "first_layer_filament_order", error);
-}
-
-// One range of the other layers: {from_layer, to_layer (null or left out: to the last layer), order}.
-std::optional<LayerPrintSequence> read_layer_range(const nlohmann::json& range, const PlateSettingsOffer& offer, std::size_t index,
-                                                   std::string& error)
+// One range of the other layers as given: {from_layer, to_layer (null or left out: to the last layer), order}.
+std::optional<LayerPrintSequence> read_layer_range(const nlohmann::json& range, std::size_t index, int filament_count, std::string& error)
 {
     const std::string what = "other_layers_filament_order[" + std::to_string(index) + "]";
     int               from = 0;
@@ -113,22 +107,51 @@ std::optional<LayerPrintSequence> read_layer_range(const nlohmann::json& range, 
         error = what + ".to_layer must be a layer number, or null for the last layer; got " + range.at("to_layer").dump();
         return std::nullopt;
     }
-    if (from < k_first_other_layer) {
-        error = what + ".from_layer must be 2 or more: layer 1 is first_layer_filament_order's";
-        return std::nullopt;
-    }
-    if (to < from) {
-        error = what + ".to_layer must be from_layer or more, or null for the last layer";
-        return std::nullopt;
-    }
     if (!range.contains("order")) {
-        error = what + ".order is required: " + filament_order_hint(offer.filament_count);
+        error = what + ".order is required: " + filament_order_hint(filament_count);
         return std::nullopt;
     }
-    const auto order = read_filament_order(range.at("order"), offer.filament_count, what + ".order", error);
+    const auto order = read_filament_numbers(range.at("order"), what + ".order", filament_count, error);
     if (!order)
         return std::nullopt;
     return LayerPrintSequence{{from, to}, *order};
+}
+
+// In layer order, as the dialog keeps them (LayerSeqInfo::operator<).
+std::vector<LayerPrintSequence> in_layer_order(std::vector<LayerPrintSequence> ranges)
+{
+    std::sort(ranges.begin(), ranges.end(), [](const LayerPrintSequence& a, const LayerPrintSequence& b) { return a.first < b.first; });
+    return ranges;
+}
+
+std::optional<std::vector<LayerPrintSequence>> read_layer_ranges(const nlohmann::json& value, int filament_count, std::string& error)
+{
+    if (!value.is_array() || value.empty()) {
+        error = "other_layers_filament_order must be \"auto\" or a list of {from_layer, to_layer, order}; got " + value.dump();
+        return std::nullopt;
+    }
+    std::vector<LayerPrintSequence> ranges;
+    for (std::size_t i = 0; i < value.size(); ++i) {
+        const auto range = read_layer_range(value[i], i, filament_count, error);
+        if (!range)
+            return std::nullopt;
+        ranges.push_back(*range);
+    }
+    return in_layer_order(ranges);
+}
+
+// ---- What the dialog offers, asked only of a change ----
+
+// What is wrong with a custom order, or nothing: every filament once.
+std::optional<std::string> filament_order_error(const std::vector<int>& order, int filament_count, const std::string& what)
+{
+    std::vector<int> sorted = order;
+    std::sort(sorted.begin(), sorted.end());
+    std::vector<int> every(std::size_t(std::max(filament_count, 0)));
+    std::iota(every.begin(), every.end(), 1);
+    if (sorted == every)
+        return std::nullopt;
+    return order_hint_error(what, filament_count, order);
 }
 
 std::string layer_range_text(const LayerPrintSequence& range)
@@ -136,48 +159,80 @@ std::string layer_range_text(const LayerPrintSequence& range)
     return std::to_string(range.first.first) + "-" + (range.first.second == k_last_layer ? std::string("the last layer") : std::to_string(range.first.second));
 }
 
+// What is wrong with ranges (in layer order), or nothing: each from layer 2, ending at or after its start,
+// every filament once, no two sharing a layer.
+std::optional<std::string> layer_ranges_error(const std::vector<LayerPrintSequence>& ranges, int filament_count)
+{
+    for (std::size_t i = 0; i < ranges.size(); ++i) {
+        const std::string what = "other_layers_filament_order's range " + layer_range_text(ranges[i]);
+        if (ranges[i].first.first < k_first_other_layer)
+            return what + ": from_layer must be 2 or more: layer 1 is first_layer_filament_order's";
+        if (ranges[i].first.second < ranges[i].first.first)
+            return what + ": to_layer must be from_layer or more, or null for the last layer";
+        if (const auto error = filament_order_error(ranges[i].second, filament_count, what + "'s order"))
+            return error;
+        if (i > 0 && ranges[i].first.first <= ranges[i - 1].first.second)
+            return "other_layers_filament_order's layers " + layer_range_text(ranges[i - 1]) + " and " + layer_range_text(ranges[i]) +
+                   " overlap: each layer takes one order, so give ranges that do not share a layer";
+    }
+    return std::nullopt;
+}
+
+const char* mixed_filaments_refusal()
+{
+    return "the project has mixed filaments, so a custom filament order does not take effect (the plate settings dialog turns it off "
+           "then): send \"auto\"";
+}
+
+std::optional<std::vector<int>> read_first_layer_order(const nlohmann::json& params, const PlateSettingsOffer& offer, const PlateSettings& current,
+                                                       std::string& error)
+{
+    const nlohmann::json& value = params.at("first_layer_filament_order");
+    if (is_auto(value))
+        return std::vector<int>();
+    const auto order = read_filament_numbers(value, "first_layer_filament_order", offer.filament_count, error);
+    if (!order || *order == current.first_layer_order)
+        return order;
+    if (offer.mixed_filaments)
+        error = mixed_filaments_refusal();
+    else if (const auto refusal = filament_order_error(*order, offer.filament_count, "first_layer_filament_order"))
+        error = *refusal;
+    return error.empty() ? order : std::nullopt;
+}
+
 std::optional<std::vector<LayerPrintSequence>> read_other_layers_order(const nlohmann::json& params, const PlateSettingsOffer& offer,
-                                                                        std::string& error)
+                                                                        const PlateSettings& current, std::string& error)
 {
     const nlohmann::json& value = params.at("other_layers_filament_order");
     if (is_auto(value))
         return std::vector<LayerPrintSequence>();
-    if (!value.is_array() || value.empty()) {
-        error = "other_layers_filament_order must be \"auto\" or a list of {from_layer, to_layer, order}; got " + value.dump();
-        return std::nullopt;
-    }
-    std::vector<LayerPrintSequence> ranges;
-    for (std::size_t i = 0; i < value.size(); ++i) {
-        const auto range = read_layer_range(value[i], offer, i, error);
-        if (!range)
-            return std::nullopt;
-        ranges.push_back(*range);
-    }
-    // In layer order, as the dialog keeps them (LayerSeqInfo::operator<); each layer takes one order.
-    std::sort(ranges.begin(), ranges.end(), [](const LayerPrintSequence& a, const LayerPrintSequence& b) { return a.first < b.first; });
-    for (std::size_t i = 1; i < ranges.size(); ++i)
-        if (ranges[i].first.first <= ranges[i - 1].first.second) {
-            error = "other_layers_filament_order's layers " + layer_range_text(ranges[i - 1]) + " and " + layer_range_text(ranges[i]) +
-                    " overlap: each layer takes one order, so give ranges that do not share a layer";
-            return std::nullopt;
-        }
-    return ranges;
+    const auto ranges = read_layer_ranges(value, offer.filament_count, error);
+    if (!ranges || *ranges == in_layer_order(current.other_layers_order))
+        return ranges;
+    if (offer.mixed_filaments)
+        error = mixed_filaments_refusal();
+    else if (const auto refusal = layer_ranges_error(*ranges, offer.filament_count))
+        error = *refusal;
+    return error.empty() ? ranges : std::nullopt;
 }
 
-std::optional<BedType> read_plate_bed_type(const nlohmann::json& params, const PlateSettingsOffer& offer, std::string& error)
+std::optional<BedType> read_plate_bed_type(const nlohmann::json& params, const PlateSettingsOffer& offer, const PlateSettings& current,
+                                           std::string& error)
 {
     const std::optional<std::string> value = read_text(params, "bed_type", error);
     if (!value)
         return std::nullopt;
-    if (*value == "global")
-        return btDefault;
+    const std::optional<BedType> bed_type = *value == "global" ? std::optional<BedType>(btDefault) : bed_type_from_value(*value);
+    if (bed_type && *bed_type == current.bed_type)
+        return bed_type;
+    if (bed_type == btDefault)
+        return bed_type;
     if (!offer.plate_bed_type) {
         error = "a plate's own bed type is offered for Bambu Lab printers only (the plate settings dialog greys it out on this "
                 "printer), so this plate follows the global bed type: send bed_type \"global\", or set the global one with "
                 "apply_config {\"settings\": [{\"type\": \"project\", \"key\": \"curr_bed_type\", \"value\": <a bed type>}]}";
         return std::nullopt;
     }
-    const std::optional<BedType> bed_type = bed_type_from_value(*value);
     if (!bed_type || std::find(offer.bed_types.begin(), offer.bed_types.end(), *bed_type) == offer.bed_types.end()) {
         error = "bed_type \"" + *value + "\" is not one this printer offers: \"global\", " + listed_bed_types(offer.bed_types);
         return std::nullopt;
@@ -185,11 +240,11 @@ std::optional<BedType> read_plate_bed_type(const nlohmann::json& params, const P
     return bed_type;
 }
 
-std::optional<std::string> read_plate_name(const nlohmann::json& params, std::string& error)
+std::optional<std::string> read_plate_name(const nlohmann::json& params, const PlateSettings& current, std::string& error)
 {
     const std::optional<std::string> name = read_text(params, "name", error);
-    if (!name)
-        return std::nullopt;
+    if (!name || *name == current.name)
+        return name;
     // Characters, as the name editor counts them: UTF-8 bytes that do not continue a character.
     const std::size_t characters = std::size_t(std::count_if(name->begin(), name->end(), [](char c) { return (c & 0xC0) != 0x80; }));
     if (characters > k_max_plate_name_length) {
@@ -248,12 +303,13 @@ std::optional<std::string> plate_index_error(int plate_index, int plate_count)
     return "Invalid plate_index " + std::to_string(plate_index) + ": plates are 0 to " + std::to_string(plate_count - 1);
 }
 
-std::optional<PlateSettingsRequest> read_plate_settings(const nlohmann::json& params, const PlateSettingsOffer& offer, std::string& error)
+std::optional<PlateSettingsRequest> read_plate_settings(const nlohmann::json& params, const PlateSettingsOffer& offer,
+                                                        const PlateSettings& current, std::string& error)
 {
     PlateSettingsRequest request;
-    request.name     = read_plate_name(params, error);
+    request.name     = read_plate_name(params, current, error);
     request.locked   = read_flag(params, "locked", error);
-    request.bed_type = read_plate_bed_type(params, offer, error);
+    request.bed_type = read_plate_bed_type(params, offer, current, error);
     if (!error.empty())
         return std::nullopt;
     if (const auto sequence = read_choice(params, "print_sequence", {"global", "by layer", "by object"}, error))
@@ -264,20 +320,19 @@ std::optional<PlateSettingsRequest> read_plate_settings(const nlohmann::json& pa
         request.spiral_vase = *vase == "on" ? SpiralVase::on : *vase == "off" ? SpiralVase::off : SpiralVase::global;
     if (!error.empty())
         return std::nullopt;
-    const bool custom_first = params.contains("first_layer_filament_order") && !is_auto(params.at("first_layer_filament_order"));
-    const bool custom_other = params.contains("other_layers_filament_order") && !is_auto(params.at("other_layers_filament_order"));
-    if ((custom_first || custom_other) && offer.mixed_filaments) {
-        error = "the project has mixed filaments, so a custom filament order does not take effect (the plate settings dialog turns it "
-                "off then): send \"auto\"";
-        return std::nullopt;
-    }
     if (params.contains("first_layer_filament_order"))
-        request.first_layer_order = read_first_layer_order(params, offer, error);
+        request.first_layer_order = read_first_layer_order(params, offer, current, error);
     if (error.empty() && params.contains("other_layers_filament_order"))
-        request.other_layers_order = read_other_layers_order(params, offer, error);
+        request.other_layers_order = read_other_layers_order(params, offer, current, error);
     if (!error.empty())
         return std::nullopt;
     return request;
+}
+
+bool asks_anything(const PlateSettingsRequest& request)
+{
+    return request.name || request.locked || request.bed_type || request.print_sequence || request.first_layer_order ||
+           request.other_layers_order || request.spiral_vase;
 }
 
 PlateSettings with_request(PlateSettings settings, const PlateSettingsRequest& request)
@@ -312,7 +367,8 @@ std::vector<std::string> plate_settings_differences(const PlateSettings& before,
         changes.emplace_back("print_sequence");
     if (after.first_layer_order != before.first_layer_order)
         changes.emplace_back("first_layer_filament_order");
-    if (after.other_layers_order != before.other_layers_order)
+    // The same ranges in another order are the same setting: the slicer reads each layer's range.
+    if (in_layer_order(after.other_layers_order) != in_layer_order(before.other_layers_order))
         changes.emplace_back("other_layers_filament_order");
     if (after.spiral_vase != before.spiral_vase)
         changes.emplace_back("spiral_vase");

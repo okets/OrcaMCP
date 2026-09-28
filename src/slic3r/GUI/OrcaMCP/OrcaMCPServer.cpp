@@ -3464,7 +3464,9 @@ void OrcaMCPServer::register_builtin_tools()
                 // run finishes or stops. So "not running" here means the whole slice_all run is over,
                 // not merely that one plate finished, and this is the first moment it is safe to put
                 // the caller's plate back. See s_slice_all_restore_print_index.
-                if (!is_running && s_slice_all_restore_print_index >= 0) {
+                // Not under an arrange or bed fill, which applies its result to the current plate: the plate is
+                // put back by a later call.
+                if (!is_running && s_slice_all_restore_print_index >= 0 && plater->get_ui_job_worker().is_idle()) {
                     const int restore_to            = plate_list.find_plate_by_print_index(s_slice_all_restore_print_index);
                     s_slice_all_restore_print_index = -1;
                     if (restore_to >= 0 && restore_to != plate_list.get_curr_plate_index()) {
@@ -3813,7 +3815,7 @@ void OrcaMCPServer::register_builtin_tools()
         "add_plate",
         ToolCategory::Plates,
         "Add a new plate",
-        "Create a new plate.",
+        "Create a new plate. Refused while an arrange, orient or bed fill runs: it places objects by the plates as they were.",
         {
             {"type", "object"},
             {"properties", nlohmann::json::object()}
@@ -3822,6 +3824,11 @@ void OrcaMCPServer::register_builtin_tools()
             return run_on_main_thread([]() {
                 Plater* plater = wxGetApp().plater();
                 PartPlateList& plate_list = plater->get_partplate_list();
+
+                // An arrange or bed fill places objects by the plates as they were when it started: a plate
+                // added under it moves them (the plate grid re-flows).
+                if (const auto refusal = edit_job_refusal(!plater->get_ui_job_worker().is_idle(), "add_plate"))
+                    return error_response(*refusal);
 
                 // Capture state before creation
                 int previous_plate_count = plate_list.get_plate_count();
@@ -3863,7 +3870,7 @@ void OrcaMCPServer::register_builtin_tools()
         "delete_plate",
         ToolCategory::Plates,
         "Delete a plate; its objects go unplaced",
-        "Delete a plate. Cannot delete the last plate. Objects on it are NOT deleted and NOT moved to another plate: they are moved outside every plate, where get_scene_info lists them under unplaced_objects. Delete them first if you do not want them. "
+        "Delete a plate. Cannot delete the last plate; refused while an arrange, orient or bed fill runs. Objects on it are NOT deleted and NOT moved to another plate: they are moved outside every plate, where get_scene_info lists them under unplaced_objects. Delete them first if you do not want them. "
         "A slice in progress is cancelled, a Slice All run with it (the response says so; call slice_all again).",
         {
             {"type", "object"},
@@ -3879,6 +3886,10 @@ void OrcaMCPServer::register_builtin_tools()
             return run_on_main_thread([plate_index]() {
                 Plater* plater = wxGetApp().plater();
                 PartPlateList& plate_list = plater->get_partplate_list();
+
+                // An arrange or bed fill places objects by the plates as they were when it started.
+                if (const auto refusal = edit_job_refusal(!plater->get_ui_job_worker().is_idle(), "delete_plate"))
+                    return error_response(*refusal);
 
                 // Capture state before deletion
                 int plate_count_before = plate_list.get_plate_count();
@@ -3946,7 +3957,8 @@ void OrcaMCPServer::register_builtin_tools()
         "select_plate",
         ToolCategory::Plates,
         "Make a plate the current one",
-        "Select a plate as current.",
+        "Select a plate as current. Refused while an arrange, orient or bed fill runs: a plate's arrange applies its "
+        "result to the current plate.",
         {
             {"type", "object"},
             {"properties", {
@@ -3987,6 +3999,11 @@ void OrcaMCPServer::register_builtin_tools()
                         {"note", "Already on plate " + std::to_string(plate_index) + ", no change needed."}
                     };
                 }
+
+                // A plate's arrange applies its result to the current plate (postprocess_bed_index_for_current_plate):
+                // another plate selected under it takes the arranged objects.
+                if (const auto refusal = edit_job_refusal(!plater->get_ui_job_worker().is_idle(), "select_plate"))
+                    return error_response(*refusal);
 
                 int result = plater->select_plate(plate_index);
                 int current_plate = plate_list.get_curr_plate_index();
@@ -5301,7 +5318,7 @@ void OrcaMCPServer::register_builtin_tools()
         "(cut_info_invalidated_for). An object's last solid part is not deleted on its own (delete the "
         "object), nor a cut object's solid part until invalidate_cut_info. When deleting a volume leaves "
         "one, its settings move to the object (settings_moved_to_object), as the list does. An open toolbar "
-        "tool is closed first (closed_toolbar_tool). Refused while an arrange or orient runs.",
+        "tool is closed first (closed_toolbar_tool). Refused while an arrange, orient or bed fill runs.",
         {
             {"type", "object"},
             {"properties", {
@@ -5507,7 +5524,7 @@ void OrcaMCPServer::register_builtin_tools()
         "get_object_info reports -- the object's own rotation is accounted for. keep: below, above, "
         "or both. The app's own cut: the pieces are the last objects afterwards (new_object_ids), each on "
         "the plate, and the original's index is free, so every object after it moves down by one. One undo "
-        "step. Refused while an arrange or orient runs; an open toolbar tool is closed first "
+        "step. Refused while an arrange, orient or bed fill runs; an open toolbar tool is closed first "
         "(closed_toolbar_tool).",
         {
             {"type", "object"},
