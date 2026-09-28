@@ -118,7 +118,12 @@ bridge on the machine that runs OrcaMCP; `ORCAMCP_HOST` is `localhost` or `127.0
    - Re-query `get_scene_info` to get current object IDs
    - Object IDs shift when objects are deleted
 
-2. **Wrong plate**
+2. **The object's `internal_id` was passed**
+   - Pass the object description's `object_id` (the same number as `object_index`), never
+     `internal_id`: that is the app's own number for the object, which no tool takes. Builds before
+     v2.5.0.6 called it `id`
+
+3. **Wrong plate**
    - Objects are per-plate; ensure you're on the right plate
    - Use `select_plate` if needed
 
@@ -286,6 +291,20 @@ failures, starting `[Flashforge HTTP] POST`, with the curl code and the elapsed 
    ```bash
    echo '{"jsonrpc":"2.0","id":1,"method":"ping"}' | python3 scripts/orcamcp-bridge.py
    ```
+
+### A tool lacks a parameter or behaviour the docs describe, after an upgrade
+
+**Symptoms:**
+- The agent's tool has no parameter the docs name (on 2026-09-26 `load_model` showed no `multipart`),
+  or a response lacks a field the reference shows
+- The app itself is the new version (`get_server_info`'s `server.version`)
+
+**Cause:** Claude Code keeps the tool schemas, and the server instructions, it loaded when the session
+started. A session that started before OrcaMCP was upgraded goes on with the old ones, whatever the
+app now answers.
+
+**What to do:** reconnect the MCP server after an upgrade: `/mcp` in Claude Code, then reconnect
+`orca-slicer` (or start a new session). The bridge then serves the new tool list and instructions.
 
 ### "Method not found"
 
