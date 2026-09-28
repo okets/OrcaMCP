@@ -411,6 +411,15 @@ TEST_CASE("Installed printers point at selecting the first, which the install le
     CHECK(installed_printer_next_steps({}).empty());
 }
 
+TEST_CASE("A slot change that renumbered objects points at checking them, since an undo would not", "[McpNextSteps][orcamcp]")
+{
+    const std::vector<NextStep> steps = slot_change_next_steps(true);
+    REQUIRE(steps.size() == 1);
+    CHECK(steps[0].tool == "get_scene_info");
+    CHECK(mentions(steps[0].why, "filaments_used"));
+    CHECK(slot_change_next_steps(false).empty());
+}
+
 TEST_CASE("Every next step names a real tool, with arguments its schema accepts", "[McpNextSteps][orcamcp]")
 {
     std::vector<NextStep> steps = Scene({cube_missing_facet(), separate_cubes(2)}).steps();
@@ -450,7 +459,9 @@ TEST_CASE("Every next step names a real tool, with arguments its schema accepts"
         steps.push_back(std::move(step));
     for (NextStep& step : installed_printer_next_steps({"Flashforge AD5X 0.4 nozzle", "Flashforge AD5X 0.6 nozzle"}))
         steps.push_back(std::move(step));
-    REQUIRE(steps.size() == 26);
+    for (NextStep& step : slot_change_next_steps(true))
+        steps.push_back(std::move(step));
+    REQUIRE(steps.size() == 27);
 
     const mcp_tool_references::ToolNames names(OrcaMCPServer::registered_tools());
     json                                 response = json::object();

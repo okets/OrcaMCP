@@ -131,6 +131,11 @@ std::vector<NextStep> printer_control_next_steps();
 // printer, and a switch changes the filament slots and their colours, so it is left to its own call.
 std::vector<NextStep> installed_printer_next_steps(const std::vector<std::string>& printers);
 
+// What add_filament_slot's and delete_filament_slot's answers lead to when they renumbered slots or moved
+// objects (`renumbered`): get_scene_info, whose filaments_used shows each object's slots now -- and after any
+// undo, which would bring back the objects' old slot numbers without the slots (undo_warning).
+std::vector<NextStep> slot_change_next_steps(bool renumbered);
+
 std::vector<NextStep> missing_slot_next_steps(const std::vector<int>& missing_slots, bool slots_can_be_added);
 
 }} // namespace GUI::OrcaMCP

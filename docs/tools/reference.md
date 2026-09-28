@@ -2898,7 +2898,11 @@ button; on any other printer each extruder holds one filament and the slots foll
   "active_warnings": {"count": 0, "warnings": []}
 }
 ```
-Every plate loses its slice. No undo step, as in the app: undo does not bring back or take away a slot.
+Every plate loses its slice. Not an undo step, as in the app, and undo does not reverse it: the undo history
+holds the objects, not the slots, so an undo right after a change that renumbered mixed slots brings back
+the objects' old slot numbers while the slots stay as they are, putting objects on the wrong slots. When
+that applies, the answer carries `undo_warning` saying so, and `next_steps` names `get_scene_info`, whose
+`filaments_used` shows each object's slots. `delete_filament_slot` takes a slot away again.
 
 Refused, changing nothing: a printer whose slots follow its extruders (the message says how many, or
 that `single_extruder_multi_material` is off); 64 slots; a G-code preview on the plate (the app would
@@ -2940,8 +2944,10 @@ merged slot's support filaments instead of moving them).
 ```
 `objects_changed` is every object that printed with the deleted slot (a part, a modifier or painted
 facets on it count): its effective filaments before, and after, numbered as they are then. An object on
-other slots only is renumbered, which `renumbered` says. Every plate loses its slice; no undo step, as
-in the app.
+other slots only is renumbered, which `renumbered` says. Every plate loses its slice. Not an undo step, as
+in the app, and undo does not reverse it: an undo right after brings back the objects' old slot numbers
+(from before the delete) while the slots stay, putting objects on the wrong slots. The answer then
+carries `undo_warning` and a `get_scene_info` next step; `add_filament_slot` adds a slot back.
 
 Refused, changing nothing: a slot out of range, or `merge_into` out of range or the slot itself; the
 project's last physical slot; a physical slot of a printer whose slots follow its extruders; a slot a
@@ -3834,6 +3840,7 @@ nothing to suggest has no `next_steps`.
 | `fill_bed_with_instances` | `arrange_objects` with `all_plates: true`, and `set_instance_count` (the last instances) or `delete_object` with the highest `instance_id` | the fill added instances its plate's arrange could not fit, which stand on no plate (`instances_on_no_plate`) |
 | `set_plate_settings` | `arrange_objects` with that `plate_index` | the plate now prints by object |
 | | `reset_object_config` with the first object and the vase settings it carries (`why` names every object) | the plate's spiral vase was on and is off, and objects on it still carry the vase's object settings |
+| `add_filament_slot`, `delete_filament_slot` | `get_scene_info` | the change renumbered slots or moved objects (`undo_warning`): `filaments_used` shows each object's slots now, and after any undo |
 | `install_presets` | `select_preset` with `type: printer` and the first printer it installed | it installed printers: an install selects none |
 | `match_project_to_printer` (live) | `add_filament_slot` | the printer holds filament in a station slot the project has no filament slot for, and the printer takes more slots |
 | `printer_control` with a `set_*` action | `get_printer_status` | always: the printer takes a moment to apply a command, and `printer.controls` reads back what it now reports |

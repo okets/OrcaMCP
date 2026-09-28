@@ -325,6 +325,15 @@ std::vector<NextStep> installed_printer_next_steps(const std::vector<std::string
              {{"type", "printer"}, {"name", printers.front()}}}};
 }
 
+std::vector<NextStep> slot_change_next_steps(bool renumbered)
+{
+    if (!renumbered)
+        return {};
+    return {{"get_scene_info",
+             "the slots were renumbered: each object's filaments_used shows the slots it prints with now; check it again "
+             "after any undo, which would bring back the objects' old slot numbers but not the slots"}};
+}
+
 std::vector<NextStep> missing_slot_next_steps(const std::vector<int>& missing_slots, bool slots_can_be_added)
 {
     if (missing_slots.empty() || !slots_can_be_added)

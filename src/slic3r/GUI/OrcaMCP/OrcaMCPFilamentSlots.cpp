@@ -163,6 +163,16 @@ json objects_changed(const std::vector<std::vector<int>>& before, const std::vec
     return changed;
 }
 
+std::optional<std::string> slot_change_undo_warning(const json& renumbered, const json& objects_changed)
+{
+    if (renumbered.empty() && objects_changed.empty())
+        return std::nullopt;
+    return std::string("This slot change is not an undo step and undo does not reverse it: an undo now would bring back "
+                       "the objects' slot numbers from before it while the slots stay as they are, putting objects on the "
+                       "wrong slots. Change them back with the slot tools instead, and check each object's filaments_used "
+                       "(get_scene_info) after any undo");
+}
+
 std::vector<int> slots_using(const FilamentSlotsState& state, const std::string& preset)
 {
     std::vector<int> slots;

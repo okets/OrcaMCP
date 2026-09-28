@@ -72,6 +72,12 @@ nlohmann::json renumbered_after_delete(std::size_t slots_before, int deleted_slo
 // then. An object on other slots only is renumbered, not changed: `renumbered` says how.
 nlohmann::json objects_changed(const std::vector<std::vector<int>>& before, const std::vector<std::vector<int>>& after, int deleted_slot);
 
+// What a slot change's answer says about undo when it renumbered slots or moved objects: the change is no
+// undo step (the undo history holds the objects, not the slots), so an undo restores the objects' slot
+// numbers from before it while the slots stay as they are now, and objects print on the wrong slots.
+// Nothing when nothing was renumbered or moved.
+std::optional<std::string> slot_change_undo_warning(const nlohmann::json& renumbered, const nlohmann::json& objects_changed);
+
 // Which slot's preset apply_config's filament settings go to, as the slot's Edit points the Filament
 // settings at it.
 struct SlotEdit

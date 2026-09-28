@@ -420,3 +420,17 @@ TEST_CASE("apply_config refuses a filament_slot it could not act on, before the 
     CHECK(call_tool("apply_config", {{"settings", filament}, {"filament_slot", 2}, {"include_sharing_slots", "yes"}})["message"] ==
           "include_sharing_slots must be a boolean");
 }
+
+TEST_CASE("a slot change that renumbered anything warns that an undo would put objects on the wrong slots", "[FilamentSlots]")
+{
+    const json moved = json::array({{{"from", 3}, {"to", 2}}});
+    const json object = json::array({{{"object_id", 0}, {"filaments_before", {2}}, {"filaments_after", {1}}}});
+
+    const auto warning = slot_change_undo_warning(moved, json::array());
+    REQUIRE(warning.has_value());
+    CHECK(mentions(*warning, "undo"));
+    CHECK(mentions(*warning, "wrong"));
+    CHECK(slot_change_undo_warning(json::array(), object).has_value());
+    // Nothing renumbered and nothing moved: an undo restores the same numbers.
+    CHECK_FALSE(slot_change_undo_warning(json::array(), json::array()).has_value());
+}

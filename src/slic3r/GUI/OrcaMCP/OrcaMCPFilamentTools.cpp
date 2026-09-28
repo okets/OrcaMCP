@@ -8,6 +8,7 @@
 #include "OrcaMCPColorRecipe.hpp"
 #include "OrcaMCPFilamentModel.hpp"
 #include "OrcaMCPFilamentSlots.hpp"
+#include "OrcaMCPNextSteps.hpp"
 #include "OrcaMCPUiJob.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/PresetComboBoxes.hpp"
@@ -59,6 +60,16 @@ std::vector<std::vector<int>> objects_filaments()
     return filaments;
 }
 
+// A slot change's undo_warning and next step, when it renumbered slots or moved objects.
+void add_undo_warning(nlohmann::json& answer)
+{
+    const auto warning = slot_change_undo_warning(answer.value("renumbered", nlohmann::json::array()),
+                                                   answer.value("objects_changed", nlohmann::json::array()));
+    if (warning)
+        answer["undo_warning"] = *warning;
+    add_next_steps(answer, slot_change_next_steps(warning.has_value()));
+}
+
 // What the plates were sliced with changed for every plate: none keeps its result.
 void after_slot_count_change()
 {
@@ -91,6 +102,7 @@ nlohmann::json add_filament_slot(const std::optional<std::string>& color, const 
                              {"preset", after.slot_presets[slot - 1]},
                              {"color", colour.GetAsString(wxC2S_HTML_SYNTAX).ToStdString()},
                              {"renumbered", renumbered_after_add(before)}};
+    add_undo_warning(answer);
     return guard.report(with_filaments(std::move(answer)));
 }
 
@@ -137,6 +149,7 @@ nlohmann::json delete_filament_slot(DeleteSlotRequest request)
         // The slot it merged into, as numbered now.
         answer["merged_into_now"] = *request.merge_into > request.slot ? *request.merge_into - 1 : *request.merge_into;
     }
+    add_undo_warning(answer);
     return guard.report(with_filaments(std::move(answer)));
 }
 
@@ -169,7 +182,9 @@ void OrcaMCPServer::register_filament_tools()
         "sidebar's next colour unless color gives one. Only a printer that changes filaments on one extruder, or a Bambu Lab "
         "printer, takes more slots: a printer with one filament per extruder has as many slots as extruders. Answers slot "
         "(the new slot's number), preset, color, renumbered ({from, to} for moved mixed slots) and filaments. Every plate "
-        "loses its slice; no undo step, as in the app (undo does not bring a slot back or take one away). Then give it "
+        "loses its slice. Not an undo step, as in the app, and undo does not reverse it: with mixed slots renumbered, an "
+        "undo right after brings back the objects' old slot numbers while the slots stay, putting objects on the wrong "
+        "slots (undo_warning says so when it applies; delete_filament_slot takes a slot away). Then give it "
         "objects with set_object_filament or paint_object, or another preset with select_preset {type: filament, slot}. "
         "Refused while slicing or while a job runs.",
         {
@@ -206,7 +221,9 @@ void OrcaMCPServer::register_filament_tools()
         "slot instead. Answers deleted_slot, renumbered ({from, to}), objects_changed "
         "(each object that printed with the slot: its filaments before, and after, as numbered then), merged_into / "
         "merged_into_now, and filaments. Every plate "
-        "loses its slice; no undo step, as in the app. Refused: the last physical slot; a physical slot of a printer with "
+        "loses its slice. Not an undo step, as in the app, and undo does not reverse it: an undo right after brings back the "
+        "objects' old slot numbers while the slots stay, putting objects on the wrong slots (undo_warning says so when it "
+        "applies; add_filament_slot adds a slot back). Refused: the last physical slot; a physical slot of a printer with "
         "one filament per extruder; a slot a mixed slot is made of, which breaks the mix, unless allow_breaking_mix; deleting slot 1 "
         "(or the only slot using the Filament settings' preset) while those settings have unsaved changes, which the app "
         "would re-select (save_preset or reset_preset first); while slicing or while a job runs. delete_mixed_filament "
