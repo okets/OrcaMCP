@@ -84,8 +84,8 @@ TEST_CASE("the slider offers no filament change where it greys the menu", "[Laye
     vase.spiral_vase     = true;
     CHECK(contains(add_layer_gcode(info, k_layers, 2, change_to(2), vase, change), "spiral vase"));
     // A slot the project lacks, as set_object_config refuses one.
-    CHECK(contains(add_layer_gcode(info, k_layers, 2, change_to(3), rules(), change), "filament 3 names no filament slot"));
-    CHECK(contains(add_layer_gcode(info, k_layers, 2, change_to(0), rules(), change), "numbered from 1"));
+    CHECK(contains(add_layer_gcode(info, k_layers, 2, change_to(3), rules(), change), "filament 3 names no filament slot: the project has 2"));
+    CHECK(contains(add_layer_gcode(info, k_layers, 2, change_to(0), rules(), change), "filament 0 names no filament slot"));
     CHECK(info.gcodes.empty());
 }
 

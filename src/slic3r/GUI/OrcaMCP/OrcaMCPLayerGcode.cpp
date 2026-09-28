@@ -34,10 +34,10 @@ std::optional<std::string> filament_change_refusal(const LayerGcodeRules& rules,
         if (used != rules.plate_filaments.front())
             return std::string("The app offers a filament change at a layer only on a plate printed with one filament, and this "
                                "one prints with several: paint or set_object_filament is how a plate changes filaments");
-    if (filament < 1)
-        return "filament " + std::to_string(filament) + " is not a slot: filaments are numbered from 1";
-    if (const auto refusal = filament_number_refusal(rules.slots, "extruder", filament))
-        return "filament" + refusal->substr(std::string("extruder").size());
+    // As set_object_config holds a filament number (filament_number_refusal), less its 0, which is no slot.
+    if (filament < 1 || filament_number_refusal(rules.slots, "extruder", filament))
+        return "filament " + std::to_string(filament) + " names no filament slot: the project has " + std::to_string(rules.slots.slots()) +
+               ", numbered 1 to " + std::to_string(rules.slots.slots());
     return std::nullopt;
 }
 
