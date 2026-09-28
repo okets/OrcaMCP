@@ -1,6 +1,7 @@
 #include "OrcaMCPUiJob.hpp"
 
 #include "slic3r/Utils/ThreadCancel.hpp"
+#include "libslic3r/Model.hpp"
 
 #include <algorithm>
 #include <iomanip>
@@ -167,6 +168,33 @@ nlohmann::json ui_job_unfinished_json(UiJobKind kind, UiJobWait wait, double wai
     case UiJobWait::finished: break;
     }
     throw std::logic_error("ui_job_unfinished_json: the job finished");
+}
+
+std::vector<ObjectID> object_order(const Model& model)
+{
+    std::vector<ObjectID> order;
+    for (const ModelObject* object : model.objects)
+        order.push_back(object->id());
+    return order;
+}
+
+int object_index_of(const Model& model, const ObjectID& id)
+{
+    for (std::size_t i = 0; i < model.objects.size(); ++i)
+        if (model.objects[i]->id() == id)
+            return int(i);
+    return -1;
+}
+
+nlohmann::json object_id_changes(const std::vector<ObjectID>& before, const Model& model)
+{
+    nlohmann::json changes = nlohmann::json::array();
+    for (std::size_t now = 0; now < model.objects.size(); ++now) {
+        const auto it = std::find(before.begin(), before.end(), model.objects[now]->id());
+        if (it != before.end() && std::size_t(it - before.begin()) != now)
+            changes.push_back({{"object_id", int(now)}, {"previous_object_id", int(it - before.begin())}, {"name", model.objects[now]->name}});
+    }
+    return changes;
 }
 
 std::string ui_job_busy_message(const std::string& tool)

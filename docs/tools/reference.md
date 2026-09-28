@@ -627,8 +627,10 @@ automatic spacing, as the plate's icon does (`spacing_note`).
 
 Answered once the arrange has been applied, with `objects` as `auto_orient` gives them: each one's
 `position`, `plate_index` and `changed` where the arrange put it (see
-[Waiting for the job](#waiting-for-the-job)). **An arrange re-sorts the objects**, so an object can
-have another `object_id` afterwards though it did not move: `previous_object_id` says which it had.
+[Waiting for the job](#waiting-for-the-job)). **An arrange re-sorts every object in the scene** by its
+arrange order -- those on plates it did not arrange too -- so an object can have another `object_id`
+afterwards though it did not move: `object_id_changes` lists each one (`object_id`,
+`previous_object_id`, `name`), and each entry of `objects` carries its `previous_object_id` too.
 With `all_plates`: `plate_count_before`, `plate_count`, and `plates_not_arranged` (`locked`, or
 `print_sequence_differs`: plates the A key leaves as they are). Refused for a locked plate (unlock it
 with `set_plate_settings`), with nothing to arrange, and while another job runs.
@@ -1313,8 +1315,11 @@ Create copies of an object.
 The copies are placed by an arrange of the destination plate, and the answer comes once it has been
 applied: besides `copies_created`, `new_object_ids` (duplicates) or `total_instances` (instances), it
 lists `objects`, every object on that plate with its placement, as `arrange_objects` does (see
-[Waiting for the job](#waiting-for-the-job)). The copies and their arrange are one undo step (the
-arrange's own step used to come after the copies, so an undo took back only the arrange). While
+[Waiting for the job](#waiting-for-the-job)). The arrange re-sorts every object in the scene: the
+ids the answer gives (`source_object_id` / `object_id`, `new_object_ids`) are those after it, and
+`object_id_changes` lists every object whose `object_id` changed. The copies and their arrange are one
+undo step (the arrange's own step used to come after the copies, so an undo took back only the
+arrange). While
 another job runs it is refused before anything is copied.
 
 ---
@@ -1330,8 +1335,10 @@ Set how many instances (linked copies: one mesh, each placed on its own) an obje
 | `count` | integer | Yes | How many instances, 1 to 1000 |
 | `include_preview` | boolean | No | Include preview |
 
-New instances go a small step from the last one, as **Add instance** puts them, not where there is
-room: when one overlaps another instance on its plate, or stands off every plate, `next_steps` names
+New instances go a small step from the last one (12.8 mm in X and Y on a 256 mm bed), as **Add
+instance** puts them, not where there is room. When one stands on no plate -- many copies step past the
+bed's edge -- `next_steps` names `arrange_objects` with `all_plates: true`, since a plate's arrange takes
+only the instances it holds; when they only overlap another instance or stand partly off their plate,
 `arrange_objects` for that plate. A lower count removes the last instances (**Remove instance**); to
 remove a chosen one, `delete_object` with `instance_id`; to remove the object, `delete_object`. The
 answer gives `instance_count_before`, `instance_count`, `added_instance_ids` or
@@ -1359,9 +1366,11 @@ does.
 The plate the instance stands on is made current, the fill adds as many instances as its estimate of
 the free area allows, then the plate's objects are arranged, as the GUI's fill does. The answer comes
 once both are applied: `plate_index`, `instances_added` (0 when nothing more fits), `instance_count`,
-`arrange_options`, and every object on the plate with its placement (`previous_object_id` when the
-arrange re-sorted one). The fill's estimate can add more than the arrange then fits: those instances
-stand on no plate, and the object's `placement_warning` names them. One undo step undoes both, where
+`arrange_options`, every object on the plate with its placement, and `object_id_changes` (the arrange
+re-sorts every object in the scene). The fill's estimate can add more than the arrange then fits:
+`instances_on_no_plate` lists those, and `next_steps` names `arrange_objects` with `all_plates: true`
+to put them on plates of their own, and their removal -- `set_instance_count` when they are the last
+instances, else `delete_object` with the highest `instance_id`. One undo step undoes both, where
 the GUI's takes two. Refused for an object with an unprintable instance or a piece of a cut, for an
 instance on no plate, and while another job runs; see [Waiting for the job](#waiting-for-the-job).
 
@@ -3549,7 +3558,9 @@ nothing to suggest has no `next_steps`.
 | `add_volume` | `move_object` with `object_id` and `volume_id` | a primitive: it stands beside the object |
 | `add_volume`, `set_volume_type` | `set_object_config` with `object_id` and `volume_id` | the volume is a modifier, which changes only the settings it is given |
 | `assemble_objects` | `get_object_info` of the assembly | always: its volumes, with their boxes |
-| `set_instance_count` | `arrange_objects` with the `plate_index` of the new instances (none when they are on no plate: the current plate) | an added instance overlaps another instance on its plate, or stands off every plate: Add instance puts each a small step from the last |
+| `set_instance_count` | `arrange_objects` with `all_plates: true` | an added instance stands on no plate: a plate's arrange takes only the instances it holds |
+| | `arrange_objects` with the `plate_index` of the new instances | an added instance overlaps another instance on its plate, or stands partly off it: Add instance puts each a small step from the last |
+| `fill_bed_with_instances` | `arrange_objects` with `all_plates: true`, and `set_instance_count` (the last instances) or `delete_object` with the highest `instance_id` | the fill added instances its plate's arrange could not fit, which stand on no plate (`instances_on_no_plate`) |
 | `set_plate_settings` | `arrange_objects` with that `plate_index` | the plate now prints by object |
 | | `reset_object_config` with the first object and the vase settings it carries (`why` names every object) | the plate's spiral vase was on and is off, and objects on it still carry the vase's object settings |
 | The bridge's own answers (`list_instances`, `start_orca`, and a tool call it did not forward) | `select_instance` with the `pid` of the first instance that tells who it is (never an older OrcaMCP, which cannot), and `list_instances` | several instances run and this session has not chosen one, or the one it used is gone |

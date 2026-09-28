@@ -258,7 +258,8 @@ namespace {
 // "arrange_started"). A response has no schema to read them from, so they are listed here.
 const std::set<std::string> response_words_named_in_descriptions{"slice_run",      "reset_count",              "arrange_started",
                                                                   "export_started", "cut_info_invalidated_for", "new_object_ids",
-                                                                  "arrange_options", "fill_bed_started"};
+                                                                  "arrange_options", "fill_bed_started", "object_id_changes",
+                                                                  "instances_on_no_plate"};
 
 } // namespace
 

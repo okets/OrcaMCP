@@ -488,6 +488,36 @@ TEST_CASE("A job whose finalize starts another leaves the worker busy after it i
     CHECK(follow_up->finalized);
 }
 
+TEST_CASE("Every object an arrange re-sorted is named, those on plates it did not arrange too", "[McpUiJob][orcamcp]")
+{
+    // A, B and D on the arranged plate, C elsewhere: the re-sort gives A, C, B, D, and B moved though
+    // the arrange did not reach it.
+    Slic3r::Model model;
+    for (const char* name : {"A", "B", "C", "D"})
+        model.add_object()->name = name;
+    const std::vector<Slic3r::ObjectID> before = object_order(model);
+    std::swap(model.objects[1], model.objects[2]);
+
+    CHECK(object_id_changes(before, model) ==
+          nlohmann::json::array({{{"object_id", 1}, {"previous_object_id", 2}, {"name", "C"}},
+                                 {{"object_id", 2}, {"previous_object_id", 1}, {"name", "B"}}}));
+    CHECK(object_id_changes(object_order(model), model).empty());
+    CHECK(object_index_of(model, before[1]) == 2);
+    CHECK(object_index_of(model, Slic3r::ObjectID()) == -1);
+}
+
+TEST_CASE("An object deleted since is left out of the renumbered objects", "[McpUiJob][orcamcp]")
+{
+    Slic3r::Model model;
+    for (const char* name : {"A", "B", "C"})
+        model.add_object()->name = name;
+    const std::vector<Slic3r::ObjectID> before = object_order(model);
+    model.delete_object(size_t(0));
+    CHECK(object_id_changes(before, model) ==
+          nlohmann::json::array({{{"object_id", 0}, {"previous_object_id", 1}, {"name", "B"}},
+                                 {{"object_id", 1}, {"previous_object_id", 2}, {"name", "C"}}}));
+}
+
 // ==================== WHAT THE TOOL ANSWERS ====================
 
 TEST_CASE("A job that did not finish is answered with what stopped it and what to do", "[McpUiJob][orcamcp]")

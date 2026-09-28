@@ -32,7 +32,7 @@
 //
 // Unit-tested in tests/slic3rutils/test_mcp_ui_job.cpp.
 
-namespace Slic3r { class ModelObject; }
+namespace Slic3r { class Model; class ModelObject; }
 namespace Slic3r { namespace GUI { class Plater; } }
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
@@ -132,6 +132,18 @@ private:
     std::chrono::milliseconds m_previous;
 };
 std::chrono::milliseconds tool_wait_cap();
+
+// The objects' ids in the model's order, before a job that can re-sort them: an arrange sorts every
+// object of the model by its arrange order (PartPlateList::rebuild_plates_after_arrangement), those on
+// plates it did not arrange too.
+std::vector<ObjectID> object_order(const Model& model);
+
+// The index of the object whose id is `id` in `model`, or -1.
+int object_index_of(const Model& model, const ObjectID& id);
+
+// Every object whose index in `model` differs from its index in `before`, in its new order:
+// [{object_id, previous_object_id, name}]; empty when none moved. An object deleted since is left out.
+nlohmann::json object_id_changes(const std::vector<ObjectID>& before, const Model& model);
 
 // ---- The app side (OrcaMCPUiJobApp.cpp) ----------------------------------------------------------
 

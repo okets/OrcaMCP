@@ -249,20 +249,47 @@ std::string named_ids(const std::string& noun, const std::vector<int>& ids)
 } // namespace
 
 std::vector<NextStep> added_instances_next_steps(int object_id, int plate_index, const std::vector<int>& crowded,
-                                                 const std::vector<int>& off_plate)
+                                                 const std::vector<int>& partly_off, const std::vector<int>& on_no_plate)
 {
-    if (crowded.empty() && off_plate.empty())
+    const std::string step = "the GUI's Add instance puts each new instance a small step from the last one, not where there is room: ";
+    const std::string object = " of object " + std::to_string(object_id);
+    if (!on_no_plate.empty())
+        return {{"arrange_objects",
+                 step + named_ids("instance", on_no_plate) + object + (on_no_plate.size() == 1 ? " stands" : " stand") +
+                     " on no plate, and a plate's arrange takes only the instances it holds: arranging every plate places them (it may "
+                     "add plates)",
+                 {{"all_plates", true}}}};
+    if (crowded.empty() && partly_off.empty())
         return {};
-    std::string why = "the GUI's Add instance puts each new instance a small step from the last one, not where there is room: ";
+    std::string why = step;
     if (!crowded.empty())
-        why += named_ids("instance", crowded) + " of object " + std::to_string(object_id) + (crowded.size() == 1 ? " overlaps" : " overlap") +
-               " another";
-    if (!off_plate.empty())
-        why += std::string(crowded.empty() ? "" : ", and ") + named_ids("instance", off_plate) + (off_plate.size() == 1 ? " stands" : " stand") +
-               " off the plate";
-    if (plate_index < 0)
-        return {{"arrange_objects", why + ": it arranges the current plate's objects", nullptr}};
+        why += named_ids("instance", crowded) + object + (crowded.size() == 1 ? " overlaps" : " overlap") + " another";
+    if (!partly_off.empty())
+        why += std::string(crowded.empty() ? "" : ", and ") + named_ids("instance", partly_off) + (partly_off.size() == 1 ? " stands" : " stand") +
+               " partly off the plate";
     return {{"arrange_objects", why + ": it spaces plate " + std::to_string(plate_index) + "'s objects", {{"plate_index", plate_index}}}};
+}
+
+std::vector<NextStep> unplaced_instances_next_steps(int object_id, const std::vector<int>& on_no_plate, int instance_count)
+{
+    if (on_no_plate.empty())
+        return {};
+    const std::string what = named_ids("instance", on_no_plate) + " of object " + std::to_string(object_id) +
+                             (on_no_plate.size() == 1 ? " stands" : " stand") + " on no plate: the fill's estimate added more than its plate's arrange fit";
+    std::vector<NextStep> steps = {{"arrange_objects", what + "; arranging every plate puts them on plates of their own (it may add plates)",
+                                    {{"all_plates", true}}}};
+    const int  kept     = instance_count - int(on_no_plate.size());
+    bool       the_last = true;
+    for (std::size_t i = 0; i < on_no_plate.size(); ++i)
+        the_last = the_last && on_no_plate[i] == kept + int(i);
+    if (the_last)
+        steps.push_back({"set_instance_count", what + "; this removes them, the last " + std::to_string(on_no_plate.size()),
+                         {{"object_id", object_id}, {"count", kept}}});
+    else
+        steps.push_back({"delete_object", what + "; this removes the highest, and the ids after a deleted one shift down: call it for "
+                                                 "each, highest first",
+                         {{"object_id", object_id}, {"instance_id", on_no_plate.back()}}});
+    return steps;
 }
 
 std::vector<NextStep> print_by_object_next_steps(int plate_index)

@@ -235,12 +235,13 @@ std::optional<nlohmann::json> close_toolbar_tool(Plater& plater, std::string& cl
 
 // ---- set_instance_count ----
 
-// The instances from `first_added` on that overlap another instance on their plate, those that stand off
-// every plate, and the plate to arrange for them.
+// The instances from `first_added` on that overlap another instance on their plate, those partly off
+// their plate, those on no plate, and the plate to arrange for the first two.
 struct AddedInstances
 {
     std::vector<int> crowded;
-    std::vector<int> off_plate;
+    std::vector<int> partly_off;
+    std::vector<int> on_no_plate;
     int              plate_index = -1;
 };
 
@@ -261,25 +262,34 @@ AddedInstances added_instances(Plater& plater, int object_id, std::size_t first_
 {
     AddedInstances                       added;
     const Model&                         model      = plater.model();
-    GUI::PartPlateList&                       plates     = plater.get_partplate_list();
+    GUI::PartPlateList&                  plates     = plater.get_partplate_list();
     const ModelObject&                   object     = *model.objects[std::size_t(object_id)];
     const std::vector<InstancePlacement> placements = instance_placements(object, object_id, plates);
     for (std::size_t i = first_added; i < placements.size(); ++i) {
         const int plate_index = placements[i].plate_index;
-        if (!placements[i].on_bed)
-            added.off_plate.push_back(int(i));
-        else {
-            int                              position = -1;
-            const std::vector<BoundingBoxf3> boxes    = instance_boxes_on(model, *plates.get_plate(plate_index), object_id, int(i), position);
-            if (!overlapping_boxes(boxes, {position}).empty())
-                added.crowded.push_back(int(i));
+        if (plate_index < 0) {
+            added.on_no_plate.push_back(int(i));
+            continue;
         }
-        if (added.plate_index < 0 && plate_index >= 0 && (!added.crowded.empty() || !added.off_plate.empty()))
+        if (added.plate_index < 0)
             added.plate_index = plate_index;
+        int position = -1;
+        if (!placements[i].on_bed)
+            added.partly_off.push_back(int(i));
+        else if (!overlapping_boxes(instance_boxes_on(model, *plates.get_plate(plate_index), object_id, int(i), position), {position}).empty())
+            added.crowded.push_back(int(i));
     }
-    if (added.plate_index < 0 && first_added > 0)
-        added.plate_index = placements[first_added - 1].plate_index;
     return added;
+}
+
+// The instances of the object that stand on no plate, as its placement reports them.
+std::vector<int> instances_on_no_plate(const nlohmann::json& placement)
+{
+    std::vector<int> ids;
+    for (const nlohmann::json& instance : placement.value("instance_placement", nlohmann::json::array()))
+        if (instance.at("plate_index").is_null())
+            ids.push_back(instance.at("instance_id").get<int>());
+    return ids;
 }
 
 std::vector<int> ids_between(std::size_t first, std::size_t end)
@@ -346,7 +356,7 @@ nlohmann::json set_instance_count_on_main_thread(const nlohmann::json& params, i
     report_placement(answer, object_id);
     if (after > before) {
         const AddedInstances added = added_instances(*plater, object_id, before);
-        add_next_steps(answer, added_instances_next_steps(object_id, added.plate_index, added.crowded, added.off_plate));
+        add_next_steps(answer, added_instances_next_steps(object_id, added.plate_index, added.crowded, added.partly_off, added.on_no_plate));
     }
     answer["active_warnings"] = get_active_warnings_json(plater);
     return with_closed_tool(guard.report(std::move(answer)), closed_tool);
@@ -373,6 +383,7 @@ struct FillBedStart
 {
     std::shared_ptr<UiJobOutcome> outcome;
     std::vector<ObjectTransforms> scope;
+    std::vector<ObjectID>         order; // the objects' order before the job, which the arrange re-sorts
     ObjectTransforms              filled;
     int                           plate_index = -1;
     OptionsChange                 options;
@@ -411,6 +422,7 @@ nlohmann::json start_fill_bed(const nlohmann::json& params, const ArrangeOptions
     if (const auto refusal = select_instance(*plater, object_id, instance_id))
         return with_closed_tool(error_response(*refusal), start.closed_tool);
     start.scope   = current_plate_objects(*plater);
+    start.order   = object_order(plater->model());
     start.filled  = transforms_of(*object);
     start.outcome = start_ui_job(*plater, UiJobKind::fill_bed, Job::PREPARE_STATE_MENU);
     return nullptr;
@@ -438,7 +450,13 @@ nlohmann::json fill_bed_with_instances(const nlohmann::json& params)
             const std::size_t    now    = filled.contains("instance_placement") ? filled["instance_placement"].size() : 0;
             answer["instances_added"]   = int(now) - int(start.filled.instances.size());
             answer["instance_count"]    = now;
+            // The fill's estimate can add more than its plate's arrange fits: those stand on no plate.
+            const std::vector<int> unplaced = instances_on_no_plate(filled);
+            answer["instances_on_no_plate"] = unplaced;
+            if (filled.contains("object_id") && filled["object_id"].is_number())
+                add_next_steps(answer, unplaced_instances_next_steps(filled["object_id"].get<int>(), unplaced, int(now)));
             answer["objects"]           = placements_after(start.scope);
+            answer["object_id_changes"] = object_id_changes(start.order, wxGetApp().plater()->model());
             add_options_report(answer, start.options);
             answer["active_warnings"] = get_active_warnings_json(wxGetApp().plater());
             add_turntable_preview_if_requested(answer, include_preview);
@@ -481,6 +499,7 @@ nlohmann::json arrange_objects(const nlohmann::json& params)
 
     std::shared_ptr<UiJobOutcome> outcome;
     std::vector<ObjectTransforms> scope;
+    std::vector<ObjectID>         order;
     OptionsChange                 options;
     nlohmann::json                facts;
     const nlohmann::json          refusal = run_on_main_thread([&]() -> nlohmann::json {
@@ -509,16 +528,18 @@ nlohmann::json arrange_objects(const nlohmann::json& params)
                 facts["spacing_note"] = *note;
             scope = current_plate_objects(*plater);
         }
+        order   = object_order(plater->model());
         outcome = start_ui_job(*plater, UiJobKind::arrange, all_plates ? Job::PREPARE_STATE_DEFAULT : Job::PREPARE_STATE_MENU);
         return nullptr;
     });
     if (!refusal.is_null())
         return refusal;
-    return answer_after_ui_job(*outcome, [scope, facts, options, all_plates, include_preview]() -> nlohmann::json {
+    return answer_after_ui_job(*outcome, [scope, order, facts, options, all_plates, include_preview]() -> nlohmann::json {
         Plater*        plater = wxGetApp().plater();
         nlohmann::json answer = {{"status", "success"}};
         answer.update(facts);
-        answer["objects"] = placements_after(scope);
+        answer["objects"]           = placements_after(scope);
+        answer["object_id_changes"] = object_id_changes(order, plater->model());
         if (all_plates)
             answer["plate_count"] = plater->get_partplate_list().get_plate_count();
         answer["current_plate_index"] = plater->get_partplate_list().get_curr_plate_index();
@@ -571,8 +592,9 @@ void Slic3r::GUI::OrcaMCPServer::register_arrange_tools()
         "Fill the free space of a plate with instances (linked copies) of an object, as the GUI's Fill bed with instances does: the plate "
         "the instance stands on, made current first, gets as many as fit, then its objects are arranged; one undo step (the GUI's "
         "takes two). The arrange menu's options this call gives are saved and used, as the menu's are. Answered once the fill and its "
-        "arrange have been applied, with instances_added (0 when nothing more fits) and every object on the plate with its placement "
-        "(previous_object_id when the arrange moved one in the object list). Past the bridge's cap: status fill_bed_started with "
+        "arrange have been applied, with instances_added (0 when nothing more fits), instances_on_no_plate (copies the fill's "
+        "estimate added and the arrange could not fit; next_steps names how to place or remove them), every object on the plate with "
+        "its placement, and object_id_changes (the arrange re-sorts every object in the scene). Past the bridge's cap: status fill_bed_started with "
         "finished false, and get_slicing_status's ui_job says when it has ended. Refused for an object with an unprintable instance or a "
         "piece of a cut, an instance on no plate, and while another job runs; an open toolbar tool is closed first (closed_toolbar_tool).",
         {{"type", "object"}, {"properties", fill_properties}, {"required", {"object_id"}}},

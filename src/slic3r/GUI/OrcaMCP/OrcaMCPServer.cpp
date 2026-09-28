@@ -1779,6 +1779,8 @@ void OrcaMCPServer::register_builtin_tools()
         "unprintable objects to a plate after the last). The arrange menu's options this call gives (spacing_mm, auto_rotate, "
         "allow_multiple_materials, align_to_y_axis, avoid_calibration_region, reset_options) are saved as the menu saves them, and "
         "every later arrange uses them, clone_object's and fill_bed_with_instances' too; arrange_options reports the ones in force. "
+        "An arrange re-sorts every object in the scene, those on other plates too: object_id_changes lists each object whose "
+        "object_id changed. "
         "Answered once the arrange has been applied: status success with objects, each one's placement (position, rotation_degrees, "
         "scale, changed, and rotate_object's placement fields, and previous_object_id when the arrange moved it in the object list: "
         "an arrange re-sorts the objects, so re-read object_id). The arrange runs in the background while this waits, up to the "
@@ -4933,7 +4935,8 @@ void OrcaMCPServer::register_builtin_tools()
         ToolCategory::Transforms,
         "Copy an object as instances or objects",
         "Clone object. duplicate=true for independent copies. The copies are placed by an arrange of the "
-        "destination plate, one undo step with the copies, and the answer comes once it has been applied: objects lists every object on "
+        "destination plate, one undo step with the copies, and the answer comes once it has been applied (the arrange re-sorts "
+        "the objects: the ids given are those after it, and object_id_changes lists every object whose object_id changed): objects lists every object on "
         "that plate with its placement. Past the bridge's cap the arrange is still running (status "
         "arrange_started, finished false; get_slicing_status's ui_job says when it has finished); refused, "
         "with nothing copied, while another job runs.",
@@ -4984,6 +4987,9 @@ void OrcaMCPServer::register_builtin_tools()
             nlohmann::json                result;
             std::shared_ptr<UiJobOutcome> outcome;
             std::vector<ObjectTransforms> scope;
+            std::vector<ObjectID>         order; // before the arrange, which re-sorts the objects
+            ObjectID                      source_id;
+            std::vector<ObjectID>         new_ids;  // duplicates: the new objects
             const nlohmann::json refusal = run_on_main_thread([&]() -> nlohmann::json {
                 Plater* plater = wxGetApp().plater();
                 Model& model = plater->model();
@@ -5020,6 +5026,7 @@ void OrcaMCPServer::register_builtin_tools()
                 // arrange's own step came after the copies, so undo took back only the arrange.
                 plater->take_snapshot("Selection-clone");
                 ModelObject* obj = model.objects[object_id];
+                source_id        = obj->id();
 
                 if (duplicate) {
                     // Create independent copies - each gets its own object_id
@@ -5047,6 +5054,7 @@ void OrcaMCPServer::register_builtin_tools()
 
                         int new_id = static_cast<int>(model.objects.size()) - 1;
                         new_object_ids.push_back(new_id);
+                        new_ids.push_back(new_obj->id());
 
                         // Register with GUI object list
                         wxGetApp().obj_list()->add_object_to_list(new_id, false, true, false);
@@ -5057,6 +5065,7 @@ void OrcaMCPServer::register_builtin_tools()
 
                     // Arrange to place the new objects on the destination plate
                     scope   = current_plate_objects(*plater);
+                    order   = object_order(model);
                     outcome = start_ui_job(*plater, UiJobKind::arrange, Job::PREPARE_STATE_MENU, /*take_snapshot=*/false);
 
                     // Build enhanced response with clear metadata
@@ -5110,6 +5119,7 @@ void OrcaMCPServer::register_builtin_tools()
 
                     // Arrange to place the new instances on the destination plate
                     scope   = current_plate_objects(*plater);
+                    order   = object_order(model);
                     outcome = start_ui_job(*plater, UiJobKind::arrange, Job::PREPARE_STATE_MENU, /*take_snapshot=*/false);
 
                     // Build enhanced response with clear metadata
@@ -5134,12 +5144,22 @@ void OrcaMCPServer::register_builtin_tools()
             });
             if (!refusal.is_null())
                 return refusal;
-            return answer_after_ui_job(*outcome, [result, scope, include_preview]() -> nlohmann::json {
+            return answer_after_ui_job(*outcome, [result, scope, order, source_id, new_ids, include_preview]() -> nlohmann::json {
                 nlohmann::json answer = result;
+                // The indices after the arrange, which re-sorts the objects.
+                const Model& model = wxGetApp().plater()->model();
+                answer[answer.contains("source_object_id") ? "source_object_id" : "object_id"] = object_index_of(model, source_id);
+                if (answer.contains("new_object_ids")) {
+                    nlohmann::json ids = nlohmann::json::array();
+                    for (const ObjectID& id : new_ids)
+                        ids.push_back(object_index_of(model, id));
+                    answer["new_object_ids"] = ids;
+                }
                 nlohmann::json objects = nlohmann::json::array();
                 for (const ObjectTransforms& before : scope)
                     objects.push_back(placement_after_job(before));
-                answer["objects"]         = objects;
+                answer["objects"]           = objects;
+                answer["object_id_changes"] = object_id_changes(order, wxGetApp().plater()->model());
                 answer["active_warnings"] = get_active_warnings_json(wxGetApp().plater());
                 if (include_preview) {
                     add_turntable_preview_if_requested(answer, true);
