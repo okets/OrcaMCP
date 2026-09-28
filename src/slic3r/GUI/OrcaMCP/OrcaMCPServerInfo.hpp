@@ -10,7 +10,8 @@
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
-// get_server_info's content. The tool catalogue is generated from the registry on every call, so it
+// get_server_info's content. The tool catalogue -- every tool's name by category, and the
+// tool_summaries section with each one's summary -- is generated from the registry on every call, so it
 // cannot miss a tool; the documentation sections are hand-written and fetched one at a time.
 
 using ToolMap = std::map<std::string, OrcaMCPServer::ToolDefinition>;
@@ -20,12 +21,13 @@ using ToolMap = std::map<std::string, OrcaMCPServer::ToolDefinition>;
 // the key tool of each job. At most 2048 characters, which is where Claude Code cuts it off.
 const std::string& server_instructions();
 
-// What get_server_info's `section` parameter accepts: each documentation section, then "all".
+// What get_server_info's `section` parameter accepts: "tool_summaries", each documentation section,
+// then "all".
 const std::vector<std::string>& server_info_section_names();
 
-// get_server_info's response. With no section: the server, quick_start, every tool's summary by
-// category, and an index of the other sections with their sizes. With a section, that section, or
-// everything for "all".
+// get_server_info's response. With no section: the server, quick_start, every tool's name by category,
+// and an index of the sections with their sizes. With a section, that section (tool_summaries: every
+// tool's one-line summary by category), or everything for "all".
 nlohmann::json server_info(const nlohmann::json& params, const ToolMap& tools);
 
 }}} // namespace Slic3r::GUI::OrcaMCP

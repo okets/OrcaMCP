@@ -4,7 +4,8 @@ Reference for the MCP tools available in OrcaMCP. The authoritative tool count a
 command that regenerates it live in `CLAUDE.md`, so it is not repeated here.
 
 The table below is every tool, grouped by the category each one declares in the registry; the
-same grouping, with a one-line summary per tool, is what `get_server_info` returns. Several tools
+same grouping is what `get_server_info` returns: the tool names by default, and a one-line summary
+per tool with `section: tool_summaries`. Several tools
 it lists -- `get_filaments`, `set_mixed_filament`, `get_flush_volumes` among them -- have no
 dedicated section below yet.
 
@@ -50,21 +51,26 @@ into a call that reports success and changes nothing. See [Error Handling](#erro
 
 ### get_server_info
 The tool catalogue and the server's documentation. The catalogue is generated from the tool
-registry on every call, so it names every tool the build has, bridge-only ones included.
+registry on every call, so it names every tool the build has, bridge-only ones included. The
+default response lists the names only, so it stays under its 6 KB cap however many tools there are;
+each tool's one-line summary is the `tool_summaries` section.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `section` | string | No | `concepts`, `suggested_flows`, `tool_examples`, `warnings_and_best_practices`, `settings`, or `all`. Omit for the default response. |
+| `section` | string | No | `tool_summaries`, `concepts`, `suggested_flows`, `tool_examples`, `warnings_and_best_practices`, `settings`, or `all`. Omit for the default response. |
 
-**Returns:** Without `section` (about 5.6 KB): `server` (name, version from `version.inc`),
-`quick_start`, `tools` (every tool's one-line summary, grouped by category), `bridge_only` (tools
-the bridge answers itself), and `sections` (each section's name and size in bytes). With a
-section name, just that section; with `all`, everything (about 25 KB).
+**Returns:** Without `section` (about 3 KB): `server` (name, version from `version.inc`),
+`quick_start`, `tools` (every tool's name, grouped by category: `{"Models": ["auto_orient", ...]}`),
+`bridge_only` (tools the bridge answers itself), and `sections` (each section's name and size in
+bytes). With a section name, just that section: `tool_summaries` is every tool's one-line summary,
+grouped by category (`{"Models": {"auto_orient": "Orient the current plate's objects", ...}}`,
+about 5 KB). With `all`, everything (about 28 KB).
 
 **Examples:**
 ```json
 {"name": "get_server_info", "arguments": {}}
+{"name": "get_server_info", "arguments": {"section": "tool_summaries"}}
 {"name": "get_server_info", "arguments": {"section": "suggested_flows"}}
 ```
 

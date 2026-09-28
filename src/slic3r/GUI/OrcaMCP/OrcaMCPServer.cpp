@@ -875,22 +875,24 @@ void OrcaMCPServer::register_builtin_tools()
         }
     });
 
-    // get_server_info - every tool's summary, generated from this registry on each call, and the
-    // documentation sections (OrcaMCPServerInfo.cpp)
+    // get_server_info - every tool's name and, by section, its summary, generated from this registry on
+    // each call, and the documentation sections (OrcaMCPServerInfo.cpp)
     register_tool({
         "get_server_info",
         ToolCategory::Info,
         "This guide; pass section for the rest",
-        "Every tool's one-line summary by category, a quick start, and guides (concepts, workflows, "
-        "examples) to fetch by section: call it to find a tool before deciding one does not exist.",
+        "Every tool's name by category and a quick start; section tool_summaries gives each tool's "
+        "one-line summary, and the guides (concepts, workflows, examples) are fetched by section too: call "
+        "it to find a tool before deciding one does not exist.",
         {
             {"type", "object"},
             {"properties", {
                 {"section", {
                     {"type", "string"},
                     {"enum", server_info_section_names()},
-                    {"description", "One documentation section, or all of them. Omit it for every tool's "
-                                    "summary, the quick start, and the list of sections with their sizes."}
+                    {"description", "One section -- tool_summaries (every tool's one-line summary, by category) "
+                                    "or a guide -- or all of them. Omit it for every tool's name by category, "
+                                    "the quick start, and the list of sections with their sizes."}
                 }}
             }}
         },
