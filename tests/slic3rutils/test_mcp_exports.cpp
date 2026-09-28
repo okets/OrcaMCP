@@ -31,6 +31,16 @@ TEST_CASE("a .gcode.3mf path asks for the sliced file, any other for plain G-cod
     CHECK(gcode_export_kind("/tmp/a.gcode") == GcodeExportKind::gcode);
 }
 
+TEST_CASE("a sliced file is written where it was asked for, whatever the case of its .3mf", "[McpExports][orcamcp]")
+{
+    CHECK(sliced_file_path("/tmp/part.gcode.3mf") == "/tmp/part.gcode.3mf");
+    CHECK(sliced_file_path("/tmp/PART.GCODE.3MF") == "/tmp/PART.GCODE.3MF");
+    CHECK(sliced_file_path("/tmp/part.Gcode.3Mf") == "/tmp/part.Gcode.3Mf");
+    // A name the file dialog gets without the extension has it added, as the app does.
+    CHECK(sliced_file_path("/tmp/part") == "/tmp/part.3mf");
+    CHECK(sliced_file_path("/tmp/part.gcode") == "/tmp/part.gcode.3mf");
+}
+
 TEST_CASE("export_gcode refuses a path it would write as something else, before looking at the plates", "[McpExports][orcamcp]")
 {
     CHECK(contains(*gcode_export_path_refusal("", false), "output_path is required"));

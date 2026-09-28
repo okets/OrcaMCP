@@ -26,6 +26,12 @@ enum class GcodeExportKind
 // What `output_path` asks for: a path ending in .gcode.3mf (any case) is a sliced file.
 GcodeExportKind gcode_export_kind(const std::string& output_path);
 
+// Where the app writes a sliced file chosen at `chosen`: there when it ends in .3mf, in any case, else with .3mf
+// added. Plater::export_gcode_3mf's file dialog, answered by the user or by MCP, and export_gcode's answer
+// all read it, so the answer names the file written (upstream's test was case-sensitive: X.GCODE.3MF was
+// written as X.GCODE.3MF.3mf).
+std::string sliced_file_path(const std::string& chosen);
+
 // Why export_gcode refuses `output_path` with `all_plates` before looking at the plates, or nullopt: no
 // path; a .3mf that is not a .gcode.3mf (a project, which export_3mf writes); all_plates for a plain
 // .gcode, which holds one plate.

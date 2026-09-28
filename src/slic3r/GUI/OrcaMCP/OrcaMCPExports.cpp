@@ -37,6 +37,11 @@ GcodeExportKind gcode_export_kind(const std::string& output_path)
     return ends_with_nocase(output_path, ".gcode.3mf") ? GcodeExportKind::sliced_file : GcodeExportKind::gcode;
 }
 
+std::string sliced_file_path(const std::string& chosen)
+{
+    return ends_with_nocase(chosen, ".3mf") ? chosen : chosen + ".3mf";
+}
+
 std::optional<std::string> gcode_export_path_refusal(const std::string& output_path, bool all_plates)
 {
     if (output_path.empty())

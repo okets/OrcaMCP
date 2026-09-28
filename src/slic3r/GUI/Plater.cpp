@@ -184,6 +184,7 @@
 #include "FilamentMapDialog.hpp"
 #include "CloneDialog.hpp"
 #include "PurgeModeDialog.hpp"
+#include "OrcaMCP/OrcaMCPExports.hpp"
 #include "OrcaMCP/OrcaMCPGcodeCheck.hpp"
 #include "OrcaMCP/OrcaMCPModelLoad.hpp"
 #include "OrcaMCP/OrcaMCPQuit.hpp"
@@ -18615,11 +18616,8 @@ bool Plater::export_gcode_3mf(bool export_all)
     // Orca MCP: the tool call's path answers the file dialog, which would block the call for good.
     if (std::vector<std::string> answered; mcp_answer_path_dialog(into_u8(_L("Save Sliced file as:")), McpPathDialog::file, answered)) {
         if (!answered.empty())
-            output_path = into_path(from_u8(answered.front()));
-        if (!output_path.empty() && output_path.extension().string() != ".3mf")
-            output_path = output_path.string() + ".3mf";
+            output_path = into_path(from_u8(OrcaMCP::sliced_file_path(answered.front())));
     } else {
-        std::string ext = default_output_file.extension().string();
         wxFileDialog dlg(this, _L("Save Sliced file as:"),
             start_dir,
             from_path(default_output_file.filename()),
@@ -18627,10 +18625,8 @@ bool Plater::export_gcode_3mf(bool export_all)
             wxFD_SAVE | wxFD_OVERWRITE_PROMPT
         );
         if (dlg.ShowModal() == wxID_OK) {
-            output_path = into_path(dlg.GetPath());
-            ext = output_path.extension().string();
-            if (ext != ".3mf")
-                output_path = output_path.string() + ".3mf";
+            // Orca: .3mf added unless the name ends in it in any case (upstream: X.GCODE.3MF became X.GCODE.3MF.3mf).
+            output_path = into_path(from_u8(OrcaMCP::sliced_file_path(into_u8(dlg.GetPath()))));
         }
     }
 

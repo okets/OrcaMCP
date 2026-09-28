@@ -53,15 +53,16 @@ nlohmann::json export_sliced_file(Plater& plater, McpDialogSuppressionGuard& gua
         return error_response(*refusal);
 
     guard.answer_file(output_path);
-    const bool written = plater.export_gcode_3mf(all_plates);
-    nlohmann::json answer;
+    const bool        written = plater.export_gcode_3mf(all_plates);
+    const std::string file    = sliced_file_path(output_path); // where the app wrote it
+    nlohmann::json    answer;
     if (written) {
         answer = {{"status", "success"},
-                  {"output_path", output_path},
+                  {"output_path", file},
                   {"format", "gcode.3mf"},
                   {"plates", sliced_file_plates(plates, all_plates, selected)}};
         boost::system::error_code error;
-        const auto                bytes = boost::filesystem::file_size(output_path, error);
+        const auto                bytes = boost::filesystem::file_size(file, error);
         if (!error)
             answer["bytes"] = bytes;
     } else {
