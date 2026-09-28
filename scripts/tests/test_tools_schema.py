@@ -83,7 +83,7 @@ class StaleEntryTests(unittest.TestCase):
         """The one entry that was found stale in the field, pinned so it cannot silently go back."""
         entry = server_tools_by_name()["get_presets"]
         self.assertEqual(set(entry["inputSchema"]["properties"]),
-                         {"type", "vendor", "name_contains", "summary", "limit"})
+                         {"type", "vendor", "name_contains", "summary", "limit", "installed"})
 
 
 class ValueSchemaAcceptsLists(unittest.TestCase):

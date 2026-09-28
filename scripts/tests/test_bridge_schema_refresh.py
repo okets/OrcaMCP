@@ -64,7 +64,7 @@ class StaticSchemaFreshnessTests(unittest.TestCase):
         entry = next(t for t in load_bridge().get_full_tools_list() if t["name"] == "get_presets")
         properties = entry["inputSchema"]["properties"]
         self.assertEqual(
-            set(properties), {"type", "vendor", "name_contains", "summary", "limit"}
+            set(properties), {"type", "vendor", "name_contains", "summary", "limit", "installed"}
         )
 
 
