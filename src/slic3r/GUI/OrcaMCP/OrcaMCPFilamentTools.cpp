@@ -165,7 +165,7 @@ void OrcaMCPServer::register_filament_tools()
         ToolCategory::FilamentsColour,
         "Add a physical filament slot",
         "Add a physical filament slot, as the sidebar's + button does: after the last physical slot (mixed slots move up "
-        "one, and so do objects on them), with the preset the + button gives it (the last slot's) unless preset names another, and the "
+        "one, and so does everything that names one: objects, parts, paint, layer ranges, feature filaments, tool changes), with the preset the + button gives it (the last slot's) unless preset names another, and the "
         "sidebar's next colour unless color gives one. Only a printer that changes filaments on one extruder, or a Bambu Lab "
         "printer, takes more slots: a printer with one filament per extruder has as many slots as extruders. Answers slot "
         "(the new slot's number), preset, color, renumbered ({from, to} for moved mixed slots) and filaments. Every plate "
@@ -201,8 +201,9 @@ void OrcaMCPServer::register_filament_tools()
         ToolCategory::FilamentsColour,
         "Delete a filament slot, or merge it",
         "Delete a filament slot, physical or mixed, as its Delete in the sidebar does: its objects, parts and painted facets "
-        "move to slot 1, and every later slot moves down one (objects and paint with it). With merge_into, as its Merge with "
-        "does: its objects and paint move to that slot instead. Answers deleted_slot, renumbered ({from, to}), objects_changed "
+        "move to slot 1, the settings that name it (support, feature filaments) to the default, and every later slot moves "
+        "down one (everything that names one with it). With merge_into, as its Merge with does: all of that moves to that "
+        "slot instead. Answers deleted_slot, renumbered ({from, to}), objects_changed "
         "(each object that printed with the slot: its filaments before, and after, as numbered then), merged_into / "
         "merged_into_now, and filaments. Every plate "
         "loses its slice; no undo step, as in the app. Refused: the last physical slot; a physical slot of a printer with "

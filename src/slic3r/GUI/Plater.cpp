@@ -5565,24 +5565,12 @@ void Sidebar::add_custom_filament(wxColour new_col, const std::string& preset_na
         if (ams_mc.size() > total)
             std::rotate(ams_mc.begin() + insert_pos, ams_mc.begin() + total, ams_mc.end());
 
-        // Remap object/volume extruder IDs and paint data: anything >= insert_pos+1 (1-based) shifts up by 1
-        int threshold_1based = (int)(insert_pos + 1);
-        auto ebt_threshold = EnforcerBlockerType(threshold_1based);
-        for (auto* obj : wxGetApp().plater()->model().objects) {
-            if (obj->config.has("extruder")) {
-                int ext = obj->config.extruder();
-                if (ext >= threshold_1based)
-                    obj->config.set("extruder", ext + 1);
-            }
-            for (auto* vol : obj->volumes) {
-                if (vol->config.has("extruder")) {
-                    int ext = vol->config.extruder();
-                    if (ext >= threshold_1based)
-                        vol->config.set("extruder", ext + 1);
-                }
-                vol->mmu_segmentation_facets.shift_states_above(*vol, ebt_threshold, +1);
-            }
-        }
+        // Remap everything that names a mixed slot by its number: anything >= insert_pos+1 (1-based) shifts up by 1.
+        // Orca: every object's, volume's and layer range's extruder and filament settings, paint, and custom
+        // G-code (renumber_filaments_after_insert), and the print preset's filament settings; upstream shifted
+        // the objects' and volumes' extruders and paint only.
+        renumber_filaments_after_insert(wxGetApp().plater()->model(), insert_pos);
+        wxGetApp().plater()->renumber_filament_settings(FilamentRenumbering::insertion(insert_pos));
     }
 
     if (!preset_name.empty() &&
@@ -20391,19 +20379,9 @@ void Plater::on_filaments_delete(size_t num_filaments, size_t filament_id, int r
 
     // update global support filament
     // Orca: every filament number setting, in the plater's copy of the config and in the print preset the
-    // slicer reads, which upstream left naming the old numbers.
-    for (const std::string& key : filament_number_settings())
-        if (p->config->has(key)) {
-            if (const std::optional<int> now = filament_number_after_delete(p->config->opt_int(key), filament_id))
-                (*(p->config)).set_key_value(key, new ConfigOptionInt(*now));
-            else
-                (*(p->config)).erase(key);
-        }
-    renumber_filament_settings_after_delete(wxGetApp().preset_bundle->prints.get_edited_preset().config, filament_id);
-    if (Tab* print_tab = wxGetApp().get_tab(Preset::TYPE_PRINT)) {
-        print_tab->reload_config();
-        print_tab->update_dirty();
-    }
+    // slicer reads, which upstream left naming the old numbers; a merge's target takes the merged one's.
+    renumber_filament_settings(FilamentRenumbering::deletion(
+        filament_id, replace_filament_id, replace_filament_id >= 0 && wxGetApp().preset_bundle->is_mixed_filament(size_t(replace_filament_id))));
 
     // update UI — runs after remap so update_mixed_filament_list() won't clip remapped extruder IDs
     sidebar().on_filaments_delete(filament_id);
@@ -20423,6 +20401,16 @@ void Plater::on_filaments_delete(size_t num_filaments, size_t filament_id, int r
             if (item.type == CustomGCode::Type::ToolChange && item.extruder > filament_id)
                 item.extruder--;
         }
+    }
+}
+
+void Plater::renumber_filament_settings(const FilamentRenumbering& change)
+{
+    GUI::renumber_filament_settings(*p->config, change);
+    GUI::renumber_filament_settings(wxGetApp().preset_bundle->prints.get_edited_preset().config, change);
+    if (Tab* print_tab = wxGetApp().get_tab(Preset::TYPE_PRINT)) {
+        print_tab->reload_config();
+        print_tab->update_dirty();
     }
 }
 

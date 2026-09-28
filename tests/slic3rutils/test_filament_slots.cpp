@@ -2,6 +2,7 @@
 
 #include "libslic3r/Model.hpp"
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/CustomGCode.hpp"
 #include "libslic3r/TriangleMesh.hpp"
 #include "slic3r/GUI/GUI_ObjectList.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPFilamentSlots.hpp"
@@ -73,7 +74,7 @@ TEST_CASE("deleting a filament renumbers each support filament in its own config
     object->volumes[1]->config.set_key_value("support_filament", new ConfigOptionInt(2));
 
     // Slot 2 (index 1) goes: 3 and 4 move down one, a reference to 2 falls back to the default.
-    GUI::renumber_filament_settings_after_delete(*object, 1);
+    GUI::renumber_filament_settings(*object, GUI::FilamentRenumbering::deletion(1));
 
     CHECK(support_filament(object->config, "support_filament") == 2);
     CHECK(support_filament(object->volumes[0]->config, "support_interface_filament") == 3);
@@ -89,7 +90,7 @@ TEST_CASE("deleting a filament leaves the support filaments before it as they ar
     object->config.set_key_value("support_filament", new ConfigOptionInt(1));
     object->volumes[1]->config.set_key_value("support_interface_filament", new ConfigOptionInt(2));
 
-    GUI::renumber_filament_settings_after_delete(*object, 3);
+    GUI::renumber_filament_settings(*object, GUI::FilamentRenumbering::deletion(3));
 
     CHECK(support_filament(object->config, "support_filament") == 1);
     CHECK(support_filament(object->volumes[1]->config, "support_interface_filament") == 2);
@@ -103,7 +104,7 @@ TEST_CASE("deleting a filament renumbers a part's per-feature filaments too", "[
     object->volumes[1]->config.set_key_value("outer_wall_filament_id", new ConfigOptionInt(3));
     object->config.set_key_value("sparse_infill_filament_id", new ConfigOptionInt(2));
 
-    GUI::renumber_filament_settings_after_delete(*object, 1);
+    GUI::renumber_filament_settings(*object, GUI::FilamentRenumbering::deletion(1));
 
     CHECK(object->volumes[1]->config.opt_int("outer_wall_filament_id") == 2);
     CHECK_FALSE(object->config.has("sparse_infill_filament_id")); // it named the deleted slot: the default takes over
@@ -118,7 +119,7 @@ TEST_CASE("deleting a filament renumbers the print preset's filament settings, k
     preset.set_key_value("top_surface_filament_id", new ConfigOptionInt(3));
 
     // Slot 2 goes: 4 and 3 move down one, 2 is the default (0), 1 stays.
-    GUI::renumber_filament_settings_after_delete(preset, 1);
+    GUI::renumber_filament_settings(preset, GUI::FilamentRenumbering::deletion(1));
 
     CHECK(preset.opt_int("support_filament") == 3);
     CHECK(preset.opt_int("support_interface_filament") == 0);
@@ -126,8 +127,84 @@ TEST_CASE("deleting a filament renumbers the print preset's filament settings, k
     CHECK(preset.opt_int("top_surface_filament_id") == 2);
     CHECK(preset.opt_int("outer_wall_filament_id") == 0); // the default stays the default
 
-    CHECK_FALSE(GUI::filament_number_after_delete(2, 1).has_value());
-    CHECK(GUI::filament_number_after_delete(0, 1) == 0);
+    CHECK_FALSE(GUI::FilamentRenumbering::deletion(1).number(2, false).has_value());
+    CHECK(GUI::FilamentRenumbering::deletion(1).number(0, false) == 0);
+}
+
+TEST_CASE("merging a filament moves the settings that named it to the slot it merged into", "[FilamentSlots]")
+{
+    // Slot 2 (index 1) merged into slot 4, which is slot 3 (index 2) once slot 2 has gone.
+    const auto merge = GUI::FilamentRenumbering::deletion(1, 2, false);
+
+    DynamicPrintConfig preset = DynamicPrintConfig::full_print_config();
+    preset.set_key_value("support_filament", new ConfigOptionInt(2));
+    preset.set_key_value("sparse_infill_filament_id", new ConfigOptionInt(2));
+    preset.set_key_value("wipe_tower_filament", new ConfigOptionInt(4));
+    GUI::renumber_filament_settings(preset, merge);
+    CHECK(preset.opt_int("support_filament") == 3);
+    CHECK(preset.opt_int("sparse_infill_filament_id") == 3);
+    CHECK(preset.opt_int("wipe_tower_filament") == 3);
+
+    Model        model;
+    ModelObject* object = object_with_two_parts(model);
+    object->volumes[1]->config.set_key_value("support_interface_filament", new ConfigOptionInt(2));
+    object->config.set_key_value("top_surface_filament_id", new ConfigOptionInt(2));
+    GUI::renumber_filament_settings(*object, merge);
+    CHECK(object->volumes[1]->config.opt_int("support_interface_filament") == 3);
+    CHECK(object->config.opt_int("top_surface_filament_id") == 3);
+}
+
+TEST_CASE("merging a filament into a mixed one leaves support and the wipe tower on the default", "[FilamentSlots]")
+{
+    // Support and the wipe tower print from a physical filament only (ConfigManipulation's
+    // physical_only_keys); a feature may print from a mix.
+    const auto into_mix = GUI::FilamentRenumbering::deletion(1, 2, true);
+    CHECK(into_mix.number(2, true) == std::nullopt);
+    CHECK(into_mix.number(2, false) == 3);
+
+    DynamicPrintConfig preset = DynamicPrintConfig::full_print_config();
+    preset.set_key_value("support_filament", new ConfigOptionInt(2));
+    preset.set_key_value("outer_wall_filament_id", new ConfigOptionInt(2));
+    GUI::renumber_filament_settings(preset, into_mix);
+    CHECK(preset.opt_int("support_filament") == 0);
+    CHECK(preset.opt_int("outer_wall_filament_id") == 3);
+}
+
+TEST_CASE("adding a filament before the mixed ones moves every number that names a mixed slot", "[FilamentSlots]")
+{
+    // Three physical slots and mixed slots 4 and 5; the new physical slot goes in at 4 (index 3).
+    Model        model;
+    ModelObject* object = object_with_two_parts(model);
+    object->config.set_key_value("extruder", new ConfigOptionInt(4));
+    object->config.set_key_value("support_filament", new ConfigOptionInt(2));
+    object->volumes[0]->config.set_key_value("extruder", new ConfigOptionInt(2));
+    object->volumes[1]->config.set_key_value("extruder", new ConfigOptionInt(5));
+    object->volumes[1]->config.set_key_value("outer_wall_filament_id", new ConfigOptionInt(4));
+    ModelConfig& range = object->layer_config_ranges[{2.0, 5.0}];
+    range.set_key_value("extruder", new ConfigOptionInt(5));
+    range.set_key_value("sparse_infill_filament_id", new ConfigOptionInt(4));
+    CustomGCode::Info& plate = model.plates_custom_gcodes[0];
+    plate.gcodes.push_back({3.0, CustomGCode::ToolChange, 4, "", ""});
+    plate.gcodes.push_back({4.0, CustomGCode::ToolChange, 2, "", ""});
+
+    GUI::renumber_filaments_after_insert(model, 3);
+
+    CHECK(object->config.opt_int("extruder") == 5);
+    CHECK(object->config.opt_int("support_filament") == 2);
+    CHECK(object->volumes[0]->config.opt_int("extruder") == 2);
+    CHECK(object->volumes[1]->config.opt_int("extruder") == 6);
+    CHECK(object->volumes[1]->config.opt_int("outer_wall_filament_id") == 5);
+    CHECK(range.opt_int("extruder") == 6);
+    CHECK(range.opt_int("sparse_infill_filament_id") == 5);
+    CHECK(plate.gcodes[0].extruder == 5);
+    CHECK(plate.gcodes[1].extruder == 2);
+
+    DynamicPrintConfig preset = DynamicPrintConfig::full_print_config();
+    preset.set_key_value("top_surface_filament_id", new ConfigOptionInt(5));
+    preset.set_key_value("support_filament", new ConfigOptionInt(3));
+    GUI::renumber_filament_settings(preset, GUI::FilamentRenumbering::insertion(3));
+    CHECK(preset.opt_int("top_surface_filament_id") == 6);
+    CHECK(preset.opt_int("support_filament") == 3);
 }
 
 TEST_CASE("a filament a mixed filament lists is one whose delete breaks it", "[FilamentSlots]")

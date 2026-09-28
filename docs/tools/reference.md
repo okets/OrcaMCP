@@ -2882,7 +2882,9 @@ Add a physical filament slot, as the sidebar's **+** button does (`Sidebar::add_
 | `preset` | string | No | A filament preset for the slot (compatible with the selected printer). Default: the last slot's, as the button gives it |
 
 The new slot goes after the last physical slot: mixed slots, which sit at the end, move up one, and so
-do objects on them. Only a printer that changes filaments on one extruder
+does everything that names one -- objects, parts, painted facets, layer ranges, the per-feature filaments
+of objects, parts, layer ranges and the print preset, and a tool change in the layer list (probe AT:
+upstream moved the objects, parts and paint only). Only a printer that changes filaments on one extruder
 (`single_extruder_multi_material`) or a Bambu Lab printer takes more slots, as only those show the
 button; on any other printer each extruder holds one filament and the slots follow the extruders.
 
@@ -2919,10 +2921,12 @@ as its **Merge with** does (`Sidebar::delete_filament`, `change_filament`).
 
 The app renumbers everything after the deleted slot: objects, parts, painted facets, layer ranges,
 a plate's filament order, a tool change in the layer list, and every setting that names a slot by its
-number -- support, support interface, wipe tower and the per-feature filaments -- in each object and
-part and in the print preset, where one that named the deleted slot becomes the default (0) and the
-preset is left with unsaved changes (probes AO, AQ: upstream renumbered only the plater's own copy, and
-wrote a part's number into its object).
+number -- support, support interface, wipe tower and the per-feature filaments -- in each object, part
+and layer range and in the print preset, which is left with unsaved changes. One that named the deleted
+slot moves to `merge_into`, or without it becomes the default (0); support and the wipe tower take the
+default when `merge_into` is a mixed slot, since they print from a physical filament only (probes AO, AQ,
+AU: upstream renumbered only the plater's own copy, wrote a part's number into its object, and dropped a
+merged slot's support filaments instead of moving them).
 
 **Returns:**
 ```json

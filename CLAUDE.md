@@ -1276,6 +1276,8 @@ echo "AP the physical filament's Merge with checks the menu's unresolved -2 for 
 echo "AQ deleting a filament renumbers the support filaments in the plater's copy of the config only, not in the print preset the slicer reads (rel2506/13): $(U src/slic3r/GUI/Plater.cpp | awk '/^void Plater::on_filaments_delete/{f=1} f&&/prints\.get_edited_preset\(\)/{print "no"; d=1; exit} f&&/^}/{print "yes"; d=1; exit} END{if(!d) print "unknown"}')"
 echo "AR a mixed filament slot cannot be deleted while one physical slot is left (rel2506/13): $(U src/slic3r/GUI/Plater.cpp | awk '/^void Sidebar::delete_filament\(/{f=1} f&&/if \(p->combos_filament.size\(\) <= 1\) return;/{print "yes"; d=1; exit} f&&/^}/{print "no"; d=1; exit} END{if(!d) print "unknown"}')"
 echo "AS a merge install switches filament slot 1 to the first filament it adds (rel2506/13): $(U src/libslic3r/PresetBundle.cpp | awk '/Ensure active filament compatibility/{f=1} f&&/if \(overwrite/{print "no"; d=1; exit} f&&/if \(!supplemented_filaments.empty\(\)\)/{print "yes"; d=1; exit} END{if(!d) print "unknown"}')"
+echo "AT adding a filament slot before mixed ones shifts objects' and volumes' extruders and paint only, not layer ranges, feature filaments, the print preset or tool changes (rel2506/13): $(U src/slic3r/GUI/Plater.cpp | awk '/^void Sidebar::add_custom_filament/{f=1} f&&/renumber_filaments_after_insert|layer_config_ranges/{print "no"; d=1; exit} f&&/shift_states_above/{print "yes"; d=1; exit} END{if(!d) print "unknown"}')"
+echo "AU merging a filament slot drops the support filaments that named it instead of moving them to the target (rel2506/13): $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^void ObjectList::update_filament_values_for_items_when_delete_filament/{f=1} f&&/config.opt_int\(key\) == filament_id \+ 1/{print "yes"; d=1; exit} f&&/^}/{print "no"; d=1; exit} END{if(!d) print "unknown"}')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -1620,7 +1622,7 @@ none past the last) and the object gained a support filament it never had. And a
 filament kept the old number in its row, and the per-feature filaments (`outer_wall_filament_id` and the
 rest) an object or part overrides were not renumbered at all. Ours renumbers every filament number
 setting of each config in place through the free function
-`renumber_filament_settings_after_delete` (`GUI_ObjectList.cpp`, tested without the app) and labels the
+`renumber_filament_settings` (`GUI_ObjectList.cpp`, tested without the app) and labels the
 row with the filament it moved to. On "no", take upstream's and re-run `slic3rutils_tests "[FilamentSlots]"`.
 
 Item AP: a physical filament slot's "Merge with" menu calls `Sidebar::change_filament(-2, to)`, -2
@@ -1638,8 +1640,9 @@ tower and per-feature filaments (`outer_wall_filament_id` and the rest) hold. De
 (`p->config`) only, while the slicer reads the print preset (`PresetBundle::full_config`): a setting
 that named the deleted slot went on naming the next filament, a later one the one after it, and one
 that now fell on a mixed slot was reset to the default (`ConfigManipulation`'s check). Ours renumbers
-every filament number setting there and in the print preset (`renumber_filament_settings_after_delete`,
-0 for the deleted one, which leaves the preset unsaved), and in each object and volume (item AO). On
+every filament number setting there and in the print preset (`Plater::renumber_filament_settings`, 0 for
+the deleted one, the target for a merge (item AU), which leaves the preset unsaved), and in each object,
+volume and layer range (item AO). On
 "no", take upstream's and re-run `slic3rutils_tests "[FilamentSlots]"`, then delete a slot the print
 preset's support filament names.
 
@@ -1656,6 +1659,22 @@ whole choice (`overwrite`). Its merge mode, which adds to what is enabled (the c
 `load_pending_vendors`, MCP's `install_presets`), passes only the filaments it adds, so slot 1 was
 switched to the first of those: installing one filament replaced the project's first filament. Ours
 switches only on an overwrite. On "no", take upstream's and re-run `slic3rutils_tests "[PresetInstall]"`.
+
+Item AT: a physical slot added while the project has mixed slots goes in before them, and every number
+that named a mixed slot moves up one. Upstream's `Sidebar::add_custom_filament` shifted the objects' and
+volumes' `extruder` and their paint only: a layer range's filament, the per-feature filaments of objects,
+parts, layer ranges and the print preset (walls, infill, top and bottom surfaces, which may print from a
+mix), and a tool change in the layer list went on naming the old numbers, now another filament. Ours shifts
+them all (`renumber_filaments_after_insert`, `Plater::renumber_filament_settings`, both over
+`FilamentRenumbering`, tested without the app). On "no", take upstream's and re-run
+`slic3rutils_tests "[FilamentSlots]"`.
+
+Item AU: a slot's Merge with moves what used the slot to the target: upstream moves objects', volumes' and
+layer ranges' filaments there, but dropped a support, support interface, wipe tower or feature filament that
+named the merged slot to the default. Ours moves those to the target too (`FilamentRenumbering::deletion`
+with the target), except support and the wipe tower onto a mixed target, which print from a physical
+filament only (`ConfigManipulation`'s physical-only keys) and take the default. On "no", take upstream's and
+re-run `slic3rutils_tests "[FilamentSlots]"`.
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices
