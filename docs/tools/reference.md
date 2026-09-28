@@ -1735,7 +1735,8 @@ Slice every plate in the project, one after another, exactly as the GUI's **Slic
   "plates_to_slice": 4,
   "selected_plate_at_call": 0,
   "note": "Slicing all 4 plates. The plate selection walks to the last plate while it runs; get_slicing_status restores plate 0 when the run ends.",
-  "active_warnings": {"count": 0, "warnings": []}
+  "active_warnings": {"count": 0, "warnings": []},
+  "next_steps": [{"tool": "wait_for_slice", "why": "the slice runs in the background: wait_for_slice returns once it is over, with each plate's result"}]
 }
 ```
 
@@ -1755,8 +1756,9 @@ Slice every plate in the project, one after another, exactly as the GUI's **Slic
 | `invalid` | The app refuses a plate it was asked for as it stands, the way the GUI greys its Slice button, ahead of `nothing_to_slice`; `message` says which check, the first that applies: its validation (the plate's validation result, not a guess from `active_warnings`; `message` gives the app's words, e.g. "Prime Tower is partially outside the printable area"), plugins slicing needs but that are missing, a mixed filament that lost a component, a plate not ready to slice (an object partly off the plate or over its height, or a filament that cannot print where it is), or the plate's last slice having failed, which the app does not retry until something on the plate changes. A setting fixed just before the call counts: the app takes in a settings change 0.5 s after it, and `slice_all` applies one still waiting first (so do `get_slicing_status`, `get_print_estimate` and `export_gcode`), so it is not refused on the failure the fix removed |
 | `unknown` | No signal explains it; `active_warnings` may |
 
-**Note:** Async operation. Call `wait_for_slice`, or poll `get_slicing_status` until `state` is
-`done` (or until `plates_sliced` equals `plates_total` for a multi-plate run).
+**Note:** Async operation. Call `wait_for_slice`, which returns once the run is over; `next_steps`
+names it (for `slicing_started` and `busy_slicing`), `get_slicing_status` for `busy_job`, and
+`get_print_estimate` for `already_sliced`. `get_slicing_status` reads the state at any moment.
 
 **Plate selection.** Slicing every plate is driven by the slicer's own per-plate chaining, which
 selects each plate in turn, so the selection moves while the run is in progress. The first
@@ -1789,8 +1791,13 @@ left with three unsliced plates and no error.
 ---
 
 ### export_gcode
-Export the selected plate's sliced G-code to a file. The file is written asynchronously:
-`status: "export_started"`.
+Export the selected plate's sliced G-code to a file. The file is written asynchronously, so a
+successful call answers `status: "export_started"`, not `"success"`:
+
+| `status` | Meaning |
+|----------|---------|
+| `export_started` | The app has begun writing the file in the background: not a failure. It is complete once `wait_for_slice` returns (`get_slicing_status`'s `busy` is false again, `busy_reason` was `exporting`); `next_steps` names `wait_for_slice` |
+| `error` | Nothing was written; `message` says why (below) |
 
 **Parameters:**
 | Parameter | Type | Required | Description |
@@ -2966,6 +2973,10 @@ nothing to suggest has no `next_steps`.
 |----------|------|------|
 | `load_model` (the objects it added), `get_scene_info` (every object) | `get_mesh_health` | an object shows the object list's mesh warning icon (open edges, or repairs a 3MF recorded) |
 | | `get_object_components` | a model part of the object is more than one shell: a loose part or a stray fragment, which leaves no warning icon when it is closed |
+| `slice_all` | `wait_for_slice` | `slicing_started`, or `not_started` with `busy_slicing` (wait, then `slice_all` again) |
+| | `get_slicing_status` | `busy_job`: an arrange or orient holds the app, which `wait_for_slice` does not wait for; `slice_all` again once `ui_job` is null |
+| | `get_print_estimate` | `already_sliced` |
+| `export_gcode` | `wait_for_slice` | `export_started`: the file is still being written |
 
 ---
 

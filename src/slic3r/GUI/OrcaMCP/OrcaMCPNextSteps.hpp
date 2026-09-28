@@ -7,6 +7,7 @@
 #include <nlohmann/json.hpp>
 
 #include "OrcaMCPMeshHealth.hpp"
+#include "OrcaMCPSliceProgress.hpp"
 
 namespace Slic3r {
 class Model;
@@ -45,6 +46,16 @@ std::string listed_ids(const std::vector<int>& ids, size_t max_listed = 10);
 std::vector<NextStep> mesh_next_steps(const Model& model, const std::vector<int>& object_indices, const std::vector<MeshHealth>& health);
 // The same for every object of `model`.
 std::vector<NextStep> mesh_next_steps(const Model& model, const std::vector<MeshHealth>& health);
+
+// What slice_all's answer leads to: wait_for_slice for a slice that started, or for a busy pipeline
+// (then slice_all again); get_slicing_status while an arrange or an orient holds the app (its ui_job;
+// wait_for_slice does not wait for those); get_print_estimate for plates already sliced. A refusal
+// the app explains (invalid, nothing_to_slice, unknown) leads to no tool: its message says what to fix.
+std::vector<NextStep> slice_start_next_steps(const SliceStartReport& report);
+
+// What export_gcode's answer leads to: wait_for_slice while the file is written (export_started), which
+// returns once the export is over; nothing for an export that did not start.
+std::vector<NextStep> export_next_steps(bool export_started);
 
 }} // namespace GUI::OrcaMCP
 } // namespace Slic3r

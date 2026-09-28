@@ -126,4 +126,32 @@ std::vector<NextStep> mesh_next_steps(const Model& model, const std::vector<Mesh
     return mesh_next_steps(model, every_object, health);
 }
 
+std::vector<NextStep> slice_start_next_steps(const SliceStartReport& report)
+{
+    if (report.status == SliceStart::started)
+        return {{"wait_for_slice", "the slice runs in the background: wait_for_slice returns once it is over, with each plate's result",
+                 nullptr}};
+    if (report.reason == "busy_slicing")
+        return {{"wait_for_slice", "the slicing pipeline is busy, so nothing was started: wait for it, then call slice_all again",
+                 nullptr}};
+    if (report.reason == "busy_job")
+        return {{"get_slicing_status",
+                 "an arrange or an orient holds the app, which wait_for_slice does not wait for: call slice_all again once "
+                 "get_slicing_status's ui_job is null",
+                 nullptr}};
+    if (report.reason == "already_sliced")
+        return {{"get_print_estimate", "the plates are already sliced: it reads the time and filament of the selected one", nullptr}};
+    return {};
+}
+
+std::vector<NextStep> export_next_steps(bool export_started)
+{
+    if (!export_started)
+        return {};
+    return {{"wait_for_slice",
+             "the export has started, not failed: the G-code is still being written in the background, and "
+             "wait_for_slice returns once it is written",
+             nullptr}};
+}
+
 }}} // namespace Slic3r::GUI::OrcaMCP

@@ -2896,8 +2896,8 @@ void OrcaMCPServer::register_builtin_tools()
         "slice that failed; message says which, in the app's words for a validation failure), "
         "nothing_to_slice (no printable object fully on the plates -- one partly off its plate or too tall "
         "for the printer does not count -- and no refusal the app gives words for) or unknown. Then call "
-        "wait_for_slice, or poll get_slicing_status until state is \"done\"; its plates array says which "
-        "plates have a result. The plate selection walks from the first plate to the last while the "
+        "wait_for_slice, which returns once the run is over, with each plate's result; next_steps names "
+        "the tool to call next. The plate selection walks from the first plate to the last while the "
         "run is in progress, and get_slicing_status puts back the plate that was selected here once "
         "it ends.",
         {
@@ -2938,6 +2938,7 @@ void OrcaMCPServer::register_builtin_tools()
                         result["message"] = report.message;
                     }
                     result["active_warnings"] = std::move(active_warnings);
+                    add_next_steps(result, slice_start_next_steps(report));
                 };
 
                 // While the pipeline is busy -- slicing, exporting, uploading, or still taking in the last
@@ -2981,6 +2982,9 @@ void OrcaMCPServer::register_builtin_tools()
         ToolCategory::Slicing,
         "Write the sliced plate's G-code",
         "Export the selected plate's G-code. The plate must be sliced (slice_all, then wait_for_slice). "
+        "status is export_started when the app has begun writing the file in the background -- not a "
+        "failure: the file is complete once wait_for_slice returns (get_slicing_status's busy is false "
+        "again), which next_steps says -- or error, with message saying why nothing was written. "
         "Refused, as the GUI's Export button is off, when the check its slice ran on its G-code failed: "
         "get_slicing_status's plates[].gcode_check names what it found.",
         {
@@ -3029,6 +3033,7 @@ void OrcaMCPServer::register_builtin_tools()
                     result = suppression_guard.fail_on_errors(result);
                     if (result["status"] == "error")
                         result.erase("note");
+                    add_next_steps(result, export_next_steps(result["status"] == "export_started"));
                 } else {
                     // No path provided. File dialogs are modal and would block the GUI thread
                     // for as long as the MCP call waits, so require an explicit path instead.
@@ -3453,7 +3458,7 @@ void OrcaMCPServer::register_builtin_tools()
                         return nlohmann::json{
                             {"status", "in_progress"},
                             {"state", "slicing"},
-                            {"message", "Slicing still in progress. Poll get_slicing_status until state is \"done\"."}
+                            {"message", "Slicing still in progress: call wait_for_slice, which returns once it is over."}
                         };
                     }
 
@@ -3485,7 +3490,7 @@ void OrcaMCPServer::register_builtin_tools()
                             {"state", "idle"},
                             {"plate_index", plate_index},
                             {"message", "Plate " + std::to_string(plate_index) + " has no valid slice result. Run "
-                                        "slice_all and poll get_slicing_status until state is \"done\"."},
+                                        "slice_all, then wait_for_slice."},
                             {"active_warnings", get_active_warnings_json(plater)}
                         };
                     }

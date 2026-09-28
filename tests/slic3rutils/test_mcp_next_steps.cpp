@@ -164,10 +164,62 @@ TEST_CASE("A modifier's shells are not a stray part", "[McpNextSteps][orcamcp]")
     CHECK(step_for(scene.steps(), "get_object_components") == nullptr);
 }
 
+TEST_CASE("A slice that started is waited for with wait_for_slice", "[McpNextSteps][orcamcp]")
+{
+    const std::vector<NextStep> steps = slice_start_next_steps({SliceStart::started, "", ""});
+    REQUIRE(steps.size() == 1);
+    CHECK(steps[0].tool == "wait_for_slice");
+    CHECK(steps[0].arguments.is_null());
+}
+
+TEST_CASE("A slice refused while the pipeline is busy waits it out, then slices again", "[McpNextSteps][orcamcp]")
+{
+    const std::vector<NextStep> busy = slice_start_next_steps({SliceStart::not_started, "busy_slicing", "the pipeline is busy"});
+    REQUIRE(busy.size() == 1);
+    CHECK(busy[0].tool == "wait_for_slice");
+    CHECK(mentions(busy[0].why, "slice_all again"));
+
+    // An arrange or an orient is not the slicing pipeline: wait_for_slice would not wait for it.
+    const std::vector<NextStep> job = slice_start_next_steps({SliceStart::not_started, "busy_job", "an arrange runs"});
+    REQUIRE(job.size() == 1);
+    CHECK(job[0].tool == "get_slicing_status");
+    CHECK(mentions(job[0].why, "ui_job"));
+}
+
+TEST_CASE("Plates already sliced point at their estimate", "[McpNextSteps][orcamcp]")
+{
+    const std::vector<NextStep> steps = slice_start_next_steps({SliceStart::not_started, "already_sliced", "nothing to do"});
+    REQUIRE(steps.size() == 1);
+    CHECK(steps[0].tool == "get_print_estimate");
+}
+
+TEST_CASE("A slice the app refuses suggests no tool: its message says what to fix", "[McpNextSteps][orcamcp]")
+{
+    for (const char* reason : {"invalid", "nothing_to_slice", "unknown"}) {
+        INFO("reason " << reason);
+        CHECK(slice_start_next_steps({SliceStart::not_started, reason, "why"}).empty());
+    }
+}
+
+TEST_CASE("An export that started is waited for, and one that did not suggests nothing", "[McpNextSteps][orcamcp]")
+{
+    // export_started is not a failure: the file is being written in the background.
+    const std::vector<NextStep> started = export_next_steps(true);
+    REQUIRE(started.size() == 1);
+    CHECK(started[0].tool == "wait_for_slice");
+    CHECK(mentions(started[0].why, "written"));
+    CHECK(export_next_steps(false).empty());
+}
+
 TEST_CASE("Every next step names a real tool, with arguments its schema accepts", "[McpNextSteps][orcamcp]")
 {
     std::vector<NextStep> steps = Scene({cube_missing_facet(), separate_cubes(2)}).steps();
     REQUIRE(steps.size() == 2);
+    for (const char* reason : {"", "busy_slicing", "busy_job", "already_sliced"})
+        for (NextStep& step : slice_start_next_steps({*reason ? SliceStart::not_started : SliceStart::started, reason, ""}))
+            steps.push_back(std::move(step));
+    for (NextStep& step : export_next_steps(true))
+        steps.push_back(std::move(step));
 
     const mcp_tool_references::ToolNames names(OrcaMCPServer::registered_tools());
     json                                 response = json::object();
