@@ -23,7 +23,7 @@ void OrcaMCPServer::register_builtin_tools()
     register_tool({
         "my_new_tool",                        // Tool name
         ToolCategory::Scene,                  // Required: a registration without one does not compile
-        "What it does, in 40 chars at most",  // Summary: get_server_info's catalogue line
+        "What it does, in 40 chars at most",  // Summary: get_server_info's tool_summaries line
         "Description of what the tool does",  // Description for tools/list
         {                                     // JSON Schema for parameters
             {"type", "object"},

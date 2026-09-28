@@ -968,13 +968,14 @@
     },
     {
       "category": "Info",
-      "description": "Every tool's one-line summary by category, a quick start, and guides (concepts, workflows, examples) to fetch by section: call it to find a tool before deciding one does not exist.",
+      "description": "Every tool's name by category and a quick start; section tool_summaries gives each tool's one-line summary, and the guides (concepts, workflows, examples) are fetched by section too: call it to find a tool before deciding one does not exist.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
           "section": {
-            "description": "One documentation section, or all of them. Omit it for every tool's summary, the quick start, and the list of sections with their sizes.",
+            "description": "One section -- tool_summaries (every tool's one-line summary, by category) or a guide -- or all of them. Omit it for every tool's name by category, the quick start, and the list of sections with their sizes.",
             "enum": [
+              "tool_summaries",
               "concepts",
               "suggested_flows",
               "tool_examples",

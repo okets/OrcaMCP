@@ -6,7 +6,8 @@ namespace {
 
 using json = nlohmann::json;
 
-constexpr const char* all_sections = "all";
+constexpr const char* all_sections           = "all";
+constexpr const char* tool_summaries_section = "tool_summaries";
 
 json server()
 {
@@ -26,7 +27,7 @@ json quick_start()
             "1. get_scene_info: plates, objects and their object_id",
             "2. get_mesh_health, get_object_components: holes, open edges, loose parts",
             "3. render_plate_view save_to_file=true, then Read the PNG",
-            "4. get_server_info section=<one of sections> for more"
+            "4. get_server_info section=tool_summaries: what each tool does; section=<another of sections> for more"
         }},
         {"common_tasks", {
             {"load_and_slice", "load_model -> slice_all -> wait_for_slice -> get_print_estimate -> export_gcode"},
@@ -426,9 +427,19 @@ const std::vector<Section>& documentation_sections()
     return sections;
 }
 
-// Every tool's summary, by category. Built from the registry, so a new tool is listed the moment
-// it is registered.
-json tool_catalogue(const ToolMap& tools)
+// Every tool's name, by category, in name order: the default response's catalogue. Built from the
+// registry, so a new tool is listed the moment it is registered. Names only, about 19 bytes a tool, so
+// the default stays under its 6 KB cap as tools are added; the summaries are a section of their own.
+json tool_names(const ToolMap& tools)
+{
+    json catalogue = json::object();
+    for (const auto& [name, tool] : tools)
+        catalogue[OrcaMCPServer::tool_category_name(tool.category)].push_back(name);
+    return catalogue;
+}
+
+// Every tool's one-line summary, by category: the tool_summaries section. Built from the registry too.
+json tool_summaries(const ToolMap& tools)
 {
     json catalogue = json::object();
     for (const auto& [name, tool] : tools)
@@ -446,16 +457,25 @@ json bridge_only_tools(const ToolMap& tools)
     return names;
 }
 
-// Each section's size in bytes, so a caller can see what a fetch costs before making it. The sections
-// are fixed text, so they are built and measured once rather than on every call.
-const json& section_index()
+// Each documentation section's size in bytes. The sections are fixed text, so they are built and
+// measured once rather than on every call.
+const json& documentation_section_sizes()
 {
-    static const json index = [] {
-        json sizes = json::object();
+    static const json sizes = [] {
+        json out = json::object();
         for (const Section& section : documentation_sections())
-            sizes[section.name] = section.content().dump().size();
-        return sizes;
+            out[section.name] = section.content().dump().size();
+        return out;
     }();
+    return sizes;
+}
+
+// Every section's size in bytes, so a caller can see what a fetch costs before making it: the
+// documentation sections, and tool_summaries, measured from the registry.
+json section_index(const ToolMap& tools)
+{
+    json index                    = documentation_section_sizes();
+    index[tool_summaries_section] = tool_summaries(tools).dump().size();
     return index;
 }
 
@@ -464,10 +484,11 @@ json default_response(const ToolMap& tools)
     return json{
         {"server", server()},
         {"quick_start", quick_start()},
-        {"tools", tool_catalogue(tools)},
+        {"tools", tool_names(tools)},
         {"bridge_only", bridge_only_tools(tools)},
-        {"sections", section_index()},
-        {"more", "Pass section=<a name from sections> for one of them, or section=all for everything."}
+        {"sections", section_index(tools)},
+        {"more", "Pass section=tool_summaries for every tool's one-line summary, section=<another name from "
+                 "sections> for that guide, or section=all for everything."}
     };
 }
 
@@ -476,8 +497,9 @@ json every_section(const ToolMap& tools)
     json response = json{
         {"server", server()},
         {"quick_start", quick_start()},
-        {"tools", tool_catalogue(tools)},
-        {"bridge_only", bridge_only_tools(tools)}
+        {"tools", tool_names(tools)},
+        {"bridge_only", bridge_only_tools(tools)},
+        {tool_summaries_section, tool_summaries(tools)}
     };
     for (const Section& section : documentation_sections())
         response[section.name] = section.content();
@@ -523,7 +545,7 @@ Careful:
 const std::vector<std::string>& server_info_section_names()
 {
     static const std::vector<std::string> names = [] {
-        std::vector<std::string> out;
+        std::vector<std::string> out{tool_summaries_section};
         for (const Section& section : documentation_sections())
             out.emplace_back(section.name);
         out.emplace_back(all_sections);
@@ -543,6 +565,8 @@ json server_info(const json& params, const ToolMap& tools)
     const std::string requested = section.get<std::string>();
     if (requested == all_sections)
         return every_section(tools);
+    if (requested == tool_summaries_section)
+        return json{{tool_summaries_section, tool_summaries(tools)}};
     for (const Section& candidate : documentation_sections())
         if (requested == candidate.name)
             return json{{candidate.name, candidate.content()}};

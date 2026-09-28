@@ -103,8 +103,9 @@ TEST_CASE("A tool without a handler is refused", "[orcamcp][tools]")
 
 // ==================== GET_SERVER_INFO ====================
 //
-// Its catalogue is built from the registry on every call, so it names every tool; the rest of its
-// documentation is fetched one section at a time, so the default stays small enough to call.
+// Its catalogue is built from the registry on every call, so it names every tool: the default lists
+// the names by category, the tool_summaries section each one's summary. The rest of its documentation
+// is fetched one section at a time too, so the default stays small enough to call.
 
 namespace {
 
@@ -113,41 +114,74 @@ nlohmann::json get_server_info(const nlohmann::json& params = nlohmann::json::ob
     return OrcaMCPServer::registered_tools().at("get_server_info").handler(params);
 }
 
-// name -> category, as the catalogue lists them.
-std::map<std::string, std::string> catalogue_entries(const nlohmann::json& catalogue)
+// Every entry of a catalogue listed per category (an array of names, or an object of name -> summary):
+// the tool's name -> its category, and how many entries there are in all.
+struct CatalogueEntries
 {
-    std::map<std::string, std::string> entries;
+    std::map<std::string, std::string> category_of;
+    size_t                             listed = 0;
+};
+CatalogueEntries catalogue_entries(const nlohmann::json& catalogue)
+{
+    CatalogueEntries entries;
     for (auto category = catalogue.begin(); category != catalogue.end(); ++category)
-        for (auto tool = category->begin(); tool != category->end(); ++tool)
-            entries[tool.key()] = category.key();
+        for (auto tool = category->begin(); tool != category->end(); ++tool) {
+            entries.category_of[category->is_array() ? tool->get<std::string>() : tool.key()] = category.key();
+            ++entries.listed;
+        }
     return entries;
 }
 
 } // namespace
 
-TEST_CASE("get_server_info's catalogue names every tool once, under its category, with its summary", "[orcamcp][tools]")
+TEST_CASE("get_server_info's default response names every tool once, under its category", "[orcamcp][tools]")
 {
-    const nlohmann::json info    = get_server_info();
-    const auto&          tools   = OrcaMCPServer::registered_tools();
-    const auto           entries = catalogue_entries(info.at("tools"));
+    const nlohmann::json catalogue = get_server_info().at("tools");
+    const auto&          tools     = OrcaMCPServer::registered_tools();
+    const auto           entries   = catalogue_entries(catalogue);
 
-    size_t listed = 0;
-    for (auto category = info.at("tools").begin(); category != info.at("tools").end(); ++category)
-        listed += category->size();
-    CHECK(listed == tools.size());
-
+    CHECK(entries.listed == tools.size());
+    for (auto category = catalogue.begin(); category != catalogue.end(); ++category) {
+        INFO("category " << category.key());
+        // Names only: the summaries are the tool_summaries section, so the default stays small.
+        CHECK(category->is_array());
+    }
     for (const auto& [name, tool] : tools) {
         INFO("tool " << name);
-        REQUIRE(entries.count(name) == 1);
-        CHECK(entries.at(name) == OrcaMCPServer::tool_category_name(tool.category));
-        CHECK(info.at("tools").at(entries.at(name)).at(name) == tool.summary);
+        REQUIRE(entries.category_of.count(name) == 1);
+        CHECK(entries.category_of.at(name) == OrcaMCPServer::tool_category_name(tool.category));
     }
+}
+
+TEST_CASE("get_server_info's tool_summaries section gives every tool's summary, under its category", "[orcamcp][tools]")
+{
+    const nlohmann::json summaries = get_server_info({{"section", "tool_summaries"}}).at("tool_summaries");
+    const auto&          tools     = OrcaMCPServer::registered_tools();
+    const auto           entries   = catalogue_entries(summaries);
+
+    CHECK(entries.listed == tools.size());
+    for (const auto& [name, tool] : tools) {
+        INFO("tool " << name);
+        REQUIRE(entries.category_of.count(name) == 1);
+        const std::string& category = entries.category_of.at(name);
+        CHECK(category == OrcaMCPServer::tool_category_name(tool.category));
+        CHECK(summaries.at(category).at(name) == tool.summary);
+    }
+}
+
+TEST_CASE("get_server_info's default response points to the tool summaries", "[orcamcp][tools]")
+{
+    const nlohmann::json info = get_server_info();
+    CHECK(info.at("sections").contains("tool_summaries"));
+    CHECK(info.at("more").get<std::string>().find("tool_summaries") != std::string::npos);
+    CHECK(info.at("quick_start").dump().find("tool_summaries") != std::string::npos);
 }
 
 TEST_CASE("get_server_info's default response stays under 6 KB", "[orcamcp][tools]")
 {
-    // An agent that has to spend 6k tokens to learn what exists stops asking. Each new tool adds
-    // about 55 bytes; when this fails, shorten summaries or move content into a section.
+    // An agent that has to spend 6k tokens to learn what exists stops asking. The default lists tool
+    // names only, about 19 bytes each; when this fails, move content into a section rather than raise
+    // the cap.
     const std::string response = get_server_info().dump();
     INFO("default response is " << response.size() << " bytes");
     CHECK(response.size() <= 6 * 1024);
@@ -188,6 +222,7 @@ TEST_CASE("get_server_info section=all returns the default content and every sec
     const nlohmann::json everything = get_server_info({{"section", "all"}});
     const nlohmann::json summary    = get_server_info();
     CHECK(everything.at("tools") == summary.at("tools"));
+    CHECK(everything.at("tool_summaries") == get_server_info({{"section", "tool_summaries"}}).at("tool_summaries"));
     CHECK(everything.at("quick_start") == summary.at("quick_start"));
     for (auto entry = summary.at("sections").begin(); entry != summary.at("sections").end(); ++entry) {
         INFO("section " << entry.key());
