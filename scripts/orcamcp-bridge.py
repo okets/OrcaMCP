@@ -151,13 +151,10 @@ _notified_tools_changed = False
 
 
 def get_orcamcp_executable() -> str | None:
-    """Find the OrcaMCP executable based on platform"""
+    """The OrcaMCP start_orca launches: ORCAMCP_APP_PATH, or the installed app. Never a build in a source
+    folder: it would run on the user's real data folder, as a test build must not (the user, 2026-09-28)."""
     import platform
     system = platform.system()
-
-    # Get project root (scripts/ is one level down from project root)
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(script_dir)
 
     paths = []
 
@@ -167,37 +164,17 @@ def get_orcamcp_executable() -> str | None:
         paths.append(custom_path)
 
     if system == "Darwin":  # macOS
-        # Dev build paths (relative to project root)
-        paths.extend([
-            os.path.join(project_root, "build", "arm64", "src", "Release", "OrcaSlicer.app", "Contents", "MacOS", "OrcaSlicer"),
-            os.path.join(project_root, "build", "x86_64", "src", "Release", "OrcaSlicer.app", "Contents", "MacOS", "OrcaSlicer"),
-            os.path.join(project_root, "build", "src", "Release", "OrcaSlicer.app", "Contents", "MacOS", "OrcaSlicer"),
-        ])
-        # Installation paths
         paths.extend([
             "/Applications/OrcaMCP.app/Contents/MacOS/OrcaSlicer",
             os.path.expanduser("~/Applications/OrcaMCP.app/Contents/MacOS/OrcaSlicer"),
         ])
     elif system == "Windows":
-        # Dev build paths (relative to project root)
-        paths.extend([
-            os.path.join(project_root, "build", "OrcaSlicer", "orca-mcp.exe"),
-            os.path.join(project_root, "build", "src", "Release", "orca-mcp.exe"),
-            os.path.join(project_root, "build", "Release", "orca-mcp.exe"),
-        ])
-        # Installation paths
         paths.extend([
             os.path.join(os.environ.get("ProgramFiles", "C:\\Program Files"), "OrcaMCP", "orca-mcp.exe"),
             os.path.join(os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)"), "OrcaMCP", "orca-mcp.exe"),
             os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "OrcaMCP", "orca-mcp.exe"),
         ])
     else:  # Linux
-        # Dev build paths (relative to project root)
-        paths.extend([
-            os.path.join(project_root, "build", "src", "orca-mcp"),
-            os.path.join(project_root, "build", "OrcaSlicer", "orca-mcp"),
-        ])
-        # Installation paths
         paths.extend([
             "/usr/bin/orcamcp",
             "/usr/local/bin/orcamcp",
@@ -214,6 +191,9 @@ def get_orcamcp_executable() -> str | None:
     return None
 
 
+LAUNCH_WAIT_S = 30  # how long start_orca waits for the instance it launched to answer
+
+
 def launch_orcamcp() -> dict:
     """Launch OrcaMCP application and wait for it to be ready"""
     # Check if already running
@@ -222,14 +202,10 @@ def launch_orcamcp() -> dict:
 
     executable = get_orcamcp_executable()
     if not executable:
-        # Get project root for helpful message
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        project_root = os.path.dirname(script_dir)
         return {
             "success": False,
-            "message": f"Could not find OrcaMCP executable. "
-                      f"Searched in dev build paths (relative to {project_root}) and standard installation locations. "
-                      f"Set ORCAMCP_APP_PATH environment variable to specify the path, or build the project first."
+            "message": "Could not find the installed OrcaMCP app. Install it, or set ORCAMCP_APP_PATH to the "
+                       "OrcaMCP program to launch."
         }
 
     try:

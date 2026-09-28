@@ -824,12 +824,15 @@ Path normalization is applied to: `file_path`, `output_path`, `path` parameters.
 On Windows, OrcaMCP installs to:
 - `C:\Program Files\OrcaMCP\orca-mcp.exe`
 
-The bridge script searches these locations automatically:
+The bridge's `start_orca` launches the first of these that exists (and only these: never a build in a
+source folder, which would run on the real data folder):
 - `%ProgramFiles%\OrcaMCP\orca-mcp.exe`
 - `%ProgramFiles(x86)%\OrcaMCP\orca-mcp.exe`
 - `%LOCALAPPDATA%\Programs\OrcaMCP\orca-mcp.exe`
 
-Override with `ORCAMCP_APP_PATH` environment variable if needed.
+On macOS `/Applications/OrcaMCP.app` or `~/Applications/OrcaMCP.app`; on Linux `/usr/bin`, `/usr/local/bin`,
+`~/.local/bin` or `/opt/OrcaMCP/bin`. `ORCAMCP_APP_PATH` overrides all of them: set it to launch a test
+build, and give that build its own data folder.
 
 ---
 
