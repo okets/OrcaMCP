@@ -71,6 +71,7 @@ add_executable(${_TEST_NAME}_tests
     test_gcode_check.cpp
     test_mcp_exports.cpp
     test_layer_gcode.cpp
+    test_mcp_user_view.cpp
     test_config_values.cpp
     test_http_server.cpp
     test_thread_cancel.cpp

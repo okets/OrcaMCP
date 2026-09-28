@@ -574,6 +574,16 @@ nlohmann::json rename_in_object_list(const nlohmann::json& params)
     return run_on_main_thread([&]() -> nlohmann::json { return rename_on_main_thread(params); });
 }
 
+std::optional<std::string> select_as_a_click_does(Plater& plater, int object_id, ModelVolume* volume)
+{
+    return select_in_object_list(plater, object_id, volume);
+}
+
+std::optional<nlohmann::json> close_toolbar_tool_for_change(Plater& plater, int object_id, std::size_t volumes_before, std::string& closed_tool)
+{
+    return close_toolbar_tool_before_change(plater, object_id, volumes_before, closed_tool);
+}
+
 }}} // namespace Slic3r::GUI::OrcaMCP
 
 namespace {

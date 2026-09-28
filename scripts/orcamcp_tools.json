@@ -3361,6 +3361,61 @@
       "summary": "Change a volume's type: part, modifier"
     },
     {
+      "category": "Visualization",
+      "description": "Change what the user sees in the OrcaMCP window, when the user asks to be shown something: the tab (prepare, preview, device, home, project, calibration, multi_device, as the window has them now) and the 3D view's camera, as the tab bar and the View menu change them. camera is one of the View menu's views (default, top, bottom, front, back, left, right) or iso; zoom_to fits the view to the current plate, the bed or every object; object_id selects that object as a click on its row does and zooms to it (Prepare only). The camera works in Prepare and Preview only. Switching to preview slices the selected plate when it has no result, as the tab does for the user (slice_started, and next_steps names wait_for_slice), and closes an open toolbar tool (closed_toolbar_tool). No other tool moves the user's view: render_plate_view draws images for you. Called with nothing, it changes nothing and says what the user sees (user_view: tab, camera, plate). No undo step.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "camera": {
+            "description": "A View menu view: default (and zoom to the bed), iso, top, bottom, front, back, left, right",
+            "enum": [
+              "default",
+              "iso",
+              "top",
+              "bottom",
+              "front",
+              "back",
+              "left",
+              "right"
+            ],
+            "type": "string"
+          },
+          "object_id": {
+            "description": "Select this object and zoom to it (Prepare only)",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "tab": {
+            "description": "The tab to show: prepare (the 3D view), preview (the sliced G-code), device, home, project, calibration or multi_device; device_web in printer-agents mode",
+            "enum": [
+              "home",
+              "prepare",
+              "preview",
+              "device",
+              "device_web",
+              "multi_device",
+              "project",
+              "calibration"
+            ],
+            "type": "string"
+          },
+          "zoom_to": {
+            "description": "Fit the view to the current plate, the bed or every object",
+            "enum": [
+              "plate",
+              "bed",
+              "objects"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "show_view",
+      "summary": "Show the user a tab, view or object"
+    },
+    {
       "category": "Slicing",
       "description": "Slice every plate in the project, the way the GUI's Slice All button does: one plate at a time until all are sliced. Pass all_plates=false to slice only the plate that is currently selected. status says what happened: slicing_started, or not_started with a reason and a message: busy_slicing (the pipeline is busy -- get_slicing_status's busy: a slice or Slice All run, an export, an upload, or the last slice still stopping; nothing is started -- call wait_for_slice, then slice_all again), already_sliced (nothing to do), busy_job (an arrange, an orient or a bed fill holds the app: poll get_slicing_status until ui_job is null, then slice_all again), invalid (the app refuses the plate as it stands -- its validation, an object partly off the plate, a filament check, missing plugins, a broken mixed filament, or a last slice that failed; message says which, in the app's words for a validation failure), nothing_to_slice (no printable object fully on the plates -- one partly off its plate or too tall for the printer does not count -- and no refusal the app gives words for) or unknown. Then call wait_for_slice, which returns once the run is over, with each plate's result; next_steps names the tool to call next. The plate selection walks from the first plate to the last while the run is in progress, and get_slicing_status puts back the plate that was selected here once it ends.",
       "inputSchema": {

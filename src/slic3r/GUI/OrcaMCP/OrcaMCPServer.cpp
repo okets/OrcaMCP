@@ -6060,6 +6060,7 @@ void OrcaMCPServer::register_builtin_tools()
     register_plate_tools();
     register_export_tools();
     register_layer_gcode_tools();
+    register_view_tools();
     register_bridge_tools();
 
     BOOST_LOG_TRIVIAL(info) << "OrcaMCPServer: Registered " << s_tools.size() << " tools";
@@ -6173,5 +6174,15 @@ void OrcaMCPServer::register_bridge_tools()
         }
     });
 }
+
+namespace OrcaMCP {
+
+void record_selected_plate_slice_run(PartPlateList& plate_list)
+{
+    s_slice_all_restore_print_index = -1;
+    record_slice_run(plate_list, /*every_plate=*/false, plate_list.get_curr_plate_index());
+}
+
+} // namespace OrcaMCP
 
 }} // namespace Slic3r::GUI

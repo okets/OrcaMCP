@@ -111,6 +111,10 @@ std::vector<NextStep> cancel_slice_next_steps(bool still_stopping);
 // slices that plate again (plates still sliced are kept); nothing for a call that changed nothing.
 std::vector<NextStep> layer_gcode_next_steps(int plate_index, bool changed);
 
+// What show_view's switch to the Preview tab leads to when it started a slice of the selected plate
+// (`slice_started`): wait_for_slice, which returns once it is over.
+std::vector<NextStep> show_view_next_steps(bool slice_started);
+
 // What a render_plate_view view whose picture came out one flat colour leads to (uniform_image_hint
 // says why in words): get_scene_info when nothing on plate `plate_index` was drawn (`drawn` 0: no model
 // volume in the 3D view, or none printable on that plate), render_plate_view of that plate without

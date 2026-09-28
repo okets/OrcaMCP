@@ -168,6 +168,8 @@ private:
     static void register_export_tools();
     // G-code at a sliced layer: add_layer_gcode, delete_layer_gcode (OrcaMCPLayerGcodeTools.cpp)
     static void register_layer_gcode_tools();
+    // What the user sees: show_view (OrcaMCPViewTools.cpp)
+    static void register_view_tools();
     // Tools orcamcp-bridge.py answers itself (start_orca)
     static void register_bridge_tools();
 };

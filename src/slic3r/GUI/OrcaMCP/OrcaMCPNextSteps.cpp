@@ -220,6 +220,15 @@ std::vector<NextStep> layer_gcode_next_steps(int plate_index, bool changed)
              nullptr}};
 }
 
+std::vector<NextStep> show_view_next_steps(bool slice_started)
+{
+    if (!slice_started)
+        return {};
+    return {{"wait_for_slice",
+             "the Preview tab started slicing the selected plate, as it does for the user: wait_for_slice returns once it is over",
+             nullptr}};
+}
+
 std::vector<NextStep> uniform_image_next_steps(size_t model_volumes, size_t drawn, int plate_index)
 {
     const std::string plate = "plate " + std::to_string(plate_index);

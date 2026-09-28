@@ -39,7 +39,7 @@ into a call that reports success and changes nothing. See [Error Handling](#erro
 | **Filaments & colour** | `get_filaments`, `add_filament_slot`, `delete_filament_slot`, `set_object_filament`, `set_mixed_filament`, `delete_mixed_filament`, `set_filament_color`, `get_flush_volumes`, `set_flush_volumes`, `auto_calc_flush_volumes`, `get_toolchanger_config`, `suggest_color_mix`, `get_color_palette` |
 | **Painting** | `paint_object`, `remap_paint`, `get_object_paint`, `clear_object_paint`, `set_brim_ears`, `pick_facet` |
 | **Slicing** | `slice_all`, `cancel_slice`, `wait_for_slice` (bridge-only), `get_slicing_status`, `export_gcode`, `get_print_estimate`, `add_layer_gcode`, `delete_layer_gcode` |
-| **Visualization** | `render_plate_view`, `get_preview_base64`, `set_gcode_view_type` |
+| **Visualization** | `render_plate_view`, `get_preview_base64`, `set_gcode_view_type`, `show_view` |
 | **Printers** | `get_printers`, `select_printer`, `add_physical_printer`, `discover_printers`, `send_to_printer`, `get_printer_status`, `printer_control`, `list_printer_files`, `print_printer_file`, `match_project_to_printer` |
 | **Adaptive** | `apply_adaptive_layer_height`, `clear_adaptive_layer_height` |
 | **History** | `undo`, `redo` |
@@ -3022,6 +3022,44 @@ prefix anywhere in the path, so `<anywhere>/orcamcp_render_/../<file>` passed.
 
 ---
 
+### show_view
+Change what the user sees in the OrcaMCP window, when the user asks to be shown something: the tab,
+as the tab bar switches it, and the 3D view's camera, as the View menu turns it. Every other tool
+leaves the user's view alone: `render_plate_view` draws images for the agent, and `slice_all` puts
+back the view its Slice button's event changes.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `tab` | string | No | `prepare` (the 3D view), `preview` (the sliced G-code), `device`, `home`, `project`, `calibration`, `multi_device`, or `device_web` in printer-agents mode -- as the window has them now |
+| `camera` | string | No | A View menu view: `default` (Default View: the plate from the front, zoomed to the bed), `iso`, `top`, `bottom`, `front`, `back` (the menu's Rear), `left`, `right` |
+| `zoom_to` | string | No | Fit the view to the current `plate`, the `bed` or every object (`objects`) |
+| `object_id` | integer | No | Select that object, as a click on its row does, and zoom to it (Prepare only, as the object list's double-click) |
+
+**Returns:**
+```json
+{"status": "success", "changed": true, "previous_tab": "prepare",
+ "user_view": {"tab": "preview", "camera": {"view": "top", "projection": "orthographic", "target": [128.0, 128.0, 0.0], "zoom": 2.4},
+               "plate_index": 0},
+ "slice_started": "the Preview tab slices the selected plate when it has no result, as it does for the user",
+ "active_warnings": {"count": 0, "warnings": []},
+ "next_steps": [{"tool": "wait_for_slice", "why": "the Preview tab started slicing the selected plate, as it does for the user: ..."}]}
+```
+
+The tab changes first, then the camera: a view keeps the zoom, a zoom keeps the view, and an object's
+zoom comes last. `user_view` says what the user sees afterwards: the tab, the camera -- its `view` by
+name when it looks along one, else `null` (the user turned it) -- and the current plate. Called with no
+arguments it changes nothing (`changed: false`) and reports `user_view`.
+
+As for the user: switching to `preview` slices the selected plate when it has no result
+(`slice_started`, recorded as a slice of that plate so `wait_for_slice` follows it) and closes an open
+toolbar tool (`closed_toolbar_tool`); a Bambu multi-extruder printer's filament check may ask on the
+way, and suppression answers it. Refused: a tab the window does not have now (the answer lists those it
+has); `camera`, `zoom_to` or `object_id` with a tab other than Prepare or Preview showing, where the View
+menu is off; `object_id` in Preview; `zoom_to` with `object_id`. No undo step: the view is not an edit.
+
+---
+
 ## Adaptive Layer Height Tools
 
 ### apply_adaptive_layer_height
@@ -4019,6 +4057,7 @@ nothing to suggest has no `next_steps`.
 | `export_gcode` | `wait_for_slice` | `export_started`: the file is still being written |
 | `cancel_slice` | `wait_for_slice` | the cancelled slice is still stopping: its completion is not taken in yet |
 | `add_layer_gcode`, `delete_layer_gcode` | `slice_all` | the call changed the plate's layer G-code, so it lost its slice |
+| `show_view` | `wait_for_slice` | switching to the Preview tab started a slice of the selected plate |
 | `render_plate_view`, on each view whose `uniform_image` is true (beside its `hint`) | `get_scene_info` | nothing printable on that plate was drawn |
 | | `render_plate_view` with `{plate_index, save_to_file: true}` | the plate's objects were drawn but the camera looked elsewhere: no views gives a contact sheet fitted to the plate |
 | `paint_object` with `mode: support` | `set_object_config` for that object: `enable_support` `"1"` and `support_type` `normal(manual)` (or `tree(manual)` when its type is a tree one), for support only where painted | the object has painted enforcers and `enable_support` is off for it, so they do nothing (`info_messages` says so too). Not for blockers alone or erased paint: turning support on is the opposite of what a blocker asks; and not with an `(auto)` type, which would also support every other overhang |

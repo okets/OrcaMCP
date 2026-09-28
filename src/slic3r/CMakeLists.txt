@@ -493,6 +493,9 @@ set(SLIC3R_GUI_SOURCES
     GUI/OrcaMCP/OrcaMCPLayerGcode.cpp
     GUI/OrcaMCP/OrcaMCPLayerGcodeTools.hpp
     GUI/OrcaMCP/OrcaMCPLayerGcodeTools.cpp
+    GUI/OrcaMCP/OrcaMCPUserView.hpp
+    GUI/OrcaMCP/OrcaMCPUserView.cpp
+    GUI/OrcaMCP/OrcaMCPViewTools.cpp
     GUI/OrcaMCP/OrcaMCPLayerPlan.hpp
     GUI/OrcaMCP/OrcaMCPLayerPlan.cpp
     GUI/OrcaMCP/OrcaMCPPresetConfigUtils.hpp

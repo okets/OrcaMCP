@@ -467,6 +467,11 @@ private:
 // Slice All run, and `plate_count` plates. Main thread.
 PipelineState pipeline_state(Plater& plater, int plate_count);
 
+// Records a slice of the selected plate that a tool started other than through slice_all (show_view's
+// Preview tab, which slices the plate as the GUI's tab does), as slice_all records its runs, so
+// get_slicing_status's slice_run and wait_for_slice follow it. Main thread.
+void record_selected_plate_slice_run(PartPlateList& plate_list);
+
 // Closes the toolbar tool (gizmo) open in the 3D view, as the user closes it, and says which it was;
 // "" when none was open. The object list's Repair refuses while one is open -- its undo snapshot would
 // land in the tool's own undo stack -- and a painting tool's selectors belong to the volumes it was
