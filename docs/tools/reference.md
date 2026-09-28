@@ -3238,7 +3238,7 @@ folder: it would run on the user's real data folder.
 |-----------|--------------|----------|
 | The instance this session uses runs, or exactly one runs and none is chosen yet | Launches nothing; uses it | `already_running` |
 | Several run and none is chosen | Launches nothing; lists them in `other_instances`, with `next_steps` to `select_instance` (an error) | `several_running` |
-| None runs, or the one this session used is gone, or `new_instance: true` | Launches the app (on macOS `open -n`, always a new process), waits up to 30 s for its entry, and uses it | `started` |
+| None runs, or the one this session used is gone, or nothing answers on `ORCAMCP_PORT` when that is set, or `new_instance: true` | Launches the app (on macOS `open -n`, always a new process), waits up to 30 s for a new instance running that program (never another program's window that came up meanwhile; an installed OrcaMCP older than 2.5.0.6, which cannot say what it runs, is taken when it newly answers on 13618), and uses it | `started` |
 | The app cannot be found, or does not answer in 30 s | An error | `not_started` |
 
 **Returns:** the instance it launched or found, named as `list_instances` names it (pid, port,
@@ -3323,10 +3323,11 @@ build keep the list. No match, or several, is an error listing the running insta
 | Situation | A tool call |
 |-----------|-------------|
 | One instance runs | Goes to it, as with a single OrcaMCP |
-| `ORCAMCP_PORT` is set and an instance runs on it | Goes to that one |
+| `ORCAMCP_PORT` is set and an instance runs on it | Goes to that one, and only ever to that one |
+| `ORCAMCP_PORT` is set and nothing answers on it | Is not run: "No OrcaMCP answers on port N". No other instance is used in its place |
 | Several run, and none is chosen | Is not run: the answer lists them, with `next_steps` to `select_instance` |
-| The chosen one quit or crashed, or another instance answers on its port | Is not run: the answer names it and lists the others, with `next_steps` to `select_instance` and `start_orca`. None is taken in its place |
-| The chosen one restarted (the same program on the same data folder, started after the bridge last heard from it) | Is not run: the session now uses the restarted one, and the answer says so, with `next_steps` to `get_scene_info` |
+| The chosen one quit or crashed, or something else answers on its port (another instance, or an OrcaMCP older than 2.5.0.6: the bridge asks the port who answers before every call) | Is not run: the answer names it and lists the others, with `next_steps` to `select_instance` and `start_orca`. None is taken in its place |
+| The chosen one restarted: the same program on the same data folder, started after the bridge last heard from it with no other instance of that program on that folder running, and the only one that qualifies | Is not run: the session now uses the restarted one, and the answer says so, with `next_steps` to `get_scene_info`. A second window opened while the first ran is never taken for its restart |
 | None runs | "OrcaMCP is not running": `start_orca` |
 
 These answers are tool errors whose text is JSON: `status: "error"`, `message`, `instances`, and

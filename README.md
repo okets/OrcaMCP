@@ -284,7 +284,7 @@ See the [building guide](docs/setup/building.md) for Windows and for the depende
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ORCAMCP_HOST` | `127.0.0.1` | OrcaSlicer HTTP host; the app listens on 127.0.0.1 only |
-| `ORCAMCP_PORT` | unset | The port whose OrcaMCP a session uses first. Several can run at once, each on its own port from 13618; agents list and choose them with `list_instances` and `select_instance` |
+| `ORCAMCP_PORT` | unset | The port whose OrcaMCP a session uses, and no other. Several can run at once, each on its own port from 13618; agents list and choose them with `list_instances` and `select_instance` |
 | `ORCAMCP_TIMEOUT` | `120` | Request timeout in seconds |
 | `ORCAMCP_DEBUG` | unset | Debug logging to stderr |
 

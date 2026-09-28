@@ -39,7 +39,7 @@ class FakeInstance:
     it refuses a call stamped for another instance with -32004 (unless it plays an older OrcaMCP)."""
 
     def __init__(self, pid, project="bracket", instance_id=None, legacy=False, tools=None, started_at=None,
-                 executable=PROGRAM, data_dir=DATA_DIR, get_delay_s=0.0):
+                 executable=PROGRAM, data_dir=DATA_DIR, get_delay_s=0.0, alone_at_start=True):
         self.calls = []
         self.legacy = legacy
         self.tools = tools or TOOLS
@@ -49,7 +49,7 @@ class FakeInstance:
         self.identity = {
             "schema": 1, "instance_id": instance_id or f"id-{pid}", "pid": pid, "port": self.port,
             "url": f"http://127.0.0.1:{self.port}/mcp", "version": "2.5.0.6-dev", "executable": executable,
-            "data_dir": data_dir, "started_at": started_at or timestamp(time.time() - 60),
+            "data_dir": data_dir, "started_at": started_at or timestamp(time.time() - 60), "alone_at_start": alone_at_start,
             "project": {"name": project, "path": f"/prints/{project}.3mf", "unsaved": False},
         }
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
@@ -256,6 +256,19 @@ class ChoosingTests(InstancesTest):
         self.bridge.PINNED_PORT = pinned.port
         self.assertEqual(self.answered_by(self.call("get_scene_info")), 40002)
 
+    def test_a_pinned_port_with_nothing_on_it_never_falls_back_to_another_instance(self):
+        """A session pinned to a test build that is not up yet must not drive the user's app instead."""
+        users_app = self.start(40001)
+        pinned = closed_port()
+        self.bridge.PINNED_PORT = pinned
+        self.bridge.ORCAMCP_URL = f"http://127.0.0.1:{pinned}/mcp"
+        report = self.call("new_project")
+        self.assertTrue(report["is_error"])
+        self.assertIn(f"port {pinned}", report["message"])
+        self.assertIn("not run", report["message"])
+        self.assertEqual(users_app.calls, [])
+        self.assertIsNone(self.bridge._selected)
+
     def test_with_nothing_running_a_call_says_to_start_orcamcp(self):
         report = self.call("get_scene_info")
         self.assertTrue(report["is_error"])
@@ -359,6 +372,19 @@ class LosingTheInstanceTests(InstancesTest):
         self.assertEqual(report["next_steps"][0]["tool"], "get_scene_info")
         self.assertEqual(self.answered_by(self.call("get_scene_info")), 40009)
 
+    def test_a_second_window_opened_beside_the_chosen_one_is_not_taken_for_its_restart(self):
+        """Another session's start_orca new_instance opens a window after this session's last call; when
+        this session's window quits, that one started beside it, so it is not a restart."""
+        chosen = self.start(40001)
+        self.call("select_instance", {"pid": 40001})
+        sibling = self.start(40002, started_at=timestamp(time.time() + 1), alone_at_start=False)
+        chosen.stop()
+        self.instances.remove(chosen)
+        report = self.call("delete_object", {"object_id": 0})
+        self.assertIn("no other instance is chosen", report["message"])
+        self.assertEqual(sibling.calls, [])
+        self.assertEqual(self.bridge._selected["pid"], 40001)
+
     def test_a_restart_on_another_program_or_data_folder_is_not_followed(self):
         for different in ({"executable": "/tmp/build/OrcaSlicer"}, {"data_dir": "/copies/OrcaMCP"}):
             with self.subTest(different=different):
@@ -376,14 +402,38 @@ class LosingTheInstanceTests(InstancesTest):
                 for name in os.listdir(self.folder.name):
                     os.remove(os.path.join(self.folder.name, name))
 
-    def test_a_call_that_reaches_another_instance_on_the_chosen_port_is_not_run(self):
+    def test_an_older_orcamcp_that_took_the_chosen_port_never_gets_the_call(self):
+        """An OrcaMCP older than 2.5.0.6 ignores the stamp, so the bridge must see it is not the chosen one."""
         chosen = self.start(40001)
         self.call("select_instance", {"pid": 40001})
-        # The instance quit, and another took its port: it answers GET as itself and refuses the stamp.
+        chosen.legacy = True  # the instance quit, and an older OrcaMCP now answers on its port
+        report = self.call("new_project")
+        self.assertTrue(report["is_error"])
+        self.assertIn("not run", report["message"])
+        self.assertEqual([c for c in chosen.calls if c["method"] == "tools/call"], [])
+
+    def test_another_instance_on_the_chosen_port_is_seen_before_the_call_is_sent(self):
+        chosen = self.start(40001)
+        self.call("select_instance", {"pid": 40001})
+        # The instance quit, and another took its port: it answers GET as itself.
         chosen.identity = dict(chosen.identity, instance_id="id-40011", pid=40011, started_at=timestamp(time.time() - 3600))
         os.remove(os.path.join(self.folder.name, "40001.json"))
         self.register(chosen.identity)
         report = self.call("new_project")
+        self.assertTrue(report["is_error"])
+        self.assertIn("not run", report["message"])
+        self.assertEqual([c for c in chosen.calls if c["method"] == "tools/call"], [])
+
+    def test_a_call_that_still_reaches_another_instance_is_refused_by_it_unrun(self):
+        """The port changed hands between the bridge's look and its call: the stamp makes the newer
+        instance refuse it (-32004), and the bridge says the chosen one is gone."""
+        chosen = self.start(40001)
+        self.call("select_instance", {"pid": 40001})
+        chosen.identity = dict(chosen.identity, instance_id="id-40011", pid=40011, started_at=timestamp(time.time() - 3600))
+        os.remove(os.path.join(self.folder.name, "40001.json"))
+        self.register(chosen.identity)
+        with mock.patch.object(self.bridge, "answers_as", return_value=True):  # the look saw the chosen one
+            report = self.call("new_project")
         self.assertTrue(report["is_error"])
         self.assertIn("another instance does", report["message"])
         self.assertIn("not run", report["message"])
@@ -487,6 +537,37 @@ class StartOrcaTests(InstancesTest):
         self.assertEqual(report["status"], "started")
         self.assertEqual(self.bridge._selected["pid"], 40050)
 
+    def test_a_window_of_another_program_is_not_taken_for_the_one_launched(self):
+        """Another agent's dev build coming up while the launched app does not must not be adopted."""
+        launched, launch = self.launches_into({"executable": "/Users/someone/src/OrcaMCP/build/OrcaSlicer"})
+        self.bridge.LAUNCH_WAIT_S = 0.3
+        with mock.patch.object(self.bridge, "launch_process", side_effect=launch):
+            report = self.start_orca()
+        self.assertEqual(report["status"], "not_started")
+        self.assertIsNone(self.bridge._selected)
+
+    def test_an_installed_orcamcp_older_than_2506_is_taken_when_it_comes_up(self):
+        """It cannot say what it runs, but it answers on the first port where nothing answered before."""
+        def launch(executable):
+            older = self.start(0, registered=False, legacy=True)
+            self.bridge.ORCAMCP_URL = older.url
+
+        with mock.patch.object(self.bridge, "launch_process", side_effect=launch):
+            report = self.start_orca()
+        self.assertEqual(report["status"], "started")
+        self.assertTrue(report["instance"]["legacy"])
+
+    def test_a_pinned_port_launches_rather_than_use_another_instance(self):
+        self.start(40001)
+        pinned = closed_port()
+        self.bridge.PINNED_PORT = pinned
+        self.bridge.ORCAMCP_URL = f"http://127.0.0.1:{pinned}/mcp"
+        launched, launch = self.launches_into({})
+        with mock.patch.object(self.bridge, "launch_process", side_effect=launch):
+            report = self.start_orca()
+        self.assertEqual(launched, [PROGRAM])
+        self.assertEqual(report["status"], "started")
+
     def test_new_instance_must_be_true_or_false(self):
         self.assertEqual(self.call("start_orca", {"new_instance": "yes"})["rpc_error"]["code"], -32602)
 
@@ -515,10 +596,16 @@ class RestartRuleTests(unittest.TestCase):
     def setUp(self):
         self.bridge = load_bridge()
         self.previous = {"instance_id": "a", "pid": 1, "port": 13618, "url": "", "executable": PROGRAM,
-                         "data_dir": DATA_DIR, "started_at": timestamp(1000)}
+                         "data_dir": DATA_DIR, "started_at": timestamp(1000), "alone_at_start": True}
 
     def candidate(self, started, **changes):
-        return dict(self.previous, instance_id="b", pid=2, started_at=timestamp(started), **changes)
+        return dict(dict(self.previous, instance_id="b", pid=2, started_at=timestamp(started)), **changes)
+
+    def test_one_started_beside_another_of_its_program_and_folder_is_not_a_restart(self):
+        self.assertFalse(self.bridge.is_successor(self.candidate(2000.5, alone_at_start=False), self.previous, 2000.0))
+        without = self.candidate(2000.5)
+        del without["alone_at_start"]  # an entry that does not say
+        self.assertFalse(self.bridge.is_successor(without, self.previous, 2000.0))
 
     def test_the_same_program_on_the_same_data_folder_started_after_it_was_last_heard_from_is_a_restart(self):
         self.assertTrue(self.bridge.is_successor(self.candidate(2000.5), self.previous, 2000.0))

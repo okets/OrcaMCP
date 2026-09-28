@@ -118,7 +118,8 @@ An agent sees them with `list_instances` (each one's port, pid, program, data fo
 project) and chooses with `select_instance`. With one window nothing changes. With several:
 
 - **"N OrcaMCP instances run, and this session has not chosen the one its calls go to"**: call
-  `select_instance` (by `pid`, `port` or `project`). Set `ORCAMCP_PORT` to start every session on one.
+  `select_instance` (by `pid`, `port` or `project`). Set `ORCAMCP_PORT` to tie every session to the
+  window on one port (and only that one: with nothing there, "No OrcaMCP answers on port N").
 - **"The OrcaMCP instance this session used ... has quit or crashed"**: the call was not run, and no
   other window is taken in its place. `select_instance` one of those listed, or `start_orca`.
 - **"... has restarted: this session now uses ..."**: the same program on the same data folder was

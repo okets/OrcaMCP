@@ -238,17 +238,23 @@ def launch_process(executable: str):
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def wait_for_launched(executable: str, known: set, timeout_s: float = LAUNCH_WAIT_S):
-    """The instance a launch started: one not running before (`known` keys), from `executable` when it
-    says which it runs (an older OrcaMCP does not). None when none answers within `timeout_s`."""
-    deadline = time.time() + timeout_s
-    wanted = os.path.realpath(executable)
+def same_program(a: str, b: str) -> bool:
+    return os.path.normcase(os.path.realpath(a)) == os.path.normcase(os.path.realpath(b))
+
+
+def wait_for_launched(executable: str, known: set):
+    """The instance a launch started: one not running before (`known` keys) that runs `executable`, never
+    a window of another program that came up meanwhile (another agent's build). An installed OrcaMCP older
+    than 2.5.0.6 cannot say what it runs; a new one of those, answering on the first port where nothing
+    did before, is taken. None when neither comes up within LAUNCH_WAIT_S."""
+    deadline = time.time() + LAUNCH_WAIT_S
     while time.time() < deadline:
         time.sleep(1)
         new = [i for i in discover_instances()[0] if instance_key(i) not in known]
-        same = [i for i in new if i.get("executable") and os.path.realpath(i["executable"]) == wanted]
-        if same or len(new) == 1:
-            return (same or new)[0]
+        launched = [i for i in new if not i.get("legacy") and same_program(i.get("executable", ""), executable)]
+        older = [i for i in new if i.get("legacy")]
+        if launched or older:
+            return (launched or older)[0]
     return None
 
 
@@ -278,7 +284,7 @@ def launch_orcamcp(new_instance: bool = False) -> dict:
             return launch_answer(True, "already_running",
                                  f"OrcaMCP is already running: {describe_instance(found)}. This session uses it.",
                                  found, instances)
-        if _selected is None and len(instances) > 1:
+        if _selected is None and PINNED_PORT is None and len(instances) > 1:
             return launch_answer(False, "several_running",
                                  f"{len(instances)} OrcaMCP instances run and this session has not chosen one, so "
                                  f"none was launched. Choose one, or pass new_instance: true to launch another.",
@@ -466,11 +472,13 @@ def check_orcaslicer_connection(use_cache: bool = True, timeout: float = 0.3) ->
 #   - finds them: the entries whose port answers with the entry's instance_id (a busy one by its live
 #     pid), and whatever answers at ORCAMCP_URL without an entry: an OrcaMCP older than 2.5.0.6
 #     ("legacy", which tells neither pid nor project), or one whose entry is in another folder;
-#   - chooses one for the session: the one on ORCAMCP_PORT when that is set, else the only one. With
-#     several and none chosen, a tool call is refused with the list; select_instance or start_orca
-#     chooses. It never moves to another by itself, except to follow a restart (is_successor);
-#   - names the chosen one on every forwarded call, in params._meta["orcamcp/instance"]: the app refuses
-#     a call meant for another instance with -32004, before running it.
+#   - chooses one for the session: the one on ORCAMCP_PORT when that is set, and never another; else the
+#     only one. With several and none chosen, a tool call is refused with the list; select_instance or
+#     start_orca chooses. It never moves to another by itself, except to follow a restart (is_successor);
+#   - asks the chosen port who answers before every call (call_refusal), and names the chosen instance on
+#     the call, in params._meta["orcamcp/instance"]: an instance refuses a call meant for another with
+#     -32004 before running it, and an OrcaMCP older than 2.5.0.6, which ignores the stamp, is never sent
+#     one meant for another.
 INSTANCE_META_KEY = "orcamcp/instance"
 LEGACY_INSTANCE_ID = "legacy"   # how an older OrcaMCP is named on a call: any newer one refuses it
 WRONG_INSTANCE_ERROR = -32004   # OrcaMCPJsonRpcError.hpp, WrongInstance
@@ -626,9 +634,11 @@ def started_epoch(instance: dict):
 
 def is_successor(candidate: dict, previous: dict, last_heard: float) -> bool:
     """Whether `candidate` is `previous` restarted: the same program on the same data folder, started
-    after the bridge last heard from `previous`. An instance that ran beside it is not one, however
-    alike (the user opens a second window of the same app from Finder), nor is an older OrcaMCP."""
-    if candidate.get("legacy") or previous.get("legacy"):
+    after the bridge last heard from `previous`, and with no other instance of that program on that
+    folder running when it started (alone_at_start, from its registry entry). A window opened beside
+    `previous` is not one, however alike and however late (another session's start_orca new_instance,
+    the user opening a second window from Finder), nor is an older OrcaMCP."""
+    if candidate.get("legacy") or previous.get("legacy") or candidate.get("alone_at_start") is not True:
         return False
     started = started_epoch(candidate)
     return (started is not None and started > last_heard and candidate.get("executable") == previous.get("executable")
@@ -740,12 +750,12 @@ def choose_instance(instance: dict) -> bool:
 
 
 def first_choice(instances: list):
-    """The instance a session starts with: the one on ORCAMCP_PORT when that is set, else the only one
-    running. None when none runs, or several do: which to drive is then the agent's choice."""
+    """The instance a session starts with: the one on ORCAMCP_PORT when that is set, and then only that
+    one, never another when nothing answers there (a session pinned to a test build not up yet would
+    drive the user's app); else the only one running. None when none qualifies, or several run: which
+    to drive is then the agent's choice."""
     if PINNED_PORT is not None:
-        pinned = [instance for instance in instances if instance["port"] == PINNED_PORT]
-        if pinned:
-            return pinned[0]
+        return next((instance for instance in instances if instance["port"] == PINNED_PORT), None)
     return instances[0] if len(instances) == 1 else None
 
 
@@ -791,21 +801,47 @@ def lost_instance_answer(request_id, what: str) -> dict:
                           [next_step("start_orca", "launch a new OrcaMCP window instead", {"new_instance": True})])
 
 
+def answers_as(answer, instance: dict) -> bool:
+    """Whether a GET /mcp answer comes from `instance`: the same instance id, or, for an older OrcaMCP, an
+    OrcaMCP answer with none. A newer instance's answer is never an older one's, nor the reverse."""
+    identity = answer_identity(answer)
+    if instance.get("legacy"):
+        return identity is None and isinstance(answer, dict) and answer.get("name") == "orca-slicer"
+    return identity is not None and identity["instance_id"] == instance["instance_id"]
+
+
 def call_refusal(request_id):
-    """A local answer when a tool call must not be forwarded: several instances run and none is chosen, or
-    the chosen one is gone. None when it may go ahead: to the chosen instance, or, with none running, to
-    the "not running" answer."""
+    """A local answer when a tool call must not be forwarded: several instances run and none is chosen,
+    nothing answers on a pinned port, or the chosen instance is gone. None when it may go ahead: to the
+    chosen instance, or, with none running, to the "not running" answer."""
     if _selected is None:
         instances = choose_first_instance()
-        if _selected is None and len(instances) > 1:
+        if _selected is not None:
+            return None
+        if PINNED_PORT is not None:
+            steps = [next_step("start_orca", "start OrcaMCP")]
+            if instances:
+                steps += choose_steps(instances, "drive one of the instances running instead")
+            return instance_error(request_id,
+                                  f"No OrcaMCP answers on port {PINNED_PORT}, the port ORCAMCP_PORT names, so this call "
+                                  f"was not run. Another instance is never used in its place.", instances, steps)
+        if len(instances) > 1:
             return instance_error(request_id,
                                   f"{len(instances)} OrcaMCP instances run, and this session has not chosen the one "
                                   f"its calls go to, so this call was not run.",
                                   instances, choose_steps(instances, "choose the instance this session drives"))
         return None
-    if check_orcaslicer_connection() != DOWN:
-        return None
-    return lost_instance_answer(request_id, "has quit or crashed")
+    # Is the chosen instance still the one on its port? Not merely something: an OrcaMCP older than 2.5.0.6
+    # that took the port would ignore the call's stamp and run it.
+    verdict, answer = fetch_identity(current_url(), INSTANCE_PROBE_TIMEOUT_S)
+    if verdict == BUSY:
+        return None  # it is in a call; the stamp keeps any newer instance from running this one
+    if verdict == DOWN:
+        return lost_instance_answer(request_id, "has quit or crashed")
+    if not answers_as(answer, _selected):
+        return lost_instance_answer(request_id, "no longer answers on its port: another program does")
+    note_heard()
+    return None
 
 
 def settle_call(request: dict, response: dict) -> dict:

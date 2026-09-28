@@ -43,7 +43,7 @@ The bridge script accepts these environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ORCAMCP_HOST` | `127.0.0.1` | Where the bridge looks for OrcaMCP before it has chosen an instance: `127.0.0.1` or `localhost`. The app listens on 127.0.0.1 only, so another machine cannot reach it |
-| `ORCAMCP_PORT` | (unset: `13618`) | The port a session starts with. Set, the instance listening there is used first, even with several running; unset, the only running instance is (see "Multiple OrcaMCP Instances") |
+| `ORCAMCP_PORT` | (unset: `13618`) | Set: the session uses the OrcaMCP on this port and only that one, even with several running; with nothing there, calls answer "No OrcaMCP answers on port N" and no other instance is used. Unset: the only running instance is used (see "Multiple OrcaMCP Instances") |
 | `ORCAMCP_INSTANCES_DIR` | `~/.orcamcp/instances` | Where each running instance publishes its entry, read by the app and the bridge alike. For tests |
 | `ORCAMCP_TIMEOUT` | `120` | Request timeout in seconds. It also bounds how long `arrange_objects`, `auto_orient`, `flatten_object` and `clone_object` wait for their job: the bridge sends wait_for_slice's cap (15 s below it) with every tool call, as `params._meta["orcamcp/wait_cap_s"]` |
 | `ORCAMCP_DEBUG` | (unset) | Enable debug logging to stderr |

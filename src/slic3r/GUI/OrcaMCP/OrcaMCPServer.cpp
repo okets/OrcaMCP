@@ -5594,8 +5594,8 @@ void OrcaMCPServer::register_bridge_tools()
         "Launch OrcaMCP and wait until it is up",
         "Start the OrcaMCP application and wait until it is ready; this session's calls then go to it. It "
         "launches the installed app, or ORCAMCP_APP_PATH, never a build in a source folder. When the "
-        "instance this session uses runs, or exactly one runs and none is chosen yet, it launches nothing "
-        "and answers already_running. When several run and none is chosen, it launches nothing and lists "
+        "instance this session uses runs, or exactly one runs and none is chosen yet (with ORCAMCP_PORT set: "
+        "the one on that port), it launches nothing and answers already_running. When several run and none is chosen, it launches nothing and lists "
         "them: choose one with select_instance. new_instance: true always launches another window. The "
         "answer names the instance: its pid, port, program, data folder and open project.",
         {

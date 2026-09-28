@@ -816,44 +816,64 @@ with it on, a second launch of the same program hands its files over and exits (
 program's path, so a dev build and the installed app never count as one). So several instances run at
 once, and an agent sees them and chooses:
 
-- **The port** (`OrcaMCPPortChoice.cpp`, called from `GUI_App::start_http_server`): the first of
-  13618-13627 that nothing accepts a connection on at 127.0.0.1 or [::1], a connection check that also
-  finds a listener on every interface. A bind would not tell (it succeeds beside one on macOS), and a bind
-  without `SO_REUSEADDR` also fails for the closed connections a quit leaves for up to a minute, so a
-  relaunch would lose 13618 for nothing. A listener bound to another address only cannot take a local
-  client's connection and is not looked for. The bind itself is `HttpServer::try_start()` (never throws;
-  `start()` still does, for `OAuthJob`), `127.0.0.1` only, exclusive on Windows (`SO_EXCLUSIVEADDRUSE`,
-  probe AJ); a bind that fails anyway (two instances starting at once) moves on to the next port. The
-  request guard is built for the port bound. No free port: no MCP server, a warning notification, and no
-  cloud sign-in callback either (it rides on the MCP server, `OrcaMCPLoginServer.hpp`). A port other than
-  13618 gets a quiet notification naming who holds 13618; Preferences shows the port.
+- **The port** (`OrcaMCPPortChoice.cpp`, called from `GUI_App::start_http_server`, once per session: a
+  sign-in asks for the server on every message): the first of 13618-13627 where nothing *accepts* a
+  connection at 127.0.0.1 or [::1] within 200 ms (both tried at once; the probe returns as soon as it
+  knows), a check that also finds a listener on every interface. A connection refused, or still pending at
+  the timeout, is no sign of one: Windows refuses a loopback connection to a closed port only after about a
+  second of retries, and a firewall may drop loopback IPv6, while a listener accepts at once (a probe that
+  counted a pending one as taken found every port taken on Windows). A bind alone would not tell: it
+  succeeds beside a listener on every interface on macOS, and on Windows even with `SO_EXCLUSIVEADDRUSE`
+  (Microsoft's table: an exclusive bind to a specific address after another process's `SO_REUSEADDR` or
+  default bind to the wildcard succeeds, and takes that address from it). A bind without `SO_REUSEADDR`
+  also fails for the closed connections a quit leaves for up to a minute, so a relaunch would lose 13618
+  for nothing. A listener bound to another address only cannot take a local client's connection and is not
+  looked for. The bind itself is `HttpServer::try_start()` (never throws; `start()` still does, for
+  `OAuthJob`), `127.0.0.1` only, exclusive on Windows (`SO_EXCLUSIVEADDRUSE`, probe AJ, so no later
+  process takes the port from it); a bind that fails (two instances starting at once, or one of ours,
+  which binds 127.0.0.1 exclusively) moves on to the next port. The request guard is built for the port
+  bound. No free port: no MCP server, a warning notification, and no cloud sign-in callback either (it
+  rides on the MCP server, `OrcaMCPLoginServer.hpp`). A port other than 13618 gets a quiet notification
+  naming who holds 13618; Preferences shows the port.
 - **The registry** (`OrcaMCPInstanceRegistry.cpp`): each instance writes `~/.orcamcp/instances/<pid>.json`
   (`ORCAMCP_INSTANCES_DIR` for tests) once its server listens: `instance_id` (random, new each launch),
   pid, port, `url` (always `http://127.0.0.1:<port>/mcp`), version, executable, data_dir, `started_at`
-  (UTC with milliseconds), and `project` {name, path, unsaved}, what the window title shows. The folder is
-  0700, the files 0600, written under a temporary name and renamed. Never a credential; the id is an
-  identity, not a secret. The project is refreshed after every tool call and once a second
-  (`OrcaMCPInstanceRegistryApp.cpp`, no upstream hook), rewritten only when it changed. The entry goes
-  when the app starts quitting (`OrcaMCPServer::shut_down`). Publishing removes entries whose process is
-  gone and any other entry claiming its port; a reader trusts an entry only when its port answers GET
-  `/mcp` with its id. GET `/mcp` and `get_server_info`'s `server.instance` carry the same identity, and GET
-  never waits for the main thread.
+  (UTC with milliseconds), `alone_at_start` (no other instance of its program ran on its data folder when
+  it started: only such an instance can be a restart), and `project` {name, path, unsaved}, what the window
+  title shows. The folder is 0700, the files 0600, written under a temporary name and renamed. Never a
+  credential; the id is an identity, not a secret. The project is refreshed after every tool call and once
+  a second (`OrcaMCPInstanceRegistryApp.cpp`, no upstream hook); the file is rewritten whenever it does
+  not hold the current project yet, so a write that failed (Windows refuses the rename while the bridge
+  reads the file) is tried again. The file goes when the app starts quitting (`OrcaMCPServer::shut_down`),
+  and is never written again; the identity stays, since the app answers calls until it is gone: one
+  stamped for it gets -32002, not -32004, and GET `/mcp` still names it. Publishing removes entries whose
+  process is gone or whose pid now runs another program (`instance_process_runs`), and any other entry
+  claiming its port; a reader trusts an entry only when its port answers GET `/mcp` with its id. GET
+  `/mcp` and `get_server_info`'s `server.instance` carry the same identity, and GET never waits for the
+  main thread.
 - **One instance per call.** The bridge names the instance it chose on every tools/call, in
   `params._meta["orcamcp/instance"]` ("legacy" for an OrcaMCP older than 2.5.0.6, which ignores it), and
   the app refuses a call naming another with JSON-RPC **-32004** (`WrongInstance`) before anything else,
   the quitting and starting-up answers included. A call without it (an older bridge, curl) runs.
 - **The bridge** (`scripts/orcamcp-bridge.py`, "Instances"): it lists the entries that answer, plus
-  whatever answers at `ORCAMCP_URL` without one (an older OrcaMCP, shown as `legacy`). A session starts
-  with the instance on `ORCAMCP_PORT` when that is set, else the only one running; with several and none
-  chosen, a tool call is refused with the list and `next_steps` to `select_instance` (the user's choice,
-  2026-09-28: first use does not simply take 13618, which was the user's own window on 09-27). After that
-  it never moves by itself, except to follow a restart: an instance of the same program on the same data
-  folder that started after the bridge last heard from its own (`is_successor`); the call that finds it
-  is not run, and says so. A chosen instance that quit or crashed is reported, with the others running;
-  none is taken in its place. `start_orca` launches only the installed app or `ORCAMCP_APP_PATH` (dev
-  builds would run on the real data folder; the user, 2026-09-28), always with `open -n` on macOS, and
-  chooses the instance it launched. Switching to an instance whose build lists other tools sends
-  `notifications/tools/list_changed`; the same build keeps the list.
+  whatever answers at `ORCAMCP_URL` without one (an older OrcaMCP, shown as `legacy`). With `ORCAMCP_PORT`
+  set, a session uses the instance on that port and only that one: nothing there is "No OrcaMCP answers on
+  port N", never another instance (a session pinned to a test build not up yet drove the user's app).
+  Unset, it starts with the only one running; with several and none chosen, a tool call is refused with
+  the list and `next_steps` to `select_instance` (the user's choice, 2026-09-28: first use does not simply
+  take 13618, which was the user's own window on 09-27). Before each call it asks the chosen port's GET
+  `/mcp` who answers: another instance id, or none (an OrcaMCP older than 2.5.0.6, which would ignore the
+  stamp and run the call), means the chosen one is gone and the call is not sent. It never moves by
+  itself, except to follow a restart: an instance of the same program on the same data folder that started
+  after the bridge last heard from its own, with none of that program on that folder beside it
+  (`alone_at_start`; `is_successor`), and only when exactly one qualifies; the call that finds it is not
+  run, and says so. A second window opened meanwhile is never taken for a restart. A chosen instance that
+  quit or crashed is reported, with the others running; none is taken in its place. `start_orca` launches
+  only the installed app or `ORCAMCP_APP_PATH` (dev builds would run on the real data folder; the user,
+  2026-09-28), always with `open -n` on macOS, and chooses the instance it launched: a new one running that
+  program, never another program's window that came up meanwhile (an installed OrcaMCP older than 2.5.0.6,
+  which cannot say what it runs, is taken when it newly answers on 13618). Switching to an instance whose
+  build lists other tools sends `notifications/tools/list_changed`; the same build keeps the list.
 - **The data folder is shared, as upstream shares it**: two instances on one data folder each save
   `OrcaMCP.conf` (on idle, whenever it changed) and presets, and the last writer wins; there is one
   `last_backup_path`. The registry writes nothing there. The second instance shows a notification naming
@@ -1099,11 +1119,11 @@ The `count` field is always present (even when 0) to help confirm issues have be
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ORCAMCP_HOST` | `127.0.0.1` | Where the bridge looks for an instance before it has chosen one. The app listens on 127.0.0.1 only, so this is `127.0.0.1` or `localhost`; another machine cannot reach it. A chosen instance is always addressed at 127.0.0.1 |
-| `ORCAMCP_PORT` | (unset: `13618`) | The port a session starts with: set, the instance on it is chosen first, even with several running; unset, the only running instance is, and an OrcaMCP older than 2.5.0.6 is looked for on 13618. `select_instance` changes it either way |
+| `ORCAMCP_PORT` | (unset: `13618`) | Set: the session uses the instance on this port and only that one, even with several running; with nothing there a call answers "No OrcaMCP answers on port N" and no other instance is used. Unset: the only running instance is used, and an OrcaMCP older than 2.5.0.6 is looked for on 13618. `select_instance` changes it either way |
 | `ORCAMCP_INSTANCES_DIR` | `~/.orcamcp/instances` | Read by the app and the bridge: where each instance publishes its entry. For tests |
 | `ORCAMCP_TIMEOUT` | `120` | Request timeout in seconds. It also bounds how long a tool waits for its arrange or orient: the bridge sends `wait_for_slice`'s cap with every tool call, as `params._meta["orcamcp/wait_cap_s"]` (see "Waiting for a UI job") |
 | `ORCAMCP_DEBUG` | (unset) | Enable debug logging to stderr |
-| `ORCAMCP_SKIP_CLOUD_LOGIN` | (set by `start_orca`) | App-side: marks an agent launch (`GUI::is_agent_launch()`), so startup waits on nothing a person must answer, and leaves `~/.orcamcp`'s bridge alone (see "Where `~/.orcamcp` comes from"). It skips the Orca cloud silent sign-in, which reads the keychain synchronously on the GUI thread (on macOS a permission prompt per freshly built binary), and the recent-project thumbnails, which open every recent 3MF on the GUI thread (for projects in `~/Documents`, a macOS privacy prompt per fresh binary). Home then shows the projects listed before the launch without thumbnails; projects saved or opened during the session get theirs. Either prompt, unanswered, blocks the app before the MCP server starts. Set it yourself when launching the app for an agent. |
+| `ORCAMCP_SKIP_CLOUD_LOGIN` | (set by `start_orca`) | App-side: marks an agent launch (`GUI::is_agent_launch()`), so startup waits on nothing a person must answer. It skips the Orca cloud silent sign-in, which reads the keychain synchronously on the GUI thread (on macOS a permission prompt per freshly built binary), and the recent-project thumbnails, which open every recent 3MF on the GUI thread (for projects in `~/Documents`, a macOS privacy prompt per fresh binary). Home then shows the projects listed before the launch without thumbnails; projects saved or opened during the session get theirs. Either prompt, unanswered, blocks the app before the MCP server starts. Set it yourself when launching the app for an agent. |
 
 ---
 
