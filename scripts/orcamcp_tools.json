@@ -2,10 +2,52 @@
   "bridge_tools": [
     {
       "category": "Info",
-      "description": "Start the OrcaMCP application. Use this first when OrcaMCP is not running. The tool will launch OrcaMCP and wait for it to be ready. Once started, all other tools become available.",
+      "description": "List every running OrcaMCP window (instance): its pid, port, version, program and data folder, the project it has open (name, path, unsaved changes), whether it is busy, and which one this session's calls go to (selected). Several can run at once, each on its own port from 13618 to 13627. An OrcaMCP older than 2.5.0.6 is listed as legacy: it tells neither its pid nor its project. Instances that share a data folder are marked, since the settings either one saves can overwrite the other's. Switch with select_instance.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "name": "list_instances",
+      "summary": "List the running OrcaMCP windows"
+    },
+    {
+      "category": "Info",
+      "description": "Send this session's calls to one running OrcaMCP window, chosen by exactly one of pid, port or project (its open project's name or full path, as list_instances shows them). It answers with the instance, confirmed by its identity, and the one used before. A call that would reach any other instance is refused unrun. When the chosen window's build has other tools, tool_list_changed is true and the client reloads the tool list.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "pid": {
+            "description": "The instance's process id.",
+            "type": "integer"
+          },
+          "port": {
+            "description": "The port its MCP server listens on.",
+            "type": "integer"
+          },
+          "project": {
+            "description": "Its open project's name (any case) or full path. Refused when several instances match.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "select_instance",
+      "summary": "Choose which OrcaMCP window to drive"
+    },
+    {
+      "category": "Info",
+      "description": "Start the OrcaMCP application and wait until it is ready; this session's calls then go to it. It launches the installed app, or ORCAMCP_APP_PATH, never a build in a source folder. When the instance this session uses runs, or exactly one runs and none is chosen yet (with ORCAMCP_PORT set: the one on that port), it launches nothing and answers already_running. When several run and none is chosen, it launches nothing and lists them: choose one with select_instance. new_instance: true always launches another window. The answer names the instance: its pid, port, program, data folder and open project.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "new_instance": {
+            "description": "Launch another OrcaMCP window even when one runs (default false). This session then uses the new one.",
+            "type": "boolean"
+          }
+        },
         "required": [],
         "type": "object"
       },
@@ -32,7 +74,7 @@
     }
   ],
   "generated_from": "The MCP tool registry in src/slic3r/GUI/OrcaMCP. Do not edit by hand: see CLAUDE.md, \"Tool list\", for how to regenerate it.",
-  "instructions": "OrcaMCP drives OrcaSlicer. Before deciding something cannot be done here, call get_server_info: it lists every tool by job.\n\nStart with get_scene_info (plates, objects, each object's object_id). Key tools:\n- Models: load_model (keeps the presets), load_project (replaces them), arrange_objects, auto_orient, move_object, rotate_object, scale_object, cut_object.\n- Mesh: get_mesh_health (holes, open edges), get_object_components (stray shells), repair_mesh.\n- Painting: paint_object (color, support, seam, fuzzy_skin).\n- Filaments and colour: get_filaments, set_object_filament, suggest_color_mix.\n- Settings: get_config_values, apply_config, set_object_config (one object), select_preset.\n- Slicing: slice_all, then wait_for_slice (no polling); get_print_estimate, export_gcode.\n- Seeing results: render_plate_view (its layer_view draws a sliced layer's toolpaths).\n- Printers: get_printer_status, send_to_printer.\n\nResponses may carry next_steps: the tool to call next, and why.\n\nCareful:\n- send_to_printer uploads AND STARTS the print on a print host; start_print: false only uploads.\n- save_project without output_path overwrites the file the project is named after.\n- new_project and load_project discard unsaved changes without asking.",
+  "instructions": "OrcaMCP drives OrcaSlicer. Before deciding something cannot be done here, call get_server_info: it lists every tool by job.\n\nStart with get_scene_info (plates, objects, each object's object_id). Key tools:\n- Models: load_model (keeps the presets), load_project (replaces them), arrange_objects, auto_orient, move_object, rotate_object, scale_object, cut_object.\n- Mesh: get_mesh_health (holes, open edges), get_object_components (stray shells), repair_mesh.\n- Painting: paint_object (color, support, seam, fuzzy_skin).\n- Filaments and colour: get_filaments, set_object_filament, suggest_color_mix.\n- Settings: get_config_values, apply_config, set_object_config (one object), select_preset.\n- Slicing: slice_all, then wait_for_slice (no polling); get_print_estimate, export_gcode.\n- Seeing results: render_plate_view (its layer_view draws a sliced layer's toolpaths).\n- Printers: get_printer_status, send_to_printer.\n- Several OrcaMCP windows: list_instances, select_instance.\n\nResponses may carry next_steps: the tool to call next, and why.\n\nCareful:\n- send_to_printer uploads AND STARTS the print on a print host; start_print: false only uploads.\n- save_project without output_path overwrites the file the project is named after.\n- new_project and load_project discard unsaved changes without asking.",
   "server_tools": [
     {
       "category": "Printers",

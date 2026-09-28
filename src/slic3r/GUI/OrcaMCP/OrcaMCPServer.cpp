@@ -4,6 +4,7 @@
 #include "OrcaMCPPresetConfigUtils.hpp"
 #include "OrcaMCPPlateUtils.hpp"
 #include "OrcaMCPImageFiles.hpp"
+#include "OrcaMCPInstanceRegistry.hpp"
 #include "OrcaMCPConfigKeys.hpp"
 #include "OrcaMCPConfigValues.hpp"
 #include "OrcaMCPFilamentUtils.hpp"
@@ -483,6 +484,8 @@ void OrcaMCPServer::shut_down()
 {
     if (main_thread_gate().close())
         BOOST_LOG_TRIVIAL(info) << "OrcaMCPServer: the app is quitting; tool calls are refused from now on";
+    // A quitting instance is no longer one an agent can choose.
+    instance_registry().withdraw();
 }
 
 bool OrcaMCPServer::defer_until_tool_call_returns(std::function<void()> task)
@@ -519,6 +522,10 @@ std::shared_ptr<HttpServer::Response> OrcaMCPServer::handle_request(
             {"protocol", "mcp"},
             {"description", "OrcaSlicer 3D Slicer MCP Server for Claude Code integration"}
         };
+        // Who answers: the bridge confirms the instance it chose by this (OrcaMCPInstanceRegistry.hpp).
+        // Answered here, on the HTTP thread, so it never waits for the main thread.
+        if (const auto self = instance_registry().identity())
+            info["instance"] = to_json(*self);
         return std::make_shared<HttpServer::ResponseJson>(info.dump());
     }
 
@@ -564,6 +571,10 @@ std::shared_ptr<HttpServer::Response> OrcaMCPServer::handle_request(
         } else if (rpc_method == "tools/list") {
             result = handle_tools_list();
         } else if (rpc_method == "tools/call") {
+            // First: a call meant for another instance must not be answered as this one's, not even
+            // with "quitting" or "starting up".
+            if (const auto refusal = wrong_instance_refusal(params, instance_registry().identity()))
+                throw WrongInstance(*refusal);
             if (main_thread_gate().is_closed())
                 throw McpShuttingDown();
             std::string not_ready_reason;
@@ -574,6 +585,7 @@ std::shared_ptr<HttpServer::Response> OrcaMCPServer::handle_request(
                 return std::make_shared<HttpServer::ResponseJson>(error.dump(), 200);
             }
             result = handle_tools_call(params);
+            request_project_refresh(); // the instance entry shows what the call did to the project at once
         } else if (rpc_method == "ping") {
             result = nlohmann::json::object();  // Empty response for ping
         } else {
@@ -5580,11 +5592,61 @@ void OrcaMCPServer::register_bridge_tools()
         "start_orca",
         ToolCategory::Info,
         "Launch OrcaMCP and wait until it is up",
-        "Start the OrcaMCP application. Use this first when OrcaMCP is not running. The tool will launch "
-        "OrcaMCP and wait for it to be ready. Once started, all other tools become available.",
+        "Start the OrcaMCP application and wait until it is ready; this session's calls then go to it. It "
+        "launches the installed app, or ORCAMCP_APP_PATH, never a build in a source folder. When the "
+        "instance this session uses runs, or exactly one runs and none is chosen yet (with ORCAMCP_PORT set: "
+        "the one on that port), it launches nothing and answers already_running. When several run and none is chosen, it launches nothing and lists "
+        "them: choose one with select_instance. new_instance: true always launches another window. The "
+        "answer names the instance: its pid, port, program, data folder and open project.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"new_instance", {
+                    {"type", "boolean"},
+                    {"description", "Launch another OrcaMCP window even when one runs (default false). "
+                                    "This session then uses the new one."}
+                }}
+            }}
+        }
+    });
+
+    // list_instances / select_instance - several OrcaMCP windows can run at once, each with its MCP server
+    // on its own port (OrcaMCPPortChoice.hpp). The bridge finds them in the instance registry
+    // (OrcaMCPInstanceRegistry.hpp) and sends every call to the one it chose.
+    register_bridge_tool({
+        "list_instances",
+        ToolCategory::Info,
+        "List the running OrcaMCP windows",
+        "List every running OrcaMCP window (instance): its pid, port, version, program and data folder, "
+        "the project it has open (name, path, unsaved changes), whether it is busy, and which one this "
+        "session's calls go to (selected). Several can run at once, each on its own port from 13618 to "
+        "13627. An OrcaMCP older than 2.5.0.6 is listed as legacy: it tells neither its pid nor its project. "
+        "Instances that share a data folder are marked, since the settings either one saves can overwrite "
+        "the other's. Switch with select_instance.",
         {
             {"type", "object"},
             {"properties", nlohmann::json::object()}
+        }
+    });
+
+    register_bridge_tool({
+        "select_instance",
+        ToolCategory::Info,
+        "Choose which OrcaMCP window to drive",
+        "Send this session's calls to one running OrcaMCP window, chosen by exactly one of pid, port or "
+        "project (its open project's name or full path, as list_instances shows them). It answers with the "
+        "instance, confirmed by its identity, and the one used before. A call that would reach any other "
+        "instance is refused unrun. When the chosen window's build has other tools, tool_list_changed is "
+        "true and the client reloads the tool list.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"pid", {{"type", "integer"}, {"description", "The instance's process id."}}},
+                {"port", {{"type", "integer"}, {"description", "The port its MCP server listens on."}}},
+                {"project", {{"type", "string"},
+                             {"description", "Its open project's name (any case) or full path. Refused when "
+                                             "several instances match."}}}
+            }}
         }
     });
 

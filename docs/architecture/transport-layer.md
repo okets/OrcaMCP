@@ -39,8 +39,9 @@ Translate MCP stdio transport to HTTP requests.
 ### Configuration
 Environment variables:
 ```bash
-ORCAMCP_HOST=localhost    # OrcaSlicer host: localhost or 127.0.0.1 (the app listens on 127.0.0.1 only)
-ORCAMCP_PORT=13618        # OrcaSlicer HTTP port
+ORCAMCP_HOST=127.0.0.1    # where to look before an instance is chosen: 127.0.0.1 or localhost (the app listens on 127.0.0.1 only)
+ORCAMCP_PORT=13618        # optional: use the instance on this port, and only that one (several can run, on 13618-13627)
+ORCAMCP_INSTANCES_DIR=... # optional: the instance registry folder (default ~/.orcamcp/instances)
 ORCAMCP_TIMEOUT=120       # Request timeout (seconds)
 ORCAMCP_DEBUG=1           # Enable debug logging to stderr
 ```
@@ -118,7 +119,9 @@ m_http_server.set_request_handler(
         return HttpServer::bbl_auth_handle_request(method, url, body);
     });
 
-m_http_server.start();  // Starts on port 13618
+// The first of 13618-13627 nothing answers on (OrcaMCPPortChoice.hpp); several instances can run at
+// once, each publishing itself in ~/.orcamcp/instances (OrcaMCPInstanceRegistry.hpp).
+OrcaMCP::choose_port(OrcaMCP::mcp_ports(), port_has_listener, try_start_on);
 ```
 
 ### Request Processing
@@ -216,12 +219,12 @@ Nothing is listening at http://localhost:13618/mcp. OrcaMCP is not running -- us
 **Causes:**
 - OrcaSlicer not running
 - HTTP server not started (check OrcaSlicer logs)
-- Port conflict (another app using 13618)
+- Every port from 13618 to 13627 taken (the app then runs without MCP, and says so)
 
 **Solutions:**
 - Launch OrcaSlicer
 - Check if MCP server initialized in OrcaSlicer console
-- Change port via `ORCAMCP_PORT` env var
+- `list_instances` shows every running instance and its port; `select_instance` chooses one
 
 ### Reachable But Not Answering
 ```

@@ -71,7 +71,8 @@ The probe now returns one of three verdicts, and only the last one produces that
 | busy | Reachable, no answer inside the probe window | Forward the request anyway, with the full `ORCAMCP_TIMEOUT` |
 | down | Connection refused, or nothing listening | Answer locally: "OrcaMCP is not running" |
 
-So if you see it, nothing is listening on the port. Check `ORCAMCP_PORT`, and use `start_orca`.
+So if you see it, nothing is listening on the port. Check `ORCAMCP_PORT`, and use `start_orca`. With
+several OrcaMCP windows, see "A second OrcaMCP window, or several" below.
 
 ### "OrcaMCP is quitting, so this call was not run" (-32002)
 
@@ -86,8 +87,9 @@ older build does that, `kill` it; the project's unsaved changes are lost either 
 ### "OrcaMCP does not answer web pages" / "answers only requests addressed to 127.0.0.1" (HTTP 403, -32003)
 
 By design, since v2.5.0.6-dev. The app refuses any `/mcp` request that carries an `Origin` header (a
-web page's fetch or form post) or whose `Host` is not `127.0.0.1:13618`, `localhost:13618` or
-`[::1]:13618` (DNS rebinding): a page in your browser could otherwise start a print. The bridge and
+web page's fetch or form post) or whose `Host` is not `127.0.0.1:<port>`, `localhost:<port>` or
+`[::1]:<port>`, for the port it listens on (DNS rebinding): a page in your browser could otherwise
+start a print. The bridge and
 curl send neither, so they are not affected. If you see it:
 
 - from a browser-based MCP client (an "inspector" page): use a local client, such as the bridge;
@@ -97,11 +99,55 @@ curl send neither, so they are not affected. If you see it:
 A request to any other path on port 13618 gets 404 unless a cloud login is in progress there (its
 sign-in dialog is open); the login's own callback port closes when its dialog does.
 
+### A second OrcaMCP window, or several
+
+Since v2.5.0.6-dev several OrcaMCP windows can run at once. Before, a second one crashed at startup
+("Uncaught exception: bind: Address already in use" in its log) because the first held port 13618; and
+next to OrcaMCP 2.5.0.5 or older, which listens on every interface, macOS let the second one listen
+beside it, so a call could land in either window.
+
+Now each window takes the first free port from 13618 to 13627; one that is not on 13618 says so in a
+short notification, and Preferences > MCP shows its port. To see them:
+
+```bash
+lsof -nP -iTCP -sTCP:LISTEN | grep -E ':1361[89]|:1362[0-7]'
+ls ~/.orcamcp/instances/          # one <pid>.json per running window
+```
+
+An agent sees them with `list_instances` (each one's port, pid, program, data folder and open
+project) and chooses with `select_instance`. With one window nothing changes. With several:
+
+- **"N OrcaMCP instances run, and this session has not chosen the one its calls go to"**: call
+  `select_instance` (by `pid`, `port` or `project`). Set `ORCAMCP_PORT` to tie every session to the
+  window on one port (and only that one: with nothing there, "No OrcaMCP answers on port N").
+- **"The OrcaMCP instance this session used ... has quit or crashed"**: the call was not run, and no
+  other window is taken in its place. `select_instance` one of those listed, or `start_orca`.
+- **"... has restarted: this session now uses ..."**: the same program on the same data folder was
+  started again; the call was not run, since the scene is new. Look at it, then call again.
+- **"... no longer answers on its port: another instance does"** (the app's JSON-RPC -32004): the window
+  quit and another took its port. Nothing ran in the other window.
+
+A crashed window leaves its `<pid>.json` behind. It is harmless: an entry is trusted only when its port
+answers with its id, and the next window to start removes it.
+
+**Ten windows at most have MCP.** An eleventh runs without it (a warning says so), and its cloud sign-in
+cannot finish either, since the sign-in's callback rides on the MCP server. Close one and restart it.
+
+**Windows on one data folder overwrite each other's settings.** Each saves `OrcaMCP.conf` whenever it
+changes and presets when you save them, and the last writer wins, as in upstream OrcaSlicer. The
+second window shows a notification naming the first, and `list_instances` marks them
+`shares_data_dir_with`. Give a test window its own folder (`--datadir`).
+
+**OrcaMCP 2.5.0.5 or older**, started after a newer window, still listens on every interface at 13618.
+This machine's connections reach the newer window; the older one cannot be listed or chosen. Upgrade
+it. Started first, it is listed as `legacy` and can be chosen by `port`.
+
 ### Can't reach OrcaMCP from another machine
 
 By design. The app listens on 127.0.0.1 only (`lsof -nP -iTCP:13618 -sTCP:LISTEN` shows
-`127.0.0.1:13618`): the MCP server has no authentication and can load files and start prints. Run the
-bridge on the machine that runs OrcaMCP; `ORCAMCP_HOST` is `localhost` or `127.0.0.1`.
+`127.0.0.1:13618`, or the port a second window took): the MCP server has no authentication and can load
+files and start prints. Run the bridge on the machine that runs OrcaMCP; `ORCAMCP_HOST` is `127.0.0.1`
+or `localhost`.
 
 ## Tool Errors
 

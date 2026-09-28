@@ -9,6 +9,7 @@
 #include "I18N.hpp"
 #include "libslic3r/AppConfig.hpp"
 #include "OrcaMCP/MCPClientConfig.hpp"
+#include "OrcaMCP/OrcaMCPInstanceRegistry.hpp"
 #include "libslic3r/Format/DRC.hpp"
 #include <wx/language.h>
 #include <wx/clipbrd.h>
@@ -2194,8 +2195,13 @@ void PreferencesDialog::create_mcp_clients_page(wxFlexGridSizer* g_sizer)
         wxBoxSizer* sizer = new wxBoxSizer(wxHORIZONTAL);
         sizer->AddSpacer(FromDIP(DESIGN_LEFT_MARGIN));
 
-        auto label = new wxStaticText(m_parent, wxID_ANY, _L("Status: Running on port 13618"), wxDefaultPosition, wxDefaultSize);
-        label->SetForegroundColour(wxColour("#00A86B"));  // Green color for running status
+        // The port this window's MCP server took: several OrcaMCP windows can run at once, each on its own.
+        const auto self  = OrcaMCP::instance_registry().identity();
+        auto       label = new wxStaticText(m_parent, wxID_ANY,
+                                            self ? wxString::Format(_L("Status: Running on port %d"), int(self->port)) :
+                                                   _L("Status: Not running (every port from 13618 to 13627 is in use)"),
+                                            wxDefaultPosition, wxDefaultSize);
+        label->SetForegroundColour(self ? wxColour("#00A86B") : wxColour("#E14747")); // green running, red not
         label->SetFont(::Label::Body_14);
         sizer->Add(label, 0, wxALIGN_CENTER_VERTICAL);
 

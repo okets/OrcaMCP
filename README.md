@@ -239,14 +239,14 @@ API, with no cloud account and no closed network plugin. Details, limits and set
 | **Vision** | `render_plate_view`, `get_preview_base64`, `set_gcode_view_type` |
 | **Printers** | `get_printers`, `select_printer`, `add_physical_printer`, `discover_printers`, `send_to_printer`, `get_printer_status`, `printer_control`, `list_printer_files`, `print_printer_file`, `match_project_to_printer` |
 | **History and info** | `undo`, `redo`, `get_server_info` |
-| **Bridge only** | `start_orca` |
+| **Bridge only** | `start_orca`, `wait_for_slice`, `list_instances`, `select_instance` |
 
 ## Architecture
 
 ```
 ┌─────────────────┐     stdio     ┌──────────────────┐     HTTP      ┌─────────────┐
 │   MCP client    │ ◄───────────► │ orcamcp-bridge   │ ◄───────────► │  OrcaMCP    │
-│ (Claude Code…)  │               │    (Python)      │               │ Port 13618  │
+│ (Claude Code…)  │               │    (Python)      │               │ 13618-13627 │
 └─────────────────┘               └──────────────────┘               └─────────────┘
 ```
 
@@ -283,8 +283,8 @@ See the [building guide](docs/setup/building.md) for Windows and for the depende
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ORCAMCP_HOST` | `localhost` | OrcaSlicer HTTP host; the app listens on 127.0.0.1 only |
-| `ORCAMCP_PORT` | `13618` | OrcaSlicer HTTP port |
+| `ORCAMCP_HOST` | `127.0.0.1` | OrcaSlicer HTTP host; the app listens on 127.0.0.1 only |
+| `ORCAMCP_PORT` | unset | The port whose OrcaMCP a session uses, and no other. Several can run at once, each on its own port from 13618; agents list and choose them with `list_instances` and `select_instance` |
 | `ORCAMCP_TIMEOUT` | `120` | Request timeout in seconds |
 | `ORCAMCP_DEBUG` | unset | Debug logging to stderr |
 

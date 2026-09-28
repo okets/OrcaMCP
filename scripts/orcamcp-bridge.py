@@ -28,6 +28,7 @@ Configuration (Claude Code):
 """
 
 import sys
+import datetime
 import http.client
 import json
 import math
@@ -35,6 +36,7 @@ import os
 import socket
 import subprocess
 import time
+import urllib.parse
 import urllib.request
 import urllib.error
 
@@ -116,10 +118,21 @@ def install_tools_manifest(path: str = TOOLS_FILE):
 install_tools_manifest()
 
 # Configuration
-ORCAMCP_HOST = os.environ.get("ORCAMCP_HOST", "localhost")
-ORCAMCP_PORT = int(os.environ.get("ORCAMCP_PORT", "13618"))
+# The environment the bridge reads its ORCAMCP_* settings from, here and when a tool runs. The tests load
+# the bridge with their own, so no setting of the shell that runs them changes what they test.
+ENV = os.environ
+# Several OrcaMCP instances can run at once, each with its MCP server on its own port from 13618
+# (OrcaMCPPortChoice.hpp). The bridge finds them in the instance registry and sends every call to the
+# one this session chose (see "Instances" below). ORCAMCP_URL is where it looks before any is chosen:
+# 13618, the port every OrcaMCP tries first and every older one listens on, or ORCAMCP_PORT's.
+FIRST_MCP_PORT = 13618
+ORCAMCP_HOST = ENV.get("ORCAMCP_HOST", "127.0.0.1")
+PINNED_PORT = int(ENV["ORCAMCP_PORT"]) if ENV.get("ORCAMCP_PORT") else None
+ORCAMCP_PORT = PINNED_PORT or FIRST_MCP_PORT
 ORCAMCP_URL = f"http://{ORCAMCP_HOST}:{ORCAMCP_PORT}/mcp"
-TIMEOUT = int(os.environ.get("ORCAMCP_TIMEOUT", "120"))  # 2 minute default for slicing
+TIMEOUT = int(ENV.get("ORCAMCP_TIMEOUT", "120"))  # 2 minute default for slicing
+# Where every running instance publishes an entry, <pid>.json (OrcaMCPInstanceRegistry.hpp).
+INSTANCES_DIR = ENV.get("ORCAMCP_INSTANCES_DIR") or os.path.join(os.path.expanduser("~"), ".orcamcp", "instances")
 
 # What a tool call gets while nothing answers at ORCAMCP_URL.
 NOT_RUNNING_MESSAGE = "OrcaMCP is not running. Use the 'start_orca' tool to start it, then try again."
@@ -148,56 +161,42 @@ CONNECTION_CACHE_TTL = 3  # seconds
 _served_static_tools = False
 _live_contact = False
 _notified_tools_changed = False
+# The tool list the client was last served, and whether the instance now chosen lists other tools:
+# switching to an instance of another build must tell the client its list changed.
+_served_tools = None
+_pending_list_changed = False
+
+# The instance this session's calls go to (its registry entry, or an older OrcaMCP's "legacy" one),
+# None until one is chosen; and when it last answered, which tells a restart from a sibling.
+_selected = None
+_last_heard = 0.0
 
 
 def get_orcamcp_executable() -> str | None:
-    """Find the OrcaMCP executable based on platform"""
+    """The OrcaMCP start_orca launches: ORCAMCP_APP_PATH, or the installed app. Never a build in a source
+    folder: it would run on the user's real data folder, as a test build must not (the user, 2026-09-28)."""
     import platform
     system = platform.system()
-
-    # Get project root (scripts/ is one level down from project root)
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(script_dir)
 
     paths = []
 
     # First priority: environment variable
-    custom_path = os.environ.get("ORCAMCP_APP_PATH")
+    custom_path = ENV.get("ORCAMCP_APP_PATH")
     if custom_path:
         paths.append(custom_path)
 
     if system == "Darwin":  # macOS
-        # Dev build paths (relative to project root)
-        paths.extend([
-            os.path.join(project_root, "build", "arm64", "src", "Release", "OrcaSlicer.app", "Contents", "MacOS", "OrcaSlicer"),
-            os.path.join(project_root, "build", "x86_64", "src", "Release", "OrcaSlicer.app", "Contents", "MacOS", "OrcaSlicer"),
-            os.path.join(project_root, "build", "src", "Release", "OrcaSlicer.app", "Contents", "MacOS", "OrcaSlicer"),
-        ])
-        # Installation paths
         paths.extend([
             "/Applications/OrcaMCP.app/Contents/MacOS/OrcaSlicer",
             os.path.expanduser("~/Applications/OrcaMCP.app/Contents/MacOS/OrcaSlicer"),
         ])
     elif system == "Windows":
-        # Dev build paths (relative to project root)
-        paths.extend([
-            os.path.join(project_root, "build", "OrcaSlicer", "orca-mcp.exe"),
-            os.path.join(project_root, "build", "src", "Release", "orca-mcp.exe"),
-            os.path.join(project_root, "build", "Release", "orca-mcp.exe"),
-        ])
-        # Installation paths
         paths.extend([
             os.path.join(os.environ.get("ProgramFiles", "C:\\Program Files"), "OrcaMCP", "orca-mcp.exe"),
             os.path.join(os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)"), "OrcaMCP", "orca-mcp.exe"),
             os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "OrcaMCP", "orca-mcp.exe"),
         ])
     else:  # Linux
-        # Dev build paths (relative to project root)
-        paths.extend([
-            os.path.join(project_root, "build", "src", "orca-mcp"),
-            os.path.join(project_root, "build", "OrcaSlicer", "orca-mcp"),
-        ])
-        # Installation paths
         paths.extend([
             "/usr/bin/orcamcp",
             "/usr/local/bin/orcamcp",
@@ -214,102 +213,110 @@ def get_orcamcp_executable() -> str | None:
     return None
 
 
-def launch_orcamcp() -> dict:
-    """Launch OrcaMCP application and wait for it to be ready"""
-    # Check if already running
-    if check_orcaslicer_connection() != DOWN:
-        return {"success": True, "message": "OrcaMCP is already running"}
+LAUNCH_WAIT_S = 30  # how long start_orca waits for the instance it launched to answer
+
+
+def launch_process(executable: str):
+    """Start `executable` detached from this process, as an agent's launch."""
+    import platform
+    # An agent-launched app skips the Orca cloud silent sign-in: it reads the keychain
+    # synchronously at startup, which on macOS can block on a permission prompt before the MCP
+    # server exists (see CLAUDE.md, environment variables).
+    agent_env = dict(os.environ, ORCAMCP_SKIP_CLOUD_LOGIN="1")
+    log_debug(f"Launching OrcaMCP from: {executable}")
+    if platform.system() == "Windows":
+        # Windows: use CREATE_NEW_PROCESS_GROUP and DETACHED_PROCESS
+        DETACHED_PROCESS = 0x00000008
+        CREATE_NEW_PROCESS_GROUP = 0x00000200
+        subprocess.Popen([executable], creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP, close_fds=True,
+                         env=agent_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return
+    app_path = executable.replace("/Contents/MacOS/OrcaSlicer", "")
+    if platform.system() == "Darwin" and app_path.endswith(".app"):
+        # --env reaches the app through LaunchServices; a plain env= would not. -n starts a new process:
+        # without it LaunchServices only brings forward a copy of the bundle that already runs.
+        subprocess.Popen(["open", "-n", "--env", "ORCAMCP_SKIP_CLOUD_LOGIN=1", app_path], close_fds=True)
+        return
+    subprocess.Popen([executable], start_new_session=True, env=agent_env, close_fds=True,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def same_program(a: str, b: str) -> bool:
+    return os.path.normcase(os.path.realpath(a)) == os.path.normcase(os.path.realpath(b))
+
+
+def wait_for_launched(executable: str, known: set):
+    """The instance a launch started: one not running before (`known` keys) that runs `executable`, never
+    a window of another program that came up meanwhile (another agent's build). An installed OrcaMCP older
+    than 2.5.0.6 cannot say what it runs; a new one of those, answering on the first port where nothing
+    did before, is taken. None when neither comes up within LAUNCH_WAIT_S."""
+    deadline = time.time() + LAUNCH_WAIT_S
+    while time.time() < deadline:
+        time.sleep(1)
+        new = [i for i in discover_instances()[0] if instance_key(i) not in known]
+        launched = [i for i in new if not i.get("legacy") and same_program(i.get("executable", ""), executable)]
+        older = [i for i in new if i.get("legacy")]
+        if launched or older:
+            return (launched or older)[0]
+    return None
+
+
+def launch_answer(success: bool, status: str, message: str, instance=None, instances=(), next_steps=None) -> dict:
+    """What launch_orcamcp returns: start_orca's report, and the two fields its caller reads."""
+    report = {"status": status, "message": message}
+    if instance is not None:
+        report["instance"] = instance_summary(instance)
+    others = [instance_summary(i) for i in instances if instance is None or instance_key(i) != instance_key(instance)]
+    if others:
+        report["other_instances"] = others
+    if next_steps:
+        report["next_steps"] = next_steps
+    return {"success": success, "message": message, "report": report}
+
+
+def launch_orcamcp(new_instance: bool = False) -> dict:
+    """start_orca: launch OrcaMCP and choose the instance it started, unless one runs that this session
+    can use: the one it chose, or the only one when it has chosen none. Several running and none chosen
+    launches nothing: which to use is the agent's choice. new_instance launches another in any case."""
+    instances, _ = discover_instances()
+    if not new_instance:
+        found = instance_to_use(instances)
+        if found is not None:
+            choose_instance(found)
+            note_live_contact()
+            return launch_answer(True, "already_running",
+                                 f"OrcaMCP is already running: {describe_instance(found)}. This session uses it.",
+                                 found, instances)
+        if _selected is None and PINNED_PORT is None and len(instances) > 1:
+            return launch_answer(False, "several_running",
+                                 f"{len(instances)} OrcaMCP instances run and this session has not chosen one, so "
+                                 f"none was launched. Choose one, or pass new_instance: true to launch another.",
+                                 None, instances, choose_steps(instances, "several instances run"))
 
     executable = get_orcamcp_executable()
     if not executable:
-        # Get project root for helpful message
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        project_root = os.path.dirname(script_dir)
-        return {
-            "success": False,
-            "message": f"Could not find OrcaMCP executable. "
-                      f"Searched in dev build paths (relative to {project_root}) and standard installation locations. "
-                      f"Set ORCAMCP_APP_PATH environment variable to specify the path, or build the project first."
-        }
-
+        return launch_answer(False, "not_started",
+                             "Could not find the installed OrcaMCP app. Install it, or set ORCAMCP_APP_PATH to "
+                             "the OrcaMCP program to launch.", None, instances)
     try:
-        log_debug(f"Launching OrcaMCP from: {executable}")
-
-        # An agent-launched app skips the Orca cloud silent sign-in: it reads the keychain
-        # synchronously at startup, which on macOS can block on a permission prompt before the MCP
-        # server exists (see CLAUDE.md, environment variables).
-        agent_env = dict(os.environ, ORCAMCP_SKIP_CLOUD_LOGIN="1")
-
-        # Launch detached from this process
-        import platform
-        if platform.system() == "Windows":
-            # Windows: use CREATE_NEW_PROCESS_GROUP and DETACHED_PROCESS
-            DETACHED_PROCESS = 0x00000008
-            CREATE_NEW_PROCESS_GROUP = 0x00000200
-            subprocess.Popen(
-                [executable],
-                creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
-                close_fds=True,
-                env=agent_env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-        elif platform.system() == "Darwin":
-            # macOS: use 'open' command for .app bundles
-            app_path = executable.replace("/Contents/MacOS/OrcaSlicer", "")
-            if app_path.endswith(".app"):
-                # --env reaches the app through LaunchServices; a plain env= would not.
-                subprocess.Popen(["open", "--env", "ORCAMCP_SKIP_CLOUD_LOGIN=1", app_path], close_fds=True)
-            else:
-                subprocess.Popen(
-                    [executable],
-                    start_new_session=True,
-                    close_fds=True,
-                    env=agent_env,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL
-                )
-        else:
-            # Linux: start new session
-            subprocess.Popen(
-                [executable],
-                start_new_session=True,
-                env=agent_env,
-                close_fds=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-
-        # Wait for the HTTP server to become available
-        max_wait = 30  # seconds
-        start_time = time.time()
-
-        while time.time() - start_time < max_wait:
-            time.sleep(1)
-            # Bypass cache when polling for startup
-            if check_orcaslicer_connection(use_cache=False) == LIVE:
-                elapsed = int(time.time() - start_time)
-                return {
-                    "success": True,
-                    "message": f"OrcaMCP started successfully (took {elapsed}s)"
-                }
-
-        return {
-            "success": False,
-            "message": f"OrcaMCP was launched but HTTP server did not respond within {max_wait}s. "
-                      "The application may still be starting up."
-        }
-
+        launch_process(executable)
     except Exception as e:
-        return {
-            "success": False,
-            "message": f"Failed to launch OrcaMCP: {str(e)}"
-        }
+        return launch_answer(False, "not_started", f"Failed to launch OrcaMCP ({executable}): {e}", None, instances)
+
+    launched = wait_for_launched(executable, {instance_key(i) for i in instances})
+    if launched is None:
+        return launch_answer(False, "not_started",
+                             f"OrcaMCP ({executable}) was launched but did not answer within {LAUNCH_WAIT_S}s. It "
+                             f"may still be starting: call list_instances in a moment.", None, instances)
+    choose_instance(launched)
+    note_live_contact()
+    return launch_answer(True, "started", f"OrcaMCP started: {describe_instance(launched)}. This session uses it.",
+                         launched, instances)
 
 
 def log_debug(message: str):
     """Log debug message to stderr (won't interfere with stdout protocol)"""
-    if os.environ.get("ORCAMCP_DEBUG"):
+    if ENV.get("ORCAMCP_DEBUG"):
         print(f"[orcamcp-bridge] {message}", file=sys.stderr)
 
 
@@ -354,12 +361,24 @@ def note_live_contact():
 
 
 def tools_changed_notification_due() -> bool:
-    """True at most once: a static tool list was served, and a live server has since answered."""
-    global _notified_tools_changed
+    """True once the instance this session switched to lists other tools than the client holds, and at
+    most once for a static tool list served before a live server answered."""
+    global _notified_tools_changed, _pending_list_changed
+    if _pending_list_changed:
+        _pending_list_changed = False
+        return True
     if _notified_tools_changed or not _served_static_tools or not _live_contact:
         return False
     _notified_tools_changed = True
     return True
+
+
+def served(tools: list) -> list:
+    """`tools`, recorded as the list the client now holds: a switch to an instance whose list differs
+    tells it so."""
+    global _served_tools
+    _served_tools = tools
+    return tools
 
 
 # One literal, used at both call sites in main(), so a typo in the method name or a dropped
@@ -423,7 +442,7 @@ def check_orcaslicer_connection(use_cache: bool = True, timeout: float = 0.3) ->
                 return cached
 
     try:
-        req = urllib.request.Request(ORCAMCP_URL, method="GET")
+        req = urllib.request.Request(current_url(), method="GET")
         with urllib.request.urlopen(req, timeout=timeout) as response:
             # Any response, not just a 200, proves something answered.
             verdict = LIVE
@@ -449,6 +468,480 @@ def check_orcaslicer_connection(use_cache: bool = True, timeout: float = 0.3) ->
     return verdict
 
 
+# ---------------------------------------------------------------------------------------------------
+# Instances. Several OrcaMCP instances can run at once, each with its MCP server on its own port from
+# 13618 to 13627 (OrcaMCPPortChoice.hpp). Each publishes an entry, <pid>.json, in INSTANCES_DIR, and GET
+# /mcp answers with the same identity (OrcaMCPInstanceRegistry.hpp). The bridge:
+#   - finds them: the entries whose port answers with the entry's instance_id (a busy one by its live
+#     pid), and whatever answers at ORCAMCP_URL without an entry: an OrcaMCP older than 2.5.0.6
+#     ("legacy", which tells neither pid nor project), or one whose entry is in another folder;
+#   - chooses one for the session: the one on ORCAMCP_PORT when that is set, and never another; else the
+#     only one. With several and none chosen, a tool call is refused with the list; select_instance or
+#     start_orca chooses. It never moves to another by itself, except to follow a restart (is_successor);
+#   - asks the chosen port who answers before every call (call_refusal), and names the chosen instance on
+#     the call, in params._meta["orcamcp/instance"]: an instance refuses a call meant for another with
+#     -32004 before running it, and an OrcaMCP older than 2.5.0.6, which ignores the stamp, is never sent
+#     one meant for another.
+INSTANCE_META_KEY = "orcamcp/instance"
+LEGACY_INSTANCE_ID = "legacy"   # how an older OrcaMCP is named on a call: any newer one refuses it
+WRONG_INSTANCE_ERROR = -32004   # OrcaMCPJsonRpcError.hpp, WrongInstance
+INSTANCE_PROBE_TIMEOUT_S = 0.3
+TOOL_LIST_TIMEOUT_S = 5
+
+
+def current_url() -> str:
+    """Where calls go: the chosen instance, or ORCAMCP_URL until one is chosen."""
+    return _selected["url"] if _selected else ORCAMCP_URL
+
+
+def note_heard():
+    """The chosen instance answered as itself. A restart of it is an instance started after this."""
+    global _last_heard
+    _last_heard = time.time()
+
+
+def pid_alive(pid) -> bool:
+    """Whether a process with this pid runs. Never os.kill(pid, 0) on Windows: signal 0 is CTRL_C_EVENT."""
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        process_query_limited_information, still_active, error_access_denied = 0x1000, 259, 5
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+        if not handle:
+            return kernel32.GetLastError() == error_access_denied  # it runs, as another user
+        code = ctypes.c_ulong()
+        alive = bool(kernel32.GetExitCodeProcess(handle, ctypes.byref(code))) and code.value == still_active
+        kernel32.CloseHandle(handle)
+        return alive
+    try:
+        os.kill(pid, 0)
+    except PermissionError:
+        return True  # it runs, as another user
+    except OSError:
+        return False
+    return True
+
+
+def owned_by_user(path: str) -> bool:
+    """An entry another account wrote is not trusted: it could point this bridge at its own server."""
+    if os.name == "nt":
+        return True  # the user's profile folder is the user's alone, by its ACLs
+    try:
+        return os.stat(path).st_uid == os.getuid()
+    except OSError:
+        return False
+
+
+def valid_entry(entry) -> bool:
+    """An instance as the app describes it, in its registry entry or its GET /mcp answer."""
+    return (isinstance(entry, dict) and isinstance(entry.get("instance_id"), str) and bool(entry["instance_id"])
+            and all(isinstance(entry.get(key), int) and not isinstance(entry.get(key), bool) for key in ("pid", "port"))
+            and isinstance(entry.get("url"), str))
+
+
+def registry_entries() -> list:
+    """Every readable entry in INSTANCES_DIR that the user wrote; none for a missing folder."""
+    try:
+        names = sorted(os.listdir(INSTANCES_DIR))
+    except OSError:
+        return []
+    entries = []
+    for name in names:
+        path = os.path.join(INSTANCES_DIR, name)
+        if not name.endswith(".json") or not owned_by_user(path):
+            continue
+        try:
+            with open(path, encoding="utf-8") as f:
+                entry = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if valid_entry(entry):
+            entries.append(entry)
+    return entries
+
+
+def fetch_identity(url: str, timeout: float) -> tuple:
+    """GET /mcp at `url`: (LIVE, its JSON answer or None), (BUSY, None) or (DOWN, None)."""
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, method="GET"), timeout=timeout) as response:
+            body = response.read()
+    except Exception as exc:
+        return _verdict_for_exception(exc), None
+    try:
+        answer = json.loads(body.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError, AttributeError):
+        return LIVE, None
+    return LIVE, answer if isinstance(answer, dict) else None
+
+
+def answer_identity(answer) -> dict | None:
+    """The instance a GET /mcp answer names; None from an OrcaMCP that does not say (older than 2.5.0.6)."""
+    instance = answer.get("instance") if isinstance(answer, dict) else None
+    return instance if valid_entry(instance) else None
+
+
+def legacy_instance(url: str, answer: dict) -> dict:
+    """An OrcaMCP older than 2.5.0.6 answering at `url`: it tells its version, nothing more."""
+    return {"instance_id": LEGACY_INSTANCE_ID, "legacy": True, "port": urllib.parse.urlparse(url).port, "url": url,
+            "version": answer.get("version", ""), "state": "live"}
+
+
+def instance_key(instance: dict) -> str:
+    """Tells instances apart: by instance id, and an older OrcaMCP by its port."""
+    return f"legacy:{instance['port']}" if instance.get("legacy") else instance["instance_id"]
+
+
+def probe_entry(entry: dict, timeout: float):
+    """The entry as a running instance, with its state ("live", or "busy": its one request thread is in
+    a call), or None when it is stale: its port does not answer with its instance id, and its process
+    is gone or its port refuses."""
+    verdict, answer = fetch_identity(entry["url"], timeout)
+    identity = answer_identity(answer)
+    if verdict == LIVE and identity and identity["instance_id"] == entry["instance_id"]:
+        return dict(identity, state="live")  # the answer's project is the freshest
+    if verdict == BUSY and pid_alive(entry["pid"]):
+        return dict(entry, state="busy")
+    return None
+
+
+def discover_instances(timeout: float = INSTANCE_PROBE_TIMEOUT_S) -> tuple:
+    """(the running instances, by port; how many registry entries were stale)."""
+    from concurrent.futures import ThreadPoolExecutor
+    entries = registry_entries()
+    with ThreadPoolExecutor(max_workers=len(entries) + 1) as pool:
+        at_default = pool.submit(fetch_identity, ORCAMCP_URL, timeout)
+        probed = list(pool.map(lambda entry: probe_entry(entry, timeout), entries))
+        default_verdict, default_answer = at_default.result()
+    instances = [instance for instance in probed if instance]
+    stale = len(entries) - len(instances)
+    if default_verdict == LIVE and isinstance(default_answer, dict) and default_answer.get("name") == "orca-slicer":
+        identity = answer_identity(default_answer)
+        if identity is None:
+            instances.append(legacy_instance(ORCAMCP_URL, default_answer))
+        elif identity["instance_id"] not in {i["instance_id"] for i in instances}:
+            instances.append(dict(identity, state="live"))
+    instances.sort(key=lambda instance: instance["port"])
+    return instances, stale
+
+
+def started_epoch(instance: dict):
+    """When the instance started, in seconds since the epoch; None when it does not say."""
+    try:
+        started = datetime.datetime.strptime(instance["started_at"], "%Y-%m-%dT%H:%M:%S.%fZ")
+    except (KeyError, TypeError, ValueError):
+        return None
+    return started.replace(tzinfo=datetime.timezone.utc).timestamp()
+
+
+def is_successor(candidate: dict, previous: dict, last_heard: float) -> bool:
+    """Whether `candidate` is `previous` restarted: the same program on the same data folder, started
+    after the bridge last heard from `previous`, and with no other instance of that program on that
+    folder running when it started (alone_at_start, from its registry entry). A window opened beside
+    `previous` is not one, however alike and however late (another session's start_orca new_instance,
+    the user opening a second window from Finder), nor is an older OrcaMCP."""
+    if candidate.get("legacy") or previous.get("legacy") or candidate.get("alone_at_start") is not True:
+        return False
+    started = started_epoch(candidate)
+    return (started is not None and started > last_heard and candidate.get("executable") == previous.get("executable")
+            and candidate.get("data_dir") == previous.get("data_dir"))
+
+
+def is_selected(instance: dict) -> bool:
+    return _selected is not None and instance_key(_selected) == instance_key(instance)
+
+
+def describe_instance(instance: dict) -> str:
+    """One line naming an instance: what an agent needs to tell it from another."""
+    if instance.get("legacy"):
+        return (f"an OrcaMCP older than 2.5.0.6 on port {instance['port']} (version {instance.get('version') or 'unknown'}; "
+                f"it tells neither its pid nor its project)")
+    project = instance.get("project") or {}
+    unsaved = ", unsaved changes" if project.get("unsaved") else ""
+    name = f"project \"{project['name']}\"" if project.get("name") else "no project yet"
+    return (f"pid {instance['pid']} on port {instance['port']}, {name}{unsaved}, "
+            f"program {instance.get('executable', '')}, data folder {instance.get('data_dir', '')}")
+
+
+def instance_summary(instance: dict, others=()) -> dict:
+    """An instance as list_instances, select_instance and start_orca show it. `others` are the other
+    running instances, for the ones on the same data folder."""
+    if instance.get("legacy"):
+        return {"port": instance["port"], "legacy": True, "version": instance.get("version", ""),
+                "state": instance.get("state", "live"), "selected": is_selected(instance),
+                "note": "An OrcaMCP older than 2.5.0.6: it tells neither its pid nor its project, and it does not "
+                        "refuse a call meant for another instance."}
+    summary = {key: instance.get(key) for key in ("pid", "port", "version", "executable", "data_dir", "started_at", "project")}
+    summary.update(state=instance.get("state", "live"), selected=is_selected(instance))
+    sharing = [other["pid"] for other in others if not other.get("legacy") and other.get("instance_id") != instance["instance_id"]
+               and other.get("data_dir") == instance.get("data_dir")]
+    if sharing:
+        summary["shares_data_dir_with"] = sharing
+    return summary
+
+
+def next_step(tool: str, why: str, arguments: dict = None) -> dict:
+    """One of next_steps, in the app's shape (OrcaMCPNextSteps.hpp): the tool, its arguments, and why."""
+    step = {"tool": tool}
+    if arguments:
+        step["arguments"] = arguments
+    step["why"] = why
+    return step
+
+
+def choose_steps(instances: list, why: str) -> list:
+    """Choosing one of `instances`: select_instance naming the first that tells who it is, and
+    list_instances for them all. An older OrcaMCP is never suggested: it cannot say whose window it is,
+    and on 2026-09-27 the one on 13618 was the user's own."""
+    steps = [next_step("list_instances", "every running instance, with its open project")]
+    first = next((instance for instance in instances if not instance.get("legacy")), None)
+    if first is not None:
+        steps.insert(0, next_step("select_instance", why, {"pid": first["pid"]}))
+    return steps
+
+
+def tool_report(request_id, report: dict, is_error: bool = False) -> dict:
+    """A bridge tool's JSON answer, as the app's tools give theirs."""
+    return make_success_response(request_id, {"content": [{"type": "text", "text": json.dumps(report)}],
+                                              "isError": is_error})
+
+
+def instance_error(request_id, message: str, instances: list, next_steps: list) -> dict:
+    """A call answered here, not run: why, the running instances, and what to call next."""
+    report = {"status": "error", "message": message, "instances": [instance_summary(i, instances) for i in instances]}
+    if next_steps:
+        report["next_steps"] = next_steps
+    return tool_report(request_id, report, is_error=True)
+
+
+def fetch_tools(timeout: float = TOOL_LIST_TIMEOUT_S):
+    """The chosen instance's tool list, with the bridge's own tools; None when it does not answer."""
+    try:
+        reply = post_to_app({"jsonrpc": "2.0", "id": "tools", "method": "tools/list", "params": {}}, timeout)
+    except Exception:
+        return None
+    tools = (reply.get("result") or {}).get("tools") if isinstance(reply, dict) else None
+    return with_bridge_tools(tools) if tools else None
+
+
+def note_tools_after_switch() -> bool:
+    """After a switch: whether the instance now chosen lists other tools than the client holds. If so the
+    client is told (notifications/tools/list_changed), and reloads the list from it."""
+    global CACHED_TOOLS, _pending_list_changed
+    tools = fetch_tools()
+    if tools is None:
+        return False
+    CACHED_TOOLS = tools
+    if _served_tools is None or tools == _served_tools:
+        return False
+    _pending_list_changed = True
+    return True
+
+
+def choose_instance(instance: dict) -> bool:
+    """From now on every call goes to `instance`. True when it replaced another whose build lists other
+    tools: the client is then told to reload its list."""
+    global _selected, _connection_cache
+    previous = _selected
+    _selected = dict(instance)
+    _connection_cache = {"connected": None, "last_check": 0}
+    note_heard()
+    if previous is None or instance_key(previous) == instance_key(instance):
+        return False
+    return note_tools_after_switch()
+
+
+def first_choice(instances: list):
+    """The instance a session starts with: the one on ORCAMCP_PORT when that is set, and then only that
+    one, never another when nothing answers there (a session pinned to a test build not up yet would
+    drive the user's app); else the only one running. None when none qualifies, or several run: which
+    to drive is then the agent's choice."""
+    if PINNED_PORT is not None:
+        return next((instance for instance in instances if instance["port"] == PINNED_PORT), None)
+    return instances[0] if len(instances) == 1 else None
+
+
+def choose_first_instance(timeout: float = INSTANCE_PROBE_TIMEOUT_S) -> list:
+    """Chooses the first instance, if one is to be chosen (first_choice). Returns the running ones."""
+    instances, _ = discover_instances(timeout)
+    first = first_choice(instances)
+    if first is not None:
+        choose_instance(first)
+    return instances
+
+
+def instance_to_use(instances: list):
+    """The running instance start_orca finds for this session: the one it chose, or the first choice
+    when it has chosen none. None when that one is gone, or several run and none is chosen."""
+    if _selected is not None:
+        return next((instance for instance in instances if is_selected(instance)), None)
+    return first_choice(instances)
+
+
+def lost_instance_answer(request_id, what: str) -> dict:
+    """The chosen instance is gone (`what` says how the bridge found out), and this call was not run. A
+    restart of it is followed, and said; any other instance is the agent's choice, never taken for it."""
+    lost = _selected
+    instances, _ = discover_instances()
+    successors = [instance for instance in instances if is_successor(instance, lost, _last_heard)]
+    if len(successors) == 1:
+        choose_instance(successors[0])
+        return instance_error(request_id,
+                              f"The OrcaMCP instance this session used ({describe_instance(lost)}) has restarted: "
+                              f"this session now uses {describe_instance(successors[0])}. This call was not run, since "
+                              f"the scene is now the restarted instance's: look at it, then call again.",
+                              instances, [next_step("get_scene_info", "the restarted instance's scene")])
+    if not instances:
+        return instance_error(request_id,
+                              f"The OrcaMCP instance this session used ({describe_instance(lost)}) {what}. No OrcaMCP "
+                              f"is running now, and this call was not run.",
+                              instances, [next_step("start_orca", "start OrcaMCP again")])
+    return instance_error(request_id,
+                          f"The OrcaMCP instance this session used ({describe_instance(lost)}) {what}. This call was "
+                          f"not run, and no other instance is chosen in its place: choose one, or start a new one.",
+                          instances, choose_steps(instances, "drive one of the instances still running") +
+                          [next_step("start_orca", "launch a new OrcaMCP window instead", {"new_instance": True})])
+
+
+def answers_as(answer, instance: dict) -> bool:
+    """Whether a GET /mcp answer comes from `instance`: the same instance id, or, for an older OrcaMCP, an
+    OrcaMCP answer with none. A newer instance's answer is never an older one's, nor the reverse."""
+    identity = answer_identity(answer)
+    if instance.get("legacy"):
+        return identity is None and isinstance(answer, dict) and answer.get("name") == "orca-slicer"
+    return identity is not None and identity["instance_id"] == instance["instance_id"]
+
+
+def call_refusal(request_id):
+    """A local answer when a tool call must not be forwarded: several instances run and none is chosen,
+    nothing answers on a pinned port, or the chosen instance is gone. None when it may go ahead: to the
+    chosen instance, or, with none running, to the "not running" answer."""
+    if _selected is None:
+        instances = choose_first_instance()
+        if _selected is not None:
+            return None
+        if PINNED_PORT is not None:
+            steps = [next_step("start_orca", "start OrcaMCP")]
+            if instances:
+                steps += choose_steps(instances, "drive one of the instances running instead")
+            return instance_error(request_id,
+                                  f"No OrcaMCP answers on port {PINNED_PORT}, the port ORCAMCP_PORT names, so this call "
+                                  f"was not run. Another instance is never used in its place.", instances, steps)
+        if len(instances) > 1:
+            return instance_error(request_id,
+                                  f"{len(instances)} OrcaMCP instances run, and this session has not chosen the one "
+                                  f"its calls go to, so this call was not run.",
+                                  instances, choose_steps(instances, "choose the instance this session drives"))
+        return None
+    # Is the chosen instance still the one on its port? Not merely something: an OrcaMCP older than 2.5.0.6
+    # that took the port would ignore the call's stamp and run it.
+    verdict, answer = fetch_identity(current_url(), INSTANCE_PROBE_TIMEOUT_S)
+    if verdict == BUSY:
+        return None  # it is in a call; the stamp keeps any newer instance from running this one
+    if verdict == DOWN:
+        return lost_instance_answer(request_id, "has quit or crashed")
+    if not answers_as(answer, _selected):
+        return lost_instance_answer(request_id, "no longer answers on its port: another program does")
+    note_heard()
+    return None
+
+
+def settle_call(request: dict, response: dict) -> dict:
+    """A forwarded tool call's answer. One that reached another instance than the chosen one was refused
+    unrun (-32004): the chosen one is gone from its port."""
+    error = response.get("error") if isinstance(response, dict) else None
+    if request.get("method") == "tools/call" and isinstance(error, dict) and error.get("code") == WRONG_INSTANCE_ERROR \
+            and _selected is not None:
+        return lost_instance_answer(request.get("id"), "no longer answers on its port: another instance does")
+    return response
+
+
+def stamp_instance(request: dict) -> dict:
+    """Name the chosen instance in a tools/call's params._meta, so no other instance runs it."""
+    params = request.get("params")
+    if request.get("method") != "tools/call" or not isinstance(params, dict) or _selected is None:
+        return request
+    meta = params.get("_meta")
+    if not isinstance(meta, dict):
+        meta = params["_meta"] = {}
+    meta[INSTANCE_META_KEY] = _selected["instance_id"]
+    return request
+
+
+def call_list_instances(request_id, arguments: dict) -> dict:
+    """list_instances: every running instance, and the one this session uses."""
+    instances, stale = discover_instances()
+    report = {"status": "success", "instances": [instance_summary(i, instances) for i in instances],
+              "using": None}
+    if _selected is not None:
+        using = next((i for i in instances if is_selected(i)), None)
+        report["using"] = instance_summary(using, instances) if using else dict(instance_summary(_selected), state="gone")
+    if stale:
+        report["stale_entries_ignored"] = stale
+    if not instances:
+        report["next_steps"] = [next_step("start_orca", "no OrcaMCP is running")]
+    elif report["using"] is None and len(instances) > 1:
+        report["next_steps"] = choose_steps(instances, "several instances run and this session has not chosen one")
+    elif report["using"] is not None and report["using"]["state"] == "gone":
+        report["next_steps"] = choose_steps(instances, "the instance this session used is gone")
+    return tool_report(request_id, report)
+
+
+SELECT_KEYS = ("pid", "port", "project")
+
+
+def select_argument_error(arguments: dict):
+    """Why select_instance's arguments cannot choose: it takes exactly one of pid, port or project."""
+    given = [key for key in SELECT_KEYS if key in arguments]
+    if len(given) != 1:
+        return f"select_instance takes exactly one of pid, port or project; got {', '.join(given) or 'none'}."
+    key, value = given[0], arguments[given[0]]
+    if key == "project" and (not isinstance(value, str) or not value):
+        return f"select_instance's project must be a project name or path; got {json.dumps(value)}."
+    if key != "project" and (not isinstance(value, int) or isinstance(value, bool)):
+        return f"select_instance's {key} must be an integer; got {json.dumps(value)}."
+    return None
+
+
+def matches(instance: dict, key: str, value) -> bool:
+    """Whether `instance` is the one select_instance's `key` names: a pid, a port, or its open project's
+    name (any case) or full path."""
+    if key == "port":
+        return instance["port"] == value
+    if instance.get("legacy"):
+        return False  # it tells neither
+    if key == "pid":
+        return instance["pid"] == value
+    project = instance.get("project") or {}
+    path = project.get("path") or ""
+    return project.get("name", "").lower() == value.lower() or (bool(path) and os.path.normpath(path) == os.path.normpath(value))
+
+
+def call_select_instance(request_id, arguments: dict) -> dict:
+    """select_instance: send this session's calls to one running instance, confirmed by its identity."""
+    error = select_argument_error(arguments)
+    if error:
+        return make_error_response(request_id, INVALID_PARAMS_ERROR, error)
+    key = next(k for k in SELECT_KEYS if k in arguments)
+    value = arguments[key]
+    instances, _ = discover_instances()
+    chosen = [instance for instance in instances if matches(instance, key, value)]
+    if len(chosen) != 1:
+        problem = "No running instance has" if not chosen else f"{len(chosen)} running instances have"
+        steps = [next_step("list_instances", "every running instance, with its open project")] if instances else \
+            [next_step("start_orca", "no OrcaMCP is running")]
+        return instance_error(request_id, f"{problem} {key} {json.dumps(value)}. Nothing was changed.", instances, steps)
+    previous = _selected
+    changed = choose_instance(chosen[0])
+    report = {"status": "success", "instance": instance_summary(_selected, instances),
+              "previous": instance_summary(previous) if previous else None, "tool_list_changed": changed}
+    if chosen[0]["state"] == "busy":
+        report["note"] = ("It is busy with a call, so its identity was taken from its registry entry; each call "
+                          "still names it, and it refuses any meant for another.")
+    return tool_report(request_id, report)
+
+
 def with_bridge_tools(server_tools: list) -> list:
     """The list a client is served, online and offline alike: the bridge's own tools first
     (start_orca is the entry point while the app is down), then the app's."""
@@ -469,7 +962,7 @@ def adopt_live_tools(response: dict) -> dict:
     tools = response.get("result", {}).get("tools")
     if tools:
         tools = with_bridge_tools(tools)
-        response["result"]["tools"] = tools
+        response["result"]["tools"] = served(tools)
         CACHED_TOOLS = tools
         log_debug(f"Cached {len(tools)} tools (including the bridge's own)")
     return response
@@ -489,18 +982,19 @@ def settle_tools_list(response: dict) -> dict:
     else:
         tools = get_full_tools_list()
         _served_static_tools = True
-    return make_success_response(response.get("id"), {"tools": tools})
+    return make_success_response(response.get("id"), {"tools": served(tools)})
 
 
 def call_start_orca(request_id, arguments: dict) -> dict:
     """start_orca: launch the app and wait for it. Answered here, since the app cannot launch itself."""
-    result = launch_orcamcp()
-    if result["success"]:
-        return make_success_response(request_id, {
-            "content": [{"type": "text", "text": result["message"]}],
-            "isError": False
-        })
-    return make_success_response(request_id, make_tool_error_result(result["message"]))
+    new_instance = arguments.get("new_instance", False)
+    if not isinstance(new_instance, bool):
+        return make_error_response(request_id, INVALID_PARAMS_ERROR,
+                                   f"start_orca's new_instance must be true or false; got {json.dumps(new_instance)}.")
+    result = launch_orcamcp(new_instance=new_instance)
+    text = json.dumps(result["report"]) if "report" in result else result["message"]
+    return make_success_response(request_id, {"content": [{"type": "text", "text": text}],
+                                              "isError": not result["success"]})
 
 
 # wait_for_slice. Its text is the C++ registration's, served from orcamcp_tools.json; these are the
@@ -570,12 +1064,12 @@ def parse_wait_timeout(value, cap: float) -> tuple:
 def call_app_tool(name: str, arguments: dict, timeout: float) -> dict:
     """One tools/call to the app, and its decoded result. Raises AppBusy for a call it did not answer,
     AppDown when nothing listens or the app is quitting, and AppUnavailable for the rest."""
-    request = {"jsonrpc": "2.0", "id": name, "method": "tools/call",
-               "params": {"name": name, "arguments": arguments}}
+    request = stamp_instance({"jsonrpc": "2.0", "id": name, "method": "tools/call",
+                              "params": {"name": name, "arguments": arguments}})
     try:
         reply = post_to_app(request, timeout)
     except urllib.error.HTTPError as e:
-        raise AppUnavailable(f"OrcaSlicer answered with HTTP {e.code} ({e.reason}) at {ORCAMCP_URL}.")
+        raise AppUnavailable(f"OrcaSlicer answered with HTTP {e.code} ({e.reason}) at {current_url()}.")
     except (socket.timeout, TimeoutError):
         raise AppBusy()
     except urllib.error.URLError as e:
@@ -589,7 +1083,8 @@ def call_app_tool(name: str, arguments: dict, timeout: float) -> dict:
         # that is going away does this, and so does one whose request thread dropped the socket.
         raise AppBusy()
     if "error" in reply:
-        if reply["error"].get("code") == APP_QUITTING_ERROR:
+        # Quitting, or gone from its port, which another instance now answers: either way it is gone.
+        if reply["error"].get("code") in (APP_QUITTING_ERROR, WRONG_INSTANCE_ERROR):
             raise AppDown(quitting=True)
         raise AppUnavailable(f"{name} failed: {reply['error'].get('message', reply['error'])}")
     try:
@@ -784,6 +1279,8 @@ def call_wait_for_slice(request_id, arguments: dict) -> dict:
 BRIDGE_HANDLERS = {
     "start_orca": call_start_orca,
     "wait_for_slice": call_wait_for_slice,
+    "list_instances": call_list_instances,
+    "select_instance": call_select_instance,
 }
 
 
@@ -904,12 +1401,21 @@ def handle_local_request(request: dict) -> dict | None:
     # return minimal list immediately without slow connection check
     if method == "tools/list" and CACHED_TOOLS is None:
         # First time - try a quick check, but return the static list fast if nothing answers
+        if _selected is None:
+            choose_first_instance(timeout=0.1)
         if check_orcaslicer_connection(timeout=0.1) != LIVE:
             log_debug("Quick startup: returning static tools list")
             _served_static_tools = True
-            return make_success_response(request_id, {"tools": get_full_tools_list()})
+            return make_success_response(request_id, {"tools": served(get_full_tools_list())})
         # Connected - let it through to get full tools list
         return None
+
+    # A tool call goes to the instance this session chose; not at all while several run and none is
+    # chosen, or when the chosen one is gone.
+    if method == "tools/call":
+        refusal = call_refusal(request_id)
+        if refusal is not None:
+            return refusal
 
     # For other methods, only a DOWN verdict is answered locally. A BUSY server is forwarded to:
     # the real request has the full ORCAMCP_TIMEOUT to be answered, and a real error from a real
@@ -923,7 +1429,7 @@ def handle_local_request(request: dict) -> dict | None:
     if method == "tools/list":
         # CACHED_TOOLS is guaranteed set by this point: the "CACHED_TOOLS is None" branch above
         # already handles (and returns from) every tools/list call before it is populated.
-        return make_success_response(request_id, {"tools": CACHED_TOOLS})
+        return make_success_response(request_id, {"tools": served(CACHED_TOOLS)})
 
     elif method == "tools/call":
         # start_orca is handled above, so any tool call here is for an unavailable tool
@@ -998,7 +1504,7 @@ def post_to_app(request: dict, timeout: float) -> dict:
     """POST one JSON-RPC request to OrcaSlicer and return its decoded reply. Raises whatever urlopen
     and json raise: send_request turns those into JSON-RPC errors, wait_for_slice into its own."""
     req = urllib.request.Request(
-        ORCAMCP_URL,
+        current_url(),
         data=json.dumps(request).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
@@ -1020,19 +1526,22 @@ def send_request(request: dict) -> dict:
     # Normalize paths for Windows before sending
     request = normalize_paths_for_windows(request)
     request = stamp_wait_cap(request)
+    request = stamp_instance(request)
 
     try:
         result = post_to_app(request, TIMEOUT)
         # Ensure response has proper id
         if "id" not in result or result["id"] is None:
             result["id"] = request_id
+        if (result.get("error") or {}).get("code") != WRONG_INSTANCE_ERROR:
+            note_heard()  # it answered as the instance the call named
         return result
     except urllib.error.HTTPError as e:
         log_debug(f"HTTP error: {e}")
         return make_error_response(
             request_id,
             -32000,
-            f"OrcaSlicer answered with HTTP {e.code} ({e.reason}) at {ORCAMCP_URL}."
+            f"OrcaSlicer answered with HTTP {e.code} ({e.reason}) at {current_url()}."
         )
     except (socket.timeout, TimeoutError):
         log_debug(f"Request timed out after {TIMEOUT}s")
@@ -1050,7 +1559,7 @@ def send_request(request: dict) -> dict:
             return make_error_response(
                 request_id,
                 -32000,
-                f"Nothing is listening at {ORCAMCP_URL}. OrcaMCP is not running -- use the "
+                f"Nothing is listening at {current_url()}. OrcaMCP is not running -- use the "
                 f"'start_orca' tool. Error: {str(e)}"
             )
         return make_error_response(
@@ -1111,7 +1620,7 @@ def main():
                 continue
 
             # Forward request to OrcaSlicer HTTP server
-            response = send_request(request)
+            response = settle_call(request, send_request(request))
 
             # A tools/list gets the bridge's own tools added, or the offline list if the app failed it
             method = request.get("method", "")

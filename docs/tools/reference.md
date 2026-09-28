@@ -43,7 +43,7 @@ into a call that reports success and changes nothing. See [Error Handling](#erro
 | **Printers** | `get_printers`, `select_printer`, `add_physical_printer`, `discover_printers`, `send_to_printer`, `get_printer_status`, `printer_control`, `list_printer_files`, `print_printer_file`, `match_project_to_printer` |
 | **Adaptive** | `apply_adaptive_layer_height`, `clear_adaptive_layer_height` |
 | **History** | `undo`, `redo` |
-| **Info** | `get_server_info`, `quit_app`, `start_orca` (bridge-only) |
+| **Info** | `get_server_info`, `quit_app`, `start_orca` (bridge-only), `list_instances` (bridge-only), `select_instance` (bridge-only) |
 
 ---
 
@@ -60,7 +60,9 @@ each tool's one-line summary is the `tool_summaries` section.
 |-----------|------|----------|-------------|
 | `section` | string | No | `tool_summaries`, `concepts`, `suggested_flows`, `tool_examples`, `warnings_and_best_practices`, `settings`, or `all`. Omit for the default response. |
 
-**Returns:** Without `section` (about 3 KB): `server` (name, version from `version.inc`),
+**Returns:** Without `section` (about 3 KB): `server` (name, version from `version.inc`,
+`endpoint`, the address this instance answers at, and `instance`, which instance it is: the same
+object as its registry entry and `GET /mcp`, see `list_instances`),
 `quick_start`, `tools` (every tool's name, grouped by category: `{"Models": ["auto_orient", ...]}`),
 `bridge_only` (tools the bridge answers itself), and `sections` (each section's name and size in
 bytes). With a section name, just that section: `tool_summaries` is every tool's one-line summary,
@@ -3155,6 +3157,9 @@ nothing to suggest has no `next_steps`.
 | `render_plate_view`, on each view whose `uniform_image` is true (beside its `hint`) | `get_scene_info` | nothing printable on that plate was drawn |
 | | `render_plate_view` with `{plate_index, save_to_file: true}` | the plate's objects were drawn but the camera looked elsewhere: no views gives a contact sheet fitted to the plate |
 | `paint_object` with `mode: support` | `set_object_config` for that object: `enable_support` `"1"` and `support_type` `normal(manual)` (or `tree(manual)` when its type is a tree one), for support only where painted | the object has painted enforcers and `enable_support` is off for it, so they do nothing (`info_messages` says so too). Not for blockers alone or erased paint: turning support on is the opposite of what a blocker asks; and not with an `(auto)` type, which would also support every other overhang |
+| The bridge's own answers (`list_instances`, `start_orca`, and a tool call it did not forward) | `select_instance` with the `pid` of the first instance that tells who it is (never an older OrcaMCP, which cannot), and `list_instances` | several instances run and this session has not chosen one, or the one it used is gone |
+| | `start_orca` (with `new_instance: true` when others run) | no instance runs, or the one this session used is gone |
+| | `get_scene_info` | the instance this session used restarted, and the session now uses the restarted one: its scene is new |
 
 ---
 
@@ -3194,7 +3199,8 @@ back: `brim_ears` as `set_brim_ears`' `points` (their `z` is ignored), a send's 
 nested objects take any key: a render's `views` and a paint call's `bands` may be passed back with
 the extra fields the response carried.
 Types, ranges and enum values are not checked here; the tool reports those itself. The bridge's own
-tools (`start_orca`, `wait_for_slice`) are held to their schemas the same way.
+tools (`start_orca`, `wait_for_slice`, `list_instances`, `select_instance`) are held to their schemas
+the same way.
 
 JSON-RPC error codes:
 | Code | Meaning |
@@ -3207,64 +3213,125 @@ JSON-RPC error codes:
 | -32001 | OrcaMCP is still starting up; retry in a few seconds |
 | -32002 | OrcaMCP is quitting, so the call was not run; `start_orca` starts it again |
 | -32003 | Refused: the request came from a web page (`Origin`) or named another host (`Host`) |
+| -32004 | The call named another OrcaMCP instance (`params._meta["orcamcp/instance"]`), so this one did not run it. The bridge answers it for you: see `select_instance` |
 
 ---
 
 ## Bridge Tools
 
-These tools are handled by the MCP bridge script (`orcamcp-bridge.py`), not the OrcaSlicer server. `start_orca` works even when OrcaSlicer is not running; `wait_for_slice` needs it running, but waits in the bridge so the app stays free to answer other calls.
+These tools are handled by the MCP bridge script (`orcamcp-bridge.py`), not the OrcaSlicer server. `start_orca` and `list_instances` work even when OrcaSlicer is not running; `wait_for_slice` needs it running, but waits in the bridge so the app stays free to answer other calls. `list_instances` and `select_instance` choose which of several running OrcaMCP windows the session drives.
 
 ### start_orca
-Start the OrcaMCP application. Use this when OrcaMCP is not running.
+Start OrcaMCP and wait until it is ready; this session's calls then go to it. It launches the
+installed app (`/Applications/OrcaMCP.app`, `~/Applications/OrcaMCP.app`; on Windows
+`%ProgramFiles%\OrcaMCP\orca-mcp.exe`, `%ProgramFiles(x86)%\OrcaMCP\orca-mcp.exe`,
+`%LOCALAPPDATA%\Programs\OrcaMCP\orca-mcp.exe`; on Linux `/usr/bin`, `/usr/local/bin`,
+`~/.local/bin`, `/opt/OrcaMCP/bin`), or `ORCAMCP_APP_PATH` when that is set. Never a build in a source
+folder: it would run on the user's real data folder.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `new_instance` | boolean | No | Launch another OrcaMCP window even when one runs (default `false`). The session then uses the new one |
+
+| Situation | What it does | `status` |
+|-----------|--------------|----------|
+| The instance this session uses runs, or exactly one runs and none is chosen yet | Launches nothing; uses it | `already_running` |
+| Several run and none is chosen | Launches nothing; lists them in `other_instances`, with `next_steps` to `select_instance` (an error) | `several_running` |
+| None runs, or the one this session used is gone, or nothing answers on `ORCAMCP_PORT` when that is set, or `new_instance: true` | Launches the app (on macOS `open -n`, always a new process), waits up to 30 s for a new instance running that program (never another program's window that came up meanwhile; an installed OrcaMCP older than 2.5.0.6, which cannot say what it runs, is taken when it newly answers on 13618), and uses it | `started` |
+| The app cannot be found, or does not answer in 30 s | An error | `not_started` |
+
+**Returns:** the instance it launched or found, named as `list_instances` names it (pid, port,
+program as `executable`, data folder as `data_dir`, open project), and the others running:
+```json
+{
+  "status": "already_running",
+  "message": "OrcaMCP is already running: pid 4242 on port 13618, project \"bracket\", program /Applications/OrcaMCP.app/Contents/MacOS/OrcaSlicer, data folder /Users/me/Library/Application Support/OrcaMCP. This session uses it.",
+  "instance": {"pid": 4242, "port": 13618, "version": "2.5.0.6-dev", "executable": "/Applications/OrcaMCP.app/Contents/MacOS/OrcaSlicer", "data_dir": "/Users/me/Library/Application Support/OrcaMCP", "started_at": "2026-09-28T09:15:03.123Z", "project": {"name": "bracket", "path": "/Users/me/prints/bracket.3mf", "unsaved": false}, "state": "live", "selected": true}
+}
+```
+It is launched as an agent's launch (`ORCAMCP_SKIP_CLOUD_LOGIN=1`, see "Configuration").
+
+### list_instances
+Every running OrcaMCP window (instance), and which one this session's calls go to. Several can run
+at once, each with its MCP server on its own port, the first free one from 13618 to 13627; each
+publishes an entry in `~/.orcamcp/instances`, which the bridge reads. An entry whose port does not
+answer with its instance id is stale (a crashed instance's): it is left out and counted.
 
 **Parameters:** None
 
-**Example:**
-```json
-{"name": "start_orca", "arguments": {}}
-```
-
-**Returns (success):**
+**Returns:**
 ```json
 {
-  "content": [{"type": "text", "text": "OrcaMCP started successfully. Ready for commands."}],
-  "isError": false
+  "status": "success",
+  "instances": [
+    {"pid": 4242, "port": 13618, "version": "2.5.0.6-dev", "executable": "/Applications/OrcaMCP.app/Contents/MacOS/OrcaSlicer",
+     "data_dir": "/Users/me/Library/Application Support/OrcaMCP", "started_at": "2026-09-28T09:15:03.123Z",
+     "project": {"name": "bracket", "path": "/Users/me/prints/bracket.3mf", "unsaved": true},
+     "state": "live", "selected": true},
+    {"pid": 5150, "port": 13619, "version": "2.5.0.6-dev", "executable": "/Applications/OrcaMCP.app/Contents/MacOS/OrcaSlicer",
+     "data_dir": "/Users/me/Library/Application Support/OrcaMCP", "started_at": "2026-09-28T10:02:41.007Z",
+     "project": {"name": "Untitled", "path": "", "unsaved": false},
+     "state": "busy", "selected": false, "shares_data_dir_with": [4242]}
+  ],
+  "using": {"pid": 4242, "port": 13618, "...": "...", "state": "live", "selected": true},
+  "stale_entries_ignored": 1
 }
 ```
 
-**Returns (already running):**
+| Field | Meaning |
+|-------|---------|
+| `project` | What the window title shows: its name (`Untitled` for a new project), its file (empty until it is saved or opened from one), and whether it has unsaved changes. Refreshed after every tool call and once a second |
+| `state` | `live`: it answered. `busy`: its one request thread is in a call, so it could not answer now; its process runs |
+| `selected` | This session's calls go to it |
+| `shares_data_dir_with` | Other instances on the same data folder: the settings and presets either one saves can overwrite the other's |
+| `legacy` | An OrcaMCP older than 2.5.0.6 on 13618: it tells neither its pid nor its project, and does not refuse a call meant for another instance. It has `port`, `version`, `state`, `selected` and a `note` |
+| `using` | The instance this session uses, `null` when none is chosen; `state: "gone"` when it quit or crashed |
+| `stale_entries_ignored` | Registry entries left by instances that are gone |
+| `next_steps` | `start_orca` when none runs; `select_instance` when several run and none is chosen, or the chosen one is gone |
+
+### select_instance
+Send this session's calls to one running instance, chosen by exactly one of `pid`, `port` or
+`project`. It is confirmed by its identity (its `GET /mcp` answers with the instance id of its entry).
+From then on every call names it (`params._meta["orcamcp/instance"]`), and any other instance refuses
+the call unrun (-32004).
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `pid` | integer | One of the three | The instance's process id |
+| `port` | integer | One of the three | The port its MCP server listens on (an older OrcaMCP can only be chosen by port) |
+| `project` | string | One of the three | Its open project's name, any case, or full path. Refused when several instances match |
+
+None, or more than one, of them is JSON-RPC -32602.
+
+**Returns:**
 ```json
 {
-  "content": [{"type": "text", "text": "OrcaMCP is already running"}],
-  "isError": false
+  "status": "success",
+  "instance": {"pid": 5150, "port": 13619, "...": "...", "selected": true},
+  "previous": {"pid": 4242, "port": 13618, "...": "..."},
+  "tool_list_changed": false
 }
 ```
+`tool_list_changed` is true when the chosen instance is another build that lists other tools: the
+client is sent `notifications/tools/list_changed`, and reloads the list from it. Instances of the same
+build keep the list. No match, or several, is an error listing the running instances; nothing changes.
 
-**Behavior:**
-- Checks if OrcaMCP is already running (returns immediately if so)
-- Launches OrcaMCP in detached mode
-- Waits up to 30 seconds for the MCP server to become available
-- Returns success once the server responds to ping
+### How a session chooses its instance
 
-**Platform-specific launch:**
-| Platform | Method |
-|----------|--------|
-| macOS | Uses `open` command for .app bundles |
-| Windows | Uses `subprocess.Popen` with detached flags |
-| Linux | Uses `subprocess.Popen` with new session |
+| Situation | A tool call |
+|-----------|-------------|
+| One instance runs | Goes to it, as with a single OrcaMCP |
+| `ORCAMCP_PORT` is set and an instance runs on it | Goes to that one, and only ever to that one |
+| `ORCAMCP_PORT` is set and nothing answers on it | Is not run: "No OrcaMCP answers on port N". No other instance is used in its place |
+| Several run, and none is chosen | Is not run: the answer lists them, with `next_steps` to `select_instance` |
+| The chosen one quit or crashed, or something else answers on its port (another instance, or an OrcaMCP older than 2.5.0.6: the bridge asks the port who answers before every call) | Is not run: the answer names it and lists the others, with `next_steps` to `select_instance` and `start_orca`. None is taken in its place |
+| The chosen one restarted: the same program on the same data folder, started after the bridge last heard from it with no other instance of that program on that folder running, and the only one that qualifies | Is not run: the session now uses the restarted one, and the answer says so, with `next_steps` to `get_scene_info`. A second window opened while the first ran is never taken for its restart |
+| None runs | "OrcaMCP is not running": `start_orca` |
 
-**Executable search paths:**
-
-*macOS:*
-- `/Applications/OrcaMCP.app`
-- `~/Applications/OrcaMCP.app`
-
-*Windows:*
-- `%ProgramFiles%\OrcaMCP\orca-mcp.exe`
-- `%ProgramFiles(x86)%\OrcaMCP\orca-mcp.exe`
-- `%LOCALAPPDATA%\Programs\OrcaMCP\orca-mcp.exe`
-
-*Override:* Set `ORCAMCP_APP_PATH` environment variable to specify a custom path.
+These answers are tool errors whose text is JSON: `status: "error"`, `message`, `instances`, and
+`next_steps`.
 
 ### wait_for_slice
 Wait until the running slice is over, instead of polling `get_slicing_status`. Call it right after
@@ -3328,8 +3395,9 @@ The bridge answers the first `tools/list` from `scripts/orcamcp_tools.json` when
 yet running, which is normal, since the MCP client starts first. The file is generated from the
 app's tool registry, and a unit test fails whenever the two disagree, so a build and the file it
 ships with always list the same names, descriptions and schemas. The bridge's own tools
-(`start_orca`) come from the same file whether the app runs or not, so an agent sees the same list
-before and after the app starts.
+(`start_orca`, `wait_for_slice`, `list_instances`, `select_instance`) come from the same file whether
+the app runs or not, so an agent sees the same list before and after the app starts, and whichever
+instance it uses.
 
 The server instructions an MCP client shows before any tool is loaded -- `get_server_info` for
 every tool, one line per job naming its key tools, `next_steps`, and the calls that overwrite,
@@ -3340,8 +3408,9 @@ ASCII, naming only real tools.
 
 A running app of a different build than the bridge's file can still list other tools. For that
 case the bridge advertises `tools.listChanged` and sends `notifications/tools/list_changed` the
-first time a live OrcaSlicer answers after the file's list was served. A client that honours it
-re-fetches without a restart.
+first time a live OrcaSlicer answers after the file's list was served, and again when
+`select_instance` (or `start_orca`, or following a restart) switches to an instance whose build lists
+other tools. A client that honours it re-fetches without a restart.
 
 After adding or changing a tool, regenerate the file (no running app needed):
 

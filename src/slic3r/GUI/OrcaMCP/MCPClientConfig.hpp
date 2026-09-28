@@ -75,13 +75,39 @@ public:
     // Test if MCP server is responding on port 13618
     static bool test_mcp_server();
 
-    // Ensure bridge script is copied to user's ~/.orcamcp/ directory
-    // Called on startup to auto-update the bridge script when app is updated
+    // Copies this app's bridge script and its tool list (orcamcp_tools.json) into ~/.orcamcp when either
+    // differs in content from the copy there; both go together. Connecting a client does it.
     static bool ensure_bridge_script_copied(std::string& error);
 
-private:
-    // Shared scripts directory management
+    // At startup: whether ~/.orcamcp gets this app's bridge, logged either way. The user's own agent
+    // sessions run the bridge there, so a test launch never touches it: one on a data folder of its own
+    // (--datadir, which every test launch has) or of a build in a source tree (`executable` under a
+    // CMakeCache.txt). Any other launch -- the installed app's, an agent's start_orca included -- leaves
+    // it matching this app, by content: every dev-build launch used to replace it, and the installed app,
+    // older by date, never put its own back.
+    static void refresh_shared_bridge_at_startup(bool own_data_folder, const std::string& executable);
+
+    // Whether `executable` is a build in a source tree: a folder above it holds a CMakeCache.txt.
+    static bool executable_in_build_tree(const std::string& executable);
+
+    struct BridgeCopyDecision
+    {
+        bool        copy = false;
+        std::string reason; // for the log
+    };
+    // refresh_shared_bridge_at_startup's decision, apart from the files (tested in test_mcp_client_config.cpp).
+    static BridgeCopyDecision bridge_copy_decision(bool own_data_folder, bool build_tree, bool content_differs);
+
+    // Whether `copy` holds other bytes than `original`; a missing copy differs.
+    static bool file_content_differs(const std::string& original, const std::string& copy);
+
+    // The per-user ~/.orcamcp folder (%USERPROFILE%\.orcamcp on Windows): the bridge script, and the
+    // instance registry's entries (OrcaMCPInstanceRegistry.hpp). Empty without a home folder.
     static std::string get_shared_scripts_dir();
+
+private:
+    // Whether ~/.orcamcp's bridge or tool list differs from this app's.
+    static bool shared_bridge_differs();
 
     // Platform-specific path resolution
     static std::string resolve_config_path(const std::string& path_template);

@@ -278,6 +278,31 @@ void HttpServer::start()
     });
 }
 
+std::string HttpServer::try_start()
+{
+    try {
+        start();
+        return {};
+    } catch (const std::exception& e) {
+        return e.what();
+    }
+}
+
+boost::asio::ip::tcp::acceptor HttpServer::listen_on_loopback(boost::asio::io_service& io_service, boost::asio::ip::port_type port)
+{
+    const boost::asio::ip::tcp::endpoint endpoint = loopback_endpoint(port);
+    boost::asio::ip::tcp::acceptor       acceptor(io_service);
+    acceptor.open(endpoint.protocol());
+#ifdef _WIN32
+    acceptor.set_option(boost::asio::detail::socket_option::boolean<SOL_SOCKET, SO_EXCLUSIVEADDRUSE>(true));
+#else
+    acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true));
+#endif
+    acceptor.bind(endpoint);
+    acceptor.listen();
+    return acceptor;
+}
+
 bool HttpServer::stop(std::chrono::milliseconds bound)
 {
     start_http_server = false;
@@ -311,7 +336,7 @@ bool HttpServer::listen_also(boost::asio::ip::port_type also_port)
     // Bound here, so a busy port throws to the caller as it does from start().
     std::shared_ptr<IOServer::Acceptor> listener;
     if (also_port != 0)
-        listener = std::make_shared<IOServer::Acceptor>(server_->io_service, loopback_endpoint(also_port));
+        listener = std::make_shared<IOServer::Acceptor>(listen_on_loopback(server_->io_service, also_port));
     IOServer* io_server = server_.get();
     boost::asio::post(io_server->io_service, [io_server, listener] { io_server->replace_also(listener); });
     return true;

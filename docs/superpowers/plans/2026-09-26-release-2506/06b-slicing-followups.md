@@ -56,7 +56,7 @@ before writing tests. Prompts 01–07 are merged: slicing tools, busy states and
 3. **Branch.** Create `rel2506/06b-slicing-followups` off the latest `mcp`, in the main checkout.
 4. **Implement test-first**, in small commits.
 5. **Check live** as listed. Then run `[orcamcp]` in random order, the full `slic3rutils` suite
-   (excluding `[flashforge-live]`) and Python (`ORCAMCP_PORT=1` if the port is held). Regenerate the
+   (excluding `[flashforge-live]`) and Python. Regenerate the
    golden file if tool text changes.
 6. **Report back.**
 

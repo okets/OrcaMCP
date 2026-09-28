@@ -151,6 +151,8 @@
 #include "OrcaMCP/OrcaMCPServer.hpp"
 #include "OrcaMCP/OrcaMCPMainThreadGate.hpp"
 #include "OrcaMCP/OrcaMCPRequestGuard.hpp"
+#include "OrcaMCP/OrcaMCPInstanceRegistry.hpp"
+#include "OrcaMCP/OrcaMCPPortChoice.hpp"
 #include "OrcaMCP/OrcaMCPQuit.hpp"
 #include "../Utils/ThreadCancel.hpp"
 #include "OrcaMCP/MCPClientConfig.hpp"
@@ -1066,13 +1068,8 @@ void GUI_App::post_init()
     // Start HTTP server for MCP integration
     start_http_server();
 
-    // Ensure MCP bridge script is up-to-date in user's ~/.orcamcp/ directory
-    // This auto-updates the bridge when users install a new version of OrcaMCP
-    {
-        std::string bridge_error;
-        MCPClientConfig::ensure_bridge_script_copied(bridge_error);
-        // Best-effort - don't fail startup if this doesn't work
-    }
+    // The user's ~/.orcamcp bridge follows the app they run, never a test launch (--datadir, or a build).
+    MCPClientConfig::refresh_shared_bridge_at_startup(m_datadir_redefined, into_u8(wxStandardPaths::Get().GetExecutablePath()));
 
     // remove old log files over LOG_FILES_MAX_NUM
     std::string log_addr = data_dir();
@@ -7802,23 +7799,34 @@ void GUI_App::start_http_server(const std::string& provider)
 {
     // A login callback that reaches this server is answered for `provider`, until a login names its own.
     m_login_server.set_provider(provider);
-    if (!m_http_server.is_started()) {
-        // Web pages never reach MCP, and a login callback is answered only where a login listens.
-        m_http_server.set_request_guard(OrcaMCP::app_request_guard(
-            m_http_server.get_port(), [this](boost::asio::ip::port_type port) { return m_login_server.listens_on(port); }));
-        // Route /mcp requests to MCP server; everything else is a cloud login's callback.
-        m_http_server.set_request_handler([this](const std::string& method, const std::string& url, const std::string& body)
-            -> std::shared_ptr<HttpServer::Response> {
-            // Every network call made for this request gives up once the app is quitting, so the
-            // server's thread is never held past the quit (HttpServer::stop waits for it).
-            const ScopedThreadCancelCheck quitting([] { return OrcaMCP::main_thread_gate().is_closed(); });
-            if (OrcaMCP::is_mcp_url(url)) {
-                return OrcaMCPServer::handle_request(method, url, body);
-            }
-            return m_login_server.answer(url);
+    // Once per session: the cloud sign-in asks for the server on every message it sends, and probing the
+    // ports each time would stall the main thread for nothing when none was free.
+    if (m_http_server.is_started() || m_mcp_port_chosen)
+        return;
+    m_mcp_port_chosen = true;
+    // Route /mcp requests to MCP server; everything else is a cloud login's callback.
+    m_http_server.set_request_handler([this](const std::string& method, const std::string& url, const std::string& body)
+        -> std::shared_ptr<HttpServer::Response> {
+        // Every network call made for this request gives up once the app is quitting, so the
+        // server's thread is never held past the quit (HttpServer::stop waits for it).
+        const ScopedThreadCancelCheck quitting([] { return OrcaMCP::main_thread_gate().is_closed(); });
+        if (OrcaMCP::is_mcp_url(url)) {
+            return OrcaMCPServer::handle_request(method, url, body);
+        }
+        return m_login_server.answer(url);
+    });
+    // Several OrcaMCP instances can run at once: this one takes the first free port from 13618, never
+    // one another program listens on, and runs without MCP when none is free (OrcaMCPPortChoice.hpp).
+    const OrcaMCP::PortChoice choice = OrcaMCP::choose_port(
+        OrcaMCP::mcp_ports(), [](OrcaMCP::Port port) { return OrcaMCP::port_has_listener(port); },
+        [this](OrcaMCP::Port port) {
+            m_http_server.set_port(port);
+            // Web pages never reach MCP, and a login callback is answered only where a login listens.
+            m_http_server.set_request_guard(OrcaMCP::app_request_guard(
+                port, [this](boost::asio::ip::port_type login_port) { return m_login_server.listens_on(login_port); }));
+            return m_http_server.try_start();
         });
-        m_http_server.start();
-    }
+    OrcaMCP::announce_mcp_server(choice);
 }
 
 // The cloud login's callback server: the MCP server, which listens on the login's port too
@@ -7833,6 +7841,7 @@ void GUI_App::start_http_server(int port, const std::string& provider)
 
 void GUI_App::stop_http_server()
 {
+    OrcaMCP::stop_project_watch();
     // An MCP call on the server's thread may be waiting for this, the main, thread. Release it
     // first: the join in HttpServer::stop would otherwise wait on a thread that waits on the joiner.
     OrcaMCPServer::shut_down();

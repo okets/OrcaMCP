@@ -1,4 +1,5 @@
 #include "OrcaMCPServerInfo.hpp"
+#include "OrcaMCPInstanceRegistry.hpp"
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
@@ -9,14 +10,20 @@ using json = nlohmann::json;
 constexpr const char* all_sections           = "all";
 constexpr const char* tool_summaries_section = "tool_summaries";
 
+// The server, and which instance of it answers: several can run at once, each on its own port
+// (list_instances, select_instance).
 json server()
 {
-    return json{
+    const std::optional<InstanceIdentity> self = instance_registry().identity();
+    json info = json{
         {"name", "OrcaSlicer MCP Server"},
         {"version", OrcaMCPServer::version()},
         {"protocol", "JSON-RPC 2.0 over HTTP"},
-        {"endpoint", "http://localhost:13618/mcp"}
+        {"endpoint", mcp_url(self ? self->port : first_mcp_port)}
     };
+    if (self)
+        info["instance"] = to_json(*self);
+    return info;
 }
 
 // What every agent should know first. Part of the default response.
@@ -532,6 +539,7 @@ Start with get_scene_info (plates, objects, each object's object_id). Key tools:
 - Slicing: slice_all, then wait_for_slice (no polling); get_print_estimate, export_gcode.
 - Seeing results: render_plate_view (its layer_view draws a sliced layer's toolpaths).
 - Printers: get_printer_status, send_to_printer.
+- Several OrcaMCP windows: list_instances, select_instance.
 
 Responses may carry next_steps: the tool to call next, and why.
 

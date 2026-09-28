@@ -42,8 +42,9 @@ The bridge script accepts these environment variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ORCAMCP_HOST` | `localhost` | OrcaSlicer HTTP server host: `localhost` or `127.0.0.1`. The app listens on 127.0.0.1 only, so another machine cannot reach it |
-| `ORCAMCP_PORT` | `13618` | OrcaSlicer HTTP server port |
+| `ORCAMCP_HOST` | `127.0.0.1` | Where the bridge looks for OrcaMCP before it has chosen an instance: `127.0.0.1` or `localhost`. The app listens on 127.0.0.1 only, so another machine cannot reach it |
+| `ORCAMCP_PORT` | (unset: `13618`) | Set: the session uses the OrcaMCP on this port and only that one, even with several running; with nothing there, calls answer "No OrcaMCP answers on port N" and no other instance is used. Unset: the only running instance is used (see "Multiple OrcaMCP Instances") |
+| `ORCAMCP_INSTANCES_DIR` | `~/.orcamcp/instances` | Where each running instance publishes its entry, read by the app and the bridge alike. For tests |
 | `ORCAMCP_TIMEOUT` | `120` | Request timeout in seconds. It also bounds how long `arrange_objects`, `auto_orient`, `flatten_object` and `clone_object` wait for their job: the bridge sends wait_for_slice's cap (15 s below it) with every tool call, as `params._meta["orcamcp/wait_cap_s"]` |
 | `ORCAMCP_DEBUG` | (unset) | Enable debug logging to stderr |
 | `ORCAMCP_SKIP_CLOUD_LOGIN` | set to `1` by `start_orca` | Read by the **app**, not the bridge: skips the Orca cloud silent sign-in at startup. That sign-in reads the keychain synchronously on the GUI thread and, on macOS, can block on a permission prompt before the MCP server starts. Set it yourself if you launch the app for an agent by other means. |
@@ -75,22 +76,20 @@ python3 scripts/orcamcp-bridge.py
 
 ## Port Configuration
 
-### Default Port: 13618
+### Ports 13618 to 13627
 
-OrcaSlicer's HTTP server runs on port 13618 by default. This is hardcoded in OrcaSlicer.
+OrcaMCP's MCP server listens on 127.0.0.1 at the first of ports 13618 to 13627 that nothing else
+answers on, so several OrcaMCP windows can run at once. A window not on 13618 shows a short
+notification naming the port and who holds 13618, and Preferences > MCP shows its port.
 
 ### Port Conflicts
 
-If another application uses port 13618:
+If another application uses a port in the range, OrcaMCP skips it. If all ten are taken, the window
+runs without MCP and a warning says so. To see who holds them:
 
-1. Check what's using the port:
 ```bash
-lsof -i :13618
+lsof -nP -iTCP -sTCP:LISTEN | grep -E ':1361[89]|:1362[0-7]'
 ```
-
-2. Stop the conflicting application, or
-
-3. Wait - OrcaSlicer may fail to start its HTTP server if port is occupied
 
 ## Claude Desktop Configuration
 
@@ -110,13 +109,19 @@ For Claude Desktop (not Claude Code CLI), add to the MCP configuration:
 }
 ```
 
-## Multiple OrcaSlicer Instances
+## Multiple OrcaMCP Instances
 
-Currently not supported - only one OrcaSlicer instance can bind to port 13618.
+Several OrcaMCP windows can run at once, each on its own port (above). Each publishes an entry in
+`~/.orcamcp/instances/<pid>.json`: its pid, port, version, program, data folder and open project. The
+folder and its files are yours alone, and hold no credential.
 
-To work around this:
-1. Use a single OrcaSlicer instance
-2. Use multiple plates within one project
+An agent lists them with `list_instances` and chooses one with `select_instance` (by pid, port or
+project). A session with one window running uses it, as before. With several, a session that has not
+chosen is refused with the list, and a chosen window that quits is never replaced by another silently.
+`start_orca` names the window it launched or found. See `docs/tools/reference.md`, "Bridge Tools".
+
+Windows that share a data folder overwrite each other's settings and presets as they save them; give a
+second window its own with `--datadir <folder>`.
 
 ## Verifying Configuration
 

@@ -69,13 +69,17 @@ class StaticSchemaFreshnessTests(unittest.TestCase):
 
 
 class LiveResponse:
-    """Just enough of urlopen's context-manager result for check_orcaslicer_connection's probe."""
+    """Just enough of urlopen's context-manager result for check_orcaslicer_connection's probe, and for
+    the GET /mcp answer of an OrcaMCP older than 2.5.0.6, which start_orca finds running."""
 
     def __enter__(self):
         return self
 
     def __exit__(self, *args):
         return False
+
+    def read(self):
+        return json.dumps({"name": "orca-slicer", "version": "2.5.0.5", "protocol": "mcp"}).encode()
 
 
 class StartOrcaAlreadyRunningNotifiesTests(unittest.TestCase):
@@ -101,7 +105,7 @@ class StartOrcaAlreadyRunningNotifiesTests(unittest.TestCase):
             result = self.bridge.launch_orcamcp()
 
         self.assertTrue(result["success"])
-        self.assertEqual(result["message"], "OrcaMCP is already running")
+        self.assertTrue(result["message"].startswith("OrcaMCP is already running"), result["message"])
         self.assertTrue(self.bridge.tools_changed_notification_due())
 
 

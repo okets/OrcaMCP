@@ -23,4 +23,13 @@ struct McpShuttingDown : JsonRpcError
     {}
 };
 
+// -32004: the call names another OrcaMCP instance than this one (params._meta["orcamcp/instance"]), so
+// it was not run. Several instances can run at once, and the bridge names the one it chose on every
+// call; this is how a call that reached the wrong one is told apart (OrcaMCPInstanceRegistry.hpp).
+struct WrongInstance : JsonRpcError
+{
+    static constexpr int error_code = -32004;
+    explicit WrongInstance(const std::string& message) : JsonRpcError(error_code, message) {}
+};
+
 }}} // namespace Slic3r::GUI::OrcaMCP

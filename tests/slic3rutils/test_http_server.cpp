@@ -118,6 +118,43 @@ TEST_CASE("the HTTP server listens on this machine only", "[HttpServer]")
     CHECK_FALSE(server.is_started());
 }
 
+TEST_CASE("a server does not start on a port another server listens on, and says why", "[HttpServer]")
+{
+    // A second OrcaMCP instance used to die here, on an uncaught bind error; on Windows asio's
+    // SO_REUSEADDR let it share the port instead, so either instance could answer a call.
+    HttpServer first(0);
+    first.set_request_handler([](const std::string&) { return json_response({{"server", "first"}}); });
+    first.start();
+    const unsigned short port = first.local_endpoint().port();
+
+    HttpServer  second(port);
+    std::string failure;
+    CHECK_NOTHROW(failure = second.try_start());
+    CHECK_FALSE(failure.empty());
+    CHECK_FALSE(second.is_started());
+    CHECK(contains(exchange(port, "GET", "/mcp").get(), "\"server\":\"first\""));
+    first.stop();
+}
+
+TEST_CASE("a stopped server's port can be listened on again at once, after it served requests", "[HttpServer]")
+{
+    // The server closes each connection, which leaves them closing on its side for up to a few minutes.
+    // A relaunch must still get its port back rather than move to the next one.
+    HttpServer first(0);
+    first.set_request_handler([](const std::string&) { return json_response({{"status", "ok"}}); });
+    first.start();
+    const unsigned short port = first.local_endpoint().port();
+    for (int i = 0; i < 3; ++i)
+        CHECK(contains(exchange(port, "GET", "/mcp").get(), "\"status\":\"ok\""));
+    first.stop();
+
+    HttpServer again(port);
+    again.set_request_handler([](const std::string&) { return json_response({{"status", "again"}}); });
+    CHECK(again.try_start().empty());
+    CHECK(contains(exchange(port, "GET", "/mcp").get(), "\"status\":\"again\""));
+    again.stop();
+}
+
 TEST_CASE("stopping the HTTP server waits for a request still being handled, and never abandons it", "[HttpServer]")
 {
     // A handler still running may use what the app destroys next, so stop() must not return before it
@@ -339,7 +376,6 @@ TEST_CASE("a cloud login that asks again for the port it listens on keeps its li
     mcp.stop();
 }
 
-#ifndef _WIN32 // Windows' SO_REUSEADDR lets a second socket take a bound port (prompt 09 settles that)
 TEST_CASE("a cloud login that cannot bind its port says so instead of throwing", "[HttpServer][Login]")
 {
     HeldMainThread quit_queue;
@@ -358,7 +394,6 @@ TEST_CASE("a cloud login that cannot bind its port says so instead of throwing",
     CHECK_FALSE(login.listens_on(squatter.local_endpoint().port()));
     mcp.stop();
 }
-#endif
 
 TEST_CASE("a cloud login's callback route closes when the login ends", "[HttpServer][Login][McpRequestGuard]")
 {

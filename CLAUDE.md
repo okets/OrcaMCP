@@ -71,7 +71,7 @@ cd build && ctest --output-on-failure
 ```
 ┌─────────────────┐         ┌──────────────────────┐         ┌─────────────────┐
 │   Claude Code   │  stdio  │  orcamcp-bridge.py   │  HTTP   │   OrcaSlicer    │
-│      CLI        │◄───────►│     (Python)         │◄───────►│  Port 13618     │
+│      CLI        │◄───────►│     (Python)         │◄───────►│  13618-13627    │
 └─────────────────┘         └──────────────────────┘         └─────────────────┘
                                                                       │
                                                                       ▼
@@ -89,7 +89,7 @@ cd build && ctest --output-on-failure
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
 | Transport | HTTP + stdio bridge | OrcaSlicer is a GUI app; pure stdio doesn't work |
-| Server location | Embedded in OrcaSlicer | Reuse existing HTTP server on port 13618 |
+| Server location | Embedded in OrcaSlicer | Reuse existing HTTP server, from port 13618; several instances each take their own port (see "Several instances at once") |
 | Protocol | JSON-RPC 2.0 over HTTP | Standard MCP protocol |
 | Threading | Main thread via CallAfter | OpenGL/GUI operations require main thread |
 
@@ -99,12 +99,13 @@ cd build && ctest --output-on-failure
 
 **Status**: Complete & Tested ✓
 
-### MCP Tools (83 in the app, 85 reachable)
+### MCP Tools (83 in the app, 87 reachable)
 
-The registry holds 85: the app serves 83 through `tools/list`, and two are registered as
+The registry holds 87: the app serves 83 through `tools/list`, and four are registered as
 bridge-only and served by the bridge: `start_orca`, which launches OrcaSlicer and so cannot be
-answered by it, and `wait_for_slice`, a wait the app's one request thread could not do without
-stalling every other call.
+answered by it, `wait_for_slice`, a wait the app's one request thread could not do without
+stalling every other call, and `list_instances` / `select_instance`, which choose the running app
+the bridge talks to.
 Every tool's category is the row it sits in below. To regenerate the counts after adding a tool:
 
 ```bash
@@ -127,13 +128,13 @@ grep -hA1 -E '^\s*register_(bridge_)?tool\(\{' src/slic3r/GUI/OrcaMCP/*.cpp | gr
 | **Printers** | `get_printers` (`is_online` is not a live check; `current_print_host.last_status_age_s` is), `select_printer`, `add_physical_printer` (incl. optional Obico URL/token for Flashforge), `discover_printers`, `send_to_printer` (refused when a plate it would send failed its `gcode_check`), `get_printer_status` (a failure names host:port and the next step, with the last known material station as `cached`), `printer_control`, `list_printer_files`, `print_printer_file`, `match_project_to_printer` (falls back to the printer's last status, applied only with `allow_cached: true`) |
 | **Adaptive** | `apply_adaptive_layer_height`, `clear_adaptive_layer_height` |
 | **History** | `undo`, `redo` |
-| **Info** | `get_server_info` (every tool's name by category; `section: tool_summaries` gives each tool's one-line summary, `section` fetches the rest of the docs), `quit_app` (closes the app with no dialog; discards unsaved changes and closes an open dialog unanswered unless `discard_changes=false`; refuses while a system file chooser or alert is open), `start_orca` (bridge-only) |
+| **Info** | `get_server_info` (every tool's name by category; `section: tool_summaries` gives each tool's one-line summary, `section` fetches the rest of the docs; `server.instance`: which instance answers, as in its registry entry), `quit_app` (closes the app with no dialog; discards unsaved changes and closes an open dialog unanswered unless `discard_changes=false`; refuses while a system file chooser or alert is open), `start_orca` (bridge-only: launches only the installed app or `ORCAMCP_APP_PATH`, never a build in a source folder; launches nothing when the session's instance runs, or exactly one runs and none is chosen (`already_running`), nor when several run and none is chosen (`several_running`, with the list); `new_instance: true` always launches another; the answer names the instance: pid, port, program, data folder, open project), `list_instances` (bridge-only: every running instance with its pid, port, version, program, data folder, open project (name, path, unsaved), `state` live / busy, `selected`, `shares_data_dir_with`; an OrcaMCP older than 2.5.0.6 as `legacy`; `using`, `stale_entries_ignored`), `select_instance` (bridge-only: by exactly one of `pid`, `port`, `project` (name, any case, or full path); `previous`, `tool_list_changed`) (see "Several instances at once") |
 
 ### Tool list: one source for every tool's text
 
 Every tool's name, category, summary, description and schema lives in its registration in
 `src/slic3r/GUI/OrcaMCP/`: `register_tool({...})`, or `register_bridge_tool({...})` for a tool the
-bridge answers itself (`start_orca`, `wait_for_slice`). Nothing else holds tool text; everything agents see is
+bridge answers itself (`start_orca`, `wait_for_slice`, `list_instances`, `select_instance`). Nothing else holds tool text; everything agents see is
 generated from that registry:
 
 | Where agents see it | Generated by |
@@ -232,7 +233,14 @@ What the tests enforce, with no app running:
   in the app's words, and no bridge tool takes a nested object; the Windows path rewrite forwards
   arguments that are not an object untouched, for the app to refuse (`test_bridge_arguments.py`);
   `initialize` answers the file's instructions, app or no app, and still answers without them for a
-  file that has none (`test_bridge_instructions.py`).
+  file that has none (`test_bridge_instructions.py`). No Python test contacts or launches an app, nor
+  depends on the shell's environment: each loads the bridge through `bridge_test_support.load_bridge()`,
+  which gives it none of the shell's `ORCAMCP_*` settings (a test that needs one passes it:
+  `load_bridge(ORCAMCP_PORT="13625")`; `test_bridge_environment.py`), an empty instance registry, a
+  default address nothing listens on, and a launch that raises (on 2026-09-28 a test of
+  `start_orca` launched the user's installed app); the fake instances are the tests' own servers. The
+  one comparison with a running app, `test_tools_schema.py`'s, is opt-in: it runs only with
+  `ORCAMCP_LIVE_SCHEMA_TEST_PORT` set to the port of a build started for it, and asks that port alone.
 - `tests/slic3rutils/test_mcp_scene_description.cpp` (`[McpSceneDescription]`): every object
   description carries `object_id` (and `internal_id`, never `id`), every plate `plate_index` and
   `is_current`; and `docs/tools/reference.md`'s `get_scene_info` example (after its
@@ -468,12 +476,14 @@ gh release upload v2.3.2.10 ./path/to/new/artifact.exe -R okets/OrcaMCP
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPMainThreadGate.hpp` | How a call hands work to the main thread and waits, and how quitting releases it: the gate is `QueuedCalls` (`src/slic3r/Utils/QueuedCall.hpp`), with `call_through` for a tool's json (see "Threading Model"; unit-tested in `tests/slic3rutils/test_mcp_shutdown.cpp`, `test_queued_call.cpp`) |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPQuit.cpp` | Quitting while a modal dialog is open: which dialogs are open, ending the innermost unanswered, holding the close until they are gone, and `quit_app`'s refusals (unit-tested in `tests/slic3rutils/test_mcp_quit.cpp`); the wx side (modal hook, turn timer) is `OrcaMCPQuitApp.cpp` |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPLoginServer.cpp` | Where the cloud login's callback is answered: a second port of the MCP server, on its thread (unit-tested in `tests/slic3rutils/test_http_server.cpp`) |
+| `src/slic3r/GUI/OrcaMCP/OrcaMCPPortChoice.cpp` | Which port the MCP server takes: the first of 13618-13627 where nothing accepts a connection at 127.0.0.1 or [::1] (see "Several instances at once"; unit-tested in `tests/slic3rutils/test_mcp_port_choice.cpp`) |
+| `src/slic3r/GUI/OrcaMCP/OrcaMCPInstanceRegistry.cpp` | Who this instance is: its entry in `~/.orcamcp/instances` (identity, open project), stale entries, the -32004 check on a call meant for another instance, and the user's notices; `OrcaMCPInstanceRegistryApp.cpp` reads the project from the Plater and shows them (unit-tested in `tests/slic3rutils/test_instance_registry.cpp`) |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPUiJob.cpp` | The UI worker's jobs a tool waits for (arrange, orient): the reported outcome, the wait on the HTTP thread and its answers, `get_slicing_status`'s `ui_job`, the bridge's cap; `OrcaMCPUiJobApp.cpp` starts them and reads the placement they left (see "Waiting for a UI job"; unit-tested in `tests/slic3rutils/test_mcp_ui_job.cpp`) |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPToolArguments.cpp` | Which tool calls reach a handler: an argument the tool's schema does not declare, a required one left out, or arguments that are not an object are refused with -32602 (see "Tool list"; unit-tested in `tests/slic3rutils/test_mcp_tool_arguments.cpp`) |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPRequestGuard.cpp` | Which requests the server answers: no web page's and no DNS-rebound one on `/mcp`, login callbacks only where a login listens (see "Security"; unit-tested in `tests/slic3rutils/test_mcp_request_guard.cpp`) |
 | `src/slic3r/Utils/ThreadCancel.cpp` | The per-request cancel check a quit applies to blocking network calls on the HTTP thread (unit-tested in `tests/slic3rutils/test_thread_cancel.cpp`) |
-| `src/slic3r/GUI/GUI_App.cpp` | MCP route registration, HTTP server startup, and the shutdown order (`stop_http_server`) |
-| `scripts/orcamcp-bridge.py` | stdio-to-HTTP bridge for Claude Code |
+| `src/slic3r/GUI/GUI_App.cpp` | MCP route registration, HTTP server startup on the first free port, and the shutdown order (`stop_http_server`) |
+| `scripts/orcamcp-bridge.py` | stdio-to-HTTP bridge for Claude Code; finds the running instances and sends every call to the chosen one (its "Instances" section) |
 
 ### Where the app's data lives
 
@@ -488,6 +498,26 @@ This fork's data directory is named after the fork, **not** after OrcaSlicer:
 Physical printers (print host, serial, API key) live in `user/default/machine/<name>.json`
 there — `C5P.json` for the Creator 5 Pro. Searching the `OrcaSlicer` directory instead finds
 nothing and looks like the printer was never saved.
+
+### Where `~/.orcamcp` comes from, and why a test launch never touches it
+
+`~/.orcamcp` (`%USERPROFILE%\.orcamcp` on Windows) holds the bridge the user's own agent sessions run:
+the "Connect" buttons in Preferences point clients at `~/.orcamcp/orcamcp-bridge.py`, and so may a
+user's `~/.claude.json`. The app puts its own bridge and tool list (`orcamcp_tools.json`, which the
+bridge cannot work without) there at startup, both together, and only when either differs **in content**
+(`MCPClientConfig::refresh_shared_bridge_at_startup`): launching the installed app, by hand or by an
+agent's `start_orca`, leaves it matching that app. Until 2026-09-28 it copied by file date, so every
+dev-build launch -- every agent's live check -- replaced the user's bridge, and the installed app, older by
+date, never put its own back.
+
+A test launch never touches it: one with a data folder of its own (`--datadir`, which every test launch
+has), or of a build in a source tree (a `CMakeCache.txt` in a folder above the program,
+`MCPClientConfig::executable_in_build_tree`). The log says, at info, which it did and why ("MCP bridge:
+~/.orcamcp left as it is: ..." or "... copied ..."). An agent's launch of the installed app copies too:
+`start_orca` launches nothing else, so skipping those left `~/.orcamcp` on an old bridge after an update
+made that way. Connecting a client in Preferences copies by content as well. The instance registry
+(`~/.orcamcp/instances`) is the one thing a test launch writes there, unless `ORCAMCP_INSTANCES_DIR`
+points elsewhere, as the live checks do.
 
 ### Running the live printer test
 
@@ -673,7 +703,8 @@ that call in flight waited forever: on 2026-09-26 `quit_app`, with a script poll
   sets `set_closing(true)`, once the close can no longer be vetoed (`MainFrame.cpp`). That closes the
   gate: the waiting call is released with `McpShuttingDown`, work still queued is never run, and
   every later tool call is refused with JSON-RPC **-32002** ("OrcaMCP is quitting, so this call was
-  not run. Use start_orca to start it again."). `McpShuttingDown` is a `JsonRpcError`
+  not run. Use start_orca to start it again."), and the instance's registry entry is removed (see
+  "Several instances at once"). `McpShuttingDown` is a `JsonRpcError`
   (`OrcaMCPJsonRpcError.hpp`), so it takes the one `JsonRpcError` path. A call whose work has already
   started is waited for, since its work may still use what the caller owns.
 - **Never abandon a handler, and still bound the quit.** A handler still running may use what the app
@@ -741,7 +772,8 @@ that call in flight waited forever: on 2026-09-26 `quit_app`, with a script poll
   closed. Anything else that stops or restarts an `HttpServer` from the main thread needs the same
   care.
 
-Both servers listen on **127.0.0.1 only**: MCP has no authentication and can start prints.
+Both servers listen on **127.0.0.1 only**, on whichever port the MCP server took (see "Several instances
+at once"): MCP has no authentication and can start prints.
 
 ### Security: web pages never reach MCP
 
@@ -771,6 +803,83 @@ with `HttpServer::set_request_guard` in `GUI_App::start_http_server`) before any
 - **No reply carries `Access-Control-Allow-*`**, so no page can read one either.
 
 The bridge sends no `Origin` and names `localhost` or `127.0.0.1` (`scripts/tests/test_bridge_request_headers.py`).
+
+### Several instances at once
+
+"OrcaMCP crashes when a second instance is open" (2026-09-26): the MCP server bound 13618 in
+`post_init`, a second instance's bind threw on the main thread, and nothing caught it. Upstream starts
+its HTTP server only for a cloud sign-in, on a port the OS just gave it, so the startup bind is ours.
+And on 2026-09-27 an agent's `new_project` reached the user's own window: OrcaMCP 2.5.0.5 listens on
+`*:13618`, and macOS lets a later `127.0.0.1:13618` bind beside it, so the second instance did not fail
+at all. Windows' `SO_REUSEADDR` let two instances share one port outright. A second instance is an
+everyday event, not only an agent's: with the "single instance" preference off (the default), opening a
+3MF from Finder while OrcaMCP runs starts another copy (`GUI_App::MacOpenFiles` -> `start_new_slicer`);
+with it on, a second launch of the same program hands its files over and exits (the lock is keyed by the
+program's path, so a dev build and the installed app never count as one). So several instances run at
+once, and an agent sees them and chooses:
+
+- **The port** (`OrcaMCPPortChoice.cpp`, called from `GUI_App::start_http_server`, once per session: a
+  sign-in asks for the server on every message): the first of 13618-13627 where nothing *accepts* a
+  connection at 127.0.0.1 or [::1] within 200 ms (both tried at once; the probe returns as soon as it
+  knows), a check that also finds a listener on every interface. A connection refused, or still pending at
+  the timeout, is no sign of one: Windows refuses a loopback connection to a closed port only after about a
+  second of retries, and a firewall may drop loopback IPv6, while a listener accepts at once (a probe that
+  counted a pending one as taken found every port taken on Windows). A bind alone would not tell: it
+  succeeds beside a listener on every interface on macOS, and on Windows even with `SO_EXCLUSIVEADDRUSE`
+  (Microsoft's table: an exclusive bind to a specific address after another process's `SO_REUSEADDR` or
+  default bind to the wildcard succeeds, and takes that address from it). A bind without `SO_REUSEADDR`
+  also fails for the closed connections a quit leaves for up to a minute, so a relaunch would lose 13618
+  for nothing. A listener bound to another address only cannot take a local client's connection and is not
+  looked for. The bind itself is `HttpServer::try_start()` (never throws; `start()` still does, for
+  `OAuthJob`), `127.0.0.1` only, exclusive on Windows (`SO_EXCLUSIVEADDRUSE`, probe AJ, so no later
+  process takes the port from it); a bind that fails (two instances starting at once, or one of ours,
+  which binds 127.0.0.1 exclusively) moves on to the next port. The request guard is built for the port
+  bound. No free port: no MCP server, a warning notification, and no cloud sign-in callback either (it
+  rides on the MCP server, `OrcaMCPLoginServer.hpp`). A port other than 13618 gets a quiet notification
+  naming who holds 13618; Preferences shows the port.
+- **The registry** (`OrcaMCPInstanceRegistry.cpp`): each instance writes `~/.orcamcp/instances/<pid>.json`
+  (`ORCAMCP_INSTANCES_DIR` for tests) once its server listens: `instance_id` (random, new each launch),
+  pid, port, `url` (always `http://127.0.0.1:<port>/mcp`), version, executable, data_dir, `started_at`
+  (UTC with milliseconds), `alone_at_start` (no other instance of its program ran on its data folder when
+  it started: only such an instance can be a restart), and `project` {name, path, unsaved}, what the window
+  title shows. The folder is 0700, the files 0600, written under a temporary name and renamed. Never a
+  credential; the id is an identity, not a secret. The project is refreshed after every tool call and once
+  a second (`OrcaMCPInstanceRegistryApp.cpp`, no upstream hook); the file is rewritten whenever it does
+  not hold the current project yet, so a write that failed (Windows refuses the rename while the bridge
+  reads the file) is tried again. The file goes when the app starts quitting (`OrcaMCPServer::shut_down`),
+  and is never written again; the identity stays, since the app answers calls until it is gone: one
+  stamped for it gets -32002, not -32004, and GET `/mcp` still names it. Publishing removes entries whose
+  process is gone or whose pid now runs another program (`instance_process_runs`), and any other entry
+  claiming its port; a reader trusts an entry only when its port answers GET `/mcp` with its id. GET
+  `/mcp` and `get_server_info`'s `server.instance` carry the same identity, and GET never waits for the
+  main thread.
+- **One instance per call.** The bridge names the instance it chose on every tools/call, in
+  `params._meta["orcamcp/instance"]` ("legacy" for an OrcaMCP older than 2.5.0.6, which ignores it), and
+  the app refuses a call naming another with JSON-RPC **-32004** (`WrongInstance`) before anything else,
+  the quitting and starting-up answers included. A call without it (an older bridge, curl) runs.
+- **The bridge** (`scripts/orcamcp-bridge.py`, "Instances"): it lists the entries that answer, plus
+  whatever answers at `ORCAMCP_URL` without one (an older OrcaMCP, shown as `legacy`). With `ORCAMCP_PORT`
+  set, a session uses the instance on that port and only that one: nothing there is "No OrcaMCP answers on
+  port N", never another instance (a session pinned to a test build not up yet drove the user's app).
+  Unset, it starts with the only one running; with several and none chosen, a tool call is refused with
+  the list and `next_steps` to `select_instance` (the user's choice, 2026-09-28: first use does not simply
+  take 13618, which was the user's own window on 09-27). Before each call it asks the chosen port's GET
+  `/mcp` who answers: another instance id, or none (an OrcaMCP older than 2.5.0.6, which would ignore the
+  stamp and run the call), means the chosen one is gone and the call is not sent. It never moves by
+  itself, except to follow a restart: an instance of the same program on the same data folder that started
+  after the bridge last heard from its own, with none of that program on that folder beside it
+  (`alone_at_start`; `is_successor`), and only when exactly one qualifies; the call that finds it is not
+  run, and says so. A second window opened meanwhile is never taken for a restart. A chosen instance that
+  quit or crashed is reported, with the others running; none is taken in its place. `start_orca` launches
+  only the installed app or `ORCAMCP_APP_PATH` (dev builds would run on the real data folder; the user,
+  2026-09-28), always with `open -n` on macOS, and chooses the instance it launched: a new one running that
+  program, never another program's window that came up meanwhile (an installed OrcaMCP older than 2.5.0.6,
+  which cannot say what it runs, is taken when it newly answers on 13618). Switching to an instance whose
+  build lists other tools sends `notifications/tools/list_changed`; the same build keeps the list.
+- **The data folder is shared, as upstream shares it**: two instances on one data folder each save
+  `OrcaMCP.conf` (on idle, whenever it changed) and presets, and the last writer wins; there is one
+  `last_backup_path`. The registry writes nothing there. The second instance shows a notification naming
+  the other, and `list_instances` marks them `shares_data_dir_with`.
 
 ---
 
@@ -802,6 +911,11 @@ The bridge sends no `Origin` and names `localhost` or `127.0.0.1` (`scripts/test
 6. **Mesh repair time**: `repair_mesh` applies nothing when its CGAL work takes longer than the call may
    wait (a little under the bridge's `ORCAMCP_TIMEOUT`); a larger mesh needs a larger timeout, or
    `volume_id` one volume at a time. CGAL is header-only, so the -O0 dev build runs it unoptimised
+7. **Several instances**: at most ten run with MCP (ports 13618-13627); an eleventh runs without it, and
+   its cloud sign-in cannot receive its callback. Instances on one data folder overwrite each other's
+   settings and presets as they save them (upstream behaviour; the second instance warns). An OrcaMCP
+   2.5.0.5 or older started after a newer one still binds `*:13618` beside it: this machine's connections
+   reach the newer one, and the older one cannot be listed. Upgrade it
 
 ---
 
@@ -824,12 +938,15 @@ Path normalization is applied to: `file_path`, `output_path`, `path` parameters.
 On Windows, OrcaMCP installs to:
 - `C:\Program Files\OrcaMCP\orca-mcp.exe`
 
-The bridge script searches these locations automatically:
+The bridge's `start_orca` launches the first of these that exists (and only these: never a build in a
+source folder, which would run on the real data folder):
 - `%ProgramFiles%\OrcaMCP\orca-mcp.exe`
 - `%ProgramFiles(x86)%\OrcaMCP\orca-mcp.exe`
 - `%LOCALAPPDATA%\Programs\OrcaMCP\orca-mcp.exe`
 
-Override with `ORCAMCP_APP_PATH` environment variable if needed.
+On macOS `/Applications/OrcaMCP.app` or `~/Applications/OrcaMCP.app`; on Linux `/usr/bin`, `/usr/local/bin`,
+`~/.local/bin` or `/opt/OrcaMCP/bin`. `ORCAMCP_APP_PATH` overrides all of them: set it to launch a test
+build, and give that build its own data folder.
 
 ---
 
@@ -1003,8 +1120,9 @@ The `count` field is always present (even when 0) to help confirm issues have be
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ORCAMCP_HOST` | `localhost` | OrcaSlicer HTTP server host. The app listens on 127.0.0.1 only, so this is `localhost` or `127.0.0.1`; another machine cannot reach it |
-| `ORCAMCP_PORT` | `13618` | OrcaSlicer HTTP server port |
+| `ORCAMCP_HOST` | `127.0.0.1` | Where the bridge looks for an instance before it has chosen one. The app listens on 127.0.0.1 only, so this is `127.0.0.1` or `localhost`; another machine cannot reach it. A chosen instance is always addressed at 127.0.0.1 |
+| `ORCAMCP_PORT` | (unset: `13618`) | Set: the session uses the instance on this port and only that one, even with several running; with nothing there a call answers "No OrcaMCP answers on port N" and no other instance is used. Unset: the only running instance is used, and an OrcaMCP older than 2.5.0.6 is looked for on 13618. `select_instance` changes it either way |
+| `ORCAMCP_INSTANCES_DIR` | `~/.orcamcp/instances` | Read by the app and the bridge: where each instance publishes its entry. For tests |
 | `ORCAMCP_TIMEOUT` | `120` | Request timeout in seconds. It also bounds how long a tool waits for its arrange or orient: the bridge sends `wait_for_slice`'s cap with every tool call, as `params._meta["orcamcp/wait_cap_s"]` (see "Waiting for a UI job") |
 | `ORCAMCP_DEBUG` | (unset) | Enable debug logging to stderr |
 | `ORCAMCP_SKIP_CLOUD_LOGIN` | (set by `start_orca`) | App-side: marks an agent launch (`GUI::is_agent_launch()`), so startup waits on nothing a person must answer. It skips the Orca cloud silent sign-in, which reads the keychain synchronously on the GUI thread (on macOS a permission prompt per freshly built binary), and the recent-project thumbnails, which open every recent 3MF on the GUI thread (for projects in `~/Documents`, a macOS privacy prompt per fresh binary). Home then shows the projects listed before the launch without thumbnails; projects saved or opened during the session get theirs. Either prompt, unanswered, blocks the app before the MCP server starts. Set it yourself when launching the app for an agent. |
@@ -1102,13 +1220,23 @@ echo "AF a cancelled or failed arrange keeps prepare_all's plates locked, its ru
 echo "AG an object added to the scene has only its first instance on a plate (rel2506/07f): $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^void ObjectList::add_object_to_list\(/{f=1} f&&/notify_instance_update\(obj_idx, 0, true\)/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
 echo "AH the first slice waits for every TBB worker at once to name them (rel2506/07g): $(U src/libslic3r/Thread.cpp | awk '/^void name_tbb_thread_pool_threads_set_locale/{f=1} f&&/cv\.wait\(/{print "yes"; exit} f&&/^}/{print "no"; exit}')"
 echo "AI the Repair's worker changes the object itself, off the main thread / a first volume dropped whole skips the next / a repair can delete an object's last part / the Repair's snapshot is taken before its dialog / ModelVolume has a hull setter (0 = no, keep ours) (rel2506/08b): $(U src/slic3r/Utils/FixModelByCgal.cpp | grep -c 'std::thread(\[&model_object') / $(U src/slic3r/Utils/FixModelByCgal.cpp | awk '/removed_parts >= parts_count/{f=1} f&&/ivolume = part_end;/{print "yes"; exit} f&&/continue;/{print "no"; exit}') / $(U src/slic3r/Utils/FixModelByCgal.cpp | awk '/is_not_3dimensional_part\(part_volume->mesh\(\)\)/{f=1} f&&/parts_count\(\)|is_model_part/{print "no"; exit} f&&/delete_volume\(part_idx\)/{print "yes"; exit}') / $(U src/slic3r/GUI/GUI_ObjectList.cpp | awk '/^void ObjectList::fix_through_cgal/{f=1} f&&/TakeSnapshot/{print "yes"; exit} f&&/ProgressDialog progress_dlg/{print "no"; exit}') / $(U src/libslic3r/Model.hpp | grep -c 'set_convex_hull')"
+echo "AJ upstream's acceptor takes asio's SO_REUSEADDR on Windows, which lets a second process bind a port the first listens on (rel2506/09; 0 = bug): $( { U src/slic3r/GUI/HttpServer.hpp; U src/slic3r/GUI/HttpServer.cpp; } | grep -c 'EXCLUSIVEADDRUSE')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
 written is cut (ours drains it, `IOServer::begin_stop`), and upstream binds all interfaces (we bind
 127.0.0.1). Our other `HttpServer` changes are features, not fixes: the second listener for the
-cloud login (`listen_also`) and the loopback endpoint helper. On "no" / 0, take upstream's code and
-re-check that a reply in flight still reaches its client and the bind is still loopback.
+cloud login (`listen_also`), the loopback endpoint helper, and `try_start()`, a `start()` that returns
+why it could not bind instead of throwing (the MCP server then tries the next port; see "Several
+instances at once"). On "no" / 0, take upstream's code and re-check that a reply in flight still reaches
+its client and the bind is still loopback.
+
+Item AJ: asio's endpoint constructor sets `SO_REUSEADDR`, which on Windows lets a second process bind a
+port another listens on, so two instances shared 13618 and either could answer a call. Ours opens every
+listener through `HttpServer::listen_on_loopback`, with `SO_EXCLUSIVEADDRUSE` on Windows (`SO_REUSEADDR`
+elsewhere, where it only covers a restart's closed connections). On a non-zero, take upstream's and
+re-run `slic3rutils_tests "[HttpServer]"` on Windows: a second server on a held port must not start, and a
+stopped server's port must bind again at once.
 
 Item R: upstream's `HttpServer` never reads a request's `Origin` header, so it serves whatever page
 reaches it. Ours passes every request's `Origin`, `Host` and arrival port to a guard before the handler
