@@ -1886,8 +1886,11 @@ nothing (`CustomGCode::tool_change_effects`, which MCP reports by). The plate ca
 (walls, infill, top and bottom surfaces: only the slicer's regions know), so it counts its objects' filaments from
 their parts and layer ranges (`ModelVolume::get_extruders`, as `Print::object_extruders` reads them), and only of
 the objects the slicer prints: an instance here that is printable -- the object's flag, the instance's, inside the
-plate's build volume by the same test (`PartPlate::slicer_prints_object`, `ModelInstance::calc_print_volume_state`);
-instances on other plates are outside it. That is the fewest filaments the slicer counts, so the plate lists a
+plate's build volume by the same test, against the volume the plater gives the slicer (`PartPlate::slicer_prints_instance`,
+`slicing_build_volume`, `ModelInstance::calc_print_volume_state`; on a round bed an object in a corner of the plate's
+square is on the plate, not inside the volume); instances on other plates are outside it. The volume is built once
+per call, and only when the plate's own reasons (by object, vase mode, one filament, another mode) leave the objects
+to decide. That is the fewest filaments the slicer counts, so the plate lists a
 change the slicer may take and never misses one it takes; where a feature's filament keeps the slicer from taking it,
 the plate lists a filament that does not print, as upstream lists every change. On 0, take upstream's and re-run
 `fff_print_tests "[MultiFilament]"` and `slic3rutils_tests "[LayerGcode]"`.

@@ -543,6 +543,26 @@ TEST_CASE("a plate's objects the slicer does not print do not keep a filament ch
     CHECK(lists(3));
 }
 
+// What the slicer leaves out by the build volume alone: on a round bed, an object in a corner of the plate's square is on
+// the plate (its box is inside the plate's box, which is all the plate's own containment asks), yet outside the bed's
+// circle, so the slicer does not print it. On plate 1, whose shape is moved by the plate's offset.
+TEST_CASE("an object outside a round bed's circle does not keep a plate's filament change from being listed", "[LayerGcode][orcamcp]")
+{
+    Model model;
+    auto  plates = plate_list_fixtures::plate_list_for(model, 2, plate_list_fixtures::round_bed());
+    GUI::PartPlate& plate = *plates->get_plate(1);
+    plate_list_fixtures::add_cube(model, *plates, {plate_list_fixtures::centre_of(*plates, 1)});
+    const Vec3d corner = plate.get_plate_box().min + Vec3d(20., 20., plate_list_fixtures::k_cube_size / 2.0);
+    plate_list_fixtures::add_cube(model, *plates, {Vec3d(corner.x(), corner.y(), plate_list_fixtures::k_cube_size / 2.0)})
+        .config.set_key_value("extruder", new ConfigOptionInt(2));
+    REQUIRE(plate.contain_any_instance_totally(1)); // the plate holds it
+    model.plates_custom_gcodes[1] = {CustomGCode::MultiAsSingle, {{10.0, CustomGCode::ToolChange, 3, "#0000FF", ""}}};
+    DynamicPrintConfig project;
+    project.set_key_value("filament_colour", new ConfigOptionStrings({"#FF0000", "#00FF00", "#0000FF"}));
+    const std::vector<int> listed = plate.get_extruders(true, DynamicPrintConfig::full_print_config(), project);
+    CHECK(std::find(listed.begin(), listed.end(), 3) != listed.end());
+}
+
 TEST_CASE("an object on another plate does not keep a plate's filament change from being listed", "[LayerGcode][orcamcp]")
 {
     Model model;
