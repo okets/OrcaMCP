@@ -1307,6 +1307,7 @@ echo "BH a static last vase mode clears the ticks of whichever plate is shown ne
 echo "BI a plate's filament changes count as filaments it uses (Print::extruders, PartPlate::get_extruders) though the slicer applies none on a plate printing with several filaments or by object / a vase plate's filament changes print as filament switches the slider hides / the plate counts the filaments of objects the slicer does not print (rel2506/14; 0 = bug): $(U src/libslic3r/CustomGCode.hpp | grep -c 'tool_changes_apply') / $(U src/libslic3r/CustomGCode.hpp | grep -c 'spiral_vase') / $(U src/slic3r/GUI/PartPlate.hpp | grep -c 'slicer_prints_object')"
 echo "BJ the Preview's slider shows or hides a plate's filament changes by its parts' filaments, not by the slicer's rule: a mixed slot's plate hid a change it prints (rel2506/14): $(U src/slic3r/GUI/GUI_Preview.cpp | awk '/^void Preview::update_layers_slider_mode/{f=1} f&&/tool_changes_off/{print "no"; d=1; exit} f&&/extruder != plate_extruders\[0\]/{print "yes"; d=1; exit} END{if(!d) print "unknown"}')"
 echo "BK Save's steps after its file dialog are inline in save_project, which MCP's save_project and export_3mf need to run too (rel2506/14; a move): $(U src/slic3r/GUI/Plater.cpp | grep -c '^int Plater::save_project_as')"
+echo "BL admesh takes an STL for ASCII when the 128 bytes after its label are all below 128, so a small binary STL at whole millimetres with zero normals loads no geometry (rel2506/15; 0 = bug): $(U deps_src/admesh/stlinit.cpp | grep -c 'binary_by_size')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -1910,6 +1911,14 @@ names the project, removes its backup and marks it saved. Ours moves the second 
 through (`save_project_to`, `OrcaMCPServer.cpp`): `export_3mf` wrote the file and named the project only, so the
 project stayed marked unsaved, and `save_project` named it before saving, so a failed save renamed it. On a
 non-zero count, upstream has its own; on changes to `save_project`, move them the same way.
+
+Item BL: admesh's `stl_open_count_facets` (`deps_src/admesh/stlinit.cpp`) decided binary or ASCII by the 128 bytes
+after the label alone: any byte above 127 meant binary. A small binary STL at whole millimetres with zero normals (10
+and 15 mm cubes from a generator) has none, so it was read as text and loaded no geometry; a binary STL whose label
+starts with "solid" was read right only because its bytes usually cross 127. A binary STL is exactly its label, its
+facet count and 50 bytes per facet, and ours decides by that first, falling back to the byte test; text never
+matches (the count's four ASCII bytes are at least 0x20202020 facets, a 26 GB file). On a non-zero, take upstream's
+and re-run `libslic3r_tests "[stl]"`, which writes such files byte by byte.
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices
