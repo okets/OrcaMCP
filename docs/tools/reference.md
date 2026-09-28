@@ -4114,7 +4114,7 @@ nothing to suggest has no `next_steps`.
 
 | Response | Step | When |
 |----------|------|------|
-| `load_model` (the objects it added), `get_scene_info` (every object) | `get_mesh_health` | an object shows the object list's mesh warning icon (open edges, or repairs a 3MF recorded) |
+| `load_model` (the objects it added), `get_scene_info` (every object), `reload_from_disk` / `replace_volume_with_file` (the objects they changed) | `get_mesh_health` | an object shows the object list's mesh warning icon (open edges, or repairs a 3MF recorded) |
 | `get_mesh_health` | `repair_mesh` for that object | the object has open edges. Not for a closed mesh whose icon shows repairs recorded at load: a repair leaves it as it is |
 | | `get_object_components` | a model part of the object is more than one shell: a loose part or a stray fragment, which leaves no warning icon when it is closed |
 | `slice_all` | `wait_for_slice` | `slicing_started`, or `not_started` with `busy_slicing` (wait, then `slice_all` again) |
