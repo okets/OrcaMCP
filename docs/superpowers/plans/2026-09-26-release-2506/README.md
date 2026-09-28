@@ -68,12 +68,12 @@ gave were wrong; the prompts carry the corrected facts.
 | 07f | (no prompt file; 07c's agent) | 07e | an object whose instances sit on two plates: a 3MF round trip loses the second plate; on_bed measured over both instances | merged and pushed 2026-09-28 (two rounds, 4 commits; merge e9431bd0c4; Build all green); probe AG |
 | 07g | [The first slice can hang the app](07g-tbb-thread-naming.md) | 07f | `name_tbb_thread_pool_threads_set_locale` (Thread.cpp): a barrier across the TBB pool | merged and pushed 2026-09-28 (two rounds, 3 commits; merge 5c0bbc0278; Build all green on every platform); probe AH |
 | 08 | [Server instructions and hints](08-instructions-and-hints.md) | 01–07g | `initialize`, descriptions, result hints | merged and pushed 2026-09-28 (two rounds, 16 commits; merge 1a3afdc522); the user's shorter instructions text (1,228 characters); acceptance 3/3 valid runs |
-| 08b | [An agent can repair a mesh](08b-repair-mesh.md) | 08 | a `repair_mesh` tool on the object list's CGAL repair (`FixModelByCgal.cpp`), one core for the GUI and MCP | design approved 2026-09-28 (plan/apply core shared by the GUI and MCP, fixing five upstream Repair bugs); implementing |
-| 09 | [Several instances, switch between them](09-second-instance-crash.md) | 01–08 | port fallback, instance registry (with open file), bridge `list_instances` / `select_instance` | design approved by the user 2026-09-28 (decisions 1-7 and 9 as recommended; 8: start_orca keeps launching only the installed app). Starts after 08b merges |
-| 11 | [Parts and mesh edits](11-parts-and-mesh-edits.md) | 09 | split to objects/parts, add part/modifier/negative/support volumes, per-part settings and transforms, change type, delete, rename, merge; the get_server_info catalogue's growth | added 2026-09-28 by the user from the parity audit; design goes to the orchestrator |
-| 12 | [Arrange, instances, plates](12-arrange-instances-plates.md) | 11 | arrange all plates and options, remove instance / instance count / fill bed, plate settings, the global bed type path | added 2026-09-28 (parity) |
-| 13 | [Filaments and printers](13-filaments-and-printers.md) | 12 | add/delete filament slots, a slot's settings, installing printers/filaments, Flashforge fans / speed / Z offset (no live printer commands without the user) | added 2026-09-28 (parity) |
-| 14 | [Slice, export, view](14-slice-export-view.md) | 13 | cancel a slice, export .gcode.3mf and STL, G-code at a layer, the user's tab and camera, reload from disk | added 2026-09-28 (parity) |
+| 08b | [An agent can repair a mesh](08b-repair-mesh.md) | 08 | a `repair_mesh` tool on the object list's CGAL repair (`FixModelByCgal.cpp`), one core for the GUI and MCP | merged and pushed 2026-09-28 (three rounds, 4 commits; merge 003f581c0d); probe AI |
+| 09 | [Several instances, switch between them](09-second-instance-crash.md) | 01–08 | port fallback, instance registry (with open file), bridge `list_instances` / `select_instance` | design approved by the user 2026-09-28 (decisions 1-7 and 9 as recommended; 8: start_orca keeps launching only the installed app). Starts after 11a merges (11a keeps get_server_info under its 6 KB cap for 09's two tools) |
+| 11 | [Parts and mesh edits](11-parts-and-mesh-edits.md) | 09 | split to objects/parts, add part/modifier/negative/support volumes, per-part settings and transforms, change type, delete, rename, merge; the get_server_info catalogue's growth | design approved 2026-09-28; its catalogue part runs first as 11a (implementing, before 09); the rest after 09 |
+| 12 | [Arrange, instances, plates](12-arrange-instances-plates.md) | 11 | arrange all plates and options, remove instance / instance count / fill bed, plate settings, the global bed type path | design approved 2026-09-28; queued |
+| 13 | [Filaments and printers](13-filaments-and-printers.md) | 12 | add/delete filament slots, a slot's settings, installing printers/filaments, Flashforge fans / speed / Z offset (no live printer commands without the user) | design approved 2026-09-28; queued |
+| 14 | [Slice, export, view](14-slice-export-view.md) | 13 | cancel a slice, export .gcode.3mf and STL, G-code at a layer, the user's tab and camera, reload from disk | design approved 2026-09-28; queued |
 | 10 | [Flashforge print options](../2026-09-27-flashforge-print-options.md) (flow calibration, leveling, time-lapse) | 01–14 | `FlashforgeApi::PrintOptions`, the send dialog, `send_to_printer`, `print_printer_file`, `get_printer_status` | written 2026-09-27 in another session; the user decided 2026-09-28 it runs last, after all other work and right before the version bump. Its live printer steps start real prints: they run only with the user present and on their word at that moment |
 
 If time runs short, the priority is 01, 02, 03, 04b, 05, 08, 04, 06, 07. Anything unfinished moves to the
@@ -112,7 +112,7 @@ roadmap; nothing ships half-done.
   discoverability. Unit tests and code review come on top of this, not instead of it.
 - **Status:** update the table above as prompts move through design → approved → implementing → merged.
 
-Order of work: 08, 08b, 09, 11, 12, 13, 14, then 10 (the Flashforge print options, last), then the version bump.
+Order of work: 08, 08b, 11a, 09, 11, 12, 13, 14, then 10 (the Flashforge print options, last), then the version bump.
 The instructions text is the user's shorter version (2026-09-28); each prompt adds only its own tools to it.
 
 ## Waiting for the user
