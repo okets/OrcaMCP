@@ -410,6 +410,8 @@ struct McpDialogSuppressionGuard
     {
         set_mcp_prompt_answer(key, answer_id, note);
     }
+    // Whether the app asked the keyed prompt (MsgDialog::set_mcp_prompt_key) during this call.
+    bool prompt_asked(const std::string& key) const { return was_mcp_prompt_asked(key); }
     // The path a native file or folder dialog of this call gets instead of opening
     // (mcp_answer_path_dialog), until the outermost guard ends.
     void answer_file(const std::string& path) { answer_files({path}); }

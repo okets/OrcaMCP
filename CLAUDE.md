@@ -1022,7 +1022,8 @@ Dialog suppression is implemented in:
   native dialog on an MCP path needs only its call site
 - `MsgDialog.cpp`: `ShowModal()` override checks suppression flag; a dialog tagged with
   `set_mcp_prompt_key()` takes the answer the tool set with `McpDialogSuppressionGuard::answer_prompt()`,
-  and one tagged `set_mcp_error()` is recorded as an error
+  and records that it was asked (`record_mcp_prompt_asked`; the tool reads `prompt_asked(key)`, never the
+  prompt's text, which is translated); one tagged `set_mcp_error()` is recorded as an error
 - `GUI.cpp`: `show_error()` captures its text under suppression instead of deferring the dialog
   (`mcp_captures_error()`); the guard reads the errors apart (`errors()`, `notices()`, `fail_on_errors()`)
 - `UnsavedChangesDialog.cpp`: `ShowModal()` discards preset changes under suppression

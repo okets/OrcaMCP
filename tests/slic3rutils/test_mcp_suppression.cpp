@@ -330,3 +330,20 @@ TEST_CASE("a path answer lasts until the outermost guard ends, and a dialog outs
     CHECK(mcp_answer_path_dialog("Choose one or more files", McpPathDialog::file, paths));
     CHECK(paths.empty());
 }
+
+// split_object reports whether the app asked about floating pieces. It found out by searching the
+// captured messages for the prompt's text, whose translation is another msgid than the prompt's own:
+// in any other language it never matched. A keyed prompt that was asked is recorded by its key.
+TEST_CASE("A keyed prompt that was asked is known as asked, until the outermost guard ends", "[McpSuppression][orcamcp][suppression]")
+{
+    {
+        Slic3r::GUI::OrcaMCP::McpDialogSuppressionGuard guard;
+        CHECK_FALSE(guard.prompt_asked(MCP_PROMPT_SPLIT_FLOATING));
+        record_mcp_prompt_asked(MCP_PROMPT_SPLIT_FLOATING);
+        record_mcp_prompt_asked(""); // an untagged prompt has no key to record
+        CHECK(guard.prompt_asked(MCP_PROMPT_SPLIT_FLOATING));
+        CHECK_FALSE(guard.prompt_asked(MCP_PROMPT_MULTIPART));
+    }
+    Slic3r::GUI::OrcaMCP::McpDialogSuppressionGuard next;
+    CHECK_FALSE(next.prompt_asked(MCP_PROMPT_SPLIT_FLOATING));
+}

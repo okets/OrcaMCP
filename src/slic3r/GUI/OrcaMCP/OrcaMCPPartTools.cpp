@@ -565,13 +565,6 @@ std::vector<int> ids_from(std::size_t first, std::size_t end)
     return ids;
 }
 
-// Whether the guard's messages hold the prompt `prompt` (its answer recorded after it).
-bool prompt_answered(const McpDialogSuppressionGuard& guard, const std::string& prompt)
-{
-    const std::vector<std::string> said = guard.messages();
-    return std::any_of(said.begin(), said.end(), [&prompt](const std::string& message) { return message.find(prompt) != std::string::npos; });
-}
-
 nlohmann::json split_to_objects(Plater& plater, int object_id, ModelObject& object, bool keep_height, const McpDialogSuppressionGuard& guard)
 {
     Model&            model     = plater.model();
@@ -598,8 +591,8 @@ nlohmann::json split_to_objects(Plater& plater, int object_id, ModelObject& obje
         answer["object_ids_shifted"] = "object " + std::to_string(object_id) + " is gone and every object after it moved down by one; the "
                                        "pieces are the last " + std::to_string(ids.size()) + ", objects " + listed_ids(ids);
     // The app asks only when auto-drop is on and a piece would float.
-    answer["floating_pieces"] = prompt_answered(guard, into_u8(_L("Disable Auto-Drop to preserve Z positioning?"))) ?
-                                    nlohmann::json(keep_height ? "kept_height" : "dropped_to_bed") : nlohmann::json(nullptr);
+    answer["floating_pieces"] = guard.prompt_asked(MCP_PROMPT_SPLIT_FLOATING) ? nlohmann::json(keep_height ? "kept_height" : "dropped_to_bed")
+                                                                               : nlohmann::json(nullptr);
     add_next_steps(answer, mesh_next_steps(model, ids, model_mesh_health(model)));
     return answer;
 }
