@@ -83,6 +83,8 @@ public:
 
     Info GetTicksValues() const;
     void SetTicksValues(const Info &custom_gcode_per_print_z);
+    // Orca: whether the slider shows a G-code file rather than the project's plate (it then shows every item).
+    void SetGcodeOnly(bool gcode_only) { m_gcode_only = gcode_only; }
     void SetLayersTimes(const std::vector<float> &layers_times, float total_time);
     void SetLayersTimes(const std::vector<double> &layers_times);
 
@@ -92,7 +94,8 @@ public:
     void SetExtraStyle(long style) { m_extra_style = style; }
     void SetManipulationMode(Mode mode) { m_mode = mode; }
     Mode GetManipulationMode() const { return m_mode; }
-    void SetModeAndOnlyExtruder(const bool is_one_extruder_printed_model, const int only_extruder, bool can_change_color);
+    // Orca: is_spiral_vase is the plate's own (PartPlate::get_spiral_vase_mode), not the print preset's.
+    void SetModeAndOnlyExtruder(const bool is_one_extruder_printed_model, const int only_extruder, bool can_change_color, bool is_spiral_vase);
     void SetExtruderColors(const std::vector<std::string> &extruder_colors);
 
     bool IsNewPrint();
@@ -222,6 +225,10 @@ private:
     std::vector<double>      m_layers_values;
     std::vector<std::string> m_extruder_colors;
     bool                     m_can_change_color;
+    // Orca: the plate's items the slider does not show now -- a filament change while the plate prints with
+    // several filaments, an item on a layer another holds -- kept so that GetTicksValues writes them back.
+    std::vector<CustomGCode::Item> m_hidden_gcodes;
+    bool                     m_gcode_only = false;
     std::string              m_print_obj_idxs;
     bool                     m_is_need_post_tick_changed_event { false };
     Type                     m_tick_change_event_type;

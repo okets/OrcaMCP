@@ -9,6 +9,7 @@
 //BBS: add print base
 #include "libslic3r/PrintBase.hpp"
 
+#include <map>
 #include <string>
 #include "libslic3r/GCode/GCodeProcessor.hpp"
 #include <slic3r/GUI/GCodeViewer.hpp>
@@ -97,6 +98,8 @@ class Preview : public wxPanel
 
     unsigned int m_number_extruders { 1 };
     bool m_keep_current_preview_type{ false };
+    // Orca: each plate's vase mode when the Preview last showed it, by print index (clears_plate_layer_gcode).
+    std::map<int, bool> m_vase_by_plate;
 
     //bool m_loaded { false };
     //BBS: add logic for preview print

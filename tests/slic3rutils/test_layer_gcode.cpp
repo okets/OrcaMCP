@@ -1,11 +1,15 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include <cmath>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
 #include "slic3r/GUI/OrcaMCP/OrcaMCPLayerGcode.hpp"
+#include "slic3r/GUI/IMSlider.hpp"
+#include "plate_list_fixtures.hpp"
 #include "fff_print/test_helpers.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Print.hpp"
@@ -249,4 +253,135 @@ TEST_CASE("layers read from a slice are that slice's until an object's layers ar
     const std::optional<SliceLayersStamp> resliced = slice_layers_stamp(print);
     REQUIRE(resliced.has_value());
     CHECK(*resliced != *sliced);
+}
+
+// ---- The Preview's layer slider (IMSlider): what it keeps of a plate's layer G-code --------------------
+//
+// The slider takes the plate's layer G-code when the Preview shows it (SetTicksValues) and gives it back
+// (GetTicksValues), which the plater writes into the project on the slider's change. It erased every filament
+// change of the plate shown once it printed with several filaments, and wrote that to the project; and a
+// static "last vase mode" cleared the ticks of whichever plate was shown next after any vase toggle.
+
+namespace {
+
+// A slider over k_layers for a plate that prints with one filament (`several`: with several), in vase mode or not.
+std::unique_ptr<GUI::IMSlider> slider_for(bool several = false, bool vase = false)
+{
+    auto slider = std::make_unique<GUI::IMSlider>(0, int(k_layers.size()) - 1, 0, int(k_layers.size()) - 1);
+    slider->SetSliderValues(k_layers);
+    slider->SetMaxValue(int(k_layers.size()) - 1);
+    slider->SetModeAndOnlyExtruder(/*is_one_extruder_printed_model=*/true, /*only_extruder=*/1, /*can_change_color=*/!several, vase);
+    slider->SetDrawMode(/*is_sequential_print=*/false);
+    slider->SetGcodeOnly(false);
+    return slider;
+}
+
+CustomGCode::Info pause_and_filament_change()
+{
+    CustomGCode::Info info;
+    info.mode   = CustomGCode::MultiAsSingle;
+    info.gcodes = {{0.4, CustomGCode::PausePrint, 1, "", ""}, {1.0, CustomGCode::ToolChange, 2, "#00FF00", ""}};
+    return info;
+}
+
+// Whether `got` holds `expected`'s items: their type, filament and height, in order.
+bool same_items(const std::vector<CustomGCode::Item>& got, const std::vector<CustomGCode::Item>& expected)
+{
+    if (got.size() != expected.size())
+        return false;
+    for (std::size_t i = 0; i < got.size(); ++i)
+        if (got[i].type != expected[i].type || got[i].extruder != expected[i].extruder || std::abs(got[i].print_z - expected[i].print_z) > 1e-9)
+            return false;
+    return true;
+}
+
+} // namespace
+
+TEST_CASE("the slider keeps a filament change it does not show while the plate prints with several filaments", "[LayerGcode][orcamcp]")
+{
+    const CustomGCode::Info info   = pause_and_filament_change();
+    auto                    slider = slider_for(/*several=*/true);
+    slider->SetTicksValues(info);
+    // What a tick edit writes back into the project: the change is still there.
+    CHECK(same_items(slider->GetTicksValues().gcodes, info.gcodes));
+
+    // Printed with one filament again, the slider shows it as a tick, at its layer.
+    auto one = slider_for(/*several=*/false);
+    one->SetTicksValues(info);
+    CHECK(same_items(one->GetTicksValues().gcodes, info.gcodes));
+}
+
+TEST_CASE("two items at one layer both stay, though the slider shows one tick there", "[LayerGcode][orcamcp]")
+{
+    CustomGCode::Info info;
+    info.mode   = CustomGCode::MultiAsSingle;
+    info.gcodes = {{0.6, CustomGCode::PausePrint, 1, "", ""}, {0.6, CustomGCode::Custom, 1, "", "M117 hi"}};
+    auto slider = slider_for();
+    slider->SetTicksValues(info);
+    CHECK(slider->GetTicksValues().gcodes.size() == 2);
+}
+
+// STUDIO-2621 clears a plate's layer G-code once it no longer works: printed by object, or after a vase toggle.
+// The Preview makes the clear on the plate's items at once (the slider's deferred change event lost it when the
+// slider was updated twice before it), and a static "last vase mode" cleared whichever plate was shown next.
+TEST_CASE("a vase toggle clears the layer G-code of the plate it was made on, not of the next plate shown", "[LayerGcode][orcamcp]")
+{
+    std::map<int, bool> vase_by_plate;
+    const auto          shown = [&vase_by_plate](int plate, bool vase) {
+        return GUI::clears_plate_layer_gcode(vase_by_plate, plate, vase, /*by_object=*/false);
+    };
+    CHECK_FALSE(shown(/*plate=*/1, /*vase=*/false));
+    // Another plate, first shown in vase mode: its ticks are its own.
+    CHECK_FALSE(shown(/*plate=*/2, /*vase=*/true));
+    // Back to the first plate, whose mode did not change: they stay, as often as it is shown.
+    CHECK_FALSE(shown(1, false));
+    CHECK_FALSE(shown(1, false));
+    // The first plate switched to vase mode: its ticks no longer work, and go -- once.
+    CHECK(shown(1, true));
+    CHECK_FALSE(shown(1, true));
+    CHECK_FALSE(shown(2, true));
+}
+
+TEST_CASE("a plate printed by object has its layer G-code cleared, as upstream means to", "[LayerGcode][orcamcp]")
+{
+    std::map<int, bool> vase_by_plate;
+    CHECK(GUI::clears_plate_layer_gcode(vase_by_plate, 1, false, /*by_object=*/true));
+}
+
+// The slider no longer clears anything itself: shown by object, it keeps the plate's items (the Preview has
+// cleared them before when it means to).
+TEST_CASE("the slider keeps every item of the plate it is given, whatever it shows", "[LayerGcode][orcamcp]")
+{
+    auto slider = slider_for();
+    slider->SetDrawMode(/*is_sequential_print=*/true);
+    const CustomGCode::Info info = pause_and_filament_change();
+    slider->SetTicksValues(info);
+    CHECK(same_items(slider->GetTicksValues().gcodes, info.gcodes));
+}
+
+// ---- A plate's filaments with its filament changes (PartPlate::get_extruders) ----------------------
+
+// The plate's filaments, as the Print counts them (Print::extruders): a filament change counts only where
+// the slicer applies it -- a by-layer plate whose objects print with one filament.
+TEST_CASE("a plate's filament change counts as a filament it uses only where the slicer applies it", "[LayerGcode][orcamcp]")
+{
+    Model model;
+    auto  plates = plate_list_fixtures::plate_list_for(model, 1);
+    plate_list_fixtures::add_cube(model, *plates, {plate_list_fixtures::centre_of(*plates, 0)});
+    model.plates_custom_gcodes[0] = {CustomGCode::MultiAsSingle, {{6.0, CustomGCode::ToolChange, 3, "#0000FF", ""}}};
+    DynamicPrintConfig project;
+    project.set_key_value("filament_colour", new ConfigOptionStrings({"#FF0000", "#00FF00", "#0000FF"}));
+    DynamicPrintConfig by_layer = DynamicPrintConfig::full_print_config();
+    GUI::PartPlate&    plate    = *plates->get_plate(0);
+
+    CHECK(plate.get_extruders(true, by_layer, project) == std::vector<int>{1, 3});
+
+    DynamicPrintConfig by_object = by_layer;
+    by_object.set_deserialize_strict({{"print_sequence", "by object"}});
+    CHECK(plate.get_extruders(true, by_object, project) == std::vector<int>{1});
+
+    Vec3d beside = plate_list_fixtures::centre_of(*plates, 0);
+    beside.x() += 40.;
+    plate_list_fixtures::add_cube(model, *plates, {beside}).config.set_key_value("extruder", new ConfigOptionInt(2));
+    CHECK(plate.get_extruders(true, by_layer, project) == std::vector<int>{1, 2});
 }

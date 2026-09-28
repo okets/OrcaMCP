@@ -124,6 +124,11 @@ extern void check_mode_for_custom_gcode_per_print_z(Info& info);
 // print_z corresponds to the first layer printed with the new extruder.
 std::vector<std::pair<double, unsigned int>> custom_tool_changes(const Info& custom_gcode_per_print_z, size_t num_extruders);
 
+// Orca: whether the slicer takes a plate's filament changes (its ToolChange items) at all: only on a print by
+// layer, on a printer of several filaments, whose objects all print with one filament, recorded in
+// MultiAsSingle mode (ToolOrdering). Any other prints nothing, and is not a filament the plate uses.
+bool tool_changes_apply(const Info& info, size_t num_filaments, size_t object_filaments, bool by_layer);
+
 } // namespace CustomGCode
 
 } // namespace Slic3r

@@ -502,7 +502,10 @@ void Preview::update_layers_slider_mode()
     }
 
     IMSlider *m_layers_slider = m_canvas->get_gcode_viewer().get_layers_slider();
-    m_layers_slider->SetModeAndOnlyExtruder(one_extruder_printed_model, only_extruder, can_change_color);
+    // Orca: the plate's own vase mode, which may differ from the print preset's.
+    const PartPlate *plate = wxGetApp().plater()->get_partplate_list().get_curr_plate();
+    m_layers_slider->SetModeAndOnlyExtruder(one_extruder_printed_model, only_extruder, can_change_color,
+                                            plate != nullptr && plate->get_spiral_vase_mode());
 }
 
 void Preview::update_layers_slider_from_canvas(wxKeyEvent &event)
@@ -581,7 +584,21 @@ void Preview::update_layers_slider(const std::vector<double>& layers_z, bool kee
     auto curr_print_seq = curr_plate->get_real_print_seq();
     bool sequential_print = (curr_print_seq == PrintSequence::ByObject);
     m_layers_slider->SetDrawMode(sequential_print);
-    
+
+    // Orca: STUDIO-2621's clears, made on the plate's layer G-code at once: the slider made them by a deferred change
+    // event, and a second update of the slider before it re-read the plate's items, and the clear was lost.
+    const bool gcode_only = plater->only_gcode_mode() || plater->using_exported_file();
+    if (wxGetApp().is_editor() && !gcode_only) {
+        int plate_print_index = -1;
+        curr_plate->get_print(nullptr, nullptr, &plate_print_index);
+        if (clears_plate_layer_gcode(m_vase_by_plate, plate_print_index, curr_plate->get_spiral_vase_mode(), sequential_print) &&
+            !ticks_info_from_curr_plate.gcodes.empty()) {
+            ticks_info_from_curr_plate.gcodes.clear();
+            plater->model().plates_custom_gcodes[plater->get_partplate_list().get_curr_plate_index()].gcodes.clear();
+            plater->set_plater_dirty(true);
+        }
+    }
+    m_layers_slider->SetGcodeOnly(gcode_only);
     m_layers_slider->SetTicksValues(ticks_info_from_curr_plate);
 
     auto print_mode_stat = m_gcode_result->print_statistics.modes.front();

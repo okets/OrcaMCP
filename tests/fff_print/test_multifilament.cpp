@@ -744,3 +744,48 @@ TEST_CASE("The apply that brings in a filament change decides the prime tower by
     CHECK(print.config().independent_support_layer_height.value);
     CHECK(print.apply(model, config) == PrintBase::APPLY_STATUS_UNCHANGED);
 }
+
+// The slicer takes a plate's filament changes only on a by-layer print whose objects all print with one
+// filament (ToolOrdering). Print::extruders(true) counted every one, so a change the Preview's slider keeps
+// but the slicer ignores -- on a plate printing with several filaments, or by object -- made a filament the
+// plate never prints used (the prime tower's filaments, the filament grouping).
+TEST_CASE("A filament change counts as a filament the plate uses only where the slicer applies it", "[MultiFilament][Print]")
+{
+    const auto plate_changes_to = [](Model& model, int filament) {
+        CustomGCode::Info& plate_gcodes = model.plates_custom_gcodes[model.curr_plate_index];
+        plate_gcodes.mode               = CustomGCode::MultiAsSingle;
+        plate_gcodes.gcodes             = {{6.0, CustomGCode::ToolChange, filament, "#0000FF", ""}};
+    };
+
+    SECTION("one object on one filament: the change applies")
+    {
+        const DynamicPrintConfig config = multifilament_config(3, {});
+        Print print;
+        Model model;
+        init_print({cube(20)}, print, model, config);
+        plate_changes_to(model, 3);
+        print.apply(model, config);
+        CHECK(print.extruders(true) == std::vector<unsigned int>{0, 2});
+    }
+    SECTION("objects on two filaments: the change prints nothing")
+    {
+        const DynamicPrintConfig config = multifilament_config(3, {});
+        Print print;
+        Model model;
+        const std::vector<std::vector<ConfigBase::SetDeserializeItem>> overrides{{{"extruder", 1}}, {{"extruder", 2}}};
+        init_print(std::vector<TriangleMesh>{cube(20), cube(20)}, print, model, config, &overrides);
+        plate_changes_to(model, 3);
+        print.apply(model, config);
+        CHECK(print.extruders(true) == std::vector<unsigned int>{0, 1});
+    }
+    SECTION("by object: the change prints nothing")
+    {
+        const DynamicPrintConfig config = multifilament_config(3, {{"print_sequence", "by object"}});
+        Print print;
+        Model model;
+        init_print({cube(20)}, print, model, config);
+        plate_changes_to(model, 3);
+        print.apply(model, config);
+        CHECK(print.extruders(true) == std::vector<unsigned int>{0});
+    }
+}

@@ -1298,6 +1298,9 @@ echo "BA storing an STL returns true whatever the write did (0 = fixed) / the ST
 echo "BB the layer slider's change handler holds what follows a change inline, which MCP's layer G-code tools need to run too (rel2506/14; a move): $(U src/slic3r/GUI/Plater.cpp | awk '/EVT_CUSTOMEVT_TICKSCHANGED, \[this\]/{f=1} f&&/on_layer_gcodes_changed/{print "no"; d=1; exit} f&&/set_plater_dirty\(true\)/{print "yes"; d=1; exit} END{if(!d) print "unknown"}')"
 echo "BC Reload from disk returns on a file that fails to load, the scene not updated / takes its undo step before loading (0 = bug) / Reload All takes one up front / where it finds files is inline (0 = move not upstream) / no native file or folder dialog on an MCP path takes the call's path (0 = keep ours) (rel2506/14): $(U src/slic3r/GUI/Plater.cpp | awk '/^void Plater::priv::reload_from_disk\(/{f=1} f&&/\/\/ error while loading/{getline; print ($0 ~ /return;/ ? "yes" : "no"); d=1; exit} END{if(!d) print "unknown"}') / $(U src/slic3r/GUI/Plater.cpp | grep -c 'std::optional<Plater::TakeSnapshot> snapshot') / $(U src/slic3r/GUI/Plater.cpp | awk '/^void Plater::priv::reload_all_from_disk/{f=1} f&&/TakeSnapshot/{print "yes"; d=1; exit} f&&/^}/{print "no"; d=1; exit} END{if(!d) print "unknown"}') / $(U src/slic3r/GUI/Plater.cpp | grep -c 'ReloadSources reload_sources') / $(U src/slic3r/GUI/Plater.cpp | grep -c 'mcp_answer_path_dialog')"
 echo "BD Print::apply normalizes the config by the filaments the last apply used, and its late pass only turns options off, so the apply that adds or drops a filament slices with the old prime tower and the next one discards that slice (rel2506/14; 0 = bug): $(U src/libslic3r/PrintApply.cpp | grep -c 'apply_once')"
+echo "BG the Preview's layer slider erases every filament change of the plate it shows once that plate prints with several filaments, and writes that to the project (rel2506/14): $(U src/slic3r/GUI/IMSlider.cpp | grep -c 'm_ticks.erase_all_ticks_with_code(ToolChange);')"
+echo "BH a static last vase mode clears the ticks of whichever plate is shown next after any vase toggle / the slider takes the print preset's vase mode, not the plate's / STUDIO-2621's clears go through the slider's deferred change event, which a second slider update loses (rel2506/14): $(U src/slic3r/GUI/IMSlider.cpp | grep -c 'static bool last_spiral_vase_status') / $(U src/slic3r/GUI/IMSlider.cpp | awk '/^void IMSlider::SetModeAndOnlyExtruder/{f=1} f&&/spiral_mode/{print "yes"; d=1; exit} f&&/^}/{print "no"; d=1; exit} END{if(!d) print "unknown"}') / $(U src/slic3r/GUI/IMSlider.cpp | awk '/^void IMSlider::SetTicksValues/{f=1} f&&/dmSequentialFffPrint/{print "yes"; d=1; exit} f&&/^}/{print "no"; d=1; exit} END{if(!d) print "unknown"}')"
+echo "BI a plate's filament changes count as filaments it uses (Print::extruders, PartPlate::get_extruders) though the slicer applies none on a plate printing with several filaments or by object (rel2506/14; 0 = bug): $(U src/libslic3r/CustomGCode.hpp | grep -c 'tool_changes_apply')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -1798,6 +1801,44 @@ the invalidating diff was `enable_prime_tower` and `independent_support_layer_he
 apply now normalizes by the filaments of the model it is given; if so, take it and drop ours, and re-run
 `fff_print_tests "[MultiFilament]"`.
 
+
+Item BG: the Preview's layer slider takes the plate's layer G-code when it shows the plate
+(`IMSlider::SetTicksValues`) and writes back what it holds on any tick change (`GetTicksValues`, the
+`EVT_CUSTOMEVT_TICKSCHANGED` handler). Once the plate it showed printed with several filaments, it erased
+every filament change from its ticks and posted the change: showing the Preview wrote the user's filament
+changes out of the project (an object moved to another filament, a painting), and the edit that made the plate
+print with one filament again found them gone. The slicer takes filament changes only on a plate printed with
+one filament (ToolOrdering), so they print nothing there and needed no erase. Ours keeps what the slider does
+not show -- a filament change then, and a second item on a layer that holds one -- and writes it back with the
+ticks (`m_hidden_gcodes`). The clears upstream means (STUDIO-2621, "invalid and doesn't work": a plate printed by
+object, a plate whose vase mode changed) stay, narrowed and made at once by the Preview (item BH); the Preview's
+`check_layers_slider_values` still leaves out of what the slider gets an item above the last layer, as
+PrusaSlicer means it to. `SetTicksValues` and `SetModeAndOnlyExtruder` no longer read the app (the Preview passes
+the plate's vase mode and whether it shows a G-code file, `SetGcodeOnly`), so `slic3rutils_tests "[LayerGcode]"`
+drives the slider without it. On 0, take upstream's and re-run it.
+
+Item BH: STUDIO-2621's clears were made in `SetTicksValues`, which emptied the slider's ticks and flagged a
+change event that the next render posts, whose handler writes the slider's ticks into the plate. The Preview
+updates the slider twice for one showing (seen live), and the second update read the plate's items back before the
+event came: the clear was lost. And the vase clear compared the vase mode with a function-static "last" one, shared
+by every plate and starting at off: the next plate shown after a vase toggle had its ticks cleared, whatever its
+own mode, and so had a plate first shown in vase mode (a project opened with one lost its pauses on its first
+Preview); the slider took the print preset's vase mode, not the plate's own (`PartPlate::get_spiral_vase_mode`).
+Ours makes both clears in `Preview::update_layers_slider` on the plate's layer G-code before the slider reads it,
+and marks the project changed (`set_plater_dirty`), deciding by `clears_plate_layer_gcode` (`TickCode.cpp`): by
+object, or the plate's own vase mode changed since the Preview last showed it, recorded per plate by print index
+(a plate shown the first time is recorded only, so a toggle made before a plate's first Preview keeps its ticks).
+On a non-zero or "yes", take upstream's and re-run `slic3rutils_tests "[LayerGcode]"`, then toggle a plate's vase
+mode between two Previews of it: its pauses go, the other plate's stay.
+
+Item BI: `Print::extruders(true)` and `PartPlate::get_extruders(true)` count the plate's filament changes among
+the filaments it uses, all of them, though the slicer takes them only on a by-layer plate whose objects print
+with one filament, in MultiAsSingle mode (`ToolOrdering`): a change on a plate printing with several filaments
+-- which item BG keeps -- or by object made a filament the plate never prints used (the prime tower's
+filaments and size estimate, the filament grouping, the plate's filament maps). Ours counts them only there
+(`CustomGCode::tool_changes_apply`, which `ToolOrdering` asks too; `PartPlate::get_extruders` keeps support
+apart to tell the objects' own filaments, as `Print::object_extruders` does). On 0, take upstream's and re-run
+`fff_print_tests "[MultiFilament]"` and `slic3rutils_tests "[LayerGcode]"`.
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices
 when <https://github.com/OrcaSlicer/OrcaSlicer/issues/15758> closes.

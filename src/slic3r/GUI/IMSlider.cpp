@@ -226,6 +226,11 @@ Info IMSlider::GetTicksValues() const
             if (tick.tick > val_size) break;
             values.emplace_back(CustomGCode::Item{m_values[tick.tick], tick.type, tick.extruder, tick.color, tick.extra});
         }
+    // Orca: and the plate's items it does not show, in height order with the rest, so a tick edit does not drop them.
+    for (const CustomGCode::Item &hidden : m_hidden_gcodes)
+        values.insert(std::upper_bound(values.begin(), values.end(), hidden,
+                                       [](const CustomGCode::Item &a, const CustomGCode::Item &b) { return a.print_z < b.print_z; }),
+                      hidden);
 
     if (m_force_mode_apply) custom_gcode_per_print_z.mode = m_mode;
 
@@ -239,47 +244,21 @@ void IMSlider::SetTicksValues(const Info &custom_gcode_per_print_z)
         return;
     }
 
-    static bool last_spiral_vase_status = false;
-
-    const bool was_empty = m_ticks.empty();
-
     m_ticks.ticks.clear();
-    const std::vector<CustomGCode::Item> &heights = custom_gcode_per_print_z.gcodes;
-    for (auto h : heights) {
-        int tick = get_tick_from_value(h.print_z, true);
-        if (tick >= 0) m_ticks.ticks.emplace(TickCode{tick, h.type, h.extruder, h.color, h.extra});
-    }
+    m_hidden_gcodes.clear();
 
-    if (m_ticks.has_tick_with_code(ToolChange) && !m_can_change_color) {
-        if (!wxGetApp().plater()->only_gcode_mode() && !wxGetApp().plater()->using_exported_file())
-        {
-            m_ticks.erase_all_ticks_with_code(ToolChange);
-            post_ticks_changed_event();
-        }
-    }
-
-    if (last_spiral_vase_status != m_is_spiral_vase) {
-        last_spiral_vase_status = m_is_spiral_vase;
-        if (!m_ticks.empty()) {
-            m_ticks.ticks.clear();
-            post_ticks_changed_event();
-        }
-    }
-
-    //auto has_tick_execpt = [this](CustomGCode::Type type) {
-    //    for (const TickCode& tick : m_ticks.ticks)
-    //        if (tick.type != type) return true;
-
-    //    return false;
-    //};
-    if ((!m_ticks.empty() /*&& has_tick_execpt(PausePrint)*/) && m_draw_mode == dmSequentialFffPrint) {
-        for (auto it{ m_ticks.ticks.begin() }, end{ m_ticks.ticks.end() }; it != end;) {
-            if (true/*it->type != PausePrint*/)
-                it = m_ticks.ticks.erase(it);
-            else
-                ++it;
-        }
-        post_ticks_changed_event();
+    // Orca: a filament change is not shown while the plate prints with several filaments (the slicer takes it only
+    // on a plate printed with one), but kept: it was erased and the change posted, which wrote it out of the project
+    // whenever the Preview showed the plate so, and the edit that made the plate print with one filament again found
+    // it gone. An item on a layer another holds is kept the same way. GetTicksValues writes both back.
+    // STUDIO-2621's clears -- a plate printed by object, a plate whose vase mode changed -- were made here too, by
+    // the same deferred event, and are the Preview's now (clears_plate_layer_gcode): a second slider update before
+    // the event re-read the plate's items, and the clear was lost.
+    const bool hide_filament_changes = !m_can_change_color && !m_gcode_only;
+    for (const CustomGCode::Item &h : custom_gcode_per_print_z.gcodes) {
+        const int tick = h.type == ToolChange && hide_filament_changes ? -1 : get_tick_from_value(h.print_z, true);
+        if (tick < 0 || !m_ticks.ticks.emplace(TickCode{tick, h.type, h.extruder, h.color, h.extra}).second)
+            m_hidden_gcodes.push_back(h);
     }
 
     if (custom_gcode_per_print_z.mode && !custom_gcode_per_print_z.gcodes.empty()) m_ticks.mode = custom_gcode_per_print_z.mode;
@@ -325,7 +304,7 @@ void IMSlider::SetDrawMode(bool is_sequential_print)
     m_can_change_color = m_can_change_color && !(m_draw_mode == dmSequentialFffPrint);
 }
 
-void IMSlider::SetModeAndOnlyExtruder(const bool is_one_extruder_printed_model, const int only_extruder, bool can_change_color)
+void IMSlider::SetModeAndOnlyExtruder(const bool is_one_extruder_printed_model, const int only_extruder, bool can_change_color, bool is_spiral_vase)
 {
     m_mode = !is_one_extruder_printed_model ? MultiExtruder : only_extruder < 0 ? SingleExtruder : MultiAsSingle;
     if (!m_ticks.mode || (m_ticks.empty() && m_ticks.mode != m_mode)) m_ticks.mode = m_mode;
@@ -335,8 +314,7 @@ void IMSlider::SetModeAndOnlyExtruder(const bool is_one_extruder_printed_model, 
 
     m_is_wipe_tower = m_mode != SingleExtruder;
 
-    auto config = wxGetApp().preset_bundle->full_config();
-    m_is_spiral_vase = config.option<ConfigOptionBool>("spiral_mode")->value;
+    m_is_spiral_vase = is_spiral_vase;
 
     m_can_change_color = can_change_color && !m_is_spiral_vase;
 

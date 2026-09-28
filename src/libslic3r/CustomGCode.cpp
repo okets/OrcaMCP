@@ -71,6 +71,11 @@ std::vector<std::pair<double, unsigned int>> custom_tool_changes(const Info& cus
     return custom_tool_changes;
 }
 
+bool tool_changes_apply(const Info& info, size_t num_filaments, size_t object_filaments, bool by_layer)
+{
+    return by_layer && num_filaments > 1 && object_filaments == 1 && info.mode == MultiAsSingle;
+}
+
 } // namespace CustomGCode
 
 } // namespace Slic3r

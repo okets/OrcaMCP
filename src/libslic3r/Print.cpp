@@ -561,13 +561,19 @@ std::vector<unsigned int> Print::support_material_extruders() const
 std::vector<unsigned int> Print::extruders(bool conside_custom_gcode) const
 {
     std::vector<unsigned int> extruders = this->object_extruders();
+    const size_t              object_filaments = extruders.size();
     append(extruders, this->support_material_extruders());
 
     if (conside_custom_gcode) {
         //BBS
         int num_extruders = m_config.filament_colour.size();
-        if (m_model.plates_custom_gcodes.find(m_model.curr_plate_index) != m_model.plates_custom_gcodes.end()) {
-            for (auto item : m_model.plates_custom_gcodes.at(m_model.curr_plate_index).gcodes) {
+        // Orca: only the filament changes the slicer applies: the others -- on a plate that prints with several
+        // filaments, or by object -- print nothing, and counted they made a filament the plate never prints used.
+        const auto plate = m_model.plates_custom_gcodes.find(m_model.curr_plate_index);
+        if (plate != m_model.plates_custom_gcodes.end() &&
+            CustomGCode::tool_changes_apply(plate->second, size_t(num_extruders), object_filaments,
+                                            m_config.print_sequence == PrintSequence::ByLayer)) {
+            for (auto item : plate->second.gcodes) {
                 if (item.type == CustomGCode::Type::ToolChange && item.extruder <= num_extruders)
                     extruders.push_back((unsigned int)(item.extruder - 1));
             }
