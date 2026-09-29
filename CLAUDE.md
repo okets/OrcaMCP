@@ -1319,6 +1319,7 @@ echo "BK Save's steps after its file dialog are inline in save_project, which MC
 echo "BL admesh takes an STL for ASCII when the 128 bytes after its label are all below 128, so a small binary STL at whole millimetres with zero normals loads no geometry (rel2506/15; 0 = bug): $(U deps_src/admesh/stlinit.cpp | grep -c 'binary_by_size')"
 echo "BM on_process_completed tells no one how an export ended, and opens its error dialog, which MCP's export_gcode needs to answer and capture (rel2506/15; a hook: 0 = keep ours): $(U src/slic3r/GUI/Plater.cpp | grep -c 'mcp_gcode_export')"
 echo "BN upstream's Flashforge upload always sends flowCalibration off, and reads its print options from extended_info keys each sender spells for itself (rel2506/10; a feature: non-zero = keep ours): $(U src/slic3r/Utils/Flashforge.cpp | grep -c '.header("flowCalibration", "false")') / $(U src/slic3r/Utils/Flashforge.cpp | grep -c 'extended_info\["levelingBeforePrint"\]')"
+echo "BO the Flashforge send dialog saves its boxes through AppConfig's bool overload, so every config holds \"true\" and the next dialog reads them off / it starts with leveling on and offers no flow calibration (rel2506/10): $(U src/slic3r/GUI/PrintHostDialogs.cpp | grep -c 'CONFIG_KEY_LEVELING, m_leveling_before_print ? "1" : "0"') / $(U src/slic3r/GUI/PrintHostDialogs.hpp | grep -c 'm_leveling_before_print {true}')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -1955,6 +1956,17 @@ hand. Ours carries them in one type, `FlashforgeApi::PrintOptions`, which every 
 and `printGcode` read back (`read_upload_print_options`, `make_print_gcode_payload`). On a 0, upstream sends flow
 calibration itself: keep one spelling of the keys, take upstream's where they agree, and re-run
 `slic3rutils_tests "[flashforge]"`.
+
+Item BO: `FlashforgePrintHostSendDialog::EndModal` saved its boxes with `app_config->set("recent", key, on ? "1" :
+"0")`. A string literal converts to `bool` (a standard conversion) before `std::string` (a user-defined one), so
+that call takes `AppConfig::set`'s bool overload and stores "true" whatever was ticked; `init` then read the box as
+on only for "1", so every dialog after the first Send started with leveling and time-lapse off. Ours saves and
+reads the print options through `remember_flashforge_print_options` / `remembered_flashforge_print_options`
+(`PrintHostDialogs.cpp`), which write "1" or "0" as strings and take an older build's "true" for no choice, and
+the dialog starts with all three off and offers flow calibration first, as the printer's start screen does
+(item BN). The material-station key is written as a string too. On a 0 for the first count, take upstream's
+save and re-run `slic3rutils_tests "[FlashforgeSendOptions]"`; on a 0 for the second, compare its defaults with
+the user's decision (all off, the last Send remembered).
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices

@@ -29,6 +29,8 @@ namespace Slic3r { namespace GUI { class BitmapComboBox; } }
 
 namespace Slic3r {
 
+class AppConfig;
+
 namespace GUI {
 
 class PrintHostSendDialog : public GUI::MsgDialog
@@ -223,6 +225,12 @@ private:
 // PLA/PLA+/PLA-CF -> PLA, PETG/PETG-CF -> PETG, ABS/ASA -> ABS, TPU, SILK. Any thread.
 std::string flashforge_normalize_material(const std::string& material);
 
+// The Flashforge send dialog's print options as last confirmed with Send, from the app config's
+// "recent" section. Each is off until a send was confirmed with it on.
+FlashforgeApi::PrintOptions remembered_flashforge_print_options(const AppConfig& config);
+// Saves them for the next dialog. Called only when a send is confirmed.
+void remember_flashforge_print_options(AppConfig& config, const FlashforgeApi::PrintOptions& options);
+
 class FlashforgePrintHostSendDialog : public PrintHostSendDialog
 {
 public:
@@ -274,17 +282,15 @@ private:
     wxSizer*                         m_mapping_section_sizer {nullptr};
     wxBoxSizer*                      m_mapping_wrap_sizer {nullptr};
     wxStaticText*                    m_status_text {nullptr};
+    ::CheckBox*                      m_checkbox_flow_calibration {nullptr};
     ::CheckBox*                      m_checkbox_leveling {nullptr};
     ::CheckBox*                      m_checkbox_timelapse {nullptr};
     ::CheckBox*                      m_checkbox_ifs {nullptr};
-    bool                             m_leveling_before_print {true};
-    bool                             m_time_lapse_video {false};
+    FlashforgeApi::PrintOptions      m_print_options;
     bool                             m_use_material_station {false};
     bool                             m_supports_material_station {false};
     bool                             m_slots_loaded {false};
 
-    const char* CONFIG_KEY_LEVELING  = "flashforge_leveling_before_print";
-    const char* CONFIG_KEY_TIMELAPSE = "flashforge_timelapse_video";
     const char* CONFIG_KEY_IFS       = "flashforge_use_material_station";
 };
 
