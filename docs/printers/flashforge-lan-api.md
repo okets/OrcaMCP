@@ -350,6 +350,10 @@ with all three on:
 2. Bed levelling, every nozzle at 120 °C: about 12.5 minutes.
 3. The print, at the file's own temperatures.
 
+The time-lapse was recorded: the printer's Home screen menu, Timelapse, listed a video named after the
+print file (export it to USB there). That confirms `timeLapseVideo` on `uploadGcode`; on `printGcode`
+it is still unconfirmed.
+
 So a three-colour file waited about 24 minutes before its first layer. That is why OrcaMCP turns
 levelling and flow calibration on by itself only for a print estimated at four hours or more.
 
