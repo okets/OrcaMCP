@@ -565,13 +565,9 @@ void OrcaMCPServer::register_printer_tools()
                         return mapping_error;
                 }
 
-                // Exactly the keys FlashforgePrintHostSendDialog::extendedInfo() produces. The dialog's
-                // time-lapse checkbox has no tool parameter, so it stays off.
-                extended_info = {{"levelingBeforePrint", leveling ? "1" : "0"},
-                                 {"timeLapseVideo", "0"},
-                                 {"useMatlStation", use_material_station ? "1" : "0"},
-                                 {"gcodeToolCnt", std::to_string(mappings_payload.size())},
-                                 {"materialMappings", mappings_payload.dump()}};
+                Slic3r::FlashforgeApi::PrintOptions options;
+                options.leveling = leveling;
+                extended_info = Slic3r::FlashforgeApi::make_upload_extended_info(options, use_material_station, mappings_payload);
             }
 
             // Main thread again: exporting the plate and queueing the upload are Plater work.
@@ -1020,7 +1016,9 @@ void OrcaMCPServer::register_printer_tools()
             }
 
             wxString msg;
-            if (!ff->print_gcode_file(file_name, leveling, mappings_payload, msg))
+            Slic3r::FlashforgeApi::PrintOptions options;
+            options.leveling = leveling;
+            if (!ff->print_gcode_file(file_name, options, mappings_payload, msg))
                 return error_response(msg.empty() ? "Failed to start print" : to_std(msg));
 
             return {{"status", "success"}, {"file_name", file_name}, {"material_mappings", mappings_report}};

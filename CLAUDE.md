@@ -1318,6 +1318,7 @@ echo "BJ the Preview's slider shows or hides a plate's filament changes by its p
 echo "BK Save's steps after its file dialog are inline in save_project, which MCP's save_project and export_3mf need to run too (rel2506/14; a move): $(U src/slic3r/GUI/Plater.cpp | grep -c '^int Plater::save_project_as')"
 echo "BL admesh takes an STL for ASCII when the 128 bytes after its label are all below 128, so a small binary STL at whole millimetres with zero normals loads no geometry (rel2506/15; 0 = bug): $(U deps_src/admesh/stlinit.cpp | grep -c 'binary_by_size')"
 echo "BM on_process_completed tells no one how an export ended, and opens its error dialog, which MCP's export_gcode needs to answer and capture (rel2506/15; a hook: 0 = keep ours): $(U src/slic3r/GUI/Plater.cpp | grep -c 'mcp_gcode_export')"
+echo "BN upstream's Flashforge upload always sends flowCalibration off, and reads its print options from extended_info keys each sender spells for itself (rel2506/10; a feature: non-zero = keep ours): $(U src/slic3r/Utils/Flashforge.cpp | grep -c '.header("flowCalibration", "false")') / $(U src/slic3r/Utils/Flashforge.cpp | grep -c 'extended_info\["levelingBeforePrint"\]')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -1945,6 +1946,15 @@ let go where the process reset takes the export off without a completion (`priv:
 `delete_all_objects_from_model`: `drop_mcp_gcode_export`), so a later GUI export is never taken for it. The GUI's own
 exports are unchanged. On upstream changes to `on_process_completed` or those resets, keep the hooks; re-check
 export_gcode to a folder that does not exist: an error answer, no dialog.
+
+Item BN is a feature, not a fix: a Flashforge print can ask for the three switches its own start screen offers --
+flow calibration, leveling, time-lapse. Upstream's `Flashforge::upload_local_api` sends `flowCalibration` off
+whatever the sender asked and reads leveling and time-lapse from `extended_info` keys that its send dialog spells by
+hand. Ours carries them in one type, `FlashforgeApi::PrintOptions`, which every sender (the send dialog,
+`send_to_printer`, `print_printer_file`, the printer agent) builds through `make_upload_extended_info` and the upload
+and `printGcode` read back (`read_upload_print_options`, `make_print_gcode_payload`). On a 0, upstream sends flow
+calibration itself: keep one spelling of the keys, take upstream's where they agree, and re-run
+`slic3rutils_tests "[flashforge]"`.
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices

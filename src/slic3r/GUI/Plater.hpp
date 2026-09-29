@@ -630,7 +630,7 @@ public:
     void send_gcode_legacy(int plate_idx = -1, Export3mfProgressFn proFn = nullptr);
     // Orca (MCP): send_gcode_legacy without its send dialog -- the caller supplies what that dialog
     // would have collected. `extended_info` is passed to the print host verbatim (for Flashforge:
-    // levelingBeforePrint/timeLapseVideo/useMatlStation/gcodeToolCnt/materialMappings), `file_name`
+    // the keys FlashforgeApi::make_upload_extended_info builds), `file_name`
     // defaults to the plate's own output file name and `uploaded_file_name`, when given, receives the
     // name the upload was queued under. The upload is queued, not awaited: false with `error` set
     // means it could not even be queued.

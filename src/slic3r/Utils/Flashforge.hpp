@@ -70,7 +70,10 @@ public:
     bool set_light(bool on, wxString& msg) const;
     bool set_temperatures(std::optional<double> bed, std::optional<double> chamber, const std::vector<std::optional<double>>& nozzles, wxString& msg) const;
     bool list_gcode_files(std::vector<std::string>& files, wxString& msg) const;
-    bool print_gcode_file(const std::string& file_name, bool leveling, const nlohmann::json& material_mappings, wxString& msg) const;
+    bool print_gcode_file(const std::string& file_name, const FlashforgeApi::PrintOptions& options, const nlohmann::json& material_mappings, wxString& msg) const;
+    // A stored file's estimated print time, from the printer's file list. `seconds` is nullopt when
+    // the printer does not report one; false with `msg` when the list could not be read.
+    bool stored_file_printing_time(const std::string& file_name, std::optional<long>& seconds, wxString& msg) const;
 
 private:
     std::string m_host;
@@ -103,6 +106,8 @@ private:
     // The precondition every local-API method shares: true when the credentials are there, false
     // with `msg` set to the one message all of them used to spell out for themselves.
     bool require_local_api_credentials(wxString& msg) const;
+    // The gcodeList response, parsed. False with `msg` when it could not be fetched or read.
+    bool fetch_gcode_list(nlohmann::json& response, wxString& msg) const;
     std::string make_http_url(const std::string& path) const;
     int  get_err_code_from_body(const std::string &body) const;
     bool connect(wxString& msg) const;

@@ -6,6 +6,7 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -176,6 +177,54 @@ void append_gcode_names(const nlohmann::json& list, std::vector<std::string>& ou
         if (!name.empty())
             out.push_back(std::move(name));
     }
+}
+
+constexpr const char* kLevelingKey        = "levelingBeforePrint";
+constexpr const char* kFlowCalibrationKey = "flowCalibration";
+constexpr const char* kTimeLapseKey       = "timeLapseVideo";
+
+// A `printingTime` as whole seconds: a number, or text holding one, as the API types numbers loosely.
+// Not try_parse_json_int, which reads a flag as 1 s and gives up on a fraction. nullopt for anything
+// that is not a positive, finite number of seconds.
+std::optional<long> positive_seconds(const nlohmann::json& value)
+{
+    double seconds = 0;
+    if (value.is_number()) { // never a bool: nlohmann keeps those apart
+        seconds = value.get<double>();
+    } else if (value.is_string()) {
+        std::string text = value.get<std::string>();
+        boost::trim(text);
+        if (text.empty())
+            return std::nullopt;
+        try {
+            size_t pos = 0;
+            seconds    = std::stod(text, &pos);
+            if (pos != text.size())
+                return std::nullopt;
+        } catch (...) {
+            return std::nullopt;
+        }
+    } else {
+        return std::nullopt;
+    }
+    if (!std::isfinite(seconds) || seconds <= 0 || seconds > double(std::numeric_limits<int>::max()))
+        return std::nullopt;
+    const long rounded = std::lround(seconds);
+    return rounded > 0 ? std::optional<long>(rounded) : std::nullopt;
+}
+
+// `printingTime` of the entry named `file_name` in `list`, when that entry gives a usable one.
+std::optional<long> printing_time_in(const nlohmann::json& list, const std::string& file_name)
+{
+    if (!list.is_array())
+        return std::nullopt;
+    for (const auto& entry : list) {
+        if (!entry.is_object() || get_string(entry, "gcodeFileName") != file_name)
+            continue;
+        const auto it = entry.find("printingTime");
+        return it != entry.end() ? positive_seconds(*it) : std::nullopt;
+    }
+    return std::nullopt;
 }
 
 // Remaining time, projected from what the printer does report reliably. `estimatedTime` looked like
@@ -416,6 +465,15 @@ std::vector<std::string> parse_gcode_list(const nlohmann::json& response)
     return files;
 }
 
+std::optional<long> parse_gcode_printing_time(const nlohmann::json& response, const std::string& file_name)
+{
+    if (!response.is_object())
+        return std::nullopt;
+    if (const auto seconds = printing_time_in(response.value("gcodeListDetail", nlohmann::json()), file_name))
+        return seconds;
+    return printing_time_in(response.value("gcodeList", nlohmann::json()), file_name);
+}
+
 std::vector<MaterialSlot> parse_material_slots(const nlohmann::json& slot_infos)
 {
     std::vector<MaterialSlot> slots;
@@ -547,17 +605,51 @@ nlohmann::json make_temperature_args(std::optional<double> bed, std::optional<do
     return args;
 }
 
-nlohmann::json make_print_gcode_payload(const std::string& serial, const std::string& check_code, const std::string& file_name, bool leveling, const nlohmann::json& material_mappings)
+bool operator==(const PrintOptions& a, const PrintOptions& b)
+{
+    return a.leveling == b.leveling && a.flow_calibration == b.flow_calibration && a.time_lapse == b.time_lapse;
+}
+
+std::map<std::string, std::string> make_upload_extended_info(const PrintOptions& options, bool use_material_station, const nlohmann::json& mappings)
+{
+    const auto   flag       = [](bool on) { return std::string(on ? "1" : "0"); };
+    const size_t tool_count = mappings.is_array() ? mappings.size() : 0;
+    return {{kLevelingKey, flag(options.leveling)},
+            {kFlowCalibrationKey, flag(options.flow_calibration)},
+            {kTimeLapseKey, flag(options.time_lapse)},
+            {"useMatlStation", flag(use_material_station)},
+            {"gcodeToolCnt", std::to_string(tool_count)},
+            {"materialMappings", mappings.is_array() ? mappings.dump() : std::string("[]")}};
+}
+
+PrintOptions read_upload_print_options(const std::map<std::string, std::string>& extended_info)
+{
+    const auto on = [&](const char* key) {
+        const auto it = extended_info.find(key);
+        return it != extended_info.end() && it->second == "1";
+    };
+    PrintOptions options;
+    options.leveling         = on(kLevelingKey);
+    options.flow_calibration = on(kFlowCalibrationKey);
+    options.time_lapse       = on(kTimeLapseKey);
+    return options;
+}
+
+nlohmann::json make_print_gcode_payload(const std::string& serial, const std::string& check_code, const std::string& file_name, const PrintOptions& options, const nlohmann::json& material_mappings)
 {
     const bool has_mappings = material_mappings.is_array() && !material_mappings.empty();
 
     nlohmann::json payload = make_credentials_payload(serial, check_code);
-    payload["fileName"]            = file_name;
-    payload["levelingBeforePrint"] = leveling;
-    payload["flowCalibration"]     = false;
-    payload["useMatlStation"]      = has_mappings;
-    payload["gcodeToolCnt"]        = material_mappings.is_array() ? material_mappings.size() : 0;
-    payload["materialMappings"]    = material_mappings;
+    payload["fileName"]          = file_name;
+    payload[kLevelingKey]        = options.leveling;
+    payload[kFlowCalibrationKey] = options.flow_calibration;
+    // Not in the printGcode body docs/printers/flashforge-lan-api.md documents; the upload takes it.
+    // The live check in docs/superpowers/plans/2026-09-27-flashforge-print-options.md (Task 5) decides
+    // whether this request honours it.
+    payload[kTimeLapseKey]       = options.time_lapse;
+    payload["useMatlStation"]    = has_mappings;
+    payload["gcodeToolCnt"]      = material_mappings.is_array() ? material_mappings.size() : 0;
+    payload["materialMappings"]  = material_mappings;
     return payload;
 }
 

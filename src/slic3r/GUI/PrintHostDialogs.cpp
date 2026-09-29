@@ -1030,7 +1030,6 @@ void FlashforgePrintHostSendDialog::EndModal(int ret)
 std::map<std::string, std::string> FlashforgePrintHostSendDialog::extendedInfo() const
 {
     json mappings = json::array();
-    int  mapped_count = 0;
 
     if (m_use_material_station) {
         for (const auto& row : m_mapping_rows) {
@@ -1054,17 +1053,13 @@ std::map<std::string, std::string> FlashforgePrintHostSendDialog::extendedInfo()
                 {"toolMaterialColor", filament_it->color},
                 {"slotMaterialColor", slot_it->material_color}
             });
-            ++mapped_count;
         }
     }
 
-    return {
-        {"levelingBeforePrint", m_leveling_before_print ? "1" : "0"},
-        {"timeLapseVideo", m_time_lapse_video ? "1" : "0"},
-        {"useMatlStation", m_use_material_station ? "1" : "0"},
-        {"gcodeToolCnt", std::to_string(mapped_count)},
-        {"materialMappings", mappings.dump()}
-    };
+    FlashforgeApi::PrintOptions options;
+    options.leveling   = m_leveling_before_print;
+    options.time_lapse = m_time_lapse_video;
+    return FlashforgeApi::make_upload_extended_info(options, m_use_material_station, mappings);
 }
 
 void FlashforgePrintHostSendDialog::load_slots()

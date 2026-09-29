@@ -1,6 +1,7 @@
 #ifndef slic3r_Utils_FlashforgeApi_hpp_
 #define slic3r_Utils_FlashforgeApi_hpp_
 
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -62,10 +63,36 @@ std::vector<MaterialSlot> parse_material_slots(const nlohmann::json& slot_infos)
 // the UI keeps its last known value instead of flashing a fabricated one.
 nlohmann::json flashforge_status_to_bambu_payload(const PrinterStatus& status);
 
+// The switches the printer's own start screen offers (Creator 5 Pro, firmware 1.9.9: Flow
+// Calibration, Leveling, Timelapse). The API's fourth, `firstLayerInspection`, is not on that
+// screen and is always sent off.
+struct PrintOptions
+{
+    bool leveling{false};
+    bool flow_calibration{false};
+    bool time_lapse{false};
+};
+bool operator==(const PrintOptions& a, const PrintOptions& b);
+
+// The PrintHostUpload::extended_info of a Flashforge upload. Every sender builds it here
+// (FlashforgePrintHostSendDialog, send_to_printer, FlashforgePrinterAgent) and
+// Flashforge::upload_local_api turns it into the request's headers, so the keys are spelled once.
+// `mappings` is the {toolId, slotId, ...} array the printer is sent; empty without the station.
+std::map<std::string, std::string> make_upload_extended_info(const PrintOptions& options, bool use_material_station, const nlohmann::json& mappings);
+
+// The options an extended_info carries. Only "1" is on; a missing key is off.
+PrintOptions read_upload_print_options(const std::map<std::string, std::string>& extended_info);
+
+// A stored file's `printingTime` in whole seconds, from a gcodeList response: its gcodeListDetail
+// entry, else a {"gcodeFileName": ...} object in gcodeList. nullopt when the printer does not give a
+// positive, finite number (older firmware, a plain name, 0, a flag, text that is not a number) or
+// the file is not listed.
+std::optional<long> parse_gcode_printing_time(const nlohmann::json& response, const std::string& file_name);
+
 nlohmann::json make_credentials_payload(const std::string& serial, const std::string& check_code);
 nlohmann::json make_control_payload(const std::string& serial, const std::string& check_code, const std::string& cmd, const nlohmann::json& args);
 nlohmann::json make_temperature_args(std::optional<double> bed, std::optional<double> chamber, const std::vector<std::optional<double>>& nozzles); // -200 for absent
-nlohmann::json make_print_gcode_payload(const std::string& serial, const std::string& check_code, const std::string& file_name, bool leveling, const nlohmann::json& material_mappings);
+nlohmann::json make_print_gcode_payload(const std::string& serial, const std::string& check_code, const std::string& file_name, const PrintOptions& options, const nlohmann::json& material_mappings);
 
 constexpr int kTempNoChange = -200;
 constexpr int kPidCreator5 = 40, kPidCreator5Pro = 41;

@@ -397,13 +397,13 @@ bool FlashforgePrinterAgent::run_on_gui_thread(const std::function<void()>& fn) 
 std::map<std::string, std::string> FlashforgePrinterAgent::build_upload_extended_info(const Flashforge&  host,
                                                                                       const PrintParams& params) const
 {
-    // The same keys FlashforgePrintHostSendDialog::extendedInfo() produces (PrintHostDialogs.cpp:877)
-    // and the MCP send_to_printer tool builds, so all three upload paths speak one dialect.
-    std::map<std::string, std::string> info = {{"levelingBeforePrint", params.task_bed_leveling ? "1" : "0"},
-                                               {"timeLapseVideo", params.task_record_timelapse ? "1" : "0"},
-                                               {"useMatlStation", "0"},
-                                               {"gcodeToolCnt", "0"},
-                                               {"materialMappings", "[]"}};
+    // Built by FlashforgeApi::make_upload_extended_info, as the send dialog and send_to_printer
+    // build theirs, so every upload path speaks one dialect.
+    FlashforgeApi::PrintOptions options;
+    options.leveling         = params.task_bed_leveling;
+    options.flow_calibration = params.task_flow_cali;
+    options.time_lapse       = params.task_record_timelapse;
+    std::map<std::string, std::string> info = FlashforgeApi::make_upload_extended_info(options, false, nlohmann::json::array());
 
     FlashforgeApi::PrinterStatus status;
     wxString                     msg;
@@ -430,10 +430,7 @@ std::map<std::string, std::string> FlashforgePrinterAgent::build_upload_extended
         return info;
     }
 
-    info["useMatlStation"]   = "1";
-    info["gcodeToolCnt"]     = std::to_string(mappings.size());
-    info["materialMappings"] = mappings.dump();
-    return info;
+    return FlashforgeApi::make_upload_extended_info(options, true, mappings);
 }
 
 int FlashforgePrinterAgent::upload_gcode(const PrintParams& params,
