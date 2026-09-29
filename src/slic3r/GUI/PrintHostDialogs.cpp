@@ -798,8 +798,7 @@ FlashforgeApi::PrintOptions remembered_flashforge_print_options(const AppConfig&
 
 void remember_flashforge_print_options(AppConfig& config, const FlashforgeApi::PrintOptions& options)
 {
-    // A std::string, never a literal: AppConfig::set takes a const char* as its bool overload.
-    const auto flag = [](bool on) { return std::string(on ? "1" : "0"); };
+    const auto flag = [](bool on) { return on ? "1" : "0"; };
     config.set(kRecentSection, kLevelingConfigKey, flag(options.leveling));
     config.set(kRecentSection, kFlowCalibrationConfigKey, flag(options.flow_calibration));
     config.set(kRecentSection, kTimeLapseConfigKey, flag(options.time_lapse));
@@ -844,7 +843,7 @@ void FlashforgePrintHostSendDialog::init()
     // We don't revive an old stale "0" here.
     m_use_material_station = m_supports_material_station;
     if (m_supports_material_station && !app_config->has("recent", CONFIG_KEY_IFS))
-        const_cast<AppConfig*>(app_config)->set("recent", CONFIG_KEY_IFS, std::string("1"));
+        const_cast<AppConfig*>(app_config)->set("recent", CONFIG_KEY_IFS, "1");
 
 
     wxString recent_path = from_u8(app_config->get("recent", CONFIG_KEY_PATH));
@@ -1054,7 +1053,7 @@ void FlashforgePrintHostSendDialog::EndModal(int ret)
     if (ret == wxID_OK) {
         AppConfig* app_config = wxGetApp().app_config;
         remember_flashforge_print_options(*app_config, m_print_options);
-        app_config->set("recent", CONFIG_KEY_IFS, std::string(m_use_material_station ? "1" : "0"));
+        app_config->set("recent", CONFIG_KEY_IFS, m_use_material_station ? "1" : "0");
     }
 
     PrintHostSendDialog::EndModal(ret);

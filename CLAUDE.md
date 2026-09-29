@@ -1322,6 +1322,7 @@ echo "BM on_process_completed tells no one how an export ended, and opens its er
 echo "BN upstream's Flashforge upload always sends flowCalibration off, and reads its print options from extended_info keys each sender spells for itself (rel2506/10; a feature: non-zero = keep ours): $(U src/slic3r/Utils/Flashforge.cpp | grep -c '.header("flowCalibration", "false")') / $(U src/slic3r/Utils/Flashforge.cpp | grep -c 'extended_info\["levelingBeforePrint"\]')"
 echo "BO the Flashforge send dialog saves its boxes through AppConfig's bool overload, so every config holds \"true\" and the next dialog reads them off / it starts with leveling on and offers no flow calibration (rel2506/10): $(U src/slic3r/GUI/PrintHostDialogs.cpp | grep -c 'CONFIG_KEY_LEVELING, m_leveling_before_print ? "1" : "0"') / $(U src/slic3r/GUI/PrintHostDialogs.hpp | grep -c 'm_leveling_before_print {true}')"
 echo "BP upstream's send dialog is not told which Flashforge it sends to, so it cannot offer only what that machine's start screen offers (rel2506/10; a feature: 0 = keep ours): $(U src/slic3r/Utils/Flashforge.cpp | grep -c 'int\* product_id') / $(U src/slic3r/GUI/PrintHostDialogs.hpp | grep -c 'product_id')"
+echo "BQ AppConfig::set has no const char* overload, so a text literal takes its bool one and stores \"true\" / get_bool(section, key) reads \"1\" from the app section (rel2506/10; 0 = bug for the first, non-zero = bug for the second): $(U src/libslic3r/AppConfig.hpp | grep -c 'const char \*value') / $(U src/libslic3r/AppConfig.hpp | grep -c 'this->get(key) == "1"')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -1967,8 +1968,8 @@ on only for "1", so every dialog after the first Send started with leveling and 
 reads the print options through `remember_flashforge_print_options` / `remembered_flashforge_print_options`
 (`PrintHostDialogs.cpp`), which write "1" or "0" as strings and take an older build's "true" for no choice, and
 the dialog starts with all three off and offers flow calibration first, as the printer's start screen does
-(item BN). The material-station key is written as a string too. On a 0 for the first count, take upstream's
-save and re-run `slic3rutils_tests "[FlashforgeSendOptions]"`; on a 0 for the second, compare its defaults with
+(item BN). The overload that made every such literal "true" is fixed at its root (item BQ). On a 0 for the first
+count, take upstream's save and re-run `slic3rutils_tests "[FlashforgeSendOptions]"`; on a 0 for the second, compare its defaults with
 the user's decision (all off, the last Send remembered).
 
 Item BP is a feature: the Print button's Flashforge path (`Plater::priv` before `FlashforgePrintHostSendDialog`) reads
@@ -1977,6 +1978,18 @@ answer (`product_id`, a defaulted argument) and hands it to the dialog, which of
 `FlashforgeApi::start_screen_offers_calibration` knows the start screen does (the Creator 5 and 5 Pro) and sends a
 remembered tick nowhere else (`sent_flashforge_print_options`). On a non-zero, upstream tells the dialog the machine
 itself: use its value in the same predicate and re-run `slic3rutils_tests "[FlashforgeSendOptions],[flashforge]"`.
+
+Item BQ: `AppConfig::set(section, key, value)` has a `std::string` and a `bool` overload, and a `const char*` converts
+to `bool` (a standard conversion) before it converts to `std::string` (a user-defined one), so every call with a text
+literal, or a ternary of two, stored "true" whatever it said: the Flashforge send dialog's boxes (item BO), its
+material-station key, the orient settings (`GLCanvas3D.cpp`), the CrealityPrint self-test box and the setup wizard's
+`firstguide/finish`. Ours adds a `const char*` overload, so each stores what it says. And `get_bool(section, key)` read
+"1" from the app section instead of the key's own. What each caller's old configs now read: the Flashforge boxes take
+"true" for no choice (off, as users saw); the orient keys have no reader; the self-test reader (`std::stoi`) failed on
+"true" and still does (off, as users saw), and a new Send's choice is now remembered; `firstguide/finish` keeps storing
+"true", by passing `true` (`WebGuideDialog.cpp`), since an older build sharing the data folder reads it with the old
+`get_bool`. On a non-zero first count, take upstream's overload; on a 0 second count, take upstream's `get_bool`; re-run
+`libslic3r_tests "[AppConfig]"` and `slic3rutils_tests "[FlashforgeSendOptions]"`.
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices

@@ -798,7 +798,9 @@ int GuideFrame::SaveProfile()
     m_MainPtr->app_config->set_bool("stealth_mode", StealthMode);
 
     //finish
-    m_MainPtr->app_config->set(std::string(m_SectionName.mb_str()), "finish", "1");
+    // Orca: "true", as this line always stored (its "1" took AppConfig's bool overload): an older build
+    // sharing the data folder reads "finish" with get_bool, which took only "true".
+    m_MainPtr->app_config->set(std::string(m_SectionName.mb_str()), "finish", true);
 
     m_MainPtr->app_config->save();
 
