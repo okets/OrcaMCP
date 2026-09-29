@@ -29,7 +29,7 @@
 #include "GUI.hpp"
 #include "GUI_App.hpp"
 #include "MsgDialog.hpp"
-#include "Widgets/StaticGroup.hpp"
+#include "Widgets/LabeledStaticBox.hpp"
 #include "I18N.hpp"
 #include "MainFrame.hpp"
 #include "libslic3r/AppConfig.hpp"
@@ -876,7 +876,8 @@ void FlashforgePrintHostSendDialog::init()
     const int GAP = FromDIP(10);
 
     auto make_group = [this](const wxString& title) {
-        auto* group = new StaticGroup(this, wxID_ANY, title);
+        auto* group = new LabeledStaticBox(this, title);
+        group->SetBackgroundColour(*wxWHITE);
         group->SetFont(::Label::Body_13);
         group->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#323A3D")));
         group->SetBorderColor(StateColor::darkModeColorFor(wxColour("#DBDBDB")));

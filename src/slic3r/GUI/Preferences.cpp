@@ -2216,7 +2216,7 @@ void PreferencesDialog::create_items()
     //////////////////////////
     //// MCP CLIENTS TAB
     /////////////////////////////////////
-    m_pref_tabs->AppendItem(_L("MCP Clients"));
+    m_tab_index[PreferencesTab::McpClients] = m_pref_tabs->AppendItem(_L("MCP Clients"));
     f_sizers.push_back(new wxFlexGridSizer(1, 1, v_gap, 0));
     g_sizer = f_sizers.back();
     g_sizer->AddGrowableCol(0, 1);
