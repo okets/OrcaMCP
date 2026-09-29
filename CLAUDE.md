@@ -271,10 +271,14 @@ loaded was picked by exact name, and the ones nothing named (`get_mesh_health`,
   `[orcamcp][tools]` golden-file test keeps the two equal.
 - **The limit is 2048 characters; the text stays under 1,600.** Claude Code cuts a server's
   instructions at 2048 characters ("... [truncated]", measured on another server's on 2026-09-28), so
-  they are ASCII (characters = bytes) and most important first. They were 1,228 on 2026-09-28, shortened
+  they are ASCII (characters = bytes) and most important first. They are 1,301 (2026-09-29), shortened
   on the user's word so later tools fit: `get_server_info` first, `get_scene_info`, one line per job
   naming only its key tools, `next_steps`, and the footguns (`send_to_printer` starts the print,
-  `save_project` without a path overwrites, `new_project` and `load_project` discard). Tests hold them to
+  `save_project` without a path overwrites, `new_project` and `load_project` discard). A tool whose name
+  says its job needs no line: in an A/B test on 2026-09-29 (36 fresh `claude -p` agents, six tasks needing
+  tools the text does not name, texts naming 0, 7 or 10 more tools) every text found every tool, by name
+  from the deferred list, at the same cost. Name a tool here only when its name hides its job, or for a
+  footgun. Tests hold them to
   2048 (the hard cut) and 1,600 (raise only deliberately: a line that needs more room means another goes,
   or moves to `get_server_info`), and check every snake_case name in them.
 - **Next steps.** A response whose result implies a follow-up carries `next_steps`:
