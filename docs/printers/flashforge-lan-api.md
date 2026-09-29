@@ -422,7 +422,7 @@ file, for the reason given in section 3. A reference consumer of the file list a
 [flashforge-obico](https://github.com/okets/flashforge-obico) (`flashforge/client.py`).
 
 The print options' effects (section 4) were watched on 2026-09-29 on the same printer and firmware: a
-37-minute three-colour glider sent from OrcaMCP's send dialog with flow calibration, levelling and
+three-colour glider (sliced at 37 minutes, printed in 49) sent from OrcaMCP's send dialog with flow calibration, levelling and
 time-lapse on, the printer's status read every 30 seconds while its operator confirmed each stage at
 the machine.
 
