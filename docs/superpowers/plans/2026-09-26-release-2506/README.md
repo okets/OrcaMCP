@@ -172,6 +172,10 @@ belongs upstream, and decide together which to offer. Prepare one list from:
 For each item, note its severity, how easy it is to reproduce on upstream, and whether it's a clean small
 patch. The user decides; nothing is filed without their word.
 
+**Released 2026-09-29:** v2.5.0.6-dev, tag on 90c5e8b374 (the version bump; Build all green, 23 jobs), release
+workflow green, published with the three installers: https://github.com/okets/OrcaMCP/releases/tag/v2.5.0.6-dev.
+Next: the upstream issues, from `../2026-09-29-upstream-issues.md`, in a fresh session.
+
 ## Release checklist (orchestrator)
 
 1. All prompts merged, or moved to the roadmap with a reason.
