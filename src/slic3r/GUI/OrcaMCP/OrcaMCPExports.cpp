@@ -68,7 +68,8 @@ GcodeExportWait wait_for_handed_end(const GcodeExportOutcome& outcome, bool hand
 {
     if (!handed || waited != GcodeExportWait::timed_out)
         return waited;
-    // The end always follows the hand-off, in the same on_process_completed (an exception there ends the app).
+    // The end always follows the hand-off, in the same on_process_completed, once the export's error is routed and before
+    // the scene update (an exception there ends the app).
     while (outcome.state() == GcodeExportOutcome::State::pending) {
         if (quitting())
             return GcodeExportWait::quitting;

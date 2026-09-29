@@ -109,9 +109,10 @@ enum class GcodeExportWait { ended, timed_out, quitting };
 
 // After export_gcode's wait for its export stopped with `waited`: when the app had handed the completion to the call
 // (`handed`, what stop_waiting answered), the wait for the end the app records right after the hand-off, which only a
-// quit (`quitting`, asked every `poll`) cuts short. on_process_completed ends the outcome once it has updated the scene,
-// which a large preview can take seconds for on the -O0 build; the call answers that end, whose error dialog it
-// captured. Returns how the wait ended: `waited` as it was when nothing was handed or the wait did not time out.
+// quit (`quitting`, asked every `poll`) cuts short. on_process_completed ends the outcome as soon as it has routed the
+// export's error (captured for the call), before its scene update, which a large preview can make take seconds on the
+// -O0 build; the call answers that end. Returns how the wait ended: `waited` as it was when nothing was handed or the
+// wait did not time out.
 GcodeExportWait wait_for_handed_end(const GcodeExportOutcome& outcome, bool handed, GcodeExportWait waited,
                                     const std::function<bool()>& quitting,
                                     std::chrono::milliseconds poll = std::chrono::milliseconds(20));

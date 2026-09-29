@@ -12951,6 +12951,16 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
         is_finished = true;
     }
 
+    // Orca: tell MCP's export_gcode, which waits for the export it started, how it ended, as soon as that is decided
+    // (its error routed above, captured when it was handed to the call): before the scene update below, which a large
+    // preview can make take seconds, so the call's wait after a hand-off stays well inside the bridge's timeout.
+    if (mcp_gcode_export && exporting_status != ExportingStatus::NOT_EXPORTING) {
+        using State = OrcaMCP::GcodeExportOutcome::State;
+        mcp_gcode_export->end(evt.error() ? State::failed : evt.cancelled() ? State::cancelled : State::written,
+                              evt.error() ? evt.format_error_message().first : std::string());
+        mcp_gcode_export.reset();
+    }
+
     //BBS: set the current plater's slice result to valid
     // Orca: on the plate that still holds the Print this completion is about (its print index, never
     // reused), not on the plate the process points at now, and decided now, not when it was posted: the
@@ -13044,13 +13054,6 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
         }
     }
 
-    // Orca: tell MCP's export_gcode, which waits for the export it started, how it ended.
-    if (mcp_gcode_export && exporting_status != ExportingStatus::NOT_EXPORTING) {
-        using State = OrcaMCP::GcodeExportOutcome::State;
-        mcp_gcode_export->end(evt.error() ? State::failed : evt.cancelled() ? State::cancelled : State::written,
-                              evt.error() ? evt.format_error_message().first : std::string());
-        mcp_gcode_export.reset();
-    }
     exporting_status = ExportingStatus::NOT_EXPORTING;
 
 

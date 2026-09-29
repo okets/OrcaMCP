@@ -105,9 +105,10 @@ TEST_CASE("an export's end goes to the call only while it waits", "[McpExports][
     CHECK_FALSE(gone.hand_to_waiting_call()); // then the completion: the app shows its dialog
 }
 
-// The app ends the outcome once it has updated the scene after the hand-off, which a large preview can take seconds for
-// on the -O0 build. A 5 s grace then answered export_started for a file written, and the error dialog the call had
-// captured was never shown to anyone. The call waits for that end as long as it takes; only a quit cuts it short.
+// A 5 s grace after the hand-off answered export_started for a file written when the app recorded the end later (it
+// did so after its scene update, seconds for a large preview on the -O0 build), and the error dialog the call had
+// captured was never shown to anyone. The call waits for that end as long as it takes; only a quit cuts it short. The
+// test's own quit comes after a minute, so a wait that never sees the end fails here rather than hanging the suite.
 TEST_CASE("an export handed to the waiting call is answered however long the app takes to record its end", "[McpExports][orcamcp]")
 {
     GcodeExportOutcome outcome;
@@ -117,7 +118,9 @@ TEST_CASE("an export handed to the waiting call is answered however long the app
         std::this_thread::sleep_for(std::chrono::milliseconds(5500));
         outcome.end(GcodeExportOutcome::State::written);
     });
-    const GcodeExportWait waited = wait_for_handed_end(outcome, handed, GcodeExportWait::timed_out, [] { return false; });
+    const auto            give_up = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    const GcodeExportWait waited  = wait_for_handed_end(outcome, handed, GcodeExportWait::timed_out,
+                                                        [give_up] { return std::chrono::steady_clock::now() > give_up; });
     app.join();
     CHECK(waited == GcodeExportWait::ended);
 }
