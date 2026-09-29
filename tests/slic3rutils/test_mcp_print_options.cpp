@@ -191,54 +191,64 @@ TEST_CASE("The tool descriptions state the gate from the constant", "[McpPrintOp
     CHECK(calibration_gate_text() == "4 h");
 }
 
-TEST_CASE("A send that carries the options refuses none", "[McpPrintOptions][orcamcp]")
+TEST_CASE("requested_print_options names each explicit true, and only those", "[McpPrintOptions][orcamcp]")
 {
-    PrintOptionRequest all_on;
-    all_on.leveling = all_on.flow_calibration = all_on.time_lapse = true;
-    CHECK_FALSE(ignored_print_options_refusal(all_on, PrintOptionsReach::Honoured, "flashforge").has_value());
+    PrintOptionRequest request;
+    request.leveling         = true;
+    request.flow_calibration = false;
+    request.time_lapse       = true;
+    CHECK(requested_print_options(request) == std::vector<std::string>{"leveling_before_print: true", "time_lapse: true"});
+    CHECK(requested_print_options(PrintOptionRequest{}).empty());
 }
 
-TEST_CASE("A send that would drop the options refuses an explicit true, and only that", "[McpPrintOptions][orcamcp]")
+TEST_CASE("requested_station_arguments names an explicit station or mapping", "[McpPrintOptions][orcamcp]")
 {
-    PrintOptionRequest all_off;
-    all_off.leveling = all_off.flow_calibration = all_off.time_lapse = false;
-    PrintOptionRequest two_on;
-    two_on.leveling   = true;
-    two_on.time_lapse = true;
+    const nlohmann::json mapping = nlohmann::json::array({{{"tool_id", 0}, {"slot_id", 1}}});
+    CHECK(requested_station_arguments({{"use_material_station", true}, {"material_mappings", mapping}}) ==
+          std::vector<std::string>{"use_material_station: true", "material_mappings"});
+    // What changes nothing asks for nothing: false, an empty list, or leaving them out.
+    CHECK(requested_station_arguments({{"use_material_station", false}, {"material_mappings", nlohmann::json::array()}}).empty());
+    CHECK(requested_station_arguments(nlohmann::json::object()).empty());
+}
 
-    for (const PrintOptionsReach reach : {PrintOptionsReach::SendDialog, PrintOptionsReach::UploadOnly,
-                                          PrintOptionsReach::NotFlashforge, PrintOptionsReach::FlashforgeWithoutLocalApi}) {
-        // Off is what happens anyway, and nothing asked is nothing to drop.
-        CHECK_FALSE(ignored_print_options_refusal(all_off, reach, "moonraker").has_value());
-        CHECK_FALSE(ignored_print_options_refusal(PrintOptionRequest{}, reach, "moonraker").has_value());
+TEST_CASE("A send that carries the arguments refuses none", "[McpPrintOptions][orcamcp]")
+{
+    CHECK_FALSE(ignored_arguments_refusal({"flow_calibration: true", "material_mappings"}, SendReach::Honoured, "flashforge").has_value());
+}
 
-        const std::optional<std::string> refusal = ignored_print_options_refusal(two_on, reach, "moonraker");
+TEST_CASE("A send that would drop the arguments refuses each one asked, and nothing asked is nothing refused", "[McpPrintOptions][orcamcp]")
+{
+    const std::vector<std::string> asked = {"leveling_before_print: true", "use_material_station: true", "material_mappings"};
+    for (const SendReach reach : {SendReach::SendDialog, SendReach::UploadOnly, SendReach::NotFlashforge,
+                                  SendReach::FlashforgeWithoutLocalApi}) {
+        CHECK_FALSE(ignored_arguments_refusal({}, reach, "moonraker").has_value());
+
+        const std::optional<std::string> refusal = ignored_arguments_refusal(asked, reach, "moonraker");
         REQUIRE(refusal.has_value());
         CHECK(mentions(*refusal, "Nothing was sent"));
         CHECK(mentions(*refusal, "leveling_before_print: true"));
-        CHECK(mentions(*refusal, "time_lapse: true"));
-        CHECK_FALSE(mentions(*refusal, "flow_calibration"));
+        CHECK(mentions(*refusal, "use_material_station: true"));
+        CHECK(mentions(*refusal, "material_mappings"));
     }
 }
 
-TEST_CASE("The refusal says why the options would be dropped", "[McpPrintOptions][orcamcp]")
+TEST_CASE("The refusal says why the arguments would be dropped", "[McpPrintOptions][orcamcp]")
 {
-    PrintOptionRequest flow;
-    flow.flow_calibration = true;
+    const std::vector<std::string> flow = {"flow_calibration: true"};
 
-    const std::string dialog = ignored_print_options_refusal(flow, PrintOptionsReach::SendDialog, "flashforge").value();
+    const std::string dialog = ignored_arguments_refusal(flow, SendReach::SendDialog, "flashforge").value();
     CHECK(mentions(dialog, "direct: false"));
     CHECK(mentions(dialog, "direct: true"));
 
-    const std::string upload_only = ignored_print_options_refusal(flow, PrintOptionsReach::UploadOnly, "flashforge").value();
+    const std::string upload_only = ignored_arguments_refusal(flow, SendReach::UploadOnly, "flashforge").value();
     CHECK(mentions(upload_only, "start_print: false"));
     CHECK(mentions(upload_only, "print_printer_file"));
 
-    const std::string other_host = ignored_print_options_refusal(flow, PrintOptionsReach::NotFlashforge, "octoprint").value();
+    const std::string other_host = ignored_arguments_refusal({"material_mappings"}, SendReach::NotFlashforge, "octoprint").value();
     CHECK(mentions(other_host, "'octoprint'"));
     CHECK(mentions(other_host, "Flashforge"));
 
-    const std::string no_api = ignored_print_options_refusal(flow, PrintOptionsReach::FlashforgeWithoutLocalApi, "flashforge").value();
+    const std::string no_api = ignored_arguments_refusal({"use_material_station: true"}, SendReach::FlashforgeWithoutLocalApi, "flashforge").value();
     CHECK(mentions(no_api, "serial number and check code"));
     CHECK(mentions(no_api, "add_physical_printer"));
 }

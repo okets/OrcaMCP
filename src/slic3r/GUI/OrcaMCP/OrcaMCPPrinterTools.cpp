@@ -444,7 +444,8 @@ void OrcaMCPServer::register_printer_tools()
         "unless asked for. time_lapse is off unless asked for. The response's print_options says what was sent and "
         "why. An explicit true is refused where it would be ignored: direct=false, start_print=false (nothing "
         "starts; pass them to print_printer_file then), another print host, or a Flashforge without its serial "
-        "number and check code.",
+        "number and check code; so are use_material_station: true and a material_mappings list, except with "
+        "start_print=false, where the upload carries them.",
         {
             {"type", "object"},
             {"properties", {
@@ -481,13 +482,13 @@ void OrcaMCPServer::register_printer_tools()
                     {"type", "boolean"},
                     {"description", "Print from the material station (default: true when the printer reports "
                                     "one). Direct sends to a Flashforge host with local-API credentials only; "
-                                    "ignored otherwise."}
+                                    "true is refused anywhere else."}
                 }},
                 {"material_mappings", {
                     {"type", "array"},
                     {"description", "Explicit tool-to-slot mapping. Omit to map the project's filaments onto "
                                     "matching loaded slots automatically. Direct sends to a Flashforge host "
-                                    "with local-API credentials only; ignored otherwise."},
+                                    "with local-API credentials only; a mapping is refused anywhere else."},
                     {"items", material_mapping_schema()}
                 }},
                 {"file_name", {
@@ -508,17 +509,6 @@ void OrcaMCPServer::register_printer_tools()
             std::string        option_error;
             if (!read_print_option_request(params, option_request, option_error))
                 return error_response(option_error);
-            const bool all_plates = params.value("all_plates", false);
-            if (!params.value("direct", true)) {
-                if (std::optional<std::string> refusal = ignored_print_options_refusal(option_request, PrintOptionsReach::SendDialog, std::string()))
-                    return error_response(*refusal);
-                return open_send_dialog(all_plates);
-            }
-
-            if (all_plates)
-                return error_response("direct send supports one plate at a time; select the plate first with "
-                                      "select_plate, or pass direct=false to send all plates from the dialog");
-
             for (const char* flag : {"start_print", "use_material_station"})
                 if (params.contains(flag) && !params.at(flag).is_boolean())
                     return error_response(std::string(flag) + " must be a boolean");
@@ -528,10 +518,28 @@ void OrcaMCPServer::register_printer_tools()
             if (!requested_mappings.is_array())
                 return error_response("material_mappings must be an array");
 
+            // What only a direct send to a Flashforge with local-API credentials carries: asked for anywhere
+            // else, it is refused before anything is sent rather than dropped.
+            const std::vector<std::string> options_asked = requested_print_options(option_request);
+            std::vector<std::string>       flashforge_asked = options_asked;
+            for (const std::string& name : requested_station_arguments(params))
+                flashforge_asked.push_back(name);
+
+            const bool all_plates = params.value("all_plates", false);
+            if (!params.value("direct", true)) {
+                if (std::optional<std::string> refusal = ignored_arguments_refusal(flashforge_asked, SendReach::SendDialog, std::string()))
+                    return error_response(*refusal);
+                return open_send_dialog(all_plates);
+            }
+
+            if (all_plates)
+                return error_response("direct send supports one plate at a time; select the plate first with "
+                                      "select_plate, or pass direct=false to send all plates from the dialog");
+
             const bool        start_print = params.value("start_print", true);
             const std::string file_name   = params.value("file_name", std::string());
             if (!start_print)
-                if (std::optional<std::string> refusal = ignored_print_options_refusal(option_request, PrintOptionsReach::UploadOnly, std::string()))
+                if (std::optional<std::string> refusal = ignored_arguments_refusal(options_asked, SendReach::UploadOnly, std::string()))
                     return error_response(*refusal);
 
             // Main thread: everything that reads the plater and the presets.
@@ -582,12 +590,12 @@ void OrcaMCPServer::register_printer_tools()
             if (!host)
                 return error_response("Failed to create a print host for type '" + host_type + "'");
 
-            // Before anything reaches the printer: an explicit true this host would drop.
+            // Before anything reaches the printer: what this host would drop.
             auto* ff = dynamic_cast<Slic3r::Flashforge*>(host.get());
-            const PrintOptionsReach reach = ff == nullptr                    ? PrintOptionsReach::NotFlashforge :
-                                            !ff->has_local_api_credentials() ? PrintOptionsReach::FlashforgeWithoutLocalApi :
-                                                                               PrintOptionsReach::Honoured;
-            if (std::optional<std::string> refusal = ignored_print_options_refusal(option_request, reach, host_type))
+            const SendReach reach = ff == nullptr                    ? SendReach::NotFlashforge :
+                                    !ff->has_local_api_credentials() ? SendReach::FlashforgeWithoutLocalApi :
+                                                                       SendReach::Honoured;
+            if (std::optional<std::string> refusal = ignored_arguments_refusal(flashforge_asked, reach, host_type))
                 return error_response(*refusal);
 
             if (start_print && !host->get_post_upload_actions().has(Slic3r::PrintHostPostUploadAction::StartPrint))
@@ -600,7 +608,7 @@ void OrcaMCPServer::register_printer_tools()
             std::optional<PrintOptionChoices>  print_options;
             GateFacts                          gate_facts;
             gate_facts.estimated_print_s = estimated_print_s;
-            if (reach == PrintOptionsReach::Honoured) {
+            if (reach == SendReach::Honoured) {
                 Slic3r::FlashforgeApi::PrinterStatus status;
                 wxString                             msg;
                 if (!ff->fetch_status(status, msg))

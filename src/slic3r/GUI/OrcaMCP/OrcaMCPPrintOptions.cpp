@@ -2,6 +2,7 @@
 #include "OrcaMCPPrintOptions.hpp"
 
 #include <cmath>
+#include <utility>
 #include <vector>
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
@@ -45,39 +46,21 @@ nlohmann::json choice_json(const PrintOptionChoice& choice)
     return {{"on", choice.on}, {"decided_by", choice.decided_by}};
 }
 
-// "leveling_before_print: true, time_lapse: true": the parameters a send would drop.
-std::string requested_on(const PrintOptionRequest& request)
-{
-    std::vector<const char*> names;
-    if (request.leveling.value_or(false))
-        names.push_back(kLevelingParam);
-    if (request.flow_calibration.value_or(false))
-        names.push_back(kFlowCalibrationParam);
-    if (request.time_lapse.value_or(false))
-        names.push_back(kTimeLapseParam);
-
-    std::string text;
-    for (const char* name : names)
-        text += (text.empty() ? "" : ", ") + std::string(name) + ": true";
-    return text;
-}
-
-std::string why_dropped(PrintOptionsReach reach, const std::string& host_type)
+std::string why_dropped(SendReach reach, const std::string& host_type)
 {
     switch (reach) {
-    case PrintOptionsReach::SendDialog:
-        return "with direct: false the send is left to the user in OrcaSlicer's send dialog, which asks for its own print "
-               "options. Pass direct: true to choose them here, or leave them out.";
-    case PrintOptionsReach::UploadOnly:
+    case SendReach::SendDialog:
+        return "with direct: false the send is left to the user in OrcaSlicer's send dialog, which asks for its own. "
+               "Pass direct: true to choose them here, or leave them out.";
+    case SendReach::UploadOnly:
         return "with start_print: false nothing starts, so the printer never reads them. Pass them to print_printer_file "
                "when you start the uploaded file, or pass start_print: true.";
-    case PrintOptionsReach::NotFlashforge:
-        return "only a Flashforge print host takes print options, and the selected host is '" + host_type +
-               "'. Leave them out.";
-    case PrintOptionsReach::FlashforgeWithoutLocalApi:
-        return "without its serial number and check code a Flashforge is sent over its TCP console, which carries no "
-               "print options. Set them with add_physical_printer, or leave these out.";
-    case PrintOptionsReach::Honoured: break;
+    case SendReach::NotFlashforge:
+        return "only a Flashforge print host takes them, and the selected host is '" + host_type + "'. Leave them out.";
+    case SendReach::FlashforgeWithoutLocalApi:
+        return "without its serial number and check code a Flashforge is sent over its TCP console, which carries none "
+               "of them. Set them with add_physical_printer, or leave these out.";
+    case SendReach::Honoured: break;
     }
     return {};
 }
@@ -101,15 +84,38 @@ bool needs_print_time(const PrintOptionRequest& request)
     return !request.leveling || !request.flow_calibration;
 }
 
-std::optional<std::string> ignored_print_options_refusal(const PrintOptionRequest& request, PrintOptionsReach reach,
-                                                         const std::string& host_type)
+std::vector<std::string> requested_print_options(const PrintOptionRequest& request)
 {
-    if (reach == PrintOptionsReach::Honoured)
+    std::vector<std::string> asked;
+    for (const auto& [name, value] : {std::pair<const char*, std::optional<bool>>{kLevelingParam, request.leveling},
+                                      {kFlowCalibrationParam, request.flow_calibration},
+                                      {kTimeLapseParam, request.time_lapse}})
+        if (value.value_or(false))
+            asked.push_back(std::string(name) + ": true");
+    return asked;
+}
+
+std::vector<std::string> requested_station_arguments(const nlohmann::json& params)
+{
+    std::vector<std::string> asked;
+    if (!params.is_object())
+        return asked;
+    if (const auto it = params.find("use_material_station"); it != params.end() && it->is_boolean() && it->get<bool>())
+        asked.push_back("use_material_station: true");
+    if (const auto it = params.find("material_mappings"); it != params.end() && it->is_array() && !it->empty())
+        asked.push_back("material_mappings");
+    return asked;
+}
+
+std::optional<std::string> ignored_arguments_refusal(const std::vector<std::string>& asked, SendReach reach,
+                                                     const std::string& host_type)
+{
+    if (reach == SendReach::Honoured || asked.empty())
         return std::nullopt;
-    const std::string requested = requested_on(request);
-    if (requested.empty())
-        return std::nullopt;
-    return "Nothing was sent. " + requested + " would be ignored: " + why_dropped(reach, host_type);
+    std::string names;
+    for (const std::string& name : asked)
+        names += (names.empty() ? "" : ", ") + name;
+    return "Nothing was sent. " + names + " would be ignored: " + why_dropped(reach, host_type);
 }
 
 PrintOptionChoices choose_print_options(const PrintOptionRequest& request, const GateFacts& facts)

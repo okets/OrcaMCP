@@ -4043,7 +4043,7 @@ look at a dialog or to test a refusal.
 | `leveling_before_print` | boolean | No | Level the bed first. Omitted: on a Creator 5 or 5 Pro, on when the plate's estimated time is 4 h or more; off on other models |
 | `flow_calibration` | boolean | No | Calibrate the flow first. Omitted: as `leveling_before_print` |
 | `time_lapse` | boolean | No | Ask the printer to record a time-lapse (default `false`) |
-| `use_material_station`, `material_mappings` | | No | Flashforge hosts with local-API credentials only; see Material mapping below |
+| `use_material_station`, `material_mappings` | | No | Direct sends to a Flashforge host with local-API credentials only (`true`, or a mapping, is refused anywhere else); see Material mapping below |
 | `file_name` | string | No | Name to store the upload under. Direct sends only |
 | `all_plates` | boolean | No | Dialog sends only (`direct: false`): send every plate |
 
@@ -4069,10 +4069,12 @@ An explicit `true` is refused, and nothing is sent, wherever it would be ignored
 `direct: false` (the send dialog asks for its own), with `start_print: false` (nothing starts, so
 the printer never reads them: pass them to `print_printer_file` when you start the uploaded file),
 on another print host, or on a Flashforge without its serial number and check code (its TCP
-console carries no options). An explicit `false` is always accepted. A value that is not a boolean
-is refused too ("flow_calibration must be a boolean").
+console carries no options). The same holds for `use_material_station: true` and a non-empty
+`material_mappings`, except with `start_print: false`, where the upload carries them. An explicit
+`false`, or an empty list, is always accepted. A value that is not a boolean is refused too
+("flow_calibration must be a boolean"), with `direct: false` as well.
 ```json
-{"status": "error", "message": "Nothing was sent. flow_calibration: true would be ignored: only a Flashforge print host takes print options, and the selected host is 'moonraker'. Leave them out."}
+{"status": "error", "message": "Nothing was sent. flow_calibration: true, material_mappings would be ignored: only a Flashforge print host takes them, and the selected host is 'moonraker'. Leave them out."}
 ```
 
 **Returns (Flashforge):**

@@ -2780,7 +2780,7 @@
     },
     {
       "category": "Printers",
-      "description": "Upload the sliced plate to the configured print host and START PRINTING IT: start_print defaults to true, so a bare call begins a print on real hardware. Pass start_print=false to upload only. The upload runs without any dialog: on a Flashforge printer with a material station the project's filaments are mapped onto the loaded slots automatically (pass material_mappings to choose the slots yourself). Pass direct=false to open OrcaSlicer's send dialog and leave the send to the user. Refused, as the GUI's Print and Send buttons are off, when a plate it would send failed the check its slice ran on its G-code (get_slicing_status's plates[].gcode_check). On a Flashforge the printer can calibrate the flow and level the bed before it starts; each adds minutes, and the choice is yours: pass flow_calibration and leveling_before_print true before a long print or after a filament, nozzle or bed change, false for a short print or a repeat soon after the last one on the same filaments (get_printer_status's last_print_started_here says when this OrcaMCP instance last started a print there, and with what). Omitted, each runs on a Creator 5 or 5 Pro when the plate's estimated time is 4 h or more; other Flashforge models have not been checked, so there each stays off unless asked for. time_lapse is off unless asked for. The response's print_options says what was sent and why. An explicit true is refused where it would be ignored: direct=false, start_print=false (nothing starts; pass them to print_printer_file then), another print host, or a Flashforge without its serial number and check code.",
+      "description": "Upload the sliced plate to the configured print host and START PRINTING IT: start_print defaults to true, so a bare call begins a print on real hardware. Pass start_print=false to upload only. The upload runs without any dialog: on a Flashforge printer with a material station the project's filaments are mapped onto the loaded slots automatically (pass material_mappings to choose the slots yourself). Pass direct=false to open OrcaSlicer's send dialog and leave the send to the user. Refused, as the GUI's Print and Send buttons are off, when a plate it would send failed the check its slice ran on its G-code (get_slicing_status's plates[].gcode_check). On a Flashforge the printer can calibrate the flow and level the bed before it starts; each adds minutes, and the choice is yours: pass flow_calibration and leveling_before_print true before a long print or after a filament, nozzle or bed change, false for a short print or a repeat soon after the last one on the same filaments (get_printer_status's last_print_started_here says when this OrcaMCP instance last started a print there, and with what). Omitted, each runs on a Creator 5 or 5 Pro when the plate's estimated time is 4 h or more; other Flashforge models have not been checked, so there each stays off unless asked for. time_lapse is off unless asked for. The response's print_options says what was sent and why. An explicit true is refused where it would be ignored: direct=false, start_print=false (nothing starts; pass them to print_printer_file then), another print host, or a Flashforge without its serial number and check code; so are use_material_station: true and a material_mappings list, except with start_print=false, where the upload carries them.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -2805,7 +2805,7 @@
             "type": "boolean"
           },
           "material_mappings": {
-            "description": "Explicit tool-to-slot mapping. Omit to map the project's filaments onto matching loaded slots automatically. Direct sends to a Flashforge host with local-API credentials only; ignored otherwise.",
+            "description": "Explicit tool-to-slot mapping. Omit to map the project's filaments onto matching loaded slots automatically. Direct sends to a Flashforge host with local-API credentials only; a mapping is refused anywhere else.",
             "items": {
               "additionalProperties": false,
               "properties": {
@@ -2842,7 +2842,7 @@
             "type": "boolean"
           },
           "use_material_station": {
-            "description": "Print from the material station (default: true when the printer reports one). Direct sends to a Flashforge host with local-API credentials only; ignored otherwise.",
+            "description": "Print from the material station (default: true when the printer reports one). Direct sends to a Flashforge host with local-API credentials only; true is refused anywhere else.",
             "type": "boolean"
           }
         },

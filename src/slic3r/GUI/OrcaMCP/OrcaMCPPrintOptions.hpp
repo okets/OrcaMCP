@@ -3,6 +3,7 @@
 
 #include <optional>
 #include <string>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
@@ -42,21 +43,30 @@ bool read_print_option_request(const nlohmann::json& params, PrintOptionRequest&
 // Whether choose_print_options reads the estimate: some calibration was left to the gate.
 bool needs_print_time(const PrintOptionRequest& request);
 
-// Where a send's print options go.
-enum class PrintOptionsReach
+// Where a send's Flashforge-only arguments -- the print options, the material station and its
+// mapping -- go.
+enum class SendReach
 {
     Honoured,                  // a direct send to a Flashforge with local-API credentials
     SendDialog,                // direct: false: the user's send dialog asks for its own
-    UploadOnly,                // start_print: false: nothing starts, so the printer never reads them
+    UploadOnly,                // start_print: false: nothing starts, so the printer never reads the print options
     NotFlashforge,             // another print host takes none
     FlashforgeWithoutLocalApi, // no serial number and check code: the TCP console carries none
 };
 
-// The refusal of each explicit `true` a send would silently drop, naming the parameters and why;
-// nullopt when the send carries them, or none is asked for. An explicit false is never refused: it is
-// what happens anyway. `host_type` names the host for NotFlashforge.
-std::optional<std::string> ignored_print_options_refusal(const PrintOptionRequest& request, PrintOptionsReach reach,
-                                                         const std::string& host_type);
+// The print options a call asks for: "leveling_before_print: true" for each explicit true. An explicit
+// false asks for nothing: it is what happens anyway.
+std::vector<std::string> requested_print_options(const PrintOptionRequest& request);
+
+// The material-station arguments a call asks for: "use_material_station: true", and
+// "material_mappings" when it is a list with an entry. false, an empty list or leaving them out ask
+// for nothing.
+std::vector<std::string> requested_station_arguments(const nlohmann::json& params);
+
+// The refusal of the arguments in `asked` that a send would silently drop, naming them and why;
+// nullopt when the send carries them, or nothing was asked. `host_type` names the host for NotFlashforge.
+std::optional<std::string> ignored_arguments_refusal(const std::vector<std::string>& asked, SendReach reach,
+                                                     const std::string& host_type);
 
 // What the gate reads about the print and the printer.
 struct GateFacts
