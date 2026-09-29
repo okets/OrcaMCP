@@ -3883,10 +3883,24 @@ Live status from the configured print host. Full detail for Flashforge hosts.
   "print_host": "10.0.0.10",
   "online": true,
   "obico": {"configured": true, "url": "http://10.0.0.2:3334"},
-  "printer": {"state": "ready", "camera_stream_url": "http://10.0.0.10:8080/?action=stream", "...": "..."}
+  "printer": {"state": "ready", "camera_stream_url": "http://10.0.0.10:8080/?action=stream", "...": "..."},
+  "last_print_started_here": {
+    "file_name": "vase.gcode.3mf", "age_s": 2400,
+    "leveling": true, "flow_calibration": true, "time_lapse": false,
+    "fed_from": [{"tool_id": 0, "slot_id": 2, "material": "PLA", "color": "#FF0000"}]
+  }
 }
 ```
 `obico.configured` says whether the preset names an Obico server; the token is never included.
+
+`last_print_started_here` is the last print this OrcaMCP instance started on the printer, from any
+of its paths (the send dialog, `send_to_printer`, `print_printer_file`), with the options it asked
+for and the slots it fed from (`fed_from`: the project tool, the station slot, and that slot's
+material and colour when it was sent; empty without the material station). It is recorded only
+once the printer accepted the start, never for an upload with `start_print: false`. It is null
+when this instance has started none since it launched, and it never includes a print started on
+the printer's screen, from another computer or from another OrcaMCP instance. An agent uses it to
+decide whether a new print needs calibrating again (see `send_to_printer`'s print options).
 
 `printer.controls` names what `printer_control`'s `set_*` actions change, as the printer reports them:
 `print_speed_percent` (null while no job runs), `z_offset_mm`, `chamber_fan_percent`,
@@ -3911,9 +3925,11 @@ that error alone:
 {
   "status": "error",
   "message": "Could not connect to the printer at 10.0.0.100:8898: the connection failed after 2 ms, before reaching the printer; tried 2 times. That usually means the printer is not on the network right now: ...",
-  "cached": {"source": "cached", "age_s": 312, "material_station": {"present": true, "slots": [...]}}
+  "cached": {"source": "cached", "age_s": 312, "material_station": {"present": true, "slots": [...]}},
+  "last_print_started_here": null
 }
 ```
+`last_print_started_here` is there too, since it never needed the printer.
 A failure that happens at once, before reaching the printer, usually means the printer is off the
 network. On macOS, a newly built or installed app can also be blocked by System Settings > Privacy &
 Security > Local Network. Every failure is logged at warning level with the URL, curl code, HTTP

@@ -580,6 +580,20 @@ std::optional<FlashforgeLocalApi::CachedStatus> Flashforge::last_known_status() 
     return FlashforgeLocalApi::status_cache().get(m_local_api_host);
 }
 
+std::optional<FlashforgeLocalApi::RecordedPrintStart> Flashforge::last_print_start() const
+{
+    return FlashforgeLocalApi::print_start_log().get(m_local_api_host);
+}
+
+void Flashforge::record_print_start(const std::string& file_name, const FlashforgeApi::PrintOptions& options, const json& material_mappings) const
+{
+    FlashforgeLocalApi::PrintStart start;
+    start.file_name         = file_name;
+    start.options           = options;
+    start.material_mappings = material_mappings.is_array() ? material_mappings : json::array();
+    FlashforgeLocalApi::print_start_log().put(m_local_api_host, std::move(start));
+}
+
 bool Flashforge::send_control(const std::string& cmd, const nlohmann::json& args, wxString& msg) const
 {
     if (!require_local_api_credentials(msg))
@@ -648,7 +662,10 @@ bool Flashforge::print_gcode_file(const std::string& file_name, const Flashforge
         return false;
 
     std::string body;
-    return request_local_api_json("printGcode", FlashforgeApi::make_print_gcode_payload(m_serial_number, m_check_code, file_name, options, material_mappings).dump(), body, msg);
+    if (!request_local_api_json("printGcode", FlashforgeApi::make_print_gcode_payload(m_serial_number, m_check_code, file_name, options, material_mappings).dump(), body, msg))
+        return false;
+    record_print_start(file_name, options, material_mappings);
+    return true;
 }
 
 bool Flashforge::upload_local_api(PrintHostUpload upload_data, ProgressFn progress_fn, ErrorFn error_fn) const
@@ -722,6 +739,8 @@ bool Flashforge::upload_local_api(PrintHostUpload upload_data, ProgressFn progre
     const bool ok = run_local_api_request(url, upload_once, error_msg, &failure);
     if (!ok && !failure.cancelled)
         error_fn(error_msg);
+    if (ok && upload_data.post_action == PrintHostPostUploadAction::StartPrint)
+        record_print_start(filename, options, json::parse(material_map_json, nullptr, false));
     return ok;
 }
 

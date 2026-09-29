@@ -201,7 +201,7 @@ nlohmann::json match_from_cached_status(const FlashforgeLocalApi::CachedStatus& 
     const bool applies  = cached_match_applies(dry_run, allow_cached);
     const bool withheld = !dry_run && !applies;
 
-    nlohmann::json response = run_on_main_thread([station = cached.status.slots, slots, applies]() -> nlohmann::json {
+    nlohmann::json response = run_on_main_thread([station = cached.value.slots, slots, applies]() -> nlohmann::json {
         return match_project_to_printer(station, slots, /*dry_run=*/!applies);
     });
     return label_cached_match(std::move(response), cached.age_s, live_error, withheld);
@@ -438,7 +438,9 @@ void OrcaMCPServer::register_printer_tools()
         "On a Flashforge the printer can calibrate the flow and level the bed before it starts; each adds minutes, "
         "and the choice is yours: pass flow_calibration and leveling_before_print true before a long print or after "
         "a filament, nozzle or bed change, false for a short print or a repeat soon after the last one on the same "
-        "filaments. Omitted, each runs when the plate's estimated time is " + calibration_gate_text() + " or more; "
+        "filaments (get_printer_status's last_print_started_here says when this OrcaMCP instance last started a print "
+        "there, and with what). Omitted, each runs when the plate's estimated time is " + calibration_gate_text() +
+        " or more; "
         "time_lapse is off unless asked for. The response's print_options says what was sent and why. An explicit "
         "true is refused where it would be ignored: direct=false, another print host, or a Flashforge without its "
         "serial number and check code.",
@@ -773,7 +775,11 @@ void OrcaMCPServer::register_printer_tools()
         "station. Full detail is only available for Flashforge hosts; other host types report online/offline. "
         "When a Flashforge cannot be reached, the error says why and what to do next, and `cached` carries "
         "the material station from its last answer, with age_s. An answer that refuses (wrong check code) "
-        "or cannot be read is returned as that error, without `cached`.",
+        "or cannot be read is returned as that error, without `cached`. last_print_started_here, in the answer and "
+        "in that error, is the last print this OrcaMCP instance started on the printer: age_s, file_name, the "
+        "leveling, flow_calibration and time_lapse it asked for, and the slots it fed from (fed_from); null when "
+        "none since it launched. Prints started on the printer's screen, from another computer or from another "
+        "OrcaMCP instance are not in it. Use it to judge whether a new print needs calibrating again.",
         {
             {"type", "object"},
             {"properties", nlohmann::json::object()}
@@ -813,6 +819,8 @@ void OrcaMCPServer::register_printer_tools()
                 // unreadable answer is its own reply, and a stale status would hide it.
                 if (const auto cached = unreachable ? ff->last_known_status() : std::nullopt)
                     error["cached"] = cached_station_json(*cached);
+                if (unreachable)
+                    error["last_print_started_here"] = print_start_json(ff->last_print_start());
                 return error;
             }
 
@@ -821,7 +829,8 @@ void OrcaMCPServer::register_printer_tools()
                     {"print_host", print_host_value},
                     {"online", true},
                     {"obico", obico_status_json(cfg)},
-                    {"printer", status_to_json(status)}};
+                    {"printer", status_to_json(status)},
+                    {"last_print_started_here", print_start_json(ff->last_print_start())}};
         }
     });
 
