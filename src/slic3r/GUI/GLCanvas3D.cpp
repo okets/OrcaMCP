@@ -6564,7 +6564,9 @@ void GLCanvas3D::render_thumbnail_internal(ThumbnailData& thumbnail_data, const 
     BOOST_LOG_TRIVIAL(info) << boost::format("render_thumbnail: finished");
 
     // Puts the canvas viewport back in place of the thumbnail one set above.
-    wxGetApp().plater()->get_camera().apply_viewport();
+    // Orca: the CLI renders thumbnails with no wx application and no plater, and so no canvas viewport to restore.
+    if (wxApp::GetInstance() != nullptr && wxGetApp().plater() != nullptr)
+        wxGetApp().plater()->get_camera().apply_viewport();
 }
 
 void GLCanvas3D::render_thumbnail_framebuffer(ThumbnailData& thumbnail_data, unsigned int w, unsigned int h, const ThumbnailsParams& thumbnail_params,

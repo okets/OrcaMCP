@@ -1327,6 +1327,7 @@ echo "BN upstream's Flashforge upload always sends flowCalibration off, and read
 echo "BO the Flashforge send dialog saves its boxes through AppConfig's bool overload, so every config holds \"true\" and the next dialog reads them off / it starts with leveling on and offers no flow calibration (rel2506/10): $(U src/slic3r/GUI/PrintHostDialogs.cpp | grep -c 'CONFIG_KEY_LEVELING, m_leveling_before_print ? "1" : "0"') / $(U src/slic3r/GUI/PrintHostDialogs.hpp | grep -c 'm_leveling_before_print {true}')"
 echo "BP upstream's send dialog is not told which Flashforge it sends to, so it cannot offer only what that machine's start screen offers (rel2506/10; a feature: 0 = keep ours): $(U src/slic3r/Utils/Flashforge.cpp | grep -c 'int\* product_id') / $(U src/slic3r/GUI/PrintHostDialogs.hpp | grep -c 'product_id')"
 echo "BQ AppConfig::set has no const char* overload, so a text literal takes its bool one and stores \"true\" / get_bool(section, key) reads \"1\" from the app section (upstream issue #15994; rel2506/10; 0 = bug for the first, non-zero = bug for the second): $(U src/libslic3r/AppConfig.hpp | grep -c 'const char \*value') / $(U src/libslic3r/AppConfig.hpp | grep -c 'this->get(key) == "1"')"
+echo "BR the CLI's thumbnail render restores the canvas viewport through wxGetApp().plater() with no wx app, so --export-3mf and arrange with thumbnails segfault on macOS (rel2507): $(U src/slic3r/GUI/GLCanvas3D.cpp | awk '/^void GLCanvas3D::render_thumbnail_internal/{f=1} f&&/wxApp::GetInstance\(\)/{print "no"; d=1; exit} f&&/get_camera\(\)\.apply_viewport\(\)/{print "yes"; d=1; exit} END{if(!d) print "unknown"}')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -1997,6 +1998,13 @@ material-station key, the orient settings (`GLCanvas3D.cpp`), the CrealityPrint 
 "true", by passing `true` (`WebGuideDialog.cpp`), since an older build sharing the data folder reads it with the old
 `get_bool`. On a non-zero first count, take upstream's overload; on a 0 second count, take upstream's `get_bool`; re-run
 `libslic3r_tests "[AppConfig]"` and `slic3rutils_tests "[FlashforgeSendOptions]"`.
+
+Item BR: upstream's #15674 (2026-09) ends `GLCanvas3D::render_thumbnail_internal` by restoring the canvas viewport
+through `wxGetApp().plater()`. The CLI renders thumbnails (`--export-3mf`, an arrange that writes a 3MF) with no wx
+application, so on macOS it dereferenced a null app and every such run segfaulted (the external regression suite's
+`arrange-with-allow-rotations`, `export-3mf-metadata-flags`, `object-overrides-roundtrip-export-3mf`, run locally; CI
+runs that suite on Linux only, where it did not crash). Ours restores it only when there is an app and a plater. On "no",
+take upstream's and re-run those three cases against a macOS build with the suite's `run_test.py`.
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices
