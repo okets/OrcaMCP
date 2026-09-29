@@ -784,6 +784,7 @@ constexpr const char* kRecentSection            = "recent";
 constexpr const char* kLevelingConfigKey        = "flashforge_leveling_before_print";
 constexpr const char* kFlowCalibrationConfigKey = "flashforge_flow_calibration";
 constexpr const char* kTimeLapseConfigKey       = "flashforge_timelapse_video";
+constexpr const char* kMaterialStationConfigKey = "flashforge_use_material_station";
 } // namespace
 
 FlashforgeApi::PrintOptions remembered_flashforge_print_options(const AppConfig& config)
@@ -794,6 +795,19 @@ FlashforgeApi::PrintOptions remembered_flashforge_print_options(const AppConfig&
     options.flow_calibration = on(kFlowCalibrationConfigKey);
     options.time_lapse       = on(kTimeLapseConfigKey);
     return options;
+}
+
+bool remembered_flashforge_material_station(const AppConfig& config, bool printer_has_station)
+{
+    if (!printer_has_station)
+        return false;
+    // Only the "0" a toggle saved turns it off; nothing saved, or an older build's "true", is the default.
+    return config.get(kRecentSection, kMaterialStationConfigKey) != "0";
+}
+
+void remember_flashforge_material_station(AppConfig& config, bool on)
+{
+    config.set(kRecentSection, kMaterialStationConfigKey, on ? "1" : "0");
 }
 
 void remember_flashforge_print_options(AppConfig& config, const FlashforgeApi::PrintOptions& options)
@@ -839,11 +853,8 @@ void FlashforgePrintHostSendDialog::init()
 
     m_print_options = remembered_flashforge_print_options(*app_config);
 
-    // Flashforge local printing should default to IFS enabled when supported.
-    // We don't revive an old stale "0" here.
-    m_use_material_station = m_supports_material_station;
-    if (m_supports_material_station && !app_config->has("recent", CONFIG_KEY_IFS))
-        const_cast<AppConfig*>(app_config)->set("recent", CONFIG_KEY_IFS, "1");
+    // Orca: on when the printer has a station, until the user unticked it (saved on the toggle).
+    m_use_material_station = remembered_flashforge_material_station(*app_config, m_supports_material_station);
 
 
     wxString recent_path = from_u8(app_config->get("recent", CONFIG_KEY_PATH));
@@ -946,16 +957,23 @@ void FlashforgePrintHostSendDialog::init()
 
     // In the order the printer's own start screen lists them. Flow calibration only where that screen
     // is known to offer it (FlashforgeApi::start_screen_offers_calibration).
+    // Each box is saved the moment it is toggled (the user's decision, 2026-09-29): Cancel, the close box
+    // and Send all keep the latest state.
+    const auto save_print_options = [this]() { remember_flashforge_print_options(*wxGetApp().app_config, m_print_options); };
     if (m_offers_flow_calibration)
         add_option_checkbox(options_group, m_flashforge_options_sizer, _L("Calibrate the flow before printing"), m_print_options.flow_calibration,
-                            [this](bool checked) { m_print_options.flow_calibration = checked; }, &m_checkbox_flow_calibration);
+                            [this, save_print_options](bool checked) { m_print_options.flow_calibration = checked; save_print_options(); },
+                            &m_checkbox_flow_calibration);
     add_option_checkbox(options_group, m_flashforge_options_sizer, _L("Level the bed before printing"), m_print_options.leveling,
-                        [this](bool checked) { m_print_options.leveling = checked; }, &m_checkbox_leveling);
+                        [this, save_print_options](bool checked) { m_print_options.leveling = checked; save_print_options(); },
+                        &m_checkbox_leveling);
     add_option_checkbox(options_group, m_flashforge_options_sizer, _L("Ask the printer to record a time-lapse"), m_print_options.time_lapse,
-                        [this](bool checked) { m_print_options.time_lapse = checked; }, &m_checkbox_timelapse);
+                        [this, save_print_options](bool checked) { m_print_options.time_lapse = checked; save_print_options(); },
+                        &m_checkbox_timelapse);
     add_option_checkbox(options_group, m_flashforge_options_sizer, _L("Feed from the material station"), m_use_material_station,
                         [this](bool checked) {
                             m_use_material_station = checked;
+                            remember_flashforge_material_station(*wxGetApp().app_config, checked);
                             if (checked) {
                                 ensure_slots_loaded();
                                 rebuild_station_row();
@@ -1048,17 +1066,6 @@ void FlashforgePrintHostSendDialog::init()
     });
 }
 
-void FlashforgePrintHostSendDialog::EndModal(int ret)
-{
-    if (ret == wxID_OK) {
-        AppConfig* app_config = wxGetApp().app_config;
-        remember_flashforge_print_options(*app_config, m_print_options);
-        app_config->set("recent", CONFIG_KEY_IFS, m_use_material_station ? "1" : "0");
-    }
-
-    PrintHostSendDialog::EndModal(ret);
-}
-
 std::map<std::string, std::string> FlashforgePrintHostSendDialog::extendedInfo() const
 {
     json mappings = json::array();
@@ -1112,7 +1119,7 @@ void FlashforgePrintHostSendDialog::load_slots()
 
     m_supports_material_station = supports_material_station;
     m_slots_loaded = !m_slots.empty();
-    m_use_material_station = m_supports_material_station;
+    m_use_material_station = remembered_flashforge_material_station(*wxGetApp().app_config, m_supports_material_station);
 
     if (m_supports_material_station)
         m_status_text->SetLabel(wxString::Format(_L("Detected %d IFS slots on printer."), static_cast<int>(m_slots.size())));

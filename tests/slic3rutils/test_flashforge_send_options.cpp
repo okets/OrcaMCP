@@ -5,12 +5,15 @@
 
 #include <string>
 
-// What the Flashforge send dialog starts with: every print option off until a send was confirmed
-// with it on, then whatever was confirmed last.
+// What the Flashforge send dialog starts with: every print option off until a box was ticked, then
+// the boxes as the user last left them -- each is saved the moment it is toggled, so Cancel, the close
+// box and Send all keep it. The material station starts on when the printer has one, then as last left.
 
 using Slic3r::AppConfig;
 using Slic3r::FlashforgeApi::PrintOptions;
+using Slic3r::GUI::remember_flashforge_material_station;
 using Slic3r::GUI::remember_flashforge_print_options;
+using Slic3r::GUI::remembered_flashforge_material_station;
 using Slic3r::GUI::remembered_flashforge_print_options;
 using Slic3r::GUI::sent_flashforge_print_options;
 
@@ -20,7 +23,7 @@ TEST_CASE("The Flashforge send dialog starts with every print option off", "[Fla
     CHECK(remembered_flashforge_print_options(config) == PrintOptions{});
 }
 
-TEST_CASE("The Flashforge send dialog remembers the last confirmed options", "[FlashforgeSendOptions]")
+TEST_CASE("The Flashforge send dialog remembers the options as last left", "[FlashforgeSendOptions]")
 {
     AppConfig    config;
     PrintOptions chosen;
@@ -73,4 +76,32 @@ TEST_CASE("The dialog sends flow calibration only to a printer whose start scree
     PrintOptions without_flow = ticked;
     without_flow.flow_calibration = false;
     CHECK(sent_flashforge_print_options(ticked, false) == without_flow);
+}
+
+TEST_CASE("The material station starts on where the printer has one", "[FlashforgeSendOptions]")
+{
+    const AppConfig config;
+    CHECK(remembered_flashforge_material_station(config, true));
+    CHECK_FALSE(remembered_flashforge_material_station(config, false));
+}
+
+TEST_CASE("The material station box is remembered as last left", "[FlashforgeSendOptions]")
+{
+    AppConfig config;
+    remember_flashforge_material_station(config, false);
+    CHECK(config.get("recent", "flashforge_use_material_station") == "0");
+    CHECK_FALSE(remembered_flashforge_material_station(config, true));
+
+    remember_flashforge_material_station(config, true);
+    CHECK(remembered_flashforge_material_station(config, true));
+    // A printer without a station feeds from none, whatever was left ticked for another.
+    CHECK_FALSE(remembered_flashforge_material_station(config, false));
+}
+
+TEST_CASE("What an older build saved for the material station is not taken for a choice", "[FlashforgeSendOptions]")
+{
+    // Older builds saved "true" whatever was ticked (AppConfig's bool overload), and never read it back.
+    AppConfig config;
+    config.set("recent", "flashforge_use_material_station", std::string("true"));
+    CHECK(remembered_flashforge_material_station(config, true));
 }

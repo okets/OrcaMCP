@@ -225,11 +225,17 @@ private:
 // PLA/PLA+/PLA-CF -> PLA, PETG/PETG-CF -> PETG, ABS/ASA -> ABS, TPU, SILK. Any thread.
 std::string flashforge_normalize_material(const std::string& material);
 
-// The Flashforge send dialog's print options as last confirmed with Send, from the app config's
-// "recent" section. Each is off until a send was confirmed with it on.
+// The Flashforge send dialog's print options as the user last left them, from the app config's
+// "recent" section. Each is off until its box was ticked; an older build's "true" is no choice.
 FlashforgeApi::PrintOptions remembered_flashforge_print_options(const AppConfig& config);
-// Saves them for the next dialog. Called only when a send is confirmed.
+// Saves them for the next dialog. Called the moment a box is toggled, so Cancel, the close box and
+// Send all keep the latest state.
 void remember_flashforge_print_options(AppConfig& config, const FlashforgeApi::PrintOptions& options);
+// The dialog's material-station box as the user last left it: on where the printer has a station
+// until it was unticked, and off where the printer has none.
+bool remembered_flashforge_material_station(const AppConfig& config, bool printer_has_station);
+// Saves it, the moment it is toggled.
+void remember_flashforge_material_station(AppConfig& config, bool on);
 // What the dialog sends: the boxes as ticked, flow calibration only to a printer whose start screen
 // offers it (its box is not shown elsewhere, so a tick remembered from another printer stays home).
 FlashforgeApi::PrintOptions sent_flashforge_print_options(const FlashforgeApi::PrintOptions& ticked, bool offers_flow_calibration);
@@ -250,7 +256,6 @@ public:
                                   int                             product_id = 0); // the printer's `pid`
 
     virtual void init() override;
-    virtual void EndModal(int ret) override;
     virtual std::map<std::string, std::string> extendedInfo() const override;
 
 private:
@@ -295,8 +300,6 @@ private:
     bool                             m_use_material_station {false};
     bool                             m_supports_material_station {false};
     bool                             m_slots_loaded {false};
-
-    const char* CONFIG_KEY_IFS       = "flashforge_use_material_station";
 };
 
 wxDECLARE_EVENT(EVT_PRINTHOST_PROGRESS, PrintHostQueueDialog::Event);

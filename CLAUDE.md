@@ -1968,9 +1968,12 @@ on only for "1", so every dialog after the first Send started with leveling and 
 reads the print options through `remember_flashforge_print_options` / `remembered_flashforge_print_options`
 (`PrintHostDialogs.cpp`), which write "1" or "0" as strings and take an older build's "true" for no choice, and
 the dialog starts with all three off and offers flow calibration first, as the printer's start screen does
-(item BN). The overload that made every such literal "true" is fixed at its root (item BQ). On a 0 for the first
-count, take upstream's save and re-run `slic3rutils_tests "[FlashforgeSendOptions]"`; on a 0 for the second, compare its defaults with
-the user's decision (all off, the last Send remembered).
+(item BN). Each box, the material station's too, is saved the moment it is toggled, not in `EndModal` on Send (the
+user's decision, 2026-09-29: Cancel and the close box keep the latest state too), and the station box is read back
+(`remembered_flashforge_material_station`), where upstream always started it from "has a station". The overload
+that made every such literal "true" is fixed at its root (item BQ). On a 0 for the first count, take upstream's
+save and re-run `slic3rutils_tests "[FlashforgeSendOptions]"`; on a 0 for the second, compare its defaults with the
+user's decision (all off, each box as last left in the dialog).
 
 Item BP is a feature: the Print button's Flashforge path (`Plater::priv` before `FlashforgePrintHostSendDialog`) reads
 the printer's `detail` for its material slots (`Flashforge::fetch_material_slots`); ours also returns the `pid` from that
