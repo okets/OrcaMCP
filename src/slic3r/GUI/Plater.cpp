@@ -12912,7 +12912,10 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
     if (evt.error()) {
         auto message = evt.format_error_message();
         if (evt.critical_error()) {
-            if (q->m_tracking_popup_menu) {
+            // Orca: an error handed to MCP's waiting export_gcode goes to show_error, which the guard above captures:
+            // queued for an open popup menu, it opened its dialog once the menu closed, after the call had answered it.
+            if (OrcaMCP::completion_error_route(mcp_export_guard.has_value(), q->m_tracking_popup_menu) ==
+                OrcaMCP::CompletionErrorRoute::after_popup_menu) {
                 // We don't want to pop-up a message box when tracking a pop-up menu.
                 // We postpone the error message instead.
                 q->m_tracking_popup_menu_error_message = message.first;

@@ -696,7 +696,9 @@ once it has been applied, with the placement it left (`OrcaMCPUiJob.hpp`, the ap
   (a new project) is found by its path's going (`is_export_gcode_scheduled`, asked on the main thread each poll).
   Past the cap it answers `export_started`, `finished: false`, as before v2.5.0.6 it always did, and stops waiting
   (`GcodeExportOutcome::stop_waiting`): from then on a failure shows the app's dialog, and `get_slicing_status`'s
-  `last_export` says how the export ended. A completion handed to the call just before it stopped is still answered.
+  `last_export` says how the export ended. A completion handed to the call before it stopped is still answered, however
+  long the plater takes to record its end after the hand-off (it updates the scene first): only a quit ends that wait
+  (`wait_for_handed_end`).
 
 ### Mesh repair: CGAL off the main thread, the model on it
 
@@ -1933,8 +1935,11 @@ background, so `Plater::priv::on_process_completed` tells the call's `OrcaMCP::G
 (`mcp_gcode_export`, set by `export_gcode_to_file` when the export is scheduled) whether the export was written,
 failed with which words, or was cancelled, and, while the call still waits for it (`hand_to_waiting_call`, which the
 call's `stop_waiting` closes), captures its error dialog under a `McpDialogSuppressionGuard`: the call answers the
-error, and the dialog would wait for nobody. Once the call has stopped waiting (answered `export_started`), the
-dialog shows as for the GUI's own exports, and `get_slicing_status`'s `last_export` records the end. The pointer is
+error, and the dialog would wait for nobody. That error goes to the capture even while a GUI popup menu is open,
+where upstream queues it for the menu to show once it closes (`completion_error_route`, in upstream's
+`m_tracking_popup_menu` test): queued, it opened its dialog after the call had answered it. Once the call has stopped
+waiting (answered `export_started`), the dialog shows as for the GUI's own exports, the popup menu's queue included,
+and `get_slicing_status`'s `last_export` records the end. The pointer is
 let go where the process reset takes the export off without a completion (`priv::reset`,
 `delete_all_objects_from_model`: `drop_mcp_gcode_export`), so a later GUI export is never taken for it. The GUI's own
 exports are unchanged. On upstream changes to `on_process_completed` or those resets, keep the hooks; re-check

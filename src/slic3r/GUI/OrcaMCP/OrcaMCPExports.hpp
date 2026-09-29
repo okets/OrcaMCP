@@ -2,6 +2,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <mutex>
@@ -105,6 +106,22 @@ nlohmann::json gcode_export_state_json(const GcodeExportOutcome& outcome, const 
 
 // How export_gcode's wait for its export ended: the export ended, the call's wait cap passed first, or the app began quitting.
 enum class GcodeExportWait { ended, timed_out, quitting };
+
+// After export_gcode's wait for its export stopped with `waited`: when the app had handed the completion to the call
+// (`handed`, what stop_waiting answered), the wait for the end the app records right after the hand-off, which only a
+// quit (`quitting`, asked every `poll`) cuts short. on_process_completed ends the outcome once it has updated the scene,
+// which a large preview can take seconds for on the -O0 build; the call answers that end, whose error dialog it
+// captured. Returns how the wait ended: `waited` as it was when nothing was handed or the wait did not time out.
+GcodeExportWait wait_for_handed_end(const GcodeExportOutcome& outcome, bool handed, GcodeExportWait waited,
+                                    const std::function<bool()>& quitting,
+                                    std::chrono::milliseconds poll = std::chrono::milliseconds(20));
+
+// Where on_process_completed sends an export's critical error. Handed to the waiting call, it goes to the call's guard,
+// which captures the error dialog (the call answers the error), even while a popup menu is open: queued for the menu,
+// it showed its dialog once the menu closed (Plater::PopupMenu), after the call had answered it. Else, while a popup
+// menu is open, it waits for the menu to close; else the error dialog shows.
+enum class CompletionErrorRoute { captured_for_call, after_popup_menu, dialog };
+CompletionErrorRoute completion_error_route(bool handed_to_waiting_call, bool tracking_popup_menu);
 
 // export_gcode's answer for a plain .gcode once its wait is over: success with output_path and bytes (the file's size,
 // when it is there) once written; error with why when it failed, was cancelled or was taken off; past the cap, the

@@ -20,7 +20,6 @@
 #include <boost/filesystem.hpp>
 
 #include <chrono>
-#include <thread>
 #include <cmath>
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
@@ -119,20 +118,14 @@ nlohmann::json wait_for_gcode_export(GcodeExportOutcome& outcome, const std::str
         outcome.stop_waiting();
         throw;
     }
-    // Stopping: from now on the app shows the export's error dialog itself. A completion handed to this call in the
-    // meantime is answered: its end is being recorded on the main thread, right after it was handed over.
-    if (outcome.stop_waiting() && waited == UiJobWait::timed_out) {
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-        while (outcome.state() == GcodeExportOutcome::State::pending && std::chrono::steady_clock::now() < deadline &&
-               !this_thread_cancelled())
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
-        if (outcome.state() != GcodeExportOutcome::State::pending)
-            waited = UiJobWait::finished;
-    }
-    const double    waited_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - started_at).count();
-    const GcodeExportWait wait = waited == UiJobWait::finished  ? GcodeExportWait::ended :
-                                 waited == UiJobWait::quitting  ? GcodeExportWait::quitting :
-                                                                  GcodeExportWait::timed_out;
+    // Stopping: from now on the app shows the export's error dialog itself. A completion handed to this call before is
+    // answered, however long the app takes to record its end.
+    const GcodeExportWait wait = wait_for_handed_end(outcome, outcome.stop_waiting(),
+                                                     waited == UiJobWait::finished ? GcodeExportWait::ended :
+                                                     waited == UiJobWait::quitting ? GcodeExportWait::quitting :
+                                                                                     GcodeExportWait::timed_out,
+                                                     [] { return this_thread_cancelled(); });
+    const double waited_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - started_at).count();
     std::optional<std::uintmax_t> bytes;
     boost::system::error_code     error;
     if (const auto size = boost::filesystem::file_size(output_path, error); !error)

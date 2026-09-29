@@ -1,8 +1,10 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include <chrono>
 #include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "slic3r/GUI/OrcaMCP/OrcaMCPExports.hpp"
@@ -101,6 +103,48 @@ TEST_CASE("an export's end goes to the call only while it waits", "[McpExports][
     GcodeExportOutcome gone;
     CHECK_FALSE(gone.stop_waiting());          // the call stopped first (its cap)
     CHECK_FALSE(gone.hand_to_waiting_call()); // then the completion: the app shows its dialog
+}
+
+// The app ends the outcome once it has updated the scene after the hand-off, which a large preview can take seconds for
+// on the -O0 build. A 5 s grace then answered export_started for a file written, and the error dialog the call had
+// captured was never shown to anyone. The call waits for that end as long as it takes; only a quit cuts it short.
+TEST_CASE("an export handed to the waiting call is answered however long the app takes to record its end", "[McpExports][orcamcp]")
+{
+    GcodeExportOutcome outcome;
+    REQUIRE(outcome.hand_to_waiting_call());
+    const bool  handed = outcome.stop_waiting();
+    std::thread app([&outcome] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5500));
+        outcome.end(GcodeExportOutcome::State::written);
+    });
+    const GcodeExportWait waited = wait_for_handed_end(outcome, handed, GcodeExportWait::timed_out, [] { return false; });
+    app.join();
+    CHECK(waited == GcodeExportWait::ended);
+}
+
+TEST_CASE("a quit while the call waits for a handed export's end answers that the app is quitting", "[McpExports][orcamcp]")
+{
+    GcodeExportOutcome outcome;
+    REQUIRE(outcome.hand_to_waiting_call());
+    const bool handed = outcome.stop_waiting();
+    int        asked  = 0;
+    CHECK(wait_for_handed_end(outcome, handed, GcodeExportWait::timed_out, [&asked] { return ++asked > 2; },
+                              std::chrono::milliseconds(1)) == GcodeExportWait::quitting);
+
+    // Nothing handed (the call stopped first): its wait stands as it ended, without waiting for the export.
+    GcodeExportOutcome not_handed;
+    CHECK(wait_for_handed_end(not_handed, not_handed.stop_waiting(), GcodeExportWait::timed_out, [] { return false; }) ==
+          GcodeExportWait::timed_out);
+}
+
+// A GUI popup menu open as the completion arrives takes a critical error to show once it closes (Plater::PopupMenu),
+// outside the call's guard: an error the waiting call answered also opened its dialog, which waited for nobody.
+TEST_CASE("an export error handed to the waiting call is never also queued for the popup menu", "[McpExports][orcamcp]")
+{
+    CHECK(completion_error_route(/*handed=*/true, /*tracking_popup_menu=*/true) == CompletionErrorRoute::captured_for_call);
+    CHECK(completion_error_route(true, false) == CompletionErrorRoute::captured_for_call);
+    CHECK(completion_error_route(false, true) == CompletionErrorRoute::after_popup_menu);
+    CHECK(completion_error_route(false, false) == CompletionErrorRoute::dialog);
 }
 
 // An agent that got export_started learns how the export ended from get_slicing_status (and so wait_for_slice).

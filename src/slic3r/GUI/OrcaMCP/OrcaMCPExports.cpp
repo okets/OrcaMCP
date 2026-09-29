@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <set>
+#include <thread>
 
 #include <boost/algorithm/string/case_conv.hpp>
 #include <boost/algorithm/string/predicate.hpp>
@@ -60,6 +61,27 @@ bool GcodeExportOutcome::stop_waiting()
     std::lock_guard<std::mutex> lock(m_mutex);
     m_call_waiting = false;
     return m_handed;
+}
+
+GcodeExportWait wait_for_handed_end(const GcodeExportOutcome& outcome, bool handed, GcodeExportWait waited,
+                                    const std::function<bool()>& quitting, std::chrono::milliseconds poll)
+{
+    if (!handed || waited != GcodeExportWait::timed_out)
+        return waited;
+    // The end always follows the hand-off, in the same on_process_completed (an exception there ends the app).
+    while (outcome.state() == GcodeExportOutcome::State::pending) {
+        if (quitting())
+            return GcodeExportWait::quitting;
+        std::this_thread::sleep_for(poll);
+    }
+    return GcodeExportWait::ended;
+}
+
+CompletionErrorRoute completion_error_route(bool handed_to_waiting_call, bool tracking_popup_menu)
+{
+    if (handed_to_waiting_call)
+        return CompletionErrorRoute::captured_for_call;
+    return tracking_popup_menu ? CompletionErrorRoute::after_popup_menu : CompletionErrorRoute::dialog;
 }
 
 nlohmann::json gcode_export_state_json(const GcodeExportOutcome& outcome, const std::string& output_path)
