@@ -14,6 +14,7 @@
 #include "Flow.hpp"
 #include "Geometry/ConvexHull.hpp"
 #include "I18N.hpp"
+#include "LifecycleEvents.hpp"
 #include "ShortestPath.hpp"
 #include "Thread.hpp"
 #include "Time.hpp"
@@ -377,6 +378,7 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
             || opt_key == "wipe_tower_bridging"
             || opt_key == "wipe_tower_extra_flow"
             || opt_key == "wipe_tower_no_sparse_layers"
+            || opt_key == "wipe_tower_sparse_layers_combination"
             || opt_key == "flush_volumes_matrix"
             || opt_key == "prime_volume"
             || opt_key == "flush_into_infill"
@@ -1711,6 +1713,25 @@ StringObjectException Print::check_multi_filament_valid(const Print& print)
 
 // Precondition: Print::validate() requires the Print::apply() to be called its invocation.
 //BBS: refine seq-print validation logic
+// The exception's own message is just "Errors"; the detail is in the per-object errors,
+// whose object id is the PrintObject's.
+std::string Print::slicing_errors_message(const SlicingErrors &errors) const
+{
+    std::string message;
+    for (const SlicingError &error : errors.errors_) {
+        std::string object_name;
+        for (const PrintObject *object : m_objects)
+            if (object->id().id == error.objectId()) {
+                object_name = object->model_object()->name;
+                break;
+            }
+        if (!message.empty())
+            message += "\n";
+        message += object_name.empty() ? std::string(error.what()) : object_name + ": " + error.what();
+    }
+    return message;
+}
+
 StringObjectException Print::validate(std::vector<StringObjectException> *warnings, Polygons* collison_polygons, std::vector<std::pair<Polygon, float>>* height_polygons) const
 {
     auto add_warning = [warnings](StringObjectException w) {
@@ -2701,6 +2722,15 @@ void Print::process(long long *time_cost_with_cache, bool use_cache)
     if (m_objects.empty())
         return;
 
+    {
+        LifecycleEventContext ctx;
+        ctx.id = std::to_string(m_model.id().id);
+        ctx.name = get_model_name();
+        ctx.code = LifecycleEvtCode::Ok;
+        ctx.cancellation_check = [this]() { return canceled(); };
+        fire_lifecycle_event(LifecycleEvent::SliceStarted, ctx);
+    }
+
     for (PrintObject *obj : m_objects)
         obj->clear_shared_object();
 
@@ -3319,6 +3349,15 @@ void Print::process(long long *time_cost_with_cache, bool use_cache)
     }
 
     BOOST_LOG_TRIVIAL(info) << "Slicing process finished." << log_memory_info();
+
+    {
+        LifecycleEventContext ctx;
+        ctx.id = std::to_string(m_model.id().id);
+        ctx.name = get_model_name();
+        ctx.code = LifecycleEvtCode::Ok;
+        ctx.cancellation_check = [this]() { return canceled(); };
+        fire_lifecycle_event(LifecycleEvent::SliceGeometryFinished, ctx);
+    }
 }
 
 // G-code export process, running at a background thread.
@@ -3906,6 +3945,9 @@ void Print::update_filament_maps_to_config(std::vector<int> f_maps, std::vector<
     {
         int extruder_count = 1, extruder_volume_type_count = 1;
         bool support_multi = m_ori_full_print_config.support_different_extruders(extruder_count);
+        // Orca: resolve the filament variants wherever Print::apply does, a multi-variant filament
+        // on a single-variant printer included.
+        const bool expand_filaments = (extruder_count > 1) || support_multi || m_ori_full_print_config.has_multi_variant_filament();
         std::vector<std::vector<NozzleVolumeType>> nozzle_volume_types;
         extruder_volume_type_count = m_ori_full_print_config.get_extruder_nozzle_volume_count(extruder_count, nozzle_volume_types);
 
@@ -3946,7 +3988,7 @@ void Print::update_filament_maps_to_config(std::vector<int> f_maps, std::vector<
         m_full_print_config = m_ori_full_print_config;
         std::set<std::string> filament_keys = filament_options_with_variant;
         filament_keys.insert("filament_self_index");
-        if ((extruder_count > 1) || support_multi)
+        if (expand_filaments)
             m_full_print_config.update_values_to_printer_extruders_for_multiple_filaments(m_full_print_config, extruder_count, extruder_volume_type_count, filament_keys,  "filament_self_index", "filament_extruder_variant");
 
         const std::vector<std::string> &extruder_retract_keys = print_config_def.extruder_retract_keys();
@@ -3963,7 +4005,7 @@ void Print::update_filament_maps_to_config(std::vector<int> f_maps, std::vector<
                 compute_filament_override_value(opt_key, opt_old_machine, opt_new_machine, opt_new_filament, m_full_print_config, print_diff, filament_overrides, m_config.filament_map_2.values);
         }
 
-        if ((extruder_count > 1) || support_multi) {
+        if (expand_filaments) {
             t_config_option_keys keys(filament_options_with_variant.begin(), filament_options_with_variant.end());
             keys.push_back("filament_self_index");
             m_config.apply_only(m_full_print_config, keys, true);
@@ -4918,6 +4960,16 @@ void Print::set_gcode_file_invalidated()
 //BBS: add gcode file preload logic
 void Print::export_gcode_from_previous_file(const std::string& file, GCodeProcessorResult* result, ThumbnailsGeneratorCallback thumbnail_cb)
 {
+    {
+        LifecycleEventContext ctx;
+        ctx.id = std::to_string(m_model.id().id);
+        ctx.name = get_model_name();
+        ctx.code = LifecycleEvtCode::Ok;
+        ctx.msg  = file;
+        ctx.cancellation_check = [this]() { return canceled(); };
+        fire_lifecycle_event(LifecycleEvent::GCodeExportStarted, ctx);
+    }
+
     try {
         GCodeProcessor processor;
         GCodeProcessor::s_IsBBLPrinter = is_BBL_printer();
@@ -4937,13 +4989,32 @@ void Print::export_gcode_from_previous_file(const std::string& file, GCodeProces
         *result = std::move(processor.extract_result());
         result->filament_change_sequence = filament_seq_loaded;
         result->nozzle_change_sequence   = nozzle_seq_loaded;
-    } catch (std::exception & /* ex */) {
+    } catch (std::exception &ex) {
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ <<  boost::format(": found errors when process gcode file %1%") %file.c_str();
+        {
+            LifecycleEventContext ctx;
+            ctx.id = std::to_string(m_model.id().id);
+            ctx.name = get_model_name();
+            ctx.code = LifecycleEvtCode::Error;
+            ctx.msg  = file + "\n" + ex.what();
+            ctx.cancellation_check = [this]() { return canceled(); };
+            fire_lifecycle_event(LifecycleEvent::GCodeExportFinished, ctx);
+        }
         throw Slic3r::RuntimeError(
             std::string("Failed to process the G-code file ") + file + " from previous 3mf\n");
     }
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ <<  boost::format(":  process the G-code file %1% successfully")%file.c_str();
+
+    {
+        LifecycleEventContext ctx;
+        ctx.id = std::to_string(m_model.id().id);
+        ctx.name = get_model_name();
+        ctx.code = LifecycleEvtCode::Ok;
+        ctx.msg  = file;
+        ctx.cancellation_check = [this]() { return canceled(); };
+        fire_lifecycle_event(LifecycleEvent::GCodeExportFinished, ctx);
+    }
 }
 
 std::tuple<float, float> Print::object_skirt_offset(double margin_height) const
@@ -4988,6 +5059,7 @@ DynamicConfig PrintStatistics::config() const
     config.set_key_value("total_wipe_tower_filament", new ConfigOptionFloat(this->total_wipe_tower_filament));
     config.set_key_value("initial_tool",              new ConfigOptionInt(static_cast<int>(this->initial_tool)));
     config.set_key_value("initial_extruder",          new ConfigOptionInt(static_cast<int>(this->initial_tool)));
+    config.set_key_value("initial_no_support_extruder", new ConfigOptionInt(static_cast<int>(this->initial_no_support_tool)));
     return config;
 }
 
@@ -4997,7 +5069,7 @@ DynamicConfig PrintStatistics::placeholders()
     for (const std::string key : {
         "print_time", "normal_print_time", "silent_print_time",
         "used_filament", "extruded_volume", "extruded_volume_total", "total_cost", "total_weight", "extruded_weight_total",
-        "initial_tool", "initial_extruder", "total_toolchanges", "total_wipe_tower_cost", "total_wipe_tower_filament"})
+        "initial_tool", "initial_extruder", "initial_no_support_extruder", "total_toolchanges", "total_wipe_tower_cost", "total_wipe_tower_filament"})
         config.set_key_value(key, new ConfigOptionString(std::string("{") + key + "}"));
     return config;
 }

@@ -26,6 +26,7 @@
 #include "wx/textctrl.h"
 #include <wx/timer.h>
 #include <memory>
+#include "Lazy.hpp"
 
 
 namespace Slic3r {
@@ -34,7 +35,7 @@ namespace GUI {
 class PrinterWebViewHandler;
 
 
-class PrinterWebView : public wxPanel {
+class PrinterWebView : public wxPanel, public LazyInstance<PrinterWebView> {
 public:
     /// `initial_url` loads with the web view itself. A page handed to LoadURL instead races the
     /// about:blank the view starts on, so anything that must be showing from the first paint

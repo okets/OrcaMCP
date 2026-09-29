@@ -30,6 +30,9 @@ namespace Slic3r { namespace GUI {
 #define DESIGN_INPUT_SIZE wxSize(FromDIP(120), -1)
 #define DESIGN_LEFT_MARGIN 25
 
+// The tabs other dialogs open Preferences on.
+enum class PreferencesTab { General, Control, Graphics, Online };
+
 class PreferencesDialog : public DPIDialog
 {
 private:
@@ -39,8 +42,7 @@ protected:
     wxBoxSizer *  m_sizer_body;
     wxScrolledWindow* m_parent;
     TabCtrl* m_pref_tabs;
-    size_t m_initial_tab{0};
-    std::string m_highlight_option;
+    std::map<PreferencesTab, int> m_tab_index;   // position of each tab in m_pref_tabs
 
     // bool								m_settings_layout_changed {false};
     bool m_seq_top_layer_only_changed{false};
@@ -55,10 +57,15 @@ public:
 
 public:
     PreferencesDialog(wxWindow *      parent,
-                      size_t          open_on_tab = 0,
-                      const std::string& highlight_option = std::string());
+                      wxWindowID      id    = wxID_ANY,
+                      const wxString &title = wxT(""),
+                      const wxPoint & pos   = wxDefaultPosition,
+                      const wxSize &  size  = wxDefaultSize,
+                      long            style = wxSYSTEM_MENU | wxCAPTION | wxCLOSE_BOX);
 
     ~PreferencesDialog();
+
+    void select_tab(PreferencesTab tab, const std::string& option = {});   // and scrolls a combobox option's row into view, focused
 
     wxString m_backup_interval_time;
     wxTimer m_filament_height_timer;
@@ -71,6 +78,7 @@ public:
     ::CheckBox * m_dark_mode_ckeckbox        = {nullptr};
     ::CheckBox * m_sync_user_preset_checkbox = {nullptr};
     ::CheckBox * m_bambu_cloud_checkbox      = {nullptr};
+    ::CheckBox * m_skip_identical_frames_checkbox = {nullptr};
     ::TextInput *m_backup_interval_textinput = {nullptr};
     ::SpinInput *m_dim_previous_layers_brightness_input = {nullptr};
     ::ComboBox * m_network_version_combo     = {nullptr};

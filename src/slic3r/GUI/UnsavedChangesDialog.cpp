@@ -954,7 +954,7 @@ void UnsavedChangesDialog::build(Preset::Type type, PresetCollection *dependent_
     m_sizer_tab->Add(m_table_top, 1, 0, 0);
 
     m_scrolledWindow = new wxScrolledWindow(m_panel_tab, wxID_ANY, wxDefaultPosition, UNSAVE_CHANGE_DIALOG_SCROLL_WINDOW_SIZE,  wxNO_BORDER|wxVSCROLL);
-    m_scrolledWindow->SetScrollRate(0, 5);
+    m_scrolledWindow->SetScrollRate(0, FromDIP(20));
     m_scrolledWindow->SetBackgroundColour(GREY200);
     m_sizer_bottom = new wxBoxSizer(wxVERTICAL);
     m_sizer_bottom->Add(m_scrolledWindow, 1, wxEXPAND, 0);
@@ -1497,12 +1497,12 @@ std::string UnsavedChangesDialog::subreplace(std::string resource_str, std::stri
 
 void UnsavedChangesDialog::update_tree(Preset::Type type, DynamicConfig * config, int from, int to)
 {
-    Search::OptionsSearcher &searcher = wxGetApp().sidebar().get_searcher();
-    searcher.sort_options_by_key();
+    Search::SettingsIndex &index = wxGetApp().sidebar().settings_index();
+    index.sort_options_by_key();
 
     for (const std::string &opt_key : config->keys()) {
         int                   variant_index = -2;
-        Search::Option        option        = searcher.get_option(opt_key, type, variant_index);
+        Search::Option        option        = index.get_option(opt_key, type, variant_index);
         if (variant_index == -2) {
             // Orca: Every transferred setting must remain visible even when it is absent from the search index.
             const ConfigOptionDef* def = print_config_def.get(opt_key);
@@ -1522,8 +1522,8 @@ void UnsavedChangesDialog::update_tree(Preset::Type type, DynamicConfig * config
 
 void UnsavedChangesDialog::update_tree(Preset::Type type, PresetCollection* presets_)
 {
-    Search::OptionsSearcher& searcher = wxGetApp().sidebar().get_searcher();
-    searcher.sort_options_by_key();
+    Search::SettingsIndex& index = wxGetApp().sidebar().settings_index();
+    index.sort_options_by_key();
 
     // list of the presets with unsaved changes
     std::vector<PresetCollection*> presets_list;
@@ -1581,11 +1581,11 @@ void UnsavedChangesDialog::update_tree(Preset::Type type, PresetCollection* pres
 
         for (const std::string& opt_key : dirty_options) {
             int variant_index = -2;
-            const Search::Option &option = searcher.get_option(opt_key, type, variant_index);
+            const Search::Option &option = index.get_option(opt_key, type, variant_index);
             if (variant_index == -2) {
                 // When founded option isn't the correct one.
                 // It can be for dirty_options: "default_print_profile", "printer_model", "printer_settings_id",
-                // because of they don't exist in searcher
+                // because of they don't exist in the index
                 continue;
             }
             wxString category = option.category_local;
@@ -1624,8 +1624,8 @@ void UnsavedChangesDialog::update_tree(Preset::Type type, PresetCollection* pres
         }
     }
 
-    // Revert sort of searcher back
-    searcher.sort_options_by_label();
+    // Revert sort of index back
+    index.sort_options_by_label();
 }
 
 void UnsavedChangesDialog::on_dpi_changed(const wxRect& suggested_rect)
@@ -1974,8 +1974,9 @@ DiffPresetDialog::DiffPresetDialog(MainFrame* mainframe)
 
     assert(wxGetApp().preset_bundle);
 
-    m_preset_bundle_left  = std::make_unique<PresetBundle>(*wxGetApp().preset_bundle);
-    m_preset_bundle_right = std::make_unique<PresetBundle>(*wxGetApp().preset_bundle);
+    // show() copies the app's bundle into both before anything is displayed.
+    m_preset_bundle_left  = std::make_unique<PresetBundle>();
+    m_preset_bundle_right = std::make_unique<PresetBundle>();
 
     // Create UI items
 
@@ -2077,8 +2078,8 @@ void DiffPresetDialog::update_bottom_info(wxString bottom_info)
 
 void DiffPresetDialog::update_tree()
 {
-    Search::OptionsSearcher& searcher = wxGetApp().sidebar().get_searcher();
-    searcher.sort_options_by_key();
+    Search::SettingsIndex& index = wxGetApp().sidebar().settings_index();
+    index.sort_options_by_key();
 
     m_tree->Clear();
     wxString bottom_info = "";
@@ -2158,14 +2159,14 @@ void DiffPresetDialog::update_tree()
             wxString right_val = get_string_value(opt_key, right_congig);
 
             const std::string lookup_key = get_pure_opt_key(opt_key);
-            Search::Option option = searcher.get_option(lookup_key, get_full_label(lookup_key, left_config), type);
+            Search::Option option = index.get_option(lookup_key, get_full_label(lookup_key, left_config), type);
             if (get_pure_opt_key(option.opt_key()) != lookup_key)
-                option = searcher.get_option(opt_key, get_full_label(opt_key, left_config), type);
+                option = index.get_option(opt_key, get_full_label(opt_key, left_config), type);
             if (get_pure_opt_key(option.opt_key()) != lookup_key) {
                 // When the found option is not the requested one.
                 // This can happen for dirty_options such as:
                 // "default_print_profile", "printer_model", "printer_settings_id",
-                // because they do not exist in the searcher.
+                // because they do not exist in the index.
                 continue;
             }
             m_tree->Append(opt_key, type, option.category_local, option.group_local, option.label_local,
@@ -2189,8 +2190,8 @@ void DiffPresetDialog::update_tree()
         Refresh();
     }
 
-    // Revert sort of searcher back
-    searcher.sort_options_by_label();
+    // Revert sort of index back
+    index.sort_options_by_label();
 }
 
 void DiffPresetDialog::on_dpi_changed(const wxRect&)
