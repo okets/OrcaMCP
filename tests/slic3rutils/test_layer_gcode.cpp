@@ -249,6 +249,43 @@ TEST_CASE("a filament change is reported reached only below where the slicer's l
     CHECK(shrunk.at(1).at("active").is_null());
 }
 
+// A variable or adaptive layer height can reach the largest layer the nozzle allows, which the slicer reads from
+// max_layer_height, whose default 0 means 3/4 of the nozzle (Slicing::max_layer_height_from_nozzle). Read as 0 mm, an
+// adaptive profile's 0.3 mm layers on a 0.4 mm nozzle put the reach of a 10 mm object at 9.9 mm, where the slicer may
+// stop at 9.85, and a change at 9.88 was reported active.
+TEST_CASE("an object with a variable layer height may print the largest layer its printer's nozzles allow", "[LayerGcode][orcamcp]")
+{
+    using Catch::Matchers::WithinAbs;
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_key_value("nozzle_diameter", new ConfigOptionFloats({0.4}));
+    config.set_key_value("max_layer_height", new ConfigOptionFloats({0.}));
+    config.set_key_value("min_layer_height", new ConfigOptionFloats({0.07}));
+    config.set_key_value("layer_height", new ConfigOptionFloat(0.2));
+    config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(0.2));
+    Model        model;
+    ModelObject& object = *model.add_object();
+    CHECK_THAT(object_largest_layer_mm(object, config), WithinAbs(0.2, 1e-9)); // no profile: its layer height
+    object.layer_height_profile.set(std::vector<coordf_t>{0., 0.2, 10., 0.3});
+    const double largest = object_largest_layer_mm(object, config);
+    CHECK_THAT(largest, WithinAbs(0.3, 1e-9)); // 3/4 of 0.4
+
+    CustomGCode::Info info;
+    info.mode              = CustomGCode::MultiAsSingle;
+    info.gcodes            = {{9.88, CustomGCode::ToolChange, 2, "#00FF00", ""}};
+    LayerGcodeRules plate  = rules(2, {1});
+    plate.objects_top_mm   = 10.0;
+    plate.largest_layer_mm = largest;
+    CHECK(layer_gcodes_json(info, nullptr, &plate).at(0).at("active").is_null()); // the slicer may stop at 9.85
+
+    // Each extruder's limit: the largest of them, a max_layer_height set taken as it is.
+    config.set_key_value("nozzle_diameter", new ConfigOptionFloats({0.4, 0.8}));
+    config.set_key_value("min_layer_height", new ConfigOptionFloats({0.07, 0.07}));
+    config.set_key_value("max_layer_height", new ConfigOptionFloats({0., 0.5}));
+    CHECK_THAT(object_largest_layer_mm(object, config), WithinAbs(0.5, 1e-9));
+    config.set_key_value("max_layer_height", new ConfigOptionFloats({0., 0.}));
+    CHECK_THAT(object_largest_layer_mm(object, config), WithinAbs(0.6, 1e-9)); // 3/4 of 0.8
+}
+
 // A change to a slot the project lacks is taken for filament 1 (custom_tool_changes); the reason named the slot it
 // was stored with, "filament 5" on a project of two.
 TEST_CASE("a filament change that switches nothing names the filament the slicer takes it for", "[LayerGcode][orcamcp]")

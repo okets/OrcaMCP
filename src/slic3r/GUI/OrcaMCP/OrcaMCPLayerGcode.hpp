@@ -20,6 +20,8 @@
 // the tests drive it with plain values (tests/slic3rutils/test_layer_gcode.cpp).
 
 namespace Slic3r {
+class DynamicPrintConfig;
+class ModelObject;
 class Print;
 namespace GUI { namespace OrcaMCP {
 
@@ -83,8 +85,15 @@ std::optional<std::string> layer_gcode_request_refusal(const LayerGcodeRequest& 
 // The height the slicer's layers reach at least, before the plate is sliced: the top of its highest object as the slicer
 // slices it -- scaled by 100 / `z_shrinkage_percent` (Print::shrinkage_compensation) -- less half the largest layer an
 // object can print with there, since generate_object_layers stops once the next layer's middle would pass the top. A
-// raft only lifts the layers. Z shrinkage under 100 % is not counted: the slicer uses none when the filaments differ.
+// raft only lifts the layers. Z shrinkage under 100 % is left out, though the slicer applies it (every filament at 95 %
+// slices the objects taller): a taller slice reaches higher, so the bound stays one the slicer's layers reach.
 double layers_reach_mm(double objects_top_mm, double z_shrinkage_percent, double largest_layer_mm);
+
+// The largest layer `object` can print with under `config`, the full config its plate slices with: its own layer height
+// or the print preset's, the first layer's (an object one layer tall), its layer ranges', and with a variable or
+// adaptive layer height profile the largest any extruder's nozzle allows, as the slicer reads it
+// (Slicing::max_layer_height_from_nozzle: a max_layer_height of 0, its default, is 3/4 of the nozzle).
+double object_largest_layer_mm(const ModelObject& object, const DynamicPrintConfig& config);
 
 // What an add or a delete did: the item it wrote or removed, and one it replaced.
 struct LayerGcodeChange

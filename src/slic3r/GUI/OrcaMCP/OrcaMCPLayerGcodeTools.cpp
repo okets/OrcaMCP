@@ -114,12 +114,6 @@ void add_objects_reach(PartPlate& plate, LayerGcodeRules& rules)
     const Model&              model  = wxGetApp().plater()->model();
     const DynamicPrintConfig  config = wxGetApp().preset_bundle->full_config();
     const BuildVolume         volume = plate.slicing_build_volume();
-    const auto                largest = [](const ConfigOptionFloats* heights) {
-        return heights == nullptr || heights->values.empty() ? 0. : *std::max_element(heights->values.begin(), heights->values.end());
-    };
-    const double printer_max_layer = largest(config.option<ConfigOptionFloats>("max_layer_height"));
-    const double preset_layer      = config.opt_float("layer_height");
-    const double first_layer       = config.opt_float("initial_layer_print_height");
     for (std::size_t o = 0; o < model.objects.size(); ++o) {
         const ModelObject& object  = *model.objects[o];
         bool               printed = false;
@@ -128,18 +122,8 @@ void add_objects_reach(PartPlate& plate, LayerGcodeRules& rules)
                 printed              = true;
                 rules.objects_top_mm = std::max(rules.objects_top_mm.value_or(0.), instance_box(object, i).max.z());
             }
-        if (!printed)
-            continue;
-        // The largest layer the object can print with: its own layer height, a layer range's, the first layer's (an
-        // object one layer tall), and with a variable or adaptive profile the printer's largest.
-        double layer = object.config.has("layer_height") ? object.config.opt_float("layer_height") : preset_layer;
-        layer        = std::max(layer, first_layer);
-        for (const auto& [range, range_config] : object.layer_config_ranges)
-            if (range_config.has("layer_height"))
-                layer = std::max(layer, range_config.opt_float("layer_height"));
-        if (!object.layer_height_profile.empty())
-            layer = std::max(layer, printer_max_layer);
-        rules.largest_layer_mm = std::max(rules.largest_layer_mm, layer);
+        if (printed)
+            rules.largest_layer_mm = std::max(rules.largest_layer_mm, object_largest_layer_mm(object, config));
     }
     // Print::shrinkage_compensation: 100 / the first filament's percent when every filament has the same, else none.
     // The largest of them is the shortest the slicer can make the objects.

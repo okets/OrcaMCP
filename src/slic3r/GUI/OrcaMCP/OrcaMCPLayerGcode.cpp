@@ -5,7 +5,9 @@
 #include <cmath>
 
 #include "slic3r/GUI/IMSlider.hpp"
+#include "libslic3r/Model.hpp"
 #include "libslic3r/Print.hpp"
+#include "libslic3r/Slicing.hpp"
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
@@ -300,6 +302,20 @@ std::optional<SliceLayersStamp> slice_layers_stamp(const Print& print)
 double layers_reach_mm(double objects_top_mm, double z_shrinkage_percent, double largest_layer_mm)
 {
     return objects_top_mm * 100. / std::max(100., z_shrinkage_percent) - 0.5 * largest_layer_mm;
+}
+
+double object_largest_layer_mm(const ModelObject& object, const DynamicPrintConfig& config)
+{
+    double layer = std::max(object.config.has("layer_height") ? object.config.opt_float("layer_height") : config.opt_float("layer_height"),
+                            config.opt_float("initial_layer_print_height"));
+    for (const auto& [range, range_config] : object.layer_config_ranges)
+        if (range_config.has("layer_height"))
+            layer = std::max(layer, range_config.opt_float("layer_height"));
+    if (!object.layer_height_profile.empty() && config.has("max_layer_height") && config.has("min_layer_height"))
+        if (const auto* nozzles = config.option<ConfigOptionFloats>("nozzle_diameter"); nozzles != nullptr)
+            for (int nozzle = 1; nozzle <= int(nozzles->values.size()); ++nozzle)
+                layer = std::max(layer, Slicing::max_layer_height_from_nozzle(config, nozzle));
+    return layer;
 }
 
 nlohmann::json layer_gcode_json(const CustomGCode::Item& item, const std::vector<double>* layer_zs)
