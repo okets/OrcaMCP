@@ -3,6 +3,7 @@
 
 #include "OrcaMCPCommon.hpp"
 #include "OrcaMCPFilamentUtils.hpp"
+#include "OrcaMCPInstanceBox.hpp"
 #include "OrcaMCPLayerGcode.hpp"
 #include "OrcaMCPLayerPlan.hpp"
 #include "OrcaMCPNextSteps.hpp"
@@ -17,6 +18,7 @@
 #include "libslic3r/Print.hpp"
 #include "libslic3r/PresetBundle.hpp"
 
+#include <algorithm>
 #include <map>
 #include <string>
 #include <vector>
@@ -107,6 +109,29 @@ LayerGcodeRules layer_gcode_rules(Plater& plater, PartPlate& plate)
     return rules;
 }
 
+void add_objects_reach(PartPlate& plate, LayerGcodeRules& rules)
+{
+    const Model&              model  = wxGetApp().plater()->model();
+    const DynamicPrintConfig  config = wxGetApp().preset_bundle->full_config();
+    const BuildVolume         volume = plate.slicing_build_volume();
+    for (std::size_t o = 0; o < model.objects.size(); ++o) {
+        const ModelObject& object  = *model.objects[o];
+        bool               printed = false;
+        for (std::size_t i = 0; i < object.instances.size(); ++i)
+            if (plate.slicer_prints_instance(int(o), int(i), volume)) {
+                printed              = true;
+                rules.objects_top_mm = std::max(rules.objects_top_mm.value_or(0.), instance_box(object, i).max.z());
+            }
+        if (printed)
+            rules.largest_layer_mm = std::max(rules.largest_layer_mm, object_largest_layer_mm(object, config));
+    }
+    // Print::shrinkage_compensation: 100 / the first filament's percent when every filament has the same, else none.
+    // The largest of them is the shortest the slicer can make the objects.
+    if (const auto* shrinkage = config.option<ConfigOptionPercents>("filament_shrinkage_compensation_z"); shrinkage != nullptr)
+        for (double percent : shrinkage->values)
+            rules.z_shrinkage_percent = std::max(rules.z_shrinkage_percent, percent);
+}
+
 nlohmann::json plate_layer_gcodes_json(PartPlate& plate)
 {
     Plater&      plater = *wxGetApp().plater();
@@ -115,7 +140,12 @@ nlohmann::json plate_layer_gcodes_json(PartPlate& plate)
     if (info == model.plates_custom_gcodes.end())
         return nlohmann::json::array();
     const std::optional<std::vector<double>> zs    = plate_layer_zs(plate);
-    const LayerGcodeRules                    rules = layer_gcode_rules(plater, plate);
+    LayerGcodeRules                          rules = layer_gcode_rules(plater, plate);
+    // The objects' top tells a filament change the slicer reaches while the plate's layers are not known.
+    const bool has_changes = std::any_of(info->second.gcodes.begin(), info->second.gcodes.end(),
+                                         [](const CustomGCode::Item& item) { return item.type == CustomGCode::ToolChange; });
+    if (!zs && has_changes)
+        add_objects_reach(plate, rules);
     return layer_gcodes_json(info->second, zs ? &*zs : nullptr, &rules);
 }
 

@@ -208,6 +208,130 @@ TEST_CASE("a filament change that writes nothing in the G-code is reported inact
     CHECK(above.at("inactive_reason").get<std::string>().find("last layer") != std::string::npos);
 }
 
+// Before a plate is sliced its layers are not known, and a change above its objects was reported active though the
+// slicer never reaches it (a 3MF with a change at 15 mm on an object scaled to 10 mm). Every layer the slicer makes
+// reaches the top of the highest object it prints, so a change at or under it is reached; above it, the last layer
+// (a raft lifts it) is known only once the plate is sliced.
+TEST_CASE("a filament change above the plate's objects is not reported active before the plate is sliced", "[LayerGcode][orcamcp]")
+{
+    CustomGCode::Info info;
+    info.mode   = CustomGCode::MultiAsSingle;
+    info.gcodes = {{5.0, CustomGCode::ToolChange, 2, "#00FF00", ""}, {15.0, CustomGCode::ToolChange, 1, "#FF0000", ""}};
+    LayerGcodeRules plate = rules(2, {1});
+    plate.objects_top_mm  = 10.0;
+    const nlohmann::json unsliced = layer_gcodes_json(info, nullptr, &plate);
+    CHECK(unsliced.at(0).at("active") == true);
+    CHECK(unsliced.at(1).at("active").is_null());
+    plate.objects_top_mm.reset();
+    CHECK(layer_gcodes_json(info, nullptr, &plate).at(0).at("active").is_null());
+}
+
+// The slicer's last layer can stop short of the top: generate_object_layers ends once the next layer's middle would pass
+// the top, up to half a layer below it, and Z shrinkage compensation over 100 % slices the object shorter (a 50 mm
+// object at 110 % ends at 45.45 mm). A change at the top was taken for reached, and ToolOrdering never applies it.
+TEST_CASE("a filament change is reported reached only below where the slicer's last layer may stop", "[LayerGcode][orcamcp]")
+{
+    CustomGCode::Info info;
+    info.mode   = CustomGCode::MultiAsSingle;
+    info.gcodes = {{9.95, CustomGCode::ToolChange, 2, "#00FF00", ""}, {10.05, CustomGCode::ToolChange, 1, "#FF0000", ""}};
+    LayerGcodeRules plate  = rules(2, {1});
+    plate.objects_top_mm   = 10.09; // 0.2 mm layers end at 10.0
+    plate.largest_layer_mm = 0.2;
+    const nlohmann::json half_layer = layer_gcodes_json(info, nullptr, &plate);
+    CHECK(half_layer.at(0).at("active") == true); // 9.95 <= 10.09 - 0.1
+    CHECK(half_layer.at(1).at("active").is_null());
+
+    info.gcodes              = {{45.0, CustomGCode::ToolChange, 2, "#00FF00", ""}, {46.0, CustomGCode::ToolChange, 1, "#FF0000", ""}};
+    plate.objects_top_mm     = 50.0;
+    plate.z_shrinkage_percent = 110.0; // sliced to 45.45 mm
+    const nlohmann::json shrunk = layer_gcodes_json(info, nullptr, &plate);
+    CHECK(shrunk.at(0).at("active") == true);
+    CHECK(shrunk.at(1).at("active").is_null());
+}
+
+// A variable or adaptive layer height can reach the largest layer the nozzle allows, which the slicer reads from
+// max_layer_height, whose default 0 means 3/4 of the nozzle (Slicing::max_layer_height_from_nozzle). Read as 0 mm, an
+// adaptive profile's 0.3 mm layers on a 0.4 mm nozzle put the reach of a 10 mm object at 9.9 mm, where the slicer may
+// stop at 9.85, and a change at 9.88 was reported active.
+TEST_CASE("an object with a variable layer height may print the largest layer its printer's nozzles allow", "[LayerGcode][orcamcp]")
+{
+    using Catch::Matchers::WithinAbs;
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_key_value("nozzle_diameter", new ConfigOptionFloats({0.4}));
+    config.set_key_value("max_layer_height", new ConfigOptionFloats({0.}));
+    config.set_key_value("min_layer_height", new ConfigOptionFloats({0.07}));
+    config.set_key_value("layer_height", new ConfigOptionFloat(0.2));
+    config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(0.2));
+    Model        model;
+    ModelObject& object = *model.add_object();
+    CHECK_THAT(object_largest_layer_mm(object, config), WithinAbs(0.2, 1e-9)); // no profile: its layer height
+    object.layer_height_profile.set(std::vector<coordf_t>{0., 0.2, 10., 0.3});
+    const double largest = object_largest_layer_mm(object, config);
+    CHECK_THAT(largest, WithinAbs(0.3, 1e-9)); // 3/4 of 0.4
+
+    CustomGCode::Info info;
+    info.mode              = CustomGCode::MultiAsSingle;
+    info.gcodes            = {{9.88, CustomGCode::ToolChange, 2, "#00FF00", ""}};
+    LayerGcodeRules plate  = rules(2, {1});
+    plate.objects_top_mm   = 10.0;
+    plate.largest_layer_mm = largest;
+    CHECK(layer_gcodes_json(info, nullptr, &plate).at(0).at("active").is_null()); // the slicer may stop at 9.85
+
+    // Each extruder's limit: the largest of them, a max_layer_height set taken as it is.
+    config.set_key_value("nozzle_diameter", new ConfigOptionFloats({0.4, 0.8}));
+    config.set_key_value("min_layer_height", new ConfigOptionFloats({0.07, 0.07}));
+    config.set_key_value("max_layer_height", new ConfigOptionFloats({0., 0.5}));
+    CHECK_THAT(object_largest_layer_mm(object, config), WithinAbs(0.5, 1e-9));
+    config.set_key_value("max_layer_height", new ConfigOptionFloats({0., 0.}));
+    CHECK_THAT(object_largest_layer_mm(object, config), WithinAbs(0.6, 1e-9)); // 3/4 of 0.8
+}
+
+// The slicer takes a stored profile's heights as they are: generate_object_layers only asserts them against the nozzle's
+// limit, and nothing rewrites a profile loaded from a 3MF or kept across a printer change. A profile painted up to
+// 0.42 mm on a 0.6 mm nozzle, then printed on a 0.4 mm one, was bounded at 0.3: the reach of a 10 mm object came out at
+// 9.85 mm where the slicer may stop at 9.79, and a change at 9.82 read active.
+TEST_CASE("an object's stored layer height profile may print layers taller than its nozzle allows", "[LayerGcode][orcamcp]")
+{
+    using Catch::Matchers::WithinAbs;
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_key_value("nozzle_diameter", new ConfigOptionFloats({0.4}));
+    config.set_key_value("max_layer_height", new ConfigOptionFloats({0.}));
+    config.set_key_value("min_layer_height", new ConfigOptionFloats({0.07}));
+    config.set_key_value("layer_height", new ConfigOptionFloat(0.2));
+    config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(0.2));
+    Model        model;
+    ModelObject& object = *model.add_object();
+    object.layer_height_profile.set(std::vector<coordf_t>{0., 0.2, 5., 0.42, 10., 0.3}); // painted for a 0.6 mm nozzle
+    const double largest = object_largest_layer_mm(object, config);
+    CHECK_THAT(largest, WithinAbs(0.42, 1e-9));
+
+    CustomGCode::Info info;
+    info.mode              = CustomGCode::MultiAsSingle;
+    info.gcodes            = {{9.82, CustomGCode::ToolChange, 2, "#00FF00", ""}};
+    LayerGcodeRules plate  = rules(2, {1});
+    plate.objects_top_mm   = 10.0;
+    plate.largest_layer_mm = largest;
+    CHECK(layer_gcodes_json(info, nullptr, &plate).at(0).at("active").is_null()); // the slicer may stop at 9.79
+}
+
+// A change to a slot the project lacks is taken for filament 1 (custom_tool_changes); the reason named the slot it
+// was stored with, "filament 5" on a project of two.
+TEST_CASE("a filament change that switches nothing names the filament the slicer takes it for", "[LayerGcode][orcamcp]")
+{
+    CustomGCode::Info info;
+    info.mode                   = CustomGCode::MultiAsSingle;
+    info.gcodes                 = {{1.0, CustomGCode::ToolChange, 5, "", ""}};
+    const LayerGcodeRules on_1  = rules(2, {1});
+    const std::string     why   = layer_gcodes_json(info, &k_layers, &on_1).at(0).at("inactive_reason").get<std::string>();
+    CHECK(why.find("filament 1") != std::string::npos);
+    CHECK(why.find("filament 5") == std::string::npos);
+    CHECK(why.find("slot 5") != std::string::npos); // how it was mapped
+    info.gcodes[0].extruder = 1;
+    const std::string plain = layer_gcodes_json(info, &k_layers, &on_1).at(0).at("inactive_reason").get<std::string>();
+    CHECK(plain.find("filament 1") != std::string::npos);
+    CHECK(plain.find("slot") == std::string::npos);
+}
+
 TEST_CASE("nothing goes at a layer of a plate printed by object", "[LayerGcode][orcamcp]")
 {
     CustomGCode::Info info;
@@ -541,6 +665,26 @@ TEST_CASE("a plate's objects the slicer does not print do not keep a filament ch
     other.instances[0]->set_offset(Vec3d(plate_list_fixtures::k_plate_size - 5., at.y(), at.z()));
     plates->notify_instance_update(1, 0);
     CHECK(lists(3));
+}
+
+// What the slicer leaves out by the build volume alone: on a round bed, an object in a corner of the plate's square is on
+// the plate (its box is inside the plate's box, which is all the plate's own containment asks), yet outside the bed's
+// circle, so the slicer does not print it. On plate 1, whose shape is moved by the plate's offset.
+TEST_CASE("an object outside a round bed's circle does not keep a plate's filament change from being listed", "[LayerGcode][orcamcp]")
+{
+    Model model;
+    auto  plates = plate_list_fixtures::plate_list_for(model, 2, plate_list_fixtures::round_bed());
+    GUI::PartPlate& plate = *plates->get_plate(1);
+    plate_list_fixtures::add_cube(model, *plates, {plate_list_fixtures::centre_of(*plates, 1)});
+    const Vec3d corner = plate.get_plate_box().min + Vec3d(20., 20., plate_list_fixtures::k_cube_size / 2.0);
+    plate_list_fixtures::add_cube(model, *plates, {Vec3d(corner.x(), corner.y(), plate_list_fixtures::k_cube_size / 2.0)})
+        .config.set_key_value("extruder", new ConfigOptionInt(2));
+    REQUIRE(plate.contain_any_instance_totally(1)); // the plate holds it
+    model.plates_custom_gcodes[1] = {CustomGCode::MultiAsSingle, {{10.0, CustomGCode::ToolChange, 3, "#0000FF", ""}}};
+    DynamicPrintConfig project;
+    project.set_key_value("filament_colour", new ConfigOptionStrings({"#FF0000", "#00FF00", "#0000FF"}));
+    const std::vector<int> listed = plate.get_extruders(true, DynamicPrintConfig::full_print_config(), project);
+    CHECK(std::find(listed.begin(), listed.end(), 3) != listed.end());
 }
 
 TEST_CASE("an object on another plate does not keep a plate's filament change from being listed", "[LayerGcode][orcamcp]")

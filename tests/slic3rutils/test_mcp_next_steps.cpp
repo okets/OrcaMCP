@@ -246,11 +246,12 @@ TEST_CASE("A slice the app refuses suggests no tool: its message says what to fi
 
 TEST_CASE("An export that started is waited for, and one that did not suggests nothing", "[McpNextSteps][orcamcp]")
 {
-    // export_started is not a failure: the file is being written in the background.
+    // export_started is not a failure: the file is being written in the background, past export_gcode's own wait.
     const std::vector<NextStep> started = export_next_steps(true);
     REQUIRE(started.size() == 1);
     CHECK(started[0].tool == "wait_for_slice");
     CHECK(mentions(started[0].why, "written"));
+    CHECK(mentions(started[0].why, "past how long export_gcode waits"));
     CHECK(export_next_steps(false).empty());
 }
 

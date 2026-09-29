@@ -184,6 +184,7 @@
 #include "FilamentMapDialog.hpp"
 #include "CloneDialog.hpp"
 #include "PurgeModeDialog.hpp"
+#include "OrcaMCP/OrcaMCPCommon.hpp"
 #include "OrcaMCP/OrcaMCPExports.hpp"
 #include "OrcaMCP/OrcaMCPGcodeCheck.hpp"
 #include "OrcaMCP/OrcaMCPModelLoad.hpp"
@@ -7269,6 +7270,11 @@ struct Plater::priv
     //mutable bool    			ready_to_slice = { false };
     // Flag indicating that the G-code export targets a removable device, therefore the show_action_buttons() needs to be called at any case when the background processing finishes.
     ExportingStatus             exporting_status { NOT_EXPORTING };
+    // Orca: the plain G-code export MCP's export_gcode started, told how it ends on its completion.
+    std::shared_ptr<OrcaMCP::GcodeExportOutcome> mcp_gcode_export;
+    // Orca: its export was taken off without a completion (the process reset): it is told so, and let go, so a later
+    // export (the GUI's) is not taken for it.
+    void drop_mcp_gcode_export();
     std::string                 last_output_path;
     std::string                 last_output_dir_path;
     //BBS store machine_sn and 3mf_path for PrintJob
@@ -10259,6 +10265,7 @@ void Plater::priv::delete_all_objects_from_model()
 
     // Stop and reset the Print content.
     background_process.reset();
+    drop_mcp_gcode_export(); // Orca: its export went with the reset
 
     //BBS: update partplate
     partplate_list.clear();
@@ -10317,6 +10324,7 @@ void Plater::priv::reset(bool apply_presets_change)
 
     // Stop and reset the Print content.
     this->background_process.reset();
+    drop_mcp_gcode_export(); // Orca: its export went with the reset
     model.clear_objects();
     assemble_view->get_canvas3d()->reset_explosion_ratio();
     update();
@@ -12890,6 +12898,13 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
     this->background_process.stop();
     notification_manager->set_slicing_progress_export_possible();
 
+    // Orca: an export MCP's export_gcode started answers its error in the call while the call still waits for it: the
+    // app's error dialog would wait for a user nobody asked, so its words are captured instead. Once the call has
+    // stopped waiting (it answered export_started), the dialog shows, as for the GUI's own exports.
+    std::optional<OrcaMCP::McpDialogSuppressionGuard> mcp_export_guard;
+    if (mcp_gcode_export && exporting_status != ExportingStatus::NOT_EXPORTING && mcp_gcode_export->hand_to_waiting_call())
+        mcp_export_guard.emplace();
+
     // Reset the "export G-code path" name, so that the automatic background processing will be enabled again.
     this->background_process.reset_export();
     // This bool stops showing export finished notification even when process_completed_with_error is false
@@ -12897,7 +12912,10 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
     if (evt.error()) {
         auto message = evt.format_error_message();
         if (evt.critical_error()) {
-            if (q->m_tracking_popup_menu) {
+            // Orca: an error handed to MCP's waiting export_gcode goes to show_error, which the guard above captures:
+            // queued for an open popup menu, it opened its dialog once the menu closed, after the call had answered it.
+            if (OrcaMCP::completion_error_route(mcp_export_guard.has_value(), q->m_tracking_popup_menu) ==
+                OrcaMCP::CompletionErrorRoute::after_popup_menu) {
                 // We don't want to pop-up a message box when tracking a pop-up menu.
                 // We postpone the error message instead.
                 q->m_tracking_popup_menu_error_message = message.first;
@@ -12931,6 +12949,16 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", cancel event, status: %1%") % evt.status();
         this->notification_manager->set_slicing_progress_canceled(_u8L("Slicing Canceled"));
         is_finished = true;
+    }
+
+    // Orca: tell MCP's export_gcode, which waits for the export it started, how it ended, as soon as that is decided
+    // (its error routed above, captured when it was handed to the call): before the scene update below, which a large
+    // preview can make take seconds, so the call's wait after a hand-off stays well inside the bridge's timeout.
+    if (mcp_gcode_export && exporting_status != ExportingStatus::NOT_EXPORTING) {
+        using State = OrcaMCP::GcodeExportOutcome::State;
+        mcp_gcode_export->end(evt.error() ? State::failed : evt.cancelled() ? State::cancelled : State::written,
+                              evt.error() ? evt.format_error_message().first : std::string());
+        mcp_gcode_export.reset();
     }
 
     //BBS: set the current plater's slice result to valid
@@ -18506,7 +18534,15 @@ void Plater::export_gcode(bool prefer_removable)
 }
 
 // Silent G-code export to a specific file path (for MCP automation)
-std::optional<std::string> Plater::export_gcode_to_file(const std::string& output_path)
+void Plater::priv::drop_mcp_gcode_export()
+{
+    if (!mcp_gcode_export)
+        return;
+    mcp_gcode_export->end(OrcaMCP::GcodeExportOutcome::State::dropped);
+    mcp_gcode_export.reset();
+}
+
+std::optional<std::string> Plater::export_gcode_to_file(const std::string& output_path, std::shared_ptr<OrcaMCP::GcodeExportOutcome> outcome)
 {
     // The failure of the plate being exported -- the selected one -- validated on that plate's own
     // Print, not on whichever Print the background process last pointed at: after a Slice All walk,
@@ -18563,6 +18599,8 @@ std::optional<std::string> Plater::export_gcode_to_file(const std::string& outpu
         p->exporting_status     = ExportingStatus::EXPORTING_TO_LOCAL;
         p->last_output_path     = output_path;
         p->last_output_dir_path = path.parent_path().string();
+        p->drop_mcp_gcode_export(); // one left from an export taken off by a path that did not tell it
+        p->mcp_gcode_export     = std::move(outcome);
     } else {
         attempt.validation_error = validation_error();
     }

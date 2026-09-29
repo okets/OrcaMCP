@@ -1,10 +1,16 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPExports.hpp
 #pragma once
 
+#include <atomic>
+#include <chrono>
+#include <cstdint>
 #include <functional>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
+
+#include <nlohmann/json.hpp>
 
 // What export_gcode's sliced-file form and export_stl decide before the app writes anything: which
 // file a path asks for, and why a call is refused. No wx and no Plater: the tests drive it with plain
@@ -57,6 +63,73 @@ std::optional<std::string> sliced_file_refusal(const std::vector<SlicedFilePlate
 std::vector<int> sliced_file_plates(const std::vector<SlicedFilePlate>& plates, bool all_plates, int selected_index);
 
 // ---- export_stl --------------------------------------------------------------------------------
+
+// ---- export_gcode's wait for a plain .gcode ------------------------------------------------------
+
+// How a plain G-code export MCP started ended. The app writes the file in the background, as its Export G-code does, and
+// records here how that went when it takes the export's completion in (Plater::priv::on_process_completed), on the main
+// thread; export_gcode reads it on the HTTP thread while it waits. Only the first end counts.
+class GcodeExportOutcome
+{
+public:
+    enum class State
+    {
+        pending,
+        written,   // the file is written
+        failed,    // the export ended in an error: error() has the app's words
+        cancelled, // cancelled before it was written (cancel_slice, the app's Cancel, a new slice)
+        dropped,   // taken off without a completion (a new project, a project opened, the plate list changed)
+    };
+    State       state() const { return m_state.load(std::memory_order_acquire); }
+    std::string error() const;
+    void        end(State state, const std::string& error = {});
+
+    // The call that started the export waits for it. While it does, the app's completion hands it the export's end
+    // (and captures the app's error dialog, whose words the call answers); once the call has stopped waiting, the app
+    // shows its dialog as for its own exports. Main thread, at the completion: whether the call still waits, and so
+    // answers the end.
+    bool hand_to_waiting_call();
+    // HTTP thread, when the call stops waiting: whether the completion was handed to it (then it answers the export's
+    // end, which the main thread records next); after this, none is.
+    bool stop_waiting();
+
+private:
+    std::atomic<State> m_state{State::pending};
+    mutable std::mutex m_mutex;
+    std::string        m_error;
+    bool               m_call_waiting = true;
+    bool               m_handed       = false;
+};
+
+// get_slicing_status's last_export: {output_path, state: writing, written, failed, cancelled or dropped, error when failed}.
+nlohmann::json gcode_export_state_json(const GcodeExportOutcome& outcome, const std::string& output_path);
+
+// How export_gcode's wait for its export ended: the export ended, the call's wait cap passed first, or the app began quitting.
+enum class GcodeExportWait { ended, timed_out, quitting };
+
+// After export_gcode's wait for its export stopped with `waited`: when the app had handed the completion to the call
+// (`handed`, what stop_waiting answered), the wait for the end the app records right after the hand-off, which only a
+// quit (`quitting`, asked every `poll`) cuts short. on_process_completed ends the outcome as soon as it has routed the
+// export's error (captured for the call), before its scene update, which a large preview can make take seconds on the
+// -O0 build; the call answers that end. Returns how the wait ended: `waited` as it was when nothing was handed or the
+// wait did not time out.
+GcodeExportWait wait_for_handed_end(const GcodeExportOutcome& outcome, bool handed, GcodeExportWait waited,
+                                    const std::function<bool()>& quitting,
+                                    std::chrono::milliseconds poll = std::chrono::milliseconds(20));
+
+// Where on_process_completed sends an export's critical error. Handed to the waiting call, it goes to the call's guard,
+// which captures the error dialog (the call answers the error), even while a popup menu is open: queued for the menu,
+// it showed its dialog once the menu closed (Plater::PopupMenu), after the call had answered it. Else, while a popup
+// menu is open, it waits for the menu to close; else the error dialog shows.
+enum class CompletionErrorRoute { captured_for_call, after_popup_menu, dialog };
+CompletionErrorRoute completion_error_route(bool handed_to_waiting_call, bool tracking_popup_menu);
+
+// export_gcode's answer for a plain .gcode once its wait is over: success with output_path and bytes (the file's size,
+// when it is there) once written; error with why when it failed, was cancelled or was taken off; past the cap, the
+// export_started it answered before it waited, with how long it waited and next_steps to wait_for_slice; the app
+// quitting: export_started, finished false. Without active_warnings, which the caller adds.
+nlohmann::json gcode_export_answer(const GcodeExportOutcome& outcome, GcodeExportWait wait, const std::string& output_path,
+                                   std::optional<std::uintmax_t> bytes, double waited_s);
 
 // export_stl's arguments, as the handler read them.
 struct MeshExportRequest

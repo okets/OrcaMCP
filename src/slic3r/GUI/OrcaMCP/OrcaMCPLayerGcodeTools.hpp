@@ -31,6 +31,12 @@ bool plate_layers_may_be_known(PartPlate& plate);
 // the slicer counts them when its Print is current. Main thread.
 LayerGcodeRules layer_gcode_rules(Plater& plater, PartPlate& plate);
 
+// Into `rules`, what tells how high the slicer's layers of `plate` reach before it is sliced (layers_reach_mm): the top
+// of the highest instance the slicer prints there (PartPlate::slicer_prints_instance), none when it prints none, the
+// largest layer those objects can print with (object_largest_layer_mm), and the filaments' largest Z shrinkage
+// compensation. Main thread.
+void add_objects_reach(PartPlate& plate, LayerGcodeRules& rules);
+
 // get_scene_info's layer_gcodes of plate `plate`: its G-code at a layer, each with its layer number when
 // the plate's layers are known (plate_layer_zs), null otherwise, and a filament change with whether the slicer
 // takes it (layer_gcode_json). Main thread.

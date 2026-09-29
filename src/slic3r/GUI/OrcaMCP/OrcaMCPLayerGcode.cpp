@@ -5,7 +5,9 @@
 #include <cmath>
 
 #include "slic3r/GUI/IMSlider.hpp"
+#include "libslic3r/Model.hpp"
 #include "libslic3r/Print.hpp"
+#include "libslic3r/Slicing.hpp"
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
@@ -23,9 +25,23 @@ std::vector<CustomGCode::Item>::iterator item_at(CustomGCode::Info& info, const 
                         [&](const CustomGCode::Item& item) { return layer_of(layer_zs, item.print_z) == layer; });
 }
 
+// "filament N", N the filament the slicer takes a change to `item` for (CustomGCode::tool_change_target), and how the slot
+// it names was mapped when that differs.
+std::string target_words(const CustomGCode::Item& item, const LayerGcodeRules& rules)
+{
+    const int objects_own = rules.object_filaments && !rules.object_filaments->empty() ? rules.object_filaments->front() : 1;
+    const int target      = CustomGCode::tool_change_target(item.extruder, rules.slots.slots(), objects_own);
+    std::string words     = "filament " + std::to_string(target);
+    if (item.extruder <= 0)
+        words += " (it names no slot, so the objects' own filament)";
+    else if (target != item.extruder)
+        words += " (it names slot " + std::to_string(item.extruder) + ", which the project lacks, and the slicer takes filament 1 for it)";
+    return words;
+}
+
 // Why a filament change writes nothing in the G-code, in words (CustomGCode::tool_change_effects), or nullopt when it
 // switches the filament.
-std::optional<std::string> inactive_reason(CustomGCode::ToolChangesOff off, const CustomGCode::Item& item)
+std::optional<std::string> inactive_reason(CustomGCode::ToolChangesOff off, const CustomGCode::Item& item, const LayerGcodeRules& rules)
 {
     switch (off) {
     case CustomGCode::ToolChangesOff::by_object:
@@ -43,7 +59,7 @@ std::optional<std::string> inactive_reason(CustomGCode::ToolChangesOff off, cons
         return std::string("it was recorded in another filament mode (an older project's), which the slicer skips; delete_layer_gcode "
                            "and add_layer_gcode record it anew");
     case CustomGCode::ToolChangesOff::same_filament:
-        return "it changes to filament " + std::to_string(item.extruder) +
+        return "it changes to " + target_words(item, rules) +
                ", which already prints there (the objects' own below the first change, the previous change's above it), so the "
                "G-code has no switch for it";
     case CustomGCode::ToolChangesOff::none: break;
@@ -283,6 +299,32 @@ std::optional<SliceLayersStamp> slice_layers_stamp(const Print& print)
     return stamp;
 }
 
+double layers_reach_mm(double objects_top_mm, double z_shrinkage_percent, double largest_layer_mm)
+{
+    return objects_top_mm * 100. / std::max(100., z_shrinkage_percent) - 0.5 * largest_layer_mm;
+}
+
+double object_largest_layer_mm(const ModelObject& object, const DynamicPrintConfig& config)
+{
+    double layer = std::max(object.config.has("layer_height") ? object.config.opt_float("layer_height") : config.opt_float("layer_height"),
+                            config.opt_float("initial_layer_print_height"));
+    for (const auto& [range, range_config] : object.layer_config_ranges)
+        if (range_config.has("layer_height"))
+            layer = std::max(layer, range_config.opt_float("layer_height"));
+    if (object.layer_height_profile.empty())
+        return layer;
+    // A stored profile's own heights ({z, height} pairs), which the slicer takes as they are, and an adaptive profile's
+    // limit, the largest any nozzle allows.
+    const std::vector<coordf_t> profile = object.layer_height_profile.get();
+    for (std::size_t i = 1; i < profile.size(); i += 2)
+        layer = std::max(layer, double(profile[i]));
+    if (config.has("max_layer_height") && config.has("min_layer_height"))
+        if (const auto* nozzles = config.option<ConfigOptionFloats>("nozzle_diameter"); nozzles != nullptr)
+            for (int nozzle = 1; nozzle <= int(nozzles->values.size()); ++nozzle)
+                layer = std::max(layer, Slicing::max_layer_height_from_nozzle(config, nozzle));
+    return layer;
+}
+
 nlohmann::json layer_gcode_json(const CustomGCode::Item& item, const std::vector<double>* layer_zs)
 {
     const std::optional<std::size_t> layer = layer_zs != nullptr ? layer_of(*layer_zs, item.print_z) : std::nullopt;
@@ -307,17 +349,24 @@ nlohmann::json layer_gcodes_json(const CustomGCode::Info& info, const std::vecto
         const CustomGCode::Item& item = info.gcodes[i];
         nlohmann::json           json = layer_gcode_json(item, layer_zs);
         if (item.type == CustomGCode::ToolChange && rules != nullptr) {
-            const bool past_last_layer = layer_zs != nullptr && !layer_of(*layer_zs, item.print_z);
+            // Whether the slicer reaches the change's height: by the plate's layers when they are known, else by where the
+            // slicer's layers reach at least (layers_reach_mm); above that only the slice tells (a raft may lift them).
+            const std::optional<bool> reached =
+                layer_zs != nullptr ? std::optional<bool>(layer_of(*layer_zs, item.print_z).has_value()) :
+                rules->objects_top_mm &&
+                        item.print_z <= layers_reach_mm(*rules->objects_top_mm, rules->z_shrinkage_percent, rules->largest_layer_mm) ?
+                                      std::optional<bool>(true) :
+                                      std::nullopt;
             const std::optional<std::string> why =
-                past_last_layer ? std::optional<std::string>("it is above the plate's last layer, which the slicer never reaches") :
-                effects[i]      ? inactive_reason(*effects[i], item) :
-                                  std::nullopt;
+                reached == false ? std::optional<std::string>("it is above the plate's last layer, which the slicer never reaches") :
+                effects[i]       ? inactive_reason(*effects[i], item, *rules) :
+                                   std::nullopt;
             if (why) {
                 json["active"]          = false;
                 json["inactive_reason"] = *why;
             } else {
                 // null: known once the plate is the current one, sliced as the settings are now
-                json["active"] = effects[i] ? nlohmann::json(true) : nlohmann::json(nullptr);
+                json["active"] = effects[i] && reached ? nlohmann::json(true) : nlohmann::json(nullptr);
             }
         }
         list.push_back(std::move(json));

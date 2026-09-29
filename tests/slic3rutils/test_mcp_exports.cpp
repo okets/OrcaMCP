@@ -1,7 +1,10 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include <chrono>
 #include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "slic3r/GUI/OrcaMCP/OrcaMCPExports.hpp"
@@ -39,6 +42,129 @@ TEST_CASE("a sliced file is written where it was asked for, whatever the case of
     // A name the file dialog gets without the extension has it added, as the app does.
     CHECK(sliced_file_path("/tmp/part") == "/tmp/part.3mf");
     CHECK(sliced_file_path("/tmp/part.gcode") == "/tmp/part.gcode.3mf");
+}
+
+// A plain .gcode is written in the background, as the app's Export G-code writes it. export_gcode answered
+// export_started at once, and an agent that then read the file read it half written. It now waits for the export
+// (within the call's cap) and answers what became of it.
+TEST_CASE("export_gcode answers once its G-code is written, or why it was not", "[McpExports][orcamcp]")
+{
+    using State = GcodeExportOutcome::State;
+    GcodeExportOutcome written;
+    written.end(State::written);
+    const nlohmann::json done = gcode_export_answer(written, GcodeExportWait::ended, "/tmp/out/box.gcode", std::uintmax_t(81234), 1.5);
+    CHECK(done.at("status") == "success");
+    CHECK(done.at("output_path") == "/tmp/out/box.gcode");
+    CHECK(done.at("bytes") == 81234);
+    CHECK_FALSE(done.contains("next_steps"));
+
+    GcodeExportOutcome failed;
+    failed.end(State::failed, "Copying of the temporary G-code to the output G-code failed.");
+    failed.end(State::written); // only the first end counts
+    const nlohmann::json broke = gcode_export_answer(failed, GcodeExportWait::ended, "/nope/box.gcode", std::nullopt, 0.4);
+    CHECK(broke.at("status") == "error");
+    CHECK(contains(broke.at("message").get<std::string>(), "Copying of the temporary G-code"));
+    CHECK_FALSE(broke.contains("next_steps"));
+
+    for (const State state : {State::cancelled, State::dropped}) {
+        GcodeExportOutcome stopped;
+        stopped.end(state);
+        const nlohmann::json answer = gcode_export_answer(stopped, GcodeExportWait::ended, "/tmp/out/box.gcode", std::nullopt, 0.4);
+        CHECK(answer.at("status") == "error");
+        CHECK(contains(answer.at("message").get<std::string>(), "nothing was written"));
+    }
+}
+
+TEST_CASE("export_gcode past its wait still says the export started, and how to wait for it", "[McpExports][orcamcp]")
+{
+    GcodeExportOutcome   pending;
+    const nlohmann::json late = gcode_export_answer(pending, GcodeExportWait::timed_out, "/tmp/out/box.gcode", std::nullopt, 105.0);
+    CHECK(late.at("status") == "export_started");
+    CHECK(late.at("finished") == false);
+    CHECK_THAT(late.at("waited_s").get<double>(), Catch::Matchers::WithinAbs(105.0, 1e-9));
+    REQUIRE(late.contains("next_steps"));
+    CHECK(late.at("next_steps").at(0).at("tool") == "wait_for_slice");
+
+    const nlohmann::json quitting = gcode_export_answer(pending, GcodeExportWait::quitting, "/tmp/out/box.gcode", std::nullopt, 2.0);
+    CHECK(quitting.at("finished") == false);
+    CHECK(contains(quitting.at("message").get<std::string>(), "quitting"));
+}
+
+// The app captured the error dialog of every export MCP started, even once export_gcode had stopped waiting and
+// answered export_started: a write that failed then said nothing to anyone. The completion now hands the export's end
+// to the call only while it waits, which the call claims back when it stops; past that the app shows its dialog, as
+// for its own exports.
+TEST_CASE("an export's end goes to the call only while it waits", "[McpExports][orcamcp]")
+{
+    GcodeExportOutcome waited;
+    CHECK(waited.hand_to_waiting_call()); // the completion, while the call waits: the call answers it
+    CHECK(waited.stop_waiting());         // and the call, stopping, learns it must
+
+    GcodeExportOutcome gone;
+    CHECK_FALSE(gone.stop_waiting());          // the call stopped first (its cap)
+    CHECK_FALSE(gone.hand_to_waiting_call()); // then the completion: the app shows its dialog
+}
+
+// A 5 s grace after the hand-off answered export_started for a file written when the app recorded the end later (it
+// did so after its scene update, seconds for a large preview on the -O0 build), and the error dialog the call had
+// captured was never shown to anyone. The call waits for that end as long as it takes; only a quit cuts it short. The
+// test's own quit comes after a minute, so a wait that never sees the end fails here rather than hanging the suite.
+TEST_CASE("an export handed to the waiting call is answered however long the app takes to record its end", "[McpExports][orcamcp]")
+{
+    GcodeExportOutcome outcome;
+    REQUIRE(outcome.hand_to_waiting_call());
+    const bool  handed = outcome.stop_waiting();
+    std::thread app([&outcome] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5500));
+        outcome.end(GcodeExportOutcome::State::written);
+    });
+    const auto            give_up = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    const GcodeExportWait waited  = wait_for_handed_end(outcome, handed, GcodeExportWait::timed_out,
+                                                        [give_up] { return std::chrono::steady_clock::now() > give_up; });
+    app.join();
+    CHECK(waited == GcodeExportWait::ended);
+}
+
+TEST_CASE("a quit while the call waits for a handed export's end answers that the app is quitting", "[McpExports][orcamcp]")
+{
+    GcodeExportOutcome outcome;
+    REQUIRE(outcome.hand_to_waiting_call());
+    const bool handed = outcome.stop_waiting();
+    int        asked  = 0;
+    CHECK(wait_for_handed_end(outcome, handed, GcodeExportWait::timed_out, [&asked] { return ++asked > 2; },
+                              std::chrono::milliseconds(1)) == GcodeExportWait::quitting);
+
+    // Nothing handed (the call stopped first): its wait stands as it ended, without waiting for the export.
+    GcodeExportOutcome not_handed;
+    CHECK(wait_for_handed_end(not_handed, not_handed.stop_waiting(), GcodeExportWait::timed_out, [] { return false; }) ==
+          GcodeExportWait::timed_out);
+}
+
+// A GUI popup menu open as the completion arrives takes a critical error to show once it closes (Plater::PopupMenu),
+// outside the call's guard: an error the waiting call answered also opened its dialog, which waited for nobody.
+TEST_CASE("an export error handed to the waiting call is never also queued for the popup menu", "[McpExports][orcamcp]")
+{
+    CHECK(completion_error_route(/*handed=*/true, /*tracking_popup_menu=*/true) == CompletionErrorRoute::captured_for_call);
+    CHECK(completion_error_route(true, false) == CompletionErrorRoute::captured_for_call);
+    CHECK(completion_error_route(false, true) == CompletionErrorRoute::after_popup_menu);
+    CHECK(completion_error_route(false, false) == CompletionErrorRoute::dialog);
+}
+
+// An agent that got export_started learns how the export ended from get_slicing_status (and so wait_for_slice).
+TEST_CASE("the last export MCP started says how it ended", "[McpExports][orcamcp]")
+{
+    using State = GcodeExportOutcome::State;
+    GcodeExportOutcome writing;
+    CHECK(gcode_export_state_json(writing, "/tmp/out/box.gcode").at("state") == "writing");
+    GcodeExportOutcome failed;
+    failed.end(State::failed, "Copying of the temporary G-code to the output G-code failed.");
+    const nlohmann::json broke = gcode_export_state_json(failed, "/nope/box.gcode");
+    CHECK(broke.at("state") == "failed");
+    CHECK(broke.at("output_path") == "/nope/box.gcode");
+    CHECK(contains(broke.at("error").get<std::string>(), "Copying"));
+    GcodeExportOutcome written;
+    written.end(State::written);
+    CHECK_FALSE(gcode_export_state_json(written, "/tmp/out/box.gcode").contains("error"));
 }
 
 TEST_CASE("export_gcode refuses a path it would write as something else, before looking at the plates", "[McpExports][orcamcp]")

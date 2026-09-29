@@ -233,14 +233,20 @@ not yet applied, or a plate other than the current one, whose layers may be an o
 `color_change` from an older project). `add_layer_gcode` and `delete_layer_gcode` change them.
 
 A filament change also says whether the G-code has a switch for it, as the slicer takes them: `active`
-true, or false with `inactive_reason`, or null while not known (a plate other than the current one, whose
-objects' filaments only its Print can count). It has none on a plate printed by object, in spiral vase mode
-(the plate's own or the print preset's), on a plate whose objects print with several filaments (a part, a
-painting, a mixed slot's components count once, a feature's filament such as its walls' counts where the
+true, or false with `inactive_reason`, or null while not known: on a plate other than the current one, whose
+objects' filaments only its Print can count, and, before the plate is sliced, above where the slicer's layers
+must reach: the top of its highest object as the slicer slices it (scaled by its Z shrinkage compensation, which
+over 100 % slices it shorter) less half the largest layer an object there can print with (with a variable layer
+height, the largest stored in its profile or its printer's nozzles allow, a `max_layer_height` of 0 being 3/4 of
+the nozzle), since the slicer stops once the next layer's middle would pass the top (a raft may lift the last layer
+past that). It is never true for a change the slicer does not reach. It has none on a plate printed by object, in
+spiral vase mode (the plate's own or the print preset's), on a plate whose objects print with several filaments
+(a part, a painting, a mixed slot's components count once, a feature's filament such as its walls' counts where the
 feature prints), on a project of one filament (the slicer turns no filament change into a color change), for
 one recorded in another filament mode (an older project's), for one to the filament already printing there
-(the objects' own below the first change, the previous change's above it), and for one above the plate's
-last layer. The Preview's layer slider hides the first three and shows the rest, as upstream does; they all
+(the objects' own below the first change, the previous change's above it; the reason names the filament the
+slicer takes it for, and how the slot it names was mapped: a slot the project lacks is filament 1), and for
+one above the plate's last layer. The Preview's layer slider hides the first three and shows the rest, as upstream does; they all
 stay in the project, and a vase plate's apply again once vase mode is off.
 
 With a prime tower printed, `prime_tower` also carries `position` (the front-left corner of the tower
@@ -395,6 +401,7 @@ call `wait_for_slice` rather than polling this.
 | `status` | Legacy field, `slicing` or `idle` only - use `state` |
 | `slice_result_valid` | The current plate's own slice-result flag, the same one the GUI's Print/Export buttons use |
 | `plates` | Every plate's slice-result flag and `percent`, so a multi-plate run can be followed plate by plate (and a plate that failed can be identified). `percent` is 0-100 while a plate slices and 100 once it has a result; `null` for a plate with no result that nothing is slicing. The GUI drops progress updates while another job (an arrange, an orient) runs, so a percent can stand still then. An MCP change to an object's settings, layer ranges, adaptive layers, name, filament or printable state, or to the project's colours, flush volumes, mixed filaments or a plate's prime tower, marks the plates it touches not sliced at once, the unselected ones too (the app alone would find out only when the plate is next selected). Slicing again takes back the result of a plate the change did not affect without slicing it |
+| `last_export` | The plain G-code export `export_gcode` started last, `null` before any: `output_path` and `state` -- `writing`, `written`, `failed` (with `error`, the app's words), `cancelled` or `dropped` (taken off by a new project or a project opened). How an export it answered `export_started` for ended; `wait_for_slice`'s `slicing_status` carries it |
 | `plates[].gcode_check` | The check the plate's slice ran on its own G-code, `null` without a slice result: `{"ok": true}`, or `ok: false` with `problems` and a `message` in words. The problems: `outside_bed` (a toolpath outside the bed's printable area), `above_printable_height` (above the printer's printable height: the highest layer an extrusion prints at is above it, and both are given in mm as `highest_layer_z_mm` / `printable_height_mm`, with a `hint`. The check before slicing already refuses an object whose own top layer is above the printable height, so what gets here is almost always lifted by a raft, which that check leaves out; a `printable_height` of 0 sets no limit), `above_extruder_height` (above the printable height of the extruder the filament is on), `outside_extruder_area` (outside the area that extruder can reach), `in_wrapping_area`, `over_printed_mass` (heavier than the printer's maximum printed mass), `toolpath_outside` (outside the printable volume), `filament_bed_conflict` (a filament the plate type has no first-layer bed temperature for), and `check_bit_<n>` for a check this list does not name yet. The GUI keeps a failed plate's Print, Send and Export buttons off, and `export_gcode` and `send_to_printer` refuse it. Until v2.5.0.6 the height checks never tripped on a non-Bambu printer |
 | `busy` / `busy_reason` | Whether the slicing pipeline is busy, and with what: `slicing` (a slice or Slice All run), `exporting` (the background process writes G-code), `uploading` (it sends G-code to a printer) or `stopping` (the last slice finished or was cancelled, and its completion is not taken in yet). `slice_all` starts nothing while it is busy, and `wait_for_slice` waits until it is not. `is_slicing` is only the first of these |
 | `ui_job` | A job holding the app apart from slicing: `arranging`, `orienting` or `filling_bed` (one a tool started, still running past its wait), `other` (one the GUI started, or the arrange a bed fill starts), or `null`. Kept out of `busy`: `slice_all` answers `busy_job` while one runs, and `wait_for_slice` does not wait for it |
@@ -2681,13 +2688,25 @@ cancel only between phases, so on the unoptimized dev build that wait can take a
 Export sliced G-code: a plain `.gcode` of the selected plate, or the plate sliced file (`.gcode.3mf`)
 of the selected plate or of every plate.
 
-A `.gcode` is written asynchronously, as the GUI's Export G-code writes it, so a successful call
-answers `status: "export_started"`, not `"success"`:
+A `.gcode` is written in the background, as the GUI's Export G-code writes it, and the call waits for it
+(on the call's own thread, within the wait cap the bridge sends from `ORCAMCP_TIMEOUT`, as `arrange_objects`
+waits for its job; a quit releases it):
 
 | `status` | Meaning |
 |----------|---------|
-| `export_started` | The app has begun writing the file in the background: not a failure. It is complete once `wait_for_slice` returns (`get_slicing_status`'s `busy` is false again, `busy_reason` was `exporting`); `next_steps` names `wait_for_slice` |
+| `success` | The file is written: `output_path`, `bytes` (its size), `format: "gcode"`, `waited_s` |
+| `export_started` | Still being written past how long the call waits (`finished: false`, `waited_s`): not a failure. It is complete once `wait_for_slice` returns (`get_slicing_status`'s `busy` is false again, `busy_reason` was `exporting`), and `get_slicing_status`'s `last_export` (in `wait_for_slice`'s `slicing_status`) says whether it was written or failed; `next_steps` names `wait_for_slice`. A failure after the call stopped waiting also shows the app's error dialog, as for the GUI's own exports. Also with `finished: false` and a `message` when the app began quitting during the wait |
 | `error` | Nothing was written; `message` says why (below) |
+
+```json
+{"status": "success", "output_path": "/tmp/out/box.gcode", "format": "gcode", "bytes": 162448, "waited_s": 0.6,
+ "active_warnings": {"count": 0, "warnings": []}}
+```
+
+Until v2.5.0.6 the call answered `export_started` as soon as the export was scheduled, and an agent that read
+the file then read it half written. An export that started and then failed is an `error` with the app's
+words ("The G-code export failed: Copying of the temporary G-code to the output G-code failed. ..."), one
+cancelled or taken off before it was written (a new project, a project opened) says so.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
@@ -2697,8 +2716,7 @@ answers `status: "export_started"`, not `"success"`:
 
 A path ending in `.3mf` but not `.gcode.3mf` is refused: a project is `export_3mf`'s.
 
-`status: "export_started"` only when the app scheduled the export. An export that did not start is
-`status: "error"` with the reason as `message`: the scene has no objects, "Another export job is
+An export that did not start is `status: "error"` with the reason as `message`: the scene has no objects, "Another export job is
 running." while the previous export is still writing (call it again once `busy` in
 `get_slicing_status` is false), or "the plate failed validation: ..." with the app's words for the
 plate being exported (the selected one, never another plate's) -- the app's export refuses such a
@@ -4157,7 +4175,7 @@ nothing to suggest has no `next_steps`.
 | `slice_all` | `wait_for_slice` | `slicing_started`, or `not_started` with `busy_slicing` (wait, then `slice_all` again) |
 | | `get_slicing_status` | `busy_job`: an arrange, orient or bed fill holds the app, which `wait_for_slice` does not wait for; `slice_all` again once `ui_job` is null |
 | | `get_print_estimate` with the `plate_index` of a sliced plate (the selected one when it has a result) | `already_sliced` |
-| `export_gcode` | `wait_for_slice` | `export_started`: the file is still being written |
+| `export_gcode` | `wait_for_slice` | `export_started`: the file is still being written, past the call's own wait |
 | `cancel_slice` | `wait_for_slice` | the cancelled slice is still stopping: its completion is not taken in yet |
 | `add_layer_gcode`, `delete_layer_gcode` | `slice_all` | the call changed the plate's layer G-code, so it lost its slice |
 | `show_view` | `wait_for_slice` | switching to the Preview tab started a slice of the selected plate |

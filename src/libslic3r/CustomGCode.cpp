@@ -106,12 +106,16 @@ std::vector<ToolChangesOff> tool_change_effects(const Info& info, size_t num_fil
     const int objects_own = object_filaments.front();
     int       printing    = objects_own;
     for (size_t i : changes) {
-        const int named = info.gcodes[i].extruder;
-        const int to    = named <= 0 ? objects_own : size_t(named) > num_filaments ? 1 : named;
-        effects[i]      = to == printing ? ToolChangesOff::same_filament : ToolChangesOff::none;
-        printing        = to;
+        const int to = tool_change_target(info.gcodes[i].extruder, num_filaments, objects_own);
+        effects[i]   = to == printing ? ToolChangesOff::same_filament : ToolChangesOff::none;
+        printing     = to;
     }
     return effects;
+}
+
+int tool_change_target(int named, size_t num_filaments, int objects_own)
+{
+    return named <= 0 ? objects_own : size_t(named) > num_filaments ? 1 : named;
 }
 
 } // namespace CustomGCode

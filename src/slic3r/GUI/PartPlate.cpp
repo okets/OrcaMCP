@@ -1705,23 +1705,28 @@ std::vector<int> PartPlate::get_extruders(bool conside_custom_gcode, const Dynam
 			// Orca: only the filament changes the slicer may take (CustomGCode::tool_changes_apply): the others print
 			// nothing, and counted they made a filament the plate never prints used. The objects' filaments here are
 			// the fewest the slicer counts (a feature's may add one), so a change it may take is listed, never missed.
+			// The plate's own reasons first (by object, vase mode, one filament, another mode), which need no object;
+			// then which objects the slicer prints, against one build volume.
 			const auto plate_gcodes = m_model->plates_custom_gcodes.find(m_plate_index);
 			const bool has_changes  = plate_gcodes != m_model->plates_custom_gcodes.end() &&
 			                         std::any_of(plate_gcodes->second.gcodes.begin(), plate_gcodes->second.gcodes.end(),
 			                                     [](const CustomGCode::Item& item) { return item.type == CustomGCode::ToolChange; });
-			std::vector<int> object_filaments;
-			if (has_changes)
-				for (const auto& [obj_idx, filaments] : filaments_by_object)
-					if (slicer_prints_object(obj_idx))
-						object_filaments.insert(object_filaments.end(), filaments.begin(), filaments.end());
-			sort_remove_duplicates(object_filaments);
 			PrintSequence sequence = get_print_seq();
 			if (sequence == PrintSequence::ByDefault)
 				if (const auto* global = glb_config.option<ConfigOptionEnum<PrintSequence>>("print_sequence"))
 					sequence = global->value;
+			const bool by_layer = sequence != PrintSequence::ByObject;
+			const bool vase     = get_spiral_vase_mode(glb_config);
+			std::vector<int> object_filaments;
+			if (has_changes && CustomGCode::tool_changes_apply(plate_gcodes->second.mode, size_t(nums_extruders), 1, by_layer, vase)) {
+				const BuildVolume build_volume = slicing_build_volume();
+				for (const auto& [obj_idx, filaments] : filaments_by_object)
+					if (slicer_prints_object(obj_idx, build_volume))
+						object_filaments.insert(object_filaments.end(), filaments.begin(), filaments.end());
+			}
+			sort_remove_duplicates(object_filaments);
 			if (has_changes &&
-				CustomGCode::tool_changes_apply(plate_gcodes->second.mode, size_t(nums_extruders), object_filaments.size(),
-												sequence != PrintSequence::ByObject, get_spiral_vase_mode(glb_config))) {
+				CustomGCode::tool_changes_apply(plate_gcodes->second.mode, size_t(nums_extruders), object_filaments.size(), by_layer, vase)) {
 				for (auto item : plate_gcodes->second.gcodes) {
 					if (item.type == CustomGCode::Type::ToolChange && item.extruder <= nums_extruders)
 						plate_extruders.push_back(item.extruder);
@@ -2795,21 +2800,33 @@ bool PartPlate::contain_instance_totally(int obj_id, int instance_id) const
 	return result;
 }
 
-// Orca: whether the slicer prints object `obj_id` when it slices this plate: some instance of it on the plate that is
-// printable -- the object's flag, the instance's, and inside the plate's build volume, computed as the plater computes
-// it for the Print (Plater::priv::update_print_volume_state, ModelInstance::is_printable), which leaves out every other.
-bool PartPlate::slicer_prints_object(int obj_id) const
+// Orca: the build volume the plater gives the slicer for this plate (Plater::priv::update_print_volume_state).
+BuildVolume PartPlate::slicing_build_volume() const
+{
+	return BuildVolume(get_shape(), m_height, m_extruder_areas, m_extruder_heights);
+}
+
+// Orca: whether the slicer prints this instance when it slices this plate: on the plate and printable -- the object's
+// flag, the instance's, and inside the plate's build volume, computed as the plater computes it for the Print
+// (ModelInstance::is_printable), which leaves out every other.
+bool PartPlate::slicer_prints_instance(int obj_id, int instance_id, const BuildVolume& build_volume) const
 {
 	if (obj_id < 0 || obj_id >= int(m_model->objects.size()) || !m_model->objects[obj_id]->printable)
 		return false;
 	const ModelObject* object = m_model->objects[obj_id];
-	const BuildVolume  build_volume(get_shape(), m_height, m_extruder_areas, m_extruder_heights);
-	for (int instance_id = 0; instance_id < int(object->instances.size()); ++instance_id) {
-		const ModelInstance* instance = object->instances[instance_id];
-		if (obj_to_instance_set.count({obj_id, instance_id}) != 0 && instance->printable &&
-			instance->calc_print_volume_state(build_volume) == ModelInstancePVS_Inside)
+	if (instance_id < 0 || instance_id >= int(object->instances.size()) || obj_to_instance_set.count({obj_id, instance_id}) == 0)
+		return false;
+	const ModelInstance* instance = object->instances[instance_id];
+	return instance->printable && instance->calc_print_volume_state(build_volume) == ModelInstancePVS_Inside;
+}
+
+bool PartPlate::slicer_prints_object(int obj_id, const BuildVolume& build_volume) const
+{
+	if (obj_id < 0 || obj_id >= int(m_model->objects.size()))
+		return false;
+	for (int instance_id = 0; instance_id < int(m_model->objects[obj_id]->instances.size()); ++instance_id)
+		if (slicer_prints_instance(obj_id, instance_id, build_volume))
 			return true;
-	}
 	return false;
 }
 
