@@ -805,6 +805,13 @@ void remember_flashforge_print_options(AppConfig& config, const FlashforgeApi::P
     config.set(kRecentSection, kTimeLapseConfigKey, flag(options.time_lapse));
 }
 
+FlashforgeApi::PrintOptions sent_flashforge_print_options(const FlashforgeApi::PrintOptions& ticked, bool offers_flow_calibration)
+{
+    FlashforgeApi::PrintOptions sent = ticked;
+    sent.flow_calibration            = ticked.flow_calibration && offers_flow_calibration;
+    return sent;
+}
+
 FlashforgePrintHostSendDialog::FlashforgePrintHostSendDialog(const fs::path&             path,
                                                              PrintHostPostUploadActions  post_actions,
                                                              const wxArrayString&        groups,
@@ -814,11 +821,13 @@ FlashforgePrintHostSendDialog::FlashforgePrintHostSendDialog(const fs::path&    
                                                              const Slic3r::Flashforge*   host,
                                                              bool                        supports_material_station,
                                                              std::vector<Slic3r::FlashforgeMaterialSlot> slots,
-                                                             const std::vector<FilamentInfo>& project_filaments)
+                                                             const std::vector<FilamentInfo>& project_filaments,
+                                                             int                         product_id)
     : PrintHostSendDialog(path, post_actions, groups, storage_paths, storage_names, switch_to_device_tab)
     , m_host(host)
     , m_slots(std::move(slots))
     , m_project_filaments(project_filaments)
+    , m_offers_flow_calibration(FlashforgeApi::start_screen_offers_calibration(product_id))
 {
     m_supports_material_station = supports_material_station;
     m_slots_loaded = !m_slots.empty();
@@ -936,9 +945,11 @@ void FlashforgePrintHostSendDialog::init()
     auto* options_group_sizer  = new wxStaticBoxSizer(options_group, wxVERTICAL);
     m_flashforge_options_sizer = new wxBoxSizer(wxVERTICAL);
 
-    // In the order the printer's own start screen lists them.
-    add_option_checkbox(options_group, m_flashforge_options_sizer, _L("Calibrate the flow before printing"), m_print_options.flow_calibration,
-                        [this](bool checked) { m_print_options.flow_calibration = checked; }, &m_checkbox_flow_calibration);
+    // In the order the printer's own start screen lists them. Flow calibration only where that screen
+    // is known to offer it (FlashforgeApi::start_screen_offers_calibration).
+    if (m_offers_flow_calibration)
+        add_option_checkbox(options_group, m_flashforge_options_sizer, _L("Calibrate the flow before printing"), m_print_options.flow_calibration,
+                            [this](bool checked) { m_print_options.flow_calibration = checked; }, &m_checkbox_flow_calibration);
     add_option_checkbox(options_group, m_flashforge_options_sizer, _L("Level the bed before printing"), m_print_options.leveling,
                         [this](bool checked) { m_print_options.leveling = checked; }, &m_checkbox_leveling);
     add_option_checkbox(options_group, m_flashforge_options_sizer, _L("Ask the printer to record a time-lapse"), m_print_options.time_lapse,
@@ -1078,7 +1089,8 @@ std::map<std::string, std::string> FlashforgePrintHostSendDialog::extendedInfo()
         }
     }
 
-    return FlashforgeApi::make_upload_extended_info(m_print_options, m_use_material_station, mappings);
+    return FlashforgeApi::make_upload_extended_info(sent_flashforge_print_options(m_print_options, m_offers_flow_calibration),
+                                                    m_use_material_station, mappings);
 }
 
 void FlashforgePrintHostSendDialog::load_slots()

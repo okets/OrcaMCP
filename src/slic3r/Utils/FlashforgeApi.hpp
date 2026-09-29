@@ -97,6 +97,15 @@ nlohmann::json make_print_gcode_payload(const std::string& serial, const std::st
 constexpr int kTempNoChange = -200;
 constexpr int kPidCreator5 = 40, kPidCreator5Pro = 41;
 
+// Whether the machine's own start screen is known to offer flow calibration and leveling before a
+// print: the Creator 5 and 5 Pro, by the product id the printer reports (`detail.pid`). Other
+// local-API Flashforges (Adventurer 5M, AD5X, ...) have not been checked, so nothing turns
+// calibration on for them unasked, and the send dialog offers them no flow calibration.
+bool start_screen_offers_calibration(int product_id);
+
+// The machine as a report names it: the printer's own `model`, else its product id, else "unknown".
+std::string printer_model_name(const PrinterStatus& status);
+
 }} // namespace Slic3r::FlashforgeApi
 
 #endif

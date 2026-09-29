@@ -521,3 +521,25 @@ TEST_CASE("parse_gcode_printing_time reads a gcodeList object too", "[flashforge
     CHECK_FALSE(parse_gcode_printing_time(nlohmann::json::parse(R"({"gcodeList":["a.gcode"]})"), "a.gcode").has_value());
     CHECK_FALSE(parse_gcode_printing_time(nlohmann::json(), "a.gcode").has_value());
 }
+
+TEST_CASE("Only a Creator 5 or 5 Pro is known to offer calibration on its start screen", "[flashforge]") {
+    CHECK(start_screen_offers_calibration(kPidCreator5));
+    CHECK(start_screen_offers_calibration(kPidCreator5Pro));
+    // Other local-API machines (Adventurer 5M, AD5X, ...) have not been checked, and a status without
+    // a product id says nothing.
+    CHECK_FALSE(start_screen_offers_calibration(0));
+    CHECK_FALSE(start_screen_offers_calibration(38));
+    CHECK_FALSE(start_screen_offers_calibration(-1));
+}
+
+TEST_CASE("printer_model_name names the machine for a report", "[flashforge]") {
+    PrinterStatus creator;
+    creator.model = "Creator 5 Pro";
+    creator.pid   = kPidCreator5Pro;
+    CHECK(printer_model_name(creator) == "Creator 5 Pro");
+
+    PrinterStatus nameless;
+    nameless.pid = 38;
+    CHECK(printer_model_name(nameless) == "product id 38");
+    CHECK(printer_model_name(PrinterStatus{}) == "unknown");
+}

@@ -230,6 +230,9 @@ std::string flashforge_normalize_material(const std::string& material);
 FlashforgeApi::PrintOptions remembered_flashforge_print_options(const AppConfig& config);
 // Saves them for the next dialog. Called only when a send is confirmed.
 void remember_flashforge_print_options(AppConfig& config, const FlashforgeApi::PrintOptions& options);
+// What the dialog sends: the boxes as ticked, flow calibration only to a printer whose start screen
+// offers it (its box is not shown elsewhere, so a tick remembered from another printer stays home).
+FlashforgeApi::PrintOptions sent_flashforge_print_options(const FlashforgeApi::PrintOptions& ticked, bool offers_flow_calibration);
 
 class FlashforgePrintHostSendDialog : public PrintHostSendDialog
 {
@@ -243,7 +246,8 @@ public:
                                   const Slic3r::Flashforge*       host,
                                   bool                            supports_material_station,
                                   std::vector<Slic3r::FlashforgeMaterialSlot> slots,
-                                  const std::vector<FilamentInfo>& project_filaments);
+                                  const std::vector<FilamentInfo>& project_filaments,
+                                  int                             product_id = 0); // the printer's `pid`
 
     virtual void init() override;
     virtual void EndModal(int ret) override;
@@ -287,6 +291,7 @@ private:
     ::CheckBox*                      m_checkbox_timelapse {nullptr};
     ::CheckBox*                      m_checkbox_ifs {nullptr};
     FlashforgeApi::PrintOptions      m_print_options;
+    bool                             m_offers_flow_calibration {false};
     bool                             m_use_material_station {false};
     bool                             m_supports_material_station {false};
     bool                             m_slots_loaded {false};

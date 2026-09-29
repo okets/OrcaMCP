@@ -52,7 +52,8 @@ public:
     // The bare host the local API is reached at (FlashforgeLocalApi::host_of of print_host), parsed
     // once when the host is built: every request and log line uses this one value.
     const std::string&         local_api_host() const { return m_local_api_host; }
-    bool                       fetch_material_slots(std::vector<FlashforgeMaterialSlot>& slots, bool* supports_material_station, wxString& msg) const;
+    // `product_id`, when given, receives the machine's `pid` from the same answer (0 when it gives none).
+    bool                       fetch_material_slots(std::vector<FlashforgeMaterialSlot>& slots, bool* supports_material_station, wxString& msg, int* product_id = nullptr) const;
     static bool                discover_printers(std::vector<FlashforgeDiscoveredPrinter>& printers, wxString& msg, int timeout_ms = 10000, int idle_timeout_ms = 1500, int max_retries = 3);
 
     // Local API status and control. All are safe to call off the main thread; all return false and fill `msg` on failure.

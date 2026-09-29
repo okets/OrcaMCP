@@ -492,9 +492,11 @@ bool Flashforge::test_local_api(wxString& msg) const
     return request_local_api_json("detail", json{{"serialNumber", m_serial_number}, {"checkCode", m_check_code}}.dump(), body, msg);
 }
 
-bool Flashforge::fetch_material_slots(std::vector<FlashforgeMaterialSlot>& slots, bool* supports_material_station, wxString& msg) const
+bool Flashforge::fetch_material_slots(std::vector<FlashforgeMaterialSlot>& slots, bool* supports_material_station, wxString& msg, int* product_id) const
 {
     slots.clear();
+    if (product_id != nullptr)
+        *product_id = 0;
 
     if (!require_local_api_credentials(msg))
         return false;
@@ -534,6 +536,11 @@ bool Flashforge::fetch_material_slots(std::vector<FlashforgeMaterialSlot>& slots
 
     if (supports_material_station != nullptr)
         *supports_material_station = reports_material_station;
+
+    // Which machine answered: what its start screen offers depends on it
+    // (FlashforgeApi::start_screen_offers_calibration).
+    if (int pid = 0; product_id != nullptr && detail.contains("pid") && FlashforgeApi::try_parse_json_int(detail["pid"], pid))
+        *product_id = pid;
 
     // json::value() throws type_error.306 on anything that is not an object, so parsing the slots is
     // done by FlashforgeApi::parse_material_slots -- the same parser fetch_status already goes

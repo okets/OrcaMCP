@@ -13,8 +13,9 @@ namespace Slic3r { namespace GUI { namespace OrcaMCP {
 // How send_to_printer and print_printer_file decide what a Flashforge does before and during the
 // print they start. The agent decides: an explicit boolean always wins. Left to the tool, leveling
 // and flow calibration run for a print estimated at kCalibrationGateSeconds or longer, where the
-// minutes they add are small beside what a failed print wastes, and time-lapse stays off. Pure and
-// any thread; tests/slic3rutils/test_mcp_print_options.cpp pins it.
+// minutes they add are small beside what a failed print wastes -- on a Creator 5 or 5 Pro only, the
+// machines whose start screen was checked (FlashforgeApi::start_screen_offers_calibration) -- and
+// time-lapse stays off. Pure and any thread; tests/slic3rutils/test_mcp_print_options.cpp pins it.
 
 constexpr double kCalibrationGateSeconds = 4 * 3600.0;
 
@@ -46,6 +47,7 @@ enum class PrintOptionsReach
 {
     Honoured,                  // a direct send to a Flashforge with local-API credentials
     SendDialog,                // direct: false: the user's send dialog asks for its own
+    UploadOnly,                // start_print: false: nothing starts, so the printer never reads them
     NotFlashforge,             // another print host takes none
     FlashforgeWithoutLocalApi, // no serial number and check code: the TCP console carries none
 };
@@ -56,8 +58,17 @@ enum class PrintOptionsReach
 std::optional<std::string> ignored_print_options_refusal(const PrintOptionRequest& request, PrintOptionsReach reach,
                                                          const std::string& host_type);
 
+// What the gate reads about the print and the printer.
+struct GateFacts
+{
+    std::optional<double> estimated_print_s;            // unset or not positive when unknown
+    bool                  model_offers_calibration{false}; // FlashforgeApi::start_screen_offers_calibration
+    std::string           printer_model;                // as the report names it (FlashforgeApi::printer_model_name); empty: not read
+};
+
 // One option as decided, and by what: "caller", "print_time_gate", "print_time_unknown" (left to
-// the gate with no estimate, so off) or "default" (time-lapse left to the tool, so off).
+// the gate with no estimate, so off), "not_offered_by_model" (left to the gate on a machine whose
+// start screen nobody checked, so off) or "default" (time-lapse left to the tool, so off).
 struct PrintOptionChoice
 {
     bool        on{false};
@@ -71,13 +82,13 @@ struct PrintOptionChoices
     PrintOptionChoice time_lapse;
 };
 
-// `estimated_print_s` is the print's estimated time; unset or not positive when unknown.
-PrintOptionChoices choose_print_options(const PrintOptionRequest& request, std::optional<double> estimated_print_s);
+PrintOptionChoices choose_print_options(const PrintOptionRequest& request, const GateFacts& facts);
 
 FlashforgeApi::PrintOptions to_print_options(const PrintOptionChoices& choices);
 
 // The response's `print_options`: each option's {on, decided_by}, the estimate the gate read
-// (`estimated_print_s`, whole seconds, null when unknown) and the gate (`gate_s`).
-nlohmann::json print_options_json(const PrintOptionChoices& choices, std::optional<double> estimated_print_s);
+// (`estimated_print_s`, whole seconds, null when unknown), the gate (`gate_s`) and the machine
+// (`printer_model`).
+nlohmann::json print_options_json(const PrintOptionChoices& choices, const GateFacts& facts);
 
 }}} // namespace Slic3r::GUI::OrcaMCP

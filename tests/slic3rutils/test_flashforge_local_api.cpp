@@ -406,69 +406,88 @@ bool upload(const Slic3r::Flashforge& host, const std::string& upload_name, bool
 
 } // namespace
 
-TEST_CASE("A print the printer accepts is recorded with what it asked for", "[flashforge]")
+// One test case, its sections run one after another: the fake printer needs the API's own port, and
+// ctest runs each test case in a process of its own, in parallel with -j.
+TEST_CASE("A Flashforge on this machine's local API port records the starts it accepts", "[flashforge]")
 {
-    FakePrinter printer(kPrinterAccepts);
-    if (!printer.listening())
-        SKIP("something else holds 127.0.0.1:" << kPort);
     Slic3r::DynamicPrintConfig config = fake_printer_config();
     const Slic3r::Flashforge   host(&config);
 
-    Slic3r::FlashforgeApi::PrintOptions options;
-    options.flow_calibration = true;
-    const nlohmann::json mappings = nlohmann::json::array(
-        {{{"toolId", 0}, {"slotId", 2}, {"materialName", "PLA"}, {"slotMaterialColor", "#FF0000"}}});
-    wxString msg;
-    REQUIRE(host.print_gcode_file("accepted-start.gcode", options, mappings, msg));
+    SECTION("A print the printer accepts is recorded with what it asked for")
+    {
+        FakePrinter printer(kPrinterAccepts);
+        if (!printer.listening())
+            SKIP("something else holds 127.0.0.1:" << kPort);
 
-    const nlohmann::json sent = nlohmann::json::parse(printer.last_body("/printGcode"));
-    CHECK(sent["flowCalibration"] == true);
-    CHECK(sent["levelingBeforePrint"] == false);
+        Slic3r::FlashforgeApi::PrintOptions options;
+        options.flow_calibration = true;
+        const nlohmann::json mappings = nlohmann::json::array(
+            {{{"toolId", 0}, {"slotId", 2}, {"materialName", "PLA"}, {"slotMaterialColor", "#FF0000"}}});
+        wxString msg;
+        REQUIRE(host.print_gcode_file("accepted-start.gcode", options, mappings, msg));
 
-    const auto recorded = host.last_print_start();
-    REQUIRE(recorded.has_value());
-    CHECK(recorded->value.file_name == "accepted-start.gcode");
-    CHECK(recorded->value.options == options);
-    CHECK(recorded->value.material_mappings == mappings);
-    CHECK(recorded->age_s < 5);
-}
+        const nlohmann::json sent = nlohmann::json::parse(printer.last_body("/printGcode"));
+        CHECK(sent["flowCalibration"] == true);
+        CHECK(sent["levelingBeforePrint"] == false);
 
-TEST_CASE("A start the printer refuses is not recorded", "[flashforge]")
-{
-    FakePrinter printer(kPrinterRefuses);
-    if (!printer.listening())
-        SKIP("something else holds 127.0.0.1:" << kPort);
-    Slic3r::DynamicPrintConfig config = fake_printer_config();
-    const Slic3r::Flashforge   host(&config);
+        const auto recorded = host.last_print_start();
+        REQUIRE(recorded.has_value());
+        CHECK(recorded->value.file_name == "accepted-start.gcode");
+        CHECK(recorded->value.options == options);
+        CHECK(recorded->value.material_mappings == mappings);
+        CHECK(recorded->age_s < 5);
+    }
 
-    wxString msg;
-    CHECK_FALSE(host.print_gcode_file("refused-start.gcode", Slic3r::FlashforgeApi::PrintOptions{}, nlohmann::json::array(), msg));
-    CHECK_FALSE(last_start_is(host, "refused-start.gcode"));
+    SECTION("A start the printer refuses is not recorded")
+    {
+        FakePrinter printer(kPrinterRefuses);
+        if (!printer.listening())
+            SKIP("something else holds 127.0.0.1:" << kPort);
 
-    CHECK_FALSE(upload(host, "refused-upload.gcode", true, Slic3r::FlashforgeApi::PrintOptions{}));
-    CHECK_FALSE(last_start_is(host, "refused-upload.gcode"));
-}
+        wxString msg;
+        CHECK_FALSE(host.print_gcode_file("refused-start.gcode", Slic3r::FlashforgeApi::PrintOptions{}, nlohmann::json::array(), msg));
+        CHECK_FALSE(last_start_is(host, "refused-start.gcode"));
 
-TEST_CASE("An upload that starts the print is recorded, and an upload alone is not", "[flashforge]")
-{
-    FakePrinter printer(kPrinterAccepts);
-    if (!printer.listening())
-        SKIP("something else holds 127.0.0.1:" << kPort);
-    Slic3r::DynamicPrintConfig config = fake_printer_config();
-    const Slic3r::Flashforge   host(&config);
+        CHECK_FALSE(upload(host, "refused-upload.gcode", true, Slic3r::FlashforgeApi::PrintOptions{}));
+        CHECK_FALSE(last_start_is(host, "refused-upload.gcode"));
+    }
 
-    Slic3r::FlashforgeApi::PrintOptions options;
-    options.leveling   = true;
-    options.time_lapse = true;
-    REQUIRE(upload(host, "upload-and-start.gcode", true, options));
-    const auto recorded = host.last_print_start();
-    REQUIRE(recorded.has_value());
-    CHECK(recorded->value.file_name == "upload-and-start.gcode");
-    CHECK(recorded->value.options == options);
-    CHECK(recorded->value.material_mappings == nlohmann::json::array());
+    SECTION("An upload that starts the print is recorded, and an upload alone is not")
+    {
+        FakePrinter printer(kPrinterAccepts);
+        if (!printer.listening())
+            SKIP("something else holds 127.0.0.1:" << kPort);
 
-    REQUIRE(upload(host, "upload-only.gcode", false, options));
-    CHECK(last_start_is(host, "upload-and-start.gcode")); // still the start before it
+        Slic3r::FlashforgeApi::PrintOptions options;
+        options.leveling   = true;
+        options.time_lapse = true;
+        REQUIRE(upload(host, "upload-and-start.gcode", true, options));
+        const auto recorded = host.last_print_start();
+        REQUIRE(recorded.has_value());
+        CHECK(recorded->value.file_name == "upload-and-start.gcode");
+        CHECK(recorded->value.options == options);
+        CHECK(recorded->value.material_mappings == nlohmann::json::array());
+
+        REQUIRE(upload(host, "upload-only.gcode", false, options));
+        CHECK(last_start_is(host, "upload-and-start.gcode")); // still the start before it
+    }
+
+    SECTION("The material-slot read also says which machine it is")
+    {
+        FakePrinter printer(R"({"code":0,"detail":{"pid":41,"model":"Creator 5 Pro","hasMatlStation":true,
+                                "matlStationInfo":{"slotCnt":1,"slotInfos":[{"slotId":1,"hasFilament":true,"materialName":"PLA"}]}}})");
+        if (!printer.listening())
+            SKIP("something else holds 127.0.0.1:" << kPort);
+
+        std::vector<Slic3r::FlashforgeMaterialSlot> slots;
+        bool                                        station    = false;
+        int                                         product_id = 0;
+        wxString                                    msg;
+        REQUIRE(host.fetch_material_slots(slots, &station, msg, &product_id));
+        CHECK(product_id == Slic3r::FlashforgeApi::kPidCreator5Pro);
+        CHECK(station);
+        CHECK(slots.size() == 1);
+    }
 }
 
 TEST_CASE("A Flashforge host reads its print_host once, when it is built", "[flashforge]")

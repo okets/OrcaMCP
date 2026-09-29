@@ -29,10 +29,12 @@ std::optional<double> known_estimate(std::optional<double> estimated_print_s)
     return std::nullopt;
 }
 
-PrintOptionChoice gated(std::optional<bool> requested, std::optional<double> estimate)
+PrintOptionChoice gated(std::optional<bool> requested, bool model_offers_calibration, std::optional<double> estimate)
 {
     if (requested)
         return {*requested, "caller"};
+    if (!model_offers_calibration)
+        return {false, "not_offered_by_model"};
     if (!estimate)
         return {false, "print_time_unknown"};
     return {*estimate >= kCalibrationGateSeconds, "print_time_gate"};
@@ -66,6 +68,9 @@ std::string why_dropped(PrintOptionsReach reach, const std::string& host_type)
     case PrintOptionsReach::SendDialog:
         return "with direct: false the send is left to the user in OrcaSlicer's send dialog, which asks for its own print "
                "options. Pass direct: true to choose them here, or leave them out.";
+    case PrintOptionsReach::UploadOnly:
+        return "with start_print: false nothing starts, so the printer never reads them. Pass them to print_printer_file "
+               "when you start the uploaded file, or pass start_print: true.";
     case PrintOptionsReach::NotFlashforge:
         return "only a Flashforge print host takes print options, and the selected host is '" + host_type +
                "'. Leave them out.";
@@ -107,12 +112,12 @@ std::optional<std::string> ignored_print_options_refusal(const PrintOptionReques
     return "Nothing was sent. " + requested + " would be ignored: " + why_dropped(reach, host_type);
 }
 
-PrintOptionChoices choose_print_options(const PrintOptionRequest& request, std::optional<double> estimated_print_s)
+PrintOptionChoices choose_print_options(const PrintOptionRequest& request, const GateFacts& facts)
 {
-    const std::optional<double> estimate = known_estimate(estimated_print_s);
+    const std::optional<double> estimate = known_estimate(facts.estimated_print_s);
     PrintOptionChoices          choices;
-    choices.leveling         = gated(request.leveling, estimate);
-    choices.flow_calibration = gated(request.flow_calibration, estimate);
+    choices.leveling         = gated(request.leveling, facts.model_offers_calibration, estimate);
+    choices.flow_calibration = gated(request.flow_calibration, facts.model_offers_calibration, estimate);
     choices.time_lapse       = request.time_lapse ? PrintOptionChoice{*request.time_lapse, "caller"}
                                                   : PrintOptionChoice{false, "default"};
     return choices;
@@ -127,14 +132,15 @@ FlashforgeApi::PrintOptions to_print_options(const PrintOptionChoices& choices)
     return options;
 }
 
-nlohmann::json print_options_json(const PrintOptionChoices& choices, std::optional<double> estimated_print_s)
+nlohmann::json print_options_json(const PrintOptionChoices& choices, const GateFacts& facts)
 {
-    const std::optional<double> estimate = known_estimate(estimated_print_s);
+    const std::optional<double> estimate = known_estimate(facts.estimated_print_s);
     return {{"leveling", choice_json(choices.leveling)},
             {"flow_calibration", choice_json(choices.flow_calibration)},
             {"time_lapse", choice_json(choices.time_lapse)},
             {"estimated_print_s", estimate ? nlohmann::json(std::lround(*estimate)) : nlohmann::json(nullptr)},
-            {"gate_s", std::lround(kCalibrationGateSeconds)}};
+            {"gate_s", std::lround(kCalibrationGateSeconds)},
+            {"printer_model", facts.printer_model.empty() ? nlohmann::json(nullptr) : nlohmann::json(facts.printer_model)}};
 }
 
 }}} // namespace Slic3r::GUI::OrcaMCP

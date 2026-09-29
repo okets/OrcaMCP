@@ -605,6 +605,20 @@ nlohmann::json make_temperature_args(std::optional<double> bed, std::optional<do
     return args;
 }
 
+bool start_screen_offers_calibration(int product_id)
+{
+    return product_id == kPidCreator5 || product_id == kPidCreator5Pro;
+}
+
+std::string printer_model_name(const PrinterStatus& status)
+{
+    if (!status.model.empty())
+        return status.model;
+    if (status.pid > 0)
+        return "product id " + std::to_string(status.pid);
+    return "unknown";
+}
+
 bool operator==(const PrintOptions& a, const PrintOptions& b)
 {
     return a.leveling == b.leveling && a.flow_calibration == b.flow_calibration && a.time_lapse == b.time_lapse;

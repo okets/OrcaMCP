@@ -439,11 +439,12 @@ void OrcaMCPServer::register_printer_tools()
         "and the choice is yours: pass flow_calibration and leveling_before_print true before a long print or after "
         "a filament, nozzle or bed change, false for a short print or a repeat soon after the last one on the same "
         "filaments (get_printer_status's last_print_started_here says when this OrcaMCP instance last started a print "
-        "there, and with what). Omitted, each runs when the plate's estimated time is " + calibration_gate_text() +
-        " or more; "
-        "time_lapse is off unless asked for. The response's print_options says what was sent and why. An explicit "
-        "true is refused where it would be ignored: direct=false, another print host, or a Flashforge without its "
-        "serial number and check code.",
+        "there, and with what). Omitted, each runs on a Creator 5 or 5 Pro when the plate's estimated time is " +
+        calibration_gate_text() + " or more; other Flashforge models have not been checked, so there each stays off "
+        "unless asked for. time_lapse is off unless asked for. The response's print_options says what was sent and "
+        "why. An explicit true is refused where it would be ignored: direct=false, start_print=false (nothing "
+        "starts; pass them to print_printer_file then), another print host, or a Flashforge without its serial "
+        "number and check code.",
         {
             {"type", "object"},
             {"properties", {
@@ -458,20 +459,23 @@ void OrcaMCPServer::register_printer_tools()
                 }},
                 {kLevelingParam, {
                     {"type", "boolean"},
-                    {"description", "Level the bed before printing. Omitted: on when the plate's estimated time is " +
-                                    calibration_gate_text() + " or more. Direct sends to a Flashforge host with "
-                                    "local-API credentials only; true is refused anywhere else."}
+                    {"description", "Level the bed before printing. Omitted: on a Creator 5 or 5 Pro, on when the plate's "
+                                    "estimated time is " + calibration_gate_text() + " or more; off on other models. "
+                                    "Direct sends that start the print on a Flashforge host with local-API credentials "
+                                    "only; true is refused anywhere else."}
                 }},
                 {kFlowCalibrationParam, {
                     {"type", "boolean"},
-                    {"description", "Calibrate the flow before printing. Omitted: on when the plate's estimated time "
-                                    "is " + calibration_gate_text() + " or more. Direct sends to a Flashforge host "
-                                    "with local-API credentials only; true is refused anywhere else."}
+                    {"description", "Calibrate the flow before printing. Omitted: on a Creator 5 or 5 Pro, on when the "
+                                    "plate's estimated time is " + calibration_gate_text() + " or more; off on other "
+                                    "models. Direct sends that start the print on a Flashforge host with local-API "
+                                    "credentials only; true is refused anywhere else."}
                 }},
                 {kTimeLapseParam, {
                     {"type", "boolean"},
-                    {"description", "Ask the printer to record a time-lapse (default false). Direct sends to a "
-                                    "Flashforge host with local-API credentials only; true is refused anywhere else."}
+                    {"description", "Ask the printer to record a time-lapse (default false). Direct sends that start "
+                                    "the print on a Flashforge host with local-API credentials only; true is refused "
+                                    "anywhere else."}
                 }},
                 {"use_material_station", {
                     {"type", "boolean"},
@@ -526,6 +530,9 @@ void OrcaMCPServer::register_printer_tools()
 
             const bool        start_print = params.value("start_print", true);
             const std::string file_name   = params.value("file_name", std::string());
+            if (!start_print)
+                if (std::optional<std::string> refusal = ignored_print_options_refusal(option_request, PrintOptionsReach::UploadOnly, std::string()))
+                    return error_response(*refusal);
 
             // Main thread: everything that reads the plater and the presets.
             DynamicPrintConfig       cfg;
@@ -591,6 +598,8 @@ void OrcaMCPServer::register_printer_tools()
             nlohmann::json                     mappings_payload = nlohmann::json::array();
             nlohmann::json                     mappings_report  = nlohmann::json::array();
             std::optional<PrintOptionChoices>  print_options;
+            GateFacts                          gate_facts;
+            gate_facts.estimated_print_s = estimated_print_s;
             if (reach == PrintOptionsReach::Honoured) {
                 Slic3r::FlashforgeApi::PrinterStatus status;
                 wxString                             msg;
@@ -605,7 +614,9 @@ void OrcaMCPServer::register_printer_tools()
                         return mapping_error;
                 }
 
-                print_options = choose_print_options(option_request, estimated_print_s);
+                gate_facts.model_offers_calibration = Slic3r::FlashforgeApi::start_screen_offers_calibration(status.pid);
+                gate_facts.printer_model            = Slic3r::FlashforgeApi::printer_model_name(status);
+                print_options = choose_print_options(option_request, gate_facts);
                 extended_info = Slic3r::FlashforgeApi::make_upload_extended_info(to_print_options(*print_options),
                                                                                  use_material_station, mappings_payload);
             }
@@ -643,7 +654,7 @@ void OrcaMCPServer::register_printer_tools()
                                        {"start_print", start_print},
                                        {"note", "Upload progress is shown in OrcaSlicer; poll get_printer_status."}};
             if (print_options)
-                response["print_options"] = print_options_json(*print_options, estimated_print_s);
+                response["print_options"] = print_options_json(*print_options, gate_facts);
             if (!info_messages.empty())
                 response["info_messages"] = info_messages;
             return response;
@@ -776,7 +787,8 @@ void OrcaMCPServer::register_printer_tools()
         "When a Flashforge cannot be reached, the error says why and what to do next, and `cached` carries "
         "the material station from its last answer, with age_s. An answer that refuses (wrong check code) "
         "or cannot be read is returned as that error, without `cached`. last_print_started_here, in the answer and "
-        "in that error, is the last print this OrcaMCP instance started on the printer: age_s, file_name, the "
+        "in the error for a printer that could not be reached (the one with `cached`), is the last print this "
+        "OrcaMCP instance started on the printer: age_s, file_name, the "
         "leveling, flow_calibration and time_lapse it asked for, and the slots it fed from (fed_from); null when "
         "none since it launched. Prints started on the printer's screen, from another computer or from another "
         "OrcaMCP instance are not in it. Use it to judge whether a new print needs calibrating again.",
@@ -990,9 +1002,10 @@ void OrcaMCPServer::register_printer_tools()
         "Start printing a file on the printer",
         std::string("Start printing a G-code file already stored on the Flashforge printer, with optional material "
         "station mapping. Leveling and flow calibration each add minutes before the print; decide them as for "
-        "send_to_printer. Omitted, each runs when the file's estimated time, from the printer's file list, is ") +
-        calibration_gate_text() + " or more, and not when the printer does not report one. The response's "
-        "print_options says what was sent and why.",
+        "send_to_printer. Omitted, each runs on a Creator 5 or 5 Pro when the file's estimated time, from the "
+        "printer's file list, is ") + calibration_gate_text() + " or more, and not when the printer does not report "
+        "one; other Flashforge models have not been checked, so there each stays off unless asked for. The "
+        "response's print_options says what was sent and why.",
         {
             {"type", "object"},
             {"properties", {
@@ -1002,13 +1015,15 @@ void OrcaMCPServer::register_printer_tools()
                 }},
                 {kLevelingParam, {
                     {"type", "boolean"},
-                    {"description", "Level the bed before printing. Omitted: on when the file's estimated time, from "
-                                    "the printer's file list, is " + calibration_gate_text() + " or more."}
+                    {"description", "Level the bed before printing. Omitted: on a Creator 5 or 5 Pro, on when the file's "
+                                    "estimated time, from the printer's file list, is " + calibration_gate_text() +
+                                    " or more; off on other models."}
                 }},
                 {kFlowCalibrationParam, {
                     {"type", "boolean"},
-                    {"description", "Calibrate the flow before printing. Omitted: on when the file's estimated time, "
-                                    "from the printer's file list, is " + calibration_gate_text() + " or more."}
+                    {"description", "Calibrate the flow before printing. Omitted: on a Creator 5 or 5 Pro, on when the "
+                                    "file's estimated time, from the printer's file list, is " + calibration_gate_text() +
+                                    " or more; off on other models."}
                 }},
                 {kTimeLapseParam, {
                     {"type", "boolean"},
@@ -1054,25 +1069,19 @@ void OrcaMCPServer::register_printer_tools()
             if (!resolve_flashforge(host, ff, error_out))
                 return error_out;
 
-            // The gate needs the file's own estimate, and only the printer's file list has it. A list that
-            // cannot be read leaves the estimate unknown; the print request below reports a dead printer.
-            std::optional<double> estimated_print_s;
-            if (needs_print_time(option_request)) {
-                std::optional<long> printing_time_s;
-                wxString            list_msg;
-                if (ff->stored_file_printing_time(file_name, printing_time_s, list_msg) && printing_time_s)
-                    estimated_print_s = double(*printing_time_s);
+            // One status read serves the mapping and the gate, which needs to know which machine this is.
+            const bool                           needs_mapping = !requested_mappings.empty() || auto_map;
+            const bool                           needs_gate    = needs_print_time(option_request);
+            Slic3r::FlashforgeApi::PrinterStatus status;
+            if (needs_mapping || needs_gate) {
+                wxString msg;
+                if (!ff->fetch_status(status, msg))
+                    return error_response(msg.empty() ? "Failed to read printer status" : to_std(msg));
             }
-            const PrintOptionChoices print_options = choose_print_options(option_request, estimated_print_s);
 
             nlohmann::json mappings_payload = nlohmann::json::array();
             nlohmann::json mappings_report  = nlohmann::json::array();
-            if (!requested_mappings.empty() || auto_map) {
-                Slic3r::FlashforgeApi::PrinterStatus status;
-                wxString                             msg;
-                if (!ff->fetch_status(status, msg))
-                    return error_response(msg.empty() ? "Failed to read material station status" : to_std(msg));
-
+            if (needs_mapping) {
                 // The project's own tool count/types, needed both to auto-map and to check an explicit
                 // mapping's tool_id is one of this project's actual tools.
                 std::string filaments_error;
@@ -1089,6 +1098,22 @@ void OrcaMCPServer::register_printer_tools()
                     return mapping_error;
             }
 
+            // The gate needs the file's own estimate, and only the printer's file list has it: read once the
+            // mapping is settled, and only where the gate can turn calibration on. A list that cannot be read
+            // leaves the estimate unknown; the print request below reports a dead printer.
+            GateFacts gate_facts;
+            if (needs_mapping || needs_gate) {
+                gate_facts.model_offers_calibration = Slic3r::FlashforgeApi::start_screen_offers_calibration(status.pid);
+                gate_facts.printer_model            = Slic3r::FlashforgeApi::printer_model_name(status);
+            }
+            if (needs_gate && gate_facts.model_offers_calibration) {
+                std::optional<long> printing_time_s;
+                wxString            list_msg;
+                if (ff->stored_file_printing_time(file_name, printing_time_s, list_msg) && printing_time_s)
+                    gate_facts.estimated_print_s = double(*printing_time_s);
+            }
+            const PrintOptionChoices print_options = choose_print_options(option_request, gate_facts);
+
             wxString msg;
             if (!ff->print_gcode_file(file_name, to_print_options(print_options), mappings_payload, msg))
                 return error_response(msg.empty() ? "Failed to start print" : to_std(msg));
@@ -1096,7 +1121,7 @@ void OrcaMCPServer::register_printer_tools()
             return {{"status", "success"},
                     {"file_name", file_name},
                     {"material_mappings", mappings_report},
-                    {"print_options", print_options_json(print_options, estimated_print_s)}};
+                    {"print_options", print_options_json(print_options, gate_facts)}};
         }
     });
     // match_project_to_printer - Make the project's filament slots say what the machine actually holds

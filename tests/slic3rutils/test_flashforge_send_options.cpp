@@ -12,6 +12,7 @@ using Slic3r::AppConfig;
 using Slic3r::FlashforgeApi::PrintOptions;
 using Slic3r::GUI::remember_flashforge_print_options;
 using Slic3r::GUI::remembered_flashforge_print_options;
+using Slic3r::GUI::sent_flashforge_print_options;
 
 TEST_CASE("The Flashforge send dialog starts with every print option off", "[FlashforgeSendOptions]")
 {
@@ -57,4 +58,19 @@ TEST_CASE("The remembered options are stored as the dialog reads them", "[Flashf
     CHECK(config.get("recent", "flashforge_leveling_before_print") == "1");
     CHECK(config.get("recent", "flashforge_flow_calibration") == "0");
     CHECK(config.get("recent", "flashforge_timelapse_video") == "0");
+}
+
+TEST_CASE("The dialog sends flow calibration only to a printer whose start screen offers it", "[FlashforgeSendOptions]")
+{
+    PrintOptions ticked;
+    ticked.leveling         = true;
+    ticked.flow_calibration = true; // remembered from a Creator 5 Pro, say
+    ticked.time_lapse       = true;
+    CHECK(sent_flashforge_print_options(ticked, true) == ticked);
+
+    // Its box is not shown there, so the remembered tick must not travel either. Leveling and
+    // time-lapse are sent as ticked on every model.
+    PrintOptions without_flow = ticked;
+    without_flow.flow_calibration = false;
+    CHECK(sent_flashforge_print_options(ticked, false) == without_flow);
 }
