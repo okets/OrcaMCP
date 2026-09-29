@@ -91,8 +91,10 @@ double layers_reach_mm(double objects_top_mm, double z_shrinkage_percent, double
 
 // The largest layer `object` can print with under `config`, the full config its plate slices with: its own layer height
 // or the print preset's, the first layer's (an object one layer tall), its layer ranges', and with a variable or
-// adaptive layer height profile the largest any extruder's nozzle allows, as the slicer reads it
-// (Slicing::max_layer_height_from_nozzle: a max_layer_height of 0, its default, is 3/4 of the nozzle).
+// adaptive layer height profile both the largest height stored in it, which the slicer takes as it is (a profile
+// painted for another nozzle, or loaded from a 3MF, is never held to this one's limit), and the largest any extruder's
+// nozzle allows, as the slicer reads it (Slicing::max_layer_height_from_nozzle: a max_layer_height of 0, its default,
+// is 3/4 of the nozzle).
 double object_largest_layer_mm(const ModelObject& object, const DynamicPrintConfig& config);
 
 // What an add or a delete did: the item it wrote or removed, and one it replaced.

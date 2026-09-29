@@ -311,7 +311,14 @@ double object_largest_layer_mm(const ModelObject& object, const DynamicPrintConf
     for (const auto& [range, range_config] : object.layer_config_ranges)
         if (range_config.has("layer_height"))
             layer = std::max(layer, range_config.opt_float("layer_height"));
-    if (!object.layer_height_profile.empty() && config.has("max_layer_height") && config.has("min_layer_height"))
+    if (object.layer_height_profile.empty())
+        return layer;
+    // A stored profile's own heights ({z, height} pairs), which the slicer takes as they are, and an adaptive profile's
+    // limit, the largest any nozzle allows.
+    const std::vector<coordf_t> profile = object.layer_height_profile.get();
+    for (std::size_t i = 1; i < profile.size(); i += 2)
+        layer = std::max(layer, double(profile[i]));
+    if (config.has("max_layer_height") && config.has("min_layer_height"))
         if (const auto* nozzles = config.option<ConfigOptionFloats>("nozzle_diameter"); nozzles != nullptr)
             for (int nozzle = 1; nozzle <= int(nozzles->values.size()); ++nozzle)
                 layer = std::max(layer, Slicing::max_layer_height_from_nozzle(config, nozzle));

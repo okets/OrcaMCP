@@ -237,11 +237,11 @@ true, or false with `inactive_reason`, or null while not known: on a plate other
 objects' filaments only its Print can count, and, before the plate is sliced, above where the slicer's layers
 must reach: the top of its highest object as the slicer slices it (scaled by its Z shrinkage compensation, which
 over 100 % slices it shorter) less half the largest layer an object there can print with (with a variable layer
-height, the largest its printer's nozzles allow, a `max_layer_height` of 0 being 3/4 of the nozzle), since the
-slicer stops once the next layer's middle would pass the top (a raft may lift the last layer past that). It is never true
-for a change the slicer does not reach. It has none on a plate printed by object, in spiral vase mode
-(the plate's own or the print preset's), on a plate whose objects print with several filaments (a part, a
-painting, a mixed slot's components count once, a feature's filament such as its walls' counts where the
+height, the largest stored in its profile or its printer's nozzles allow, a `max_layer_height` of 0 being 3/4 of
+the nozzle), since the slicer stops once the next layer's middle would pass the top (a raft may lift the last layer
+past that). It is never true for a change the slicer does not reach. It has none on a plate printed by object, in
+spiral vase mode (the plate's own or the print preset's), on a plate whose objects print with several filaments
+(a part, a painting, a mixed slot's components count once, a feature's filament such as its walls' counts where the
 feature prints), on a project of one filament (the slicer turns no filament change into a color change), for
 one recorded in another filament mode (an older project's), for one to the filament already printing there
 (the objects' own below the first change, the previous change's above it; the reason names the filament the
