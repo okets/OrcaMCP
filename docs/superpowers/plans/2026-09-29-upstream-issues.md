@@ -18,6 +18,14 @@ the same three parts, in this order:
 
 Plain, factual, short. American spelling.
 
+**Tone (the user, 2026-09-29, after the first drafts):** inviting a discussion, in simple words. Open with a
+friendly note that says we follow OrcaSlicer's releases closely and what OrcaMCP does (opens this software
+to AI agents: proper tools for everything in the slicer, project metadata and rendered views), then asks
+what they think of the fix. "The bug" says what the user sees, who it affects, how to
+reproduce it, and why it happens in plain words, then one "Where:" line with the file and function for
+maintainers. "How we fixed it" explains the fix in plain words, links the commit, and ends with an offer to
+talk it through. The filed texts of 2026-09-29 are the model.
+
 ## Candidates
 
 Each has a paragraph in CLAUDE.md, "Carried upstream fixes", under its probe letter: symptom, root
@@ -49,3 +57,9 @@ The user picks about five; offer this list and a one-line recommendation each.
 5. File with `gh issue create -R OrcaSlicer/OrcaSlicer` (always pass `-R`: without it `gh` on this fork
    may pick the wrong repository). Record each issue's URL next to its probe line in CLAUDE.md, in a
    `[skip ci]` commit.
+
+## Filed (2026-09-29)
+
+All eight, on OrcaSlicer/OrcaSlicer: AH #15988, O #15989, P #15990, BD #15991, BG #15992, BL #15993,
+BQ #15994, AN #15995. Each number is also on its probe line in CLAUDE.md. At each upstream sync, a closed
+issue is a hint to re-run that probe.
