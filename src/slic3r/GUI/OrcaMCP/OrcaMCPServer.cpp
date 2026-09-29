@@ -3967,7 +3967,7 @@ void OrcaMCPServer::register_builtin_tools()
                     }
 
                     const PrintEstimatedStatistics& ps = slice_result->print_statistics;
-                    const double normal_time = ps.modes[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Normal)].time;
+                    const double normal_time = normal_mode_print_time_s(ps);
                     const double silent_time = ps.modes[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Stealth)].time;
 
                     const SliceEstimate estimate = compute_slice_estimate(

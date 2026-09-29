@@ -50,6 +50,11 @@ SliceEstimate compute_slice_estimate(const std::map<size_t, double>& volumes,
                                      const std::vector<float>&       densities,
                                      const std::vector<float>&       costs);
 
+// A sliced plate's estimated print time, in seconds: the normal mode, as get_print_estimate's
+// estimated_time_seconds and the G-code's "estimated printing time (normal mode)" give it. The
+// silent mode is its own figure.
+double normal_mode_print_time_s(const PrintEstimatedStatistics& statistics);
+
 // How many layers a sliced plate prints. `printed` is the number the G-code states as its total
 // layer count ("; total layers count", the total_layer_count placeholder): distinct print heights,
 // object and support layers together. `object` and `support` count the same way over one kind of

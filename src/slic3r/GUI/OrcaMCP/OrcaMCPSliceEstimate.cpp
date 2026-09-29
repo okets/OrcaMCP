@@ -26,6 +26,11 @@ std::optional<double> property_at(const std::vector<float>& values, size_t index
 
 } // namespace
 
+double normal_mode_print_time_s(const PrintEstimatedStatistics& statistics)
+{
+    return statistics.modes[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Normal)].time;
+}
+
 SliceEstimate compute_slice_estimate(const std::map<size_t, double>& volumes,
                                      const std::vector<float>&       diameters,
                                      const std::vector<float>&       densities,

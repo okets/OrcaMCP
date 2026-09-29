@@ -38,6 +38,7 @@ add_executable(${_TEST_NAME}_tests
     test_hex_color.cpp
     test_color_recipe.cpp
     test_material_mapping.cpp
+    test_mcp_print_options.cpp
     test_paint_geometry.cpp
     test_scalar_params.cpp
     test_paint_select.cpp

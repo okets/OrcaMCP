@@ -517,6 +517,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/OrcaMCP/OrcaMCPFilamentSlots.cpp
     GUI/OrcaMCP/OrcaMCPPrinterUtils.hpp
     GUI/OrcaMCP/OrcaMCPPrinterUtils.cpp
+    GUI/OrcaMCP/OrcaMCPPrintOptions.hpp
+    GUI/OrcaMCP/OrcaMCPPrintOptions.cpp
     GUI/OrcaMCP/OrcaMCPPrinterTools.cpp
     GUI/OrcaMCP/OrcaMCPPrinterControl.hpp
     GUI/OrcaMCP/OrcaMCPPrinterControl.cpp

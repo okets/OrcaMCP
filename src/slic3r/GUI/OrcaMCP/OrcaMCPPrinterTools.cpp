@@ -5,7 +5,9 @@
 #include "OrcaMCPNextSteps.hpp"
 #include "OrcaMCPPrinterControl.hpp"
 #include "OrcaMCPPrinterUtils.hpp"
+#include "OrcaMCPPrintOptions.hpp"
 #include "OrcaMCPProjectMatch.hpp"
+#include "OrcaMCPSliceEstimate.hpp"
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
@@ -432,7 +434,14 @@ void OrcaMCPServer::register_printer_tools()
         "mapped onto the loaded slots automatically (pass material_mappings to choose the slots "
         "yourself). Pass direct=false to open OrcaSlicer's send dialog and leave the send to the user. "
         "Refused, as the GUI's Print and Send buttons are off, when a plate it would send failed the check its "
-        "slice ran on its G-code (get_slicing_status's plates[].gcode_check).",
+        "slice ran on its G-code (get_slicing_status's plates[].gcode_check). "
+        "On a Flashforge the printer can calibrate the flow and level the bed before it starts; each adds minutes, "
+        "and the choice is yours: pass flow_calibration and leveling_before_print true before a long print or after "
+        "a filament, nozzle or bed change, false for a short print or a repeat soon after the last one on the same "
+        "filaments. Omitted, each runs when the plate's estimated time is " + calibration_gate_text() + " or more; "
+        "time_lapse is off unless asked for. The response's print_options says what was sent and why. An explicit "
+        "true is refused where it would be ignored: direct=false, another print host, or a Flashforge without its "
+        "serial number and check code.",
         {
             {"type", "object"},
             {"properties", {
@@ -445,10 +454,22 @@ void OrcaMCPServer::register_printer_tools()
                     {"type", "boolean"},
                     {"description", "Start printing once the upload finishes (default true). Direct sends only."}
                 }},
-                {"leveling_before_print", {
+                {kLevelingParam, {
                     {"type", "boolean"},
-                    {"description", "Run bed leveling before printing (default false). Direct sends to a "
-                                    "Flashforge host with local-API credentials only; ignored otherwise."}
+                    {"description", "Level the bed before printing. Omitted: on when the plate's estimated time is " +
+                                    calibration_gate_text() + " or more. Direct sends to a Flashforge host with "
+                                    "local-API credentials only; true is refused anywhere else."}
+                }},
+                {kFlowCalibrationParam, {
+                    {"type", "boolean"},
+                    {"description", "Calibrate the flow before printing. Omitted: on when the plate's estimated time "
+                                    "is " + calibration_gate_text() + " or more. Direct sends to a Flashforge host "
+                                    "with local-API credentials only; true is refused anywhere else."}
+                }},
+                {kTimeLapseParam, {
+                    {"type", "boolean"},
+                    {"description", "Ask the printer to record a time-lapse (default false). Direct sends to a "
+                                    "Flashforge host with local-API credentials only; true is refused anywhere else."}
                 }},
                 {"use_material_station", {
                     {"type", "boolean"},
@@ -477,15 +498,22 @@ void OrcaMCPServer::register_printer_tools()
         [](const nlohmann::json& params) -> nlohmann::json {
             if (params.contains("direct") && !params.at("direct").is_boolean())
                 return error_response("direct must be a boolean");
+            PrintOptionRequest option_request;
+            std::string        option_error;
+            if (!read_print_option_request(params, option_request, option_error))
+                return error_response(option_error);
             const bool all_plates = params.value("all_plates", false);
-            if (!params.value("direct", true))
+            if (!params.value("direct", true)) {
+                if (std::optional<std::string> refusal = ignored_print_options_refusal(option_request, PrintOptionsReach::SendDialog, std::string()))
+                    return error_response(*refusal);
                 return open_send_dialog(all_plates);
+            }
 
             if (all_plates)
                 return error_response("direct send supports one plate at a time; select the plate first with "
                                       "select_plate, or pass direct=false to send all plates from the dialog");
 
-            for (const char* flag : {"start_print", "leveling_before_print", "use_material_station"})
+            for (const char* flag : {"start_print", "use_material_station"})
                 if (params.contains(flag) && !params.at(flag).is_boolean())
                     return error_response(std::string(flag) + " must be a boolean");
             if (params.contains("file_name") && !params.at("file_name").is_string())
@@ -495,7 +523,6 @@ void OrcaMCPServer::register_printer_tools()
                 return error_response("material_mappings must be an array");
 
             const bool        start_print = params.value("start_print", true);
-            const bool        leveling    = params.value("leveling_before_print", false);
             const std::string file_name   = params.value("file_name", std::string());
 
             // Main thread: everything that reads the plater and the presets.
@@ -504,6 +531,7 @@ void OrcaMCPServer::register_printer_tools()
             std::string              prep_error;
             nlohmann::json           project_filaments;
             int                      plate_idx = 0;
+            std::optional<double>    estimated_print_s;
             std::vector<std::string> info_messages;
             run_on_main_thread([&]() -> nlohmann::json {
                 McpDialogSuppressionGuard suppression;
@@ -526,6 +554,8 @@ void OrcaMCPServer::register_printer_tools()
                     prep_error = *refusal;
                     return nlohmann::json::object();
                 }
+                if (const GCodeProcessorResult* result = plate->get_slice_result())
+                    estimated_print_s = normal_mode_print_time_s(result->print_statistics);
                 if (!resolve_print_host_config(cfg, host_type, prep_error))
                     return nlohmann::json::object();
 
@@ -543,6 +573,14 @@ void OrcaMCPServer::register_printer_tools()
             if (!host)
                 return error_response("Failed to create a print host for type '" + host_type + "'");
 
+            // Before anything reaches the printer: an explicit true this host would drop.
+            auto* ff = dynamic_cast<Slic3r::Flashforge*>(host.get());
+            const PrintOptionsReach reach = ff == nullptr                    ? PrintOptionsReach::NotFlashforge :
+                                            !ff->has_local_api_credentials() ? PrintOptionsReach::FlashforgeWithoutLocalApi :
+                                                                               PrintOptionsReach::Honoured;
+            if (std::optional<std::string> refusal = ignored_print_options_refusal(option_request, reach, host_type))
+                return error_response(*refusal);
+
             if (start_print && !host->get_post_upload_actions().has(Slic3r::PrintHostPostUploadAction::StartPrint))
                 return error_response("Print host type '" + host_type +
                                       "' does not support starting a print after upload; pass start_print=false");
@@ -550,8 +588,8 @@ void OrcaMCPServer::register_printer_tools()
             std::map<std::string, std::string> extended_info;
             nlohmann::json                     mappings_payload = nlohmann::json::array();
             nlohmann::json                     mappings_report  = nlohmann::json::array();
-            auto*                              ff = dynamic_cast<Slic3r::Flashforge*>(host.get());
-            if (ff != nullptr && ff->has_local_api_credentials()) {
+            std::optional<PrintOptionChoices>  print_options;
+            if (reach == PrintOptionsReach::Honoured) {
                 Slic3r::FlashforgeApi::PrinterStatus status;
                 wxString                             msg;
                 if (!ff->fetch_status(status, msg))
@@ -565,9 +603,9 @@ void OrcaMCPServer::register_printer_tools()
                         return mapping_error;
                 }
 
-                Slic3r::FlashforgeApi::PrintOptions options;
-                options.leveling = leveling;
-                extended_info = Slic3r::FlashforgeApi::make_upload_extended_info(options, use_material_station, mappings_payload);
+                print_options = choose_print_options(option_request, estimated_print_s);
+                extended_info = Slic3r::FlashforgeApi::make_upload_extended_info(to_print_options(*print_options),
+                                                                                 use_material_station, mappings_payload);
             }
 
             // Main thread again: exporting the plate and queueing the upload are Plater work.
@@ -602,6 +640,8 @@ void OrcaMCPServer::register_printer_tools()
                                        {"material_mappings", mappings_report},
                                        {"start_print", start_print},
                                        {"note", "Upload progress is shown in OrcaSlicer; poll get_printer_status."}};
+            if (print_options)
+                response["print_options"] = print_options_json(*print_options, estimated_print_s);
             if (!info_messages.empty())
                 response["info_messages"] = info_messages;
             return response;
@@ -939,8 +979,11 @@ void OrcaMCPServer::register_printer_tools()
         "print_printer_file",
         ToolCategory::Printers,
         "Start printing a file on the printer",
-        "Start printing a G-code file already stored on the Flashforge printer, with optional material "
-        "station mapping.",
+        std::string("Start printing a G-code file already stored on the Flashforge printer, with optional material "
+        "station mapping. Leveling and flow calibration each add minutes before the print; decide them as for "
+        "send_to_printer. Omitted, each runs when the file's estimated time, from the printer's file list, is ") +
+        calibration_gate_text() + " or more, and not when the printer does not report one. The response's "
+        "print_options says what was sent and why.",
         {
             {"type", "object"},
             {"properties", {
@@ -948,9 +991,19 @@ void OrcaMCPServer::register_printer_tools()
                     {"type", "string"},
                     {"description", "File name as returned by list_printer_files"}
                 }},
-                {"leveling_before_print", {
+                {kLevelingParam, {
                     {"type", "boolean"},
-                    {"description", "Run bed leveling before printing (default false)"}
+                    {"description", "Level the bed before printing. Omitted: on when the file's estimated time, from "
+                                    "the printer's file list, is " + calibration_gate_text() + " or more."}
+                }},
+                {kFlowCalibrationParam, {
+                    {"type", "boolean"},
+                    {"description", "Calibrate the flow before printing. Omitted: on when the file's estimated time, "
+                                    "from the printer's file list, is " + calibration_gate_text() + " or more."}
+                }},
+                {kTimeLapseParam, {
+                    {"type", "boolean"},
+                    {"description", "Ask the printer to record a time-lapse (default false)."}
                 }},
                 {"material_mappings", {
                     {"type", "array"},
@@ -973,9 +1026,10 @@ void OrcaMCPServer::register_printer_tools()
             if (file_name.empty())
                 return error_response("file_name is required");
 
-            if (params.contains("leveling_before_print") && !params.at("leveling_before_print").is_boolean())
-                return error_response("leveling_before_print must be a boolean");
-            const bool leveling = params.value("leveling_before_print", false);
+            PrintOptionRequest option_request;
+            std::string        option_error;
+            if (!read_print_option_request(params, option_request, option_error))
+                return error_response(option_error);
 
             if (params.contains("auto_map") && !params.at("auto_map").is_boolean())
                 return error_response("auto_map must be a boolean");
@@ -990,6 +1044,17 @@ void OrcaMCPServer::register_printer_tools()
             nlohmann::json                     error_out;
             if (!resolve_flashforge(host, ff, error_out))
                 return error_out;
+
+            // The gate needs the file's own estimate, and only the printer's file list has it. A list that
+            // cannot be read leaves the estimate unknown; the print request below reports a dead printer.
+            std::optional<double> estimated_print_s;
+            if (needs_print_time(option_request)) {
+                std::optional<long> printing_time_s;
+                wxString            list_msg;
+                if (ff->stored_file_printing_time(file_name, printing_time_s, list_msg) && printing_time_s)
+                    estimated_print_s = double(*printing_time_s);
+            }
+            const PrintOptionChoices print_options = choose_print_options(option_request, estimated_print_s);
 
             nlohmann::json mappings_payload = nlohmann::json::array();
             nlohmann::json mappings_report  = nlohmann::json::array();
@@ -1016,12 +1081,13 @@ void OrcaMCPServer::register_printer_tools()
             }
 
             wxString msg;
-            Slic3r::FlashforgeApi::PrintOptions options;
-            options.leveling = leveling;
-            if (!ff->print_gcode_file(file_name, options, mappings_payload, msg))
+            if (!ff->print_gcode_file(file_name, to_print_options(print_options), mappings_payload, msg))
                 return error_response(msg.empty() ? "Failed to start print" : to_std(msg));
 
-            return {{"status", "success"}, {"file_name", file_name}, {"material_mappings", mappings_report}};
+            return {{"status", "success"},
+                    {"file_name", file_name},
+                    {"material_mappings", mappings_report},
+                    {"print_options", print_options_json(print_options, estimated_print_s)}};
         }
     });
     // match_project_to_printer - Make the project's filament slots say what the machine actually holds

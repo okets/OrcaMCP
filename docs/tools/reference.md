@@ -4023,7 +4023,10 @@ look at a dialog or to test a refusal.
 |-----------|------|----------|-------------|
 | `direct` | boolean | No | `true` (default): upload with no dialog. `false`: open OrcaSlicer's send dialog (Bambu's `SelectMachineDialog`, or the print-host dialog) and leave the send to the user |
 | `start_print` | boolean | No | Start printing once the upload finishes (default `true`). Direct sends only |
-| `leveling_before_print`, `use_material_station`, `material_mappings` | | No | Flashforge hosts with local-API credentials only; see Material mapping below |
+| `leveling_before_print` | boolean | No | Level the bed first. Omitted: on when the plate's estimated time is 4 h or more |
+| `flow_calibration` | boolean | No | Calibrate the flow first. Omitted: on when the plate's estimated time is 4 h or more |
+| `time_lapse` | boolean | No | Ask the printer to record a time-lapse (default `false`) |
+| `use_material_station`, `material_mappings` | | No | Flashforge hosts with local-API credentials only; see Material mapping below |
 | `file_name` | string | No | Name to store the upload under. Direct sends only |
 | `all_plates` | boolean | No | Dialog sends only (`direct: false`): send every plate |
 
@@ -4032,6 +4035,68 @@ its slice ran on its G-code (`get_slicing_status`'s `plates[].gcode_check`): "Th
 start: plate_index 0 failed the app's check of its sliced G-code, ...: a toolpath is above the
 printer's printable height. ...". A direct send also needs the plate sliced ("Plate is not sliced;
 run slice_all first"), and judges the check again just before it uploads.
+
+**Print options (Flashforge).** The printer's own start screen offers flow calibration, bed
+leveling and a time-lapse, and a direct send to a Flashforge with local-API credentials (serial
+number and check code) asks for the same three. Leveling and flow calibration each add minutes
+before the print starts, so the agent decides: true before a long print or after a filament,
+nozzle or bed change, false for a short print or a repeat soon after the last one on the same
+filaments. Left out, each runs when the plate's estimated time (`get_print_estimate`'s normal
+mode) is 4 h or more; time-lapse stays off unless asked for.
+
+An explicit `true` is refused, and nothing is sent, wherever it would be ignored: with
+`direct: false` (the send dialog asks for its own), on another print host, or on a Flashforge
+without its serial number and check code (its TCP console carries no options). An explicit
+`false` is always accepted. A value that is not a boolean is refused too ("flow_calibration must
+be a boolean").
+```json
+{"status": "error", "message": "Nothing was sent. flow_calibration: true would be ignored: only a Flashforge print host takes print options, and the selected host is 'moonraker'. Leave them out."}
+```
+
+**Returns (Flashforge):**
+```json
+{
+  "status": "queued",
+  "host_type": "flashforge",
+  "file_name": "vase.gcode.3mf",
+  "start_print": true,
+  "material_mappings": [{"tool_id": 0, "slot_id": 1, "color_delta_e": 2.1}],
+  "print_options": {
+    "leveling": {"on": true, "decided_by": "print_time_gate"},
+    "flow_calibration": {"on": false, "decided_by": "caller"},
+    "time_lapse": {"on": false, "decided_by": "default"},
+    "estimated_print_s": 52200,
+    "gate_s": 14400
+  },
+  "note": "Upload progress is shown in OrcaSlicer; poll get_printer_status."
+}
+```
+`decided_by` is `caller` (passed explicitly), `print_time_gate` (left out; on from `gate_s`),
+`print_time_unknown` (left out with no estimate, so off) or `default` (time-lapse left out, so
+off). `print_options` is there only for a Flashforge with local-API credentials. With
+`start_print: false` the options travel with the upload but start nothing.
+
+---
+
+### print_printer_file
+Start printing a file already stored on the Flashforge printer (see `list_printer_files`). It
+starts a real print.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `file_name` | string | Yes | The file, as `list_printer_files` names it |
+| `leveling_before_print` | boolean | No | Level the bed first. Omitted: on when the file's estimated time is 4 h or more |
+| `flow_calibration` | boolean | No | Calibrate the flow first. Omitted: on when the file's estimated time is 4 h or more |
+| `time_lapse` | boolean | No | Ask the printer to record a time-lapse (default `false`) |
+| `material_mappings` | array | No | Explicit `{tool_id, slot_id}` pairs |
+| `auto_map` | boolean | No | Match the project's filaments to loaded slots when no mapping is given (default `true`) |
+
+Decide leveling and flow calibration as for `send_to_printer`. The file's estimated time comes
+from the printer's file list (`printingTime`), read only when one of the two is left out. When
+the printer does not report a usable one (older firmware, 0, not a number) or the list cannot be
+read, the omitted ones stay off (`print_time_unknown`) and the print still starts. Returns
+`file_name`, `material_mappings` and `print_options`, shaped as in `send_to_printer`.
 
 ---
 

@@ -187,6 +187,16 @@ reports that the value did not change if the printer ignored it.
 The normal flow works: slice, then `send_to_printer`. The job is uploaded straight
 to the printer over the local API and can be started in the same call.
 
+### Calibration and time-lapse
+
+The printer's own start screen offers flow calibration, bed leveling and a time-lapse, and so
+does OrcaSlicer. In the send dialog all three start off, and the next dialog remembers what you
+chose with Send. An assistant decides per print: calibration adds minutes before the first
+layer, so it is worth it before a long print or after a filament change, and not for a short
+repeat. Left to OrcaMCP, leveling and flow calibration run for prints estimated at 4 hours or
+more. All three need the printer's serial number and check code in the printer settings: without
+them the job goes over the printer's older TCP connection, which carries none of them.
+
 ### Material mapping
 
 Each tool in your project has to be fed by a material-station slot. OrcaMCP matches
