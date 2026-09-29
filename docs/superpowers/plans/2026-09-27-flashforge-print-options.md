@@ -14,6 +14,9 @@
 
 - Send **flow calibration, leveling and time-lapse**. Not first-layer inspection: the Creator 5 Pro's start screen does not offer it, so `uploadGcode` keeps sending `firstLayerInspection: false`.
 - **Send dialog:** all three start off; the last choice confirmed with Send is remembered.
+  *Superseded by the user on 2026-09-29, after the live check: "it should remember the last changes made in the ui
+  regardless of the print actually being sent." Each box, the material station's too, is saved the moment it is
+  toggled.*
 - **MCP:** the agent judges. An explicit boolean always wins. Omitted, leveling and flow calibration follow a **print-time gate: on when the print is estimated at 4 hours or more**, off otherwise and off when there is no estimate. Omitted time-lapse is off.
 - The agent needs the facts to judge: the print's estimated time (in the response) and when this app last started a print on that printer and with which options (`get_printer_status`).
 

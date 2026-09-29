@@ -40,6 +40,16 @@ double expected_length_mm(double volume_mm3, double diameter_mm)
 
 } // namespace
 
+TEST_CASE("A plate's estimated print time is its normal-mode time", "[orcamcp][estimate]")
+{
+    // get_print_estimate's estimated_time_seconds and send_to_printer's calibration gate read the same
+    // number: the normal mode, never the silent one.
+    Slic3r::PrintEstimatedStatistics statistics;
+    statistics.modes[static_cast<size_t>(Slic3r::PrintEstimatedStatistics::ETimeMode::Normal)].time  = 5400.0f;
+    statistics.modes[static_cast<size_t>(Slic3r::PrintEstimatedStatistics::ETimeMode::Stealth)].time = 7200.0f;
+    CHECK_THAT(normal_mode_print_time_s(statistics), WithinAbs(5400.0, 1e-9));
+}
+
 TEST_CASE("compute_slice_estimate matches the G-code's own filament numbers", "[orcamcp][estimate]")
 {
     // 13.71 g of PETG at 1.27 g/cm3 is 10795 mm3, the shape of the print that exposed this bug.

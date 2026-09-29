@@ -20149,10 +20149,11 @@ bool Plater::configure_send_from_dialog(PrintHostJob&   upload_job,
 
             std::vector<FlashforgeMaterialSlot> slots;
             bool                                supports_material_station = false;
+            int                                 product_id                = 0; // Orca: which options its start screen offers
             {
                 wxBusyCursor wait;
                 wxString     msg;
-                if (!flashforge_host->fetch_material_slots(slots, &supports_material_station, msg)) {
+                if (!flashforge_host->fetch_material_slots(slots, &supports_material_station, msg, &product_id)) {
                     error = {into_u8(msg.empty() ? _L("Unable to log in to the Flashforge printer.") : msg), true, false};
                     return false;
                 }
@@ -20209,7 +20210,8 @@ bool Plater::configure_send_from_dialog(PrintHostJob&   upload_job,
                                                                    flashforge_host,
                                                                    supports_material_station,
                                                                    std::move(slots),
-                                                                   project_filaments);
+                                                                   project_filaments,
+                                                                   product_id);
         } else {
             pDlg = std::make_unique<PrintHostSendDialog>(default_output_file, upload_job.printhost->get_post_upload_actions(), groups,
                                                          storage_paths, storage_names, config->get_bool("open_device_tab_post_upload"));

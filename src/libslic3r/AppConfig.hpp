@@ -143,8 +143,9 @@ public:
 		{ std::string value; this->get(section, key, value); return value; }
 	std::string 		get(const std::string &key) const
 		{ std::string value; this->get("app", key, value); return value; }
+	// Orca: "1" is read from the key's own section, not from "app".
 	bool				get_bool(const std::string &section, const std::string &key) const
-		{ return this->get(section, key) == "true" || this->get(key) == "1"; }
+		{ const std::string value = this->get(section, key); return value == "true" || value == "1"; }
 	bool				get_bool(const std::string &key) const
 		{ return this->get_bool("app", key); }
 	void			    set(const std::string &section, const std::string &key, const std::string &value)
@@ -180,6 +181,11 @@ public:
 			m_dirty = true;
 		}
 	}
+
+	// Orca: a text literal or C string. Without this overload a const char* took the bool one below (a
+	// pointer converts to bool before it converts to std::string), so set(section, key, "0") stored "true".
+	void				set(const std::string &section, const std::string &key, const char *value)
+		{ this->set(section, key, std::string(value != nullptr ? value : "")); }
 
 	void				set(const std::string& section, const std::string &key, bool value)
 	{

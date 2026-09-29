@@ -1320,7 +1320,7 @@
     },
     {
       "category": "Printers",
-      "description": "Get live status from the configured print host: state, progress, temperatures, light, material station. Full detail is only available for Flashforge hosts; other host types report online/offline. When a Flashforge cannot be reached, the error says why and what to do next, and `cached` carries the material station from its last answer, with age_s. An answer that refuses (wrong check code) or cannot be read is returned as that error, without `cached`.",
+      "description": "Get live status from the configured print host: state, progress, temperatures, light, material station. Full detail is only available for Flashforge hosts; other host types report online/offline. When a Flashforge cannot be reached, the error says why and what to do next, and `cached` carries the material station from its last answer, with age_s. An answer that refuses (wrong check code) or cannot be read is returned as that error, without `cached`. last_print_started_here, in the answer and in the error for a printer that could not be reached (the one with `cached`), is the last print this OrcaMCP instance started on the printer: age_s, file_name, the leveling, flow_calibration and time_lapse it asked for, and the slots it fed from (fed_from); null when none since it launched. Prints started on the printer's screen, from another computer or from another OrcaMCP instance are not in it. Use it to judge whether a new print needs calibrating again.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {},
@@ -1993,7 +1993,7 @@
     },
     {
       "category": "Printers",
-      "description": "Start printing a G-code file already stored on the Flashforge printer, with optional material station mapping.",
+      "description": "Start printing a G-code file already stored on the Flashforge printer, with optional material station mapping. Leveling and flow calibration each add minutes before the print; decide them as for send_to_printer. Omitted, each runs on a Creator 5 or 5 Pro when the file's estimated time, from the printer's file list, is 4 h or more, and not when the printer does not report one; other Flashforge models have not been checked, so there each stays off unless asked for. The response's print_options says what was sent and why.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -2005,8 +2005,12 @@
             "description": "File name as returned by list_printer_files",
             "type": "string"
           },
+          "flow_calibration": {
+            "description": "Calibrate the flow before printing. Omitted: on a Creator 5 or 5 Pro, on when the file's estimated time, from the printer's file list, is 4 h or more; off on other models.",
+            "type": "boolean"
+          },
           "leveling_before_print": {
-            "description": "Run bed leveling before printing (default false)",
+            "description": "Level the bed before printing. Omitted: on a Creator 5 or 5 Pro, on when the file's estimated time, from the printer's file list, is 4 h or more; off on other models.",
             "type": "boolean"
           },
           "material_mappings": {
@@ -2037,6 +2041,10 @@
               "type": "object"
             },
             "type": "array"
+          },
+          "time_lapse": {
+            "description": "Ask the printer to record a time-lapse (default false). Not yet confirmed to take effect for a stored file.",
+            "type": "boolean"
           }
         },
         "required": [
@@ -2772,7 +2780,7 @@
     },
     {
       "category": "Printers",
-      "description": "Upload the sliced plate to the configured print host and START PRINTING IT: start_print defaults to true, so a bare call begins a print on real hardware. Pass start_print=false to upload only. The upload runs without any dialog: on a Flashforge printer with a material station the project's filaments are mapped onto the loaded slots automatically (pass material_mappings to choose the slots yourself). Pass direct=false to open OrcaSlicer's send dialog and leave the send to the user. Refused, as the GUI's Print and Send buttons are off, when a plate it would send failed the check its slice ran on its G-code (get_slicing_status's plates[].gcode_check).",
+      "description": "Upload the sliced plate to the configured print host and START PRINTING IT: start_print defaults to true, so a bare call begins a print on real hardware. Pass start_print=false to upload only. The upload runs without any dialog: on a Flashforge printer with a material station the project's filaments are mapped onto the loaded slots automatically (pass material_mappings to choose the slots yourself). Pass direct=false to open OrcaSlicer's send dialog and leave the send to the user. Refused, as the GUI's Print and Send buttons are off, when a plate it would send failed the check its slice ran on its G-code (get_slicing_status's plates[].gcode_check). On a Flashforge the printer can calibrate the flow and level the bed before it starts; each adds minutes, and the choice is yours: pass flow_calibration and leveling_before_print true before a long print or after a filament, nozzle or bed change, false for a short print or a repeat soon after the last one on the same filaments (get_printer_status's last_print_started_here says when this OrcaMCP instance last started a print there, and with what). Omitted, each runs on a Creator 5 or 5 Pro when the plate's estimated time is 4 h or more; other Flashforge models have not been checked, so there each stays off unless asked for. time_lapse is off unless asked for. The response's print_options says what was sent and why. An explicit true is refused where it would be ignored: direct=false, start_print=false (nothing starts; pass them to print_printer_file then), another print host, or a Flashforge without its serial number and check code; so are use_material_station: true and a material_mappings list, except with start_print=false, where the upload carries them. With start_print=false every print option is sent off.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -2788,12 +2796,16 @@
             "description": "Name to store the upload under (default: the plate's own output file name). Direct sends only.",
             "type": "string"
           },
+          "flow_calibration": {
+            "description": "Calibrate the flow before printing. Omitted: on a Creator 5 or 5 Pro, on when the plate's estimated time is 4 h or more; off on other models. Direct sends that start the print on a Flashforge host with local-API credentials only; true is refused anywhere else.",
+            "type": "boolean"
+          },
           "leveling_before_print": {
-            "description": "Run bed leveling before printing (default false). Direct sends to a Flashforge host with local-API credentials only; ignored otherwise.",
+            "description": "Level the bed before printing. Omitted: on a Creator 5 or 5 Pro, on when the plate's estimated time is 4 h or more; off on other models. Direct sends that start the print on a Flashforge host with local-API credentials only; true is refused anywhere else.",
             "type": "boolean"
           },
           "material_mappings": {
-            "description": "Explicit tool-to-slot mapping. Omit to map the project's filaments onto matching loaded slots automatically. Direct sends to a Flashforge host with local-API credentials only; ignored otherwise.",
+            "description": "Explicit tool-to-slot mapping. Omit to map the project's filaments onto matching loaded slots automatically. Direct sends to a Flashforge host with local-API credentials only; a mapping is refused anywhere else.",
             "items": {
               "additionalProperties": false,
               "properties": {
@@ -2825,8 +2837,12 @@
             "description": "Start printing once the upload finishes (default true). Direct sends only.",
             "type": "boolean"
           },
+          "time_lapse": {
+            "description": "Ask the printer to record a time-lapse (default false). Direct sends that start the print on a Flashforge host with local-API credentials only; true is refused anywhere else.",
+            "type": "boolean"
+          },
           "use_material_station": {
-            "description": "Print from the material station (default: true when the printer reports one). Direct sends to a Flashforge host with local-API credentials only; ignored otherwise.",
+            "description": "Print from the material station (default: true when the printer reports one). Direct sends to a Flashforge host with local-API credentials only; true is refused anywhere else.",
             "type": "boolean"
           }
         },

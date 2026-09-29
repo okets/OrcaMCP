@@ -228,26 +228,16 @@ FailureStreaks& failure_streaks()
     return streaks;
 }
 
-void StatusCache::put(const std::string& host, const FlashforgeApi::PrinterStatus& status, Clock::time_point now)
-{
-    std::lock_guard<std::mutex> lock(m_mutex);
-    m_entries[host] = Entry{status, now};
-}
-
-std::optional<CachedStatus> StatusCache::get(const std::string& host, Clock::time_point now) const
-{
-    std::lock_guard<std::mutex> lock(m_mutex);
-    const auto it = m_entries.find(host);
-    if (it == m_entries.end())
-        return std::nullopt;
-    const long age_s = long(std::chrono::duration_cast<std::chrono::seconds>(now - it->second.at).count());
-    return CachedStatus{it->second.status, age_s};
-}
-
 StatusCache& status_cache()
 {
     static StatusCache cache;
     return cache;
+}
+
+PrintStartLog& print_start_log()
+{
+    static PrintStartLog log;
+    return log;
 }
 
 }} // namespace Slic3r::FlashforgeLocalApi

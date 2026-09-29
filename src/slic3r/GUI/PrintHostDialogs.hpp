@@ -29,6 +29,8 @@ namespace Slic3r { namespace GUI { class BitmapComboBox; } }
 
 namespace Slic3r {
 
+class AppConfig;
+
 namespace GUI {
 
 class PrintHostSendDialog : public GUI::MsgDialog
@@ -223,6 +225,21 @@ private:
 // PLA/PLA+/PLA-CF -> PLA, PETG/PETG-CF -> PETG, ABS/ASA -> ABS, TPU, SILK. Any thread.
 std::string flashforge_normalize_material(const std::string& material);
 
+// The Flashforge send dialog's print options as the user last left them, from the app config's
+// "recent" section. Each is off until its box was ticked; an older build's "true" is no choice.
+FlashforgeApi::PrintOptions remembered_flashforge_print_options(const AppConfig& config);
+// Saves them for the next dialog. Called the moment a box is toggled, so Cancel, the close box and
+// Send all keep the latest state.
+void remember_flashforge_print_options(AppConfig& config, const FlashforgeApi::PrintOptions& options);
+// The dialog's material-station box as the user last left it: on where the printer has a station
+// until it was unticked, and off where the printer has none.
+bool remembered_flashforge_material_station(const AppConfig& config, bool printer_has_station);
+// Saves it, the moment it is toggled.
+void remember_flashforge_material_station(AppConfig& config, bool on);
+// What the dialog sends: the boxes as ticked, flow calibration only to a printer whose start screen
+// offers it (its box is not shown elsewhere, so a tick remembered from another printer stays home).
+FlashforgeApi::PrintOptions sent_flashforge_print_options(const FlashforgeApi::PrintOptions& ticked, bool offers_flow_calibration);
+
 class FlashforgePrintHostSendDialog : public PrintHostSendDialog
 {
 public:
@@ -235,10 +252,10 @@ public:
                                   const Slic3r::Flashforge*       host,
                                   bool                            supports_material_station,
                                   std::vector<Slic3r::FlashforgeMaterialSlot> slots,
-                                  const std::vector<FilamentInfo>& project_filaments);
+                                  const std::vector<FilamentInfo>& project_filaments,
+                                  int                             product_id = 0); // the printer's `pid`
 
     virtual void init() override;
-    virtual void EndModal(int ret) override;
     virtual std::map<std::string, std::string> extendedInfo() const override;
 
 private:
@@ -274,18 +291,15 @@ private:
     wxSizer*                         m_mapping_section_sizer {nullptr};
     wxBoxSizer*                      m_mapping_wrap_sizer {nullptr};
     wxStaticText*                    m_status_text {nullptr};
+    ::CheckBox*                      m_checkbox_flow_calibration {nullptr};
     ::CheckBox*                      m_checkbox_leveling {nullptr};
     ::CheckBox*                      m_checkbox_timelapse {nullptr};
     ::CheckBox*                      m_checkbox_ifs {nullptr};
-    bool                             m_leveling_before_print {true};
-    bool                             m_time_lapse_video {false};
+    FlashforgeApi::PrintOptions      m_print_options;
+    bool                             m_offers_flow_calibration {false};
     bool                             m_use_material_station {false};
     bool                             m_supports_material_station {false};
     bool                             m_slots_loaded {false};
-
-    const char* CONFIG_KEY_LEVELING  = "flashforge_leveling_before_print";
-    const char* CONFIG_KEY_TIMELAPSE = "flashforge_timelapse_video";
-    const char* CONFIG_KEY_IFS       = "flashforge_use_material_station";
 };
 
 wxDECLARE_EVENT(EVT_PRINTHOST_PROGRESS, PrintHostQueueDialog::Event);

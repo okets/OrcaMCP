@@ -333,6 +333,30 @@ Do not confuse it with `GET /getThum`, which appears in `detail.printFileThumbUr
 `printGcode` starts a stored file and takes a file name, a bed-levelling flag, and an optional
 material-mapping array pairing project tools to material-station slots.
 
+### Print options: flow calibration, levelling, time-lapse
+
+Both ways to start a print carry the switches the Creator 5 Pro's start screen offers. `uploadGcode`
+with `printNow: true` takes them as headers: `levelingBeforePrint`, `flowCalibration` and
+`timeLapseVideo`, all `"true"` or `"false"` (`firstLayerInspection` is sent `"false"`: the screen does
+not offer it). `printGcode` takes `levelingBeforePrint` and `flowCalibration` in its body, and
+`timeLapseVideo` only when a time-lapse is wanted: whether a stored file honours it is not confirmed
+yet, and a firmware that refused an unknown key would otherwise refuse every start.
+
+What the printer does with them was watched on 1.9.9 on 2026-09-29, a three-colour print started
+with all three on:
+
+1. Flow calibration on each tool the file uses, one after another, at 220 °C: about 3.5 minutes per
+   tool with its heat-up. An unused tool is not calibrated.
+2. Bed levelling, every nozzle at 120 °C: about 12.5 minutes.
+3. The print, at the file's own temperatures.
+
+The time-lapse was recorded: the printer's Home screen menu, Timelapse, listed a video named after the
+print file (export it to USB there). That confirms `timeLapseVideo` on `uploadGcode`; on `printGcode`
+it is still unconfirmed.
+
+So a three-colour file waited about 24 minutes before its first layer. That is why OrcaMCP turns
+levelling and flow calibration on by itself only for a print estimated at four hours or more.
+
 ### No deletion
 
 There is no delete. Nine plausible endpoint names -- `deleteGcode`, `delGcode`, `removeGcode`,
@@ -400,6 +424,11 @@ commands it does not implement were all found on 2026-09-20 by probing a Creator
 that was certainly not on the printer, so nothing was at risk; `control` was never aimed at a real
 file, for the reason given in section 3. A reference consumer of the file list and thumbnails is
 [flashforge-obico](https://github.com/okets/flashforge-obico) (`flashforge/client.py`).
+
+The print options' effects (section 4) were watched on 2026-09-29 on the same printer and firmware: a
+three-colour glider (sliced at 37 minutes, printed in 49) sent from OrcaMCP's send dialog with flow calibration, levelling and
+time-lapse on, the printer's status read every 30 seconds while its operator confirmed each stage at
+the machine.
 
 The parsing layer is genuinely dependency-free and is the part worth reading closely. The transport
 layer is 40 lines of HTTP in any language — reimplement it rather than trying to lift it out.

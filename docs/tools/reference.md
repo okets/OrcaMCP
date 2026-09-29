@@ -3883,10 +3883,25 @@ Live status from the configured print host. Full detail for Flashforge hosts.
   "print_host": "10.0.0.10",
   "online": true,
   "obico": {"configured": true, "url": "http://10.0.0.2:3334"},
-  "printer": {"state": "ready", "camera_stream_url": "http://10.0.0.10:8080/?action=stream", "...": "..."}
+  "printer": {"state": "ready", "camera_stream_url": "http://10.0.0.10:8080/?action=stream", "...": "..."},
+  "last_print_started_here": {
+    "file_name": "vase.gcode.3mf", "age_s": 2400,
+    "leveling": true, "flow_calibration": true, "time_lapse": false,
+    "fed_from": [{"tool_id": 0, "slot_id": 2, "material": "PLA", "color": "#FF0000"}]
+  }
 }
 ```
 `obico.configured` says whether the preset names an Obico server; the token is never included.
+
+`last_print_started_here` is the last print this OrcaMCP instance started on the printer, from any
+of its paths (the Print button's send dialog, the Device tab's send, `send_to_printer`,
+`print_printer_file`), with the options it asked
+for and the slots it fed from (`fed_from`: the project tool, the station slot, and that slot's
+material and colour when it was sent; empty without the material station). It is recorded only
+once the printer accepted the start, never for an upload with `start_print: false`. It is null
+when this instance has started none since it launched, and it never includes a print started on
+the printer's screen, from another computer or from another OrcaMCP instance. An agent uses it to
+decide whether a new print needs calibrating again (see `send_to_printer`'s print options).
 
 `printer.controls` names what `printer_control`'s `set_*` actions change, as the printer reports them:
 `print_speed_percent` (null while no job runs), `z_offset_mm`, `chamber_fan_percent`,
@@ -3911,9 +3926,11 @@ that error alone:
 {
   "status": "error",
   "message": "Could not connect to the printer at 10.0.0.100:8898: the connection failed after 2 ms, before reaching the printer; tried 2 times. That usually means the printer is not on the network right now: ...",
-  "cached": {"source": "cached", "age_s": 312, "material_station": {"present": true, "slots": [...]}}
+  "cached": {"source": "cached", "age_s": 312, "material_station": {"present": true, "slots": [...]}},
+  "last_print_started_here": null
 }
 ```
+`last_print_started_here` is there too, since it never needed the printer.
 A failure that happens at once, before reaching the printer, usually means the printer is off the
 network. On macOS, a newly built or installed app can also be blocked by System Settings > Privacy &
 Security > Local Network. Every failure is logged at warning level with the URL, curl code, HTTP
@@ -4023,7 +4040,10 @@ look at a dialog or to test a refusal.
 |-----------|------|----------|-------------|
 | `direct` | boolean | No | `true` (default): upload with no dialog. `false`: open OrcaSlicer's send dialog (Bambu's `SelectMachineDialog`, or the print-host dialog) and leave the send to the user |
 | `start_print` | boolean | No | Start printing once the upload finishes (default `true`). Direct sends only |
-| `leveling_before_print`, `use_material_station`, `material_mappings` | | No | Flashforge hosts with local-API credentials only; see Material mapping below |
+| `leveling_before_print` | boolean | No | Level the bed first. Omitted: on a Creator 5 or 5 Pro, on when the plate's estimated time is 4 h or more; off on other models |
+| `flow_calibration` | boolean | No | Calibrate the flow first. Omitted: as `leveling_before_print` |
+| `time_lapse` | boolean | No | Ask the printer to record a time-lapse (default `false`) |
+| `use_material_station`, `material_mappings` | | No | Direct sends to a Flashforge host with local-API credentials only (`true`, or a mapping, is refused anywhere else); see Material mapping below |
 | `file_name` | string | No | Name to store the upload under. Direct sends only |
 | `all_plates` | boolean | No | Dialog sends only (`direct: false`): send every plate |
 
@@ -4032,6 +4052,86 @@ its slice ran on its G-code (`get_slicing_status`'s `plates[].gcode_check`): "Th
 start: plate_index 0 failed the app's check of its sliced G-code, ...: a toolpath is above the
 printer's printable height. ...". A direct send also needs the plate sliced ("Plate is not sliced;
 run slice_all first"), and judges the check again just before it uploads.
+
+**Print options (Flashforge).** The printer's own start screen offers flow calibration, bed
+leveling and a time-lapse, and a direct send to a Flashforge with local-API credentials (serial
+number and check code) asks for the same three. Leveling and flow calibration each add minutes
+before the print starts, so the agent decides: true before a long print or after a filament,
+nozzle or bed change, false for a short print or a repeat soon after the last one on the same
+filaments. Left out, each runs when the plate's estimated time (`get_print_estimate`'s normal
+mode) is 4 h or more, on a Creator 5 or 5 Pro: the machines whose start screen was checked, known
+by the product id the printer reports (`get_printer_status`'s `printer.pid`, 40 and 41). Other
+local-API Flashforges (Adventurer 5M, AD5X, ...) have not been checked, so there both stay off
+unless asked for (`not_offered_by_model`); an explicit `true` still goes to them. Time-lapse stays
+off unless asked for, on every model.
+
+An explicit `true` is refused, and nothing is sent, wherever it would be ignored: with
+`direct: false` (the send dialog asks for its own), with `start_print: false` (nothing starts, so
+the printer never reads them: pass them to `print_printer_file` when you start the uploaded file),
+on another print host, or on a Flashforge without its serial number and check code (its TCP
+console carries no options). The same holds for `use_material_station: true` and a non-empty
+`material_mappings`, except with `start_print: false`, where the upload carries them. An explicit
+`false`, or an empty list, is always accepted. A value that is not a boolean is refused too
+("flow_calibration must be a boolean"), with `direct: false` as well.
+```json
+{"status": "error", "message": "Nothing was sent. flow_calibration: true, material_mappings would be ignored: only a Flashforge print host takes them, and the selected host is 'moonraker'. Leave them out."}
+```
+
+**Returns (Flashforge):**
+```json
+{
+  "status": "queued",
+  "host_type": "flashforge",
+  "file_name": "vase.gcode.3mf",
+  "start_print": true,
+  "material_mappings": [{"tool_id": 0, "slot_id": 1, "color_delta_e": 2.1}],
+  "print_options": {
+    "leveling": {"on": true, "decided_by": "print_time_gate"},
+    "flow_calibration": {"on": false, "decided_by": "caller"},
+    "time_lapse": {"on": false, "decided_by": "default"},
+    "estimated_print_s": 52200,
+    "gate_s": 14400,
+    "printer_model": "Creator 5 Pro"
+  },
+  "note": "Upload progress is shown in OrcaSlicer; poll get_printer_status."
+}
+```
+`decided_by` is `caller` (passed explicitly), `print_time_gate` (left out; on from `gate_s`),
+`print_time_unknown` (left out with no estimate, so off), `not_offered_by_model` (left out on a
+model other than the Creator 5 / 5 Pro, named in `printer_model`, so off), `upload_only` (left out
+of an upload with `start_print: false`, so off) or `default` (time-lapse left out, so off).
+`print_options` is there only for a Flashforge with local-API credentials. With `start_print:
+false` all three are sent off, whatever the plate's length: nothing starts, so none is asked for.
+
+---
+
+### print_printer_file
+Start printing a file already stored on the Flashforge printer (see `list_printer_files`). It
+starts a real print.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `file_name` | string | Yes | The file, as `list_printer_files` names it |
+| `leveling_before_print` | boolean | No | Level the bed first. Omitted: on a Creator 5 or 5 Pro, on when the file's estimated time is 4 h or more; off on other models |
+| `flow_calibration` | boolean | No | Calibrate the flow first. Omitted: as `leveling_before_print` |
+| `time_lapse` | boolean | No | Ask the printer to record a time-lapse (default `false`) |
+| `material_mappings` | array | No | Explicit `{tool_id, slot_id}` pairs |
+| `auto_map` | boolean | No | Match the project's filaments to loaded slots when no mapping is given (default `true`) |
+
+Decide leveling and flow calibration as for `send_to_printer`, on the same models. The printer's
+status says which machine it is; the file's estimated time comes from the printer's file list
+(`printingTime`), read after the material mapping is settled and only when one of the two is left
+out on a Creator 5 or 5 Pro. When the printer does not report a usable time (older firmware, 0,
+not a number) or the list cannot be read, the omitted ones stay off (`print_time_unknown`) and the
+print still starts. Returns `file_name`, `material_mappings` and `print_options`, shaped as in
+`send_to_printer` (`printer_model` is null when every option was given and no mapping was needed,
+so the status was not read).
+
+`time_lapse` on a stored file is not yet confirmed on the printer: `printGcode`'s documented body
+has no time-lapse key, so the request carries `timeLapseVideo` only when `time_lapse` is true, and a
+call without it sends exactly the keys it always sent. Whether the firmware records a time-lapse
+from it is checked on a Creator 5 Pro before this is relied on.
 
 ---
 

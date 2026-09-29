@@ -492,9 +492,11 @@ bool Flashforge::test_local_api(wxString& msg) const
     return request_local_api_json("detail", json{{"serialNumber", m_serial_number}, {"checkCode", m_check_code}}.dump(), body, msg);
 }
 
-bool Flashforge::fetch_material_slots(std::vector<FlashforgeMaterialSlot>& slots, bool* supports_material_station, wxString& msg) const
+bool Flashforge::fetch_material_slots(std::vector<FlashforgeMaterialSlot>& slots, bool* supports_material_station, wxString& msg, int* product_id) const
 {
     slots.clear();
+    if (product_id != nullptr)
+        *product_id = 0;
 
     if (!require_local_api_credentials(msg))
         return false;
@@ -534,6 +536,11 @@ bool Flashforge::fetch_material_slots(std::vector<FlashforgeMaterialSlot>& slots
 
     if (supports_material_station != nullptr)
         *supports_material_station = reports_material_station;
+
+    // Which machine answered: what its start screen offers depends on it
+    // (FlashforgeApi::start_screen_offers_calibration).
+    if (int pid = 0; product_id != nullptr && detail.contains("pid") && FlashforgeApi::try_parse_json_int(detail["pid"], pid))
+        *product_id = pid;
 
     // json::value() throws type_error.306 on anything that is not an object, so parsing the slots is
     // done by FlashforgeApi::parse_material_slots -- the same parser fetch_status already goes
@@ -580,6 +587,20 @@ std::optional<FlashforgeLocalApi::CachedStatus> Flashforge::last_known_status() 
     return FlashforgeLocalApi::status_cache().get(m_local_api_host);
 }
 
+std::optional<FlashforgeLocalApi::RecordedPrintStart> Flashforge::last_print_start() const
+{
+    return FlashforgeLocalApi::print_start_log().get(m_local_api_host);
+}
+
+void Flashforge::record_print_start(const std::string& file_name, const FlashforgeApi::PrintOptions& options, const json& material_mappings) const
+{
+    FlashforgeLocalApi::PrintStart start;
+    start.file_name         = file_name;
+    start.options           = options;
+    start.material_mappings = material_mappings.is_array() ? material_mappings : json::array();
+    FlashforgeLocalApi::print_start_log().put(m_local_api_host, std::move(start));
+}
+
 bool Flashforge::send_control(const std::string& cmd, const nlohmann::json& args, wxString& msg) const
 {
     if (!require_local_api_credentials(msg))
@@ -599,10 +620,8 @@ bool Flashforge::set_temperatures(std::optional<double> bed, std::optional<doubl
     return send_control("temperatureCtl_cmd", FlashforgeApi::make_temperature_args(bed, chamber, nozzles), msg);
 }
 
-bool Flashforge::list_gcode_files(std::vector<std::string>& files, wxString& msg) const
+bool Flashforge::fetch_gcode_list(json& response, wxString& msg) const
 {
-    files.clear();
-
     if (!require_local_api_credentials(msg))
         return false;
 
@@ -610,36 +629,57 @@ bool Flashforge::list_gcode_files(std::vector<std::string>& files, wxString& msg
     if (!request_local_api_json("gcodeList", FlashforgeApi::make_credentials_payload(m_serial_number, m_check_code).dump(), body, msg))
         return false;
 
-    const auto j = json::parse(body, nullptr, false, true);
-    if (j.is_discarded()) {
+    response = json::parse(body, nullptr, false, true);
+    if (response.is_discarded()) {
         msg = _(L("Flashforge returned an invalid JSON response."));
         return false;
     }
+    return true;
+}
+
+bool Flashforge::list_gcode_files(std::vector<std::string>& files, wxString& msg) const
+{
+    files.clear();
+
+    json response;
+    if (!fetch_gcode_list(response, msg))
+        return false;
 
     // Observed shape: {"code":0,"gcodeList":[{"gcodeFileName":"a.gcode", ...}, ...]}. A plain array of
     // strings and a top-level `gcodeListDetail` fallback are also accepted since the exact response
     // shape returned by different firmware versions is not fully documented -- which is exactly why
     // the parsing lives in FlashforgeApi, where it is pure, tested, and skips what it cannot read.
-    files = FlashforgeApi::parse_gcode_list(j);
-
+    files = FlashforgeApi::parse_gcode_list(response);
     return true;
 }
 
-bool Flashforge::print_gcode_file(const std::string& file_name, bool leveling, const nlohmann::json& material_mappings, wxString& msg) const
+bool Flashforge::stored_file_printing_time(const std::string& file_name, std::optional<long>& seconds, wxString& msg) const
+{
+    seconds.reset();
+    json response;
+    if (!fetch_gcode_list(response, msg))
+        return false;
+    seconds = FlashforgeApi::parse_gcode_printing_time(response, file_name);
+    return true;
+}
+
+bool Flashforge::print_gcode_file(const std::string& file_name, const FlashforgeApi::PrintOptions& options, const nlohmann::json& material_mappings, wxString& msg) const
 {
     if (!require_local_api_credentials(msg))
         return false;
 
     std::string body;
-    return request_local_api_json("printGcode", FlashforgeApi::make_print_gcode_payload(m_serial_number, m_check_code, file_name, leveling, material_mappings).dump(), body, msg);
+    if (!request_local_api_json("printGcode", FlashforgeApi::make_print_gcode_payload(m_serial_number, m_check_code, file_name, options, material_mappings).dump(), body, msg))
+        return false;
+    record_print_start(file_name, options, material_mappings);
+    return true;
 }
 
 bool Flashforge::upload_local_api(PrintHostUpload upload_data, ProgressFn progress_fn, ErrorFn error_fn) const
 {
     std::string material_map_b64;
     std::string material_map_json = "[]";
-    auto        leveling_before_print = upload_data.extended_info["levelingBeforePrint"] == "1";
-    auto        time_lapse_video      = upload_data.extended_info["timeLapseVideo"] == "1";
+    const FlashforgeApi::PrintOptions options = FlashforgeApi::read_upload_print_options(upload_data.extended_info);
     auto        use_material_station  = upload_data.extended_info["useMatlStation"] == "1";
 
     if (auto it = upload_data.extended_info.find("materialMappings"); it != upload_data.extended_info.end())
@@ -667,10 +707,10 @@ bool Flashforge::upload_local_api(PrintHostUpload upload_data, ProgressFn progre
             .header("checkCode", m_check_code)
             .header("fileSize", file_size)
             .header("printNow", upload_data.post_action == PrintHostPostUploadAction::StartPrint ? "true" : "false")
-            .header("levelingBeforePrint", leveling_before_print ? "true" : "false")
-            .header("flowCalibration", "false")
-            .header("firstLayerInspection", "false")
-            .header("timeLapseVideo", time_lapse_video ? "true" : "false")
+            .header("levelingBeforePrint", options.leveling ? "true" : "false")
+            .header("flowCalibration", options.flow_calibration ? "true" : "false")
+            .header("firstLayerInspection", "false") // not on the Creator 5 Pro's start screen
+            .header("timeLapseVideo", options.time_lapse ? "true" : "false")
             .header("useMatlStation", use_material_station ? "true" : "false")
             .header("gcodeToolCnt", upload_data.extended_info["gcodeToolCnt"])
             .header("materialMappings", material_map_b64)
@@ -706,6 +746,8 @@ bool Flashforge::upload_local_api(PrintHostUpload upload_data, ProgressFn progre
     const bool ok = run_local_api_request(url, upload_once, error_msg, &failure);
     if (!ok && !failure.cancelled)
         error_fn(error_msg);
+    if (ok && upload_data.post_action == PrintHostPostUploadAction::StartPrint)
+        record_print_start(filename, options, json::parse(material_map_json, nullptr, false));
     return ok;
 }
 

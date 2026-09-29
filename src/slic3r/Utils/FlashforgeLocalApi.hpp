@@ -7,6 +7,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <utility>
 
 #include "FlashforgeApi.hpp"
 
@@ -111,38 +112,74 @@ private:
 // The process-wide streaks every Flashforge host records into.
 FailureStreaks& failure_streaks();
 
-// ── The last status each printer answered with ─────────────────────────────────────────────────
+// ── The latest value per printer ───────────────────────────────────────────────────────────────
 
-// A printer's last good status, and how old it is.
-struct CachedStatus
-{
-    FlashforgeApi::PrinterStatus status;
-    long                         age_s{0};
-};
-
-// The last status each host answered with. Every successful Flashforge::fetch_status records into
-// it (the agent's poll, the Device page's poll, MCP calls), so when a live read fails the caller can
-// still say what the printer last reported and how long ago. Thread-safe.
-class StatusCache
+// The latest value put for each host, and how old it is. Thread-safe: the agent's poll, the Device
+// page's poll, the upload queue and MCP calls all record into the same ones.
+template<class T> class LatestPerHost
 {
 public:
     using Clock = std::chrono::steady_clock;
 
-    void                        put(const std::string& host, const FlashforgeApi::PrinterStatus& status, Clock::time_point now = Clock::now());
-    std::optional<CachedStatus> get(const std::string& host, Clock::time_point now = Clock::now()) const;
+    struct Aged
+    {
+        T    value;
+        long age_s{0};
+    };
+
+    void put(const std::string& host, T value, Clock::time_point now = Clock::now())
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_entries[host] = Entry{std::move(value), now};
+    }
+
+    std::optional<Aged> get(const std::string& host, Clock::time_point now = Clock::now()) const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        const auto it = m_entries.find(host);
+        if (it == m_entries.end())
+            return std::nullopt;
+        const long age_s = long(std::chrono::duration_cast<std::chrono::seconds>(now - it->second.at).count());
+        return Aged{it->second.value, age_s};
+    }
 
 private:
     struct Entry
     {
-        FlashforgeApi::PrinterStatus status;
-        Clock::time_point            at;
+        T                 value;
+        Clock::time_point at;
     };
     mutable std::mutex           m_mutex;
     std::map<std::string, Entry> m_entries;
 };
 
+// The last status each host answered with. Every successful Flashforge::fetch_status records into
+// it (the agent's poll, the Device page's poll, MCP calls), so when a live read fails the caller can
+// still say what the printer last reported and how long ago.
+using StatusCache  = LatestPerHost<FlashforgeApi::PrinterStatus>;
+using CachedStatus = StatusCache::Aged;
+
 // The process-wide cache every Flashforge host records into.
 StatusCache& status_cache();
+
+// A print the printer accepted from this process: an upload with printNow, or printGcode.
+struct PrintStart
+{
+    std::string                 file_name;
+    FlashforgeApi::PrintOptions options;
+    nlohmann::json              material_mappings = nlohmann::json::array(); // as sent: {toolId, slotId, materialName, ...}
+};
+
+// The last print each host accepted from this process. Flashforge::upload_local_api (with printNow)
+// and Flashforge::print_gcode_file record into it once the printer said yes, so the send dialog,
+// send_to_printer, print_printer_file and the printer agent are all here. A print started on the
+// printer's screen, from another computer or OrcaMCP instance, or before this one launched is not.
+// Memory only.
+using PrintStartLog      = LatestPerHost<PrintStart>;
+using RecordedPrintStart = PrintStartLog::Aged;
+
+// The process-wide log every Flashforge host records into.
+PrintStartLog& print_start_log();
 
 }} // namespace Slic3r::FlashforgeLocalApi
 

@@ -41,6 +41,12 @@ nlohmann::json status_to_json(const FlashforgeApi::PrinterStatus& s);
 // from its last answer, and how old that is. Nothing else of the cached status.
 nlohmann::json cached_station_json(const FlashforgeLocalApi::CachedStatus& cached);
 
+// Any thread. get_printer_status's `last_print_started_here`: the last print this OrcaMCP instance
+// started on the printer, how long ago, the options it asked for and the slots it fed from
+// (`fed_from`: tool, slot, the slot's material and colour); null when none since it launched. Only
+// those fields of the mappings it sent.
+nlohmann::json print_start_json(const std::optional<FlashforgeLocalApi::RecordedPrintStart>& recorded);
+
 // Any thread. One get_printers `physical_printers` entry: where the preset prints to and whether it has
 // credentials, never the credentials themselves (nor the Flashforge serial number that goes with one).
 nlohmann::json print_host_preset_json(const std::string& name, const DynamicPrintConfig& config, bool is_selected);

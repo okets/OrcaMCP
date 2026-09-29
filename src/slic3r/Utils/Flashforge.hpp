@@ -52,7 +52,8 @@ public:
     // The bare host the local API is reached at (FlashforgeLocalApi::host_of of print_host), parsed
     // once when the host is built: every request and log line uses this one value.
     const std::string&         local_api_host() const { return m_local_api_host; }
-    bool                       fetch_material_slots(std::vector<FlashforgeMaterialSlot>& slots, bool* supports_material_station, wxString& msg) const;
+    // `product_id`, when given, receives the machine's `pid` from the same answer (0 when it gives none).
+    bool                       fetch_material_slots(std::vector<FlashforgeMaterialSlot>& slots, bool* supports_material_station, wxString& msg, int* product_id = nullptr) const;
     static bool                discover_printers(std::vector<FlashforgeDiscoveredPrinter>& printers, wxString& msg, int timeout_ms = 10000, int idle_timeout_ms = 1500, int max_retries = 3);
 
     // Local API status and control. All are safe to call off the main thread; all return false and fill `msg` on failure.
@@ -63,6 +64,9 @@ public:
     // The status this printer last answered fetch_status with, from any caller in this process, and
     // its age; nullopt when it has not answered since the app started. Never touches the network.
     std::optional<FlashforgeLocalApi::CachedStatus> last_known_status() const;
+    // The last print this OrcaMCP instance started on this printer, and its age; nullopt when none since
+    // it launched. Never touches the network.
+    std::optional<FlashforgeLocalApi::RecordedPrintStart> last_print_start() const;
     bool send_control(const std::string& cmd, const nlohmann::json& args, wxString& msg) const;
     bool pause_job(wxString& msg) const;
     bool resume_job(wxString& msg) const;
@@ -70,7 +74,10 @@ public:
     bool set_light(bool on, wxString& msg) const;
     bool set_temperatures(std::optional<double> bed, std::optional<double> chamber, const std::vector<std::optional<double>>& nozzles, wxString& msg) const;
     bool list_gcode_files(std::vector<std::string>& files, wxString& msg) const;
-    bool print_gcode_file(const std::string& file_name, bool leveling, const nlohmann::json& material_mappings, wxString& msg) const;
+    bool print_gcode_file(const std::string& file_name, const FlashforgeApi::PrintOptions& options, const nlohmann::json& material_mappings, wxString& msg) const;
+    // A stored file's estimated print time, from the printer's file list. `seconds` is nullopt when
+    // the printer does not report one; false with `msg` when the list could not be read.
+    bool stored_file_printing_time(const std::string& file_name, std::optional<long>& seconds, wxString& msg) const;
 
 private:
     std::string m_host;
@@ -103,6 +110,10 @@ private:
     // The precondition every local-API method shares: true when the credentials are there, false
     // with `msg` set to the one message all of them used to spell out for themselves.
     bool require_local_api_credentials(wxString& msg) const;
+    // The gcodeList response, parsed. False with `msg` when it could not be fetched or read.
+    bool fetch_gcode_list(nlohmann::json& response, wxString& msg) const;
+    // Called only once the printer accepted a start.
+    void record_print_start(const std::string& file_name, const FlashforgeApi::PrintOptions& options, const nlohmann::json& material_mappings) const;
     std::string make_http_url(const std::string& path) const;
     int  get_err_code_from_body(const std::string &body) const;
     bool connect(wxString& msg) const;

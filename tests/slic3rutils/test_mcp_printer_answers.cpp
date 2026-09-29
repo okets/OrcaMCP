@@ -98,7 +98,7 @@ TEST_CASE("a printer's status reaches an agent without its credentials or identi
     SECTION("get_printer_status's cached station, for a printer that could not be reached")
     {
         FlashforgeLocalApi::CachedStatus cached;
-        cached.status = status;
+        cached.value = status;
         cached.age_s  = 42;
         const json answer = cached_station_json(cached);
         CHECK_FALSE(carries_a_secret(answer));
@@ -132,4 +132,32 @@ TEST_CASE("a print host preset's credentials never reach a printer tool's answer
         CHECK_FALSE(carries_a_secret(obico));
         CHECK(obico["configured"] == true);
     }
+}
+
+TEST_CASE("last_print_started_here says what the last start asked for, and nothing else", "[McpPrinterAnswers]")
+{
+    CHECK(print_start_json(std::nullopt).is_null());
+
+    FlashforgeLocalApi::RecordedPrintStart recorded;
+    recorded.value.file_name         = "vase.gcode.3mf";
+    recorded.value.options.leveling  = true;
+    recorded.value.material_mappings = json::array({{{"toolId", 0},
+                                                     {"slotId", 2},
+                                                     {"materialName", "PLA"},
+                                                     {"toolMaterialColor", "#FFFFFF"},
+                                                     {"slotMaterialColor", "#FF0000"},
+                                                     {"checkCode", SECRET + "check-code"}}});
+    recorded.age_s = 2400;
+
+    const json answer = print_start_json(recorded);
+    CHECK_FALSE(carries_a_secret(answer));
+    CHECK(answer["file_name"] == "vase.gcode.3mf");
+    CHECK(answer["age_s"] == 2400);
+    CHECK(answer["leveling"] == true);
+    CHECK(answer["flow_calibration"] == false);
+    CHECK(answer["time_lapse"] == false);
+    // A report of the slots it fed from, named apart from the material_mappings a send takes: its
+    // entries are not that shape, so nothing invites sending them back as one.
+    CHECK_FALSE(answer.contains("material_mappings"));
+    CHECK(answer["fed_from"] == json::array({{{"tool_id", 0}, {"slot_id", 2}, {"material", "PLA"}, {"color", "#FF0000"}}}));
 }

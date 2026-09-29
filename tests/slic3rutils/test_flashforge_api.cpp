@@ -1,6 +1,8 @@
 #include <catch2/catch_all.hpp>
 #include "slic3r/Utils/FlashforgeApi.hpp"
 
+#include <limits>
+
 using namespace Slic3r::FlashforgeApi;
 
 static const char* kDetail = R"({"code":0,"message":"Success","detail":{
@@ -133,12 +135,6 @@ TEST_CASE("control payload shapes", "[flashforge]") {
     CHECK(t["chamber"] == kTempNoChange);
     CHECK(t["nozzles"] == nlohmann::json({215, kTempNoChange, kTempNoChange, kTempNoChange}));
     CHECK(t["rightNozzle"] == 215);   // first tool mirrored into the legacy field
-
-    auto g = make_print_gcode_payload("SN1", "CC1", "a.gcode", true, nlohmann::json::array({{{"toolId", 0}, {"slotId", 1}}}));
-    CHECK(g["fileName"] == "a.gcode");
-    CHECK(g["levelingBeforePrint"] == true);
-    CHECK(g["useMatlStation"] == true);
-    CHECK(g["gcodeToolCnt"] == 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -435,4 +431,117 @@ TEST_CASE("parse_detail accepts a padded success code", "[flashforge]") {
 
     CHECK_FALSE(parse_detail(R"({"code":" 401 ","message":"check code error"})", s, err));
     CHECK(err.find("401") != std::string::npos);
+}
+
+// ---------------------------------------------------------------------------
+// Print options: the switches the printer's start screen offers, on both the
+// upload and printGcode, and the stored file's own estimate for the MCP gate.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("printGcode carries all three print options", "[flashforge]") {
+    PrintOptions options;
+    options.leveling         = true;
+    options.flow_calibration = true;
+    options.time_lapse       = true;
+    const auto g = make_print_gcode_payload("SN1", "CC1", "a.gcode", options, nlohmann::json::array({{{"toolId", 0}, {"slotId", 1}}}));
+    CHECK(g["fileName"] == "a.gcode");
+    CHECK(g["levelingBeforePrint"] == true);
+    CHECK(g["flowCalibration"] == true);
+    CHECK(g["timeLapseVideo"] == true);
+    CHECK(g["useMatlStation"] == true);
+    CHECK(g["gcodeToolCnt"] == 1);
+
+    const auto off = make_print_gcode_payload("SN1", "CC1", "a.gcode", PrintOptions{}, nlohmann::json::array());
+    CHECK(off["levelingBeforePrint"] == false);
+    CHECK(off["flowCalibration"] == false);
+    // Not in the printGcode body the firmware was seen to take: a print without a time-lapse sends the
+    // keys it always sent, so a firmware that refuses an unknown key still prints it.
+    CHECK_FALSE(off.contains("timeLapseVideo"));
+    CHECK(off["useMatlStation"] == false);
+}
+
+TEST_CASE("upload extended_info round-trips the print options", "[flashforge]") {
+    PrintOptions options;
+    options.flow_calibration = true;
+    const nlohmann::json mappings = nlohmann::json::array({{{"toolId", 0}, {"slotId", 2}}, {{"toolId", 1}, {"slotId", 3}}});
+
+    const auto info = make_upload_extended_info(options, true, mappings);
+    CHECK(info.at("levelingBeforePrint") == "0");
+    CHECK(info.at("flowCalibration") == "1");
+    CHECK(info.at("timeLapseVideo") == "0");
+    CHECK(info.at("useMatlStation") == "1");
+    CHECK(info.at("gcodeToolCnt") == "2");
+    CHECK(nlohmann::json::parse(info.at("materialMappings")) == mappings);
+    CHECK(read_upload_print_options(info) == options);
+
+    const auto bare = make_upload_extended_info(PrintOptions{}, false, nlohmann::json::array());
+    CHECK(bare.at("useMatlStation") == "0");
+    CHECK(bare.at("gcodeToolCnt") == "0");
+    CHECK(bare.at("materialMappings") == "[]");
+}
+
+TEST_CASE("an extended_info without the option keys reads as all off", "[flashforge]") {
+    CHECK(read_upload_print_options({}) == PrintOptions{});
+    CHECK(read_upload_print_options({{"flowCalibration", "yes"}}) == PrintOptions{}); // only "1" is on
+}
+
+TEST_CASE("parse_gcode_printing_time finds a stored file's time", "[flashforge]") {
+    const auto response = nlohmann::json::parse(R"({"code":0,
+        "gcodeList":["a.gcode","b.gcode","c.gcode","d.gcode","f.gcode"],
+        "gcodeListDetail":[{"gcodeFileName":"a.gcode","printingTime":893},
+                           {"gcodeFileName":"b.gcode","printingTime":" 7200 "},
+                           {"gcodeFileName":"c.gcode","printingTime":0},
+                           {"gcodeFileName":"d.gcode"},
+                           {"gcodeFileName":"f.gcode","printingTime":893.6}]})");
+    CHECK(parse_gcode_printing_time(response, "a.gcode") == 893L);
+    CHECK(parse_gcode_printing_time(response, "b.gcode") == 7200L);           // the API types numbers loosely
+    CHECK(parse_gcode_printing_time(response, "f.gcode") == 894L);            // a fraction rounds
+    CHECK_FALSE(parse_gcode_printing_time(response, "c.gcode").has_value()); // 0: the printer does not know
+    CHECK_FALSE(parse_gcode_printing_time(response, "d.gcode").has_value());
+    CHECK_FALSE(parse_gcode_printing_time(response, "e.gcode").has_value()); // not stored
+}
+
+TEST_CASE("parse_gcode_printing_time takes a time that is not a positive number for unknown", "[flashforge]") {
+    const auto time_of = [](const nlohmann::json& printing_time) {
+        const nlohmann::json response = {{"gcodeListDetail", nlohmann::json::array({{{"gcodeFileName", "a.gcode"}, {"printingTime", printing_time}}})}};
+        return parse_gcode_printing_time(response, "a.gcode");
+    };
+    CHECK_FALSE(time_of(true).has_value());   // a flag, not a time: never 1 s
+    CHECK_FALSE(time_of(-60).has_value());
+    CHECK_FALSE(time_of(-0.5).has_value());
+    CHECK_FALSE(time_of("-60").has_value());
+    CHECK_FALSE(time_of("12abc").has_value());
+    CHECK_FALSE(time_of("nan").has_value());
+    CHECK_FALSE(time_of("inf").has_value());
+    CHECK_FALSE(time_of(std::numeric_limits<double>::infinity()).has_value());
+    CHECK_FALSE(time_of(nullptr).has_value());
+    CHECK_FALSE(time_of(nlohmann::json::array({60})).has_value());
+}
+
+TEST_CASE("parse_gcode_printing_time reads a gcodeList object too", "[flashforge]") {
+    CHECK(parse_gcode_printing_time(nlohmann::json::parse(R"({"gcodeList":[{"gcodeFileName":"a.gcode","printingTime":60}]})"), "a.gcode") == 60L);
+    CHECK_FALSE(parse_gcode_printing_time(nlohmann::json::parse(R"({"gcodeList":["a.gcode"]})"), "a.gcode").has_value());
+    CHECK_FALSE(parse_gcode_printing_time(nlohmann::json(), "a.gcode").has_value());
+}
+
+TEST_CASE("Only a Creator 5 or 5 Pro is known to offer calibration on its start screen", "[flashforge]") {
+    CHECK(start_screen_offers_calibration(kPidCreator5));
+    CHECK(start_screen_offers_calibration(kPidCreator5Pro));
+    // Other local-API machines (Adventurer 5M, AD5X, ...) have not been checked, and a status without
+    // a product id says nothing.
+    CHECK_FALSE(start_screen_offers_calibration(0));
+    CHECK_FALSE(start_screen_offers_calibration(38));
+    CHECK_FALSE(start_screen_offers_calibration(-1));
+}
+
+TEST_CASE("printer_model_name names the machine for a report", "[flashforge]") {
+    PrinterStatus creator;
+    creator.model = "Creator 5 Pro";
+    creator.pid   = kPidCreator5Pro;
+    CHECK(printer_model_name(creator) == "Creator 5 Pro");
+
+    PrinterStatus nameless;
+    nameless.pid = 38;
+    CHECK(printer_model_name(nameless) == "product id 38");
+    CHECK(printer_model_name(PrinterStatus{}) == "unknown");
 }

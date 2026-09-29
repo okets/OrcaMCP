@@ -310,7 +310,29 @@ nlohmann::json cached_station_json(const FlashforgeLocalApi::CachedStatus& cache
     return {{"source", "cached"},
             {"age_s", cached.age_s},
             {"material_station",
-             {{"present", cached.status.has_material_station}, {"slots", material_slots_json(cached.status.slots)}}}};
+             {{"present", cached.value.has_material_station}, {"slots", material_slots_json(cached.value.slots)}}}};
+}
+
+nlohmann::json print_start_json(const std::optional<FlashforgeLocalApi::RecordedPrintStart>& recorded)
+{
+    if (!recorded)
+        return nullptr;
+
+    const FlashforgeLocalApi::PrintStart& start    = recorded->value;
+    nlohmann::json                        fed_from = nlohmann::json::array();
+    for (const auto& mapping : start.material_mappings)
+        if (mapping.is_object())
+            fed_from.push_back({{"tool_id", mapping.value("toolId", -1)},
+                                {"slot_id", mapping.value("slotId", -1)},
+                                {"material", mapping.value("materialName", std::string())},
+                                {"color", mapping.value("slotMaterialColor", std::string())}});
+
+    return {{"file_name", start.file_name},
+            {"age_s", recorded->age_s},
+            {"leveling", start.options.leveling},
+            {"flow_calibration", start.options.flow_calibration},
+            {"time_lapse", start.options.time_lapse},
+            {"fed_from", fed_from}};
 }
 
 nlohmann::json print_host_preset_json(const std::string& name, const DynamicPrintConfig& config, bool is_selected)
