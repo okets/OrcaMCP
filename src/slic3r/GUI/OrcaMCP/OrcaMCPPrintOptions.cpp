@@ -120,6 +120,16 @@ std::optional<std::string> ignored_arguments_refusal(const std::vector<std::stri
 
 PrintOptionChoices choose_print_options(const PrintOptionRequest& request, const GateFacts& facts)
 {
+    // An upload that starts nothing sends every option off: the printer never reads them, and a true
+    // header beside printNow false says what nobody asked for. An explicit true never gets here
+    // (SendReach::UploadOnly refuses it); an explicit false is the caller's.
+    if (!facts.starts_print) {
+        const auto off = [](std::optional<bool> requested) {
+            return PrintOptionChoice{false, requested.has_value() ? "caller" : "upload_only"};
+        };
+        return {off(request.leveling), off(request.flow_calibration), off(request.time_lapse)};
+    }
+
     const std::optional<double> estimate = known_estimate(facts.estimated_print_s);
     PrintOptionChoices          choices;
     choices.leveling         = gated(request.leveling, facts.model_offers_calibration, estimate);

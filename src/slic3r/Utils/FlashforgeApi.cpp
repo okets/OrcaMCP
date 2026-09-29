@@ -657,10 +657,13 @@ nlohmann::json make_print_gcode_payload(const std::string& serial, const std::st
     payload["fileName"]          = file_name;
     payload[kLevelingKey]        = options.leveling;
     payload[kFlowCalibrationKey] = options.flow_calibration;
-    // Not in the printGcode body docs/printers/flashforge-lan-api.md documents; the upload takes it.
-    // The live check in docs/superpowers/plans/2026-09-27-flashforge-print-options.md (Task 5) decides
-    // whether this request honours it.
-    payload[kTimeLapseKey]       = options.time_lapse;
+    // Not in the printGcode body docs/printers/flashforge-lan-api.md documents (the upload takes it), so
+    // it is sent only when asked for: a print without a time-lapse sends the keys it always sent, and a
+    // firmware that refuses an unknown key still prints it. The live check in
+    // docs/superpowers/plans/2026-09-27-flashforge-print-options.md (Task 5) decides whether this request
+    // honours it.
+    if (options.time_lapse)
+        payload[kTimeLapseKey] = true;
     payload["useMatlStation"]    = has_mappings;
     payload["gcodeToolCnt"]      = material_mappings.is_array() ? material_mappings.size() : 0;
     payload["materialMappings"]  = material_mappings;

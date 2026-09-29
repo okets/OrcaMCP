@@ -74,11 +74,13 @@ struct GateFacts
     std::optional<double> estimated_print_s;            // unset or not positive when unknown
     bool                  model_offers_calibration{false}; // FlashforgeApi::start_screen_offers_calibration
     std::string           printer_model;                // as the report names it (FlashforgeApi::printer_model_name); empty: not read
+    bool                  starts_print{true};           // false: an upload with start_print: false, which starts nothing
 };
 
 // One option as decided, and by what: "caller", "print_time_gate", "print_time_unknown" (left to
 // the gate with no estimate, so off), "not_offered_by_model" (left to the gate on a machine whose
-// start screen nobody checked, so off) or "default" (time-lapse left to the tool, so off).
+// start screen nobody checked, so off), "upload_only" (left out of an upload that starts nothing, so
+// off: every option is) or "default" (time-lapse left to the tool, so off).
 struct PrintOptionChoice
 {
     bool        on{false};

@@ -454,7 +454,9 @@ TEST_CASE("printGcode carries all three print options", "[flashforge]") {
     const auto off = make_print_gcode_payload("SN1", "CC1", "a.gcode", PrintOptions{}, nlohmann::json::array());
     CHECK(off["levelingBeforePrint"] == false);
     CHECK(off["flowCalibration"] == false);
-    CHECK(off["timeLapseVideo"] == false);
+    // Not in the printGcode body the firmware was seen to take: a print without a time-lapse sends the
+    // keys it always sent, so a firmware that refuses an unknown key still prints it.
+    CHECK_FALSE(off.contains("timeLapseVideo"));
     CHECK(off["useMatlStation"] == false);
 }
 

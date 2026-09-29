@@ -445,7 +445,7 @@ void OrcaMCPServer::register_printer_tools()
         "why. An explicit true is refused where it would be ignored: direct=false, start_print=false (nothing "
         "starts; pass them to print_printer_file then), another print host, or a Flashforge without its serial "
         "number and check code; so are use_material_station: true and a material_mappings list, except with "
-        "start_print=false, where the upload carries them.",
+        "start_print=false, where the upload carries them. With start_print=false every print option is sent off.",
         {
             {"type", "object"},
             {"properties", {
@@ -608,6 +608,7 @@ void OrcaMCPServer::register_printer_tools()
             std::optional<PrintOptionChoices>  print_options;
             GateFacts                          gate_facts;
             gate_facts.estimated_print_s = estimated_print_s;
+            gate_facts.starts_print      = start_print;
             if (reach == SendReach::Honoured) {
                 Slic3r::FlashforgeApi::PrinterStatus status;
                 wxString                             msg;
@@ -1035,7 +1036,8 @@ void OrcaMCPServer::register_printer_tools()
                 }},
                 {kTimeLapseParam, {
                     {"type", "boolean"},
-                    {"description", "Ask the printer to record a time-lapse (default false)."}
+                    {"description", "Ask the printer to record a time-lapse (default false). Not yet confirmed to take "
+                                    "effect for a stored file."}
                 }},
                 {"material_mappings", {
                     {"type", "array"},

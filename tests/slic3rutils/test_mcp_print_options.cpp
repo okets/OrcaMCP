@@ -186,6 +186,27 @@ TEST_CASE("On a model nobody checked, an explicit choice still goes through", "[
     CHECK(choices.time_lapse.on);
 }
 
+TEST_CASE("An upload that starts nothing sends every option off, whatever the print's length", "[McpPrintOptions][orcamcp]")
+{
+    GateFacts facts         = creator(3 * 24 * 3600.0); // long enough for the gate
+    facts.starts_print      = false;
+    PrintOptionRequest request;
+    request.time_lapse = false; // given, and off
+    const auto choices = choose_print_options(request, facts);
+
+    CHECK_FALSE(choices.leveling.on);
+    CHECK(choices.leveling.decided_by == "upload_only");
+    CHECK_FALSE(choices.flow_calibration.on);
+    CHECK(choices.flow_calibration.decided_by == "upload_only");
+    CHECK_FALSE(choices.time_lapse.on);
+    CHECK(choices.time_lapse.decided_by == "caller");
+
+    const auto options = to_print_options(choices);
+    CHECK_FALSE(options.leveling);
+    CHECK_FALSE(options.flow_calibration);
+    CHECK_FALSE(options.time_lapse);
+}
+
 TEST_CASE("The tool descriptions state the gate from the constant", "[McpPrintOptions][orcamcp]")
 {
     CHECK(calibration_gate_text() == "4 h");

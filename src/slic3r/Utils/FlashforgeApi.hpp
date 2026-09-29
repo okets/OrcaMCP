@@ -92,6 +92,7 @@ std::optional<long> parse_gcode_printing_time(const nlohmann::json& response, co
 nlohmann::json make_credentials_payload(const std::string& serial, const std::string& check_code);
 nlohmann::json make_control_payload(const std::string& serial, const std::string& check_code, const std::string& cmd, const nlohmann::json& args);
 nlohmann::json make_temperature_args(std::optional<double> bed, std::optional<double> chamber, const std::vector<std::optional<double>>& nozzles); // -200 for absent
+// printGcode's body. `timeLapseVideo` is there only when the time-lapse is asked for.
 nlohmann::json make_print_gcode_payload(const std::string& serial, const std::string& check_code, const std::string& file_name, const PrintOptions& options, const nlohmann::json& material_mappings);
 
 constexpr int kTempNoChange = -200;

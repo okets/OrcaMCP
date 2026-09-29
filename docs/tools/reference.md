@@ -4098,10 +4098,10 @@ console carries no options). The same holds for `use_material_station: true` and
 ```
 `decided_by` is `caller` (passed explicitly), `print_time_gate` (left out; on from `gate_s`),
 `print_time_unknown` (left out with no estimate, so off), `not_offered_by_model` (left out on a
-model other than the Creator 5 / 5 Pro, named in `printer_model`, so off) or `default` (time-lapse
-left out, so off). `print_options` is there only for a Flashforge with local-API credentials. With
-`start_print: false` it reports what the gate would decide for the options left out; they travel
-with the upload but start nothing.
+model other than the Creator 5 / 5 Pro, named in `printer_model`, so off), `upload_only` (left out
+of an upload with `start_print: false`, so off) or `default` (time-lapse left out, so off).
+`print_options` is there only for a Flashforge with local-API credentials. With `start_print:
+false` all three are sent off, whatever the plate's length: nothing starts, so none is asked for.
 
 ---
 
@@ -4127,6 +4127,11 @@ not a number) or the list cannot be read, the omitted ones stay off (`print_time
 print still starts. Returns `file_name`, `material_mappings` and `print_options`, shaped as in
 `send_to_printer` (`printer_model` is null when every option was given and no mapping was needed,
 so the status was not read).
+
+`time_lapse` on a stored file is not yet confirmed on the printer: `printGcode`'s documented body
+has no time-lapse key, so the request carries `timeLapseVideo` only when `time_lapse` is true, and a
+call without it sends exactly the keys it always sent. Whether the firmware records a time-lapse
+from it is checked on a Creator 5 Pro before this is relied on.
 
 ---
 
