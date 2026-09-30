@@ -10,6 +10,8 @@
 #include "slic3r/GUI/OrcaMCP/OrcaMCPPrinterUtils.hpp"
 #include "slic3r/Utils/ObicoLink.hpp"
 
+#include "flashforge_status_fixtures.hpp"
+
 using json = nlohmann::json;
 using namespace Slic3r;
 using namespace Slic3r::GUI::OrcaMCP;
@@ -160,4 +162,52 @@ TEST_CASE("last_print_started_here says what the last start asked for, and nothi
     // entries are not that shape, so nothing invites sending them back as one.
     CHECK_FALSE(answer.contains("material_mappings"));
     CHECK(answer["fed_from"] == json::array({{{"tool_id", 0}, {"slot_id", 2}, {"material", "PLA"}, {"color", "#FF0000"}}}));
+}
+
+namespace {
+
+FlashforgeApi::PrinterStatus parsed_status(const json& detail)
+{
+    FlashforgeApi::PrinterStatus status;
+    std::string                  error;
+    REQUIRE(FlashforgeApi::parse_detail(flashforge_fixtures::detail_body(detail), status, error));
+    return status;
+}
+
+} // namespace
+
+TEST_CASE("get_printer_status leaves out the numbers of a report it cannot trust", "[McpPrinterAnswers][FlashforgeTelemetry]")
+{
+    SECTION("the report of a print's first second, whose job and control fields are memory")
+    {
+        const json printer = status_to_json(parsed_status(flashforge_fixtures::unzipping_detail()));
+        CHECK(printer["telemetry_valid"] == false);
+        REQUIRE(printer["implausible_telemetry"].size() == 7);
+        CHECK(printer["implausible_telemetry"][3] == "printSpeedAdjust 65660");
+        // Even the ones in range: 65656 s is a time, but it is memory too.
+        for (const char* key : {"progress", "duration_s", "remaining_s", "firmware_estimated_s"}) {
+            INFO(key);
+            CHECK(printer[key].is_null());
+        }
+        for (const char* key : {"print_speed_percent", "z_offset_mm", "chamber_fan_percent", "cooling_fan_percent"}) {
+            INFO(key);
+            CHECK(printer["controls"][key].is_null());
+        }
+        // What the report does read is still given, and raw is what the printer sent.
+        CHECK(printer["controls"]["recirculation"] == false);
+        CHECK(printer["temperatures"]["nozzles"].size() == 4);
+        CHECK(printer["material_station"]["slots"].size() == 4);
+        CHECK(printer["raw"]["printSpeedAdjust"] == 65660);
+    }
+
+    SECTION("four seconds later, every number is the printer's")
+    {
+        const json printer = status_to_json(parsed_status(flashforge_fixtures::first_printing_detail()));
+        CHECK(printer["telemetry_valid"] == true);
+        CHECK(printer["implausible_telemetry"] == json::array());
+        CHECK_THAT(printer["progress"].get<double>(), WithinAbs(0.0, 1e-12));
+        CHECK(printer["firmware_estimated_s"] == 1751);
+        CHECK(printer["controls"]["print_speed_percent"] == 100);
+        CHECK(printer["controls"]["cooling_fan_percent"] == 0);
+    }
 }

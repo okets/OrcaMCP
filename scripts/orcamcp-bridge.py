@@ -948,14 +948,20 @@ def stamp_instance(request: dict) -> dict:
     return request
 
 
+def summary_as_it_is(instance: dict, instances: list) -> dict:
+    """`instance` as it is now: its summary among the running `instances`, or, once it has quit, the one it
+    was chosen by, marked gone."""
+    running = next((i for i in instances if instance_key(i) == instance_key(instance)), None)
+    return instance_summary(running, instances) if running else dict(instance_summary(instance), state="gone")
+
+
 def call_list_instances(request_id, arguments: dict) -> dict:
     """list_instances: every running instance, and the one this session uses."""
     instances, stale = discover_instances()
     report = {"status": "success", "instances": [instance_summary(i, instances) for i in instances],
               "using": None}
     if _selected is not None:
-        using = next((i for i in instances if is_selected(i)), None)
-        report["using"] = instance_summary(using, instances) if using else dict(instance_summary(_selected), state="gone")
+        report["using"] = summary_as_it_is(_selected, instances)
     if stale:
         report["stale_entries_ignored"] = stale
     if not instances:
@@ -1014,7 +1020,7 @@ def call_select_instance(request_id, arguments: dict) -> dict:
     previous = _selected
     changed = choose_instance(chosen[0])
     report = {"status": "success", "instance": instance_summary(_selected, instances),
-              "previous": instance_summary(previous) if previous else None, "tool_list_changed": changed}
+              "previous": summary_as_it_is(previous, instances) if previous else None, "tool_list_changed": changed}
     if chosen[0]["state"] == "busy":
         report["note"] = ("It is busy with a call, so its identity was taken from its registry entry; each call "
                           "still names it, and it refuses any meant for another.")

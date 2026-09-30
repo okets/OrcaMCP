@@ -734,9 +734,14 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
   }
   /* remaining_s is a projection -- elapsed * (1 - progress) / progress -- not a firmware value: the
-     printer's own estimatedTime tracks elapsed time on 1.9.9 and once showed "17 min left" 17 minutes
-     into a nine-hour job. The server sends null until progress reaches 2 %, where the projection
+     printer's own estimatedTime tracked elapsed time on one 1.9.9 job, showing "17 min left" 17 minutes
+     into a nine-hour job, and held the whole job's estimate on another. The server sends null until progress reaches 2 %, where the projection
      stops swinging by hours. Say so on screen rather than print a number with false precision. */
+  /* telemetry_valid false: the printer's job and control numbers are memory, not readings (firmware
+     1.9.9 for a second or so after a print starts: a fan at 5111810 %). None of them is shown, and
+     nothing that sends them back is offered, until a report reads right. */
+  var UNREADABLE = "The printer's last report was unreadable. Waiting for the next one.";
+  function readable(p){ return !p || p.telemetry_valid !== false; }
   function hasRemaining(p){ return p.remaining_s !== null && p.remaining_s !== undefined && num(p.remaining_s) >= 0; }
   function remainingText(p){ return hasRemaining(p) ? "est. " + dur(p.remaining_s) : "estimating…"; }
   function finishesText(p){ return hasRemaining(p) ? "≈ " + eta(p.remaining_s) : "—"; }
@@ -766,6 +771,7 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
   var ACTIONS = { 1:"Loading", 2:"Unloading" };
   var STATES  = {
     printing:["printing","Printing"], heating:["printing","Heating"], busy:["printing","Busy"],
+    downloading:["printing","Downloading"], unzipping:["printing","Unzipping"],
     paused:["paused","Paused"], ready:["idle","Ready"], completed:["idle","Completed"],
     cancelled:["idle","Cancelled"], error:["offline","Error"], unknown:["idle","Unknown"]
   };
@@ -1247,7 +1253,7 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     show(badge, pro && s.connected);
     if (pro && s.connected) setText(badge, "Chamber " + t1((((p.temperatures)||{}).chamber||{}).current) + " °C");
     show(el("camClock"), printing);
-    if (printing) setText(el("camClock"), clock(p.duration_s));
+    if (printing) setText(el("camClock"), readable(p) ? clock(p.duration_s) : "--:--:--");
   }
 
   var SPEEDS  = [50, 100, 125, 166];
@@ -1335,7 +1341,7 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     setLiveTarget("chamber-target", ch.target);
     setLiveWidth("chamber-bar", ratio(ch.current, ch.target));
 
-    setLive("fan",  String(Math.round(num(raw.coolingFanSpeed))));
+    setLive("fan",  readable(p) ? String(Math.round(num(raw.coolingFanSpeed))) : "—");
     setLive("tvoc", num(raw.tvoc).toFixed(2));
     setLive("disk", num(raw.remainingDiskSpace).toFixed(2));
 
@@ -1347,7 +1353,7 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     var door = String(p.door || "").toLowerCase();
     setLiveHTML("door", door === "open" ? '<span class="state-warn">Open</span>'
                       : door ? '<span class="state-good">Closed</span>' : "—");
-    setLive("z-value", zText(num(raw.zAxisCompensation)));
+    setLive("z-value", readable(p) ? zText(num(raw.zAxisCompensation)) : "—");
   }
 
   /* ══ Controls ═════════════════════════════════════════════════════════
@@ -1498,25 +1504,28 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     var live_ = !!bridge && !suspended && !!s.connected;
     var why   = !bridge ? SAMPLE_ONLY : suspended ? PARKED : !s.connected ? OFF_REASON : "";
     var jobWhy = live_ ? JOB_ONLY : why;
+    /* The filtration, speed and Z commands send the printer's other settings back as it reported them. */
+    var settings    = live_ && readable(p);
+    var settingsWhy = live_ ? UNREADABLE : why;
 
     setCtl("light", live_, why, expected("light", !!p.light_on));
     if (pro){
-      setCtl("internal", live_, why, expected("internal", String(raw.internalFanStatus) === "open"));
-      setCtl("external", live_, why, expected("external", String(raw.externalFanStatus) === "open"));
+      setCtl("internal", settings, settingsWhy, expected("internal", String(raw.internalFanStatus) === "open"));
+      setCtl("external", settings, settingsWhy, expected("external", String(raw.externalFanStatus) === "open"));
     }
 
     var speed = expected("speed", Math.round(num(raw.printSpeedAdjust)));
     SPEEDS.forEach(function(v){
-      setCtl("speed-" + v, live_ && busy, jobWhy, v === speed, { wait: "speed", grouped: true });
+      setCtl("speed-" + v, settings && busy, readable(p) ? jobWhy : settingsWhy, v === speed, { wait: "speed", grouped: true });
     });
     setFlag(grpNode("speed"), "data-pending", !!waiting.speed);
 
     var z = expected("z", round3(raw.zAxisCompensation));
-    /* Nothing to show an offset for until the printer has reported one. */
-    setLive("z-value", (s.printer || waiting.z) ? zText(z) : "—");
-    var zWhy = "The Z offset has to stay within ±" + Z_LIMIT.toFixed(3) + " mm.";
-    setCtl("z-down", live_ && z - Z_STEP >= -Z_LIMIT, live_ ? zWhy : why, undefined, { wait: "z", grouped: true });
-    setCtl("z-up",   live_ && z + Z_STEP <=  Z_LIMIT, live_ ? zWhy : why, undefined, { wait: "z", grouped: true });
+    /* Nothing to show an offset for until the printer has reported one it can be read from. */
+    setLive("z-value", ((s.printer && readable(p)) || waiting.z) ? zText(z) : "—");
+    var zWhy = !live_ ? why : !readable(p) ? UNREADABLE : "The Z offset has to stay within ±" + Z_LIMIT.toFixed(3) + " mm.";
+    setCtl("z-down", settings && z - Z_STEP >= -Z_LIMIT, zWhy, undefined, { wait: "z", grouped: true });
+    setCtl("z-up",   settings && z + Z_STEP <=  Z_LIMIT, zWhy, undefined, { wait: "z", grouped: true });
     setFlag(grpNode("z"), "data-pending", !!waiting.z);
 
     setCtl("cool", live_, why);
@@ -1860,14 +1869,19 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
         '<h2 class="eyebrow" style="margin:0" id="jobHead">Current job</h2>'+
         '<div class="job-head"><div class="job-title">'+
           '<span class="idle-big">'+esc(st[1] === "Ready" ? "Idle — ready to print" : st[1])+'</span>'+
-          '<span class="s">Nothing is printing. Slice a plate and send it from the Prepare tab.</span>'+
+          '<span class="s">'+(st[0] === "printing" ? "The printer is getting a job ready to print."
+                                                   : "Nothing is printing. Slice a plate and send it from the Prepare tab.")+'</span>'+
         '</div></div>'+
         '<dl class="job-stats">'+stats+'</dl>');
       return;
     }
 
+    var known  = readable(p);
     var pct    = Math.max(0, Math.min(100, num(p.progress) * 100));
-    var layer  = num(raw.printLayer), total = num(raw.targetPrintLayer);
+    var layer  = known ? num(raw.printLayer) : 0, total = known ? num(raw.targetPrintLayer) : 0;
+    /* Firmware 1.9.9 counts the first layer as the last for its first ten seconds (545 of 545 at 0.1 %):
+       a count at the total before half the job is done is that, not the last layer. */
+    if (layer >= total && pct < 50) total = 0;
     var active = slotsById(p)[num(ms.currentSlot)] || {};
     var tint   = hex(active.color) || "var(--brass)";
 
@@ -1879,17 +1893,18 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
 
     var sub = [];
     if (total) sub.push("Layer " + layer.toLocaleString() + " of " + total.toLocaleString());
-    if (num(raw.printSpeedAdjust)) sub.push(Math.round(num(raw.printSpeedAdjust)) + " % speed");
+    if (known && num(raw.printSpeedAdjust)) sub.push(Math.round(num(raw.printSpeedAdjust)) + " % speed");
+    if (!known) sub.push(UNREADABLE);
 
     setHTML(el("jobCard"),
       '<div class="job-head"><div class="job-title">'+
         '<h2 class="eyebrow" style="margin:0 0 4px" id="jobHead">Current job</h2>'+
         '<span class="n">'+esc(p.print_file || "Untitled job")+'</span>'+
         '<span class="s">'+esc(sub.join(" · "))+'</span></div>'+
-        '<div class="job-pct mono">'+pct.toFixed(1)+'<sub>%</sub></div></div>'+
+        '<div class="job-pct mono">'+(known ? pct.toFixed(1)+'<sub>%</sub>' : '—')+'</div></div>'+
       '<div class="ribbon" role="img" aria-label="Progress ribbon: '+pct.toFixed(0)+' per cent complete">'+ribbon+'</div>'+
       '<dl class="job-stats">'+
-        stat("Elapsed", dur(p.duration_s))+
+        stat("Elapsed", known ? dur(p.duration_s) : "—")+
         stat("Remaining", remainingText(p))+
         stat("Finishes", finishesText(p))+
         (total ? stat("Layer", layer.toLocaleString() + " / " + total.toLocaleString()) : "")+

@@ -135,6 +135,11 @@ std::vector<NextStep> support_paint_next_steps(int object_id, bool support_enabl
 // to apply a command, as the Device page shows by waiting for the next status.
 std::vector<NextStep> printer_control_next_steps();
 
+// What get_printer_status's answer, or printer_control's refusal, leads to when the printer's report has
+// job and control numbers no reading can be (PrinterStatus::implausible_telemetry, named in `why`):
+// get_printer_status again, a few seconds later. None when there are none.
+std::vector<NextStep> untrusted_status_next_steps(const std::vector<std::string>& implausible_telemetry);
+
 // What match_project_to_printer's answer leads to when the printer holds filament in material-station
 // slots the project has no filament slot for (`missing_slots`, 1-based): add_filament_slot, which adds one
 // slot per call, on a printer that takes more slots (`slots_can_be_added`); nothing on one whose slots

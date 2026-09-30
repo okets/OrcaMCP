@@ -800,7 +800,11 @@ void OrcaMCPServer::register_printer_tools()
         "OrcaMCP instance started on the printer: age_s, file_name, the "
         "leveling, flow_calibration and time_lapse it asked for, and the slots it fed from (fed_from); null when "
         "none since it launched. Prints started on the printer's screen, from another computer or from another "
-        "OrcaMCP instance are not in it. Use it to judge whether a new print needs calibrating again.",
+        "OrcaMCP instance are not in it. Use it to judge whether a new print needs calibrating again. "
+        "printer.telemetry_valid false: the printer reported job and control numbers no reading can be, named in "
+        "implausible_telemetry (a Flashforge does for a moment after a print starts, states downloading and unzipping); progress, "
+        "the times and the numbers in controls are then null, raw keeps what it sent, and next_steps says to read "
+        "again in a few seconds.",
         {
             {"type", "object"},
             {"properties", nlohmann::json::object()}
@@ -845,13 +849,15 @@ void OrcaMCPServer::register_printer_tools()
                 return error;
             }
 
-            return {{"status", "success"},
-                    {"host_type", host_type},
-                    {"print_host", print_host_value},
-                    {"online", true},
-                    {"obico", obico_status_json(cfg)},
-                    {"printer", status_to_json(status)},
-                    {"last_print_started_here", print_start_json(ff->last_print_start())}};
+            nlohmann::json answer = {{"status", "success"},
+                                     {"host_type", host_type},
+                                     {"print_host", print_host_value},
+                                     {"online", true},
+                                     {"obico", obico_status_json(cfg)},
+                                     {"printer", status_to_json(status)},
+                                     {"last_print_started_here", print_start_json(ff->last_print_start())}};
+            add_next_steps(answer, untrusted_status_next_steps(status.implausible_telemetry));
+            return answer;
         }
     });
 
@@ -869,7 +875,8 @@ void OrcaMCPServer::register_printer_tools()
         "and sent back as it reports them; the answer gives what was sent and the printer's values before, and "
         "get_printer_status's printer.controls reads them back. Refused, sending nothing: a print speed while "
         "nothing prints, a fan or filtration the printer does not report, a status lacking a field the command "
-        "sends back (it would go out as 0), a value out of range, and an argument of another action.",
+        "sends back (it would go out as 0) or whose numbers no reading can be (telemetry_valid false), a value "
+        "out of range, and an argument of another action.",
         {
             {"type", "object"},
             {"properties", {
@@ -956,8 +963,11 @@ void OrcaMCPServer::register_printer_tools()
                     return error_response("Nothing was sent: the printer's current settings could not be read. " +
                                           (msg.empty() ? std::string("Failed to fetch printer status") : to_std(msg)));
                 snapshot = console_snapshot(status);
-                if (const auto missing = status_refusal(request, snapshot))
-                    return error_response(*missing);
+                if (const auto refusal = status_refusal(request, snapshot)) {
+                    nlohmann::json answer = error_response(*refusal);
+                    add_next_steps(answer, untrusted_status_next_steps(status.implausible_telemetry));
+                    return answer;
+                }
             }
 
             nlohmann::json operation;

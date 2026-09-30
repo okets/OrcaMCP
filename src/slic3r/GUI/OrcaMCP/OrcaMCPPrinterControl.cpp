@@ -173,6 +173,15 @@ json number_or_null(const json& raw, const char* key)
     return it != raw.end() && it->is_number() ? *it : json(nullptr);
 }
 
+// A list of names as prose: "a, b and c".
+std::string listed(const json& names)
+{
+    std::string text;
+    for (std::size_t i = 0; i < names.size(); ++i)
+        text += (i == 0 ? "" : i + 1 == names.size() ? " and " : ", ") + names[i].get<std::string>();
+    return text;
+}
+
 json switch_or_null(const json& raw, const char* key)
 {
     const auto it = raw.find(key);
@@ -223,6 +232,11 @@ std::optional<std::string> status_refusal(const PrinterControlRequest& request, 
         return std::nullopt;
     const json& printer = snapshot.contains("printer") && snapshot["printer"].is_object() ? snapshot["printer"] : json::object();
     const json& raw     = printer.contains("raw") && printer["raw"].is_object() ? printer["raw"] : json::object();
+    if (!printer.value("telemetry_valid", true))
+        return "The printer's status has numbers no reading can be (" +
+               listed(printer.value("implausible_telemetry", json::array())) + "), as it reports for a moment after a "
+               "print starts, and " + request.action + " sends its settings back as the printer reports them. Nothing "
+               "was sent; read get_printer_status again in a few seconds";
     std::vector<std::string> missing;
     const std::string        name = request.console_params.value("name", std::string());
     if (name == "printer_ctl") {
@@ -240,10 +254,7 @@ std::optional<std::string> status_refusal(const PrinterControlRequest& request, 
     }
     if (missing.empty())
         return std::nullopt;
-    std::string fields;
-    for (std::size_t i = 0; i < missing.size(); ++i)
-        fields += (i == 0 ? "" : i + 1 == missing.size() ? " and " : ", ") + missing[i];
-    return "The printer's status lacks " + fields + ", which " + request.action +
+    return "The printer's status lacks " + listed(missing) + ", which " + request.action +
            " sends back as the printer reports it: sent without it, it would reset it. Nothing was sent; "
            "get_printer_status shows what the printer reports";
 }

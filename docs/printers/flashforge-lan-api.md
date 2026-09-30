@@ -117,8 +117,8 @@ POST http://<ip>:8898/detail
 | `printFileName` | string | File currently printing; empty when idle. |
 | `printProgress` | number | **0.0 to 1.0**, not a percentage. Multiply by 100 to display. |
 | `printDuration` | number | Seconds elapsed in the current job. |
-| `estimatedTime` | number | **Not remaining time.** On firmware 1.9.9 this tracks `printDuration` to the second (observed 2026-09-18: 1020 elapsed → 1020, 1680 → 1680, on a ~9 h job). The earlier "seconds remaining" reading was inferred from an idle printer where every time field is 0. Derive remaining time instead: `printDuration × (1 − printProgress) ÷ printProgress`, and treat it as unknown below 2 % progress. OrcaMCP exposes the raw value as `firmware_estimated_s` and the derivation as `remaining_s`. |
-| `printLayer` | number | Current layer. |
+| `estimatedTime` | number | **Not remaining time.** On firmware 1.9.9 it tracked `printDuration` to the second on one job (observed 2026-09-18: 1020 elapsed → 1020, 1680 → 1680, on a ~9 h job) and held the job's whole estimate on another (2026-09-30, a `.gcode.3mf` sent from OrcaMCP: 1752 s, the slicer's estimate, from the start through the first minute). Neither is time left. The earlier "seconds remaining" reading was inferred from an idle printer where every time field is 0. Derive remaining time instead: `printDuration × (1 − printProgress) ÷ printProgress`, and treat it as unknown below 2 % progress. OrcaMCP exposes the raw value as `firmware_estimated_s` and the derivation as `remaining_s`. |
+| `printLayer` | number | Current layer. **Equals `targetPrintLayer` during the first ~10 s of printing** (1.9.9, 2026-09-30: 545 of 545 at 0.1 % progress, then 2 of 545): read it against `printProgress`. |
 | `targetPrintLayer` | number | Total layers. |
 | `errorCode` | string | Empty when healthy. A **hard fault** (thermal, etc.). |
 | `cameraStreamUrl` | string | MJPEG stream URL, see §5. |
@@ -139,12 +139,48 @@ strings — note the **short forms** for pause and cancel:
 | `printing` | A job has been accepted. **This includes the warm-up phase**, before anything is extruded: `printDuration` and `printLayer` stay `0` until the first layer starts. Use `printDuration > 0` (or `printLayer > 0`) to tell "warming up" from "really printing". |
 | `pause` | Paused. **Not** `paused`. |
 | `cancel` | Cancelled. **Not** `cancelled`. |
+| `downloading` | A print just sent, while the printer takes the file in (observed 2026-09-30, about a second). |
+| `unzipping` | Then, a print from a `.gcode.3mf`, for a second or so before `printing` (observed 2026-09-30). **From the end of `downloading` through `unzipping`, the job and control numbers are not readings**: see below. |
 
 Map `pause` → `paused` and `cancel` → `cancelled` if the rest of your code speaks the long forms,
 and keep accepting the long forms in case a future firmware changes. `completed`, `error`, `busy`
 and `heating` were anticipated by this implementation but have **not** been observed; treat any
 value you do not recognise as unknown and keep going — do not assume an unfamiliar state means
 "not printing".
+
+### Job and control numbers that are memory
+
+Observed twice on 2026-09-30 on firmware 1.9.9, on two starts of the same `.gcode.3mf` sent from
+OrcaMCP: for about half a second, from the end of `downloading` through `unzipping`, every job and
+control number is memory, and the next `printing` report reads right. Temperatures, door, light and
+the material station's slots stay right throughout. `matlStationInfo.stateAction` is 5 from
+`downloading` on and stays 5 through leveling, so it is no sign of this. The second start, recorded
+four times a second through a whole 19-minute start with leveling and flow calibration, had it in
+three reports only, all in that half second.
+
+| Field | First start (`unzipping`) | Second start (`downloading`, `unzipping`) | Then (`printing`) |
+|---|---|---|---|
+| `chamberFanSpeed` | 5177344 (0x4F0000) | 11 | 0 |
+| `coolingFanSpeed` | 5111810 (0x4E0002) | 9 | 0 |
+| `printSpeedAdjust` | 65660 (0x1007C) | 10 | 100 |
+| `printLayer` | 65658 (0x1007A) | 11 | 0 |
+| `targetPrintLayer` | 8065023 (0x7B0FFF) | 0 | 545 |
+| `estimatedTime` | 65656 (0x10078) | not recorded | 1751 |
+| `printDuration` | 268369921 (0x0FFF0001) | not recorded | 0 |
+| `printProgress` | 1.1117833352328347e-38 (float bits 0x790FFF) | 1.5414283107572988e-44 (float bits 11) | 0.0 |
+| `zAxisCompensation` | 2.7561578975419097e-40 (float bits 0x3004E) | 1.2611686178923354e-44 (float bits 9) | 0.0 |
+
+The second start's integers are all in range, and so are some of the first's (65656 s is a time), so
+checking each field alone misses them; what gave both away is the floats, integer bits read as
+floats. A consumer should distrust every job and control number of a report in which any one is
+impossible: a fan outside 0-100 %, progress outside 0-1, a speed override over 1000 %, a Z offset past
+10 mm, a job over 30 days or 100,000 layers, or a nonzero number under 1e-12 (integer bits read as a
+float: 11 reads as 1.5e-44, 268369921 as 2.5e-29; float arithmetic on a real reading leaves no less
+than about 1e-9). **Never send such a report's values back**: `printerCtl_cmd` and `circulateCtl_cmd`
+carry every field they own, so a Z nudge built from the first would have sent the printer a 65660 %
+speed. OrcaMCP marks the report (`telemetry_valid: false`, `implausible_telemetry`), leaves those
+numbers out of `get_printer_status` and the Device page, and refuses both commands until a report
+reads right.
 
 ### Job control is ignored during warm-up
 

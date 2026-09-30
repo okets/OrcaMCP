@@ -307,6 +307,20 @@ class ChoosingTests(InstancesTest):
         report = self.call("select_instance", {"pid": 40002})
         self.assertEqual(report["previous"]["pid"], 40001)
 
+    def test_select_instance_says_whether_the_one_it_used_before_still_runs(self):
+        # 2026-09-30: after the user's window had quit, select_instance described it as "live".
+        before = self.start(40001)
+        self.start(40002)
+        self.start(40003)
+        self.call("select_instance", {"pid": 40001})
+        self.assertEqual(self.call("select_instance", {"pid": 40002})["previous"]["state"], "live")
+        self.call("select_instance", {"pid": 40001})
+        before.stop()
+        self.instances.remove(before)
+        report = self.call("select_instance", {"pid": 40003})
+        self.assertEqual(report["previous"]["pid"], 40001)
+        self.assertEqual(report["previous"]["state"], "gone")
+
     def test_select_instance_refuses_a_project_several_instances_have_open(self):
         self.start(40001, project="bracket")
         self.start(40002, project="bracket")

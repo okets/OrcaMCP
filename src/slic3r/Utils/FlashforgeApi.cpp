@@ -230,7 +230,8 @@ std::optional<long> printing_time_in(const nlohmann::json& list, const std::stri
 // Remaining time, projected from what the printer does report reliably. `estimatedTime` looked like
 // seconds remaining in the LAN API doc, which was written from an idle printer where every time
 // field is 0. On a running print (firmware 1.9.9, 2026-09-18) it tracked printDuration to the
-// second: 1020 elapsed -> 1020 "remaining", 1680 -> 1680, on a nine-hour job. So it is not used.
+// second: 1020 elapsed -> 1020 "remaining", 1680 -> 1680, on a nine-hour job; on a .gcode.3mf sent from
+// OrcaMCP (2026-09-30) it held the job's whole estimate, 1752 s, from the start. So it is not used.
 //
 // Elapsed / progress is the whole-job estimate; minus elapsed is what is left. Below 2 % the
 // denominator is small enough that warm-up noise dominates, so the answer is "unknown" (-1) rather
@@ -242,6 +243,54 @@ long project_remaining_s(const std::string& state, long duration_s, double progr
     if (!active || duration_s <= 0 || progress < 0.02)
         return -1;
     return std::lround(duration_s * (1.0 - progress) / progress);
+}
+
+// A job or control number of `detail`, and what a real reading of it can be: wide on purpose, to
+// catch memory and never a setting. Firmware 1.9.9 reports every one of them from other memory for a
+// moment after a print starts (PrinterStatus::implausible_telemetry).
+struct ReadingBounds
+{
+    const char* key;
+    double      min, max;
+};
+
+constexpr double MAX_JOB_S = 30 * 24 * 3600.0;
+// Below this, a nonzero number is integer bits read as a float: 11 reads as 1.5e-44, 268369921 as
+// 2.5e-29. Float arithmetic on a real reading leaves far more (0.025 mm steps: 1.9e-9).
+constexpr double MIN_NONZERO_READING = 1e-12;
+
+const ReadingBounds TELEMETRY_BOUNDS[] = {
+    {"printProgress", 0, 1},
+    {"printDuration", 0, MAX_JOB_S},
+    {"estimatedTime", 0, MAX_JOB_S},
+    {"printLayer", 0, 100000},
+    {"targetPrintLayer", 0, 100000},
+    {"printSpeedAdjust", 0, 1000},
+    {"zAxisCompensation", -10, 10},
+    {"chamberFanSpeed", 0, 100},
+    {"coolingFanSpeed", 0, 100},
+    {"coolingLeftFanSpeed", 0, 100},
+};
+
+// Whether `value` can be a reading within `bounds`. A nonzero one under MIN_NONZERO_READING never is,
+// whatever the field.
+bool is_reading(double value, const ReadingBounds& bounds)
+{
+    if (!std::isfinite(value) || value < bounds.min || value > bounds.max)
+        return false;
+    return value == 0 || std::abs(value) >= MIN_NONZERO_READING;
+}
+
+// PrinterStatus::implausible_telemetry of `detail`. A field the printer does not report is not one.
+std::vector<std::string> implausible_telemetry_of(const nlohmann::json& detail)
+{
+    std::vector<std::string> implausible;
+    for (const ReadingBounds& bounds : TELEMETRY_BOUNDS) {
+        const auto it = detail.find(bounds.key);
+        if (it != detail.end() && !is_reading(get_number(detail, bounds.key), bounds))
+            implausible.push_back(std::string(bounds.key) + " " + it->dump());
+    }
+    return implausible;
 }
 
 void fill_material_slots(const nlohmann::json& detail, PrinterStatus& out)
@@ -422,7 +471,10 @@ bool parse_detail(const std::string& body, PrinterStatus& out, std::string& erro
     result.progress             = get_number(detail, "printProgress");
     result.duration_s           = static_cast<long>(get_number(detail, "printDuration"));
     result.firmware_estimated_s = static_cast<long>(get_number(detail, "estimatedTime"));
-    result.remaining_s          = project_remaining_s(result.state, result.duration_s, result.progress);
+    // A report whose job numbers are memory projects nothing from them.
+    result.implausible_telemetry = implausible_telemetry_of(detail);
+    result.remaining_s           = result.implausible_telemetry.empty() ?
+                                       project_remaining_s(result.state, result.duration_s, result.progress) : -1;
 
     result.bed_temp       = get_number(detail, "platTemp");
     result.bed_target     = get_number(detail, "platTargetTemp");
@@ -547,9 +599,13 @@ nlohmann::json flashforge_status_to_bambu_payload(const PrinterStatus& status)
         print["nozzle_type"]     = status.nozzle_type;
     }
 
-    print["mc_percent"]        = scale_progress_to_percent(status.progress);
-    // Whole minutes of the projection; -1 (unknown) reads as 0, which the Device tab shows as "--".
-    print["mc_remaining_time"] = static_cast<int>(std::max<long>(0, status.remaining_s) / 60);
+    // A report whose job numbers are memory (implausible_telemetry) says nothing of progress: left
+    // out, the Device tab keeps what it showed.
+    if (status.implausible_telemetry.empty()) {
+        print["mc_percent"]        = scale_progress_to_percent(status.progress);
+        // Whole minutes of the projection; -1 (unknown) reads as 0, which the Device tab shows as "--".
+        print["mc_remaining_time"] = static_cast<int>(std::max<long>(0, status.remaining_s) / 60);
+    }
 
     if (!status.print_file.empty()) {
         print["subtask_name"] = status.print_file;

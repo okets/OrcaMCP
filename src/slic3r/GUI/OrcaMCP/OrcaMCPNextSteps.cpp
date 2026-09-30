@@ -393,4 +393,15 @@ std::vector<NextStep> printer_control_next_steps()
              "the printer applies a command within a few seconds; printer.controls there reads back what it now reports"}};
 }
 
+std::vector<NextStep> untrusted_status_next_steps(const std::vector<std::string>& implausible_telemetry)
+{
+    if (implausible_telemetry.empty())
+        return {};
+    std::string readings;
+    for (const std::string& reading : implausible_telemetry)
+        readings += (readings.empty() ? "" : ", ") + reading;
+    return {{"get_printer_status", "the printer reported job and control numbers no reading can be (" + readings +
+                                       "), as it does for a moment after a print starts; read it again in a few seconds"}};
+}
+
 }}} // namespace Slic3r::GUI::OrcaMCP

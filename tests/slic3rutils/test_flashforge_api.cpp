@@ -1,6 +1,8 @@
 #include <catch2/catch_all.hpp>
 #include "slic3r/Utils/FlashforgeApi.hpp"
 
+#include "flashforge_status_fixtures.hpp"
+
 #include <limits>
 
 using namespace Slic3r::FlashforgeApi;
@@ -122,6 +124,98 @@ TEST_CASE("parse_detail rejects error codes and garbage", "[flashforge]") {
     CHECK_FALSE(parse_detail(R"({"code":401,"message":"check code error"})", s, err));
     CHECK(err.find("401") != std::string::npos);
     CHECK_FALSE(parse_detail("not json", s, err));
+}
+
+namespace {
+
+PrinterStatus parsed(const nlohmann::json& detail)
+{
+    PrinterStatus s; std::string err;
+    REQUIRE(parse_detail(flashforge_fixtures::detail_body(detail), s, err));
+    return s;
+}
+
+// What parse_detail finds implausible in the idle Creator 5 Pro's detail with `fields` changed.
+std::vector<std::string> implausible_with(const nlohmann::json& fields)
+{
+    nlohmann::json detail = flashforge_fixtures::creator_5_pro_detail();
+    detail.update(fields);
+    return parsed(detail).implausible_telemetry;
+}
+
+} // namespace
+
+TEST_CASE("parse_detail names the job and control numbers no reading can be", "[flashforge][FlashforgeTelemetry]") {
+    // Firmware 1.9.9, within a second of a print's start: memory in every job and control field.
+    const PrinterStatus s = parsed(flashforge_fixtures::unzipping_detail());
+    CHECK(s.state == "unzipping");
+    CHECK(s.implausible_telemetry == std::vector<std::string>{
+        "printProgress 1.1117833352328347e-38", "printDuration 268369921", "targetPrintLayer 8065023",
+        "printSpeedAdjust 65660", "zAxisCompensation 2.7561578975419097e-40", "chamberFanSpeed 5177344",
+        "coolingFanSpeed 5111810"});
+    CHECK(s.remaining_s == -1);
+    // The rest of the same report is still read, and what the printer sent is kept as it sent it.
+    CHECK(s.nozzles.size() == 4);
+    CHECK(s.slots.size() == 4);
+    CHECK(s.light_on);
+    CHECK(s.raw["printSpeedAdjust"] == 65660);
+
+    // Another start of the same print: every integer in range, the floats integer bits all the same.
+    const PrinterStatus downloading = parsed(flashforge_fixtures::downloading_detail());
+    CHECK(downloading.state == "downloading");
+    CHECK(downloading.implausible_telemetry == std::vector<std::string>{
+        "printProgress 1.5414283107572988e-44", "zAxisCompensation 1.2611686178923354e-44"});
+
+    // Four seconds later every number reads right.
+    CHECK(parsed(flashforge_fixtures::first_printing_detail()).implausible_telemetry.empty());
+    CHECK(parsed(flashforge_fixtures::creator_5_pro_detail()).implausible_telemetry.empty());
+}
+
+TEST_CASE("each job and control number is held to what a reading can be", "[flashforge][FlashforgeTelemetry]") {
+    using Names = std::vector<std::string>;
+    // Fans are percentages.
+    CHECK(implausible_with({{"chamberFanSpeed", 100}, {"coolingFanSpeed", 0}, {"coolingLeftFanSpeed", 55}}).empty());
+    CHECK(implausible_with({{"chamberFanSpeed", 101}}) == Names{"chamberFanSpeed 101"});
+    CHECK(implausible_with({{"coolingLeftFanSpeed", -1}}) == Names{"coolingLeftFanSpeed -1"});
+    // Progress is a fraction.
+    CHECK(implausible_with({{"printProgress", 1.0}}).empty());
+    CHECK(implausible_with({{"printProgress", 1e-6}}).empty());
+    CHECK(implausible_with({{"printProgress", 1.5}}) == Names{"printProgress 1.5"});
+    // A float under 1e-12 is integer bits read as one, whatever the field: 11 reads as 1.5e-44, and
+    // 268369921 (0x0FFF0001, the report's printDuration) as 2.5e-29, a normal float.
+    CHECK(implausible_with({{"printProgress", 1e-39}}) == Names{"printProgress 1e-39"});
+    CHECK(implausible_with({{"zAxisCompensation", -3e-40}}) == Names{"zAxisCompensation -3e-40"});
+    CHECK(implausible_with({{"printProgress", 2.5e-29}}) == Names{"printProgress 2.5e-29"});
+    // What float arithmetic on a real reading leaves is far above it: 0.025 - 0.025 in floats is 0 or a
+    // step of 1.9e-9, and one byte of a gigabyte file is 1e-9 of it.
+    CHECK(implausible_with({{"zAxisCompensation", 1.862645149230957e-09}, {"printProgress", 1e-9}}).empty());
+    // A Z offset of a few millimetres, a speed override of any step the printer offers.
+    CHECK(implausible_with({{"zAxisCompensation", -0.075}, {"printSpeedAdjust", 166}}).empty());
+    CHECK(implausible_with({{"zAxisCompensation", 12.0}}) == Names{"zAxisCompensation 12.0"});
+    CHECK(implausible_with({{"printSpeedAdjust", 65660}}) == Names{"printSpeedAdjust 65660"});
+    // A job of days, and of thousands of layers.
+    CHECK(implausible_with({{"printDuration", 9 * 24 * 3600}, {"estimatedTime", 9 * 24 * 3600},
+                            {"printLayer", 4000}, {"targetPrintLayer", 5000}}).empty());
+    CHECK(implausible_with({{"estimatedTime", -1}}) == Names{"estimatedTime -1"});
+    CHECK(implausible_with({{"printLayer", 8065023}}) == Names{"printLayer 8065023"});
+    // A number sent as text is read as parse_detail reads it, and named as it was sent.
+    CHECK(implausible_with({{"chamberFanSpeed", "5177344"}}) == Names{"chamberFanSpeed \"5177344\""});
+    // A field the printer does not report is not a reading.
+    nlohmann::json no_fans = flashforge_fixtures::creator_5_pro_detail();
+    no_fans.erase("chamberFanSpeed");
+    CHECK(parsed(no_fans).implausible_telemetry.empty());
+}
+
+TEST_CASE("flashforge_status_to_bambu_payload leaves out the progress of a report it cannot trust", "[flashforge][FlashforgeTelemetry]") {
+    // Left out, the Device tab keeps what it showed; the report's own progress is memory.
+    const nlohmann::json unreadable = flashforge_status_to_bambu_payload(parsed(flashforge_fixtures::unzipping_detail()))["print"];
+    CHECK_FALSE(unreadable.contains("mc_percent"));
+    CHECK_FALSE(unreadable.contains("mc_remaining_time"));
+    CHECK(unreadable["bed_temper"] == 27);
+
+    const nlohmann::json readable = flashforge_status_to_bambu_payload(parsed(flashforge_fixtures::first_printing_detail()))["print"];
+    CHECK(readable["mc_percent"] == 0);
+    CHECK(readable["mc_remaining_time"] == 0);
 }
 
 TEST_CASE("control payload shapes", "[flashforge]") {

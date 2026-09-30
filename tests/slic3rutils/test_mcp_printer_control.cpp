@@ -11,6 +11,8 @@
 #include "slic3r/GUI/OrcaMCP/OrcaMCPServer.hpp"
 #include "slic3r/Utils/FlashforgeApi.hpp"
 
+#include "flashforge_status_fixtures.hpp"
+
 // printer_control, from a call's arguments to the exact request the printer's local API would receive,
 // with no printer: every step but the POST itself (Flashforge::send_control, which light, temperatures
 // and pause already take) is a pure function. No test here may reach a printer.
@@ -251,4 +253,25 @@ TEST_CASE("a status names the controls printer_control changes", "[McpPrinterCon
 
     // get_printer_status carries them in its printer object.
     CHECK(status_to_json(printing_printer())["controls"]["print_speed_percent"] == 100);
+}
+
+TEST_CASE("printer_control sends nothing back from a report it cannot trust", "[McpPrinterControl][orcamcp][FlashforgeTelemetry]")
+{
+    FlashforgeApi::PrinterStatus unreadable;
+    std::string                  error;
+    REQUIRE(FlashforgeApi::parse_detail(flashforge_fixtures::detail_body(flashforge_fixtures::unzipping_detail()), unreadable, error));
+
+    // Each would have carried a 65660 % speed and fans in the millions back to the printer.
+    for (const json& arguments : {json{{"action", "set_fans"}, {"cooling_fan", 50}},
+                                  json{{"action", "set_z_offset"}, {"z_offset", 0.05}},
+                                  json{{"action", "set_filtration"}, {"exhaust", true}}}) {
+        const std::string refusal = refusal_of(control_body(arguments, unreadable));
+        INFO(arguments.dump() << " -> " << refusal);
+        CHECK(mentions(refusal, "printSpeedAdjust 65660"));
+        CHECK(mentions(refusal, "get_printer_status"));
+        CHECK(mentions(refusal, "Nothing was sent"));
+    }
+    // What carries nothing of the report back still goes.
+    CHECK_FALSE(control_body({{"action", "light_on"}}, unreadable).contains("refused"));
+    CHECK_FALSE(control_body({{"action", "cancel"}}, unreadable).contains("refused"));
 }

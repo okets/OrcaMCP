@@ -272,16 +272,29 @@ nlohmann::json status_to_json(const FlashforgeApi::PrinterStatus& s)
     // transcripts and logs.
     const nlohmann::json raw = console_raw_detail(s.raw);
 
+    // A report whose job and control numbers are memory (implausible_telemetry) gives none of them.
+    const bool     telemetry_valid = s.implausible_telemetry.empty();
+    auto           reading         = [telemetry_valid](const nlohmann::json& value) {
+        return telemetry_valid ? value : nlohmann::json(nullptr);
+    };
+    nlohmann::json controls = printer_controls_json(raw);
+    for (nlohmann::json& control : controls)
+        if (control.is_number())
+            control = reading(control);
+
     return {
         {"state", s.state},
         {"print_file", s.print_file},
-        {"progress", s.progress},
-        {"duration_s", s.duration_s},
+        {"telemetry_valid", telemetry_valid},
+        {"implausible_telemetry", s.implausible_telemetry},
+        {"progress", reading(s.progress)},
+        {"duration_s", reading(s.duration_s)},
         // Projected from elapsed and progress; null until there is enough progress to project from.
-        // The firmware's own estimate is NOT remaining time (it tracks elapsed on 1.9.9) and is
+        // The firmware's own estimate is NOT remaining time (on 1.9.9 it tracked elapsed on one job and
+        // held the whole job's estimate on another) and is
         // passed through separately so an agent never mistakes one for the other.
         {"remaining_s", s.remaining_s >= 0 ? nlohmann::json(s.remaining_s) : nlohmann::json(nullptr)},
-        {"firmware_estimated_s", s.firmware_estimated_s},
+        {"firmware_estimated_s", reading(s.firmware_estimated_s)},
         {"temperatures", {
             {"bed", temperature_json(s.bed_temp, s.bed_target)},
             {"chamber", temperature_json(s.chamber_temp, s.chamber_target)},
@@ -300,7 +313,7 @@ nlohmann::json status_to_json(const FlashforgeApi::PrinterStatus& s)
         {"camera_stream_url", s.camera_stream_url},
         {"material_station", {{"present", s.has_material_station}, {"slots", material_slots_json(s.slots)}}},
         // What printer_control's set_* actions change, named as it takes them.
-        {"controls", printer_controls_json(raw)},
+        {"controls", controls},
         {"raw", raw}
     };
 }

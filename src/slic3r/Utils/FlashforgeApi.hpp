@@ -13,11 +13,12 @@ namespace Slic3r { namespace FlashforgeApi {
 struct NozzleTemp { double current{0}; double target{0}; };
 struct MaterialSlot { int slot_id{0}; bool has_filament{false}; std::string material_name, material_color; };
 struct PrinterStatus {
-    std::string state;                 // normalized: ready|busy|heating|printing|paused|completed|error|cancelled|unknown
+    std::string state;                 // normalized: ready|busy|heating|printing|paused|completed|error|cancelled|unknown, or the printer's own (downloading, unzipping)
     std::string print_file; double progress{0}; long duration_s{0};
     // Seconds left, PROJECTED from elapsed time and progress: duration_s * (1 - p) / p. The firmware's
-    // own `estimatedTime` is not usable for this -- on 1.9.9 it tracks printDuration exactly, so a
-    // console that trusted it showed "17 min left" 17 minutes into a nine-hour job. -1 when unknown:
+    // own `estimatedTime` is not usable for this -- on 1.9.9 it tracked printDuration exactly on one
+    // job, so a console that trusted it showed "17 min left" 17 minutes into a nine-hour job, and held
+    // the job's whole estimate on another (2026-09-30). -1 when unknown:
     // no active job, no elapsed time yet, or progress under 2 %, where the projection swings wildly.
     long remaining_s{-1};
     // The firmware's `estimatedTime` as reported, untouched, so its real meaning can be studied
@@ -36,6 +37,13 @@ struct PrinterStatus {
     std::string name, model, firmware, ip, camera_stream_url; int pid{0};
     bool has_material_station{false}; std::vector<MaterialSlot> slots;
     nlohmann::json raw;                // the untouched `detail` object
+    // The job and control numbers of this report that no reading can be, each as the field and the
+    // value the printer sent ("chamberFanSpeed 5177344"); empty when every one is a reading. Firmware
+    // 1.9.9 fills all of them from other memory for half a second after a print starts (states
+    // `downloading` and `unzipping`, 2026-09-30), some or all in range, so one entry means none of
+    // them is the printer's: progress, the times, layers, speed, Z offset and fans. `remaining_s` is
+    // then -1; `raw` keeps what was sent.
+    std::vector<std::string> implausible_telemetry;
 };
 
 // The local API is inconsistent about how it types its integers: `code`/`err`/`hasMatlStation`/

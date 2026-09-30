@@ -3909,6 +3909,35 @@ decide whether a new print needs calibrating again (see `send_to_printer`'s prin
 `cooling_fan_percent`, `cooling_left_fan_percent` (only on a printer with that fan), `recirculation`
 and `exhaust` (the filtration fans, on or off); null for what the printer does not report.
 
+`printer.telemetry_valid` says whether the printer's job and control numbers are readings. A
+Flashforge on firmware 1.9.9 reports every one of them from other memory for half a second after a
+print starts (states `downloading` and `unzipping`): once a fan at 5177344 % and a 65660 % speed,
+once every integer in range (layer 11, speed 10 %, fans 11 and 9 %), and both times the floats as
+integer bits (a 1.5e-44 progress). So when any is impossible (a fan outside 0-100 %, progress outside
+0-1, a speed over 1000 %, a Z offset past 10 mm, a job over 30 days or 100,000 layers, a nonzero
+number under 1e-12, which is integer bits read as a float), `telemetry_valid` is false, `implausible_telemetry` names each one as
+the printer sent it, and none of them is given: `progress`, `duration_s`, `remaining_s`,
+`firmware_estimated_s` and the numbers in `controls` are null, `raw` keeps what the printer sent, and
+`next_steps` says to read again in a few seconds. Temperatures, door, light and the material station
+are unaffected. `printer_control`'s `set_*` actions refuse to send such a report's settings back.
+
+```json
+"printer": {
+  "state": "unzipping", "print_file": "",
+  "telemetry_valid": false,
+  "implausible_telemetry": ["printProgress 1.1117833352328347e-38", "printDuration 268369921", "targetPrintLayer 8065023",
+                            "printSpeedAdjust 65660", "zAxisCompensation 2.7561578975419097e-40",
+                            "chamberFanSpeed 5177344", "coolingFanSpeed 5111810"],
+  "progress": null, "duration_s": null, "remaining_s": null, "firmware_estimated_s": null,
+  "controls": {"print_speed_percent": null, "z_offset_mm": null, "chamber_fan_percent": null,
+               "cooling_fan_percent": null, "recirculation": false, "exhaust": false},
+  "...": "..."
+}
+```
+
+`printer.raw.printLayer` equals `targetPrintLayer` for the first ten seconds or so of printing on
+firmware 1.9.9 (545 of 545 at 0.1 % progress): read it against `progress`.
+
 `printer.raw` is the printer's own status object cut down to the fields the Device page reads (fan
 states, print speed, Z offset, fan speeds, the material station's progress, ...), the same allowlist the
 page gets. The rest never leaves the app: the printer's cloud register codes, its MAC address, and any
@@ -3995,6 +4024,10 @@ Refused, with nothing sent to the printer:
   speed or part-cooling fan for `printerCtl_cmd` (the chamber fan too on the Pro), the other filtration
   fan for `circulateCtl_cmd` -- which would go out as 0 or `close` (a reply without a detail object parses
   as an empty status). The Device page still sends it as it always has;
+- a status whose job and control numbers are not readings (`get_printer_status`'s `telemetry_valid`
+  false, as for a moment after a print starts), whose values the command would send back: the refusal
+  names them, and `next_steps` says to read `get_printer_status` again in a few seconds. The Device page
+  turns its filtration, speed and Z buttons off then;
 - a print speed while nothing prints (the page's speed buttons are off then: the printer applies a speed
   only to a running job);
 - filtration on a printer that reports no filtration fans, a chamber fan on one that reports none, a
@@ -4300,6 +4333,7 @@ nothing to suggest has no `next_steps`.
 | `install_presets` | `select_preset` with `type: printer` and the first printer it installed | it installed printers: an install selects none |
 | `match_project_to_printer` (live) | `add_filament_slot` | the printer holds filament in a station slot the project has no filament slot for, and the printer takes more slots |
 | `printer_control` with a `set_*` action | `get_printer_status` | always: the printer takes a moment to apply a command, and `printer.controls` reads back what it now reports |
+| `get_printer_status`, and `printer_control`'s refusal of a `set_*` action | `get_printer_status` | the printer's job and control numbers were not readings (`telemetry_valid` false): a report a few seconds later is read again |
 | The bridge's own answers (`list_instances`, `start_orca`, and a tool call it did not forward) | `select_instance` with the `pid` of the first instance that tells who it is (never an older OrcaMCP, which cannot), and `list_instances` | several instances run and this session has not chosen one, or the one it used is gone |
 | | `start_orca` (with `new_instance: true` when others run) | no instance runs, or the one this session used is gone |
 | | `get_scene_info` | the instance this session used restarted, and the session now uses the restarted one: its scene is new |

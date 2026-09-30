@@ -119,6 +119,14 @@ const json* raw_detail(const json& snapshot)
     return (raw != printer->end() && raw->is_object()) ? &*raw : nullptr;
 }
 
+/// Whether the cached report's job and control numbers are the printer's (status_to_json's
+/// telemetry_valid), and so values to send back.
+bool telemetry_valid(const json& snapshot)
+{
+    const auto printer = snapshot.find("printer");
+    return printer == snapshot.end() || !printer->is_object() || printer->value("telemetry_valid", true);
+}
+
 double json_double(const json& obj, const char* key, double fallback)
 {
     const auto it = obj.find(key);
@@ -810,10 +818,18 @@ bool build_console_operation(const json& params, const json& snapshot, json& ope
     }
 
     // The two commands below each carry every field they own. Without a snapshot to read the
-    // untouched ones from, sending either would reset whatever it did not mention.
-    const json* raw = raw_detail(snapshot);
-    if (raw == nullptr && (name == "filtration" || name == "printer_ctl")) {
+    // untouched ones from, sending either would reset whatever it did not mention; from a report whose
+    // numbers are memory, it would send them (firmware 1.9.9's first second of a print: a 65660 %
+    // speed, fans in the millions).
+    const json* raw            = raw_detail(snapshot);
+    const bool  sends_settings = name == "filtration" || name == "printer_ctl";
+    if (raw == nullptr && sends_settings) {
         error = _u8L("The printer has not reported its current settings yet.");
+        return false;
+    }
+    if (sends_settings && !telemetry_valid(snapshot)) {
+        error = _u8L("The printer's last report was unreadable, and this command sends its settings back as reported. "
+                     "Try again in a few seconds.");
         return false;
     }
 

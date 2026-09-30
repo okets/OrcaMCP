@@ -9,6 +9,8 @@
 #include "slic3r/Utils/Flashforge.hpp"
 #include "slic3r/Utils/FlashforgeApi.hpp"
 
+#include "flashforge_status_fixtures.hpp"
+
 using json = nlohmann::json;
 using Slic3r::GUI::build_console_operation;
 using Catch::Matchers::WithinAbs;
@@ -412,4 +414,31 @@ TEST_CASE("an operation nobody built never reaches the printer", "[flashforge][f
     CHECK(msg.ToStdString().find("Unknown command") != std::string::npos);
     CHECK_FALSE(Slic3r::GUI::run_console_operation(host, json{{"kind", "job"}, {"action", "eject"}}, msg));
     CHECK(msg.ToStdString().find("Unknown job action") != std::string::npos);
+}
+
+TEST_CASE("a control that sends the printer's settings back waits for a report it can trust", "[flashforge][flashforge-console][FlashforgeTelemetry]")
+{
+    auto snapshot_of = [](const json& detail) {
+        Slic3r::FlashforgeApi::PrinterStatus status;
+        std::string                          error;
+        REQUIRE(Slic3r::FlashforgeApi::parse_detail(flashforge_fixtures::detail_body(detail), status, error));
+        return Slic3r::GUI::console_snapshot(status);
+    };
+    std::string error;
+
+    // A print's first second on firmware 1.9.9: a Z nudge would have sent back a 65660 % speed and
+    // fans in the millions, as the printer reported them.
+    const json unreadable = snapshot_of(flashforge_fixtures::unzipping_detail());
+    CHECK(build({{"name", "printer_ctl"}, {"zAxisCompensation", 0.05}}, unreadable, error).is_null());
+    CHECK(error.find("few seconds") != std::string::npos);
+    CHECK(build({{"name", "printer_ctl"}, {"coolingFan", 50}}, unreadable, error).is_null());
+    CHECK(build({{"name", "filtration"}, {"internal", "open"}}, unreadable, error).is_null());
+    // What sends nothing of the report back still goes.
+    CHECK_FALSE(build({{"name", "light"}, {"on", true}}, unreadable, error).is_null());
+    CHECK_FALSE(build({{"name", "job"}, {"action", "stop"}}, unreadable, error).is_null());
+    CHECK_FALSE(build({{"name", "temperature"}, {"bed", 60}}, unreadable, error).is_null());
+
+    // Four seconds later the same nudge goes, carrying what the printer then reports.
+    const json op = build({{"name", "printer_ctl"}, {"zAxisCompensation", 0.05}}, snapshot_of(flashforge_fixtures::first_printing_detail()), error);
+    CHECK(op["args"] == json{{"zAxisCompensation", 0.05}, {"speed", 100.0}, {"chamberFan", 0.0}, {"coolingFan", 0.0}});
 }
