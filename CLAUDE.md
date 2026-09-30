@@ -2010,6 +2010,26 @@ Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices
 when <https://github.com/OrcaSlicer/OrcaSlicer/issues/15758> closes.
 
+### The Design (CAD) tab — check its state after every sync
+
+Upstream's experimental Design tab (PR #15238, in since v2.5.0.7-dev, off unless Preferences' "CAD feature
+(experimental)" is ticked) is **not ready**, and the user decided on 2026-09-30 not to invest in it: no MCP tools
+for it, no fixes to it, no work on its own agent socket (`src/slic3r/GUI/CAD/McpControl.cpp`). We ship it as
+upstream has it. After every upstream sync, report its state to the user in a few lines, so the decision can be
+revisited when it matures:
+
+```bash
+PREV=<the upstream commit the last sync merged>   # e.g. 52f4c68c41 before v2.5.0.7-dev, 72cfe71b81 after it
+git log --oneline $PREV..upstream/main -- src/libslic3r/CAD src/slic3r/GUI/CAD src/slic3r/GUI/Gizmos/GLGizmoSketch.cpp tools/orca_cad_mcp_bridge.py
+gh issue list -R SoftFever/OrcaSlicer --state all --search "Design tab OR CAD sketch" --limit 20
+gh pr view 15238 -R SoftFever/OrcaSlicer --comments | tail -40   # crash and breakage reports
+git show upstream/main:src/slic3r/GUI/Preferences.cpp | grep -c 'CAD feature (experimental)'   # still experimental?
+```
+
+Say what changed (fixes, new verbs on its socket, crash reports still open, whether it is still experimental),
+whether it now looks stable, and nothing more; the user decides. On 2026-09-29 it was crashy on macOS while
+sketching, most of its tools untested by its author, and upstream's only changes since its merge were build fixes.
+
 ### Alternative: Rebase (cleaner history)
 
 ```bash

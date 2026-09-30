@@ -7,35 +7,7 @@ decided and what is already known, so nobody has to rediscover it.
 
 ---
 
-## Next: the Design (CAD) tab for agents
-
-**The goal.** An agent models in the slicer: sketches, constrains, extrudes, fillets, and commits the
-part to the plate, then slices it with the tools it already has. The user, 2026-09-29: "I ABSOLUTELY
-LOVE IT and can't wait to experiment with it."
-
-**What upstream shipped (merged in v2.5.0.7-dev, PR #15238, 2026-09-18).** A sketch-first parametric
-CAD tab on OCCT and SolveSpace's libslvs, behind an experimental preference. The model is a recipe of
-features, replayed on every change and saved in the 3MF. It comes with its own agent surface: about 60
-JSON-RPC verbs (`sketch_begin` / `sketch_add` / `sketch_commit`, `extrude`, `revolve`, `fillet`,
-`chamfer`, `shell`, `hole`, `pattern`, `boolean`, `measure`, `mass_properties`, `import_step`, ...) in
-`src/slic3r/GUI/CAD/McpControl.cpp`, over a Unix socket that opens only with `ORCA_CAD_MCP` set, through
-its own bridge (`tools/orca_cad_mcp_bridge.py`). No Windows transport.
-
-**Its state on 2026-09-29.** Early. The PR's own notes: most tools never click-tested, the defect rate
-"has not converged". PR comments report hard crashes on macOS drawing a rectangle or circle in a new
-sketch, flicker, broken scaling; one regular contributor asked for a revert. Upstream's changes since the
-merge are build and OCCT 8 fixes only. The geometry kernel has about 200 test cases in CI; the crashes are
-in the mouse-driven sketch UI, which an agent path through the kernel skips.
-
-**Decided on 2026-09-29.** The catch-up release ships the tab as upstream has it. The CAD sprint opens
-with a hands-on probe of upstream's socket on our build (which verbs work, what the kernel refuses, what
-crashes); the findings go to the user before any tool design. The aim after that is the verbs as
-OrcaMCP tools on the one server: every platform, the instance routing, the argument checks, the golden
-tool list, full agentic parity.
-
----
-
-## Then: pointing and the window screenshot, together
+## Next release: pointing and the window screenshot, together
 
 **The goal.** The user can show the agent what they mean instead of describing it:
 
@@ -46,8 +18,8 @@ It came from the user struggling to explain in words what a click would have sho
 
 **Decided on 2026-09-26:**
 
-- Pointing and the screenshot ship together (planned for the release after v2.5.0.6-dev; on 2026-09-29
-  the user put the upstream catch-up, then the Design tab for agents, first).
+- Pointing and the screenshot ship together (planned for the release after v2.5.0.6-dev; the upstream
+  catch-up, v2.5.0.7-dev, went first).
 - Both must work on macOS, Windows and Linux. If one platform can't be done, the feature waits;
   it doesn't ship for some platforms only.
 - Pointing is by **click**, not hover.
@@ -144,6 +116,32 @@ list, 3D view, notifications), with the cursor position drawn on it.
 ---
 
 ## Later
+
+### The Design (CAD) tab for agents: not now
+
+**The goal.** An agent models in the slicer: sketches, constrains, extrudes, fillets, and commits the
+part to the plate, then slices it with the tools it already has. The user, 2026-09-29: "I ABSOLUTELY
+LOVE IT and can't wait to experiment with it."
+
+**What upstream shipped (merged in v2.5.0.7-dev, PR #15238, 2026-09-18).** A sketch-first parametric
+CAD tab on OCCT and SolveSpace's libslvs, behind an experimental preference. The model is a recipe of
+features, replayed on every change and saved in the 3MF. It comes with its own agent surface: about 60
+JSON-RPC verbs (`sketch_begin` / `sketch_add` / `sketch_commit`, `extrude`, `revolve`, `fillet`,
+`chamfer`, `shell`, `hole`, `pattern`, `boolean`, `measure`, `mass_properties`, `import_step`, ...) in
+`src/slic3r/GUI/CAD/McpControl.cpp`, over a Unix socket that opens only with `ORCA_CAD_MCP` set, through
+its own bridge (`tools/orca_cad_mcp_bridge.py`). No Windows transport.
+
+**Its state on 2026-09-29.** Early. The PR's own notes: most tools never click-tested, the defect rate
+"has not converged". PR comments report hard crashes on macOS drawing a rectangle or circle in a new
+sketch, flicker, broken scaling; one regular contributor asked for a revert. Upstream's changes since the
+merge are build and OCCT 8 fixes only. The geometry kernel has about 200 test cases in CI; the crashes are
+in the mouse-driven sketch UI, which an agent path through the kernel skips.
+
+**Decided on 2026-09-30.** The user tried it: "this tab IS NOT READY". No investment for now: no tools, no
+probe of its socket, no fixes. After every upstream sync its state is checked and reported (CLAUDE.md, "The
+Design (CAD) tab -- check its state after every sync"); the user decides when it is worth picking up. If it is,
+the aim stays the verbs as OrcaMCP tools on the one server (every platform, instance routing, argument checks,
+the golden tool list), starting with a hands-on probe of upstream's socket.
 
 ### Hover pointing
 
