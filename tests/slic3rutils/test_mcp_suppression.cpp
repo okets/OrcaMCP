@@ -1,5 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstdlib>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -362,4 +364,53 @@ TEST_CASE("A keyed prompt that was asked is known as asked, until the outermost 
     }
     Slic3r::GUI::OrcaMCP::McpDialogSuppressionGuard next;
     CHECK_FALSE(next.prompt_asked(MCP_PROMPT_SPLIT_FLOATING));
+}
+
+namespace {
+
+// ORCAMCP_SKIP_CLOUD_LOGIN, which marks an agent's launch, set for one test (nullptr: not set) and put
+// back as it was.
+class ScopedAgentLaunchVariable
+{
+public:
+    explicit ScopedAgentLaunchVariable(const char* value)
+    {
+        if (const char* before = std::getenv(k_name))
+            m_before = before;
+        set(value);
+    }
+    ~ScopedAgentLaunchVariable() { set(m_before ? m_before->c_str() : nullptr); }
+
+private:
+    static constexpr const char* k_name = "ORCAMCP_SKIP_CLOUD_LOGIN";
+
+    static void set(const char* value)
+    {
+#ifdef _WIN32
+        _putenv_s(k_name, value ? value : "");
+#else
+        if (value)
+            ::setenv(k_name, value, 1);
+        else
+            ::unsetenv(k_name);
+#endif
+    }
+
+    std::optional<std::string> m_before;
+};
+
+} // namespace
+
+// An agent's launch has nobody at the screen: a startup dialog would wait for good, before the MCP
+// server starts (the Linux build's SSL prompt, 2026-09-30) or over the window after it.
+TEST_CASE("an agent's launch leaves out a startup dialog, and any other launch shows it", "[McpSuppression][orcamcp]")
+{
+    {
+        ScopedAgentLaunchVariable agent("1");
+        CHECK(agent_launch_leaves_out("the setup wizard", "install_presets installs printers and filaments"));
+    }
+    for (const char* value : {static_cast<const char*>(nullptr), "", "0"}) {
+        ScopedAgentLaunchVariable person(value);
+        CHECK_FALSE(agent_launch_leaves_out("the setup wizard", "install_presets installs printers and filaments"));
+    }
 }

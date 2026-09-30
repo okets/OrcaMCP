@@ -60,6 +60,9 @@ struct InstanceIdentity
     // No other instance of this program ran on this data folder when it started: only then can it be a
     // restart of one that quit, which the bridge follows. A second window opened beside it is not.
     bool        alone_at_start = false;
+    // The token the bridge's start_orca gave this launch (ORCAMCP_LAUNCH_ID), by which it knows the
+    // instance it launched whatever wrapper launched it; empty when no agent launched it.
+    std::string launch_id;
     ProjectInfo project;
 };
 
@@ -71,6 +74,9 @@ std::optional<InstanceIdentity> identity_from_json(const nlohmann::json& entry);
 
 // 32 random hex digits.
 std::string new_instance_id();
+// The launch token in ORCAMCP_LAUNCH_ID, cleared from the environment so that a window this instance
+// opens never carries it too; empty when it is not set.
+std::string take_launch_id();
 // e.g. 2026-09-28T09:15:03.123Z
 std::string utc_timestamp(std::chrono::system_clock::time_point when);
 

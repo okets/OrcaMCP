@@ -144,6 +144,11 @@ std::vector<NextStep> printer_control_next_steps();
 // printer, and a switch changes the filament slots and their colours, so it is left to its own call.
 std::vector<NextStep> installed_printer_next_steps(const std::vector<std::string>& printers);
 
+// What a refusal for the built-in default printer leads to (slice_all's no_printer, export_gcode's): with
+// no printer installed, get_presets of the printers that can be, which install_presets installs by name
+// (and its answer leads to select_preset); with one installed, select_preset of it. Nothing for a real one.
+std::vector<NextStep> printer_setup_next_steps(const PrinterSetup& setup);
+
 // What add_filament_slot's and delete_filament_slot's answers lead to when they renumbered slots or moved
 // objects (`renumbered`): get_scene_info, whose filaments_used shows each object's slots now -- and after any
 // undo, which would bring back the objects' old slot numbers without the slots (undo_warning).

@@ -353,6 +353,22 @@ std::vector<NextStep> installed_printer_next_steps(const std::vector<std::string
              {{"type", "printer"}, {"name", printers.front()}}}};
 }
 
+std::vector<NextStep> printer_setup_next_steps(const PrinterSetup& setup)
+{
+    if (!setup.default_selected)
+        return {};
+    if (!setup.installed_printer.empty())
+        return {{"select_preset",
+                 "the built-in default printer is selected, and '" + setup.installed_printer +
+                     "' is installed: this selects it (get_presets with type printer lists the others)",
+                 {{"type", "printer"}, {"name", setup.installed_printer}}}};
+    return {{"get_presets",
+             "no printer is installed: this lists the makers whose printers can be (vendors_not_installed); called "
+             "again with vendor and name_contains for the user's printer, it lists its presets, which install_presets "
+             "installs by name, then select_preset selects",
+             {{"installed", false}, {"type", "printer"}}}};
+}
+
 std::vector<NextStep> slot_change_next_steps(bool renumbered)
 {
     if (!renumbered)

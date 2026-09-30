@@ -66,7 +66,7 @@ def load_bridge(**settings):
     return module
 
 
-def refuse_to_launch(executable):
+def refuse_to_launch(executable, launch_id=None):
     """No test launches an app: start_orca would start the user's installed OrcaMCP, on their real data
     (2026-09-28, a test of the "already running" answer did). A test of the launch fakes it."""
     raise AssertionError(f"a bridge test tried to launch {executable}")

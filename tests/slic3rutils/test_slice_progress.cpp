@@ -747,3 +747,34 @@ TEST_CASE("an export of a plate its slice's G-code check failed, or never checke
     REQUIRE(export_not_started(invalid).has_value());
     CHECK(export_not_started(invalid)->find("Prime Tower") != std::string::npos);
 }
+
+// On a new data folder only the app's built-in default printer exists until one is installed: the setup
+// wizard installs it for a person, and an agent's launch shows none. A slice for the default failed its
+// validation ("Relative extruder addressing ... Add G92 E0 to layer_gcode"), which sent an agent to the
+// wrong fix (2026-09-30).
+TEST_CASE("slice_all refuses the built-in default printer, and says how to install one", "[orcamcp][SliceProgress]")
+{
+    const std::optional<SliceStartReport> refusal = refuse_without_printer({true, ""});
+    REQUIRE(refusal.has_value());
+    CHECK(refusal->status == SliceStart::not_started);
+    CHECK(refusal->reason == "no_printer");
+    CHECK(refusal->message.find("No printer is installed") != std::string::npos);
+    for (const char* tool : {"get_presets", "install_presets", "select_preset"})
+        CHECK(refusal->message.find(tool) != std::string::npos);
+}
+
+TEST_CASE("slice_all with a printer installed but the default still selected says to select it", "[orcamcp][SliceProgress]")
+{
+    const std::optional<SliceStartReport> refusal = refuse_without_printer({true, "Creality Ender-3 V2 0.4 nozzle"});
+    REQUIRE(refusal.has_value());
+    CHECK(refusal->reason == "no_printer");
+    CHECK(refusal->message.find("select_preset") != std::string::npos);
+    CHECK(refusal->message.find("Creality Ender-3 V2 0.4 nozzle") != std::string::npos);
+    CHECK(refusal->message.find("install_presets") == std::string::npos);
+}
+
+TEST_CASE("a printer of the user's selected is no refusal", "[orcamcp][SliceProgress]")
+{
+    CHECK_FALSE(refuse_without_printer({false, "Creality Ender-3 V2 0.4 nozzle"}).has_value());
+    CHECK_FALSE(no_printer_message({false, "Creality Ender-3 V2 0.4 nozzle"}).has_value());
+}

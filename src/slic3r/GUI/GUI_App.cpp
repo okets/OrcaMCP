@@ -976,7 +976,8 @@ void GUI_App::post_init()
     hms_query = new HMSQuery();
 
     m_show_gcode_window = app_config->get_bool("show_gcode_window");
-    if (m_networking_need_update) {
+    if (m_networking_need_update &&
+        !agent_launch_leaves_out("the network plugin download dialog", "the Bambu network plugin stays as it is")) {
         show_network_plugin_download_dialog(false);
     }
 
@@ -1010,7 +1011,8 @@ void GUI_App::post_init()
                 this->preset_updater->sync(http_url, language, network_ver, sys_preset ? preset_bundle : nullptr);
             }
 
-            this->check_new_version_sf();
+            if (!agent_launch_leaves_out("the startup check for a newer OrcaMCP, and its dialog,", "Help > Check for Updates still checks"))
+                this->check_new_version_sf();
             const auto cloud_provider = get_printer_cloud_provider();
             if (is_user_login(cloud_provider) && !app_config->get_stealth_mode()) {
               // this->check_privacy_version(0);
@@ -1022,7 +1024,8 @@ void GUI_App::post_init()
     // Orca: notify users upgrading from a pre-2.4.0 version that profile syncing
     // moved from Bambu Cloud to Orca Cloud.
     if (is_editor() && m_last_config_version && m_last_config_version->valid()
-        && *m_last_config_version < Semver(2, 4, 0)) {
+        && *m_last_config_version < Semver(2, 4, 0)
+        && !agent_launch_leaves_out("the notice that profile syncing moved to Orca Cloud", "nothing changes")) {
         CallAfter([] {
             const wxString wiki_url = "https://www.orcaslicer.com/wiki/user_profiles/user_profiles.html#profiles-missing-after-updating-from-bambu-cloud";
             MessageDialog dlg(nullptr,
@@ -3092,7 +3095,9 @@ bool GUI_App::on_init_inner()
         std::string ssl_cert_store = app_config->get("tls_accepted_cert_store_location");
         bool ssl_accept = app_config->get("tls_cert_store_accepted") == "yes" && ssl_cert_store == Slic3r::Http::tls_system_cert_store();
 
-        if (!msg.empty() && !ssl_accept) {
+        // Orca: an agent's launch goes on as on its Yes, which takes the system store the message names.
+        if (!msg.empty() && !ssl_accept &&
+            !agent_launch_leaves_out("the prompt \"" + msg + "\"", "going on with the system certificate store, as its Yes")) {
             RichMessageDialog
                 dlg(nullptr,
                     wxString::Format(_L("%s\nDo you want to continue?"), msg),
@@ -8215,8 +8220,9 @@ bool GUI_App::load_language(wxString language, bool initial)
         message += _L("\nYou may need to reconfigure the missing locales, likely by running the \"locale-gen\" and \"dpkg-reconfigure locales\" commands.\n");
 #endif
         if (initial)
-        	message + "\n\nApplication will close.";
-        wxMessageBox(message, _L("Orca Slicer - Switching language failed"), wxOK | wxICON_ERROR);
+            message += "\n\nApplication will close.";
+        if (!(initial && agent_launch_leaves_out("the error \"" + into_u8(message) + "\"", "the app closes")))
+            wxMessageBox(message, _L("Orca Slicer - Switching language failed"), wxOK | wxICON_ERROR);
         if (initial)
 			std::exit(EXIT_FAILURE);
 		else
@@ -9717,6 +9723,9 @@ void GUI_App::window_pos_center(wxTopLevelWindow *window)
 bool GUI_App::config_wizard_startup()
 {
     if (!m_app_conf_exists || preset_bundle->printers.only_default_printers()) {
+        // Orca: the next launch by a person still runs it, as long as no printer is installed.
+        if (agent_launch_leaves_out("the setup wizard", "install_presets installs printers and filaments"))
+            return false;
         BOOST_LOG_TRIVIAL(info) << "run wizard...";
         run_wizard(ConfigWizard::RR_DATA_EMPTY);
         BOOST_LOG_TRIVIAL(info) << "finished run wizard";

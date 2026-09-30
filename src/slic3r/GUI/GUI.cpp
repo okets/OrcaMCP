@@ -199,6 +199,13 @@ bool is_agent_launch() {
     return value != nullptr && *value != '\0' && std::string(value) != "0";
 }
 
+bool agent_launch_leaves_out(const std::string& dialog, const std::string& instead) {
+    if (!is_agent_launch())
+        return false;
+    BOOST_LOG_TRIVIAL(warning) << "Agent launch (ORCAMCP_SKIP_CLOUD_LOGIN): " << dialog << " not shown; " << instead;
+    return true;
+}
+
 std::string mcp_list_summary(const std::vector<std::string>& items, size_t max_items) {
     const size_t shown = std::min(items.size(), max_items);
     std::string  summary;

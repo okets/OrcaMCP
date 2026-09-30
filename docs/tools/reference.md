@@ -2614,6 +2614,7 @@ Slice every plate in the project, one after another, exactly as the GUI's **Slic
 | `busy_job` | An arrange, orient or bed fill holds the app: poll `get_slicing_status` until `ui_job` is null, then call `slice_all` again |
 | `nothing_to_slice` | No printable object fully on the plates asked for: an object marked unprintable, or partly outside its plate, does not count (`get_object_info`'s `on_bed` and `placement_warning` say which), and neither does one taller than the printable height, which the app leaves out of the slice (`active_warnings`: "laid over the boundary of plate or exceeds the height limit"). A refusal the app gives words for comes first: with a `printable_height` of 0, which the build volume takes for no limit, the object stays in the slice and the app's validation refuses it, reported as `invalid` with its words ("The object ... exceeds the maximum build volume height.") |
 | `invalid` | The app refuses a plate it was asked for as it stands, the way the GUI greys its Slice button, ahead of `nothing_to_slice`; `message` says which check, the first that applies: its validation (the plate's validation result, not a guess from `active_warnings`; `message` gives the app's words, e.g. "Prime Tower is partially outside the printable area"), plugins slicing needs but that are missing, a mixed filament that lost a component, a plate not ready to slice (an object partly off the plate or over its height, or a filament that cannot print where it is), or the plate's last slice having failed, which the app does not retry until something on the plate changes. A setting fixed just before the call counts: the app takes in a settings change 0.5 s after it, and `slice_all` applies one still waiting first (so do `get_slicing_status`, `get_print_estimate` and `export_gcode`), so it is not refused on the failure the fix removed |
+| `no_printer` | The selected printer is the app's built-in default, whose settings match no real printer: no printer is installed yet (a new data folder, where an agent's launch shows no setup wizard), or one is installed and not selected. Checked before the plate, whose validation would otherwise fail on the default's settings ("Add G92 E0 to layer_gcode"). `message` says what to do, and `next_steps` names the call: `get_presets` of the printers that can be installed, or `select_preset` of the one installed |
 | `unknown` | No signal explains it; `active_warnings` may |
 
 **Note:** Async operation. Call `wait_for_slice`, which returns once the run is over; `next_steps`
@@ -4245,6 +4246,7 @@ Many tools return an `active_warnings` section in their response, providing visi
 | `SlicingSeriousWarning` | Serious slicing issue |
 | `ValidateError` | Validation failed |
 | `PlaterWarning` | General plater warning |
+| `NoPrinter` | A `serious_warning`, first in every response's list while the selected printer is the app's built-in default: nothing can be sliced until a printer is installed (`install_presets`) and selected (`select_preset`); `message` says how. Gone once a real printer is selected |
 | `MeshErrors` | The object list shows its warning icon for an object: open edges or recorded repairs. Only `get_scene_info` (every flagged object) and `load_model` (the flagged objects it added) report it, because it stays until the mesh is repaired. `message` gives the list's reason and what an agent can do (`repair_mesh {object_id: N}` for open edges; slicing closes each layer's outline across gaps up to 2 mm); the entry also carries `object_id` and `object_name`. `get_mesh_health` has the numbers |
 
 **Note:** The `count` field is always present (even when 0) to help agents confirm issues have been resolved.
@@ -4275,6 +4277,8 @@ nothing to suggest has no `next_steps`.
 | `slice_all` | `wait_for_slice` | `slicing_started`, or `not_started` with `busy_slicing` (wait, then `slice_all` again) |
 | | `get_slicing_status` | `busy_job`: an arrange, orient or bed fill holds the app, which `wait_for_slice` does not wait for; `slice_all` again once `ui_job` is null |
 | | `get_print_estimate` with the `plate_index` of a sliced plate (the selected one when it has a result) | `already_sliced` |
+| `slice_all`, `export_gcode` | `get_presets` with `installed: false, type: printer` | `no_printer` (for `export_gcode`, its error) with no printer installed: its answer lists the makers (`vendors_not_installed`), and called again with `vendor` and `name_contains` the user's printer's presets, which `install_presets` installs |
+| | `select_preset` with `type: printer` and an installed printer | the built-in default printer is selected while one is installed |
 | `export_gcode` | `wait_for_slice` | `export_started`: the file is still being written, past the call's own wait |
 | `cancel_slice` | `wait_for_slice` | the cancelled slice is still stopping: its completion is not taken in yet |
 | `add_layer_gcode`, `delete_layer_gcode` | `slice_all` | the call changed the plate's layer G-code, so it lost its slice |
@@ -4364,8 +4368,9 @@ These tools are handled by the MCP bridge script (`orcamcp-bridge.py`), not the 
 Start OrcaMCP and wait until it is ready; this session's calls then go to it. It launches the
 installed app (`/Applications/OrcaMCP.app`, `~/Applications/OrcaMCP.app`; on Windows
 `%ProgramFiles%\OrcaMCP\orca-mcp.exe`, `%ProgramFiles(x86)%\OrcaMCP\orca-mcp.exe`,
-`%LOCALAPPDATA%\Programs\OrcaMCP\orca-mcp.exe`; on Linux `/usr/bin`, `/usr/local/bin`,
-`~/.local/bin`, `/opt/OrcaMCP/bin`), or `ORCAMCP_APP_PATH` when that is set. Never a build in a source
+`%LOCALAPPDATA%\Programs\OrcaMCP\orca-mcp.exe`; on Linux `orca-mcp` in `/usr/bin`, `/usr/local/bin`,
+`~/.local/bin`, `/opt/OrcaMCP/bin`), or `ORCAMCP_APP_PATH` when that is set: one program, which may be a
+wrapper script that execs the app (`systemd-run --scope`, `nice`, the AppImage's `AppRun`). Never a build in a source
 folder: it would run on the user's real data folder.
 
 **Parameters:**
@@ -4377,8 +4382,8 @@ folder: it would run on the user's real data folder.
 |-----------|--------------|----------|
 | The instance this session uses runs, or exactly one runs and none is chosen yet | Launches nothing; uses it | `already_running` |
 | Several run and none is chosen | Launches nothing; lists them in `other_instances`, with `next_steps` to `select_instance` (an error) | `several_running` |
-| None runs, or the one this session used is gone, or nothing answers on `ORCAMCP_PORT` when that is set, or `new_instance: true` | Launches the app (on macOS `open -n`, always a new process), waits up to 30 s for a new instance running that program (never another program's window that came up meanwhile; an installed OrcaMCP older than 2.5.0.6, which cannot say what it runs, is taken when it newly answers on 13618), and uses it | `started` |
-| The app cannot be found, or does not answer in 30 s | An error | `not_started` |
+| None runs, or the one this session used is gone, or nothing answers on `ORCAMCP_PORT` when that is set, or `new_instance: true` | Launches the app (on macOS `open -n`, always a new process), waits up to 30 s for the new instance carrying the token it gave the launch (`ORCAMCP_LAUNCH_ID`), whatever wrapper launched it; an OrcaMCP older than 2.5.0.8 records no token, and a new one running that program is taken. Never another program's window, another session's launch or a window the user opened that came up meanwhile; an installed OrcaMCP older than 2.5.0.6, which cannot say what it runs, is taken when it newly answers on 13618. Uses it | `started` |
+| The app cannot be found, does not answer in 30 s, or exits with a failure before it answers (said at once, with its exit status) | An error. Its `message` says whether the launched process still runs (by pid: still loading, or a dialog waiting at startup) or exited, and where its log is (the log folder of the default data folder); `next_steps` names `list_instances` when it may still come up | `not_started` |
 
 **Returns:** the instance it launched or found, named as `list_instances` names it (pid, port,
 program as `executable`, data folder as `data_dir`, open project), and the others running:
@@ -4389,7 +4394,9 @@ program as `executable`, data folder as `data_dir`, open project), and the other
   "instance": {"pid": 4242, "port": 13618, "version": "2.5.0.6-dev", "executable": "/Applications/OrcaMCP.app/Contents/MacOS/OrcaSlicer", "data_dir": "/Users/me/Library/Application Support/OrcaMCP", "started_at": "2026-09-28T09:15:03.123Z", "project": {"name": "bracket", "path": "/Users/me/prints/bracket.3mf", "unsaved": false}, "state": "live", "selected": true}
 }
 ```
-It is launched as an agent's launch (`ORCAMCP_SKIP_CLOUD_LOGIN=1`, see "Configuration").
+It is launched as an agent's launch (`ORCAMCP_SKIP_CLOUD_LOGIN=1`, `ORCAMCP_LAUNCH_ID`, and on Linux
+`SSL_CERT_FILE` when unset; see "Configuration"): the app shows no startup dialog, the setup wizard included, so on a
+new data folder it starts with no printer installed until `install_presets` installs one.
 
 ### list_instances
 Every running OrcaMCP window (instance), and which one this session's calls go to. Several can run

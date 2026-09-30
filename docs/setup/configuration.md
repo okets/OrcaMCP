@@ -47,7 +47,9 @@ The bridge script accepts these environment variables:
 | `ORCAMCP_INSTANCES_DIR` | `~/.orcamcp/instances` | Where each running instance publishes its entry, read by the app and the bridge alike. For tests |
 | `ORCAMCP_TIMEOUT` | `120` | Request timeout in seconds. It also bounds how long `arrange_objects`, `auto_orient`, `flatten_object` and `clone_object` wait for their job: the bridge sends wait_for_slice's cap (15 s below it) with every tool call, as `params._meta["orcamcp/wait_cap_s"]` |
 | `ORCAMCP_DEBUG` | (unset) | Enable debug logging to stderr |
-| `ORCAMCP_SKIP_CLOUD_LOGIN` | set to `1` by `start_orca` | Read by the **app**, not the bridge: skips the Orca cloud silent sign-in at startup. That sign-in reads the keychain synchronously on the GUI thread and, on macOS, can block on a permission prompt before the MCP server starts. Set it yourself if you launch the app for an agent by other means. |
+| `ORCAMCP_SKIP_CLOUD_LOGIN` | set to `1` by `start_orca` | Read by the **app**, not the bridge: marks an agent's launch, which nobody watches, so startup waits on nothing a person must answer. It skips the Orca cloud silent sign-in (it reads the keychain synchronously on the GUI thread and, on macOS, can block on a permission prompt before the MCP server starts) and every startup dialog, each logged instead: the Linux build's certificate prompt (taken as its Yes), the network plugin download, the setup wizard (use `install_presets`), the startup check for a newer version, and the notice that profile syncing moved. Set it yourself if you launch the app for an agent by other means. |
+| `ORCAMCP_LAUNCH_ID` | set by `start_orca` | Read by the **app**: a token it records in its instance entry, by which `start_orca` knows the instance it launched even when `ORCAMCP_APP_PATH` is a wrapper script (`systemd-run`, `nice`, the AppImage's `AppRun`) |
+| `SSL_CERT_FILE` | set by `start_orca` on Linux when unset | The system's CA bundle (for example `/etc/ssl/certs/ca-certificates.crt`). Without it an OrcaMCP older than 2.5.0.8 asks about certificates before its MCP server starts. A value already set is kept |
 
 ### Setting Environment Variables
 

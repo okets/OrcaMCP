@@ -39,7 +39,7 @@ class FakeInstance:
     it refuses a call stamped for another instance with -32004 (unless it plays an older OrcaMCP)."""
 
     def __init__(self, pid, project="bracket", instance_id=None, legacy=False, tools=None, started_at=None,
-                 executable=PROGRAM, data_dir=DATA_DIR, get_delay_s=0.0, alone_at_start=True):
+                 executable=PROGRAM, data_dir=DATA_DIR, get_delay_s=0.0, alone_at_start=True, launch_id=None):
         self.calls = []
         self.legacy = legacy
         self.tools = tools or TOOLS
@@ -52,6 +52,8 @@ class FakeInstance:
             "data_dir": data_dir, "started_at": started_at or timestamp(time.time() - 60), "alone_at_start": alone_at_start,
             "project": {"name": project, "path": f"/prints/{project}.3mf", "unsaved": False},
         }
+        if launch_id is not None:  # a build that records launch tokens: "" when no agent launched it
+            self.identity["launch_id"] = launch_id
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
 
     @property
@@ -97,6 +99,17 @@ class FakeInstance:
     def stop(self):
         self.server.shutdown()
         self.server.server_close()
+
+
+class FakeProcess:
+    """What launch_process returns: the process it started, ended with `returncode`, or still running (None)."""
+
+    def __init__(self, returncode, pid=40099):
+        self.returncode = returncode
+        self.pid = pid
+
+    def poll(self):
+        return self.returncode
 
 
 def dead_pid() -> int:
@@ -473,13 +486,19 @@ class ToolListTests(InstancesTest):
 
 
 class StartOrcaTests(InstancesTest):
-    def launches_into(self, instance_args):
-        """A fake launch that starts an instance, as the app would, and records the program."""
-        launched = []
+    def launches_into(self, instance_args, records_token=True, process=None):
+        """A fake launch that starts an instance, as the app would, and records the program and the launch's
+        token. The instance carries the token unless it plays a build older than launch tokens
+        (records_token=False) or `instance_args` gives it another. The launch returns `process`."""
+        launched, tokens = [], []
 
-        def launch(executable):
+        def launch(executable, launch_id):
             launched.append(executable)
-            self.start(40050, started_at=timestamp(time.time()), **instance_args)
+            tokens.append(launch_id)
+            token = {"launch_id": launch_id} if records_token else {}
+            self.start(40050, started_at=timestamp(time.time()), **dict(token, **instance_args))
+            return process
+        launch.tokens = tokens
         return launched, launch
 
     def start_orca(self, **arguments):
@@ -539,7 +558,8 @@ class StartOrcaTests(InstancesTest):
 
     def test_a_window_of_another_program_is_not_taken_for_the_one_launched(self):
         """Another agent's dev build coming up while the launched app does not must not be adopted."""
-        launched, launch = self.launches_into({"executable": "/Users/someone/src/OrcaMCP/build/OrcaSlicer"})
+        launched, launch = self.launches_into({"executable": "/Users/someone/src/OrcaMCP/build/OrcaSlicer"},
+                                              records_token=False)
         self.bridge.LAUNCH_WAIT_S = 0.3
         with mock.patch.object(self.bridge, "launch_process", side_effect=launch):
             report = self.start_orca()
@@ -548,7 +568,7 @@ class StartOrcaTests(InstancesTest):
 
     def test_an_installed_orcamcp_older_than_2506_is_taken_when_it_comes_up(self):
         """It cannot say what it runs, but it answers on the first port where nothing answered before."""
-        def launch(executable):
+        def launch(executable, launch_id):
             older = self.start(0, registered=False, legacy=True)
             self.bridge.ORCAMCP_URL = older.url
 
@@ -566,6 +586,95 @@ class StartOrcaTests(InstancesTest):
         with mock.patch.object(self.bridge, "launch_process", side_effect=launch):
             report = self.start_orca()
         self.assertEqual(launched, [PROGRAM])
+        self.assertEqual(report["status"], "started")
+
+    def test_an_instance_launched_through_a_wrapper_is_known_by_its_launch_token(self):
+        """ORCAMCP_APP_PATH may be a script that execs the app (systemd-run, nice, the AppImage's AppRun): the
+        instance names the program it runs, never the wrapper, and carries the token the launch gave it."""
+        launched, launch = self.launches_into({"executable": "/opt/orcamcp/squashfs-root/bin/orca-mcp"})
+        with mock.patch.object(self.bridge, "launch_process", side_effect=launch):
+            report = self.start_orca()
+        self.assertEqual(report["status"], "started")
+        self.assertEqual(self.bridge._selected["pid"], 40050)
+
+    def test_every_launch_gives_a_token_of_its_own(self):
+        launched, launch = self.launches_into({})
+        self.bridge.LAUNCH_WAIT_S = 0.3  # the second fake launch plays the same instance again, so is not new
+        with mock.patch.object(self.bridge, "launch_process", side_effect=launch):
+            self.start_orca()
+            self.start_orca(new_instance=True)
+        self.assertEqual(len(launch.tokens), 2)
+        self.assertTrue(all(launch.tokens))
+        self.assertNotEqual(launch.tokens[0], launch.tokens[1])
+
+    def test_a_window_of_the_same_program_with_another_launch_token_is_not_taken(self):
+        """Another session's start_orca of the same app, coming up while this one's does not."""
+        launched, launch = self.launches_into({"launch_id": "another-sessions-launch"})
+        self.bridge.LAUNCH_WAIT_S = 0.3
+        with mock.patch.object(self.bridge, "launch_process", side_effect=launch):
+            report = self.start_orca()
+        self.assertEqual(report["status"], "not_started")
+        self.assertIsNone(self.bridge._selected)
+
+    def test_a_window_of_the_same_program_opened_by_hand_is_not_taken(self):
+        """A build that records launch tokens says "" when no agent launched it."""
+        launched, launch = self.launches_into({"launch_id": ""})
+        self.bridge.LAUNCH_WAIT_S = 0.3
+        with mock.patch.object(self.bridge, "launch_process", side_effect=launch):
+            report = self.start_orca()
+        self.assertEqual(report["status"], "not_started")
+
+    def test_a_build_older_than_launch_tokens_is_taken_by_its_program(self):
+        launched, launch = self.launches_into({}, records_token=False)
+        with mock.patch.object(self.bridge, "launch_process", side_effect=launch):
+            report = self.start_orca()
+        self.assertEqual(report["status"], "started")
+        self.assertEqual(self.bridge._selected["pid"], 40050)
+
+    def test_a_launch_that_fails_before_answering_says_so_at_once(self):
+        """The app exited with an error (a missing locale, a crash): the answer says so, without waiting out
+        LAUNCH_WAIT_S for an instance that will never come."""
+        def launch(executable, launch_id):
+            return FakeProcess(returncode=1)
+
+        started = time.time()
+        with mock.patch.object(self.bridge, "launch_process", side_effect=launch):
+            report = self.start_orca()
+        self.assertLess(time.time() - started, 5)
+        self.assertEqual(report["status"], "not_started")
+        self.assertIn("exited with status 1", report["message"])
+        self.assertIn(self.bridge.default_log_folder(), report["message"])
+        self.assertIsNone(self.bridge._selected)
+
+    def test_a_launch_still_running_past_the_wait_says_so_and_where_its_log_is(self):
+        """Its MCP server never answered: still loading, or a startup dialog nobody can answer. The agent is
+        told which process, where its log is, and what to call next."""
+        def launch(executable, launch_id):
+            return FakeProcess(returncode=None, pid=40123)
+
+        self.bridge.LAUNCH_WAIT_S = 0.3
+        with mock.patch.object(self.bridge, "launch_process", side_effect=launch):
+            report = self.start_orca()
+        self.assertEqual(report["status"], "not_started")
+        self.assertIn("pid 40123", report["message"])
+        self.assertIn("dialog", report["message"])
+        self.assertIn(self.bridge.default_log_folder(), report["message"])
+        self.assertEqual([step["tool"] for step in report["next_steps"]], ["list_instances"])
+
+    def test_a_launch_through_launchservices_that_does_not_answer_points_at_its_log(self):
+        """macOS's open ends at once, so there is no process to ask: the answer still leads somewhere."""
+        self.bridge.LAUNCH_WAIT_S = 0.3
+        with mock.patch.object(self.bridge, "launch_process", return_value=None):
+            report = self.start_orca()
+        self.assertEqual(report["status"], "not_started")
+        self.assertIn(self.bridge.default_log_folder(), report["message"])
+        self.assertEqual([step["tool"] for step in report["next_steps"]], ["list_instances"])
+
+    def test_a_wrapper_that_exits_at_once_is_waited_past(self):
+        """A wrapper that starts the app in the background and returns 0 did its job: the app still comes."""
+        launched, launch = self.launches_into({}, process=FakeProcess(returncode=0))
+        with mock.patch.object(self.bridge, "launch_process", side_effect=launch):
+            report = self.start_orca()
         self.assertEqual(report["status"], "started")
 
     def test_new_instance_must_be_true_or_false(self):

@@ -326,7 +326,12 @@ nlohmann::json model_object_summary_json(const ModelObject& object, int object_i
 nlohmann::json model_object_summary_json(const ModelObject& object, int object_index, const InstancesOnPlate& here,
                                          const MeshHealth& health);
 
-// Always returns {"count": N, "warnings": [{level, message, type}...]}.
+// The printer a slice would be for, as the preset bundle has it (no_printer_message says what it means).
+PrinterSetup printer_setup();
+
+// Always returns {"count": N, "warnings": [{level, message, type}...]}. It includes a NoPrinter warning while
+// the built-in default printer is selected, since nothing can be sliced until a printer is installed and
+// selected: on a new data folder an agent learns it from its first call.
 nlohmann::json get_active_warnings_json(Plater* plater);
 
 // Appends `entries` to an active_warnings section and sets its count to match: for warnings only

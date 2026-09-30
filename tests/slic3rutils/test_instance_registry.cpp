@@ -8,6 +8,7 @@
 #include <boost/nowide/fstream.hpp>
 #include <nlohmann/json.hpp>
 
+#include <cstdlib>
 #include <regex>
 #include <sstream>
 #include <set>
@@ -95,6 +96,48 @@ TEST_CASE("an instance's entry holds its identity and its open project", "[Insta
     CHECK(entry.at("started_at") == "2026-09-28T09:15:03.123Z");
     CHECK(entry.at("project") == json{{"name", "bracket"}, {"path", "/prints/bracket.3mf"}, {"unsaved", false}});
     CHECK(identity_from_json(entry)->project == identity(4242, 13619).project);
+}
+
+TEST_CASE("an agent's launch token is in the entry, and read back", "[InstanceRegistry]")
+{
+    ScopedTemporaryDir dir("orcamcp-instances");
+    InstanceRegistry   registry(dir.path());
+    InstanceIdentity   launched = identity(4242, 13619);
+    launched.launch_id          = "0b6f3c1e-5d52-4c1a-9f0e-2a7d8c4b1e90";
+    REQUIRE(registry.publish(launched, running({4242})).empty());
+
+    const json entry = read_entry(registry.entry_path(4242));
+    CHECK(entry.at("launch_id") == launched.launch_id);
+    CHECK(identity_from_json(entry)->launch_id == launched.launch_id);
+}
+
+TEST_CASE("an instance no agent launched says so with an empty launch token", "[InstanceRegistry]")
+{
+    // The key's presence tells the bridge this build records tokens: it then never takes this window,
+    // opened by the user, for the one its start_orca launched.
+    const json entry = to_json(identity(4242, 13619));
+    REQUIRE(entry.contains("launch_id"));
+    CHECK(entry.at("launch_id") == "");
+}
+
+namespace {
+void set_launch_id_variable(const char* value)
+{
+#ifdef _WIN32
+    _putenv_s("ORCAMCP_LAUNCH_ID", value);
+#else
+    ::setenv("ORCAMCP_LAUNCH_ID", value, 1);
+#endif
+}
+} // namespace
+
+TEST_CASE("the launch token is taken from the environment once, and cleared from it", "[InstanceRegistry]")
+{
+    set_launch_id_variable("token-of-this-launch");
+    CHECK(take_launch_id() == "token-of-this-launch");
+    // A window this instance opens later inherits its environment: it must not carry the token too.
+    CHECK(std::getenv("ORCAMCP_LAUNCH_ID") == nullptr);
+    CHECK(take_launch_id().empty());
 }
 
 TEST_CASE("an entry is written whole, with nothing left beside it", "[InstanceRegistry]")

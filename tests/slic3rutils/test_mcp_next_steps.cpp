@@ -438,6 +438,22 @@ TEST_CASE("Installed printers point at selecting the first, which the install le
     CHECK(installed_printer_next_steps({}).empty());
 }
 
+TEST_CASE("No printer to slice for points at installing one, or at selecting the one installed", "[McpNextSteps][orcamcp]")
+{
+    const std::vector<NextStep> none = printer_setup_next_steps({true, ""});
+    REQUIRE(none.size() == 1);
+    CHECK(none[0].tool == "get_presets");
+    CHECK(none[0].arguments == json{{"installed", false}, {"type", "printer"}});
+    CHECK(mentions(none[0].why, "install_presets"));
+
+    const std::vector<NextStep> installed = printer_setup_next_steps({true, "Creality Ender-3 V2 0.4 nozzle"});
+    REQUIRE(installed.size() == 1);
+    CHECK(installed[0].tool == "select_preset");
+    CHECK(installed[0].arguments == json{{"type", "printer"}, {"name", "Creality Ender-3 V2 0.4 nozzle"}});
+
+    CHECK(printer_setup_next_steps({false, "Creality Ender-3 V2 0.4 nozzle"}).empty());
+}
+
 TEST_CASE("A slot change that renumbered objects points at checking them, since an undo would not", "[McpNextSteps][orcamcp]")
 {
     const std::vector<NextStep> steps = slot_change_next_steps(true);
@@ -494,7 +510,10 @@ TEST_CASE("Every next step names a real tool, with arguments its schema accepts"
         steps.push_back(std::move(step));
     for (NextStep& step : slot_change_next_steps(true))
         steps.push_back(std::move(step));
-    REQUIRE(steps.size() == 30);
+    for (const std::string& installed : {std::string(), std::string("Flashforge AD5X 0.4 nozzle")})
+        for (NextStep& step : printer_setup_next_steps({true, installed}))
+            steps.push_back(std::move(step));
+    REQUIRE(steps.size() == 32);
 
     const mcp_tool_references::ToolNames names(OrcaMCPServer::registered_tools());
     json                                 response = json::object();

@@ -12,6 +12,7 @@
 #include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/GUI/NotificationManager.hpp"
 #include "libslic3r/Model.hpp"
+#include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/Geometry.hpp"
 
 #include <algorithm>
@@ -763,11 +764,32 @@ nlohmann::json plate_slicing_json(int plate_index, bool slice_result_valid, std:
             {"gcode_check", std::move(gcode_check)}};
 }
 
+PrinterSetup printer_setup()
+{
+    PrinterSetup setup;
+    if (wxApp::GetInstance() == nullptr || wxGetApp().preset_bundle == nullptr) // no app: a unit test, the CLI
+        return setup;
+    const PresetBundle* bundle = wxGetApp().preset_bundle;
+    const PresetCollection& printers = bundle->printers;
+    setup.default_selected           = printers.get_selected_preset().is_default;
+    if (setup.default_selected)
+        for (const Preset& printer : printers.get_presets())
+            if (!printer.is_default && printer.is_visible) {
+                setup.installed_printer = printer.name;
+                break;
+            }
+    return setup;
+}
+
 // Helper to get active warnings as JSON object (always includes count, even if 0)
 nlohmann::json get_active_warnings_json(Plater* plater) {
     nlohmann::json result;
     nlohmann::json warnings_array = nlohmann::json::array();
 
+    // First: until a printer is selected, the app's own warnings (a validation error on the default printer's
+    // settings) point at the wrong fix.
+    if (auto no_printer = no_printer_message(printer_setup()))
+        warnings_array.push_back({{"level", "serious_warning"}, {"message", *no_printer}, {"type", "NoPrinter"}});
     if (plater) {
         auto* notification_manager = plater->get_notification_manager();
         if (notification_manager) {

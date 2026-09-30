@@ -546,6 +546,44 @@ inline SliceStartReport judge_slice_start(const SliceStartSignals& signals)
     return {SliceStart::not_started, "unknown", "The app did not start a slice; active_warnings may say why."};
 }
 
+// ---- Whether there is a printer to slice for ----------------------------------------------------
+
+// The printer a slice is for. On a new data folder only the app's built-in default printer exists until
+// one is installed: the setup wizard installs it for a person, and an agent's launch shows no wizard. A
+// plate sliced for the default fails validation on settings nobody chose (relative extrusion with no
+// G92 E0 in its layer G-code), whose words sent an agent to the wrong fix (2026-09-30).
+struct PrinterSetup
+{
+    bool        default_selected = false; // the selected printer is the built-in default
+    std::string installed_printer;        // the first printer installed, "" when none is
+};
+
+// Why nothing can be sliced for the selected printer, and what to do, or nullopt when it is a real one.
+inline std::optional<std::string> no_printer_message(const PrinterSetup& setup)
+{
+    if (!setup.default_selected)
+        return std::nullopt;
+    if (!setup.installed_printer.empty())
+        return "The selected printer is the app's built-in default, whose settings match no real printer, so nothing "
+               "can be sliced: select an installed printer with select_preset (type printer), e.g. '" +
+               setup.installed_printer + "'; get_presets (type printer) lists the installed ones.";
+    return std::string("No printer is installed, so nothing can be sliced: the app has only its built-in default "
+                       "printer, whose settings match no real printer. A new data folder starts that way, and an "
+                       "agent's launch shows no setup wizard to install one. Ask the user which printer they print on "
+                       "when you do not know. get_presets (installed false, type printer) lists the makers whose "
+                       "printers can be installed (vendors_not_installed); with vendor set to the maker and "
+                       "name_contains to the model it lists the printer's presets. Install one with install_presets, "
+                       "then select it with select_preset.");
+}
+
+// slice_all's refusal when the selected printer is the built-in default, before anything is sliced.
+inline std::optional<SliceStartReport> refuse_without_printer(const PrinterSetup& setup)
+{
+    if (const std::optional<std::string> message = no_printer_message(setup))
+        return SliceStartReport{SliceStart::not_started, "no_printer", *message};
+    return std::nullopt;
+}
+
 // ---- What export_gcode reports ------------------------------------------------------------------
 
 // One export_gcode call as it went (Plater::export_gcode_to_file): what refused it before the export

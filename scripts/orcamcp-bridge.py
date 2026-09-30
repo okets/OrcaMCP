@@ -39,6 +39,7 @@ import time
 import urllib.parse
 import urllib.request
 import urllib.error
+import uuid
 
 # Every tool's name, description and schema, generated from the app's tool registry and checked
 # against it by tests/slic3rutils/test_mcp_tool_list.cpp. The bridge serves its server_tools while
@@ -198,10 +199,10 @@ def get_orcamcp_executable() -> str | None:
         ])
     else:  # Linux
         paths.extend([
-            "/usr/bin/orcamcp",
-            "/usr/local/bin/orcamcp",
-            os.path.expanduser("~/.local/bin/orcamcp"),
-            "/opt/OrcaMCP/bin/orcamcp",
+            "/usr/bin/orca-mcp",
+            "/usr/local/bin/orca-mcp",
+            os.path.expanduser("~/.local/bin/orca-mcp"),
+            "/opt/OrcaMCP/bin/orca-mcp",
         ])
 
     for path in paths:
@@ -215,49 +216,127 @@ def get_orcamcp_executable() -> str | None:
 
 LAUNCH_WAIT_S = 30  # how long start_orca waits for the instance it launched to answer
 
+# The CA bundles the Linux build looks for when OpenSSL's own is missing, in its order (Http.cpp,
+# CA_BUNDLES). Its OpenSSL's own is a path in the build machine's folders, so it always is.
+SYSTEM_CA_BUNDLES = (
+    "/etc/pki/tls/certs/ca-bundle.crt",        # Fedora/RHEL 6
+    "/etc/ssl/certs/ca-certificates.crt",      # Debian/Ubuntu/Gentoo etc.
+    "/usr/share/ssl/certs/ca-bundle.crt",
+    "/usr/local/share/certs/ca-root-nss.crt",  # FreeBSD
+    "/etc/ssl/cert.pem",
+    "/etc/ssl/ca-bundle.pem",                  # OpenSUSE Tumbleweed
+)
 
-def launch_process(executable: str):
-    """Start `executable` detached from this process, as an agent's launch."""
+
+def agent_launch_variables(launch_id: str, environ, system: str) -> dict:
+    """What an agent's launch adds to the environment OrcaMCP starts in.
+
+    ORCAMCP_SKIP_CLOUD_LOGIN marks the launch as an agent's: nobody is at the screen, so the app waits on
+    nothing a person must answer, from the keychain to its startup dialogs (see CLAUDE.md, environment
+    variables). ORCAMCP_LAUNCH_ID is the token the instance records in its registry entry, by which
+    wait_for_launched knows it whatever wrapper ORCAMCP_APP_PATH is. On Linux, SSL_CERT_FILE names the
+    system's CA bundle when nothing names one: an OrcaMCP older than 2.5.0.8 asks about it before its MCP
+    server starts, even on an agent's launch."""
+    variables = {"ORCAMCP_SKIP_CLOUD_LOGIN": "1", "ORCAMCP_LAUNCH_ID": launch_id}
+    if system not in ("Darwin", "Windows") and not environ.get("SSL_CERT_FILE"):
+        bundle = next((path for path in SYSTEM_CA_BUNDLES if os.path.isfile(path)), None)
+        if bundle:
+            variables["SSL_CERT_FILE"] = bundle
+    return variables
+
+
+def launch_process(executable: str, launch_id: str):
+    """Start `executable` detached from this process, as an agent's launch carrying `launch_id`. The
+    process started, or None when LaunchServices starts it (macOS), whose `open` ends at once."""
     import platform
-    # An agent-launched app skips the Orca cloud silent sign-in: it reads the keychain
-    # synchronously at startup, which on macOS can block on a permission prompt before the MCP
-    # server exists (see CLAUDE.md, environment variables).
-    agent_env = dict(os.environ, ORCAMCP_SKIP_CLOUD_LOGIN="1")
+    system = platform.system()
+    variables = agent_launch_variables(launch_id, os.environ, system)
+    agent_env = dict(os.environ, **variables)
     log_debug(f"Launching OrcaMCP from: {executable}")
-    if platform.system() == "Windows":
+    if system == "Windows":
         # Windows: use CREATE_NEW_PROCESS_GROUP and DETACHED_PROCESS
         DETACHED_PROCESS = 0x00000008
         CREATE_NEW_PROCESS_GROUP = 0x00000200
-        subprocess.Popen([executable], creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP, close_fds=True,
-                         env=agent_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return
+        return subprocess.Popen([executable], creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP, close_fds=True,
+                                env=agent_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     app_path = executable.replace("/Contents/MacOS/OrcaSlicer", "")
-    if platform.system() == "Darwin" and app_path.endswith(".app"):
+    if system == "Darwin" and app_path.endswith(".app"):
         # --env reaches the app through LaunchServices; a plain env= would not. -n starts a new process:
         # without it LaunchServices only brings forward a copy of the bundle that already runs.
-        subprocess.Popen(["open", "-n", "--env", "ORCAMCP_SKIP_CLOUD_LOGIN=1", app_path], close_fds=True)
-        return
-    subprocess.Popen([executable], start_new_session=True, env=agent_env, close_fds=True,
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        env_arguments = [argument for name, value in variables.items() for argument in ("--env", f"{name}={value}")]
+        subprocess.Popen(["open", "-n", *env_arguments, app_path], close_fds=True)
+        return None
+    return subprocess.Popen([executable], start_new_session=True, env=agent_env, close_fds=True,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def same_program(a: str, b: str) -> bool:
     return os.path.normcase(os.path.realpath(a)) == os.path.normcase(os.path.realpath(b))
 
 
-def wait_for_launched(executable: str, known: set):
-    """The instance a launch started: one not running before (`known` keys) that runs `executable`, never
-    a window of another program that came up meanwhile (another agent's build). An installed OrcaMCP older
-    than 2.5.0.6 cannot say what it runs; a new one of those, answering on the first port where nothing
-    did before, is taken. None when neither comes up within LAUNCH_WAIT_S."""
+def is_launched_instance(instance: dict, executable: str, launch_id: str) -> bool:
+    """Whether a new instance is the one a launch started. One that records launch tokens (2.5.0.8 and
+    later) is known by the token it was given, whatever wrapper launched it; "" says no agent did. One
+    older runs `executable`. An OrcaMCP older than 2.5.0.6 (legacy) is weighed by wait_for_launched."""
+    if "launch_id" in instance:
+        return instance["launch_id"] == launch_id
+    return not instance.get("legacy") and same_program(instance.get("executable", ""), executable)
+
+
+def failed_exit_status(process):
+    """The status the launched process ended with, when it ended with a failure; else None. A wrapper that
+    starts the app in the background and ends with 0 has done its job: the app still comes."""
+    status = process.poll() if process is not None else None
+    return status if status else None
+
+
+def default_log_folder(system: str = None) -> str:
+    """Where OrcaMCP writes its log by default: the log folder of its data folder (GUI_App.cpp; CLAUDE.md, "Where
+    the app's data lives"). A --datadir the launch passes moves it."""
+    import platform
+    system = system or platform.system()
+    if system == "Darwin":
+        base = os.path.expanduser("~/Library/Application Support")
+    elif system == "Windows":
+        base = ENV.get("APPDATA") or os.path.expanduser("~")
+    else:
+        base = ENV.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    return os.path.join(base, "OrcaMCP", "log")
+
+
+def unanswered_launch(executable: str, process) -> tuple:
+    """start_orca's (message, next_steps) for a launch whose instance did not answer: what the process did, as far
+    as the bridge can see it, and where the app's log says why."""
+    log = f"Its log says why: {default_log_folder()} (or the log folder of the data folder a --datadir names)."
+    exit_status = failed_exit_status(process)
+    if exit_status is not None:
+        return f"OrcaMCP ({executable}) exited with status {exit_status} before it answered, so it is not running. {log}", []
+    if process is not None and process.poll() is None:
+        message = (f"OrcaMCP ({executable}) runs as pid {process.pid}, but its MCP server has not answered within "
+                   f"{LAUNCH_WAIT_S}s: it may still be loading (a first start on a new data folder takes longer), or a "
+                   f"dialog may be waiting at startup for someone to answer it. {log}")
+    else:
+        message = f"OrcaMCP ({executable}) was launched but did not answer within {LAUNCH_WAIT_S}s: it may still be starting. {log}"
+    return message, [next_step("list_instances", "lists it once its MCP server answers; when it is the only one running, "
+                                                  "this session's calls go to it")]
+
+
+def wait_for_launched(executable: str, known: set, launch_id: str, process=None):
+    """The instance a launch started: one not running before (`known` keys) that carries the launch's token,
+    or runs `executable` when it is too old to record one; never a window of another program, another
+    session's launch or the user's own that came up meanwhile. An installed OrcaMCP older than 2.5.0.6
+    cannot say what it runs; a new one of those, answering on the first port where nothing did before, is
+    taken. None when none comes up within LAUNCH_WAIT_S, or once `process` ended with a failure."""
     deadline = time.time() + LAUNCH_WAIT_S
     while time.time() < deadline:
         time.sleep(1)
         new = [i for i in discover_instances()[0] if instance_key(i) not in known]
-        launched = [i for i in new if not i.get("legacy") and same_program(i.get("executable", ""), executable)]
+        launched = [i for i in new if is_launched_instance(i, executable, launch_id)]
         older = [i for i in new if i.get("legacy")]
         if launched or older:
             return (launched or older)[0]
+        if failed_exit_status(process) is not None:
+            return None
     return None
 
 
@@ -298,16 +377,16 @@ def launch_orcamcp(new_instance: bool = False) -> dict:
         return launch_answer(False, "not_started",
                              "Could not find the installed OrcaMCP app. Install it, or set ORCAMCP_APP_PATH to "
                              "the OrcaMCP program to launch.", None, instances)
+    launch_id = str(uuid.uuid4())
     try:
-        launch_process(executable)
+        process = launch_process(executable, launch_id)
     except Exception as e:
         return launch_answer(False, "not_started", f"Failed to launch OrcaMCP ({executable}): {e}", None, instances)
 
-    launched = wait_for_launched(executable, {instance_key(i) for i in instances})
+    launched = wait_for_launched(executable, {instance_key(i) for i in instances}, launch_id, process)
     if launched is None:
-        return launch_answer(False, "not_started",
-                             f"OrcaMCP ({executable}) was launched but did not answer within {LAUNCH_WAIT_S}s. It "
-                             f"may still be starting: call list_instances in a moment.", None, instances)
+        message, steps = unanswered_launch(executable, process)
+        return launch_answer(False, "not_started", message, None, instances, steps)
     choose_instance(launched)
     note_live_contact()
     return launch_answer(True, "started", f"OrcaMCP started: {describe_instance(launched)}. This session uses it.",

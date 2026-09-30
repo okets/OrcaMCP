@@ -71,6 +71,7 @@ InstanceIdentity this_instance(Port port)
     identity.executable  = canonical(into_u8(wxStandardPaths::Get().GetExecutablePath()));
     identity.data_dir    = canonical(data_dir());
     identity.started_at  = utc_timestamp(std::chrono::system_clock::now());
+    identity.launch_id   = take_launch_id();
     identity.project     = current_project();
     return identity;
 }

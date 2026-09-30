@@ -3326,7 +3326,9 @@ void OrcaMCPServer::register_builtin_tools()
         "partly off the plate, a filament check, missing plugins, a broken mixed filament, or a last "
         "slice that failed; message says which, in the app's words for a validation failure), "
         "nothing_to_slice (no printable object fully on the plates -- one partly off its plate or too tall "
-        "for the printer does not count -- and no refusal the app gives words for) or unknown. Then call "
+        "for the printer does not count -- and no refusal the app gives words for), no_printer (the "
+        "selected printer is the app's built-in default: none installed yet on a new data folder, or none "
+        "selected; message and next_steps say how to install and select one) or unknown. Then call "
         "wait_for_slice, which returns once the run is over, with each plate's result; next_steps names "
         "the tool to call next. The plate selection walks from the first plate to the last while the "
         "run is in progress, and get_slicing_status puts back the plate that was selected here once "
@@ -3378,6 +3380,14 @@ void OrcaMCPServer::register_builtin_tools()
                 // that run half done.
                 if (const auto refusal = OrcaMCP::refuse_while_busy(OrcaMCP::pipeline_state(*plater, plate_count))) {
                     answer(*refusal, get_active_warnings_json(plater));
+                    return result;
+                }
+                // The built-in default printer's own validation would refuse the slice in words that point at
+                // the wrong fix: say what is missing, and how to install and select a printer.
+                const OrcaMCP::PrinterSetup setup = OrcaMCP::printer_setup();
+                if (const auto refusal = OrcaMCP::refuse_without_printer(setup)) {
+                    answer(*refusal, get_active_warnings_json(plater));
+                    add_next_steps(result, printer_setup_next_steps(setup));
                     return result;
                 }
                 // A settings change made just before this call has not reached the slicer yet; until it
@@ -3508,6 +3518,14 @@ void OrcaMCPServer::register_builtin_tools()
                 Plater* plater = wxGetApp().plater();
                 // Enable dialog suppression to capture any error messages
                 McpDialogSuppressionGuard suppression_guard;
+                // Before the settings are applied: the default printer's validation would raise a warning that
+                // points at the wrong fix.
+                const OrcaMCP::PrinterSetup setup = OrcaMCP::printer_setup();
+                if (const auto no_printer = OrcaMCP::no_printer_message(setup)) {
+                    nlohmann::json refused = error_response(*no_printer);
+                    add_next_steps(refused, printer_setup_next_steps(setup));
+                    return suppression_guard.report(refused);
+                }
                 // A settings change made just before this call has not reached the slicer yet: until it
                 // does, the export is refused on the failure the change may have fixed.
                 apply_pending_settings(*plater, suppression_guard);

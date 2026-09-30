@@ -139,6 +139,10 @@ McpUnhandledModal mcp_unhandled_modal(bool suppression_enabled, const std::strin
 // (to anything but "" or "0"). Such a launch has nobody at the screen, so startup must not wait on
 // anything a person has to answer, such as a keychain or macOS privacy prompt.
 bool is_agent_launch();
+// A startup dialog on an agent's launch would wait for good: before the MCP server starts, no call can
+// even say why. True on an agent's launch, which leaves `dialog` out and logs that it did and what
+// happens `instead`; false on any other, and the caller shows it.
+bool agent_launch_leaves_out(const std::string& dialog, const std::string& instead);
 void show_substitutions_info(const PresetsConfigSubstitutions& presets_config_substitutions);
 void show_substitutions_info(const ConfigSubstitutions& config_substitutions, const std::string& filename);
 

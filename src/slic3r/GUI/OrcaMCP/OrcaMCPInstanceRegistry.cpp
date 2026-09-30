@@ -86,6 +86,7 @@ json to_json(const InstanceIdentity& identity)
         {"data_dir", identity.data_dir},
         {"started_at", identity.started_at},
         {"alone_at_start", identity.alone_at_start},
+        {"launch_id", identity.launch_id},
         {"project", {{"name", identity.project.name}, {"path", identity.project.path}, {"unsaved", identity.project.unsaved}}},
     };
 }
@@ -108,6 +109,7 @@ std::optional<InstanceIdentity> identity_from_json(const json& entry)
     identity.data_dir    = string_field(entry, "data_dir");
     identity.started_at  = string_field(entry, "started_at");
     identity.alone_at_start = entry.value("alone_at_start", false);
+    identity.launch_id   = string_field(entry, "launch_id");
     if (const auto project = entry.find("project"); project != entry.end() && project->is_object()) {
         identity.project.name    = string_field(*project, "name");
         identity.project.path    = string_field(*project, "path");
@@ -124,6 +126,19 @@ std::string new_instance_id()
     for (int i = 0; i < 16; ++i)
         out << std::hex << std::setw(2) << std::setfill('0') << byte(device);
     return out.str();
+}
+
+std::string take_launch_id()
+{
+    static constexpr const char* k_variable = "ORCAMCP_LAUNCH_ID";
+    const char*       value     = std::getenv(k_variable);
+    const std::string launch_id = value != nullptr ? value : "";
+#ifdef _WIN32
+    _putenv_s(k_variable, "");
+#else
+    ::unsetenv(k_variable);
+#endif
+    return launch_id;
 }
 
 std::string utc_timestamp(std::chrono::system_clock::time_point when)
