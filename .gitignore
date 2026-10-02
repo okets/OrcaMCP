@@ -48,6 +48,7 @@ test.js
 /.cache/
 .clangd
 /.claude/smarter-claude
+/.claude/voiceover.json
 
 # Local build scripts
 build_openssl.ps1
