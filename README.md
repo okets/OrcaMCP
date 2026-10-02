@@ -13,7 +13,7 @@
 [![Build](https://github.com/okets/OrcaMCP/actions/workflows/build_all.yml/badge.svg)](https://github.com/okets/OrcaMCP/actions/workflows/build_all.yml)
 [![Latest release](https://img.shields.io/github/v/release/okets/OrcaMCP?include_prereleases)](https://github.com/okets/OrcaMCP/releases)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE.txt)
-[![MCP Protocol](https://img.shields.io/badge/MCP-2024--11--05-purple)](https://modelcontextprotocol.io/)
+[![MCP Protocol](https://img.shields.io/badge/MCP-2025--06--18-purple)](https://modelcontextprotocol.io/)
 
 </div>
 
@@ -164,9 +164,10 @@ that used to mean an afternoon in menus.
 - **Read-back for everything it writes.** Paint coverage per part and per mode, per-object
   overrides, layer ranges, plate occupancy including brim and prime tower, live printer state.
 - **Undo and redo** are tools too.
-- **Any MCP client.** The transport is stdio to a small Python bridge (standard library only), HTTP
+- **Any MCP client.** The usual transport is stdio to a small Python bridge (standard library only), HTTP
   from the bridge to the app. Claude Code picks it up from the repository's `.mcp.json`; anything else that speaks MCP
-  works the same way.
+  works the same way. The app's own endpoint also speaks MCP's Streamable HTTP, so a client with that transport,
+  such as Claude Code's `type: "http"` or the MCP TypeScript SDK, can connect to a running OrcaMCP without the bridge.
 - **Local.** The app, the bridge and the printer connection all live on your network.
 
 ## Quick start
@@ -187,6 +188,17 @@ that used to mean an afternoon in menus.
      }
    }
    ```
+
+   Or connect to a running OrcaMCP over HTTP, without the bridge:
+
+   ```bash
+   claude mcp add --transport http orca-slicer http://127.0.0.1:13618/mcp
+   ```
+
+   That reaches the one window on that port, and only while it runs, with the app's 102 tools. The
+   bridge adds four of its own (`start_orca`, `wait_for_slice`, `list_instances`, `select_instance`)
+   and answers while the app is down, so it stays the recommended way. See
+   [Configuration](docs/setup/configuration.md).
 
 3. **Ask it to start the slicer.** The bridge's `start_orca` tool launches the app, so "start
    Orca" is a valid first message. To check by hand:
@@ -248,10 +260,13 @@ API, with no cloud account and no closed network plugin. Details, limits and set
 │   MCP client    │ ◄───────────► │ orcamcp-bridge   │ ◄───────────► │  OrcaMCP    │
 │ (Claude Code…)  │               │    (Python)      │               │ 13618-13627 │
 └─────────────────┘               └──────────────────┘               └─────────────┘
+         ▲                                                                  ▲
+         └─────────────────── Streamable HTTP, no bridge ───────────────────┘
 ```
 
 The server is embedded in the application because rendering and most model operations must run
-on the GUI thread. The bridge exists because a GUI application cannot own stdio. See the
+on the GUI thread. The bridge exists because a GUI application cannot own stdio; a client that
+speaks Streamable HTTP can skip it and talk to the app's `/mcp` endpoint directly. See the
 [architecture overview](docs/architecture/overview.md) and the
 [threading model](docs/architecture/threading-model.md).
 
