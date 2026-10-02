@@ -334,7 +334,7 @@ public:
     explicit FakePrinter(std::string reply) : m_reply(std::move(reply)), m_server(kPort)
     {
         m_server.set_request_handler(Slic3r::GUI::HttpServer::RequestHandlerFn(
-            [this](const std::string&, const std::string& url, const std::string& body) {
+            [this](const std::string&, const std::string& url, const std::string& body, const Slic3r::GUI::http_headers&) {
                 std::lock_guard<std::mutex> lock(m_mutex);
                 m_requests.push_back({url, body});
                 return std::make_shared<Slic3r::GUI::HttpServer::ResponseJson>(m_reply);

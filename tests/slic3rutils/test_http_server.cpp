@@ -8,8 +8,12 @@
 #include <atomic>
 #include <chrono>
 #include <future>
+#include <optional>
 #include <sstream>
 #include <string>
+#include <thread>
+#include <utility>
+#include <vector>
 
 #include <boost/asio.hpp>
 #include <nlohmann/json.hpp>
@@ -96,7 +100,7 @@ struct FakeSignIn
 // GUI_App::start_http_server's routes: /mcp is MCP, anything else a login callback.
 HttpServer::RequestHandlerFn app_routes(LoginCallbackServer& login, std::function<std::shared_ptr<HttpServer::Response>()> mcp)
 {
-    return [&login, mcp](const std::string&, const std::string& url, const std::string&) {
+    return [&login, mcp](const std::string&, const std::string& url, const std::string&, const http_headers&) {
         return contains(url, "/mcp") ? mcp() : login.answer(url);
     };
 }
@@ -245,7 +249,7 @@ TEST_CASE("quitting with an MCP call waiting on the main thread answers the call
     MainThreadGate gate(main_thread.post());
 
     HttpServer server(0);
-    server.set_request_handler([&gate](const std::string&, const std::string&, const std::string&) {
+    server.set_request_handler([&gate](const std::string&, const std::string&, const std::string&, const http_headers&) {
         try {
             return json_response(call_through(gate, [] { return nlohmann::json{{"status", "ran"}}; }));
         } catch (const JsonRpcError& e) {
@@ -518,7 +522,7 @@ TEST_CASE("the MCP server refuses a web page's request and a rebound one before 
     const unsigned short mcp_port = free_loopback_port();
     HttpServer           mcp(mcp_port);
     mcp.set_request_guard(app_request_guard(mcp_port, [](boost::asio::ip::port_type) { return false; }));
-    mcp.set_request_handler([&](const std::string&, const std::string&, const std::string&) {
+    mcp.set_request_handler([&](const std::string&, const std::string&, const std::string&, const http_headers&) {
         ++mcp_calls;
         return json_response({{"mcp", true}});
     });
@@ -544,4 +548,129 @@ TEST_CASE("the MCP server refuses a web page's request and a rebound one before 
     // No login is listening, so the MCP port answers no login callback.
     CHECK(exchange(mcp_port, "GET", "/callback?access_token=x").get().rfind("HTTP/1.1 404", 0) == 0);
     mcp.stop();
+}
+
+namespace {
+
+std::string written(const std::shared_ptr<HttpServer::Response>& response)
+{
+    std::stringstream out;
+    response->write_response(out);
+    return out.str();
+}
+
+// True when every line of `head` ends with CRLF: no bare LF, and no CR without its LF.
+bool every_line_ends_with_crlf(const std::string& head)
+{
+    for (size_t i = 0; i < head.size(); ++i) {
+        if (head[i] == '\n' && (i == 0 || head[i - 1] != '\r'))
+            return false;
+        if (head[i] == '\r' && (i + 1 == head.size() || head[i + 1] != '\n'))
+            return false;
+    }
+    return true;
+}
+
+// One request to 127.0.0.1:`port`, written in `pieces` a little apart, as a client whose writes the
+// network splits sends it. Returns everything the server sent before it closed the connection.
+std::future<std::string> exchange_in_pieces(unsigned short port, std::vector<std::string> pieces)
+{
+    return std::async(std::launch::async, [=] {
+        boost::asio::io_context   io;
+        tcp::socket               socket(io);
+        boost::system::error_code ec;
+        socket.connect({boost::asio::ip::address_v4::loopback(), port}, ec);
+        if (ec)
+            return "connect failed: " + ec.message();
+        socket.set_option(tcp::no_delay(true), ec);
+        for (const std::string& piece : pieces) {
+            boost::asio::write(socket, boost::asio::buffer(piece), ec);
+            std::this_thread::sleep_for(50ms);
+        }
+        std::string reply;
+        boost::asio::read(socket, boost::asio::dynamic_buffer(reply), ec); // to the server's close
+        return reply;
+    });
+}
+
+} // namespace
+
+TEST_CASE("every reply ends its lines with CRLF, gives its length and says the connection closes", "[HttpServer]")
+{
+    // HTTP/1.1 ends the status line and every header with CRLF. Node's parser, and so the MCP TypeScript
+    // SDK and Claude Code's http transport, refused every reply that ended them with a bare LF.
+    const std::vector<std::pair<std::string, std::shared_ptr<HttpServer::Response>>> replies{
+        {"not found", std::make_shared<HttpServer::ResponseNotFound>()},
+        {"redirect", std::make_shared<HttpServer::ResponseRedirect>("https://example.com/done?result=success")},
+        {"json", std::make_shared<HttpServer::ResponseJson>(R"({"status":"ok"})")},
+        {"json 405", std::make_shared<HttpServer::ResponseJson>("{}", 405, HttpServer::Response::Headers{{"Allow", "GET, POST"}})},
+        {"html", std::make_shared<HttpServer::ResponseHtml>("<p>Signed in</p>")},
+        {"accepted", std::make_shared<HttpServer::ResponseAccepted>()},
+    };
+    for (const auto& [name, response] : replies) {
+        INFO(name);
+        const std::string reply    = written(response);
+        const size_t      head_end = reply.find("\r\n\r\n");
+        REQUIRE(head_end != std::string::npos);
+        const std::string head = reply.substr(0, head_end + 2);
+        const std::string body = reply.substr(head_end + 4);
+        CHECK(reply.rfind("HTTP/1.1 ", 0) == 0);
+        CHECK(every_line_ends_with_crlf(head));
+        CHECK(contains(head, "\r\nContent-Length: " + std::to_string(body.size()) + "\r\n"));
+        CHECK(contains(head, "\r\nConnection: close\r\n"));
+    }
+    const std::string not_allowed = written(replies[3].second);
+    CHECK(not_allowed.rfind("HTTP/1.1 405 Method Not Allowed\r\n", 0) == 0);
+    CHECK(contains(not_allowed, "\r\nAllow: GET, POST\r\n"));
+    const std::string redirect = written(replies[1].second);
+    CHECK(redirect.rfind("HTTP/1.1 302 Found\r\n", 0) == 0);
+    CHECK(contains(redirect, "\r\nLocation: https://example.com/done?result=success\r\n"));
+    CHECK(written(replies[5].second).rfind("HTTP/1.1 202 Accepted\r\n", 0) == 0);
+}
+
+TEST_CASE("a handler gets the request's headers, and its reply reaches the client as HTTP/1.1", "[HttpServer]")
+{
+    std::promise<std::optional<std::string>> accept_seen;
+    HttpServer                               server(0);
+    server.set_request_handler([&](const std::string&, const std::string&, const std::string&, const http_headers& headers) {
+        accept_seen.set_value(headers.value("accept"));
+        return json_response({{"status", "ok"}});
+    });
+    server.start();
+    const unsigned short port = server.local_endpoint().port();
+
+    const std::string reply = exchange(port, "GET", "/mcp", "", nullptr,
+                                       "Host: localhost:" + std::to_string(port) + "\r\nAccept: text/event-stream\r\n")
+                                  .get();
+    server.stop();
+
+    CHECK(reply.rfind("HTTP/1.1 200 OK\r\n", 0) == 0);
+    CHECK(contains(reply, "\r\n\r\n{\"status\":\"ok\"}"));
+    CHECK(accept_seen.get_future().get() == std::optional<std::string>("text/event-stream"));
+}
+
+TEST_CASE("a request whose line ends arrive apart is read as the client sent it", "[HttpServer]")
+{
+    // Each line was read up to its CR, and the LF dropped only when it had arrived with it: an LF that
+    // came later began the next line, which then named no header.
+    std::promise<std::pair<std::string, std::optional<std::string>>> seen;
+    HttpServer                                                       server(0);
+    server.set_request_handler([&](const std::string&, const std::string& url, const std::string&, const http_headers& headers) {
+        seen.set_value({url, headers.value("host")});
+        return json_response({{"status", "ok"}});
+    });
+    server.start();
+    const std::string port = std::to_string(server.local_endpoint().port());
+
+    auto reply = exchange_in_pieces(server.local_endpoint().port(), {"GET /mcp HTTP/1.1\r", "\nHost: localhost:" + port + "\r", "\n\r", "\n"});
+    const bool answered = reply.wait_for(k_bound) == std::future_status::ready;
+    server.stop(); // closes a connection still waiting for the end of its request, so the exchange returns
+
+    REQUIRE(answered);
+    CHECK(reply.get().rfind("HTTP/1.1 200 OK\r\n", 0) == 0);
+    auto handled = seen.get_future();
+    REQUIRE(handled.wait_for(0s) == std::future_status::ready);
+    const auto [url, host] = handled.get();
+    CHECK(url == "/mcp");
+    CHECK(host == std::optional<std::string>("localhost:" + port));
 }

@@ -7861,13 +7861,13 @@ void GUI_App::start_http_server(const std::string& provider)
         return;
     m_mcp_port_chosen = true;
     // Route /mcp requests to MCP server; everything else is a cloud login's callback.
-    m_http_server.set_request_handler([this](const std::string& method, const std::string& url, const std::string& body)
-        -> std::shared_ptr<HttpServer::Response> {
+    m_http_server.set_request_handler([this](const std::string& method, const std::string& url, const std::string& body,
+                                             const http_headers& headers) -> std::shared_ptr<HttpServer::Response> {
         // Every network call made for this request gives up once the app is quitting, so the
         // server's thread is never held past the quit (HttpServer::stop waits for it).
         const ScopedThreadCancelCheck quitting([] { return OrcaMCP::main_thread_gate().is_closed(); });
         if (OrcaMCP::is_mcp_url(url)) {
-            return OrcaMCPServer::handle_request(method, url, body);
+            return OrcaMCPServer::handle_request(method, url, body, headers);
         }
         return m_login_server.answer(url);
     });

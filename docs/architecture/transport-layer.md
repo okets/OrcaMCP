@@ -11,6 +11,11 @@ OrcaMCP uses a two-layer transport architecture to bridge the gap between MCP's 
 └───────────────┘            └──────────────────┘           └─────────────┘
 ```
 
+The app's `/mcp` endpoint also speaks MCP's Streamable HTTP transport (see "Layer 2"), so a client that
+has it, such as Claude Code's `type: "http"` or the MCP TypeScript SDK, can skip the bridge. The bridge
+remains the recommended path: it answers while the app is down, launches it (`start_orca`), chooses among
+several instances, and waits for slices without polling (`wait_for_slice`).
+
 ## Why Two Layers?
 
 ### The stdio Requirement
@@ -106,17 +111,13 @@ OrcaSlicer already has an HTTP server for:
 In `GUI_App.cpp`:
 ```cpp
 m_http_server.set_request_handler(
-    [](const std::string& method,
-       const std::string& url,
-       const std::string& body) -> std::shared_ptr<HttpServer::Response> {
-
+    [this](const std::string& method, const std::string& url, const std::string& body,
+           const http_headers& headers) -> std::shared_ptr<HttpServer::Response> {
         // Route /mcp to OrcaMCPServer
-        if (url.find("/mcp") != std::string::npos) {
-            return OrcaMCPServer::handle_request(method, url, body);
-        }
-
-        // Fall back to existing handlers
-        return HttpServer::bbl_auth_handle_request(method, url, body);
+        if (OrcaMCP::is_mcp_url(url))
+            return OrcaMCPServer::handle_request(method, url, body, headers.value("accept"));
+        // Everything else is a cloud login's callback
+        return m_login_server.answer(url);
     });
 
 // The first of 13618-13627 nothing answers on (OrcaMCPPortChoice.hpp); several instances can run at
@@ -131,11 +132,34 @@ OrcaMCP::choose_port(OrcaMCP::mcp_ports(), port_has_listener, try_start_on);
 4. Tool handler executes on main thread
 5. Response returned as JSON
 
+What `/mcp` answers, by MCP's Streamable HTTP rules (`OrcaMCPTransport.hpp`):
+
+| Request | Answer |
+|---------|--------|
+| POST of a JSON-RPC request (it has an `id`) | 200 with the JSON-RPC response |
+| POST of a notification (a `method`, no `id`), e.g. `notifications/initialized`, `notifications/cancelled` | 202 Accepted, no body |
+| POST of something that is not a JSON-RPC 2.0 message, or whose `method` is not a string | 400 with JSON-RPC error -32700 or -32600 |
+| POST, other than `initialize`, whose `MCP-Protocol-Version` header names a version OrcaMCP does not speak | 400 with JSON-RPC error -32600 naming the versions it does |
+| GET with `Accept: text/event-stream` | 405 (`Allow: GET, POST`): the server sends nothing of its own, so it offers no stream |
+| GET without it (the bridge's, curl's) | 200 with the server's info and the instance that answers |
+| Any other method | 405 (`Allow: GET, POST`) |
+
+The server answers one request per connection: every reply says `Connection: close` and the server
+closes the connection after it. There is no session (`Mcp-Session-Id`).
+
+`initialize` agrees on a protocol version by MCP's rule: the version the client asks for when OrcaMCP
+speaks it, otherwise the newest it speaks. It speaks 2025-06-18 and 2024-11-05
+(`OrcaMCPProtocolVersions.hpp`, which says why not 2025-03-26 or 2025-11-25). The bridge answers
+`initialize` itself by the same list, which `orcamcp_tools.json` carries (`protocol_versions`).
+
 ### Response Format
-All responses are `Content-Type: application/json`:
+JSON responses are `Content-Type: application/json`:
 ```cpp
 return std::make_shared<HttpServer::ResponseJson>(result_json);
 ```
+Every reply is written by `HttpServer::Response::write_message`: the status line and each header end
+with CRLF, as HTTP/1.1 requires. Through v2.5.0.9 they ended with a bare LF, which strict clients (Node's
+parser, and so the MCP TypeScript SDK and Claude Code's `type: "http"`) refused.
 
 ## Protocol: JSON-RPC 2.0
 

@@ -75,6 +75,10 @@
   ],
   "generated_from": "The MCP tool registry in src/slic3r/GUI/OrcaMCP. Do not edit by hand: see CLAUDE.md, \"Tool list\", for how to regenerate it.",
   "instructions": "OrcaMCP drives OrcaSlicer. Before deciding something cannot be done here, call get_server_info: it lists every tool by job.\n\nStart with get_scene_info (plates, objects, each object's object_id). Key tools:\n- Models: load_model (keeps the presets), load_project (replaces them), arrange_objects, auto_orient, move_object, rotate_object, scale_object, cut_object.\n- Mesh: get_mesh_health (holes, open edges), get_object_components (stray shells), repair_mesh.\n- Painting: paint_object (color, support, seam, fuzzy_skin).\n- Filaments and colour: get_filaments, set_object_filament, suggest_color_mix.\n- Settings: get_config_values, apply_config, set_object_config (one object), select_preset.\n- Slicing: slice_all, then wait_for_slice (no polling); get_print_estimate, export_gcode.\n- Seeing results: render_plate_view (its layer_view draws a sliced layer's toolpaths).\n- Printers: get_printer_status, send_to_printer.\n- Several OrcaMCP windows: list_instances, select_instance.\n\nResponses may carry next_steps: the tool to call next, and why.\n\nCareful:\n- send_to_printer uploads AND STARTS the print on a print host; start_print: false only uploads.\n- save_project without output_path overwrites the file the project is named after.\n- new_project and load_project discard unsaved changes without asking.",
+  "protocol_versions": [
+    "2025-06-18",
+    "2024-11-05"
+  ],
   "server_tools": [
     {
       "category": "Filaments & colour",

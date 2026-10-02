@@ -65,7 +65,7 @@ json reply_body(Slic3r::GUI::HttpServer::Response& response)
     std::stringstream written;
     response.write_response(written);
     const std::string text = written.str();
-    return json::parse(text.substr(text.find("\n\n") + 2));
+    return json::parse(text.substr(text.find("\r\n\r\n") + 4));
 }
 
 std::set<std::string> entry_files(const fs::path& dir)
@@ -339,7 +339,7 @@ TEST_CASE("the server refuses a call meant for another instance with -32004 befo
     // does not exist: were the check missing, the call would be refused for that (-32602), not run.
     const json request = {{"jsonrpc", "2.0"}, {"id", 7}, {"method", "tools/call"},
                           {"params", {{"name", "no_such_tool"}, {"arguments", json::object()}, {"_meta", {{instance_meta_key, "id-1001"}}}}}};
-    const json reply = reply_body(*OrcaMCPServer::handle_request("POST", "/mcp", request.dump()));
+    const json reply = reply_body(*OrcaMCPServer::handle_request("POST", "/mcp", request.dump(), Slic3r::GUI::http_headers()));
     CHECK(reply.at("id") == 7);
     CHECK(reply.at("error").at("code") == WrongInstance::error_code);
     CHECK(reply.at("error").at("code") == -32004);

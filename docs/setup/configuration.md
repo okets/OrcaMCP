@@ -36,6 +36,20 @@ For global availability, add to `~/.claude.json`:
 }
 ```
 
+### Direct HTTP, without the bridge
+
+The app's `/mcp` endpoint speaks MCP's Streamable HTTP transport, so any MCP client that has it (Claude
+Code's `type: "http"`, the MCP TypeScript SDK) can connect to a running OrcaMCP directly:
+
+```bash
+claude mcp add --transport http orca-slicer http://127.0.0.1:13618/mcp
+```
+
+The bridge is still the recommended way. A direct connection reaches one instance, on the port you name,
+and only while it runs. It has the app's 102 tools, but not the bridge's own four: `start_orca`,
+`wait_for_slice`, `list_instances` and `select_instance`. Without the bridge's wait cap, a tool that waits
+for an arrange or orient waits up to 105 s, so give the client a timeout longer than that.
+
 ## Environment Variables
 
 The bridge script accepts these environment variables:

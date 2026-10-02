@@ -28,6 +28,39 @@ std::string url_get_param(const std::string& url, const std::string& key)
     return result;
 }
 
+namespace {
+
+// One line of a request's head, without the CRLF that ends it. HTTP/1.1 ends every line with CRLF; reading
+// up to the CR alone left an LF that came in a later read to begin the next line.
+std::string take_line(boost::asio::streambuf& buff)
+{
+    std::istream stream{&buff};
+    std::string  line;
+    std::getline(stream, line, '\n');
+    if (!line.empty() && line.back() == '\r')
+        line.pop_back();
+    return line;
+}
+
+// The reason phrase of each status the server answers with.
+const char* status_text(int status)
+{
+    switch (status) {
+    case 200: return "OK";
+    case 201: return "Created";
+    case 202: return "Accepted";
+    case 302: return "Found";
+    case 400: return "Bad Request";
+    case 403: return "Forbidden";
+    case 404: return "Not Found";
+    case 405: return "Method Not Allowed";
+    case 500: return "Internal Server Error";
+    default: return "";
+    }
+}
+
+} // namespace
+
 void session::start()
 {
     read_first_line();
@@ -44,13 +77,9 @@ void session::read_first_line()
 {
     auto self(shared_from_this());
 
-    async_read_until(socket, buff, '\r', [this, self](const boost::beast::error_code& e, std::size_t s) {
+    async_read_until(socket, buff, "\r\n", [this, self](const boost::beast::error_code& e, std::size_t s) {
         if (!e) {
-            std::string  line, ignore;
-            std::istream stream{&buff};
-            std::getline(stream, line, '\r');
-            std::getline(stream, ignore, '\n');
-            headers.on_read_request_line(line);
+            headers.on_read_request_line(take_line(buff));
             read_next_line();
         } else if (e != boost::asio::error::operation_aborted) {
             server.stop(self);
@@ -118,7 +147,7 @@ void session::process_request()
                       socket.local_endpoint(ec).port()});
     }
     if (!resp)
-        resp = server.server.m_request_handler(headers.get_method(), url_str, body);
+        resp = server.server.m_request_handler(headers.get_method(), url_str, body, headers);
 
     std::stringstream ssOut;
     resp->write_response(ssOut);
@@ -136,12 +165,9 @@ void session::read_next_line()
 {
     auto self(shared_from_this());
 
-    async_read_until(socket, buff, '\r', [this, self](const boost::beast::error_code& e, std::size_t s) {
+    async_read_until(socket, buff, "\r\n", [this, self](const boost::beast::error_code& e, std::size_t s) {
         if (!e) {
-            std::string  line, ignore;
-            std::istream stream{&buff};
-            std::getline(stream, line, '\r');
-            std::getline(stream, ignore, '\n');
+            const std::string line = take_line(buff);
             headers.on_read_header(line);
 
             if (line.length() == 0) {
@@ -356,12 +382,14 @@ void HttpServer::set_request_handler(const RequestHandlerFn& request_handler)
 void HttpServer::set_request_handler(const std::function<std::shared_ptr<Response>(const std::string&)>& request_handler)
 {
     // Wrap legacy handler in new signature
-    this->m_request_handler = [request_handler](const std::string& method, const std::string& url, const std::string& body) {
+    this->m_request_handler = [request_handler](const std::string& method, const std::string& url, const std::string& body,
+                                                const http_headers& headers) {
         return request_handler(url);
     };
 }
 
-std::shared_ptr<HttpServer::Response> HttpServer::bbl_auth_handle_request(const std::string& method, const std::string& url, const std::string& body)
+std::shared_ptr<HttpServer::Response> HttpServer::bbl_auth_handle_request(const std::string& method, const std::string& url, const std::string& body,
+                                                                         const http_headers& headers)
 {
     return auth_handle_request(url, BBL_CLOUD_PROVIDER);
 }
@@ -564,11 +592,7 @@ std::shared_ptr<HttpServer::Response> HttpServer::auth_handle_request(const std:
 void HttpServer::ResponseNotFound::write_response(std::stringstream& ssOut)
 {
     const std::string sHTML = "<html><body><h1>404 Not Found</h1><p>There's nothing here.</p></body></html>";
-    ssOut << "HTTP/1.1 404 Not Found" << std::endl;
-    ssOut << "content-type: text/html" << std::endl;
-    ssOut << "content-length: " << sHTML.length() << std::endl;
-    ssOut << std::endl;
-    ssOut << sHTML;
+    write_message(ssOut, 404, {{"Content-Type", "text/html"}}, sHTML);
 }
 
 void HttpServer::ResponseRedirect::write_response(std::stringstream& ssOut)
@@ -584,43 +608,34 @@ void HttpServer::ResponseRedirect::write_response(std::stringstream& ssOut)
         "<a class=\"button\" href=\"" + location_str + "\">Continue</a>"
         "<script>setTimeout(function(){try{window.close();}catch(e){}},1500);</script>"
         "</div></body></html>";
-    ssOut << "HTTP/1.1 302 Found" << std::endl;
-    ssOut << "Location: " << location_str << std::endl;
-    ssOut << "content-type: text/html" << std::endl;
-    ssOut << "content-length: " << sHTML.length() << std::endl;
-    ssOut << std::endl;
-    ssOut << sHTML;
+    write_message(ssOut, 302, {{"Location", location_str}, {"Content-Type", "text/html"}}, sHTML);
 }
 
 void HttpServer::ResponseJson::write_response(std::stringstream& ssOut)
 {
-    std::string status_text;
-    switch (status_code) {
-        case 200: status_text = "OK"; break;
-        case 201: status_text = "Created"; break;
-        case 400: status_text = "Bad Request"; break;
-        case 403: status_text = "Forbidden"; break;
-        case 404: status_text = "Not Found"; break;
-        case 405: status_text = "Method Not Allowed"; break;
-        case 500: status_text = "Internal Server Error"; break;
-        default: status_text = "OK"; break;
-    }
-
-    ssOut << "HTTP/1.1 " << status_code << " " << status_text << std::endl;
     // No Access-Control-Allow-* headers: no web page may read an MCP reply (OrcaMCPRequestGuard.hpp).
-    ssOut << "Content-Type: application/json" << std::endl;
-    ssOut << "Content-Length: " << json_str.length() << std::endl;
-    ssOut << std::endl;
-    ssOut << json_str;
+    Headers headers{{"Content-Type", "application/json"}};
+    headers.insert(headers.end(), extra_headers.begin(), extra_headers.end());
+    write_message(ssOut, status_code, headers, json_str);
 }
+
+void HttpServer::Response::write_message(std::ostream& out, int status, const Headers& headers, const std::string& body)
+{
+    constexpr const char* crlf = "\r\n";
+    out << "HTTP/1.1 " << status << " " << status_text(status) << crlf;
+    for (const auto& [name, value] : headers)
+        out << name << ": " << value << crlf;
+    out << "Content-Length: " << body.size() << crlf;
+    out << "Connection: close" << crlf;
+    out << crlf;
+    out << body;
+}
+
+void HttpServer::ResponseAccepted::write_response(std::stringstream& ssOut) { write_message(ssOut, 202, {}, std::string()); }
 
 void HttpServer::ResponseHtml::write_response(std::stringstream& ssOut)
 {
-    ssOut << "HTTP/1.1 200 OK" << std::endl;
-    ssOut << "content-type: text/html" << std::endl;
-    ssOut << "content-length: " << html.length() << std::endl;
-    ssOut << std::endl;
-    ssOut << html;
+    write_message(ssOut, 200, {{"Content-Type", "text/html"}}, html);
 }
 
 } // GUI

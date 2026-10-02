@@ -5,6 +5,7 @@
 #include <map>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <vector>
 #include "nlohmann/json.hpp"
@@ -92,11 +93,13 @@ public:
     // main frame's close handler defers itself so, and never tears the GUI down under a tool call.
     static bool defer_until_tool_call_returns(std::function<void()> task);
 
-    // Handle incoming HTTP requests for MCP endpoint
+    // Handle incoming HTTP requests for MCP endpoint. Of the request's headers it reads Accept (a GET that asks
+    // for an event stream is refused, OrcaMCPTransport.hpp) and MCP-Protocol-Version (OrcaMCPProtocolVersions.hpp).
     static std::shared_ptr<HttpServer::Response> handle_request(
         const std::string& method,
         const std::string& url,
-        const std::string& body);
+        const std::string& body,
+        const http_headers& headers);
 
     // Register a tool with the MCP server. Throws std::logic_error for a name that is already
     // registered, or an app tool with no handler.

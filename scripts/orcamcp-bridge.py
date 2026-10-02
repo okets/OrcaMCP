@@ -91,27 +91,41 @@ def _instructions(manifest) -> str | None:
     return instructions if isinstance(instructions, str) and instructions else None
 
 
+# The MCP protocol version the bridge answers when its file names none: the one every OrcaMCP answered
+# before the list was written there. The list itself is the app's (OrcaMCPProtocolVersions.hpp).
+PROTOCOL_VERSIONS_WITHOUT_MANIFEST = ["2024-11-05"]
+
+
+def _protocol_versions(manifest) -> list:
+    """The MCP protocol versions OrcaMCP speaks, newest first, as the manifest lists them."""
+    versions = manifest.get("protocol_versions")
+    if isinstance(versions, list) and versions and all(isinstance(v, str) and v for v in versions):
+        return versions
+    return PROTOCOL_VERSIONS_WITHOUT_MANIFEST
+
+
 def load_tools_manifest(path: str = TOOLS_FILE) -> tuple:
-    """Return (server_tools, bridge_tools, instructions, error): tools/list entries, and the server
-    instructions (None when the file has none).
+    """Return (server_tools, bridge_tools, instructions, protocol_versions, error): tools/list entries,
+    the server instructions (None when the file has none) and the MCP protocol versions, newest first.
 
     Never raises: a bridge that dies lists nothing at all. An unreadable or malformed file gives no
-    app tools, the fallback start_orca, no instructions, and the reason.
+    app tools, the fallback start_orca, no instructions, the oldest protocol version, and the reason.
     """
     try:
         with open(path, encoding="utf-8") as f:
             manifest = json.load(f)
         return (_list_entries(manifest, "server_tools"), _list_entries(manifest, "bridge_tools"),
-                _instructions(manifest), None)
+                _instructions(manifest), _protocol_versions(manifest), None)
     except Exception as e:
         error = f"cannot read OrcaMCP's tool list {path}: {e}"
-        return [], fallback_bridge_tools(error), None, error
+        return [], fallback_bridge_tools(error), None, PROTOCOL_VERSIONS_WITHOUT_MANIFEST, error
 
 
 def install_tools_manifest(path: str = TOOLS_FILE):
     """Read the tool list the bridge serves. Runs once at import; tests point it at other files."""
-    global OFFLINE_SERVER_TOOLS, BRIDGE_TOOLS, SERVER_INSTRUCTIONS, TOOLS_MANIFEST_ERROR
-    OFFLINE_SERVER_TOOLS, BRIDGE_TOOLS, SERVER_INSTRUCTIONS, TOOLS_MANIFEST_ERROR = load_tools_manifest(path)
+    global OFFLINE_SERVER_TOOLS, BRIDGE_TOOLS, SERVER_INSTRUCTIONS, PROTOCOL_VERSIONS, TOOLS_MANIFEST_ERROR
+    (OFFLINE_SERVER_TOOLS, BRIDGE_TOOLS, SERVER_INSTRUCTIONS, PROTOCOL_VERSIONS,
+     TOOLS_MANIFEST_ERROR) = load_tools_manifest(path)
     if TOOLS_MANIFEST_ERROR:
         print(f"[orcamcp-bridge] {TOOLS_MANIFEST_ERROR}", file=sys.stderr)
 
@@ -143,7 +157,6 @@ NOT_RUNNING_MESSAGE = "OrcaMCP is not running. Use the 'start_orca' tool to star
 SERVER_INFO = {
     "name": "orca-slicer",
     "version": "unknown (OrcaMCP not running)",
-    "protocolVersion": "2024-11-05"
 }
 
 # Cached tools list - served when OrcaSlicer isn't available
@@ -418,6 +431,12 @@ def make_success_response(request_id, result: dict) -> dict:
         "id": request_id if request_id is not None else 0,
         "result": result
     }
+
+
+def is_notification(message) -> bool:
+    """A JSON-RPC notification: a method and no id. JSON-RPC never answers one, and none asks OrcaMCP for
+    anything, so the bridge keeps every one to itself (the app accepts them too: OrcaMCPTransport.hpp)."""
+    return isinstance(message, dict) and "method" in message and "id" not in message
 
 
 def make_tool_error_result(message: str) -> dict:
@@ -1431,7 +1450,13 @@ def call_bridge_tool(request_id, name: str, handler, arguments) -> dict:
     return handler(request_id, arguments)
 
 
-def initialize_result(client_protocol: str) -> dict:
+def negotiated_protocol_version(requested) -> str:
+    """MCP's version negotiation, as the app's (OrcaMCPProtocolVersions.hpp): the version the client asked
+    for when OrcaMCP speaks it, otherwise the newest it speaks."""
+    return requested if isinstance(requested, str) and requested in PROTOCOL_VERSIONS else PROTOCOL_VERSIONS[0]
+
+
+def initialize_result(client_protocol) -> dict:
     """What initialize answers, app or no app: the app's server instructions, from orcamcp_tools.json,
     are the one text a client shows before any tool is loaded."""
     result = {
@@ -1441,7 +1466,7 @@ def initialize_result(client_protocol: str) -> dict:
             # client must be willing to be told it changed.
             "tools": {"listChanged": True}
         },
-        "protocolVersion": client_protocol  # Echo client's version for compatibility
+        "protocolVersion": negotiated_protocol_version(client_protocol)
     }
     if SERVER_INSTRUCTIONS:
         result["instructions"] = SERVER_INSTRUCTIONS
@@ -1463,13 +1488,14 @@ def handle_local_request(request: dict) -> dict | None:
     # This prevents connection timeouts during initialization
     if method == "initialize":
         # Store client's protocol version for potential use
-        client_protocol = params.get("protocolVersion", "2024-11-05")
+        client_protocol = params.get("protocolVersion") if isinstance(params, dict) else None
         log_debug(f"Initialize from client with protocol {client_protocol}")
         return make_success_response(request_id, initialize_result(client_protocol))
 
-    if method == "notifications/initialized":
-        # This is a notification - no response needed but we must not block
-        log_debug("Received initialized notification")
+    if is_notification(request):
+        # notifications/initialized, notifications/cancelled (the user stopped a tool call), ...: no answer,
+        # and nothing to forward. An answer would carry id 0, which no request waits for.
+        log_debug(f"Received notification {method}")
         return {"_no_response": True}  # Special marker - don't send any response
 
     if method == "ping":

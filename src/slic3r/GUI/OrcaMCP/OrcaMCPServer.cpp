@@ -21,11 +21,13 @@
 #include "OrcaMCPNextSteps.hpp"
 #include "OrcaMCPServerInfo.hpp"
 #include "OrcaMCPModelLoad.hpp"
+#include "OrcaMCPProtocolVersions.hpp"
 #include "OrcaMCPRequestGuard.hpp"
 #include "OrcaMCPQuit.hpp"
 #include "OrcaMCPSliceCredit.hpp"
 #include "OrcaMCPSliceProgress.hpp"
 #include "OrcaMCPToolArguments.hpp"
+#include "OrcaMCPTransport.hpp"
 #include "OrcaMCPUiJob.hpp"
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
@@ -608,7 +610,8 @@ bool OrcaMCPServer::defer_until_tool_call_returns(std::function<void()> task)
 std::shared_ptr<HttpServer::Response> OrcaMCPServer::handle_request(
     const std::string& method,
     const std::string& url,
-    const std::string& body)
+    const std::string& body,
+    const http_headers& headers)
 {
     // Only handle /mcp endpoint
     if (!is_mcp_url(url)) {
@@ -626,8 +629,11 @@ std::shared_ptr<HttpServer::Response> OrcaMCPServer::handle_request(
 
     BOOST_LOG_TRIVIAL(debug) << "OrcaMCPServer: Handling " << method << " " << url;
 
-    // Handle GET /mcp for server info
+    // Handle GET /mcp for server info. A Streamable HTTP client's GET asks for a stream of the server's own
+    // messages instead; this server sends none (OrcaMCPTransport.hpp).
     if (method == "GET") {
+        if (asks_for_event_stream(headers.value("accept")))
+            return method_not_allowed_response("OrcaMCP sends no event stream: POST each JSON-RPC message to /mcp.");
         nlohmann::json info = {
             {"name", "orca-slicer"},
             {"version", version()},
@@ -642,10 +648,8 @@ std::shared_ptr<HttpServer::Response> OrcaMCPServer::handle_request(
     }
 
     // Handle POST /mcp for JSON-RPC requests
-    if (method != "POST") {
-        auto error = make_error_response(nlohmann::json(nullptr), -32600, "Method not allowed. Use POST for MCP requests.");
-        return std::make_shared<HttpServer::ResponseJson>(error.dump(), 405);
-    }
+    if (method != "POST")
+        return method_not_allowed_response("Method not allowed. Use POST for MCP requests.");
 
     // Parse JSON-RPC request
     nlohmann::json request;
@@ -665,12 +669,29 @@ std::shared_ptr<HttpServer::Response> OrcaMCPServer::handle_request(
         return std::make_shared<HttpServer::ResponseJson>(error.dump(), 400);
     }
 
-    if (!request.contains("method")) {
-        auto error = make_error_response(id, -32600, "Missing method");
+    // Checked, not read as a string: anything thrown here, before the handlers' try, would leave the HTTP
+    // thread and end the app.
+    if (!request.contains("method") || !request["method"].is_string()) {
+        auto error = make_error_response(id, -32600, "Missing method: a JSON-RPC message names its method as a string");
         return std::make_shared<HttpServer::ResponseJson>(error.dump(), 400);
     }
 
-    std::string rpc_method = request["method"];
+    const std::string rpc_method = request["method"];
+
+    // Every request after initialize names the version initialize agreed on, over HTTP (OrcaMCPProtocolVersions.hpp).
+    if (rpc_method != "initialize") {
+        if (const auto refusal = protocol_version_header_refusal(headers.value("mcp-protocol-version"))) {
+            auto error = make_error_response(id, -32600, *refusal);
+            return std::make_shared<HttpServer::ResponseJson>(error.dump(), 400);
+        }
+    }
+
+    // Accepted and never answered (OrcaMCPTransport.hpp).
+    if (is_notification(request)) {
+        BOOST_LOG_TRIVIAL(debug) << "OrcaMCPServer: notification " << rpc_method << " accepted";
+        return std::make_shared<HttpServer::ResponseAccepted>();
+    }
+
     nlohmann::json params = request.contains("params") ? request["params"] : nlohmann::json::object();
 
     BOOST_LOG_TRIVIAL(debug) << "OrcaMCPServer: RPC method: " << rpc_method;
@@ -731,7 +752,7 @@ nlohmann::json OrcaMCPServer::handle_initialize(const nlohmann::json& params)
     BOOST_LOG_TRIVIAL(info) << "OrcaMCPServer: Initialize handshake";
 
     return {
-        {"protocolVersion", "2024-11-05"},
+        {"protocolVersion", negotiated_protocol_version(params)},
         {"capabilities", {
             {"tools", nlohmann::json::object()}
         }},
@@ -815,6 +836,7 @@ nlohmann::json OrcaMCPServer::tools_manifest()
         {"generated_from", "The MCP tool registry in src/slic3r/GUI/OrcaMCP. Do not edit by hand: see CLAUDE.md, "
                            "\"Tool list\", for how to regenerate it."},
         {"instructions", server_instructions()},
+        {"protocol_versions", supported_protocol_versions()},
         {"server_tools", server_tools},
         {"bridge_tools", bridge_tools}
     };

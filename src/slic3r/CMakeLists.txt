@@ -438,6 +438,10 @@ set(SLIC3R_GUI_SOURCES
     GUI/OrcaMCP/OrcaMCPLoginServer.cpp
     GUI/OrcaMCP/OrcaMCPRequestGuard.hpp
     GUI/OrcaMCP/OrcaMCPRequestGuard.cpp
+    GUI/OrcaMCP/OrcaMCPTransport.hpp
+    GUI/OrcaMCP/OrcaMCPTransport.cpp
+    GUI/OrcaMCP/OrcaMCPProtocolVersions.hpp
+    GUI/OrcaMCP/OrcaMCPProtocolVersions.cpp
     GUI/OrcaMCP/OrcaMCPPortChoice.hpp
     GUI/OrcaMCP/OrcaMCPPortChoice.cpp
     GUI/OrcaMCP/OrcaMCPInstanceRegistry.hpp

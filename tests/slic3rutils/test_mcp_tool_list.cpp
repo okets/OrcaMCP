@@ -496,6 +496,9 @@ std::vector<std::string> manifest_differences(const nlohmann::json& file, const 
     // The bridge answers initialize itself, with the file's copy of the server instructions.
     if (file.value("instructions", nlohmann::json()) != registry.at("instructions"))
         differences.push_back("instructions differ");
+    // And answers it with a version from the file's list (OrcaMCPProtocolVersions.hpp).
+    if (file.value("protocol_versions", nlohmann::json()) != registry.at("protocol_versions"))
+        differences.push_back("protocol_versions differ");
     return differences;
 }
 

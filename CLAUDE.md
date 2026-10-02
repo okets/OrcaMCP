@@ -88,7 +88,7 @@ cd build && ctest --output-on-failure
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Transport | HTTP + stdio bridge | OrcaSlicer is a GUI app; pure stdio doesn't work |
+| Transport | HTTP + stdio bridge | OrcaSlicer is a GUI app; pure stdio doesn't work. `/mcp` is also MCP's Streamable HTTP, so a client can connect without the bridge, to one running instance and its 102 tools (`docs/setup/configuration.md`) |
 | Server location | Embedded in OrcaSlicer | Reuse existing HTTP server, from port 13618; several instances each take their own port (see "Several instances at once") |
 | Protocol | JSON-RPC 2.0 over HTTP | Standard MCP protocol |
 | Threading | Main thread via CallAfter | OpenGL/GUI operations require main thread |
@@ -143,6 +143,7 @@ generated from that registry:
 | `get_server_info`'s catalogue: every tool's name by category in the default response, each one's summary in its `tool_summaries` section | `OrcaMCPServerInfo.cpp`, on every call |
 | The bridge's list while the app is down, and its own tools' text either way | `scripts/orcamcp_tools.json`, the golden file |
 | `initialize`'s `instructions` (the bridge always answers `initialize` itself, from the golden file's `instructions`; the app's copy is for direct HTTP clients) | `OrcaMCP::server_instructions()`, `OrcaMCPServerInfo.cpp` (see "Server instructions and next steps") |
+| `initialize`'s `protocolVersion`: the client's when OrcaMCP speaks it, else the newest it speaks (the bridge's from the golden file's `protocol_versions`) | `OrcaMCP::supported_protocol_versions()`, `OrcaMCPProtocolVersions.cpp` |
 
 Regenerate the golden file with the command in "Adding New Tools", step 4, below.
 
@@ -499,6 +500,8 @@ gh release upload v2.3.2.10 ./path/to/new/artifact.exe -R okets/OrcaMCP
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPUiJob.cpp` | The UI worker's jobs a tool waits for (arrange, orient): the reported outcome, the wait on the HTTP thread and its answers, `get_slicing_status`'s `ui_job`, the bridge's cap; `OrcaMCPUiJobApp.cpp` starts them and reads the placement they left (see "Waiting for a UI job"; unit-tested in `tests/slic3rutils/test_mcp_ui_job.cpp`) |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPToolArguments.cpp` | Which tool calls reach a handler: an argument the tool's schema does not declare, a required one left out, or arguments that are not an object are refused with -32602 (see "Tool list"; unit-tested in `tests/slic3rutils/test_mcp_tool_arguments.cpp`) |
 | `src/slic3r/GUI/OrcaMCP/OrcaMCPRequestGuard.cpp` | Which requests the server answers: no web page's and no DNS-rebound one on `/mcp`, login callbacks only where a login listens (see "Security"; unit-tested in `tests/slic3rutils/test_mcp_request_guard.cpp`) |
+| `src/slic3r/GUI/OrcaMCP/OrcaMCPTransport.cpp` | How `/mcp` speaks MCP's Streamable HTTP transport, so a standard client (the MCP TypeScript SDK, Claude Code's `type: "http"`) connects without the bridge: a notification is answered 202 with no body, a GET for an event stream 405, a method `/mcp` does not take 405 with `Allow` (unit-tested in `tests/slic3rutils/test_mcp_transport.cpp`); every reply's CRLF head and `Connection: close` are `HttpServer::Response::write_message` (see "Carried upstream fixes", item BT) |
+| `src/slic3r/GUI/OrcaMCP/OrcaMCPProtocolVersions.cpp` | The MCP protocol versions OrcaMCP speaks (2025-06-18, 2024-11-05; why not 2025-03-26 or 2025-11-25 is in its header), the one `initialize` answers (the client's when spoken, else the newest), and the 400 for a request whose `MCP-Protocol-Version` header names another; the golden file carries the list for the bridge (unit-tested in `tests/slic3rutils/test_mcp_protocol_versions.cpp`) |
 | `src/slic3r/Utils/ThreadCancel.cpp` | The per-request cancel check a quit applies to blocking network calls on the HTTP thread (unit-tested in `tests/slic3rutils/test_thread_cancel.cpp`) |
 | `src/slic3r/GUI/GUI_App.cpp` | MCP route registration, HTTP server startup on the first free port, and the shutdown order (`stop_http_server`) |
 | `scripts/orcamcp-bridge.py` | stdio-to-HTTP bridge for Claude Code; finds the running instances and sends every call to the chosen one (its "Instances" section) |
@@ -1346,6 +1349,7 @@ echo "BP upstream's send dialog is not told which Flashforge it sends to, so it 
 echo "BQ AppConfig::set has no const char* overload, so a text literal takes its bool one and stores \"true\" / get_bool(section, key) reads \"1\" from the app section (upstream issue #15994; rel2506/10; 0 = bug for the first, non-zero = bug for the second): $(U src/libslic3r/AppConfig.hpp | grep -c 'const char \*value') / $(U src/libslic3r/AppConfig.hpp | grep -c 'this->get(key) == "1"')"
 echo "BS an agent's launch gets startup dialogs: the Linux SSL prompt and the plugin download before the MCP server, the setup wizard, the update check, the profile-sync notice, the locale error (rel2508; a feature: 0 = keep ours) / the locale error computes \"Application will close.\" and drops it (non-zero = bug): $(U src/slic3r/GUI/GUI_App.cpp | grep -c 'agent_launch_leaves_out') / $(U src/slic3r/GUI/GUI_App.cpp | grep -cF 'message + "\n\nApplication will close.";')"
 echo "BR the CLI's thumbnail render restores the canvas viewport through wxGetApp().plater() with no wx app, so --export-3mf and arrange with thumbnails segfault on macOS (rel2507): $(U src/slic3r/GUI/GLCanvas3D.cpp | awk '/^void GLCanvas3D::render_thumbnail_internal/{f=1} f&&/wxApp::GetInstance\(\)/{print "no"; d=1; exit} f&&/get_camera\(\)\.apply_viewport\(\)/{print "yes"; d=1; exit} END{if(!d) print "unknown"}')"
+echo "BT replies end their head lines with a bare LF / a request line is read up to its CR, so an LF that arrives later begins the next line (2026-10-02, Streamable HTTP): $(U src/slic3r/GUI/HttpServer.cpp | grep -c 'ssOut << std::endl') / $(U src/slic3r/GUI/HttpServer.cpp | grep -c "async_read_until(socket, buff, '\\\\r'")"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -2034,6 +2038,20 @@ logs what it left out: that prompt (as its Yes), the network plugin download in 
 upstream's `load_language` builds `message + "\n\nApplication will close."` as a statement and drops it; ours adds
 it. On a non-zero first count upstream has an agent-launch path of its own: compare. When upstream adds a startup
 dialog, give it the same guard.
+
+Item BT: upstream's `HttpServer` ends the status line and every header of a reply with a bare LF
+(`std::endl`), where HTTP/1.1 requires CRLF. Browsers take it (the login callbacks), strict clients do not:
+Node's parser refused every reply ("Missing expected CR after response line"), so the MCP TypeScript SDK and
+Claude Code's `type: "http"` could not connect to `/mcp`; only the Python bridge, which is lenient, could. And
+it reads each request line up to its CR, dropping the LF only when that came in the same read: an LF that
+arrived later began the next line, which then named no header (a request split between the two lost its
+`Host`, and the request guard refused it). Ours writes every reply through `HttpServer::Response::write_message`
+(CRLF, `Content-Length`, and `Connection: close`, since the server closes every connection after its reply)
+and reads lines up to CRLF. Our other `/mcp` transport changes are features: the handler gets the request's
+headers (`RequestHandlerFn`'s `http_headers`), a notification is answered 202 with no body
+(`ResponseAccepted`), and a GET for an event stream 405 (`OrcaMCPTransport.hpp`). For each 0, take upstream's
+and re-run `slic3rutils_tests "[HttpServer],[McpTransport]"`, then connect with the MCP TypeScript SDK
+(`StreamableHTTPClientTransport`: connect, listTools, callTool, close).
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices

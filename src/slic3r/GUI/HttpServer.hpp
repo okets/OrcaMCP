@@ -18,6 +18,7 @@
 #include <set>
 #include <memory>
 #include <utility>
+#include <vector>
 
 #define LOCALHOST_PORT      13618
 #define LOCALHOST_URL       "http://localhost:"
@@ -98,8 +99,18 @@ public:
     class Response
     {
     public:
+        using Headers = std::vector<std::pair<std::string, std::string>>;
+
         virtual ~Response()                                   = default;
         virtual void write_response(std::stringstream& ssOut) = 0;
+
+    protected:
+        // Orca: one whole reply: the status line, `headers`, Content-Length and Connection: close, then
+        // `body`. HTTP/1.1 ends every line of the head with CRLF; upstream's bare LF made strict clients
+        // (Node's parser, so the MCP TypeScript SDK and Claude Code's http transport) refuse every reply.
+        // The server closes every connection after its reply, and says so, so a client never sends its
+        // next request on a connection that is closing.
+        static void write_message(std::ostream& out, int status, const Headers& headers, const std::string& body);
     };
 
     class ResponseNotFound : public Response
@@ -123,10 +134,21 @@ public:
     {
         const std::string json_str;
         int status_code;
+        const Headers extra_headers; // e.g. a 405's Allow
 
     public:
-        ResponseJson(const std::string& json, int status = 200) : json_str(json), status_code(status) {}
+        ResponseJson(const std::string& json, int status = 200, Headers extra_headers = {})
+            : json_str(json), status_code(status), extra_headers(std::move(extra_headers))
+        {}
         ~ResponseJson() override = default;
+        void write_response(std::stringstream& ssOut) override;
+    };
+
+    // Orca: 202 Accepted with no body, what MCP's Streamable HTTP transport answers a notification with.
+    class ResponseAccepted : public Response
+    {
+    public:
+        ~ResponseAccepted() override = default;
         void write_response(std::stringstream& ssOut) override;
     };
 
@@ -140,8 +162,9 @@ public:
         void write_response(std::stringstream& ssOut) override;
     };
 
-    // Request handler type that includes method, URL, and body
-    using RequestHandlerFn = std::function<std::shared_ptr<Response>(const std::string& method, const std::string& url, const std::string& body)>;
+    // Request handler type that includes method, URL, body and the request's headers (the MCP server reads Accept)
+    using RequestHandlerFn = std::function<std::shared_ptr<Response>(const std::string& method, const std::string& url,
+                                                                     const std::string& body, const http_headers& headers)>;
 
     // Orca: what a request guard sees of a request, before the handler does.
     struct RequestInfo
@@ -200,7 +223,8 @@ public:
     void set_request_guard(const RequestGuardFn& guard) { m_request_guard = guard; }
 
     // Default handler for BBL authentication
-    static std::shared_ptr<Response> bbl_auth_handle_request(const std::string& method, const std::string& url, const std::string& body);
+    static std::shared_ptr<Response> bbl_auth_handle_request(const std::string& method, const std::string& url, const std::string& body,
+                                                             const http_headers& headers);
     static std::shared_ptr<Response> auth_handle_request(const std::string& url, const std::string& provider);
 
 private:
