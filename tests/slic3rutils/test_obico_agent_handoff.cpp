@@ -23,13 +23,13 @@ json webcam(const std::string& name, bool primary, const std::string& stream_url
 
 TEST_CASE("The agent is found at the address of its primary camera", "[ObicoAgentHandoff]")
 {
-    CHECK(agent_url(document_with({webcam("Side", false, "http://10.0.0.3:9000/cameras/1/stream"),
-                                   webcam("Printer", true, "http://10.0.0.2:8081/cameras/0/stream")})) ==
+    CHECK(agent_url(document_with(json::array({webcam("Side", false, "http://10.0.0.3:9000/cameras/1/stream"),
+                                   webcam("Printer", true, "http://10.0.0.2:8081/cameras/0/stream")}))) ==
           std::optional<std::string>("http://10.0.0.2:8081"));
     // No primary: the first camera with an http address.
-    CHECK(agent_url(document_with({webcam("A", false, "rtsp://cam/stream"), webcam("B", false, "http://agent.lan/cameras/1/stream")})) ==
+    CHECK(agent_url(document_with(json::array({webcam("A", false, "rtsp://cam/stream"), webcam("B", false, "http://agent.lan/cameras/1/stream")}))) ==
           std::optional<std::string>("http://agent.lan:80"));
-    CHECK(agent_url(document_with({webcam("Printer", true, "http://[fd00::2]:8081/cameras/0/stream")})) ==
+    CHECK(agent_url(document_with(json::array({webcam("Printer", true, "http://[fd00::2]:8081/cameras/0/stream")}))) ==
           std::optional<std::string>("http://[fd00::2]:8081"));
 }
 
@@ -37,9 +37,9 @@ TEST_CASE("A document with no camera address of the agent names no agent", "[Obi
 {
     CHECK_FALSE(agent_url(json::object()).has_value());
     CHECK_FALSE(agent_url(document_with(json::array())).has_value());
-    CHECK_FALSE(agent_url(document_with({webcam("Printer", true, "")})).has_value());
-    CHECK_FALSE(agent_url(document_with({webcam("Printer", true, "https://agent/cameras/0/stream")})).has_value());
-    CHECK_FALSE(agent_url(document_with({json{{"name", "no url"}, {"is_primary_camera", true}}})).has_value());
+    CHECK_FALSE(agent_url(document_with(json::array({webcam("Printer", true, "")}))).has_value());
+    CHECK_FALSE(agent_url(document_with(json::array({webcam("Printer", true, "https://agent/cameras/0/stream")}))).has_value());
+    CHECK_FALSE(agent_url(document_with(json::array({json{{"name", "no url"}, {"is_primary_camera", true}}}))).has_value());
 }
 
 TEST_CASE("The agent is posted the file's name and its slice table", "[ObicoAgentHandoff]")
