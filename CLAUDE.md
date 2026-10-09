@@ -1352,6 +1352,7 @@ echo "BQ AppConfig::set has no const char* overload, so a text literal takes its
 echo "BS an agent's launch gets startup dialogs: the Linux SSL prompt and the plugin download before the MCP server, the setup wizard, the update check, the profile-sync notice, the locale error (rel2508; a feature: 0 = keep ours) / the locale error computes \"Application will close.\" and drops it (non-zero = bug): $(U src/slic3r/GUI/GUI_App.cpp | grep -c 'agent_launch_leaves_out') / $(U src/slic3r/GUI/GUI_App.cpp | grep -cF 'message + "\n\nApplication will close.";')"
 echo "BR the CLI's thumbnail render restores the canvas viewport through wxGetApp().plater() with no wx app, so --export-3mf and arrange with thumbnails segfault on macOS (rel2507): $(U src/slic3r/GUI/GLCanvas3D.cpp | awk '/^void GLCanvas3D::render_thumbnail_internal/{f=1} f&&/wxApp::GetInstance\(\)/{print "no"; d=1; exit} f&&/get_camera\(\)\.apply_viewport\(\)/{print "yes"; d=1; exit} END{if(!d) print "unknown"}')"
 echo "BT replies end their head lines with a bare LF / a request line is read up to its CR, so an LF that arrives later begins the next line (2026-10-02, Streamable HTTP): $(U src/slic3r/GUI/HttpServer.cpp | grep -c 'ssOut << std::endl') / $(U src/slic3r/GUI/HttpServer.cpp | grep -c "async_read_until(socket, buff, '\\\\r'")"
+echo "BU Windows CI's compiler cache keeps objects built with the old version after a bump (depend mode cannot see the precompiled header; 0 = bug): $(U .github/workflows/build_orca.yml | grep -c 'CCACHE_EXTRAFILES')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -2054,6 +2055,16 @@ headers (`RequestHandlerFn`'s `http_headers`), a notification is answered 202 wi
 (`ResponseAccepted`), and a GET for an event stream 405 (`OrcaMCPTransport.hpp`). For each 0, take upstream's
 and re-run `slic3rutils_tests "[HttpServer],[McpTransport]"`, then connect with the MCP TypeScript SDK
 (`StreamableHTTPClientTransport`: connect, listTools, callTool, close).
+
+Item BU: upstream's CI compiles through ccache in depend mode (`CCACHE_DEPEND=1`) with the precompiled header
+allowed (`pch_defines` sloppiness). On Windows depend mode hashes the headers MSVC reports, and MSVC reports none the
+precompiled header supplied, `libslic3r_version.h` among them: after a version bump every source that did not change
+came back from the cache compiled with the old version (v2.5.0.11-dev's first Windows build answered
+`get_server_info` with 2.5.0.10-dev, and its installer's update check would have read the same). Ours hashes
+`version.inc` into every Windows compile (`CCACHE_EXTRAFILES`), so a bump rebuilds everything once. A change to any
+other header inside the Windows precompiled header (`src/libslic3r/pchheader.hpp`, `src/slic3r/pchheader.hpp`) is
+missed the same way; it does not change the version, so this does not cover it. On a non-zero, upstream hashes something
+itself: check that it covers the version, and re-check that a bump's Windows build reports the new version.
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices

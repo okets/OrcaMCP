@@ -136,6 +136,15 @@ jobs:
           # Hash the includes the compiler reports instead of preprocessing
           # every miss before compiling it.
           echo "CCACHE_DEPEND=1" >> "$GITHUB_ENV"
+          # OrcaMCP: on Windows the version reaches every source through the
+          # precompiled header, which depend mode never sees (MSVC lists no
+          # header the PCH supplied), so after a version bump a source that did
+          # not change came back from the cache with the old version: the
+          # v2.5.0.11-dev build reported 2.5.0.10-dev. Hashing version.inc into
+          # every compile makes a bump rebuild everything once.
+          if [ "${{ runner.os }}" = Windows ]; then
+            echo "CCACHE_EXTRAFILES=${{ github.workspace }}\\version.inc" >> "$GITHUB_ENV"
+          fi
           # The restored directory carries the previous run's counters.
           ccache -z
 
