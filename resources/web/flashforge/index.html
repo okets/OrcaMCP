@@ -544,9 +544,14 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
      printer's token alone. The page opens that socket itself; the slicer only hands over the link.
      `suspended` and `lastState` are declared further down and only read at call time.          */
   var obicoLink = (function(){
-    var link = null, ws = null, doc = null, state = "off", timer = null;
+    var link = null, ws = null, doc = null, state = "off", timer = null, silenceTimer = null;
     var backoffMs = 2000, closesBeforeDoc = 0;
     var BACKOFF_MAX_MS = 60000, REJECTED_AFTER_CLOSES = 2;
+    /* Obico pushes the document about once a second while the socket lives. A connection that dies
+       without a close (a sleep, a network change, a proxy dropping it) never fires onclose, and the
+       page went on showing a document hours old as "the agent has not reported". So a socket that has
+       been silent this long, or never opened, is dropped and opened again. */
+    var SILENT_MS = 30000;
 
     function wsUrl(l){
       return l.url.replace(/^http/i, "ws").replace(/\/+$/, "") + "/ws/token/web/" + encodeURIComponent(l.token) + "/";
@@ -561,7 +566,10 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
       try { socket = new WebSocket(wsUrl(link)); }
       catch (e){ onClosed(); return; }
       ws = socket;
+      armSilence(socket);
       socket.onmessage = function(ev){
+        if (ws !== socket) return;
+        armSilence(socket);
         var parsed;
         try { parsed = JSON.parse(ev.data); } catch (e){ return; }
         if (!parsed || typeof parsed !== "object") return;
@@ -571,12 +579,23 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
       socket.onclose = function(ev){ if (ws === socket) onClosed(ev); };
       socket.onerror = function(){ /* onclose follows */ };
     }
+    function disarmSilence(){ if (silenceTimer){ clearTimeout(silenceTimer); silenceTimer = null; } }
+    function armSilence(socket){
+      disarmSilence();
+      silenceTimer = setTimeout(function(){
+        silenceTimer = null;
+        if (ws !== socket) return;
+        try { socket.close(); } catch (e){}
+        onClosed(null);   /* an unclean close: retried, never taken for a rejected token */
+      }, SILENT_MS);
+    }
     /* A clean close before any document is Obico turning the token away (its consumer closes the
        socket on an unknown token); a failed connection closes unclean (code 1006) and just means the
        server is not there. The retry timer is armed before the repaint, so the render's sync() does
        not open a second socket in between. */
     function onClosed(ev){
       ws = null;
+      disarmSilence();
       if (!link) return;
       var clean = !!(ev && ev.wasClean);
       if (!doc && clean && ++closesBeforeDoc >= REJECTED_AFTER_CLOSES){
@@ -591,6 +610,7 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     }
     function close(){
       if (timer){ clearTimeout(timer); timer = null; }
+      disarmSilence();
       var socket = ws; ws = null;
       if (socket){ try { socket.close(); } catch (e){} }
       doc = null; state = "off"; backoffMs = 2000; closesBeforeDoc = 0;
