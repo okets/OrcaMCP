@@ -227,24 +227,6 @@ std::optional<long> printing_time_in(const nlohmann::json& list, const std::stri
     return std::nullopt;
 }
 
-// Remaining time, projected from what the printer does report reliably. `estimatedTime` looked like
-// seconds remaining in the LAN API doc, which was written from an idle printer where every time
-// field is 0. On a running print (firmware 1.9.9, 2026-09-18) it tracked printDuration to the
-// second: 1020 elapsed -> 1020 "remaining", 1680 -> 1680, on a nine-hour job; on a .gcode.3mf sent from
-// OrcaMCP (2026-09-30) it held the job's whole estimate, 1752 s, from the start. So it is not used.
-//
-// Elapsed / progress is the whole-job estimate; minus elapsed is what is left. Below 2 % the
-// denominator is small enough that warm-up noise dominates, so the answer is "unknown" (-1) rather
-// than a number that will be wrong by hours. The same formula runs in the phone console served by
-// flashforge-obico, so the two agree.
-long project_remaining_s(const std::string& state, long duration_s, double progress)
-{
-    const bool active = state == "printing" || state == "paused";
-    if (!active || duration_s <= 0 || progress < 0.02)
-        return -1;
-    return std::lround(duration_s * (1.0 - progress) / progress);
-}
-
 // A job or control number of `detail`, and what a real reading of it can be: wide on purpose, to
 // catch memory and never a setting. Firmware 1.9.9 reports every one of them from other memory for a
 // moment after a print starts (PrinterStatus::implausible_telemetry).
@@ -405,6 +387,24 @@ void fill_material_station(const PrinterStatus& status, nlohmann::json& print)
 
 } // namespace
 
+// Remaining time, projected from what the printer does report reliably. `estimatedTime` looked like
+// seconds remaining in the LAN API doc, which was written from an idle printer where every time
+// field is 0. On a running print (firmware 1.9.9, 2026-09-18) it tracked printDuration to the
+// second: 1020 elapsed -> 1020 "remaining", 1680 -> 1680, on a nine-hour job; on a .gcode.3mf sent from
+// OrcaMCP (2026-09-30) it held the job's whole estimate, 1752 s, from the start. So it is not used.
+//
+// Elapsed / progress is the whole-job estimate; minus elapsed is what is left. Below 2 % the
+// denominator is small enough that warm-up noise dominates, so the answer is "unknown" (-1) rather
+// than a number that will be wrong by hours. The same formula runs in the phone console served by
+// flashforge-obico, so the two agree.
+long project_remaining_s(const std::string& state, long duration_s, double progress)
+{
+    const bool active = state == "printing" || state == "paused";
+    if (!active || duration_s <= 0 || progress < 0.02)
+        return -1;
+    return std::lround(duration_s * (1.0 - progress) / progress);
+}
+
 bool try_parse_json_int(const nlohmann::json& value, int& out)
 {
     try {
@@ -475,6 +475,13 @@ bool parse_detail(const std::string& body, PrinterStatus& out, std::string& erro
     result.implausible_telemetry = implausible_telemetry_of(detail);
     result.remaining_s           = result.implausible_telemetry.empty() ?
                                        project_remaining_s(result.state, result.duration_s, result.progress) : -1;
+    if (result.implausible_telemetry.empty()) {
+        result.work_done = result.progress;
+        if (detail.contains("printLayer"))
+            result.layer = static_cast<int>(get_number(detail, "printLayer"));
+        if (detail.contains("targetPrintLayer"))
+            result.layers = static_cast<int>(get_number(detail, "targetPrintLayer"));
+    }
 
     result.bed_temp       = get_number(detail, "platTemp");
     result.bed_target     = get_number(detail, "platTargetTemp");
@@ -602,7 +609,7 @@ nlohmann::json flashforge_status_to_bambu_payload(const PrinterStatus& status)
     // A report whose job numbers are memory (implausible_telemetry) says nothing of progress: left
     // out, the Device tab keeps what it showed.
     if (status.implausible_telemetry.empty()) {
-        print["mc_percent"]        = scale_progress_to_percent(status.progress);
+        print["mc_percent"]        = scale_progress_to_percent(status.work_done >= 0 ? status.work_done : status.progress);
         // Whole minutes of the projection; -1 (unknown) reads as 0, which the Device tab shows as "--".
         print["mc_remaining_time"] = static_cast<int>(std::max<long>(0, status.remaining_s) / 60);
     }

@@ -3,9 +3,13 @@
 #include "Flashforge.hpp"
 #include "FlashforgeApi.hpp"
 #include "FlashforgeLocalApi.hpp"
+#include "FlashforgeJobProgress.hpp"
+#include "libslic3r/GCode/GCodeProcessor.hpp"
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
+#include "slic3r/GUI/Plater.hpp"
+#include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/GUI/DeviceManager.hpp"
 #include "slic3r/GUI/DeviceCore/DevManager.h"
 #include "slic3r/GUI/DeviceCore/DevStorage.h"
@@ -433,6 +437,29 @@ std::map<std::string, std::string> FlashforgePrinterAgent::build_upload_extended
     return FlashforgeApi::make_upload_extended_info(options, true, mappings);
 }
 
+void FlashforgePrinterAgent::add_slice_table(std::map<std::string, std::string>& info, const std::string& gcode_path) const
+{
+    // The file uploaded is the plate's own sliced G-code (resolve_gcode_path), which its slice result
+    // names. The printer reports its progress as bytes of that file; the table reads them.
+    std::optional<FlashforgeJobProgress::SliceTable> table;
+    run_on_gui_thread([&]() {
+        GUI::Plater* plater = GUI::wxGetApp().plater();
+        if (plater == nullptr)
+            return;
+        GUI::PartPlateList& plates = plater->get_partplate_list();
+        for (int i = 0; i < plates.get_plate_count(); ++i) {
+            const GCodeProcessorResult* result = plates.get_plate(i)->get_slice_result();
+            if (result != nullptr && !result->filename.empty() &&
+                boost::filesystem::path(result->filename) == boost::filesystem::path(gcode_path)) {
+                table = FlashforgeJobProgress::slice_table(*result);
+                return;
+            }
+        }
+    });
+    if (table && table->valid())
+        info[FlashforgeJobProgress::kExtendedInfoKey] = FlashforgeJobProgress::to_json(*table);
+}
+
 int FlashforgePrinterAgent::upload_gcode(const PrintParams& params,
                                          const std::string& gcode_path,
                                          bool               start_print,
@@ -461,6 +488,8 @@ int FlashforgePrinterAgent::upload_gcode(const PrintParams& params,
     upload.upload_path   = boost::filesystem::path(upload_name);
     upload.post_action   = start_print ? PrintHostPostUploadAction::StartPrint : PrintHostPostUploadAction::None;
     upload.extended_info = build_upload_extended_info(*host, params);
+    if (start_print)
+        add_slice_table(upload.extended_info, gcode_path);
 
     if (update_fn)
         update_fn(PrintingStageUpload, 0, "Uploading G-code...");

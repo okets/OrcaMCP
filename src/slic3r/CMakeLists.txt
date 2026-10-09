@@ -869,6 +869,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/Flashforge.hpp
     Utils/FlashforgeApi.cpp
     Utils/FlashforgeApi.hpp
+    Utils/FlashforgeJobProgress.cpp
+    Utils/FlashforgeJobProgress.hpp
     Utils/FlashforgeLocalApi.cpp
     Utils/FlashforgeLocalApi.hpp
     Utils/ObicoLink.cpp

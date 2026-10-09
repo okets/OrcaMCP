@@ -185,7 +185,7 @@ TEST_CASE("get_printer_status leaves out the numbers of a report it cannot trust
         REQUIRE(printer["implausible_telemetry"].size() == 7);
         CHECK(printer["implausible_telemetry"][3] == "printSpeedAdjust 65660");
         // Even the ones in range: 65656 s is a time, but it is memory too.
-        for (const char* key : {"progress", "duration_s", "remaining_s", "firmware_estimated_s"}) {
+        for (const char* key : {"progress", "duration_s", "remaining_s", "firmware_estimated_s", "layer", "layers", "work_done"}) {
             INFO(key);
             CHECK(printer[key].is_null());
         }
@@ -207,6 +207,11 @@ TEST_CASE("get_printer_status leaves out the numbers of a report it cannot trust
         CHECK(printer["implausible_telemetry"] == json::array());
         CHECK_THAT(printer["progress"].get<double>(), WithinAbs(0.0, 1e-12));
         CHECK(printer["firmware_estimated_s"] == 1751);
+        // A print not read by a slice of this app's: the printer's own layer count and file progress.
+        CHECK(printer["progress_source"] == "printer");
+        CHECK(printer["layer"].is_number_integer());
+        CHECK(printer["layers"].is_number_integer());
+        CHECK_THAT(printer["work_done"].get<double>(), WithinAbs(0.0, 1e-12));
         CHECK(printer["controls"]["print_speed_percent"] == 100);
         CHECK(printer["controls"]["cooling_fan_percent"] == 0);
     }

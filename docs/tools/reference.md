@@ -3929,14 +3929,22 @@ are unaffected. `printer_control`'s `set_*` actions refuse to send such a report
                             "printSpeedAdjust 65660", "zAxisCompensation 2.7561578975419097e-40",
                             "chamberFanSpeed 5177344", "coolingFanSpeed 5111810"],
   "progress": null, "duration_s": null, "remaining_s": null, "firmware_estimated_s": null,
+  "layer": null, "layers": null, "work_done": null, "progress_source": "printer",
   "controls": {"print_speed_percent": null, "z_offset_mm": null, "chamber_fan_percent": null,
                "cooling_fan_percent": null, "recirculation": false, "exhaust": false},
   "...": "..."
 }
 ```
 
-`printer.raw.printLayer` equals `targetPrintLayer` for the first ten seconds or so of printing on
-firmware 1.9.9 (545 of 545 at 0.1 % progress): read it against `progress`.
+`printer.progress` is how far a Flashforge has read through the G-code file, by bytes, not time, and its
+own layer count can run ahead of the layer printing (38 while 36 printed, firmware 1.9.9). For a print
+this instance sliced and sent, `printer.progress_source` is `"slice"`: `layer`, `layers`, `work_done` (the
+slicer's time done, 0-1) and `remaining_s` (elapsed time over `work_done`) are read off the sent slice,
+which says where each layer starts in the file and how much of the slicer's time comes before it. For
+any other print they are the printer's (`"printer"`): `layer` / `layers` its `printLayer` /
+`targetPrintLayer`, `work_done` its `progress`. Its `printLayer` equals `targetPrintLayer` for the first
+ten seconds or so of printing on firmware 1.9.9 (545 of 545 at 0.1 % progress): read it against
+`progress`.
 
 `printer.raw` is the printer's own status object cut down to the fields the Device page reads (fan
 states, print speed, Z offset, fan speeds, the material station's progress, ...), the same allowlist the

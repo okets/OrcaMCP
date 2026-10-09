@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "FlashforgeApi.hpp"
+#include "FlashforgeJobProgress.hpp"
 
 namespace Slic3r { namespace FlashforgeLocalApi {
 
@@ -168,6 +169,9 @@ struct PrintStart
     std::string                 file_name;
     FlashforgeApi::PrintOptions options;
     nlohmann::json              material_mappings = nlohmann::json::array(); // as sent: {toolId, slotId, materialName, ...}
+    // The slice of the file, for a print this app sliced and sent: reads the printer's progress
+    // (FlashforgeJobProgress::apply). None for a file printed from the printer's storage.
+    std::optional<FlashforgeJobProgress::SliceTable> slice_table;
 };
 
 // The last print each host accepted from this process. Flashforge::upload_local_api (with printNow)

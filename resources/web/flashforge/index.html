@@ -633,6 +633,7 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     printer:{
       state:"printing", print_file:"lattice-planter-4c.gcode.3mf",
       progress:0.349, duration_s:8324, remaining_s:15527, firmware_estimated_s:8324,
+      layer:412, layers:1180, work_done:0.349, progress_source:"printer",
       light_on:true, door:"close", error_code:"",
       name:"Creator 5 Pro", model:"Creator 5 Pro", firmware:"1.9.9", ip:"10.0.0.10", pid:41,
       camera_stream_url:"",
@@ -1897,11 +1898,17 @@ body[data-ready="1"] .tool[data-state="empty"]{opacity:.66}
     }
 
     var known  = readable(p);
-    var pct    = Math.max(0, Math.min(100, num(p.progress) * 100));
-    var layer  = known ? num(raw.printLayer) : 0, total = known ? num(raw.targetPrintLayer) : 0;
+    /* For a print OrcaSlicer sliced and sent, the layer, the work done and the remaining time are read
+       off its slice (progress_source "slice"): the printer's progress is how far it has read through the
+       file, by bytes, and its layer count ran two ahead on a Creator 5 Pro. Otherwise they are the
+       printer's own. */
+    var fromSlice = p.progress_source === "slice";
+    var workDone = p.work_done !== null && p.work_done !== undefined ? p.work_done : p.progress;
+    var pct    = Math.max(0, Math.min(100, num(workDone) * 100));
+    var layer  = known ? num(p.layer) : 0, total = known ? num(p.layers) : 0;
     /* Firmware 1.9.9 counts the first layer as the last for its first ten seconds (545 of 545 at 0.1 %):
        a count at the total before half the job is done is that, not the last layer. */
-    if (layer >= total && pct < 50) total = 0;
+    if (!fromSlice && layer >= total && pct < 50) total = 0;
     var active = slotsById(p)[num(ms.currentSlot)] || {};
     var tint   = hex(active.color) || "var(--brass)";
 

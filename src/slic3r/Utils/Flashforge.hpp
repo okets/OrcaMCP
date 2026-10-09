@@ -113,7 +113,10 @@ private:
     // The gcodeList response, parsed. False with `msg` when it could not be fetched or read.
     bool fetch_gcode_list(nlohmann::json& response, wxString& msg) const;
     // Called only once the printer accepted a start.
-    void record_print_start(const std::string& file_name, const FlashforgeApi::PrintOptions& options, const nlohmann::json& material_mappings) const;
+    void record_print_start(const std::string&                                      file_name,
+                            const FlashforgeApi::PrintOptions&                      options,
+                            const nlohmann::json&                                   material_mappings,
+                            std::optional<FlashforgeJobProgress::SliceTable>        slice_table = std::nullopt) const;
     std::string make_http_url(const std::string& path) const;
     int  get_err_code_from_body(const std::string &body) const;
     bool connect(wxString& msg) const;

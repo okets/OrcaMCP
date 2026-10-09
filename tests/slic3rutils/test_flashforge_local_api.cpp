@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "libslic3r/PrintConfig.hpp"
 #include "slic3r/GUI/HttpServer.hpp"
@@ -404,6 +405,38 @@ bool upload(const Slic3r::Flashforge& host, const std::string& upload_name, bool
         std::move(upload_data), [](Slic3r::Http::Progress, bool&) {}, [](wxString) {}, [](wxString, wxString) {});
 }
 
+// Uploads `bytes` bytes of G-code as `upload_name` and starts it, carrying a slice table of three
+// layers that describes a file of `table_bytes` bytes.
+bool upload_sliced(const Slic3r::Flashforge& host, const std::string& upload_name, size_t bytes, std::uint64_t table_bytes)
+{
+    ScopedTemporaryFile gcode(".gcode");
+    {
+        boost::nowide::ofstream out(gcode.string());
+        out << std::string(bytes, ';');
+    }
+    Slic3r::FlashforgeJobProgress::SliceTable table;
+    table.file_bytes        = table_bytes;
+    table.layer_start_bytes = {100, 200, 600};
+    table.layer_start_s     = {10, 70, 80};
+    table.total_s           = 100;
+
+    Slic3r::PrintHostUpload upload_data;
+    upload_data.source_path   = gcode.path();
+    upload_data.upload_path   = upload_name;
+    upload_data.post_action   = Slic3r::PrintHostPostUploadAction::StartPrint;
+    upload_data.extended_info = Slic3r::FlashforgeApi::make_upload_extended_info({}, false, nlohmann::json::array());
+    upload_data.extended_info[Slic3r::FlashforgeJobProgress::kExtendedInfoKey] = Slic3r::FlashforgeJobProgress::to_json(table);
+    return host.upload(
+        std::move(upload_data), [](Slic3r::Http::Progress, bool&) {}, [](wxString) {}, [](wxString, wxString) {});
+}
+
+// The printer's answer while it prints `file_name`, having read 80 % of it in 9000 s, by its own count on layer 2 of 3.
+std::string printing_detail(const std::string& file_name)
+{
+    return R"({"code":0,"detail":{"status":"printing","printFileName":")" + file_name +
+           R"(","printProgress":0.8,"printDuration":9000,"printLayer":2,"targetPrintLayer":3}})";
+}
+
 } // namespace
 
 // One test case, its sections run one after another: the fake printer needs the API's own port, and
@@ -470,6 +503,59 @@ TEST_CASE("A Flashforge on this machine's local API port records the starts it a
 
         REQUIRE(upload(host, "upload-only.gcode", false, options));
         CHECK(last_start_is(host, "upload-and-start.gcode")); // still the start before it
+    }
+
+    SECTION("A print sent with its slice is read by it; a file printed from the printer's storage is not")
+    {
+        Slic3r::FlashforgeApi::PrinterStatus status;
+        wxString                             msg;
+        {
+            FakePrinter printer(kPrinterAccepts);
+            if (!printer.listening())
+                SKIP("something else holds 127.0.0.1:" << kPort);
+            REQUIRE(upload_sliced(host, "sliced-start.gcode", 1000, 1000));
+        }
+        {
+            FakePrinter printer(printing_detail("sliced-start.gcode"));
+            REQUIRE(printer.listening());
+            REQUIRE(host.fetch_status(status, msg));
+        }
+        CHECK(status.progress_source == "slice");
+        CHECK(status.layer == 3);          // 80 % of the bytes is inside the third layer, whatever the printer counts
+        CHECK(status.remaining_s == 1000); // 90 % of the slicer's time done in 9000 s
+        CHECK_THAT(status.work_done, Catch::Matchers::WithinAbs(0.9, 1e-9));
+
+        {
+            FakePrinter printer(kPrinterAccepts);
+            REQUIRE(printer.listening());
+            REQUIRE(host.print_gcode_file("sliced-start.gcode", {}, nlohmann::json::array(), msg));
+        }
+        {
+            FakePrinter printer(printing_detail("sliced-start.gcode"));
+            REQUIRE(printer.listening());
+            REQUIRE(host.fetch_status(status, msg));
+        }
+        CHECK(status.progress_source == "printer"); // a start from storage carries no slice
+        CHECK(status.layer == 2);
+    }
+
+    SECTION("A plain G-code upload whose file is not the sliced one keeps the printer's numbers")
+    {
+        Slic3r::FlashforgeApi::PrinterStatus status;
+        wxString                             msg;
+        {
+            FakePrinter printer(kPrinterAccepts);
+            if (!printer.listening())
+                SKIP("something else holds 127.0.0.1:" << kPort);
+            REQUIRE(upload_sliced(host, "post-processed.gcode", 1200, 1000)); // a script grew the copy
+        }
+        {
+            FakePrinter printer(printing_detail("post-processed.gcode"));
+            REQUIRE(printer.listening());
+            REQUIRE(host.fetch_status(status, msg));
+        }
+        CHECK(status.progress_source == "printer");
+        CHECK(status.layer == 2);
     }
 
     SECTION("The material-slot read also says which machine it is")

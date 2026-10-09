@@ -24,6 +24,17 @@ struct PrinterStatus {
     // The firmware's `estimatedTime` as reported, untouched, so its real meaning can be studied
     // against more firmware versions. Never shown to the user as remaining time.
     long firmware_estimated_s{0};
+    // The layer printing and the slice's layer count: the printer's own printLayer / targetPrintLayer,
+    // or, for a print this app sent, read off its slice (FlashforgeJobProgress::apply), which also
+    // projects remaining_s from the slicer's time rather than from file bytes. -1 when unknown.
+    int layer{-1};
+    int layers{-1};
+    // The share of the job's work done, 0..1: the slicer's time done for a print this app sent, else
+    // the printer's file progress. -1 when unknown.
+    double work_done{-1};
+    // Where layer, layers, work_done and remaining_s come from: "printer", or "slice" for a print
+    // this app sent.
+    std::string progress_source{"printer"};
     double bed_temp{0}, bed_target{0}, chamber_temp{0}, chamber_target{0};
     std::vector<NozzleTemp> nozzles;
     bool light_on{false}; std::string door; std::string error_code;
@@ -50,6 +61,11 @@ struct PrinterStatus {
 // `slotCnt` arrive as a number on one firmware, a bool on another and a (sometimes padded) string on
 // a third. Reads any of those into `out` and returns false -- without throwing -- for anything else.
 bool try_parse_json_int(const nlohmann::json& value, int& out);
+
+// Seconds left at the pace so far: duration_s * (1 - progress) / progress, for a job printing or
+// paused; -1 otherwise, without elapsed time, or under 2 % done. `progress` is the share of the job
+// done: the printer's file progress, or the slicer's time done (FlashforgeJobProgress).
+long project_remaining_s(const std::string& state, long duration_s, double progress);
 
 // Returns false with `error` set if the body is not a successful API response.
 bool parse_detail(const std::string& body, PrinterStatus& out, std::string& error);

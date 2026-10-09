@@ -289,7 +289,17 @@ nlohmann::json status_to_json(const FlashforgeApi::PrinterStatus& s)
         {"implausible_telemetry", s.implausible_telemetry},
         {"progress", reading(s.progress)},
         {"duration_s", reading(s.duration_s)},
-        // Projected from elapsed and progress; null until there is enough progress to project from.
+        // The layer printing and the layer count. For a print this app sliced and sent they are read off
+        // its slice (progress_source "slice"): the printer's own printLayer ran two ahead on a Creator 5
+        // Pro, and its progress is file bytes, not time.
+        {"layer", s.layer >= 0 ? nlohmann::json(s.layer) : nlohmann::json(nullptr)},
+        {"layers", s.layers > 0 ? nlohmann::json(s.layers) : nlohmann::json(nullptr)},
+        // The share of the job's work done: the slicer's time done for a print this app sent, else
+        // `progress` (how far the printer has read through the file).
+        {"work_done", s.work_done >= 0 ? nlohmann::json(s.work_done) : nlohmann::json(nullptr)},
+        {"progress_source", s.progress_source},
+        // Projected from elapsed time and the share of the job done -- the slicer's time done for a
+        // print this app sent, else the printer's file progress -- null until there is enough of it.
         // The firmware's own estimate is NOT remaining time (on 1.9.9 it tracked elapsed on one job and
         // held the whole job's estimate on another) and is
         // passed through separately so an agent never mistakes one for the other.

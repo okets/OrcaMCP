@@ -133,6 +133,9 @@ private:
     /// filaments.
     std::map<std::string, std::string> build_upload_extended_info(const Flashforge&  host,
                                                                   const PrintParams& params) const;
+    /// Adds to `info` the slice table of the plate whose sliced G-code `gcode_path` is
+    /// (FlashforgeJobProgress), read on the GUI thread; nothing when no plate's slice wrote that file.
+    void add_slice_table(std::map<std::string, std::string>& info, const std::string& gcode_path) const;
     /// Runs `fn` on the GUI thread and waits for it (bounded). False when no marshaller is
     /// registered, the GUI did not answer in time, or `fn` threw.
     bool run_on_gui_thread(const std::function<void()>& fn) const;

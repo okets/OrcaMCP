@@ -93,6 +93,7 @@
 #include "GUI_Factories.hpp"
 #include "wxExtensions.hpp"
 #include "../Utils/PrintHost.hpp"
+#include "../Utils/FlashforgeJobProgress.hpp"
 #include "MainFrame.hpp"
 #ifdef SLIC3R_CAD
 #include "slic3r/GUI/CAD/DesignPanel.hpp"
@@ -20543,9 +20544,19 @@ bool Plater::send_gcode_upload(int plate_idx, const SendGcodeConfigureFn& config
     // Even a single-plate bundle needs it, since its gcode entry is still indexed. The host upload
     // forwards the field and servers that don't use it ignore it. "All plates" points at the
     // current plate — the bundle still carries every plate's gcode.
-    if (use_3mf) {
-        const int plateindex = (plate_idx == PLATE_ALL_IDX ? get_partplate_list().get_curr_plate_index() : resolved_plate_idx) + 1;
-        upload_job.upload_data.extended_info["plateindex"] = std::to_string(plateindex);
+    const int printed_plate_idx = plate_idx == PLATE_ALL_IDX ? get_partplate_list().get_curr_plate_index() : resolved_plate_idx;
+    if (use_3mf)
+        upload_job.upload_data.extended_info["plateindex"] = std::to_string(printed_plate_idx + 1);
+
+    // OrcaMCP: a Flashforge reports its progress as file bytes; the printed plate's slice says where
+    // its layers and time lie in the file, so the Device page and get_printer_status can read it.
+    if (upload_job.upload_data.post_action == PrintHostPostUploadAction::StartPrint &&
+        dynamic_cast<Flashforge*>(upload_job.printhost.get()) != nullptr) {
+        if (const GCodeProcessorResult* result = get_partplate_list().get_plate(printed_plate_idx)->get_slice_result()) {
+            const FlashforgeJobProgress::SliceTable table = FlashforgeJobProgress::slice_table(*result);
+            if (table.valid())
+                upload_job.upload_data.extended_info[FlashforgeJobProgress::kExtendedInfoKey] = FlashforgeJobProgress::to_json(table);
+        }
     }
 
     // Show "Is printer clean" dialog for PrusaConnect - Upload and print.

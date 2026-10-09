@@ -578,6 +578,10 @@ bool Flashforge::fetch_status(FlashforgeApi::PrinterStatus& out, wxString& msg, 
         return false;
     }
 
+    // A print this app sliced and sent is read by its slice: the printer's progress is file bytes.
+    if (const auto start = last_print_start(); start && start->value.slice_table && start->value.file_name == out.print_file)
+        FlashforgeJobProgress::apply(out, *start->value.slice_table);
+
     FlashforgeLocalApi::status_cache().put(m_local_api_host, out);
     return true;
 }
@@ -592,12 +596,16 @@ std::optional<FlashforgeLocalApi::RecordedPrintStart> Flashforge::last_print_sta
     return FlashforgeLocalApi::print_start_log().get(m_local_api_host);
 }
 
-void Flashforge::record_print_start(const std::string& file_name, const FlashforgeApi::PrintOptions& options, const json& material_mappings) const
+void Flashforge::record_print_start(const std::string&                               file_name,
+                                    const FlashforgeApi::PrintOptions&               options,
+                                    const json&                                      material_mappings,
+                                    std::optional<FlashforgeJobProgress::SliceTable> slice_table) const
 {
     FlashforgeLocalApi::PrintStart start;
     start.file_name         = file_name;
     start.options           = options;
     start.material_mappings = material_mappings.is_array() ? material_mappings : json::array();
+    start.slice_table       = std::move(slice_table);
     FlashforgeLocalApi::print_start_log().put(m_local_api_host, std::move(start));
 }
 
@@ -747,7 +755,7 @@ bool Flashforge::upload_local_api(PrintHostUpload upload_data, ProgressFn progre
     if (!ok && !failure.cancelled)
         error_fn(error_msg);
     if (ok && upload_data.post_action == PrintHostPostUploadAction::StartPrint)
-        record_print_start(filename, options, json::parse(material_map_json, nullptr, false));
+        record_print_start(filename, options, json::parse(material_map_json, nullptr, false), FlashforgeJobProgress::for_upload(upload_data.extended_info, upload_data.use_3mf, std::stoull(file_size)));
     return ok;
 }
 

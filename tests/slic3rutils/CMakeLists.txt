@@ -28,6 +28,7 @@ add_executable(${_TEST_NAME}_tests
     test_plugin_cloud_metadata.cpp
     test_plugin_audit.cpp
     test_flashforge_api.cpp
+    test_flashforge_job_progress.cpp
     test_flashforge_local_api.cpp
     test_flashforge_send_options.cpp
     test_flashforge_console.cpp
