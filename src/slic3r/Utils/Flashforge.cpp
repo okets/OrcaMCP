@@ -41,6 +41,8 @@
 #include "SerialMessageType.hpp"
 #include "FlashforgeApi.hpp"
 #include "FlashforgeLocalApi.hpp"
+#include "ObicoAgentHandoff.hpp"
+#include "ObicoLink.hpp"
 
 namespace fs = boost::filesystem;
 namespace pt = boost::property_tree;
@@ -195,6 +197,12 @@ Flashforge::Flashforge(DynamicPrintConfig* config)
     m_local_api_host = FlashforgeLocalApi::host_of(m_host); // once: m_host never changes
     m_serial_number  = safe_config_string(config, "flashforge_serial_number");
     m_check_code     = safe_config_string(config, "printhost_apikey");
+    if (config != nullptr) {
+        if (const nlohmann::json obico = obico_link_json(*config); obico.is_object()) {
+            m_obico_url   = obico["url"].get<std::string>();
+            m_obico_token = obico["token"].get<std::string>();
+        }
+    }
 
     if (config != nullptr) {
         if (const auto* gcode_flavor = config->option<ConfigOptionEnum<GCodeFlavor>>("gcode_flavor"); gcode_flavor != nullptr)
@@ -754,9 +762,21 @@ bool Flashforge::upload_local_api(PrintHostUpload upload_data, ProgressFn progre
     const bool ok = run_local_api_request(url, upload_once, error_msg, &failure);
     if (!ok && !failure.cancelled)
         error_fn(error_msg);
-    if (ok && upload_data.post_action == PrintHostPostUploadAction::StartPrint)
-        record_print_start(filename, options, json::parse(material_map_json, nullptr, false), FlashforgeJobProgress::for_upload(upload_data.extended_info, upload_data.use_3mf, std::stoull(file_size)));
+    if (ok && upload_data.post_action == PrintHostPostUploadAction::StartPrint) {
+        const auto slice_table = FlashforgeJobProgress::for_upload(upload_data.extended_info, upload_data.use_3mf, std::stoull(file_size));
+        record_print_start(filename, options, json::parse(material_map_json, nullptr, false), slice_table);
+        if (slice_table)
+            hand_slice_table_to_obico_agent(filename, *slice_table);
+    }
     return ok;
+}
+
+void Flashforge::hand_slice_table_to_obico_agent(const std::string& file_name, const FlashforgeJobProgress::SliceTable& table) const
+{
+    if (m_obico_url.empty())
+        return;
+    BOOST_LOG_TRIVIAL(info) << "[Flashforge] slice table of " << file_name << " "
+                            << ObicoAgentHandoff::hand_over_slice_table(m_obico_url, m_obico_token, file_name, table);
 }
 
 bool Flashforge::request_local_api_json(const std::string& path, const std::string& body, std::string& response_body, wxString& error_msg, FlashforgeLocalApi::RequestFailure* failure_out) const

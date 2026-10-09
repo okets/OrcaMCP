@@ -84,6 +84,10 @@ private:
     std::string m_local_api_host;
     std::string m_serial_number;
     std::string m_check_code;
+    // The preset's Obico server and printer token (obico_link_json), empty when it names none: where the
+    // flashforge-obico agent watching this printer is found, to hand it a started print's slice table.
+    std::string m_obico_url;
+    std::string m_obico_token;
     std::string m_console_port;
     const int m_bufferSize;
     GCodeFlavor m_gcFlavor;
@@ -117,6 +121,9 @@ private:
                             const FlashforgeApi::PrintOptions&                      options,
                             const nlohmann::json&                                   material_mappings,
                             std::optional<FlashforgeJobProgress::SliceTable>        slice_table = std::nullopt) const;
+    // Hands a print's slice table to the flashforge-obico agent the preset's Obico names, and logs how
+    // that went; nothing without an Obico. Bounded to a few seconds per step.
+    void hand_slice_table_to_obico_agent(const std::string& file_name, const FlashforgeJobProgress::SliceTable& table) const;
     std::string make_http_url(const std::string& path) const;
     int  get_err_code_from_body(const std::string &body) const;
     bool connect(wxString& msg) const;

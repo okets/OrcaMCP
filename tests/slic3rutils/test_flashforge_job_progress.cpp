@@ -154,6 +154,9 @@ TEST_CASE("A status that is not a reading of an active job keeps the printer's n
 
 TEST_CASE("A slice table travels with an upload as JSON and comes back the same", "[flashforge][FlashforgeJobProgress]")
 {
+    // The flashforge-obico agent reads this very text (its tests/test_slice_table.py, ORCAMCP_JSON).
+    CHECK(to_json(three_layers()) == R"({"bytes":1000,"layers":[[100,10.0],[200,70.0],[600,80.0]],"total_s":100.0})");
+
     const SliceTable table = three_layers();
     const auto       back  = from_json(to_json(table));
     REQUIRE(back.has_value());

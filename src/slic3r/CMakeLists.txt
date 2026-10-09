@@ -871,6 +871,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/FlashforgeApi.hpp
     Utils/FlashforgeJobProgress.cpp
     Utils/FlashforgeJobProgress.hpp
+    Utils/ObicoAgentHandoff.cpp
+    Utils/ObicoAgentHandoff.hpp
     Utils/FlashforgeLocalApi.cpp
     Utils/FlashforgeLocalApi.hpp
     Utils/ObicoLink.cpp
