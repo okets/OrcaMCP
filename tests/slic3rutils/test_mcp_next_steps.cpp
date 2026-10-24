@@ -407,6 +407,9 @@ TEST_CASE("A bake points at the relief it kept the surface of, on its plate", "[
     CHECK(mentions(steps[0].why, "object 5"));
     CHECK(mentions(steps[0].why, "color_by relief"));
     CHECK(steps[0].arguments["color_by"] == "relief");
+    // The iso camera looks from the front-left: a light from the bed azimuth 30 lit the back of the part.
+    CHECK(steps[0].arguments["light"]["from"] == "left");
+    CHECK_FALSE(steps[0].arguments["light"].contains("azimuth_deg"));
     CHECK(steps[0].arguments["plate_index"] == 2);
     CHECK(unusable(steps[0]) == std::nullopt);   // the arguments pass render_plate_view's schema
     CHECK(relief_next_steps(-1, 5).empty());     // on no plate: the render needs one

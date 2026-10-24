@@ -71,7 +71,7 @@ struct ViewRequest
 
 // What `color_by` draws each part in: the object's colour from the palette (the default), its filament's, the depth of
 // the relief from the surface before the texture (relief), or the angle between neighbouring facets (detail).
-enum class ColorBy { Object, Filament, Relief, Detail };
+enum class ColorBy { Object, Filament, Relief, Detail, TriangleSize };
 
 struct RenderRequest
 {

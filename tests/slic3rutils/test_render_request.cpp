@@ -417,6 +417,8 @@ TEST_CASE("color_by relief and detail take their own scale and nothing else's", 
 {
     CHECK(read_ok({{"plate_index", 0}, {"color_by", "relief"}}).color_by == ColorBy::Relief);
     CHECK(read_ok({{"plate_index", 0}, {"color_by", "detail"}}).color_by == ColorBy::Detail);
+    CHECK(read_ok({{"plate_index", 0}, {"color_by", "triangle_size"}}).color_by == ColorBy::TriangleSize);
+    CHECK(refusal_of({{"plate_index", 0}, {"color_by", "triangle_size"}, {"detail_range_deg", 12}}).find("add color_by detail") != std::string::npos);
     CHECK_FALSE(read_ok({{"plate_index", 0}, {"color_by", "relief"}}).relief_range_mm.has_value());
     const RenderRequest r = read_ok({{"plate_index", 0}, {"color_by", "relief"}, {"relief_range_mm", 0.25}});
     REQUIRE(r.relief_range_mm.has_value());

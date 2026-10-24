@@ -115,6 +115,7 @@ bool texture_bake_moved(const TextureDisplacementBakeInput &input, const Texture
 struct TextureBakeOutcome
 {
     std::vector<ObjectID> committed, unmoved;  // parts baked (their new ids) / parts the bake did not move, left as they were
+    std::vector<std::size_t> committed_from;   // for each entry of `committed`, the index of its part in the input's volumes
     std::vector<int>      mixed_filaments;     // 0-based slots the colour bake named, each created or reused
     int                   filaments_before = 0, filaments_after = 0; // to tell created from reused
     std::size_t           refined = 0, budget = 0; // the budget notice's numbers, 0 when it did not cap

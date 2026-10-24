@@ -369,7 +369,7 @@ std::vector<NextStep> relief_next_steps(int plate_index, int object_id)
              {{"plate_index", plate_index},
               {"views", nlohmann::json::array({{{"preset", "iso"}, {"fit", {{"object_id", object_id}}}}})},
               {"color_by", "relief"},
-              {"light", {{"azimuth_deg", 30}, {"elevation_deg", 15}}},
+              {"light", {{"from", "left"}, {"elevation_deg", 15}}},
               {"save_to_file", true}}}};
 }
 

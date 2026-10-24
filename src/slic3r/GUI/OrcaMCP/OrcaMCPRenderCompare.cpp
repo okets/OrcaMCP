@@ -4,13 +4,56 @@
 #include <cmath>
 #include <stdexcept>
 
+#include <boost/filesystem.hpp>
+
 #include "slic3r/GUI/OrcaMCP/OrcaMCPImageFiles.hpp"
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
+std::string canonical_picture_path(const std::string& path)
+{
+    namespace fs = boost::filesystem;
+    if (!fs::path(path).is_absolute())
+        return path;
+    boost::system::error_code ec;
+    const fs::path            resolved = fs::weakly_canonical(fs::path(path), ec);
+    return ec ? path : resolved.string();
+}
+
+void stamp_record_file(RenderRecord& record)
+{
+    namespace fs = boost::filesystem;
+    boost::system::error_code ec;
+    const auto                bytes = fs::file_size(record.path, ec);
+    if (ec)
+        return;
+    const std::time_t modified = fs::last_write_time(record.path, ec);
+    if (ec)
+        return;
+    record.file_bytes = bytes;
+    record.modified   = modified;
+}
+
+std::string changed_file_refusal(const RenderRecord& record)
+{
+    if (record.file_bytes == 0 && record.modified == 0)
+        return "";
+    namespace fs = boost::filesystem;
+    boost::system::error_code ec;
+    const auto                bytes = fs::file_size(record.path, ec);
+    if (ec)
+        return "";   // gone: the caller says so
+    const std::time_t modified = fs::last_write_time(record.path, ec);
+    if (!ec && bytes == record.file_bytes && modified == record.modified)
+        return "";
+    return "compare_with: the file of that picture has changed since render_plate_view wrote it (size or time differ), so it is not the picture whose camera "
+           "was remembered; render it again with save_to_file";
+}
+
 void RenderRecords::remember(RenderRecord record)
 {
-    m_records.erase(std::remove_if(m_records.begin(), m_records.end(), [&record](const RenderRecord& r) { return r.path == record.path; }),
+    const std::string key = canonical_picture_path(record.path);
+    m_records.erase(std::remove_if(m_records.begin(), m_records.end(), [&key](const RenderRecord& r) { return canonical_picture_path(r.path) == key; }),
                     m_records.end());
     m_records.push_back(std::move(record));
     while (m_records.size() > k_capacity)
@@ -19,8 +62,9 @@ void RenderRecords::remember(RenderRecord record)
 
 const RenderRecord* RenderRecords::find(const std::string& path) const
 {
+    const std::string key = canonical_picture_path(path);
     for (const RenderRecord& record : m_records)
-        if (record.path == path)
+        if (canonical_picture_path(record.path) == key)
             return &record;
     return nullptr;
 }
@@ -40,6 +84,9 @@ const RenderRecord& compare_record(const RenderRecords& records, const std::stri
     if (record == nullptr)
         throw std::runtime_error("compare_with: that picture was not rendered in this session, so its camera is not known; render it again "
                                  "with save_to_file, then compare the new picture with it");
+    if (record->layer_plan)
+        throw std::runtime_error("compare_with compares 3D views: that file is a layer plan (layer_view, drawn top-down from the sliced G-code), which has no "
+                                 "camera to draw again; render a 3D view with save_to_file instead");
     if (!record->png)
         throw std::runtime_error("compare_with compares PNG pictures (a JPEG's artefacts read as changes); render the earlier picture again "
                                  "with save_to_file and image_format png");
@@ -50,6 +97,20 @@ const RenderRecord& compare_record(const RenderRecords& records, const std::stri
         throw std::runtime_error("resolution " + std::to_string(*resolution_asked) + " differs from the earlier picture's (" +
                                  std::to_string(record->resolution) + "); a compared view is drawn at its size, so leave resolution out");
     return *record;
+}
+
+std::vector<uint8_t> flatten_on_background(const std::vector<uint8_t>& rgb, const std::vector<uint8_t>& alpha, const std::array<uint8_t, 3>& background)
+{
+    if (alpha.empty())
+        return rgb;
+    const size_t pixels = rgb.size() / 3;
+    if (rgb.size() != pixels * 3 || alpha.size() != pixels)
+        throw std::runtime_error("the picture and its alpha are not the same size");
+    std::vector<uint8_t> out(rgb.size());
+    for (size_t i = 0; i < pixels; ++i)
+        for (size_t c = 0; c < 3; ++c)
+            out[i * 3 + c] = uint8_t((int(rgb[i * 3 + c]) * int(alpha[i]) + int(background[c]) * (255 - int(alpha[i])) + 127) / 255);
+    return out;
 }
 
 bool same_camera(const CameraFrame& a, const CameraFrame& b, double tolerance)
@@ -116,11 +177,18 @@ nlohmann::json comparison_json(const std::string& before_path, const ImageDiffer
     json["changed_fraction"] = difference.changed_fraction;
     json["changed_box"]      = difference.changed_box ? nlohmann::json(*difference.changed_box) : nlohmann::json(nullptr);
     json["threshold"]        = threshold;
+    const int column         = compare_column_px(resolution);
     json["columns"]          = nlohmann::json::array({"before", "now", "difference"});
-    json["x_offsets"]        = nlohmann::json::array({0, resolution, 2 * resolution});
+    json["column_px"]        = column;
+    json["x_offsets"]        = nlohmann::json::array({0, column, 2 * column});
+    if (column != resolution)
+        json["scaled"] = {{"from_px", resolution}, {"to_px", column},
+                          {"note", "each column is scaled down to " + std::to_string(column) + " px to keep the sheet readable; changed_box and the pixel counts are of the full " +
+                                   std::to_string(resolution) + " px pictures, so scale a box by column_px / " + std::to_string(resolution) + " before reading it off the sheet"}};
     json["unchanged"]        = difference.changed_pixels == 0;
     json["note"]             = "changed pixels are those whose largest colour channel differs by more than the threshold (0 to 255); "
-                               "overlays, labels and anti-aliasing at moved edges count, so ask for the same overlays in both pictures";
+                               "overlays, labels and anti-aliasing at moved edges count, so ask for the same overlays in both pictures; both pictures are "
+                               "flattened onto the render background first, so transparency does not count";
     return json;
 }
 

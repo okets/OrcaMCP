@@ -324,15 +324,17 @@ nlohmann::json finish_bake_prepare(BakeRun& run, BakePlanned& planned, double wa
 
 // Main thread, after a bake committed: the surface each committed part had before it is kept in memory, keyed by the part's
 // new id and the fingerprint of the mesh the bake made, for render_plate_view's color_by relief (a later undo, redo, repair or
-// re-bake gives the part another mesh and so ignores the reference). `commit` are the indexes of run.work.volumes the bake
-// committed, in the order outcome.committed lists the new ids.
-void remember_bake_references(const ModelObject& object, const BakeRun& run, const std::vector<std::size_t>& commit, const TextureBakeOutcome& outcome)
+// re-bake gives the part another mesh and so ignores the reference). Each new id is paired with its part by
+// outcome.committed_from, not by position: a part the bake skipped (its volume gone) shifts the positions. A second bake of
+// the same part keeps the mesh it started from, so its relief is that bake's own increment.
+void remember_bake_references(const ModelObject& object, const BakeRun& run, const TextureBakeOutcome& outcome)
 {
-    for (std::size_t k = 0; k < outcome.committed.size() && k < commit.size(); ++k) {
+    for (std::size_t k = 0; k < outcome.committed.size() && k < outcome.committed_from.size(); ++k) {
         const ModelVolume* volume = volume_by_id(object, outcome.committed[k]);
-        if (volume == nullptr || commit[k] >= run.work.volumes.size())
+        const std::size_t  from   = outcome.committed_from[k];
+        if (volume == nullptr || from >= run.work.volumes.size())
             continue;
-        bake_references().remember(volume->id(), mesh_fingerprint(volume->mesh().its), run.work.volumes[commit[k]].base_mesh, volume->get_matrix());
+        bake_references().remember(volume->id(), mesh_fingerprint(volume->mesh().its), run.work.volumes[from].base_mesh, volume->get_matrix());
     }
 }
 
@@ -390,7 +392,7 @@ nlohmann::json finish_bake(BakeRun& run, BakePlanned& planned, double wait_s, bo
         outcome = apply_texture_bake(*plater, run.work, planned.bake);
     }
 
-    remember_bake_references(object, run, commit, outcome);
+    remember_bake_references(object, run, outcome);
 
     // The answer, from what the bake committed.
     const bool changed = !outcome.committed.empty();
@@ -400,20 +402,18 @@ nlohmann::json finish_bake(BakeRun& run, BakePlanned& planned, double wait_s, bo
     if (!inactive.empty())
         answer["inactive_settings"] = inactive;
     nlohmann::json parts = nlohmann::json::array(), unmoved = nlohmann::json::array();
-    std::size_t    committed_next = 0;
     for (std::size_t i = 0; i < run.work.volumes.size(); ++i) {
         BakePartReport report;
         report.volume_id     = run.volume_ids[i];
         report.name          = run.names[i];
         report.facets_before = run.facets_before[i];
         report.facets_after  = run.work.volumes[i].base_mesh.indices.size();
-        const bool moved     = std::find(commit.begin(), commit.end(), i) != commit.end();
-        if (moved && committed_next < outcome.committed.size()) {
+        const auto done      = std::find(outcome.committed_from.begin(), outcome.committed_from.end(), i);
+        if (done != outcome.committed_from.end()) {
             report.baked   = true;
             report.colored = colored[i];
-            if (const ModelVolume* volume = volume_by_id(object, outcome.committed[committed_next]))
+            if (const ModelVolume* volume = volume_by_id(object, outcome.committed[std::size_t(done - outcome.committed_from.begin())]))
                 report.facets_after = volume->mesh().its.indices.size();
-            ++committed_next;
         } else {
             unmoved.push_back(report.volume_id);
         }

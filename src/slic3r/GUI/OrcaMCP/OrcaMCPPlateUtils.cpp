@@ -227,8 +227,17 @@ struct ImageOutput
 
 static void add_image(nlohmann::json& entry, const wxImage& image, const ImageOutput& output)
 {
-    if (output.save_to_file) entry["file_path"] = save_image_to_file(image, 0, output.use_png);
-    else                     entry["base64"]    = encode_image_to_base64(image, output.use_png);
+    if (output.save_to_file) {
+        entry["file_path"] = save_image_to_file(image, 0, output.use_png);
+        // Remembered so a compare_with of this file says it is a layer plan, not that it was never rendered.
+        OrcaMCP::RenderRecord record;
+        record.path       = entry["file_path"].get<std::string>();
+        record.layer_plan = true;
+        record.png        = output.use_png;
+        OrcaMCP::render_records().remember(std::move(record));
+    } else {
+        entry["base64"] = encode_image_to_base64(image, output.use_png);
+    }
 }
 
 // A top-down plan's frame and camera, which every layer view reports the same way.
@@ -706,6 +715,20 @@ static bool texture_preview_unchanged_since(const RenderJob& job)
     return true;
 }
 
+// color_by relief, detail and triangle_size colour each facet by a measurement; the others do not.
+static bool colours_by_measure(OrcaMCP::ColorBy by)
+{
+    return by == OrcaMCP::ColorBy::Relief || by == OrcaMCP::ColorBy::Detail || by == OrcaMCP::ColorBy::TriangleSize;
+}
+static OrcaMCP::ReliefMode relief_mode_of(OrcaMCP::ColorBy by)
+{
+    return by == OrcaMCP::ColorBy::Detail ? OrcaMCP::ReliefMode::Detail : by == OrcaMCP::ColorBy::TriangleSize ? OrcaMCP::ReliefMode::TriangleSize : OrcaMCP::ReliefMode::Relief;
+}
+static const char* measure_name(OrcaMCP::ColorBy by)
+{
+    return by == OrcaMCP::ColorBy::Detail ? "detail" : by == OrcaMCP::ColorBy::TriangleSize ? "triangle_size" : "relief";
+}
+
 // What color_by relief and detail colour, captured on the main thread: every model part of the objects on the plate (inside
 // the views' fit), and the work that colours them (HTTP thread, after the texture previews it may read).
 static void capture_relief(PartPlate& plate, RenderJob& job)
@@ -751,16 +774,17 @@ static void capture_relief(PartPlate& plate, RenderJob& job)
             }
             const auto drawn = std::find_if(previewed->draw->parts.begin(), previewed->draw->parts.end(),
                                             [&part](const OrcaMCP::PreviewPart& p) { return p.volume_id == part.volume_id; });
+            part.object_previewed = true;
             if (drawn == previewed->draw->parts.end())
-                continue;   // not a part the texture reaches: measured like any other part
+                continue;   // not a part the texture reaches: measured like any other part (detail, triangle_size)
             if (!drawn->skipped.empty() || drawn->mesh.indices.empty())
                 part.unusable = drawn->skipped.empty() ? "the texture layers move nothing on this part, so it has no relief"
                                                        : "the part was not previewed (" + drawn->skipped + "), so there is no relief to measure";
             else
                 part.previewed = &drawn->mesh;
         }
-        const bool detail = self->request.color_by == OrcaMCP::ColorBy::Detail;
-        self->relief = OrcaMCP::compute_relief(self->relief_parts, detail, detail ? self->request.detail_range_deg : self->request.relief_range_mm,
+        const OrcaMCP::ReliefMode mode = relief_mode_of(self->request.color_by);
+        self->relief = OrcaMCP::compute_relief(self->relief_parts, mode, mode == OrcaMCP::ReliefMode::Detail ? self->request.detail_range_deg : mode == OrcaMCP::ReliefMode::Relief ? self->request.relief_range_mm : std::nullopt,
                                                OrcaMCP::bake_references(), stop);
         self->relief_done = true;
     });
@@ -964,7 +988,7 @@ nlohmann::json OrcaMCPPlateUtils::PrepareRender(const nlohmann::json& payload, R
     }
     if (asked.texture_preview)
         capture_texture_preview(*plate, job);
-    if (asked.color_by == OrcaMCP::ColorBy::Relief || asked.color_by == OrcaMCP::ColorBy::Detail)
+    if (colours_by_measure(asked.color_by))
         capture_relief(*plate, job);
 
     return nlohmann::json();
@@ -1286,6 +1310,8 @@ static wxImage load_compared_picture(const OrcaMCP::RenderRecord& record)
     const auto bytes = fs::file_size(record.path, ec);
     if (ec)
         throw std::runtime_error("compare_with: the earlier picture's file is gone; render it again with save_to_file");
+    if (const std::string changed = OrcaMCP::changed_file_refusal(record); !changed.empty())
+        throw std::runtime_error(changed);
     if (bytes > OrcaMCP::k_max_compare_file_bytes)
         throw std::runtime_error("compare_with: the earlier picture's file is too large to compare");
     wxLogNull   quiet;
@@ -1297,10 +1323,15 @@ static wxImage load_compared_picture(const OrcaMCP::RenderRecord& record)
     return picture;
 }
 
+// The picture's colours over the render background by its alpha: both sides of a comparison are judged and shown on the
+// same opaque ground (the renders are opaque already; a PNG with alpha is not).
 static std::vector<uint8_t> rgb_of(const wxImage& image)
 {
-    const unsigned char* data = image.GetData();
-    return std::vector<uint8_t>(data, data + size_t(image.GetWidth()) * size_t(image.GetHeight()) * 3);
+    const size_t         pixels = size_t(image.GetWidth()) * size_t(image.GetHeight());
+    const unsigned char* data   = image.GetData();
+    const unsigned char* alpha  = image.HasAlpha() ? image.GetAlpha() : nullptr;
+    return OrcaMCP::flatten_on_background(std::vector<uint8_t>(data, data + pixels * 3),
+                                          alpha ? std::vector<uint8_t>(alpha, alpha + pixels) : std::vector<uint8_t>());
 }
 
 static wxImage image_of_rgb(const std::vector<uint8_t>& rgb, int width, int height)
@@ -1338,9 +1369,9 @@ nlohmann::json OrcaMCPPlateUtils::DrawRender(RenderJob& job)
         }
     }
 
-    const bool relief_asked = asked.color_by == OrcaMCP::ColorBy::Relief || asked.color_by == OrcaMCP::ColorBy::Detail;
+    const bool relief_asked = colours_by_measure(asked.color_by);
     if (relief_asked && !job.relief_done)
-        return {{"status", "error"}, {"message", "colouring the picture by " + std::string(asked.color_by == OrcaMCP::ColorBy::Detail ? "detail" : "relief") +
+        return {{"status", "error"}, {"message", "colouring the picture by " + std::string(measure_name(asked.color_by)) +
                                                  " needs more than the call's wait: raise ORCAMCP_TIMEOUT, or fit one object (views fit {object_id})"}};
 
     nlohmann::json texture_preview_report;
@@ -1409,7 +1440,7 @@ nlohmann::json OrcaMCPPlateUtils::DrawRender(RenderJob& job)
 
         for (RenderedVolume& v : report.drawn)
             if (relief_asked && !v.wipe_tower && relief_overlay.has(v.object_index, v.volume_id))
-                v.color_source = asked.color_by == OrcaMCP::ColorBy::Detail ? "detail" : "relief";
+                v.color_source = measure_name(asked.color_by);
 
         // Overlays go on the finished pixels, projected through the very camera that drew them.
         wxImage image = OrcaMCP::thumbnail_to_wximage(data);
@@ -1430,9 +1461,9 @@ nlohmann::json OrcaMCPPlateUtils::DrawRender(RenderJob& job)
         entry["camera"] = camera_json;
         append_render_report(entry, report, cam.frame, plate_index);
         entry["color_by"] = asked.color_by == OrcaMCP::ColorBy::Filament ? "filament" : asked.color_by == OrcaMCP::ColorBy::Relief ? "relief" :
-                            asked.color_by == OrcaMCP::ColorBy::Detail ? "detail" : "object";
+                            asked.color_by == OrcaMCP::ColorBy::Detail ? "detail" : asked.color_by == OrcaMCP::ColorBy::TriangleSize ? "triangle_size" : "object";
         if (relief_asked) {
-            nlohmann::json& shown = entry[asked.color_by == OrcaMCP::ColorBy::Detail ? "detail" : "relief"];
+            nlohmann::json& shown = entry[measure_name(asked.color_by)];
             shown = relief_report;
             const bool any_drawn = !relief_overlay.parts.empty();
             shown["applied"] = any_drawn && report.completed;
@@ -1481,11 +1512,14 @@ nlohmann::json OrcaMCPPlateUtils::DrawRender(RenderJob& job)
         const std::vector<uint8_t> before_rgb = rgb_of(*compared_before), now_rgb = rgb_of(now.image);
         const OrcaMCP::ImageDifference difference = OrcaMCP::image_difference(before_rgb, now_rgb, resolution, resolution, threshold);
         const wxImage mask = image_of_rgb(OrcaMCP::difference_picture(now_rgb, difference, resolution, resolution), resolution, resolution);
-        wxImage sheet(resolution * 3, resolution);
+        // Opaque columns of at most k_max_compare_column_px, side by side.
+        const int column = OrcaMCP::compare_column_px(resolution);
+        const auto shown = [column, resolution](const wxImage& picture) { return column == resolution ? picture : picture.Scale(column, column, wxIMAGE_QUALITY_HIGH); };
+        wxImage sheet(column * 3, column);
         sheet.InitAlpha();
-        sheet.Paste(*compared_before, 0, 0);
-        sheet.Paste(now.image, resolution, 0);
-        sheet.Paste(mask, resolution * 2, 0);
+        sheet.Paste(shown(image_of_rgb(before_rgb, resolution, resolution)), 0, 0);
+        sheet.Paste(shown(image_of_rgb(now_rgb, resolution, resolution)), column, 0);
+        sheet.Paste(shown(mask), column * 2, 0);
         now.entry["comparison"] = OrcaMCP::comparison_json(compared_record->path, difference, resolution, threshold);
         if (asked.save_to_file) now.entry["file_path"] = save_image_to_file(sheet, 0, use_png);
         else                    now.entry["base64"]    = encode_image_to_base64(sheet, use_png);
@@ -1497,7 +1531,9 @@ nlohmann::json OrcaMCPPlateUtils::DrawRender(RenderJob& job)
         for (Rendered& r : rendered) {
             if (asked.save_to_file) {
                 r.entry["file_path"] = save_image_to_file(r.image, idx, use_png);
-                OrcaMCP::render_records().remember({r.entry["file_path"].get<std::string>(), r.frame, resolution, plate_index, use_png});
+                OrcaMCP::RenderRecord record{r.entry["file_path"].get<std::string>(), r.frame, resolution, plate_index, use_png};
+                OrcaMCP::stamp_record_file(record);
+                OrcaMCP::render_records().remember(std::move(record));
             } else {
                 r.entry["base64"] = encode_image_to_base64(r.image, use_png);
             }

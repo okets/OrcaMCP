@@ -267,6 +267,7 @@ TextureBakeOutcome apply_texture_bake(Plater &plater_ref, TextureDisplacementBak
             volume->set_new_unique_id();
             volume->calculate_convex_hull();
             outcome.committed.push_back(volume->id());
+            outcome.committed_from.push_back(i);
 
             if (topology_changed) {
                 const std::array<FacetsAnnotation *, 4> target{ &volume->supported_facets, &volume->seam_facets,

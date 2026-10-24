@@ -186,6 +186,34 @@ ReliefDistances relief_distances(const indexed_triangle_set& drawn, const Transf
     return out;
 }
 
+std::vector<SizeSlab> size_slabs(const std::vector<float>& z, const std::vector<float>& longest_edge, double slab_mm, std::size_t max_slabs)
+{
+    std::vector<SizeSlab> out;
+    const std::size_t     n = std::min(z.size(), longest_edge.size());
+    double                lo = std::numeric_limits<double>::max(), hi = std::numeric_limits<double>::lowest();
+    for (std::size_t i = 0; i < n; ++i) {
+        if (std::isnan(z[i]) || std::isnan(longest_edge[i]))
+            continue;
+        lo = std::min(lo, double(z[i]));
+        hi = std::max(hi, double(z[i]));
+    }
+    if (lo > hi || !(slab_mm > 0.) || max_slabs == 0)
+        return out;
+    // A tall mesh gets thicker slabs rather than more than max_slabs of them.
+    const double height = std::max(slab_mm, std::ceil((hi - lo) / double(max_slabs) / slab_mm) * slab_mm);
+    const std::size_t count = std::min<std::size_t>(max_slabs, std::size_t(std::floor((hi - lo) / height)) + 1);
+    std::vector<std::vector<float>> edges(count);
+    for (std::size_t i = 0; i < n; ++i) {
+        if (std::isnan(z[i]) || std::isnan(longest_edge[i]))
+            continue;
+        edges[std::min(count - 1, std::size_t(std::floor((double(z[i]) - lo) / height)))].push_back(longest_edge[i]);
+    }
+    for (std::size_t k = 0; k < count; ++k)
+        if (!edges[k].empty())
+            out.push_back({lo + height * double(k), lo + height * double(k + 1), edges[k].size(), quantile(edges[k], 0.5)});
+    return out;
+}
+
 DetailMetrics detail_metrics(const indexed_triangle_set& source, const Transform3d& to_mm, const std::function<bool()>& stop)
 {
     DetailMetrics out;
@@ -206,8 +234,9 @@ DetailMetrics detail_metrics(const indexed_triangle_set& source, const Transform
 
     const std::vector<Vec3i32> neighbors = its_face_neighbors_par(its);
     std::vector<Vec3f>         normals(its.indices.size());
-    std::vector<float>         edges;
+    std::vector<float>         edges, centroid_z(its.indices.size(), k_nan);
     edges.reserve(its.indices.size() * 3);
+    out.size_mm.assign(its.indices.size(), k_nan);
     for (std::size_t f = 0; f < its.indices.size(); ++f) {
         if (f % k_chunk == 0 && stop()) {
             out.complete = false;
@@ -219,9 +248,12 @@ DetailMetrics detail_metrics(const indexed_triangle_set& source, const Transform
         Vec3f n = (b - a).cross(c - a);
         const float length = n.norm();
         normals[f] = length > 0.f ? Vec3f(n / length) : Vec3f(Vec3f::Zero());
-        edges.push_back((b - a).norm());
-        edges.push_back((c - b).norm());
-        edges.push_back((a - c).norm());
+        const float ab = (b - a).norm(), bc = (c - b).norm(), ca = (a - c).norm();
+        edges.push_back(ab);
+        edges.push_back(bc);
+        edges.push_back(ca);
+        out.size_mm[f]  = std::max({ab, bc, ca});
+        centroid_z[f]   = (a.z() + b.z() + c.z()) / 3.f;
     }
     for (std::size_t f = 0; f < its.indices.size(); ++f) {
         if (f % k_chunk == 0 && stop()) {
@@ -235,6 +267,9 @@ DetailMetrics detail_metrics(const indexed_triangle_set& source, const Transform
                 ++out.open_edges;
                 continue;
             }
+            // A sliver with no normal is no neighbour to measure an angle against (it would read 90 degrees).
+            if (normals[f] == Vec3f::Zero() || normals[std::size_t(other)] == Vec3f::Zero())
+                continue;
             const float cosine = std::clamp(normals[f].dot(normals[std::size_t(other)]), -1.f, 1.f);
             widest = std::max(widest, std::acos(cosine) * float(180. / PI));
         }
@@ -246,6 +281,7 @@ DetailMetrics detail_metrics(const indexed_triangle_set& source, const Transform
     const auto [lo, hi] = std::minmax_element(edges.begin(), edges.end());
     out.edge_min_mm = *lo;
     out.edge_max_mm = *hi;
+    out.slabs       = size_slabs(centroid_z, out.size_mm);
     return out;
 }
 
@@ -283,6 +319,27 @@ Ramp detail_ramp(double measured_p98_deg, std::optional<double> max_deg)
     return ramp;
 }
 
+Ramp triangle_size_ramp(double fine_mm, double coarse_mm)
+{
+    Ramp ramp;
+    ramp.log  = true;
+    ramp.from = std::max(1e-3, fine_mm);
+    ramp.to   = std::max(coarse_mm, ramp.from);
+    if (ramp.to < ramp.from * 1.05) {   // about one size everywhere: a scale around it, so the legend still reads
+        ramp.from /= 1.5;
+        ramp.to *= 1.5;
+    }
+    const ColorRGBA anchors[] = {ColorRGBA(0.16f, 0.30f, 0.80f, 1.f), ColorRGBA(0.20f, 0.70f, 0.75f, 1.f), ColorRGBA(0.97f, 0.90f, 0.45f, 1.f),
+                                 ColorRGBA(0.93f, 0.45f, 0.15f, 1.f), ColorRGBA(0.60f, 0.08f, 0.15f, 1.f)};
+    constexpr int bins = 10, segments = 4;
+    for (int i = 0; i < bins; ++i) {
+        const double position = double(i) / double(bins - 1) * segments;
+        const int    segment  = std::min(segments - 1, int(position));
+        ramp.colors.push_back(lerp_color(anchors[segment], anchors[segment + 1], position - segment));
+    }
+    return ramp;
+}
+
 std::vector<std::uint8_t> ramp_bins(const std::vector<float>& values, const Ramp& ramp)
 {
     std::vector<std::uint8_t> bins(values.size(), 0);
@@ -292,7 +349,9 @@ std::vector<std::uint8_t> ramp_bins(const std::vector<float>& values, const Ramp
     for (std::size_t i = 0; i < values.size(); ++i) {
         if (std::isnan(values[i]))
             continue;
-        const int index = std::clamp(int(std::floor((double(values[i]) - ramp.from) / (ramp.to - ramp.from) * n)), 0, int(ramp.bins()) - 1);
+        const double position = ramp.log ? (values[i] > 0.f ? std::log(double(values[i]) / ramp.from) / std::log(ramp.to / ramp.from) : -1.)
+                                         : (double(values[i]) - ramp.from) / (ramp.to - ramp.from);
+        const int index = std::clamp(int(std::floor(position * n)), 0, int(ramp.bins()) - 1);
         bins[i] = std::uint8_t(index + 1);
     }
     return bins;
@@ -340,9 +399,10 @@ struct Measured
     std::vector<float>  values;         // relief: mm per triangle; detail: degrees
     const indexed_triangle_set* drawn = nullptr;
     DetailMetrics       detail;
+    std::vector<float>  sizes;
 };
 
-void fill_stats(ReliefPartReport& report, const std::vector<float>& values, const Ramp& ramp, bool detail)
+void fill_stats(ReliefPartReport& report, const std::vector<float>& values, const Ramp& ramp, ReliefMode mode)
 {
     double sum = 0., sum_abs = 0., lo = std::numeric_limits<double>::max(), hi = std::numeric_limits<double>::lowest();
     std::size_t n = 0;
@@ -360,7 +420,7 @@ void fill_stats(ReliefPartReport& report, const std::vector<float>& values, cons
     report.triangles = values.size();
     if (n == 0)
         return;
-    report.min      = detail ? 0. : lo;
+    report.min      = mode == ReliefMode::Detail ? 0. : lo;
     report.max      = hi;
     report.mean_abs = sum_abs / double(n);
     report.mean     = sum / double(n);
@@ -370,11 +430,12 @@ void fill_stats(ReliefPartReport& report, const std::vector<float>& values, cons
 
 } // namespace
 
-ReliefOutput compute_relief(const std::vector<ReliefPartInput>& parts, bool detail, std::optional<double> range, BakeReferences& references,
+ReliefOutput compute_relief(const std::vector<ReliefPartInput>& parts, ReliefMode mode, std::optional<double> range, BakeReferences& references,
                             const std::function<bool()>& stop)
 {
+    const bool   detail = mode != ReliefMode::Relief;   // measured on the drawn mesh alone
     ReliefOutput out;
-    out.report.detail      = detail;
+    out.report.mode        = mode;
     out.report.range_asked = range;
     out.report.parts.resize(parts.size());
     std::vector<Measured> measured;
@@ -417,22 +478,25 @@ ReliefOutput compute_relief(const std::vector<ReliefPartInput>& parts, bool deta
                 leave("timed_out: the call's wait ran out while this part was being measured");
                 continue;
             }
-            m.values = m.detail.angle_deg;
+            m.values = mode == ReliefMode::TriangleSize ? m.detail.size_mm : m.detail.angle_deg;
         } else {
             std::shared_ptr<const BakeReference> kept;
             const indexed_triangle_set*          reference = nullptr;
-            Transform3d drawn_to_frame = Transform3d::Identity(), reference_to_frame = Transform3d::Identity();
+            // One frame for both, the bed in mm: print millimetres whatever the instance's scale. The preview and its unbaked
+            // mesh are both in the volume's frame; a kept mesh is in the frame its volume had then, which differs from the
+            // volume's now by the matrices' ratio.
+            Transform3d drawn_to_frame = in.to_world, reference_to_frame = in.to_world;
             if (in.previewed != nullptr) {
                 reference   = &in.mesh->its;
                 m.reference = "unbaked_surface";
             } else if ((kept = references.find(in.volume_identity, mesh_fingerprint(in.mesh->its)))) {
                 reference          = kept->mesh.get();
                 m.reference        = "pre_bake_mesh";
-                drawn_to_frame     = in.volume_matrix;
-                reference_to_frame = kept->volume_matrix;
+                reference_to_frame = in.to_world * in.volume_matrix.inverse() * kept->volume_matrix;
             }
             if (reference == nullptr) {
-                leave(in.has_unbaked_layers ? "unbaked: add texture_preview, which draws the texture the layers would make and measures it from the surface before it"
+                leave(in.object_previewed ? "not_reached: the texture preview of this object does not reach this part (no texture layer moves it), so it has no relief to measure"
+                      : in.has_unbaked_layers ? "unbaked: add texture_preview, which draws the texture the layers would make and measures it from the surface before it"
                                             : "no reference: the surface before the bake is not known (the bake was not made through bake_texture_displacement in this session, "
                                               "or the mesh changed since); color_by detail works without one");
                 continue;
@@ -455,29 +519,33 @@ ReliefOutput compute_relief(const std::vector<ReliefPartInput>& parts, bool deta
     }
 
     // One scale for every part, so colours mean the same everywhere in the picture.
-    double lo = 0., hi = 0.;
+    // Relief: the 99th percentile of |distance|, so a few spikes do not wash the rest of the surface out to white (the true
+    // extremes are in each part's min and max, the facets beyond the scale in beyond_scale).
     std::vector<float> pooled;
-    for (const Measured& m : measured) {
+    for (const Measured& m : measured)
         for (const float v : m.values)
-            if (!std::isnan(v)) {
-                lo = std::min(lo, double(v));
-                hi = std::max(hi, double(v));
-            }
-        if (detail)
-            pooled.insert(pooled.end(), m.values.begin(), m.values.end());
+            if (!std::isnan(v))
+                pooled.push_back(mode == ReliefMode::Relief ? std::abs(v) : v);
+    if (mode == ReliefMode::Relief) {
+        const double p99 = quantile(std::move(pooled), 0.99);
+        out.report.ramp = relief_ramp(-p99, p99, range);
+    } else if (mode == ReliefMode::Detail) {
+        out.report.ramp = detail_ramp(quantile(std::move(pooled), 0.98), range);
+    } else {
+        out.report.ramp = triangle_size_ramp(quantile(pooled, 0.02), quantile(pooled, 0.98));
     }
-    out.report.ramp = detail ? detail_ramp(quantile(std::move(pooled), 0.98), range) : relief_ramp(lo, hi, range);
 
     for (const Measured& m : measured) {
         ReliefPartReport& report = out.report.parts[m.part];
         report.reference = m.reference;
         report.coloured  = true;
-        fill_stats(report, m.values, out.report.ramp, detail);
+        fill_stats(report, m.values, out.report.ramp, mode);
         if (detail) {
             report.open_edges     = m.detail.open_edges;
             report.edge_min_mm    = m.detail.edge_min_mm;
             report.edge_median_mm = m.detail.edge_median_mm;
             report.edge_max_mm    = m.detail.edge_max_mm;
+            report.slabs          = m.detail.slabs;
         }
         ReliefPartDraw draw;
         draw.object_id = report.object_id;
@@ -501,10 +569,18 @@ std::string number_text(double value)
     return out.str();
 }
 
-nlohmann::json part_json(const ReliefPartReport& p, bool detail)
+nlohmann::json slabs_json(const std::vector<SizeSlab>& slabs)
+{
+    nlohmann::json json = nlohmann::json::array();
+    for (const SizeSlab& slab : slabs)
+        json.push_back({{"z_mm", {rounded(slab.z_from), rounded(slab.z_to)}}, {"triangles", slab.triangles}, {"median_edge_mm", rounded(slab.median_edge_mm)}});
+    return json;
+}
+
+nlohmann::json part_json(const ReliefPartReport& p, ReliefMode mode)
 {
     nlohmann::json json = {{"volume_id", p.volume_id}, {"triangles", p.triangles}};
-    if (detail) {
+    if (mode == ReliefMode::Detail) {
         json["max_deg"]  = rounded(p.max);
         json["mean_deg"] = rounded(p.mean);
         json["p50_deg"]  = rounded(p.p50);
@@ -512,6 +588,12 @@ nlohmann::json part_json(const ReliefPartReport& p, bool detail)
         json["beyond_scale"] = p.clamped_high;
         json["open_edges"]   = p.open_edges;
         json["edge_mm"]      = {{"min", rounded(p.edge_min_mm)}, {"median", rounded(p.edge_median_mm)}, {"max", rounded(p.edge_max_mm)}};
+        json["slabs"]        = slabs_json(p.slabs);
+    } else if (mode == ReliefMode::TriangleSize) {
+        json["longest_edge_mm"] = {{"min", rounded(p.min)}, {"p50", rounded(p.p50)}, {"p90", rounded(p.p90)}, {"max", rounded(p.max)}, {"mean", rounded(p.mean)}};
+        json["beyond_scale"]    = {{"finer", p.clamped_low}, {"coarser", p.clamped_high}};
+        json["open_edges"]      = p.open_edges;
+        json["slabs"]           = slabs_json(p.slabs);
     } else {
         json["reference"]     = p.reference;
         json["min_mm"]        = rounded(p.min);
@@ -528,36 +610,46 @@ nlohmann::json ramp_legend_json(const Ramp& ramp)
 {
     nlohmann::json legend = nlohmann::json::array();
     for (std::size_t i = 0; i < ramp.bins(); ++i)
-        legend.push_back({{"from", rounded(ramp.from + ramp.step() * double(i))}, {"to", rounded(ramp.from + ramp.step() * double(i + 1))},
-                          {"color", hex_color(ramp.colors[i])}});
+        legend.push_back({{"from", rounded(ramp.edge(i))}, {"to", rounded(ramp.edge(i + 1))}, {"color", hex_color(ramp.colors[i])}});
     return legend;
 }
 
 std::vector<std::string> relief_notes(const ReliefReport& report)
 {
     std::vector<std::string> notes;
+    const bool relief = report.mode == ReliefMode::Relief;
     const bool any = std::any_of(report.parts.begin(), report.parts.end(), [](const ReliefPartReport& p) { return p.coloured; });
     if (!any) {
-        notes.push_back(report.detail ? "no part was coloured: see not_coloured for why"
-                                      : "no part has a surface to measure the relief from, so nothing is coloured by relief: texture_preview gives an unbaked texture its reference "
-                                        "(the surface before it), and a bake made through bake_texture_displacement keeps its pre-bake mesh for this session; a mesh baked in the "
-                                        "texture panel, an earlier session's or a loaded one has none -- color_by detail shows its pattern and mesh density without a reference");
+        notes.push_back(!relief ? "no part was coloured: see not_coloured for why"
+                                : "no part has a surface to measure the relief from, so nothing is coloured by relief: texture_preview gives an unbaked texture its reference "
+                                  "(the surface before it), and a bake made through bake_texture_displacement keeps its pre-bake mesh for this session; a mesh baked in the "
+                                  "texture panel, an earlier session's or a loaded one has none -- color_by detail shows its pattern and mesh density without a reference");
         return notes;
     }
     std::size_t clamped = 0;
     for (const ReliefPartReport& p : report.parts)
         clamped += p.clamped_low + p.clamped_high;
     if (clamped > 0 && report.range_asked)
-        notes.push_back(std::to_string(clamped) + " facets lie beyond the requested scale and are drawn in its end colours; leave the range out to scale to the measured extremes");
-    if (!report.detail) {
+        notes.push_back(std::to_string(clamped) + " facets lie beyond the requested scale and are drawn in its end colours; leave the range out to scale to the measured values");
+    else if (clamped > 0 && relief)
+        notes.push_back(std::to_string(clamped) + " facets lie beyond the scale, which spans the 99th percentile of |distance|, and are drawn in its end colours; each part's min_mm and max_mm "
+                        "are the true extremes, and relief_range_mm sets a wider scale");
+    if (relief) {
         const bool flat = std::all_of(report.parts.begin(), report.parts.end(), [](const ReliefPartReport& p) { return !p.coloured || (std::abs(p.min) < 1e-4 && std::abs(p.max) < 1e-4); });
         if (flat)
             notes.push_back("no relief was measured (every facet is within 0.0001 mm of the reference): the texture moved nothing here, or its depth rounds to zero");
-        notes.push_back("the distance is to the nearest point of the reference surface, not along the displacement, so steep relief reads shallower than its depth");
-    } else {
+        notes.push_back("the distance is to the nearest point of the reference surface, not along the displacement, so steep relief reads shallower than its depth; each part is measured in "
+                        "bed mm, the instance's scale included. A second bake of a part measures that bake's own increment: the reference is the mesh it started from");
+    } else if (report.mode == ReliefMode::Detail) {
         notes.push_back("each facet is coloured by its largest angle to the facets it shares an edge with: a flat or smoothly curved region is pale, a sharp feature or a coarse "
-                        "stair-step dark, and a band whose triangles are larger or smaller than its neighbours' shows as a change of shade; edge_mm gives the triangle sizes");
+                        "stair-step dark. A band of large flat triangles is pale too (its angles are 0): use color_by triangle_size, or read slabs, to find bands of changing density");
+    } else {
+        notes.push_back("each facet is coloured by its longest edge in mm on a log scale (fine cool, coarse warm); a band of coarser or finer triangles shows as a band of colour, and "
+                        "each part's slabs give the median longest edge per Z slab, in bed mm, so a band shows in numbers too");
     }
+    if (!relief)
+        notes.push_back("with texture_preview this colours the unbudgeted preview: the bake's own triangle budget (budget_k) makes bands the preview cannot predict, so bake and then colour "
+                        "the baked mesh to see them");
     notes.push_back("the colours are shaded by the picture's lights: read the legend by hue and compare shades only between regions lit alike");
     if (!report.complete)
         notes.push_back("the call's wait ran out before every part was coloured; the parts in not_coloured with timed_out are drawn in their own colour (raise ORCAMCP_TIMEOUT or fit one object)");
@@ -567,17 +659,23 @@ std::vector<std::string> relief_notes(const ReliefReport& report)
 nlohmann::json relief_report_json(const ReliefReport& report)
 {
     nlohmann::json json;
-    json["mode"]     = report.detail ? "detail" : "relief";
-    json["unit"]     = report.detail ? "deg" : "mm";
+    const bool detail = report.mode == ReliefMode::Detail, size = report.mode == ReliefMode::TriangleSize;
+    json["mode"]     = detail ? "detail" : size ? "triangle_size" : "relief";
+    json["unit"]     = detail ? "deg" : "mm";
     json["complete"] = report.complete;
     json["scale"]    = {{"from", rounded(report.ramp.from)}, {"to", rounded(report.ramp.to)}, {"bins", report.ramp.bins()},
-                        {"step", rounded(report.ramp.step())}, {"range_source", report.range_asked ? "requested" : "measured"}};
-    json["how_to_read"] = report.detail
-                              ? "pale = flat or smooth, dark = a sharp facet angle; each colour step is " + number_text(report.ramp.step()) + " degrees, from 0 to " +
-                                    number_text(report.ramp.to) + " (beyond that, the darkest)"
-                              : "red = raised above the surface before the texture, blue = sunk, white = within one step of it; each colour step is " +
-                                    number_text(report.ramp.step()) + " mm, from " + number_text(report.ramp.from) + " to " +
-                                    number_text(report.ramp.to) + " (beyond that, the end colours)";
+                        {"range_source", report.range_asked ? "requested" : report.mode == ReliefMode::Relief ? "measured_p99" : "measured"}};
+    if (report.ramp.log)
+        json["scale"]["ratio_per_step"] = rounded(report.ramp.ratio()), json["scale"]["spacing"] = "log";
+    else
+        json["scale"]["step"] = rounded(report.ramp.step());
+    json["how_to_read"] = detail ? "pale = flat or smooth, dark = a sharp facet angle; each colour step is " + number_text(report.ramp.step()) + " degrees, from 0 to " +
+                                       number_text(report.ramp.to) + " (beyond that, the darkest)"
+                          : size ? "blue = fine triangles, red = coarse; each facet is coloured by its longest edge in mm, " + number_text(report.ramp.from) + " to " +
+                                       number_text(report.ramp.to) + " on a log scale (each step is " + number_text(report.ramp.ratio()) + " times the one before; beyond that, the end colours)"
+                                 : "red = raised above the surface before the texture, blue = sunk, white = within half a step of it; each colour step is " +
+                                       number_text(report.ramp.step()) + " mm, from " + number_text(report.ramp.from) + " to " +
+                                       number_text(report.ramp.to) + " (beyond that, the end colours)";
     json["legend"] = ramp_legend_json(report.ramp);
     std::map<int, nlohmann::json> by_object;
     nlohmann::json                skipped = nlohmann::json::array();
@@ -589,7 +687,7 @@ nlohmann::json relief_report_json(const ReliefReport& report)
         nlohmann::json& object = by_object[p.object_id];
         if (object.is_null())
             object = {{"object_id", p.object_id}, {"parts", nlohmann::json::array()}};
-        object["parts"].push_back(part_json(p, report.detail));
+        object["parts"].push_back(part_json(p, report.mode));
     }
     nlohmann::json objects = nlohmann::json::array();
     for (auto& item : by_object)

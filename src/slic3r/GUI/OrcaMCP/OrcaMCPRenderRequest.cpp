@@ -315,8 +315,10 @@ void read_paint_options(const nlohmann::json& payload, RenderRequest& out)
         else if (by == "filament") out.color_by = ColorBy::Filament;
         else if (by == "relief")   out.color_by = ColorBy::Relief;
         else if (by == "detail")   out.color_by = ColorBy::Detail;
+        else if (by == "triangle_size") out.color_by = ColorBy::TriangleSize;
         else throw std::runtime_error("color_by must be \"object\" (one colour per object, the default), \"filament\" (each part in its filament's colour), "
-                                      "\"relief\" (depth from the surface before the texture) or \"detail\" (the angle between neighbouring facets, for any mesh)");
+                                      "\"relief\" (depth from the surface before the texture) \"detail\" (the angle between neighbouring facets, for any mesh) or "
+                                      "\"triangle_size\" (each facet's longest edge in mm, for any mesh: shows bands of coarse or fine triangles)");
     }
     const auto positive = [&payload](const char* key) -> std::optional<double> {
         if (!payload.contains(key))

@@ -244,7 +244,7 @@ TEST_CASE("A previewed part is coloured by what the texture added to the surface
     const indexed_triangle_set raised = patch(0.4), flat = patch(0.);
     ReliefPartInput part = part_of(flat, 1, 0, 5);
     part.previewed = &raised;
-    const ReliefOutput out = compute_relief({part}, false, std::nullopt, references, never);
+    const ReliefOutput out = compute_relief({part}, ReliefMode::Relief, std::nullopt, references, never);
     REQUIRE(out.report.parts.size() == 1);
     const ReliefPartReport& r = out.report.parts[0];
     CHECK(r.coloured);
@@ -265,21 +265,22 @@ TEST_CASE("A baked part is coloured against the mesh the bake displaced, through
     const indexed_triangle_set before = plane(10., 5, 0.), after = patch(0.4);
     references.remember(ObjectID(9), mesh_fingerprint(after), before, Transform3d::Identity());
     ReliefPartInput part = part_of(after, 2, 1, 9);
-    const ReliefOutput out = compute_relief({part}, false, std::nullopt, references, never);
+    const ReliefOutput out = compute_relief({part}, ReliefMode::Relief, std::nullopt, references, never);
     REQUIRE(out.report.parts[0].coloured);
     CHECK(out.report.parts[0].reference == "pre_bake_mesh");
     CHECK_THAT(out.report.parts[0].max, WithinAbs(0.4, 1e-4));
 
     // The volume was lifted since the bake: only the part's matrix moved, so the relief reads 1 mm more.
     part.volume_matrix.translate(Vec3d(0., 0., 1.));
-    CHECK_THAT(compute_relief({part}, false, std::nullopt, references, never).report.parts[0].min, WithinAbs(1.4, 1e-4));
+    part.to_world = part.volume_matrix;   // the instance is the identity here
+    CHECK_THAT(compute_relief({part}, ReliefMode::Relief, std::nullopt, references, never).report.parts[0].min, WithinAbs(1.4, 1e-4));
 }
 
 TEST_CASE("A part with no reference says so, and what would give it one", "[Relief][orcamcp]")
 {
     BakeReferences references;
     ReliefPartInput plain = part_of(patch(0.4), 1, 0, 5);
-    ReliefOutput    out   = compute_relief({plain}, false, std::nullopt, references, never);
+    ReliefOutput    out   = compute_relief({plain}, ReliefMode::Relief, std::nullopt, references, never);
     CHECK_FALSE(out.report.parts[0].coloured);
     CHECK(out.report.parts[0].reason.find("no reference") != std::string::npos);
     CHECK(out.report.parts[0].reason.find("color_by detail") != std::string::npos);
@@ -289,18 +290,25 @@ TEST_CASE("A part with no reference says so, and what would give it one", "[Reli
     CHECK(notes[0].find("color_by detail") != std::string::npos);
 
     plain.has_unbaked_layers = true;
-    out = compute_relief({plain}, false, std::nullopt, references, never);
+    out = compute_relief({plain}, ReliefMode::Relief, std::nullopt, references, never);
     CHECK(out.report.parts[0].reason.find("add texture_preview") != std::string::npos);
 
+    // The object is previewed but the layers do not reach this part: texture_preview is not what it lacks.
+    plain.object_previewed = true;
+    out = compute_relief({plain}, ReliefMode::Relief, std::nullopt, references, never);
+    CHECK(out.report.parts[0].reason.find("not_reached") != std::string::npos);
+    CHECK(out.report.parts[0].reason.find("add texture_preview") == std::string::npos);
+    plain.object_previewed = false;
+
     plain.unusable = "the texture layers move nothing on this part";
-    out = compute_relief({plain}, false, std::nullopt, references, never);
+    out = compute_relief({plain}, ReliefMode::Relief, std::nullopt, references, never);
     CHECK(out.report.parts[0].reason == plain.unusable);
 
     // a reference made for another mesh is no reference
     references.remember(ObjectID(5), mesh_fingerprint(patch(0.5)), plane(10., 5, 0.), Transform3d::Identity());
     plain.unusable.clear();
     plain.has_unbaked_layers = false;
-    CHECK_FALSE(compute_relief({plain}, false, std::nullopt, references, never).report.parts[0].coloured);
+    CHECK_FALSE(compute_relief({plain}, ReliefMode::Relief, std::nullopt, references, never).report.parts[0].coloured);
 }
 
 TEST_CASE("The requested relief range clamps what lies beyond it and is reported", "[Relief][orcamcp]")
@@ -309,7 +317,7 @@ TEST_CASE("The requested relief range clamps what lies beyond it and is reported
     const indexed_triangle_set raised = patch(0.4);
     ReliefPartInput part = part_of(patch(0.), 1, 0, 5);
     part.previewed = &raised;
-    const ReliefOutput out = compute_relief({part}, false, 0.1, references, never);
+    const ReliefOutput out = compute_relief({part}, ReliefMode::Relief, 0.1, references, never);
     CHECK_THAT(out.report.ramp.to, WithinAbs(0.1, 1e-12));
     CHECK(out.report.parts[0].clamped_high == 32);
     CHECK(out.report.parts[0].clamped_low == 0);
@@ -323,7 +331,7 @@ TEST_CASE("Detail colours any mesh without a reference", "[Relief][orcamcp]")
     BakeReferences references;
     ReliefPartInput cube = part_of(its_make_cube(10., 10., 10.), 3, 0, 1);
     ReliefPartInput grid = part_of(plane(10., 4, 0.), 3, 1, 2);
-    const ReliefOutput out = compute_relief({cube, grid}, true, std::nullopt, references, never);
+    const ReliefOutput out = compute_relief({cube, grid}, ReliefMode::Detail, std::nullopt, references, never);
     REQUIRE(out.report.parts.size() == 2);
     CHECK(out.report.parts[0].coloured);
     CHECK(out.report.parts[1].coloured);
@@ -347,7 +355,7 @@ TEST_CASE("A call whose wait runs out leaves the parts it did not reach in their
     // compute_relief looks once before a part and detail_metrics twice inside it: the first part passes, the wait is over before the second.
     const std::function<bool()> after_first = [&looks] { return ++looks > 3; };
     ReliefPartInput a = part_of(its_make_cube(10., 10., 10.), 1, 0, 1), b = part_of(its_make_cube(5., 5., 5.), 1, 1, 2);
-    const ReliefOutput out = compute_relief({a, b}, true, std::nullopt, references, after_first);
+    const ReliefOutput out = compute_relief({a, b}, ReliefMode::Detail, std::nullopt, references, after_first);
     CHECK_FALSE(out.report.complete);
     CHECK(out.report.parts[0].coloured);
     CHECK_FALSE(out.report.parts[1].coloured);
@@ -361,7 +369,7 @@ TEST_CASE("The relief answer gives the scale in mm per step and its range", "[Re
     const indexed_triangle_set raised = patch(0.3);
     ReliefPartInput part = part_of(patch(0.), 4, 2, 5);
     part.previewed = &raised;
-    const nlohmann::json json = relief_report_json(compute_relief({part}, false, std::nullopt, references, never).report);
+    const nlohmann::json json = relief_report_json(compute_relief({part}, ReliefMode::Relief, std::nullopt, references, never).report);
     CHECK(json["mode"] == "relief");
     CHECK(json["unit"] == "mm");
     CHECK(json["complete"] == true);
@@ -369,8 +377,9 @@ TEST_CASE("The relief answer gives the scale in mm per step and its range", "[Re
     CHECK_THAT(json["scale"]["from"].get<double>(), WithinAbs(-0.3, 1e-4));
     CHECK_THAT(json["scale"]["to"].get<double>(), WithinAbs(0.3, 1e-4));
     CHECK_THAT(json["scale"]["step"].get<double>(), WithinAbs(0.04, 1e-4));
-    CHECK(json["scale"]["range_source"] == "measured");
+    CHECK(json["scale"]["range_source"] == "measured_p99");
     CHECK(json["how_to_read"].get<std::string>().find("0.04 mm") != std::string::npos);
+    CHECK(json["how_to_read"].get<std::string>().find("within half a step") != std::string::npos);
     REQUIRE(json["legend"].size() == 15);
     CHECK(json["legend"][7]["color"] == "#ffffff");
     CHECK_THAT(json["legend"][0]["from"].get<double>(), WithinAbs(-0.3, 1e-4));
@@ -378,4 +387,163 @@ TEST_CASE("The relief answer gives the scale in mm per step and its range", "[Re
     CHECK(json["objects"][0]["object_id"] == 4);
     CHECK(json["objects"][0]["parts"][0]["reference"] == "unbaked_surface");
     CHECK(json["not_coloured"].empty());
+}
+
+namespace {
+
+// A vertical sheet in the XZ plane, x from 0 to `width`, z from z0 to z1, cut into nx by nz quads of two triangles each.
+indexed_triangle_set sheet(double width, double z0, double z1, int nx, int nz)
+{
+    indexed_triangle_set its;
+    for (int k = 0; k <= nz; ++k)
+        for (int i = 0; i <= nx; ++i)
+            its.vertices.emplace_back(float(width * i / nx), 0.f, float(z0 + (z1 - z0) * k / nz));
+    const auto at = [nx](int i, int k) { return k * (nx + 1) + i; };
+    for (int k = 0; k < nz; ++k)
+        for (int i = 0; i < nx; ++i) {
+            its.indices.emplace_back(at(i, k), at(i + 1, k), at(i + 1, k + 1));
+            its.indices.emplace_back(at(i, k), at(i + 1, k + 1), at(i, k + 1));
+        }
+    return its;
+}
+
+// 0 to 10 mm and 20 to 30 mm cut finely (0.5 mm quads), 10 to 20 mm in 5 mm quads: a band of coarse flat triangles.
+indexed_triangle_set banded_wall()
+{
+    indexed_triangle_set wall;
+    for (const indexed_triangle_set& part : {sheet(10., 0., 10., 20, 20), sheet(10., 10., 20., 2, 2), sheet(10., 20., 30., 20, 20)}) {
+        const int offset = int(wall.vertices.size());
+        wall.vertices.insert(wall.vertices.end(), part.vertices.begin(), part.vertices.end());
+        for (const stl_triangle_vertex_indices& t : part.indices)
+            wall.indices.emplace_back(t(0) + offset, t(1) + offset, t(2) + offset);
+    }
+    return wall;
+}
+
+} // namespace
+
+TEST_CASE("Relief is measured in bed millimetres whatever the instance's scale", "[Relief][orcamcp]")
+{
+    const indexed_triangle_set before = plane(10., 5, 0.), after = patch(0.4);
+    const Vec3d scales[] = {Vec3d(1.5, 1.5, 1.5), Vec3d(1.2, 1., 1.5)};   // uniform, and not
+    for (const Vec3d& scale : scales) {
+        Transform3d instance = Transform3d::Identity();
+        instance.scale(scale);
+
+        // Previewed: the preview and the mesh it was made from are both in the volume's frame.
+        BakeReferences      none;
+        ReliefPartInput     previewed = part_of(before, 1, 0, 5);
+        const indexed_triangle_set raised = after;
+        previewed.previewed = &raised;
+        previewed.to_world  = instance;
+        CHECK_THAT(compute_relief({previewed}, ReliefMode::Relief, std::nullopt, none, never).report.parts[0].max, WithinAbs(0.4 * scale.z(), 1e-4));
+
+        // After a bake: the reference is the pre-bake mesh in the frame the volume had then.
+        BakeReferences kept;
+        kept.remember(ObjectID(9), mesh_fingerprint(after), before, Transform3d::Identity());
+        ReliefPartInput baked = part_of(after, 2, 1, 9);
+        baked.to_world = instance;   // the volume matrix is the identity: the world matrix is the instance's
+        const ReliefOutput baked_out = compute_relief({baked}, ReliefMode::Relief, std::nullopt, kept, never);
+        const ReliefPartReport& r = baked_out.report.parts[0];
+        REQUIRE(r.coloured);
+        CHECK_THAT(r.max, WithinAbs(0.4 * scale.z(), 1e-4));
+        CHECK_THAT(r.min, WithinAbs(0.4 * scale.z(), 1e-4));
+
+        // The volume was lifted by 1 mm after the bake: the drawn part is 1 mm (in the object's frame) above the kept one.
+        baked.volume_matrix = Transform3d::Identity();
+        baked.volume_matrix.translate(Vec3d(0., 0., 1.));
+        baked.to_world = instance * baked.volume_matrix;
+        CHECK_THAT(compute_relief({baked}, ReliefMode::Relief, std::nullopt, kept, never).report.parts[0].min, WithinAbs(1.4 * scale.z(), 1e-4));
+    }
+}
+
+TEST_CASE("The relief scale spans the 99th percentile, so one spike does not wash the rest out", "[Relief][orcamcp]")
+{
+    BakeReferences references;
+    indexed_triangle_set drawn = plane(10., 20, 0.1);
+    drawn.vertices[10 * 21 + 10].z() = 5.f;   // one vertex pulled up: six facets of 800
+    ReliefPartInput part = part_of(plane(10., 5, 0.), 1, 0, 5);
+    part.previewed = &drawn;
+    const ReliefOutput out = compute_relief({part}, ReliefMode::Relief, std::nullopt, references, never);
+    REQUIRE(out.report.parts[0].coloured);
+    CHECK_THAT(out.report.ramp.to, WithinAbs(0.1, 0.02));
+    CHECK(out.report.parts[0].max > 1.);                  // the true extreme is reported
+    CHECK(out.report.parts[0].clamped_high == 6);
+    const nlohmann::json json = relief_report_json(out.report);
+    CHECK(json["scale"]["range_source"] == "measured_p99");
+    CHECK(json["notes"].dump().find("99th percentile") != std::string::npos);
+}
+
+TEST_CASE("A degenerate facet is no neighbour: a sliver does not read 90 degrees", "[Relief][orcamcp]")
+{
+    indexed_triangle_set its;
+    its.vertices = {Vec3f(0, 0, 0), Vec3f(1, 0, 0), Vec3f(1, 1, 0), Vec3f(0.5f, 0, 0)};
+    its.indices  = {stl_triangle_vertex_indices(0, 1, 2), stl_triangle_vertex_indices(1, 0, 3)};   // the second is three points on a line
+    const DetailMetrics m = detail_metrics(its, Transform3d::Identity(), never);
+    REQUIRE(m.complete);
+    CHECK_THAT(m.angle_deg[0], WithinAbs(0., 1e-3));
+    CHECK_THAT(m.angle_deg[1], WithinAbs(0., 1e-3));
+}
+
+TEST_CASE("A band of coarse flat triangles is invisible to detail and shown by triangle_size and the slab medians", "[Relief][orcamcp]")
+{
+    const indexed_triangle_set wall = banded_wall();
+
+    const DetailMetrics m = detail_metrics(wall, Transform3d::Identity(), never);
+    REQUIRE(m.complete);
+    for (const float a : m.angle_deg)
+        CHECK_THAT(a, WithinAbs(0., 1e-3));   // every facet is flat: the angle cannot tell the band from the rest
+
+    REQUIRE_FALSE(m.slabs.empty());
+    for (const SizeSlab& slab : m.slabs) {
+        const double middle = (slab.z_from + slab.z_to) / 2.;
+        if (middle > 11. && middle < 19.)
+            CHECK(slab.median_edge_mm > 5.);
+        else if (middle < 9. || middle > 21.)
+            CHECK(slab.median_edge_mm < 1.);
+    }
+
+    BakeReferences references;
+    const ReliefOutput out = compute_relief({part_of(wall, 1, 0, 1)}, ReliefMode::TriangleSize, std::nullopt, references, never);
+    REQUIRE(out.report.parts[0].coloured);
+    CHECK(out.report.ramp.log);
+    CHECK(out.report.ramp.bins() == 10);
+    // the coarse facets (the 8 after the first 800) fall in a higher bin than the fine ones
+    const std::vector<std::uint8_t> bins = ramp_bins(m.size_mm, out.report.ramp);
+    CHECK(bins[800] > bins[0]);
+    CHECK(bins[807] > bins[0]);
+    CHECK(bins[808] == bins[0]);   // the second fine strip
+
+    const nlohmann::json json = relief_report_json(out.report);
+    CHECK(json["mode"] == "triangle_size");
+    CHECK(json["scale"]["spacing"] == "log");
+    const nlohmann::json& part = json["objects"][0]["parts"][0];
+    CHECK(part["longest_edge_mm"]["max"].get<double>() > 7.);
+    CHECK(part["slabs"].size() == m.slabs.size());
+    CHECK_THAT(json["legend"][0]["from"].get<double>(), WithinAbs(out.report.ramp.from, 1e-3));
+    CHECK_THAT(json["legend"][9]["to"].get<double>(), WithinAbs(out.report.ramp.to, 1e-3));
+    CHECK(json["notes"].dump().find("unbudgeted preview") != std::string::npos);
+
+    // detail reports the slabs too
+    const nlohmann::json detail = relief_report_json(compute_relief({part_of(wall, 1, 0, 1)}, ReliefMode::Detail, std::nullopt, references, never).report);
+    CHECK(detail["objects"][0]["parts"][0]["slabs"].size() == m.slabs.size());
+}
+
+TEST_CASE("Slabs are 2 mm, at most 64, the median of the longest edges, and leave empty slabs out", "[Relief][orcamcp]")
+{
+    const std::vector<SizeSlab> slabs = size_slabs({0.5f, 1.f, 1.5f, 5.f}, {1.f, 3.f, 2.f, 9.f});
+    REQUIRE(slabs.size() == 2);
+    CHECK_THAT(slabs[0].z_from, WithinAbs(0.5, 1e-9));
+    CHECK(slabs[0].triangles == 3);
+    CHECK_THAT(slabs[0].median_edge_mm, WithinAbs(2., 1e-6));
+    CHECK(slabs[1].triangles == 1);
+
+    std::vector<float> z, size;
+    for (int i = 0; i <= 1000; ++i) { z.push_back(float(i)); size.push_back(1.f); }
+    const std::vector<SizeSlab> tall = size_slabs(z, size);
+    CHECK(tall.size() <= size_slab_max);
+    std::size_t counted = 0;
+    for (const SizeSlab& slab : tall) counted += slab.triangles;
+    CHECK(counted == z.size());
+    CHECK(size_slabs({}, {}).empty());
 }
