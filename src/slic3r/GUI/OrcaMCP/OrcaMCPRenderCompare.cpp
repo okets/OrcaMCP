@@ -16,8 +16,13 @@ std::string canonical_picture_path(const std::string& path)
     if (!fs::path(path).is_absolute())
         return path;
     boost::system::error_code ec;
-    const fs::path            resolved = fs::weakly_canonical(fs::path(path), ec);
-    return ec ? path : resolved.string();
+    fs::path                  resolved = fs::weakly_canonical(fs::path(path), ec);
+    if (ec)
+        return path;
+    // On Windows the part weakly_canonical cannot resolve keeps the caller's separators: one form for every spelling
+    resolved = resolved.lexically_normal();
+    resolved.make_preferred();
+    return resolved.string();
 }
 
 void stamp_record_file(RenderRecord& record)

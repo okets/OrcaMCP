@@ -161,10 +161,15 @@ TEST_CASE("Two spellings of one path are one picture", "[RenderCompare][orcamcp]
 {
     RenderRecords records;
     const std::string path   = new_mcp_image_path(k_render_image_prefix, "0", ".png");
-    const std::string detour = path.substr(0, path.rfind('/')) + "/../" + path.substr(path.rfind('/', path.rfind('/') - 1) + 1);
+    const boost::filesystem::path p(path);
+    // the same file through its folder's parent: <folder>/../<folder name>/<file>
+    const std::string detour  = (p.parent_path() / ".." / p.parent_path().filename() / p.filename()).string();
+    // and with forward slashes, the spelling an agent may send on Windows (the same string elsewhere)
+    const std::string forward = p.generic_string();
     REQUIRE(detour != path);
     records.remember(record_at(path, 64, 0));
     CHECK(records.find(detour) != nullptr);
+    CHECK(records.find(forward) != nullptr);
     CHECK(message_of(records, detour, 0, std::nullopt).empty());
     // remembering the other spelling replaces, not adds
     records.remember(record_at(detour, 128, 0));
