@@ -2703,7 +2703,7 @@
         "additionalProperties": false,
         "properties": {
           "color_by": {
-            "description": "object (default): one colour per object, so objects tell apart. filament: each part in its filament's colour, as the 3D view. objects_in_frame[].color_source says where each part's colour came from: palette, filament, paint (colour paint, always its filaments' colours) or neutral (paint tints asked for).",
+            "description": "object (default): one colour per object, so objects tell apart. filament: each part in its filament's colour, as the 3D view. With paint, unpainted surfaces are neutral grey, so color_by only matters without it. objects_in_frame[].color_source says where each part's colour came from: palette, filament, paint (colour paint, always its filaments' colours) or neutral (paint tints asked for).",
             "enum": [
               "object",
               "filament"
@@ -2844,7 +2844,7 @@
             ]
           },
           "paint": {
-            "description": "Paint to tint on the parts, as the paint panels colour it: support and seam enforcers light green and blockers light red, fuzzy_skin light green, texture one colour per layer (texture_layers chooses). The unpainted surface is then drawn neutral grey so the tints read. Colour paint is always drawn in its filaments' colours, without this. The answer's tint_legend gives each tint's colour and, per object, its facets (get_object_paint's count) and area_mm2 (one instance). Ask one channel at a time to tell support from seam in the picture: they share the panels' colours. 3D views only.",
+            "description": "Paint to tint on the parts, as the paint panels colour it: support and seam enforcers light green and blockers light red, fuzzy_skin light green, texture one colour per layer (texture_layers chooses). The unpainted surface is then drawn neutral grey so the tints read. Colour paint is always drawn in its filaments' colours, without this. The answer's tint_legend gives each tint's colour and, per object, its facets (get_object_paint's count) and area_mm2 (one instance). A texture mask its mesh has outgrown is not drawn and is marked stale; tint_notes explains an empty case. Ask one channel at a time to tell support from seam in the picture: they share the panels' colours. 3D views only.",
             "items": {
               "enum": [
                 "support",

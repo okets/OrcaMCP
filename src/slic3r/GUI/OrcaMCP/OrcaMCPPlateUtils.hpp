@@ -69,6 +69,8 @@ struct RenderOptions
 struct RenderedVolume
 {
     int           object_index = -1;                    // index into Model::objects; -1 for the wipe tower
+    int           volume_id    = -1;                    // the part within the object (get_object_info's volume_id)
+    int           instance_id  = -1;
     std::string   name;
     BoundingBoxf3 world_bbox;                           // bed mm
     ColorRGBA     color;                                // the colour the label is drawn in (a colour-painted part: its base filament's)
@@ -182,8 +184,8 @@ struct RenderJob
     // paint: the tints asked for, what the first step captured of the parts that carry them, and what the work made of it.
     std::vector<OrcaMCP::PaintTint>           tints;
     std::vector<OrcaMCP::PaintVolumeInput>    paint_inputs;
-    std::vector<OrcaMCP::PaintFacets>         paint_facets;
-    bool                                      paint_done = false;             // the work finished (else the call's wait ran out)
+    OrcaMCP::PaintResult                      paint_result;
+    bool                                      paint_done = false;             // the work completed (else the call's wait ran out)
 };
 
 class OrcaMCPPlateUtils {

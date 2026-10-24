@@ -91,14 +91,32 @@ indexed_triangle_set painted_facets(const TriangleMesh& mesh, const PaintData& d
 // Surface area of `its` after `trafo`, mm2.
 double world_area_mm2(const indexed_triangle_set& its, const Transform3d& trafo);
 
-// The painted facets of every part and tint; parts and tints with none are left out. Stops between parts and tints once
-// `stop` says so (the rest are left out).
-std::vector<PaintFacets> compute_paint_facets(const std::vector<PaintVolumeInput>& inputs, const std::vector<PaintTint>& tints,
-                                              const std::function<bool()>& stop);
+// What the work made of the captured parts.
+struct PaintResult
+{
+    std::vector<PaintFacets> facets;            // parts and tints with none are left out
+    std::vector<std::pair<int, int>> stale;     // (tint, object_id) whose mask indexes triangles the mesh no longer has: skipped
+    bool                     complete = true;   // false: `stop` said so before every part was read
+};
+
+// The painted facets of every part and tint. One TriangleSelector is built per part and annotation (support enforcer and
+// blocker share it) and read per state. A mask that indexes triangles its mesh does not have (a stale texture mask)
+// is skipped and listed in `stale`. Stops before each selector and every few thousand triangles of an area sum.
+PaintResult compute_paint_facets(const std::vector<PaintVolumeInput>& inputs, const std::vector<PaintTint>& tints,
+                                 const std::function<bool()>& stop);
 
 // The answer's legend: per tint {channel, layer?, state, state_name, label, color (#rrggbb), objects: [{object_id, facets,
-// area_mm2}]} -- objects with none of it are left out, so a tint nothing carries has an empty list.
-nlohmann::json tint_legend_json(const std::vector<PaintTint>& tints, const std::vector<PaintFacets>& facets);
+// area_mm2}], stale?: [object ids]} -- objects with none of it are left out, so a tint nothing carries has an empty list.
+nlohmann::json tint_legend_json(const std::vector<PaintTint>& tints, const PaintResult& result);
+
+// What to tell the reader beyond the legend: a texture request when no object on the plate has a texture layer, and a
+// stale mask. Empty when there is nothing to say.
+std::vector<std::string> tint_notes(const std::vector<std::string>& channels, const std::vector<PaintTint>& tints,
+                                     const PaintResult& result);
+
+// The colour a label is drawn in: `color` unless it is too dark to read on the label's dark pill, then lightened toward
+// white to a luminance of 0.35 (the object palette is untouched).
+ColorRGBA readable_label_color(const ColorRGBA& color);
 
 // "#rrggbb"
 std::string hex_color(const ColorRGBA& color);

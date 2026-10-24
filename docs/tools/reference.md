@@ -3150,8 +3150,9 @@ while the paint is being prepared answers "the scene changed ..."; paint that ne
 **Examples:**
 ```json
 {"name": "render_plate_view", "arguments": {"plate_index": 1, "save_to_file": true}}
-{"name": "render_plate_view", "arguments": {"plate_index": 0, "save_to_file": true, "paint": ["support", "seam"],
-  "color_by": "filament"}}
+{"name": "render_plate_view", "arguments": {"plate_index": 0, "save_to_file": true, "paint": ["support"],
+  "views": [{"preset": "iso", "fit": {"object_id": 0}}]}}
+{"name": "render_plate_view", "arguments": {"plate_index": 0, "save_to_file": true, "color_by": "filament"}}
 {"name": "render_plate_view", "arguments": {"plate_index": 1, "save_to_file": true,
   "views": [{"preset": "low", "fit": {"object_id": 8}}, {"preset": "top"}]}}
 {"name": "render_plate_view", "arguments": {"plate_index": 1, "save_to_file": true, "layer_view": "first_layer"}}

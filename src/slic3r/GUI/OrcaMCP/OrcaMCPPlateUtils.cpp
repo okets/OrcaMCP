@@ -162,6 +162,8 @@ static void append_render_report(nlohmann::json& entry, const RenderReport& repo
         if (!sb.visible)
             continue;
         in_frame.push_back({{"object_index", v.object_index},
+                            {"volume_id", v.volume_id},
+                            {"instance_id", v.instance_id},
                             {"name", v.name},
                             {"color_source", v.color_source},
                             {"color", OrcaMCP::hex_color(v.color)},
@@ -487,8 +489,8 @@ static void capture_paint(const OrcaMCP::RenderRequest& asked, PartPlate& plate,
     }
     RenderJob* self = &job;
     job.work.push_back([self](const std::function<bool()>& stop) {
-        self->paint_facets = OrcaMCP::compute_paint_facets(self->paint_inputs, self->tints, stop);
-        self->paint_done   = !stop();
+        self->paint_result = OrcaMCP::compute_paint_facets(self->paint_inputs, self->tints, stop);
+        self->paint_done   = self->paint_result.complete;
     });
 }
 
@@ -644,13 +646,13 @@ static nlohmann::json camera_answer(const ResolvedView& view, const RenderCamera
 struct PaintOverlay
 {
     const RenderJob*                      job = nullptr;
-    std::vector<std::unique_ptr<GLModel>> models;   // parallel to job->paint_facets
+    std::vector<std::unique_ptr<GLModel>> models;   // parallel to job->paint_result.facets
 
     void build()
     {
         if (!models.empty())
             return;
-        for (const OrcaMCP::PaintFacets& f : job->paint_facets) {
+        for (const OrcaMCP::PaintFacets& f : job->paint_result.facets) {
             auto model = std::make_unique<GLModel>();
             model->init_from(f.its);
             model->set_color(job->tints[size_t(f.tint)].color);
@@ -679,7 +681,7 @@ struct PaintOverlay
             if (vol->is_left_handed())
                 glFrontFace(GL_CW);
             for (size_t i = 0; i < models.size(); ++i) {
-                const OrcaMCP::PaintFacets& f = job->paint_facets[i];
+                const OrcaMCP::PaintFacets& f = job->paint_result.facets[i];
                 if (f.object_id == vol->composite_id.object_id && f.volume_id == vol->composite_id.volume_id &&
                     size_t(f.object_id) < objects.size())
                     models[i]->render(&pass.shader);
@@ -697,7 +699,7 @@ nlohmann::json OrcaMCPPlateUtils::DrawRender(RenderJob& job)
     const OrcaMCP::RenderRequest& asked = job.request;
     if (!scene_unchanged_since(job))
         return {{"status", "error"}, {"message", "the scene changed while the picture was being prepared; render again"}};
-    if (!job.tints.empty() && !job.paint_done)
+    if (!job.request.paint.empty() && !job.paint_done)
         return {{"status", "error"}, {"message", "the paint of the picture needs more than the call's wait: raise ORCAMCP_TIMEOUT, or ask for one channel at a time in paint"}};
 
     const int  plate_index = asked.plate_index;
@@ -706,7 +708,7 @@ nlohmann::json OrcaMCPPlateUtils::DrawRender(RenderJob& job)
 
     PaintOverlay overlay;
     overlay.job = &job;
-    const nlohmann::json legend = OrcaMCP::tint_legend_json(job.tints, job.paint_facets);
+    const nlohmann::json legend = OrcaMCP::tint_legend_json(job.tints, job.paint_result);
 
     struct Rendered { wxImage image; nlohmann::json entry; };
     std::vector<Rendered> rendered;
@@ -726,7 +728,7 @@ nlohmann::json OrcaMCPPlateUtils::DrawRender(RenderJob& job)
         options.light        = asked.light;
         options.palette_colors = asked.color_by == OrcaMCP::ColorBy::Object;
         options.color_by       = asked.color_by;
-        options.neutral_base   = !job.tints.empty();
+        options.neutral_base   = !asked.paint.empty();
         if (!job.tints.empty())
             options.after_volumes.push_back([&overlay](RenderPass& pass) { overlay.draw(pass); });
         if (view.request.replay)
@@ -740,7 +742,7 @@ nlohmann::json OrcaMCPPlateUtils::DrawRender(RenderJob& job)
         std::vector<OrcaMCP::OverlayLabel> labels;
         for (const RenderedVolume& v : report.drawn)
             if (!v.wipe_tower)
-                labels.push_back({std::to_string(v.object_index), v.world_bbox.center(), v.color});
+                labels.push_back({std::to_string(v.object_index), v.world_bbox.center(), OrcaMCP::readable_label_color(v.color)});
         OrcaMCP::draw_overlays(image, cam.frame, report.plate_box, OrcaMCP::exclusion_overlays(job.legacy_boxes, job.exclusion_regions, std::nullopt),
                                labels, asked.overlays);
 
@@ -754,9 +756,12 @@ nlohmann::json OrcaMCPPlateUtils::DrawRender(RenderJob& job)
         entry["camera"] = camera_json;
         append_render_report(entry, report, cam.frame, plate_index);
         entry["color_by"] = asked.color_by == OrcaMCP::ColorBy::Filament ? "filament" : "object";
-        if (!job.tints.empty()) {
+        if (!asked.paint.empty()) {
             entry["paint"]       = asked.paint;
             entry["tint_legend"] = legend;
+            const std::vector<std::string> notes = OrcaMCP::tint_notes(asked.paint, job.tints, job.paint_result);
+            if (!notes.empty())
+                entry["tint_notes"] = notes;
         }
         entry["overlays"] = OrcaMCP::overlay_options_to_json(asked.overlays);
         if (asked.light) {
@@ -1081,6 +1086,8 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
         if (report != nullptr) {
             RenderedVolume drawn;
             drawn.object_index = vol->is_wipe_tower ? -1 : object_index;
+            drawn.volume_id    = vol->is_wipe_tower ? -1 : vol->composite_id.volume_id;
+            drawn.instance_id  = vol->is_wipe_tower ? -1 : vol->composite_id.instance_id;
             drawn.name         = vol->is_wipe_tower ? std::string("wipe tower")
                                : (object_index >= 0 && size_t(object_index) < model_objects.size() ? model_objects[object_index]->name : std::string());
             // The hull's box, which is the geometry's own. transformed_bounding_box() turns the

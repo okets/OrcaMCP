@@ -5,6 +5,7 @@
 #include <cstdio>
 
 #include "libslic3r/TriangleSelector.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPTextureDisplacement.hpp"
 #include "slic3r/GUI/Gizmos/GLGizmoPainterBase.hpp"
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
@@ -77,10 +78,12 @@ indexed_triangle_set painted_facets(const TriangleMesh& mesh, const PaintData& d
     return selector.get_facets(EnforcerBlockerType(state));
 }
 
-double world_area_mm2(const indexed_triangle_set& its, const Transform3d& trafo)
+// The area of triangles [begin, end) of `its` after `trafo`.
+static double area_range(const indexed_triangle_set& its, const Transform3d& trafo, size_t begin, size_t end)
 {
     double area = 0.;
-    for (const stl_triangle_vertex_indices& f : its.indices) {
+    for (size_t i = begin; i < end; ++i) {
+        const stl_triangle_vertex_indices& f = its.indices[i];
         const Vec3d a = trafo * its.vertices[f[0]].cast<double>();
         const Vec3d b = trafo * its.vertices[f[1]].cast<double>();
         const Vec3d c = trafo * its.vertices[f[2]].cast<double>();
@@ -89,27 +92,63 @@ double world_area_mm2(const indexed_triangle_set& its, const Transform3d& trafo)
     return area;
 }
 
-std::vector<PaintFacets> compute_paint_facets(const std::vector<PaintVolumeInput>& inputs, const std::vector<PaintTint>& tints,
-                                              const std::function<bool()>& stop)
+double world_area_mm2(const indexed_triangle_set& its, const Transform3d& trafo)
 {
-    std::vector<PaintFacets> out;
-    for (const PaintVolumeInput& in : inputs)
-        for (const auto& [tint, data] : in.per_tint) {
-            if (stop && stop())
+    return area_range(its, trafo, 0, its.indices.size());
+}
+
+PaintResult compute_paint_facets(const std::vector<PaintVolumeInput>& inputs, const std::vector<PaintTint>& tints,
+                                 const std::function<bool()>& stop)
+{
+    PaintResult out;
+    const auto stopped = [&] { return stop && stop(); };
+    for (const PaintVolumeInput& in : inputs) {
+        if (in.mesh == nullptr)
+            continue;
+        // One selector per annotation: the tints of one channel (and texture layer) read the same data.
+        std::vector<std::pair<std::pair<std::string, int>, std::unique_ptr<TriangleSelector>>> selectors;
+        for (const auto& [tint_index, data] : in.per_tint) {
+            if (tint_index < 0 || size_t(tint_index) >= tints.size())
+                continue;
+            const PaintTint& tint = tints[size_t(tint_index)];
+            if (stopped()) {
+                out.complete = false;
                 return out;
-            if (in.mesh == nullptr || tint < 0 || size_t(tint) >= tints.size())
+            }
+            // A mask indexing a triangle the mesh no longer has is unreadable (and upstream's bound check lets a negative index by).
+            if (mask_is_stale(data, in.mesh->its.indices.size())) {
+                out.stale.emplace_back(tint_index, in.object_id);
                 continue;
-            PaintFacets found;
-            found.object_id = in.object_id;
-            found.volume_id = in.volume_id;
-            found.tint      = tint;
-            found.its       = painted_facets(*in.mesh, data, tints[size_t(tint)].state);
-            found.facets    = int(found.its.indices.size());
-            if (found.facets == 0)
+            }
+            const std::pair<std::string, int> key{tint.channel, tint.texture_layer};
+            auto found = std::find_if(selectors.begin(), selectors.end(), [&](const auto& s) { return s.first == key; });
+            if (found == selectors.end()) {
+                auto selector = std::make_unique<TriangleSelector>(*in.mesh);
+                selector->deserialize(data, false);
+                selectors.emplace_back(key, std::move(selector));
+                found = std::prev(selectors.end());
+            }
+            PaintFacets facets;
+            facets.object_id = in.object_id;
+            facets.volume_id = in.volume_id;
+            facets.tint      = tint_index;
+            facets.its       = found->second->get_facets(EnforcerBlockerType(tint.state));
+            facets.facets    = int(facets.its.indices.size());
+            if (facets.facets == 0)
                 continue;
-            found.area_mm2 = world_area_mm2(found.its, in.to_plate);
-            out.push_back(std::move(found));
+            // The area sum is bounded too: a million-facet part is a few hundred thousand triangles per tint.
+            double area = 0.;
+            for (size_t begin = 0; begin < facets.its.indices.size(); begin += 4096) {
+                if (stopped()) {
+                    out.complete = false;
+                    return out;
+                }
+                area += area_range(facets.its, in.to_plate, begin, std::min(facets.its.indices.size(), begin + 4096));
+            }
+            facets.area_mm2 = area;
+            out.facets.push_back(std::move(facets));
         }
+    }
     return out;
 }
 
@@ -120,8 +159,9 @@ std::string hex_color(const ColorRGBA& color)
     return text;
 }
 
-nlohmann::json tint_legend_json(const std::vector<PaintTint>& tints, const std::vector<PaintFacets>& facets)
+nlohmann::json tint_legend_json(const std::vector<PaintTint>& tints, const PaintResult& result)
 {
+    const std::vector<PaintFacets>& facets = result.facets;
     nlohmann::json legend = nlohmann::json::array();
     for (size_t t = 0; t < tints.size(); ++t) {
         const PaintTint& tint = tints[t];
@@ -145,9 +185,42 @@ nlohmann::json tint_legend_json(const std::vector<PaintTint>& tints, const std::
                               {"label", tint.label}, {"color", hex_color(tint.color)}, {"objects", std::move(objects)}};
         if (tint.texture_layer >= 0)
             row["layer"] = tint.texture_layer;
+        nlohmann::json stale = nlohmann::json::array();
+        for (const auto& [stale_tint, object_id] : result.stale)
+            if (stale_tint == int(t))
+                stale.push_back(object_id);
+        if (!stale.empty()) {
+            row["stale"]         = true;
+            row["stale_objects"] = std::move(stale);
+        }
         legend.push_back(std::move(row));
     }
     return legend;
+}
+
+std::vector<std::string> tint_notes(const std::vector<std::string>& channels, const std::vector<PaintTint>& tints,
+                                     const PaintResult& result)
+{
+    std::vector<std::string> notes;
+    const bool texture_asked = std::find(channels.begin(), channels.end(), "texture") != channels.end();
+    const bool texture_tints = std::any_of(tints.begin(), tints.end(), [](const PaintTint& t) { return t.channel == "texture"; });
+    if (texture_asked && !texture_tints)
+        notes.push_back("No object on the plate has a texture layer, so there is no texture paint to draw. get_texture_displacement lists "
+                        "an object's layers; set_texture_displacement adds one.");
+    if (!result.stale.empty())
+        notes.push_back("A paint mask indexes triangles its mesh no longer has (the mesh was replaced after it was painted), so it is not "
+                        "drawn: the legend marks it stale. Paint it again, or clear it.");
+    return notes;
+}
+
+ColorRGBA readable_label_color(const ColorRGBA& color)
+{
+    const float luminance = 0.3f * color.r() + 0.59f * color.g() + 0.11f * color.b();
+    constexpr float minimum = 0.35f;
+    if (luminance >= minimum)
+        return color;
+    const float t = (minimum - luminance) / (1.f - luminance);
+    return ColorRGBA(color.r() + (1.f - color.r()) * t, color.g() + (1.f - color.g()) * t, color.b() + (1.f - color.b()) * t, color.a());
 }
 
 }}} // namespace Slic3r::GUI::OrcaMCP
