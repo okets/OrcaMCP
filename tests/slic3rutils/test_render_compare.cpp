@@ -223,9 +223,9 @@ TEST_CASE("The comparison sheet's columns are capped and the answer says so", "[
     CHECK(compare_column_px(512) == 512);
     CHECK(compare_column_px(2048) == k_max_compare_column_px);
     const ImageDifference d = image_difference(grey(4, 4, 0), grey(4, 4, 200), 4, 4);
-    const nlohmann::json small = comparison_json("x", d, 512, 24);
-    CHECK(small["x_offsets"] == nlohmann::json::array({0, 512, 1024}));
-    CHECK_FALSE(small.contains("scaled"));
+    const nlohmann::json narrow = comparison_json("x", d, 512, 24);
+    CHECK(narrow["x_offsets"] == nlohmann::json::array({0, 512, 1024}));
+    CHECK_FALSE(narrow.contains("scaled"));
     const nlohmann::json big = comparison_json("x", d, 2048, 24);
     CHECK(big["column_px"] == k_max_compare_column_px);
     CHECK(big["x_offsets"] == nlohmann::json::array({0, 1024, 2048}));
