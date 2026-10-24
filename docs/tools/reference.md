@@ -3180,6 +3180,12 @@ while the paint is being prepared answers "the scene changed ..."; paint that ne
   "views": [{"compare_with": "/private/var/folders/xx/T/orcamcp_render_1790422180_48213_1_0.png"}]}}
 {"name": "render_plate_view", "arguments": {"plate_index": 0, "save_to_file": true, "texture_preview": true,
   "light": {"azimuth_deg": 30, "elevation_deg": 12}, "views": [{"preset": "iso", "fit": {"object_id": 0}}]}}
+{"name": "render_plate_view", "arguments": {"plate_index": 0, "save_to_file": true, "light": {"from": "left", "elevation_deg": 12},
+  "views": [{"preset": "iso", "fit": {"point": [128, 128, 15], "radius_mm": 6}}]}}
+{"name": "render_plate_view", "arguments": {"plate_index": 0, "save_to_file": true,
+  "views": [{"camera_position": [60, 0, 20], "target": [60, 40, 20], "camera_mode": "exact", "fov_deg": 40}]}}
+{"name": "render_plate_view", "arguments": {"plate_index": 0, "save_to_file": true,
+  "views": [{"camera": {"view_matrix": "...", "projection_matrix": "...", "viewport": [0, 0, 512, 512]}}]}}
 {"name": "render_plate_view", "arguments": {"plate_index": 1, "save_to_file": true,
   "views": [{"preset": "low", "fit": {"object_id": 8}}, {"preset": "top"}]}}
 {"name": "render_plate_view", "arguments": {"plate_index": 1, "save_to_file": true, "layer_view": "first_layer"}}
@@ -3225,6 +3231,11 @@ while the paint is being prepared answers "the scene changed ..."; paint that ne
 - Files go to the system temp directory (`$TMPDIR` on macOS, `%TEMP%` on Windows, usually `/tmp`
   on Linux), not a literal `/tmp`. When the app starts it removes render and preview images older
   than an hour; younger ones may belong to another OrcaMCP running at the same time.
+- Entries add, for the option asked: `light` (`direction`, `azimuth_deg`, `elevation_deg` in bed axes, `from` and
+  `bed_elevation_deg` for a camera-relative one, `applied`), `paint` with `tint_legend` and `tint_notes`, `section`
+  (`section_area_mm2`, the instances cut, `notes`), `texture_preview` (per object `cached`, `skipped`, `timed_out`,
+  `not_reached`, `too_large`, `complete`), `relief` / `detail` / `triangle_size` (scale, legend, per-part numbers),
+  `comparison`, and `color_by`; `shader_fallback` is on every entry.
 - `camera` is what `pick_facet` needs to turn a pixel back into a ray; pass it unchanged. On a
   contact sheet each entry under `views` carries its own `camera`, `column` and `x_offset` to add
   to a pixel's x first.

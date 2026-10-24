@@ -74,6 +74,40 @@ This guide shows how to combine MCP tools for common 3D printing tasks.
 
 ---
 
+## See What You Did Workflow
+
+**Goal:** Check a change by looking at it, close up and from the right side, before and after.
+
+```
+1. render_plate_view  close-up: fit {point, radius_mm}, light {from: left, elevation_deg: 12}
+2. render_plate_view  paint: ["support"] (or "seam", "fuzzy_skin", "color") to see what is painted
+3. render_plate_view  section {plane: z, at_mm} to see inside; section_area_mm2 says how much
+4. render_plate_view  texture_preview: true, before bake_texture_displacement
+5. render_plate_view  save_to_file, change something, then a view with compare_with: that file
+6. bake_texture_displacement, then render_plate_view color_by relief / triangle_size
+```
+
+```json
+{"name": "render_plate_view", "arguments": {"plate_index": 0, "save_to_file": true,
+  "light": {"from": "left", "elevation_deg": 12},
+  "views": [{"preset": "iso", "fit": {"point": [128, 128, 15], "radius_mm": 6}}]}}
+{"name": "render_plate_view", "arguments": {"plate_index": 0, "save_to_file": true, "texture_preview": true,
+  "light": {"from": "left", "elevation_deg": 15}, "views": [{"preset": "iso", "fit": {"object_id": 0}}]}}
+{"name": "render_plate_view", "arguments": {"plate_index": 0, "save_to_file": true,
+  "views": [{"compare_with": "<file_path of the earlier render>"}]}}
+{"name": "render_plate_view", "arguments": {"plate_index": 0, "save_to_file": true, "color_by": "relief",
+  "light": {"from": "left", "elevation_deg": 15}, "views": [{"preset": "iso", "fit": {"object_id": 0}}]}}
+```
+
+**Notes:**
+- A close-up is a small `fit`, not more pixels; `camera.mm_per_pixel` gives the scale. A returned `camera` can be sent back as a view to draw the same picture again (same plate only).
+- `light.from` is relative to each view's camera, so `left` is the left of the image. A low elevation grazes the surface and shows relief.
+- `texture_preview` changes nothing in the project; it is cached, so a second call is quick until the layers, paint or mesh change.
+- `compare_with` draws with the earlier picture's camera and size: send the same overlays, light, section and paint in both. Only pictures this session saved are read.
+- `color_by: relief` after a bake measures from the surface the bake displaced; `detail` and `triangle_size` need no reference and work on any mesh (a band of large flat triangles shows in `triangle_size` and its `slabs`).
+
+---
+
 ## Settings Modification Workflow
 
 **Goal:** Adjust print quality settings.

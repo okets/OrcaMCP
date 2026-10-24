@@ -167,6 +167,8 @@ that used to mean an afternoon in menus.
 - **Vision is a first-class tool.** Renders from any camera, at any resolution, saved to a file or
   returned as base64 for clients without disk access. A render's camera can be handed back to
   `pick_facet` to turn a pixel into a facet.
+  Close-ups with a raking light, a section through a part, a texture previewed before it is baked,
+  its relief coloured by depth after, and a view compared with an earlier picture show what an edit did.
 - **Read-back for everything it writes.** Paint coverage per part and per mode, per-object
   overrides, layer ranges, plate occupancy including brim and prime tower, live printer state.
 - **Undo and redo** are tools too.
