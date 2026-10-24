@@ -317,6 +317,11 @@ RenderRequest read_request(const nlohmann::json& payload)
     if (payload.contains("section") && !payload["section"].is_null())
         out.section = read_section(payload["section"]);
     read_paint_options(payload, out);
+    if (payload.contains("texture_preview")) {
+        if (!payload["texture_preview"].is_boolean())
+            throw std::runtime_error("texture_preview must be true or false");
+        out.texture_preview = payload["texture_preview"].get<bool>();
+    }
     out.layer_view = payload.value("layer_view", nlohmann::json());
     if (out.layer_view == "")  // "" was always read as no layer view
         out.layer_view = nlohmann::json();
@@ -327,8 +332,15 @@ RenderRequest read_request(const nlohmann::json& payload)
             throw std::runtime_error("section is for 3D views; a layer_view is a plan drawn from the G-code. Leave section out, or leave layer_view out");
         if (!out.paint.empty() || payload.contains("color_by") || payload.contains("texture_layers"))
             throw std::runtime_error("paint, texture_layers and color_by are for 3D views; a layer_view is a plan drawn from the G-code. Leave them out, or leave layer_view out");
+        if (out.texture_preview)
+            throw std::runtime_error("texture_preview is for 3D views; a layer_view is a plan drawn from the G-code. Leave it out, or leave layer_view out");
         return out;  // a layer plan ignores views
     }
+
+    if (out.texture_preview && std::find(out.paint.begin(), out.paint.end(), "texture") != out.paint.end())
+        throw std::runtime_error("texture paint is drawn on the unbaked surface and texture_preview draws the displaced one; render the paint and the preview separately");
+    if (out.texture_preview && out.section)
+        throw std::runtime_error("a section cuts the unbaked meshes and cannot cut or cap a texture preview; render them separately (after a bake the section cuts the real relief)");
 
     // No views: a contact sheet of the three presets an agent reaches for first, fitted to the plate.
     nlohmann::json views = payload.value("views", nlohmann::json());

@@ -83,6 +83,7 @@ struct RenderRequest
     std::vector<std::string> paint;                        // channels to tint, canonical order, no duplicates (support seam fuzzy_skin texture)
     std::vector<int>     texture_layers;                   // texture only: the slots to tint, ascending; empty = every slot with a layer
     ColorBy              color_by = ColorBy::Object;
+    bool                 texture_preview = false;          // draw each object's painted texture layers as its bake would make them (nothing is baked)
     bool                 contact_sheet = false;            // no views asked: iso, top and front side by side
 };
 

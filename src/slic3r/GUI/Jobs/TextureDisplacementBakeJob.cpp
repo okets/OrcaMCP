@@ -454,6 +454,19 @@ bool same_texture_layers(const std::vector<TextureDisplacementLayer> &a, const s
     return true;
 }
 
+bool same_bake_volume(const TextureDisplacementBakeVolume &live, const TextureDisplacementBakeVolume &captured, bool ignore_preview_budget)
+{
+    TextureDisplacementOptions live_options = live.options, captured_options = captured.options;
+    if (ignore_preview_budget) // the panel's preview draws the bake without its triangle budget, so the budget is not what it shows
+        live_options.v2_max_triangles_k = captured_options.v2_max_triangles_k = 0;
+    return live.volume_id == captured.volume_id && live.resting_drop == captured.resting_drop &&
+           live.texture_anchor == captured.texture_anchor &&
+           live.volume_to_world.matrix() == captured.volume_to_world.matrix() && live.model_uv == captured.model_uv &&
+           live.base_mesh.indices == captured.base_mesh.indices && live.base_mesh.vertices == captured.base_mesh.vertices &&
+           live.facets_data == captured.facets_data && same_texture_layers(live.layers, captured.layers) &&
+           same_bake_options(live_options, captured_options);
+}
+
 bool texture_bake_applies_to(const Model &model, const TextureDisplacementBakeInput &input)
 {
     if (input.volumes.empty())
@@ -467,16 +480,9 @@ bool texture_bake_applies_to(const Model &model, const TextureDisplacementBakeIn
     const TextureDisplacementBakeInput now = capture_texture_bake(*first->get_object(), input.color, input.take_snapshot);
     if (now.volumes.size() != input.volumes.size())
         return false;
-    for (size_t i = 0; i < now.volumes.size(); ++i) {
-        const TextureDisplacementBakeVolume &live = now.volumes[i], &captured = input.volumes[i];
-        if (live.volume_id != captured.volume_id || live.resting_drop != captured.resting_drop ||
-            live.texture_anchor != captured.texture_anchor ||
-            live.volume_to_world.matrix() != captured.volume_to_world.matrix() || live.model_uv != captured.model_uv ||
-            live.base_mesh.indices != captured.base_mesh.indices || live.base_mesh.vertices != captured.base_mesh.vertices ||
-            live.facets_data != captured.facets_data || !same_texture_layers(live.layers, captured.layers) ||
-            !same_bake_options(live.options, captured.options))
+    for (size_t i = 0; i < now.volumes.size(); ++i)
+        if (!same_bake_volume(now.volumes[i], input.volumes[i], false))
             return false;
-    }
     return true;
 }
 

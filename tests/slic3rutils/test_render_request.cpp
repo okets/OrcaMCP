@@ -379,3 +379,16 @@ TEST_CASE("A camera is replayed only on the plate it was drawn of", "[RenderRequ
     payload["views"]       = json::array({{{"camera", camera}}});
     CHECK(read_ok(payload).views[0].replay.has_value());
 }
+
+TEST_CASE("texture_preview is read as a flag and refused where it cannot be drawn", "[RenderRequest][orcamcp][TexturePreview]")
+{
+    CHECK_FALSE(read_ok({{"plate_index", 0}}).texture_preview);
+    CHECK(read_ok({{"plate_index", 0}, {"texture_preview", true}}).texture_preview);
+    CHECK_FALSE(read_ok({{"plate_index", 0}, {"texture_preview", false}, {"layer_view", "first_layer"}}).texture_preview);
+    CHECK(refusal_of({{"plate_index", 0}, {"texture_preview", "yes"}}).find("true or false") != std::string::npos);
+    CHECK(refusal_of({{"plate_index", 0}, {"texture_preview", true}, {"layer_view", "first_layer"}}).find("3D views") != std::string::npos);
+    CHECK(refusal_of({{"plate_index", 0}, {"texture_preview", true}, {"paint", {"texture"}}}).find("separately") != std::string::npos);
+    CHECK(refusal_of({{"plate_index", 0}, {"texture_preview", true}, {"section", {{"plane", "z"}, {"at_mm", 5}}}}).find("separately") != std::string::npos);
+    // the other channels are checked against the previewed parts when the scene is read, not here
+    CHECK(read_ok({{"plate_index", 0}, {"texture_preview", true}, {"paint", {"support"}}}).texture_preview);
+}

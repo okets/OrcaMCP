@@ -8,6 +8,7 @@
 #include "OrcaMCPJsonRpcError.hpp"
 #include "OrcaMCPPartEdits.hpp"
 #include "OrcaMCPPartTools.hpp"
+#include "OrcaMCPTextureBakeTools.hpp"
 #include "OrcaMCPTextureDisplacement.hpp"
 #include "OrcaMCPUserView.hpp"
 
@@ -208,14 +209,6 @@ bool parse_paint_channel(const nlohmann::json& params, PaintChannel& out, std::s
     return true;
 }
 
-// The texture displacement panel is open on this object (it works on the selected one).
-bool texture_panel_open_on(Slic3r::GUI::Plater& plater, int object_id)
-{
-    GLCanvas3D* canvas = plater.get_view3D_canvas3D();
-    return canvas != nullptr && canvas->get_gizmos_manager().get_current_type() == GLGizmosManager::TextureDisplacement &&
-           canvas->get_selection().get_object_idx() == object_id;
-}
-
 // Why a texture paint cannot be written now: a bake or another job running on the UI worker would reset the mask it
 // captured, and the slot must hold a layer, or the mask would apply to nothing. Nothing for the other modes.
 std::optional<std::string> texture_paint_refusal(const PaintChannel& channel, const Slic3r::ModelObject& object, int object_id, const std::string& tool)
@@ -254,6 +247,9 @@ void add_texture_answer(nlohmann::json& result, const PaintTarget& target, const
     result["needs_bake"]    = needs_bake_fast(*target.object, texture_stack_owner(*target.object));
     add_next_steps(result, texture_paint_next_steps(target.object_id, channel.texture_layer,
                                                     slot_painted_fast(*target.object, channel.texture_layer), result["needs_bake"].get<bool>()));
+    const int plate_index = object_plate_index(*wxGetApp().plater(), target.object_id);
+    result["plate_index"] = plate_index;
+    append_next_steps(result, texture_preview_next_steps(plate_index, target.object_id, result["needs_bake"].get<bool>()));
 }
 
 // The plate-frame bounding box of exactly the volumes a call paints, so a band range defaulted

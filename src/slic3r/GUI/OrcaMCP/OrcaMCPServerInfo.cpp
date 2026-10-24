@@ -201,6 +201,7 @@ json tool_examples()
             {"raking_light", R"({"plate_index": 0, "save_to_file": true, "light": {"azimuth_deg": 30, "elevation_deg": 12}, "views": [{"preset": "iso", "fit": {"object_id": 0}}]})"},
             {"paint", R"({"plate_index": 0, "save_to_file": true, "paint": ["support"], "views": [{"preset": "iso", "fit": {"object_id": 0}}]})"},
             {"section", R"({"plate_index": 0, "save_to_file": true, "section": {"plane": "z", "at_mm": 15}, "views": [{"preset": "iso", "fit": {"object_id": 0}}]})"},
+            {"texture_before_the_bake", R"({"plate_index": 0, "save_to_file": true, "texture_preview": true, "light": {"azimuth_deg": 30, "elevation_deg": 12}, "views": [{"preset": "iso", "fit": {"object_id": 0}}]})"},
             {"replay_a_camera", "views: [{camera: <a camera object an earlier render returned>}] draws that view again, at its resolution"},
             {"first_layer_plan", R"({"plate_index": 1, "save_to_file": true, "layer_view": "first_layer"})"},
             {"sliced_layer_plan", R"({"plate_index": 0, "save_to_file": true, "layer_view": {"z": 10.0, "features": ["support", "support_interface"], "color_by": "filament"}})"},
@@ -619,7 +620,7 @@ Start with get_scene_info (plates, objects, each object's object_id). Key tools:
 - Filaments and colour: get_filaments, set_object_filament, suggest_color_mix.
 - Settings: get_config_values, apply_config, set_object_config (one object), select_preset.
 - Slicing: slice_all, then wait_for_slice (no polling); get_print_estimate, export_gcode.
-- Seeing results: render_plate_view (its layer_view draws a sliced layer's toolpaths).
+- Seeing results: render_plate_view (layer_view draws a sliced layer's toolpaths; texture_preview shows a texture before the bake).
 - Printers: get_printer_status, send_to_printer.
 - Several OrcaMCP windows: list_instances, select_instance.
 

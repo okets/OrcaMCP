@@ -16,6 +16,7 @@
 #include "slic3r/GUI/OrcaMCP/OrcaMCPRenderMath.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPRenderPaint.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPRenderRequest.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPTexturePreview.hpp"
 #include "libslic3r/Color.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPBedExclusion.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPPlateOccupancy.hpp"
@@ -194,6 +195,10 @@ struct RenderJob
     std::vector<OrcaMCP::SectionBody>         section_bodies;
     std::vector<OrcaMCP::SectionCap>          section_caps;
     bool                                      section_done = false;           // the work completed (else the call's wait ran out)
+
+    // texture_preview: the objects whose painted texture layers are drawn as their bake would make them, as the first
+    // step captured them (and, from the cache or the work, their plans), and what it left out.
+    OrcaMCP::PreviewReportInput               texture_preview;
 };
 
 class OrcaMCPPlateUtils {

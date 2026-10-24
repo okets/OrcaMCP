@@ -145,6 +145,11 @@ std::vector<NextStep> texture_paint_next_steps(int object_id, int slot, bool pai
 // they are baked into the mesh. None when nothing is painted.
 std::vector<NextStep> bake_next_steps(int object_id, bool needs_bake);
 
+// What an object's painted, unbaked texture layers lead to besides baking them: render_plate_view with texture_preview,
+// which draws the object as the bake would make it, changing nothing. Only when something is painted (`needs_bake`) and
+// the object stands on a plate (`plate_index` >= 0; the render needs it).
+std::vector<NextStep> texture_preview_next_steps(int plate_index, int object_id, bool needs_bake);
+
 // What a bake's answer leads to: slice_all, since the object's mesh changed (every plate lost its slice); get_filaments
 // when the bake added mixed filament slots (`slots_added`), to see them; bake_texture_displacement again when paint
 // is left (`needs_bake`: a part the bake did not move keeps its paint). The bake changed the object's mesh, so its plate

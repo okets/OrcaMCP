@@ -102,6 +102,10 @@ bool texture_bake_applies_to(const Model &model, const TextureDisplacementBakeIn
 // Two layer stacks a bake would treat alike: the same layers as the undo stack stores them, and the same live image
 // adjustments (which it leaves out).
 bool same_texture_layers(const std::vector<TextureDisplacementLayer> &a, const std::vector<TextureDisplacementLayer> &b);
+// Two captures of one part that a bake would treat alike: id, drop, anchor, placement, UV channel, mesh, paint, layers and
+// options. `ignore_preview_budget` leaves out the v2 triangle budget, which the panel's preview (and OrcaMCP's texture
+// preview) draws without.
+bool same_bake_volume(const TextureDisplacementBakeVolume &a, const TextureDisplacementBakeVolume &b, bool ignore_preview_budget);
 // A part's result is worth committing: it is not empty and some vertex moved more than 1e-5 mm. A bake
 // that moved nothing must not be committed, since committing clears the baked layers' paint.
 bool texture_bake_moved(const TextureDisplacementBakeInput &input, const TextureBakePlan &plan, std::size_t part);

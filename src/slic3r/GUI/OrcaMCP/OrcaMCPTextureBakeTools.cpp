@@ -12,11 +12,14 @@
 #include "OrcaMCPPartEdits.hpp"
 #include "OrcaMCPPartTools.hpp"
 #include "OrcaMCPSliceProgress.hpp"
+#include "OrcaMCPTextureBakeTools.hpp"
 #include "OrcaMCPTextureDisplacement.hpp"
 #include "OrcaMCPUiJob.hpp"
 
 #include "slic3r/GUI/GUI_App.hpp"
+#include "slic3r/GUI/GLCanvas3D.hpp"
 #include "slic3r/GUI/GUI_ObjectList.hpp"
+#include "slic3r/GUI/Gizmos/GLGizmosManager.hpp"
 #include "slic3r/GUI/Gizmos/GLGizmoTextureDisplacement.hpp"
 #include "slic3r/GUI/I18N.hpp"
 #include "slic3r/GUI/Jobs/TextureDisplacementBakeJob.hpp"
@@ -203,10 +206,7 @@ nlohmann::json capture_bake(const nlohmann::json& params, BakeRun& run, bool bak
     run.stored = owner->texture_displacement_options;
     run.used   = bake_options(run.stored, run.request);
 
-    const Slic3r::PresetBundle& bundle = *wxGetApp().preset_bundle;
-    const Slic3r::TextureColorSettings color = Slic3r::GUI::GLGizmoTextureDisplacement::color_settings(
-        owner->texture_displacement_layers, run.used,
-        Slic3r::GUI::GLGizmoTextureDisplacement::palette_inputs(run.used, bundle, plater->get_extruders_colors()), bundle.project_config);
+    const Slic3r::TextureColorSettings color = bake_color_settings(*plater, owner->texture_displacement_layers, run.used);
     TextureDisplacementBakeInput captured = capture_texture_bake(*object, color, /*take_snapshot=*/false);
     if (captured.volumes.empty())
         return error_response(bake_nothing_painted_message(run.object_id));
@@ -1008,3 +1008,26 @@ void OrcaMCPServer::register_texture_bake_tools()
         }
     });
 }
+
+namespace Slic3r { namespace GUI { namespace OrcaMCP {
+
+TextureColorSettings bake_color_settings(Plater& plater, const std::vector<TextureDisplacementLayer>& layers, const TextureDisplacementOptions& options)
+{
+    const PresetBundle& bundle = *wxGetApp().preset_bundle;
+    return GLGizmoTextureDisplacement::color_settings(
+        layers, options, GLGizmoTextureDisplacement::palette_inputs(options, bundle, plater.get_extruders_colors()), bundle.project_config);
+}
+
+bool texture_panel_open_on(Plater& plater, int object_id)
+{
+    GLCanvas3D* canvas = plater.get_view3D_canvas3D();
+    return canvas != nullptr && canvas->get_gizmos_manager().get_current_type() == GLGizmosManager::TextureDisplacement &&
+           canvas->get_selection().get_object_idx() == object_id;
+}
+
+int object_plate_index(Plater& plater, int object_id)
+{
+    return plater.get_partplate_list().find_instance(object_id, 0);
+}
+
+}}} // namespace Slic3r::GUI::OrcaMCP

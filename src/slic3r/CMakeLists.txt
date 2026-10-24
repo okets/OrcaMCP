@@ -481,6 +481,7 @@ set(SLIC3R_GUI_SOURCES
     GUI/OrcaMCP/OrcaMCPPaintSelect.cpp
     GUI/OrcaMCP/OrcaMCPPaintTools.cpp
     GUI/OrcaMCP/OrcaMCPTextureTools.cpp
+    GUI/OrcaMCP/OrcaMCPTextureBakeTools.hpp
     GUI/OrcaMCP/OrcaMCPTextureBakeTools.cpp
     GUI/OrcaMCP/OrcaMCPMeshHealth.hpp
     GUI/OrcaMCP/OrcaMCPMeshHealth.cpp
@@ -511,6 +512,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/OrcaMCP/OrcaMCPRenderPaint.cpp
     GUI/OrcaMCP/OrcaMCPRenderSection.hpp
     GUI/OrcaMCP/OrcaMCPRenderSection.cpp
+    GUI/OrcaMCP/OrcaMCPTexturePreview.hpp
+    GUI/OrcaMCP/OrcaMCPTexturePreview.cpp
     GUI/OrcaMCP/OrcaMCPRenderRequest.hpp
     GUI/OrcaMCP/OrcaMCPRenderRequest.cpp
     GUI/OrcaMCP/OrcaMCPRenderSchema.cpp

@@ -384,6 +384,21 @@ TEST_CASE("Painted texture layers point at baking them, after the layer still to
     CHECK(only_bake[0].tool == "bake_texture_displacement");
 }
 
+TEST_CASE("Painted, unbaked texture layers point at seeing them before the bake", "[McpNextSteps][orcamcp]")
+{
+    const std::vector<NextStep> steps = texture_preview_next_steps(2, 5, true);
+    REQUIRE(steps.size() == 1);
+    CHECK(steps[0].tool == "render_plate_view");
+    CHECK(steps[0].arguments["plate_index"] == 2);
+    CHECK(steps[0].arguments["texture_preview"] == true);
+    CHECK(steps[0].arguments["views"][0]["fit"]["object_id"] == 5);
+    CHECK(mentions(steps[0].why, "object 5"));
+    CHECK(mentions(steps[0].why, "before baking"));
+    CHECK(unusable(steps[0]) == std::nullopt);   // the arguments pass render_plate_view's schema
+    CHECK(texture_preview_next_steps(2, 5, false).empty());   // nothing painted
+    CHECK(texture_preview_next_steps(-1, 5, true).empty());   // on no plate: the render needs one
+}
+
 TEST_CASE("A bake points at slicing, at the mixed slots it added and at paint it left", "[McpNextSteps][orcamcp]")
 {
     const std::vector<NextStep> plain = baked_texture_next_steps(1, false, 0, 2);
@@ -612,6 +627,8 @@ TEST_CASE("Every next step names a real tool, with arguments its schema accepts"
         steps.push_back(std::move(step));
     for (NextStep& step : texture_paint_next_steps(0, 1, false, true))
         steps.push_back(std::move(step));
+    for (NextStep& step : texture_preview_next_steps(2, 0, true))
+        steps.push_back(std::move(step));
     for (NextStep& step : baked_texture_next_steps(0, true, 1, std::nullopt))
         steps.push_back(std::move(step));
     for (NextStep& step : budget_limited_next_steps(0, 2000, 1000, 0.5))
@@ -650,7 +667,7 @@ TEST_CASE("Every next step names a real tool, with arguments its schema accepts"
             steps.push_back(std::move(step));
     for (NextStep& step : repair_timed_out_next_steps({4, 7}))
         steps.push_back(std::move(step));
-    REQUIRE(steps.size() == 45);
+    REQUIRE(steps.size() == 46);
 
     const mcp_tool_references::ToolNames names(OrcaMCPServer::registered_tools());
     json                                 response = json::object();

@@ -318,6 +318,18 @@ std::vector<NextStep> bake_next_steps(int object_id, bool needs_bake)
              {{"object_id", object_id}}}};
 }
 
+std::vector<NextStep> texture_preview_next_steps(int plate_index, int object_id, bool needs_bake)
+{
+    if (!needs_bake || plate_index < 0)
+        return {};
+    return {{"render_plate_view",
+             "see the texture on object " + std::to_string(object_id) + " before baking it: texture_preview draws its painted layers as the bake would make them, and changes nothing",
+             {{"plate_index", plate_index},
+              {"views", nlohmann::json::array({{{"preset", "iso"}, {"fit", {{"object_id", object_id}}}}})},
+              {"texture_preview", true},
+              {"save_to_file", true}}}};
+}
+
 std::vector<NextStep> texture_changes_next_steps(const std::vector<int>& objects, const nlohmann::json& changes)
 {
     std::vector<NextStep> steps;

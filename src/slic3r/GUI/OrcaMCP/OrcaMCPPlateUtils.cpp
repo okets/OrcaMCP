@@ -9,7 +9,10 @@
 #include "OrcaMCPCommon.hpp"
 #include "OrcaMCPMeshHealth.hpp"
 #include "OrcaMCPNextSteps.hpp"
+#include "OrcaMCPTextureBakeTools.hpp"
 #include "OrcaMCPTextureDisplacement.hpp"
+#include "OrcaMCPUiJob.hpp"
+#include "slic3r/GUI/Gizmos/GLGizmoTextureDisplacement.hpp"
 #include "OrcaMCPPaintModel.hpp"
 #include "slic3r/GUI/TextureDisplacementObject.hpp"
 #include "slic3r/GUI/GLCanvas3D.hpp"
@@ -512,6 +515,124 @@ static bool paint_unchanged_since(const RenderJob& job)
     return true;
 }
 
+// The previews kept between calls (main thread only).
+static OrcaMCP::PreviewCache& texture_preview_cache()
+{
+    static OrcaMCP::PreviewCache cache;
+    return cache;
+}
+
+// What texture_preview asks for, captured on the main thread: for each object on the plate that holds texture layers with
+// paint, the bake's input exactly as bake_texture_displacement captures it (the colour settings too) and, unless the cache
+// holds that capture's preview, the work that computes it (plan_texture_bake of preview_input, HTTP thread, stopped by the
+// call's wait). Objects with layers that cannot be previewed are listed with the reason; the others by id. Throws
+// std::runtime_error when another paint channel is painted on a part that would be previewed (it is drawn on the unbaked mesh).
+static void capture_texture_preview(PartPlate& plate, RenderJob& job)
+{
+    Plater*                plater  = wxGetApp().plater();
+    const ModelObjectPtrs& objects = wxGetApp().model().objects;
+    OrcaMCP::PreviewReportInput& report = job.texture_preview;
+    report.plate_index = job.request.plate_index;
+    for (size_t oi = 0; oi < objects.size(); ++oi) {
+        ModelObject& object = *objects[oi];
+        bool on_plate = false;
+        for (size_t ii = 0; ii < object.instances.size() && !on_plate; ++ii)
+            on_plate = plate.contain_instance(int(oi), int(ii));
+        if (!on_plate)
+            continue;
+        const ModelVolume* owner = texture_stack_owner(object);
+        const bool has_layers = owner != nullptr && std::any_of(owner->texture_displacement_layers.begin(), owner->texture_displacement_layers.end(),
+                                                                [](const TextureDisplacementLayer& layer) { return !layer.empty(); });
+        if (!has_layers) {
+            report.without_layers.push_back(int(oi));
+            continue;
+        }
+        const auto skip = [&](const std::string& reason, bool paint_next) {
+            OrcaMCP::PreviewSkip entry;
+            entry.object_id = int(oi);
+            entry.reason    = reason;
+            if (paint_next)
+                for (const OrcaMCP::NextStep& step : OrcaMCP::texture_paint_next_steps(int(oi), OrcaMCP::layer_slots_of(owner).front(), false, false))
+                    entry.next_steps.push_back(OrcaMCP::next_step_json(step));
+            report.skipped.push_back(std::move(entry));
+        };
+        static const std::string unpainted = "the texture layers are painted nowhere (or only on a mask its mesh has outgrown), so there is nothing to show";
+        if (!OrcaMCP::needs_bake_fast(object, owner)) {
+            skip(unpainted, true);
+            continue;
+        }
+        OrcaMCP::PreviewObject entry;
+        entry.object_id = int(oi);
+        entry.identity  = object.id();
+        entry.captured  = capture_texture_bake(object, OrcaMCP::bake_color_settings(*plater, owner->texture_displacement_layers, owner->texture_displacement_options), false);
+        if (entry.captured.volumes.empty()) {
+            skip(unpainted, true);
+            continue;
+        }
+        for (const TextureDisplacementBakeVolume& part : entry.captured.volumes) {
+            int position = -1;
+            for (size_t vi = 0; vi < object.volumes.size(); ++vi)
+                if (object.volumes[vi]->id() == part.volume_id)
+                    position = int(vi);
+            entry.volume_ids.push_back(position);
+            for (const OrcaMCP::PaintVolumeInput& painted : job.paint_inputs)
+                if (painted.object_id == int(oi) && painted.volume_id == position)
+                    throw std::runtime_error("paint draws on the unbaked surface and object " + std::to_string(oi) + " part " + std::to_string(position) +
+                                             " is previewed displaced; render the paint and the preview separately, or leave this paint channel out");
+        }
+        entry.panel_open = OrcaMCP::texture_panel_open_on(*plater, int(oi));
+        if (const auto kept = texture_preview_cache().find(entry.identity, entry.captured)) {
+            entry.plan    = kept->plan;
+            entry.cached  = true;
+            entry.seconds = kept->seconds;
+        }
+        report.objects.push_back(std::move(entry));
+    }
+
+    RenderJob* self = &job;
+    job.work.push_back([self](const std::function<bool()>& stop) {
+        const auto progress = [&stop](int) { return !stop(); };
+        for (OrcaMCP::PreviewObject& object : self->texture_preview.objects) {
+            if (object.plan)
+                continue;
+            if (stop())
+                return;
+            const auto started = std::chrono::steady_clock::now();
+            auto       plan    = std::make_shared<TextureBakePlan>(plan_texture_bake(OrcaMCP::preview_input(object.captured), progress));
+            if (plan->canceled || stop())
+                return;   // not finished within the wait: no plan, and the object is drawn unbaked
+            object.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+            object.plan    = std::move(plan);
+        }
+    });
+}
+
+// True when the objects the preview was captured from are still the scene's: the same objects, with the same parts, paint,
+// layers, mesh and placement.
+static bool texture_preview_unchanged_since(const RenderJob& job)
+{
+    const Model& model = wxGetApp().model();
+    for (const OrcaMCP::PreviewObject& object : job.texture_preview.objects) {
+        if (object.object_id < 0 || size_t(object.object_id) >= model.objects.size() || model.objects[object.object_id]->id() != object.identity ||
+            !texture_bake_applies_to(model, object.captured))
+            return false;
+    }
+    return true;
+}
+
+// Keeps the previews this call computed, drops those of objects that are gone.
+static void keep_texture_previews(RenderJob& job)
+{
+    OrcaMCP::PreviewCache& cache = texture_preview_cache();
+    for (const OrcaMCP::PreviewObject& object : job.texture_preview.objects)
+        if (object.plan && !object.cached)
+            cache.put(object.identity, object.captured, object.plan, object.seconds);
+    const ModelObjectPtrs& objects = wxGetApp().model().objects;
+    cache.prune([&objects](const ObjectID& id) {
+        return std::any_of(objects.begin(), objects.end(), [&id](const ModelObject* object) { return object->id() == id; });
+    });
+}
+
 // The section's plane in bed mm. "app" and a ratio are the 3D view's own arithmetic (GLCanvas3D::section_view_plane) on the
 // view's bounding box -- the current plate's volumes, as the view sweeps -- or, for a ratio on another plate, that plate's
 // contents. `section` gets the app's normal and ratio filled in.
@@ -667,12 +788,15 @@ nlohmann::json OrcaMCPPlateUtils::PrepareRender(const nlohmann::json& payload, R
         job.section_plane = resolve_section(job.section, *plate, asked.plate_index, job.plate_box);
         capture_section(*plate, job);
     }
+    if (asked.texture_preview)
+        capture_texture_preview(*plate, job);
 
     return nlohmann::json();
 }
 
 void OrcaMCPPlateUtils::ComputeRender(RenderJob& job, const std::function<bool()>& stop)
 {
+    job.texture_preview.wait_s = std::chrono::duration<double>(OrcaMCP::tool_wait_cap()).count() - 5.;
     for (const RenderJob::Work& piece : job.work) {
         if (stop())
             break;
@@ -696,7 +820,7 @@ static bool scene_unchanged_since(const RenderJob& job)
     } catch (const std::exception&) {
         return false;   // the object a fit framed is gone or no longer on the plate
     }
-    return paint_unchanged_since(job) && section_unchanged_since(job);
+    return paint_unchanged_since(job) && section_unchanged_since(job) && texture_preview_unchanged_since(job);
 }
 
 // The camera a view's answer carries: the three keys pick_facet and a replay parse (written by the function they parse
@@ -846,6 +970,76 @@ struct SectionOverlay
     }
 };
 
+// The previewed parts as GL models, built once per call on the main thread, and drawn in place of the parts' own meshes
+// (the draw_volume hook): each in the part's colour, the palette entries' colours for the triangles the bake would
+// print in a filament. Positions in the volume's own frame, so every instance is drawn through its own matrix.
+struct TexturePreviewOverlay
+{
+    using Run = GLGizmoTextureDisplacement::PreviewColorRun;
+    struct Part
+    {
+        int              object_id = -1, volume_id = -1;
+        GLModel          model;
+        std::vector<Run> runs;
+        bool             first_run_neutral = false;   // the first run is the triangles the bake leaves in the part's own colour
+    };
+
+    const RenderJob*                   job = nullptr;
+    std::vector<std::unique_ptr<Part>> parts;
+    bool                               built = false;
+
+    void build()
+    {
+        if (built)
+            return;
+        built = true;
+        for (const OrcaMCP::PreviewObject& object : job->texture_preview.objects) {
+            if (!object.plan)
+                continue;
+            std::vector<ColorRGBA> entry_colors;
+            for (const PrintableColor& entry : object.captured.color.palette)
+                entry_colors.emplace_back(entry.rgb.x(), entry.rgb.y(), entry.rgb.z(), 1.f);
+            for (size_t i = 0; i < object.plan->results.size() && i < object.volume_ids.size(); ++i) {
+                const TextureBakeVolumeResult& result = object.plan->results[i];
+                if (result.mesh.its.indices.empty() || object.volume_ids[i] < 0)
+                    continue;   // this part's layers moved nothing: its own mesh is drawn
+                auto part       = std::make_unique<Part>();
+                part->object_id = object.object_id;
+                part->volume_id = object.volume_ids[i];
+                const indexed_triangle_set grouped = GLGizmoTextureDisplacement::group_preview_by_color(result.mesh.its, result.triangle_color, entry_colors, part->runs);
+                part->first_run_neutral = !part->runs.empty() && std::find(result.triangle_color.begin(), result.triangle_color.end(), uint8_t(0)) != result.triangle_color.end();
+                part->model.init_from(grouped);
+                parts.push_back(std::move(part));
+            }
+        }
+    }
+
+    bool draw(const GLVolume& vol, RenderPass& pass)
+    {
+        build();
+        for (const std::unique_ptr<Part>& part : parts) {
+            if (part->object_id != vol.composite_id.object_id || part->volume_id != vol.composite_id.volume_id)
+                continue;
+            const ColorRGBA base = vol.model.get_color();   // what the part is drawn in without the preview (set just before the hook)
+            if (vol.is_left_handed())
+                glFrontFace(GL_CW);
+            if (part->runs.empty()) {
+                part->model.set_color(base);
+                part->model.render(&pass.shader);
+            } else {
+                for (size_t r = 0; r < part->runs.size(); ++r) {
+                    part->model.set_color(r == 0 && part->first_run_neutral ? base : adjust_color_for_rendering(part->runs[r].color));
+                    part->model.render(part->runs[r].range, &pass.shader);
+                }
+            }
+            if (vol.is_left_handed())
+                glFrontFace(GL_CCW);
+            return true;
+        }
+        return false;
+    }
+};
+
 nlohmann::json OrcaMCPPlateUtils::DrawRender(RenderJob& job)
 {
     const OrcaMCP::RenderRequest& asked = job.request;
@@ -858,6 +1052,15 @@ nlohmann::json OrcaMCPPlateUtils::DrawRender(RenderJob& job)
         return {{"status", "error"}, {"message", "a section needs the render shader (mcp_render), which this driver could not build, so the cut cannot be drawn; leave section out"}};
     if (asked.section && !job.section_done)
         return {{"status", "error"}, {"message", "cutting the section needs more than the call's wait: raise ORCAMCP_TIMEOUT, or cut a plate with fewer or lighter objects"}};
+
+    nlohmann::json texture_preview_report;
+    if (asked.texture_preview) {
+        keep_texture_previews(job);
+        const OrcaMCP::PreviewCache& cache = texture_preview_cache();
+        texture_preview_report = OrcaMCP::preview_report_json(job.texture_preview, cache.size(), cache.triangles());
+    }
+    TexturePreviewOverlay preview_overlay;
+    preview_overlay.job = &job;
 
     const int  plate_index = asked.plate_index;
     const int  resolution  = asked.resolution;
@@ -892,6 +1095,8 @@ nlohmann::json OrcaMCPPlateUtils::DrawRender(RenderJob& job)
         options.palette_colors = asked.color_by == OrcaMCP::ColorBy::Object;
         options.color_by       = asked.color_by;
         options.neutral_base   = !asked.paint.empty();
+        if (asked.texture_preview)
+            options.draw_volume = [&preview_overlay](const GLVolume& vol, RenderPass& pass) { return preview_overlay.draw(vol, pass); };
         if (!job.tints.empty())
             options.after_volumes.push_back([&overlay](RenderPass& pass) { overlay.draw(pass); });
         if (view.request.replay)
@@ -926,6 +1131,8 @@ nlohmann::json OrcaMCPPlateUtils::DrawRender(RenderJob& job)
             if (!notes.empty())
                 entry["tint_notes"] = notes;
         }
+        if (asked.texture_preview)
+            entry["texture_preview"] = texture_preview_report;
         entry["overlays"] = OrcaMCP::overlay_options_to_json(asked.overlays);
         if (asked.section) {
             std::vector<std::pair<int, int>> shown;

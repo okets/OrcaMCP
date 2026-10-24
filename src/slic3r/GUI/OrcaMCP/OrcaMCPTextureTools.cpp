@@ -11,6 +11,7 @@
 #include "OrcaMCPPaintSelect.hpp"
 #include "OrcaMCPPartEdits.hpp"
 #include "OrcaMCPPartTools.hpp"
+#include "OrcaMCPTextureBakeTools.hpp"
 #include "OrcaMCPTextureDisplacement.hpp"
 #include "OrcaMCPUiJob.hpp"
 #include "OrcaMCPUserView.hpp"
@@ -682,6 +683,7 @@ nlohmann::json edit_stack(const nlohmann::json& params, const LayerRequest& requ
 
     answer["stack_options"] = stack_options_json(plan.owner->texture_displacement_options);
     answer["needs_bake"]    = needs_bake_fast(*plan.object, plan.owner);
+    answer["plate_index"]   = object_plate_index(*wxGetApp().plater(), plan.object_id);
     if (request.action == LayerAction::remove) {
         answer["removed_layer"] = {{"layer", plan.slot}, {"name", removed_name}, {"had_paint", had_paint}};
     } else {
@@ -715,6 +717,7 @@ nlohmann::json set_texture_displacement(const nlohmann::json& params)
                                                         answer.value("needs_bake", false)));
     else
         add_next_steps(answer, bake_next_steps(answer.at("object_id").get<int>(), answer.value("needs_bake", false)));
+    append_next_steps(answer, texture_preview_next_steps(answer.value("plate_index", -1), answer.at("object_id").get<int>(), answer.value("needs_bake", false)));
     return answer;
 }
 
@@ -724,6 +727,7 @@ nlohmann::json set_texture_displacement(const nlohmann::json& params)
 // What get_texture_displacement needs of the model, copied so the mask reports can be made off the main thread.
 struct PendingStack
 {
+    int plate_index = -1;   // the plate holding the object's first instance
     std::vector<StackLayerFacts>                               layers;
     Slic3r::TextureDisplacementOptions                         options;
     Slic3r::Transform3d                                        to_world     = Slic3r::Transform3d::Identity();
@@ -779,6 +783,7 @@ nlohmann::json capture_stack(const nlohmann::json& params, std::optional<int> on
     out.options      = owner->texture_displacement_options;
     out.to_world     = Slic3r::texture_displacement_volume_to_world(*owner);
     out.owner_has_uv = owner->has_texture_uv();
+    out.plate_index  = object_plate_index(*plater, object_id);
     out.mesh         = owner->mesh().its;
     if (owner->has_texture_uv())
         out.model_uv = owner->texture_uv;
@@ -837,6 +842,8 @@ nlohmann::json get_texture_displacement(const nlohmann::json& params)
         add_next_steps(answer, texture_paint_next_steps(object_id, *stack.first_unpainted_layer, false, needs_bake));
     else
         add_next_steps(answer, bake_next_steps(object_id, needs_bake));
+    answer["plate_index"] = pending.plate_index;
+    append_next_steps(answer, texture_preview_next_steps(pending.plate_index, object_id, needs_bake));
     return answer;
 }
 
