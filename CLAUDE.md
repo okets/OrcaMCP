@@ -2224,9 +2224,11 @@ written by hand. The cut faces themselves are ours (`OrcaMCPRenderSection.cpp`):
 part on its own and subtracts no negative volume, ours unions the parts and subtracts them, as the slicer prints.
 
 Item CD is a feature plus a hook: MCP's `render_plate_view` `texture_preview` draws a textured object as its bake would make it,
-copying the texture panel's own preview (`GLGizmoTextureDisplacement::queue_preview_job`): the v2 bake with no triangle
-budget (`v2_max_triangles_k = 0`; `preview_input`), and for a classic part the standard preparation first (`plan_texture_prepare`
-on a copy, as `bake_texture_displacement` does). On a 0 for the first count (1 expected), upstream changed what the panel previews: re-read
+starting from the texture panel's own preview (`GLGizmoTextureDisplacement::queue_preview_job`, the v2 bake with no triangle
+budget, `v2_max_triangles_k = 0`) but planned with the render's cap (1 M triangles) as the budget (`preview_input`), so a
+preview over the cap is simplified to fit rather than thrown away and the budget's own decimation, bands included, shows as
+in the bake; `texture_preview: {resolution_mm, budget_k}` previews a given bake exactly; for a classic part the standard
+preparation first (`plan_texture_prepare` on a copy, as `bake_texture_displacement` does). On a 0 for the first count (1 expected), upstream changed what the panel previews: re-read
 `queue_preview_job` and match `preview_input` (`OrcaMCPTexturePreview.cpp`), then re-run `slic3rutils_tests "[TexturePreview]"`.
 The previews are kept between calls in `texture_preview_cache()` by a content key (never the captured meshes or images; 4 objects,
 2 M triangles), so `Plater::priv::reset` and `delete_all_objects_from_model` call `OrcaMCP::drop_texture_previews()`; the second
