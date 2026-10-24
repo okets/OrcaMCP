@@ -12030,9 +12030,16 @@ ClippingPlane GLCanvas3D::_get_section_view_plane() const
     if (!box.defined)
         return ClippingPlane::ClipsNothing();
 
+    return section_view_plane(box, section_view.normal, section_view.ratio);
+}
+
+ClippingPlane GLCanvas3D::section_view_plane(const BoundingBoxf3& box, const Vec3d& normal, double ratio)
+{
+    if (ratio == 0. || !box.defined)
+        return ClippingPlane::ClipsNothing();
     // Sweeps the bounding sphere from the camera side (0) to the far side (1), as ObjectClipper does.
     const double radius = box.radius();
-    return ClippingPlane(section_view.normal, section_view.normal.dot(box.center()) + radius - 2. * radius * section_view.ratio);
+    return ClippingPlane(normal, normal.dot(box.center()) + radius - 2. * radius * ratio);
 }
 
 ClippingPlane GLCanvas3D::_get_volumes_clipping_plane() const

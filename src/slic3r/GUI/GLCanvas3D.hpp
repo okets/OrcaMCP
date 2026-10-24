@@ -1064,6 +1064,9 @@ public:
     void toggle_section_view();
     void align_section_view_to_camera();
     void share_section_view(const GLCanvas3D& owner) { m_section_view = owner.m_section_view; }
+    // The section view's plane for a bounding box, a unit normal and a ratio (0 clips nothing): the arithmetic the
+    // view draws with, which OrcaMCP's renders use too.
+    static ClippingPlane section_view_plane(const BoundingBoxf3& box, const Vec3d& normal, double ratio);
 
     void toggle_world_axes_visibility(bool force_show = false);
     void refresh_camera_scene_box();

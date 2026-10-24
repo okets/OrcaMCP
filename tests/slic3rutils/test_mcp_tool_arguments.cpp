@@ -516,3 +516,18 @@ TEST_CASE("render_plate_view views are strict, and a camera and a fit a render r
     const json corner = {{"preset", "iso"}, {"fit", {{"box", {{"min", {0, 0, 0}}, {"centre", {1, 1, 1}}}}}}};
     CHECK(::contains(refusal("render_plate_view", {{"plate_index", 0}, {"views", json::array({corner})}}), "has no key \"centre\""));
 }
+
+TEST_CASE("render_plate_view section: every form, and an answer's section, goes back in", "[McpToolArguments][orcamcp][tools]")
+{
+    CHECK(refusal("render_plate_view", {{"plate_index", 0}, {"section", "app"}}) == "");
+    CHECK(refusal("render_plate_view", {{"plate_index", 0}, {"section", {{"plane", "z"}, {"at_mm", 15}, {"remove", "below"}, {"frame", "plate_local"}}}}) == "");
+    CHECK(refusal("render_plate_view", {{"plate_index", 0}, {"section", {{"normal", {1, 0, 0}}, {"ratio", 0.5}}}}) == "");
+    // What section_json answers with: the normal and point are the form, the rest is ignored.
+    const json answered = {{"normal", {0, 0, 1}}, {"point", {0, 0, 15}}, {"source", "plane"}, {"removes", "the side the normal points to"},
+                           {"ratio_used", 0.5}, {"cap_color", "#404040"}, {"applied", true}, {"empty", false},
+                           {"objects", json::array({{{"object_id", 0}, {"section_area_mm2", 900.0}, {"islands", 1}, {"effect", "cut"}}})},
+                           {"notes", json::array({"a note"})}, {"warning", "w"}};
+    CHECK(refusal("render_plate_view", {{"plate_index", 0}, {"section", answered}}) == "");
+    CHECK(::contains(refusal("render_plate_view", {{"plate_index", 0}, {"section", {{"plane", "z"}, {"height", 3}}}}), "has no key \"height\""));
+}
+

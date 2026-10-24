@@ -168,6 +168,33 @@ json light_schema()
     };
 }
 
+json section_schema()
+{
+    return json{
+        {"type", {"string", "object"}},
+        {"additionalProperties", false},
+        {"description", "Cut the objects open with a plane and draw the cut faces dark grey, as the 3D view's section view does; the side the normal points to is removed. \"app\": the cut the 3D view shows now (an error when its section view is off). {normal, point}: the plane through point with that normal. {normal, ratio}: the section view's own sweep, ratio above 0 to 1, from the end of the plate contents' bounding sphere the normal points to (0, nothing cut) to the opposite end (1, everything). {plane: x|y|z, at_mm}: square to an axis, removing the larger coordinates (remove: below removes the smaller). Points and at_mm are bed mm, or plate-local with frame: plate_local. The answer's section gives the plane used (normal, point), applied, and per object section_area_mm2, islands and effect (cut, keeps_all or removes_all); empty with a note when the plane cuts no object. It needs the render shader (an error when this driver could not build it), works with any camera and light, and paint tints are cut with the surface. 3D views only."},
+        {"properties", {
+            {"normal", vec3_schema("Unit or not: the side it points to is removed")},
+            {"point", vec3_schema("A point on the plane")},
+            {"ratio", {{"type", "number"}, {"exclusiveMinimum", 0}, {"maximum", 1}, {"description", "With normal: the 3D view's ratio, 0 (nothing cut) to 1 (everything)"}}},
+            {"plane", {{"type", "string"}, {"enum", {"x", "y", "z"}}, {"description", "The axis the plane is square to"}}},
+            {"at_mm", {{"type", "number"}, {"description", "With plane: where it cuts along that axis"}}},
+            {"remove", {{"type", "string"}, {"enum", {"above", "below"}}, {"description", "With plane: above (default) removes the larger coordinates"}}},
+            {"frame", {{"type", "string"}, {"enum", {"bed_mm", "plate_local"}}, {"description", "Frame of point and of at_mm for x and y (default bed_mm)"}}},
+            {"source", {{"type", "string"}, {"description", "Accepted back from an answer; ignored"}}},
+            {"removes", {{"type", "string"}, {"description", "Accepted back from an answer; ignored"}}},
+            {"ratio_used", {{"type", "number"}, {"description", "Accepted back from an answer; ignored"}}},
+            {"cap_color", {{"type", "string"}, {"description", "Accepted back from an answer; ignored"}}},
+            {"applied", {{"type", "boolean"}, {"description", "Accepted back from an answer; ignored"}}},
+            {"empty", {{"type", "boolean"}, {"description", "Accepted back from an answer; ignored"}}},
+            {"objects", {{"type", "array"}, {"description", "Accepted back from an answer; ignored"}}},
+            {"notes", {{"type", "array"}, {"description", "Accepted back from an answer; ignored"}}},
+            {"warning", {{"type", "string"}, {"description", "Accepted back from an answer; ignored"}}}
+        }}
+    };
+}
+
 json views_schema()
 {
     return json{
@@ -181,7 +208,7 @@ json views_schema()
 
 std::string render_plate_view_description()
 {
-    return "Render a picture of a plate, one object, a region or a sliced layer's toolpaths (layer_view). Omit views for a contact sheet of iso, top and front fitted to the plate. A view is a preset (iso|top|front|back|left|right|low) or {camera_position, target} in BED mm (the get_scene_info frame; plate N sits at plates[N].bounding_box), or add frame: \"plate_local\" to give them relative to the plate's front-left corner. By default (camera_mode fit) a custom camera gives only the direction: the picture is zoomed to the view's fit -- the plate, {object_id}, a box {min, max} or a point with radius_mm -- and the eye may be moved back (camera.moved says so). camera_mode exact honours the eye, with fov_deg, or projection orthographic with ortho_height_mm. A close-up is a small fit box, not more pixels: camera.mm_per_pixel says the scale. Pass a camera a render returned as views[i].camera to draw exactly that view again. The requested plate's objects are drawn, including any hanging over its edge, from the 3D scene whichever tab the app shows. Every view returns objects_in_frame, uniform_image (+hint), plate_origin and the camera; overlays (outline, 10 mm grid, origin, labels) are on by default. paint draws support, seam, fuzzy_skin and texture-layer paint as the paint panels colour it (texture: one colour per layer, texture_layers to choose); colour paint is always drawn in its filaments' colours; color_by filament draws every part in its filament's colour instead of one colour per object. Use save_to_file=true for PNG paths. layer_view draws a top-down plan instead: \"first_layer\", or any sliced layer as {layer: N} or {z: mm}, filtered by features and filaments, with the layer's height, filaments and extruded areas -- the way to check supports, interfaces and which tool prints what on a given layer.";
+    return "Render a picture of a plate, one object, a region or a sliced layer's toolpaths (layer_view). Omit views for a contact sheet of iso, top and front fitted to the plate. A view is a preset (iso|top|front|back|left|right|low) or {camera_position, target} in BED mm (the get_scene_info frame; plate N sits at plates[N].bounding_box), or add frame: \"plate_local\" to give them relative to the plate's front-left corner. By default (camera_mode fit) a custom camera gives only the direction: the picture is zoomed to the view's fit -- the plate, {object_id}, a box {min, max} or a point with radius_mm -- and the eye may be moved back (camera.moved says so). camera_mode exact honours the eye, with fov_deg, or projection orthographic with ortho_height_mm. A close-up is a small fit box, not more pixels: camera.mm_per_pixel says the scale. Pass a camera a render returned as views[i].camera to draw exactly that view again. The requested plate's objects are drawn, including any hanging over its edge, from the 3D scene whichever tab the app shows. Every view returns objects_in_frame, uniform_image (+hint), plate_origin and the camera; overlays (outline, 10 mm grid, origin, labels) are on by default. paint draws support, seam, fuzzy_skin and texture-layer paint as the paint panels colour it (texture: one colour per layer, texture_layers to choose); colour paint is always drawn in its filaments' colours; color_by filament draws every part in its filament's colour instead of one colour per object. section cuts the objects open with a plane and draws the cut faces, reporting their areas. Use save_to_file=true for PNG paths. layer_view draws a top-down plan instead: \"first_layer\", or any sliced layer as {layer: N} or {z: mm}, filtered by features and filaments, with the layer's height, filaments and extruded areas -- the way to check supports, interfaces and which tool prints what on a given layer.";
 }
 
 json render_plate_view_schema()
@@ -211,6 +238,7 @@ json render_plate_view_schema()
                 {"description", "png or jpeg. Default: png when save_to_file is true (crisp overlays, alpha kept), jpeg for inline base64 (smaller)."}
             }},
             {"light", light_schema()},
+            {"section", section_schema()},
             {"paint", {
                 {"type", "array"},
                 {"items", {{"type", "string"}, {"enum", {"support", "seam", "fuzzy_skin", "texture"}}}},

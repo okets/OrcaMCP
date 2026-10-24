@@ -512,6 +512,102 @@ static bool paint_unchanged_since(const RenderJob& job)
     return true;
 }
 
+// The section's plane in bed mm. "app" and a ratio are the 3D view's own arithmetic (GLCanvas3D::section_view_plane) on the
+// view's bounding box -- the current plate's volumes, as the view sweeps -- or, for a ratio on another plate, that plate's
+// contents. `section` gets the app's normal and ratio filled in.
+static OrcaMCP::SectionPlane resolve_section(OrcaMCP::SectionRequest& section, PartPlate& plate, int plate_index, const BoundingBoxf3& plate_box)
+{
+    using Form = OrcaMCP::SectionRequest::Form;
+    if (section.form == Form::PointNormal || section.form == Form::Axis) {
+        const Vec3d origin(plate_box.min.x(), plate_box.min.y(), 0.);
+        return OrcaMCP::plane_through_point(section.normal, section.point + (section.plate_local ? origin : Vec3d(Vec3d::Zero())));
+    }
+    bool scene_current = true;
+    GLCanvas3D* canvas = OrcaMCPPlateUtils::SceneCanvas(scene_current);
+    if (canvas == nullptr)
+        throw std::runtime_error("the 3D view is not available, so the section view's sweep cannot be worked out; send {normal, point} or {plane, at_mm}");
+    if (section.form == Form::App) {
+        if (!canvas->is_section_view_active())
+            throw std::runtime_error("the 3D view's section view is off, so there is no cut to draw; send {normal, point}, {normal, ratio} or {plane: x|y|z, at_mm}");
+        section.normal = canvas->get_section_view_normal();
+        section.ratio  = canvas->get_section_view_ratio();
+        if (!(section.normal.norm() > 1e-9))
+            throw std::runtime_error("the 3D view's section view has no direction yet; send {normal, point}, {normal, ratio} or {plane: x|y|z, at_mm}");
+        section.normal.normalize();
+    }
+    const bool on_current = plate_index == wxGetApp().plater()->get_partplate_list().get_curr_plate_index();
+    BoundingBoxf3 box = (section.form == Form::App || on_current) ? canvas->volumes_bounding_box(true) : BoundingBoxf3();
+    if (!box.defined)
+        box = plate_contents_box(plate, plate_box);
+    const ClippingPlane swept = GLCanvas3D::section_view_plane(box, section.normal, section.ratio);
+    if (!swept.is_active())
+        throw std::runtime_error("there is nothing on the plate for the section to sweep; send {normal, point} or {plane: x|y|z, at_mm}");
+    return {swept.get_normal(), swept.get_offset()};
+}
+
+// Every instance on the plate, with the parts the plane cuts and the negative volumes it subtracts, and the work that
+// cuts them (HTTP thread, on shared immutable meshes).
+static void capture_section(PartPlate& plate, RenderJob& job)
+{
+    const ModelObjectPtrs& objects = wxGetApp().model().objects;
+    for (size_t oi = 0; oi < objects.size(); ++oi) {
+        const ModelObject& object = *objects[oi];
+        for (size_t ii = 0; ii < object.instances.size(); ++ii) {
+            if (!plate.contain_instance(int(oi), int(ii)))
+                continue;
+            OrcaMCP::SectionBody body;
+            body.object_id       = int(oi);
+            body.instance_id     = int(ii);
+            body.object_identity = object.id();
+            bool solid = false;
+            for (size_t vi = 0; vi < object.volumes.size(); ++vi) {
+                const ModelVolume& volume = *object.volumes[vi];
+                if (!volume.is_model_part() && !volume.is_negative_volume())
+                    continue;
+                solid = solid || volume.is_model_part();
+                body.parts.push_back({volume.mesh_ptr(), OrcaMCP::volume_to_plate(object, volume, ii), volume.id(), int(vi), volume.is_negative_volume()});
+            }
+            if (solid)
+                job.section_bodies.push_back(std::move(body));
+        }
+    }
+    RenderJob* self = &job;
+    job.work.push_back([self](const std::function<bool()>& stop) {
+        self->section_caps.clear();
+        for (const OrcaMCP::SectionBody& body : self->section_bodies) {
+            if (stop())
+                return;
+            OrcaMCP::SectionCap cap = OrcaMCP::section_cap(body, self->section_plane, stop);
+            if (!cap.complete)
+                return;
+            self->section_caps.push_back(std::move(cap));
+        }
+        self->section_done = true;
+    });
+}
+
+// True when the instances the section was captured from are still the scene's: the same objects, volumes, meshes and placement.
+static bool section_unchanged_since(const RenderJob& job)
+{
+    const ModelObjectPtrs& objects = wxGetApp().model().objects;
+    for (const OrcaMCP::SectionBody& body : job.section_bodies) {
+        if (body.object_id < 0 || size_t(body.object_id) >= objects.size() || objects[body.object_id]->id() != body.object_identity)
+            return false;
+        const ModelObject& object = *objects[body.object_id];
+        if (size_t(body.instance_id) >= object.instances.size())
+            return false;
+        for (const OrcaMCP::SectionPart& part : body.parts) {
+            if (part.volume_id < 0 || size_t(part.volume_id) >= object.volumes.size())
+                return false;
+            const ModelVolume& volume = *object.volumes[part.volume_id];
+            if (volume.id() != part.identity || volume.mesh_ptr() != part.mesh ||
+                !OrcaMCP::volume_to_plate(object, volume, size_t(body.instance_id)).isApprox(part.world))
+                return false;
+        }
+    }
+    return true;
+}
+
 nlohmann::json OrcaMCPPlateUtils::PrepareRender(const nlohmann::json& payload, RenderJob& job)
 {
     std::string error;
@@ -566,6 +662,11 @@ nlohmann::json OrcaMCPPlateUtils::PrepareRender(const nlohmann::json& payload, R
         job.views.push_back(std::move(resolved));
     }
     capture_paint(asked, *plate, job);
+    if (asked.section) {
+        job.section       = *asked.section;
+        job.section_plane = resolve_section(job.section, *plate, asked.plate_index, job.plate_box);
+        capture_section(*plate, job);
+    }
 
     return nlohmann::json();
 }
@@ -595,7 +696,7 @@ static bool scene_unchanged_since(const RenderJob& job)
     } catch (const std::exception&) {
         return false;   // the object a fit framed is gone or no longer on the plate
     }
-    return paint_unchanged_since(job);
+    return paint_unchanged_since(job) && section_unchanged_since(job);
 }
 
 // The camera a view's answer carries: the three keys pick_facet and a replay parse (written by the function they parse
@@ -694,6 +795,57 @@ struct PaintOverlay
     }
 };
 
+// The cut faces as GL models, built once per call on the main thread and drawn after the volumes of each view: flat dark
+// grey, as the 3D view draws them, with the plane's clipping off for them (they sit on it) and back faces kept.
+struct SectionOverlay
+{
+    const RenderJob*                      job = nullptr;
+    std::vector<std::unique_ptr<GLModel>> models;   // parallel to job->section_caps; null for a cut with no faces
+
+    void build()
+    {
+        if (!models.empty() || job->section_caps.empty())
+            return;
+        for (const OrcaMCP::SectionCap& cap : job->section_caps) {
+            if (cap.triangles.indices.empty()) {
+                models.push_back(nullptr);
+                continue;
+            }
+            auto model = std::make_unique<GLModel>();
+            model->init_from(cap.triangles);
+            model->set_color(ColorRGBA(OrcaMCP::k_section_cap_grey, OrcaMCP::k_section_cap_grey, OrcaMCP::k_section_cap_grey, 1.f));
+            models.push_back(std::move(model));
+        }
+    }
+
+    void draw(RenderPass& pass)
+    {
+        build();
+        std::vector<std::pair<int, int>> shown;
+        for (const GLVolume* vol : pass.drawn)
+            if (!vol->is_wipe_tower)
+                shown.emplace_back(vol->composite_id.object_id, vol->composite_id.instance_id);
+        pass.shader.set_uniform("ban_light", true);
+        pass.shader.set_uniform("clipping_plane", std::array<double, 4>{0., 0., 0., 1.});
+        pass.shader.set_uniform("volume_world_matrix", Transform3d::Identity());
+        pass.shader.set_uniform("view_model_matrix", pass.view);
+        pass.shader.set_uniform("projection_matrix", pass.projection);
+        pass.shader.set_uniform("view_normal_matrix", Matrix3d(pass.view.matrix().block(0, 0, 3, 3)));
+        const bool culling = ::glIsEnabled(GL_CULL_FACE) == GL_TRUE;
+        if (culling)
+            glsafe(::glDisable(GL_CULL_FACE));
+        for (size_t i = 0; i < models.size(); ++i) {
+            const OrcaMCP::SectionCap& cap = job->section_caps[i];
+            if (models[i] != nullptr && std::find(shown.begin(), shown.end(), std::make_pair(cap.object_id, cap.instance_id)) != shown.end())
+                models[i]->render(&pass.shader);
+        }
+        if (culling)
+            glsafe(::glEnable(GL_CULL_FACE));
+        pass.shader.set_uniform("ban_light", false);
+        pass.shader.set_uniform("clipping_plane", OrcaMCP::shader_clipping_plane(job->section_plane));
+    }
+};
+
 nlohmann::json OrcaMCPPlateUtils::DrawRender(RenderJob& job)
 {
     const OrcaMCP::RenderRequest& asked = job.request;
@@ -702,10 +854,17 @@ nlohmann::json OrcaMCPPlateUtils::DrawRender(RenderJob& job)
     if (!job.request.paint.empty() && !job.paint_done)
         return {{"status", "error"}, {"message", "the paint of the picture needs more than the call's wait: raise ORCAMCP_TIMEOUT, or ask for one channel at a time in paint"}};
 
+    if (asked.section && wxGetApp().get_shader("mcp_render") == nullptr)
+        return {{"status", "error"}, {"message", "a section needs the render shader (mcp_render), which this driver could not build, so the cut cannot be drawn; leave section out"}};
+    if (asked.section && !job.section_done)
+        return {{"status", "error"}, {"message", "cutting the section needs more than the call's wait: raise ORCAMCP_TIMEOUT, or cut a plate with fewer or lighter objects"}};
+
     const int  plate_index = asked.plate_index;
     const int  resolution  = asked.resolution;
     const bool use_png     = asked.use_png;
 
+    SectionOverlay section_overlay;
+    section_overlay.job = &job;
     PaintOverlay overlay;
     overlay.job = &job;
     const nlohmann::json legend = OrcaMCP::tint_legend_json(job.tints, job.paint_result);
@@ -726,6 +885,10 @@ nlohmann::json OrcaMCPPlateUtils::DrawRender(RenderJob& job)
             options.zoom_box = view.fit_box;  // presets and object fits frame exactly what they were asked to
         options.orthographic = view.request.orthographic;
         options.light        = asked.light;
+        if (asked.section) {
+            options.shading.clipping_plane = OrcaMCP::shader_clipping_plane(job.section_plane);
+            options.after_volumes.push_back([&section_overlay](RenderPass& pass) { section_overlay.draw(pass); });
+        }
         options.palette_colors = asked.color_by == OrcaMCP::ColorBy::Object;
         options.color_by       = asked.color_by;
         options.neutral_base   = !asked.paint.empty();
@@ -764,6 +927,13 @@ nlohmann::json OrcaMCPPlateUtils::DrawRender(RenderJob& job)
                 entry["tint_notes"] = notes;
         }
         entry["overlays"] = OrcaMCP::overlay_options_to_json(asked.overlays);
+        if (asked.section) {
+            std::vector<std::pair<int, int>> shown;
+            for (const RenderedVolume& v : report.drawn)
+                if (!v.wipe_tower)
+                    shown.emplace_back(v.object_index, v.instance_id);
+            entry["section"] = OrcaMCP::section_json(job.section, job.section_plane, job.section_caps, shown, report.completed && !report.shader_fallback);
+        }
         if (asked.light) {
             entry["light"] = OrcaMCP::light_json(*asked.light, cam.frame.view);
             const bool applied = report.completed && !report.shader_fallback;
@@ -929,9 +1099,10 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
     // driver (GLShadersManager logged it) the render falls back to thumbnail and its shading is ignored.
     GLShaderProgram* shader = wxGetApp().get_shader("mcp_render");
     const bool       shader_fallback = shader == nullptr;
-    if (report != nullptr)
+    if (report != nullptr) {
         report->shader_fallback = shader_fallback;
         report->completed       = true;   // set before any early return: the answer reads it
+    }
     if (shader_fallback) {
         static std::once_flag logged;   // one line per app run, not one per picture
         std::call_once(logged, [] { BOOST_LOG_TRIVIAL(warning) << "RenderThumbnail: the mcp_render shader is not available, drawing with thumbnail"; });

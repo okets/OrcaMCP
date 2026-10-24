@@ -186,6 +186,14 @@ struct RenderJob
     std::vector<OrcaMCP::PaintVolumeInput>    paint_inputs;
     OrcaMCP::PaintResult                      paint_result;
     bool                                      paint_done = false;             // the work completed (else the call's wait ran out)
+
+    // section: the plane worked out in the first step (from "app" or a ratio, the 3D view's), the instances it cuts as
+    // the first step captured them, and what the work made of them.
+    OrcaMCP::SectionRequest                   section;                        // as asked, with the app's normal and ratio filled in
+    OrcaMCP::SectionPlane                     section_plane;
+    std::vector<OrcaMCP::SectionBody>         section_bodies;
+    std::vector<OrcaMCP::SectionCap>          section_caps;
+    bool                                      section_done = false;           // the work completed (else the call's wait ran out)
 };
 
 class OrcaMCPPlateUtils {

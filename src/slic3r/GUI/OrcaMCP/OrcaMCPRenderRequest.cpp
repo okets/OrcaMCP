@@ -314,6 +314,8 @@ RenderRequest read_request(const nlohmann::json& payload)
 
     if (payload.contains("light"))
         out.light = read_light(payload["light"]);
+    if (payload.contains("section") && !payload["section"].is_null())
+        out.section = read_section(payload["section"]);
     read_paint_options(payload, out);
     out.layer_view = payload.value("layer_view", nlohmann::json());
     if (out.layer_view == "")  // "" was always read as no layer view
@@ -321,6 +323,8 @@ RenderRequest read_request(const nlohmann::json& payload)
     if (!out.layer_view.is_null()) {
         if (out.light)
             throw std::runtime_error("light is for 3D views; a layer_view is a plan drawn from the G-code. Leave light out, or leave layer_view out");
+        if (out.section)
+            throw std::runtime_error("section is for 3D views; a layer_view is a plan drawn from the G-code. Leave section out, or leave layer_view out");
         if (!out.paint.empty() || payload.contains("color_by") || payload.contains("texture_layers"))
             throw std::runtime_error("paint, texture_layers and color_by are for 3D views; a layer_view is a plan drawn from the G-code. Leave them out, or leave layer_view out");
         return out;  // a layer plan ignores views

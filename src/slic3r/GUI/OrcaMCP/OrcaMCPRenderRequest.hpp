@@ -18,6 +18,7 @@
 #include "slic3r/GUI/OrcaMCP/OrcaMCPRenderLight.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPRenderMath.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPRenderOverlay.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPRenderSection.hpp"
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
@@ -78,6 +79,7 @@ struct RenderRequest
     nlohmann::json       layer_view;                       // null: a 3D render
     std::vector<ViewRequest> views;                        // empty with a layer_view
     std::optional<LightRequest> light;                     // a single raking light; unset: the 3D view's two lights
+    std::optional<SectionRequest> section;                 // a plane that cuts the side its normal points to away
     std::vector<std::string> paint;                        // channels to tint, canonical order, no duplicates (support seam fuzzy_skin texture)
     std::vector<int>     texture_layers;                   // texture only: the slots to tint, ascending; empty = every slot with a layer
     ColorBy              color_by = ColorBy::Object;
