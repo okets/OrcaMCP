@@ -246,7 +246,7 @@ Axes view_axes_of(const std::string& name)
     return {rotation.row(0).transpose(), rotation.row(1).transpose()};
 }
 
-bool near(const Slic3r::Vec3f& a, const Slic3r::Vec3f& b) { return (a - b).norm() < 1e-5f; }
+bool nearly_same(const Slic3r::Vec3f& a, const Slic3r::Vec3f& b) { return (a - b).norm() < 1e-5f; }
 
 // ---- One call's edit of a stack ----
 
@@ -435,7 +435,7 @@ std::optional<std::string> plan_edit(const nlohmann::json& params, const LayerRe
         }
         if (axes) {
             const auto [right, up] = view_projector_axes(axes->first, axes->second, to_world);
-            if (!near(plan.after.view_project_right, right) || !near(plan.after.view_project_up, up) || became_view)
+            if (!nearly_same(plan.after.view_project_right, right) || !nearly_same(plan.after.view_project_up, up) || became_view)
                 view_changed = true;
             plan.after.view_project_right = right;
             plan.after.view_project_up    = up;
