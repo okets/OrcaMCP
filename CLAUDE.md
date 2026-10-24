@@ -1427,6 +1427,7 @@ echo "BZ upstream's 3MF drops a part's UV channel (ModelVolume::texture_uv) on s
 echo "CA the texture bake's stages never ask the cancel hook from inside (align edges, displace, the decimation's setup, regularize, relocate, repair, the colour pass), nor do the isotropic remesh or the uniform subdivision, so a cancel waits out the stage (rel2506/17; 1 = upstream still lacks the checks: keep ours; 0 = upstream added its own): $(U src/libslic3r/TextureBake/TextureBakeFlip.hpp | grep -c 'const StopFn &stop' | sed 's/^[1-9].*/0/;s/^0$/1/') / $(U src/libslic3r/TextureBake/TextureBakeDisplace.cpp | awk '/^TriSoup apply_displacement/{f=1} f&&/on_progress\(/{print 0; d=1; exit} f&&/^}/{print 1; d=1; exit} END{if(!d) print "unknown"}') / $(U src/libslic3r/MeshBoolean.hpp | grep -A4 'remesh_isotropic' | grep -c 'std::function<bool()>' | sed 's/^[1-9].*/0/;s/^0$/1/') / $(U src/libslic3r/TextureDisplacement.hpp | grep -A1 '^indexed_triangle_set subdivide_mesh_uniform' | grep -c 'progress' | sed 's/^[1-9].*/0/;s/^0$/1/')"
 echo "CB OrcaMCP's renders use a shader of their own, mcp_render, registered in GLShadersManager (a feature: 0 = keep ours): $(U src/slic3r/GUI/GLShadersManager.cpp | grep -c 'mcp_render')"
 echo "CC the section view's plane arithmetic is inside _get_section_view_plane, which MCP's renders need too (a move: 0 = keep ours): $(U src/slic3r/GUI/GLCanvas3D.hpp | grep -c 'section_view_plane(const BoundingBoxf3')"
+echo "CD the texture panel's true preview is the bake without simplification, which MCP's texture_preview copies (1 = unchanged; 0 = re-read queue_preview_job and match it) / Plater::priv::reset and delete_all_objects_from_model drop MCP's cached previews (a hook: 0 = keep ours): $(U src/slic3r/GUI/Gizmos/GLGizmoTextureDisplacement.cpp | grep -c 'entry.options.v2_max_triangles_k = 0') / $(U src/slic3r/GUI/Plater.cpp | grep -c 'drop_texture_previews')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -2196,6 +2197,16 @@ where the window does. On a 0, upstream changed or moved the function: redo the 
 `slic3rutils_tests "[RenderSection]"`, whose "section view's plane sweeps the bounding sphere" test holds it to numbers
 written by hand. The cut faces themselves are ours (`OrcaMCPRenderSection.cpp`): upstream's `MeshClipper` caps each model
 part on its own and subtracts no negative volume, ours unions the parts and subtracts them, as the slicer prints.
+
+Item CD is a feature plus a hook: MCP's `render_plate_view` `texture_preview` draws a textured object as its bake would make it,
+copying the texture panel's own preview (`GLGizmoTextureDisplacement::queue_preview_job`): the v2 bake with no triangle
+budget (`v2_max_triangles_k = 0`; `preview_input`), and for a classic part the standard preparation first (`plan_texture_prepare`
+on a copy, as `bake_texture_displacement` does). On a 0 for the first count, upstream changed what the panel previews: re-read
+`queue_preview_job` and match `preview_input` (`OrcaMCPTexturePreview.cpp`), then re-run `slic3rutils_tests "[TexturePreview]"`.
+The previews are kept between calls in `texture_preview_cache()` by a content key (never the captured meshes or images; 4 objects,
+2 M triangles), so `Plater::priv::reset` and `delete_all_objects_from_model` call `OrcaMCP::drop_texture_previews()`; on a 0 for
+the second count upstream moved those resets: put the call back where a project is closed. The Job files' `same_bake_volume` /
+`same_bake_options` (shared with `texture_bake_applies_to`) and the image-aside `same_texture_layers` are the fork's own.
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices

@@ -434,6 +434,8 @@ template<class T> std::string serialized(const T &value)
     return os.str();
 }
 
+} // namespace
+
 // Options as the bake reads them: where the panel was left (active layer, mode) is not one of them.
 bool same_bake_options(TextureDisplacementOptions a, TextureDisplacementOptions b)
 {
@@ -441,16 +443,24 @@ bool same_bake_options(TextureDisplacementOptions a, TextureDisplacementOptions 
     a.panel_mode  = b.panel_mode  = 0;
     return serialized(a) == serialized(b);
 }
-} // namespace
 
-// The bake reads a layer's live image adjustments, which the archive leaves out.
+// The bake reads a layer's live image adjustments, which the archive leaves out. The image's bytes, by far the largest
+// part of a layer, are compared apart (the same buffer is equal at once) so the archive is of the settings only.
 bool same_texture_layers(const std::vector<TextureDisplacementLayer> &a, const std::vector<TextureDisplacementLayer> &b)
 {
-    if (a.size() != b.size() || serialized(a) != serialized(b))
+    if (a.size() != b.size())
         return false;
-    for (size_t i = 0; i < a.size(); ++i)
+    for (size_t i = 0; i < a.size(); ++i) {
         if (!(a[i].preview_adjust == b[i].preview_adjust))
             return false;
+        if (a[i].image_data != b[i].image_data && (a[i].image_data == nullptr || b[i].image_data == nullptr || *a[i].image_data != *b[i].image_data))
+            return false;
+        TextureDisplacementLayer without_a = a[i], without_b = b[i];
+        without_a.image_data.reset();
+        without_b.image_data.reset();
+        if (serialized(without_a) != serialized(without_b))
+            return false;
+    }
     return true;
 }
 

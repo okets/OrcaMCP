@@ -18,12 +18,14 @@
 #include <vector>
 
 #include <catch2/catch_all.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "libslic3r/Model.hpp"
 #include "libslic3r/PNGReadWrite.hpp"
 #include "libslic3r/TextureDisplacement.hpp"
 #include "libslic3r/TriangleMesh.hpp"
 #include "libslic3r/TriangleSelector.hpp"
+#include "slic3r/GUI/Gizmos/GLGizmoTextureDisplacement.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPTexturePreview.hpp"
 #include "slic3r/GUI/TextureDisplacementObject.hpp"
 #include "test_utils.hpp"
@@ -97,17 +99,24 @@ struct Fixture
     TextureDisplacementBakeInput capture() const { return capture_texture_bake(*object, {}, false); }
 };
 
-std::shared_ptr<const TextureBakePlan> plan_of(const TextureDisplacementBakeInput& input)
-{
-    auto plan = std::make_shared<TextureBakePlan>(plan_texture_bake(preview_input(input), [](int) { return true; }));
-    return plan;
-}
-
 PrintableColor red()
 {
     PrintableColor c;
     c.rgb = Vec3f(1.f, 0.f, 0.f);
     return c;
+}
+
+PreviewKey key_of(const TextureDisplacementBakeInput& input, const PreviewColours& colours = {}, int budget = 0)
+{
+    return preview_key(input, colours, budget);
+}
+
+std::shared_ptr<const PreviewDraw> draw_of(const Fixture& f)
+{
+    const TextureDisplacementBakeInput input = f.capture();
+    PreviewResult                      result = compute_preview(input, nullptr, {0}, {}, [](int) { return true; });
+    REQUIRE_FALSE(result.canceled);
+    return std::make_shared<const PreviewDraw>(std::move(result.draw));
 }
 
 } // namespace
@@ -119,73 +128,142 @@ TEST_CASE("The preview's input zeroes the triangle budget of v2 parts only and t
     const TextureDisplacementBakeInput before = v2.capture();
     TextureDisplacementBakeInput       after  = preview_input(before);
     REQUIRE(after.volumes.size() == 1);
-    CHECK(before.volumes[0].options.v2_max_triangles_k == 40);   // the original is kept
+    CHECK(before.volumes[0].options.v2_max_triangles_k == 40);
     CHECK(after.volumes[0].options.v2_max_triangles_k == 0);
     after.volumes[0].options.v2_max_triangles_k = 40;
-    CHECK(same_bake_volume(after.volumes[0], before.volumes[0], false));   // nothing else changed
-    CHECK(after.volumes[0].base_mesh.indices == before.volumes[0].base_mesh.indices);
+    CHECK(same_bake_volume(after.volumes[0], before.volumes[0], false));
 
     Fixture classic(false);
     classic.volume->texture_displacement_options.v2_max_triangles_k = 40;
     CHECK(preview_input(classic.capture()).volumes[0].options.v2_max_triangles_k == 40);
 }
 
-TEST_CASE("Two captures are the same preview until something the preview draws changes", "[TexturePreview][orcamcp]")
+TEST_CASE("Two captures have the same key until something the preview draws changes", "[TexturePreview][orcamcp]")
 {
     Fixture f(true);
     const TextureDisplacementBakeInput first = f.capture();
+    const PreviewKey                   key   = key_of(first);
     CHECK(same_preview_input(first, f.capture()));
+    CHECK(key == key_of(f.capture()));
+    CHECK(key != key_of(first, {}, 750));   // the classic preparation's budget
 
     SECTION("the budget is not part of what is drawn") {
         f.volume->texture_displacement_options.v2_max_triangles_k = 77;
         CHECK(same_preview_input(first, f.capture()));
+        CHECK(key == key_of(f.capture()));
     }
-    SECTION("a mask timestamp") {
+    SECTION("where the panel was left is not either") {
+        f.volume->texture_displacement_options.active_slot = 3;
+        CHECK(key == key_of(f.capture()));
+    }
+    SECTION("the paint") {
         f.volume->texture_displacement_facet(0).reset();
         paint(*f.volume, 0, int(f.volume->mesh().its.indices.size()) - 2);
         CHECK_FALSE(same_preview_input(first, f.capture()));
+        CHECK(key != key_of(f.capture()));
     }
     SECTION("a layer setting") {
         f.volume->texture_displacement_layers.front().depth_mm += 0.5f;
         CHECK_FALSE(same_preview_input(first, f.capture()));
+        CHECK(key != key_of(f.capture()));
+    }
+    SECTION("an image adjustment the panel shows") {
+        f.volume->texture_displacement_layers.front().preview_adjust.brightness = 0.4f;
+        CHECK(key != key_of(f.capture()));
+    }
+    SECTION("the image") {
+        auto bytes = std::make_shared<std::vector<unsigned char>>(*f.volume->texture_displacement_layers.front().image_data);
+        bytes->back() ^= 0x55;
+        f.volume->texture_displacement_layers.front().image_data = bytes;
+        CHECK(key != key_of(f.capture()));
     }
     SECTION("an option the bake reads") {
         f.volume->texture_displacement_options.v2_refine_mm = 0.7f;
         CHECK_FALSE(same_preview_input(first, f.capture()));
+        CHECK(key != key_of(f.capture()));
     }
     SECTION("the mesh") {
         indexed_triangle_set nudged = f.volume->mesh().its;
         nudged.vertices.front().z() += 0.5f;
         f.volume->set_mesh(TriangleMesh(nudged));
-        CHECK_FALSE(same_preview_input(first, f.capture()));
+        CHECK(key != key_of(f.capture()));
     }
     SECTION("the part's placement") {
         f.volume->set_offset(Vec3d(0., 0., 3.));
-        CHECK_FALSE(same_preview_input(first, f.capture()));
+        CHECK(key != key_of(f.capture()));
     }
     SECTION("the palette") {
         TextureDisplacementBakeInput coloured = f.capture();
         coloured.color.palette = {red()};
-        CHECK_FALSE(same_preview_input(first, coloured));
+        CHECK(key != key_of(coloured));
         TextureDisplacementBakeInput other = coloured;
-        CHECK(same_preview_input(coloured, other));
+        CHECK(key_of(coloured) == key_of(other));
         other.color.palette.front().rgb = Vec3f(0.f, 1.f, 0.f);
-        CHECK_FALSE(same_preview_input(coloured, other));
-        other = coloured;
-        other.color.despeckle_passes += 1;
-        CHECK_FALSE(same_preview_input(coloured, other));
+        CHECK(key_of(coloured) != key_of(other));
     }
-    SECTION("the parts painted") {
-        TextureDisplacementBakeInput none = first;
-        none.volumes.clear();
-        CHECK_FALSE(same_preview_input(first, none));
+    SECTION("the colour paint and the extruder colours") {
+        PreviewColours colours;
+        colours.extruders = {ColorRGBA(1.f, 0.f, 0.f, 1.f)};
+        const PreviewKey base = key_of(first, colours);
+        CHECK(base != key);
+        colours.extruders = {ColorRGBA(0.f, 1.f, 0.f, 1.f)};
+        CHECK(key_of(first, colours) != base);
+        colours.extruders = {ColorRGBA(1.f, 0.f, 0.f, 1.f)};
+        TriangleSelector selector(f.volume->mesh());
+        selector.set_facet(0, EnforcerBlockerType::ENFORCER);
+        f.volume->mmu_segmentation_facets.set(selector);
+        colours.colour_paint = {f.volume->mmu_segmentation_facets.get_data()};
+        CHECK(key_of(first, colours) != base);
+    }
+}
+
+TEST_CASE("The stamp follows the masks' timestamps, not their content", "[TexturePreview][orcamcp]")
+{
+    Fixture f(true);
+    const PreviewStamp stamp = capture_preview_stamp(*f.object);
+    CHECK(preview_stamp_current(*f.object, stamp));
+
+    SECTION("a mask written again with the same content is a new timestamp") {
+        const auto data   = f.volume->texture_displacement_facet(0).get_data();
+        const auto before = f.volume->texture_displacement_facet(0).timestamp();
+        f.volume->texture_displacement_facet(0).set_data(TriangleSelector::TriangleSplittingData(data));
+        REQUIRE(f.volume->texture_displacement_facet(0).get_data() == data);
+        REQUIRE(f.volume->texture_displacement_facet(0).timestamp() != before);
+        CHECK_FALSE(preview_stamp_current(*f.object, stamp));
+        CHECK(key_of(capture_texture_bake(*f.object, {}, false)) == key_of(f.capture()));   // the content key still matches
+    }
+    SECTION("a layer edited") {
+        f.volume->texture_displacement_layers.front().depth_mm += 1.f;
+        CHECK_FALSE(preview_stamp_current(*f.object, stamp));
+    }
+    SECTION("an image replaced by a different buffer") {
+        auto bytes = std::make_shared<std::vector<unsigned char>>(*f.volume->texture_displacement_layers.front().image_data);
+        f.volume->texture_displacement_layers.front().image_data = bytes;   // same bytes: still the same layer
+        CHECK(preview_stamp_current(*f.object, stamp));
+        bytes->back() ^= 1;
+        f.volume->texture_displacement_layers.front().image_data = std::make_shared<std::vector<unsigned char>>(*bytes);
+        CHECK_FALSE(preview_stamp_current(*f.object, stamp));
+    }
+    SECTION("the mesh, the placement and the options") {
+        f.volume->texture_displacement_options.active_slot = 2;
+        CHECK(preview_stamp_current(*f.object, stamp));
+        f.volume->texture_displacement_options.v2_refine_mm = 0.9f;
+        CHECK_FALSE(preview_stamp_current(*f.object, stamp));
+        f.volume->texture_displacement_options.v2_refine_mm = stamp.options.v2_refine_mm;
+        CHECK(preview_stamp_current(*f.object, stamp));
+        f.volume->set_offset(Vec3d(1., 0., 0.));
+        CHECK_FALSE(preview_stamp_current(*f.object, stamp));
+    }
+    SECTION("a part that is gone") {
+        f.object->delete_volume(0);
+        CHECK_FALSE(preview_stamp_current(*f.object, stamp));
     }
 }
 
 TEST_CASE("The preview is the bake without simplification: it moves vertices and keeps more triangles than a budgeted bake", "[TexturePreview][orcamcp]")
 {
     Fixture f(true, 16);
-    f.volume->texture_displacement_options.v2_max_triangles_k = 1;   // 1000 triangles at most for the bake
+    f.volume->texture_displacement_options.v2_max_triangles_k = 1;
     const TextureDisplacementBakeInput input = f.capture();
     REQUIRE(input.volumes.size() == 1);
 
@@ -193,99 +271,171 @@ TEST_CASE("The preview is the bake without simplification: it moves vertices and
     const TextureBakePlan preview  = plan_texture_bake(preview_input(input), [](int) { return true; });
     REQUIRE_FALSE(budgeted.canceled);
     REQUIRE_FALSE(preview.canceled);
-    REQUIRE(preview.results.size() == 1);
     CHECK(texture_bake_moved(preview_input(input), preview, 0));
     float highest = 0.f;
     for (const Vec3f& v : preview.results.front().mesh.its.vertices)
         highest = std::max(highest, std::abs(v.z()));
-    CHECK(highest > 0.1f);   // the ramp really relieved the sheet
-    CHECK(preview_triangles(preview) > preview_triangles(budgeted));
-    CHECK(preview_triangles(preview) > input.volumes[0].base_mesh.indices.size());   // refined, not the base mesh
+    CHECK(highest > 0.1f);
+    CHECK(preview.results.front().mesh.its.indices.size() > budgeted.results.front().mesh.its.indices.size());
+
+    const PreviewResult computed = compute_preview(input, nullptr, {0}, {}, [](int) { return true; });
+    REQUIRE_FALSE(computed.canceled);
+    REQUIRE(computed.draw.parts.size() == 1);
+    CHECK(computed.draw.parts[0].triangles == preview.results.front().mesh.its.indices.size());
+    CHECK(computed.draw.parts[0].triangles_base == input.volumes[0].base_mesh.indices.size());
+    CHECK(computed.draw.preparation.empty());
 }
 
 TEST_CASE("A preview whose progress hook says no is cancelled", "[TexturePreview][orcamcp]")
 {
     Fixture f(true);
-    const TextureBakePlan stopped = plan_texture_bake(preview_input(f.capture()), [](int) { return false; });
-    CHECK(stopped.canceled);
+    CHECK(compute_preview(f.capture(), nullptr, {0}, {}, [](int) { return false; }).canceled);
+}
+
+TEST_CASE("The classic pipeline previews the mesh its preparation leaves, as the bake does", "[TexturePreview][orcamcp]")
+{
+    Fixture f(false);
+    const TextureDisplacementBakeInput input = f.capture();
+    // A tiny budget leaves the sheet as it is; a mesh coarser than the texture is refined by the standard preparation.
+    TextureDisplacementPrepareInput prepare = capture_texture_prepare(*f.object, GLGizmoTextureDisplacement::standard_prepare_params(750),
+                                                                      TexturePrepareScope::PaintedParts, {}, std::string());
+    REQUIRE(prepare.volumes.size() == 1);
+    const PreviewResult plain    = compute_preview(input, nullptr, {0}, {}, [](int) { return true; });
+    const PreviewResult prepared = compute_preview(input, &prepare, {0}, {}, [](int) { return true; });
+    REQUIRE_FALSE(plain.canceled);
+    REQUIRE_FALSE(prepared.canceled);
+    CHECK(plain.draw.preparation.empty());
+    CHECK((prepared.draw.preparation == "applied" || prepared.draw.preparation == "unchanged"));
+    REQUIRE(prepared.draw.parts.size() == 1);
+    if (prepared.draw.preparation == "applied") {
+        // the preparation planned on a copy: the model is untouched, the preview has the refined mesh's triangles
+        CHECK(prepared.draw.parts[0].triangles != plain.draw.parts[0].triangles);
+        CHECK(f.volume->mesh().its.indices.size() == input.volumes[0].base_mesh.indices.size());
+    } else {
+        CHECK(prepared.draw.parts[0].triangles == plain.draw.parts[0].triangles);
+    }
+    CHECK(compute_preview(input, &prepare, {0}, {}, [](int) { return false; }).canceled);
+}
+
+TEST_CASE("The part's own colour paint is carried onto the preview and the rest draws in its colour", "[TexturePreview][orcamcp]")
+{
+    Fixture f(false);   // classic without a preparation: the triangles stay, so triangle i is still triangle i
+    const int triangles = int(f.volume->mesh().its.indices.size());
+    TriangleSelector selector(f.volume->mesh());
+    for (int i = 0; i < 10; ++i)
+        selector.set_facet(i, EnforcerBlockerType::ENFORCER);   // extruder 1
+    f.volume->mmu_segmentation_facets.set(selector);
+
+    PreviewColours colours;
+    colours.extruders    = {ColorRGBA(1.f, 0.f, 0.f, 1.f), ColorRGBA(0.f, 1.f, 0.f, 1.f)};
+    colours.colour_paint = {f.volume->mmu_segmentation_facets.get_data()};
+    const PreviewResult result = compute_preview(f.capture(), nullptr, {0}, colours, [](int) { return true; });
+    REQUIRE_FALSE(result.canceled);
+    const PreviewPart& part = result.draw.parts.at(0);
+    REQUIRE(part.mesh.indices.size() == size_t(triangles));
+    REQUIRE(part.runs.size() == 2);
+    CHECK(part.runs[0].base);
+    CHECK(part.runs[0].range == std::make_pair(size_t(0), size_t(triangles - 10) * 3));
+    CHECK_FALSE(part.runs[1].base);
+    CHECK(part.runs[1].color.r() == 1.f);
+    CHECK(part.runs[1].range == std::make_pair(size_t(triangles - 10) * 3, size_t(triangles) * 3));
+
+    SECTION("without colour paint there is one run in the part's colour") {
+        const PreviewResult plain = compute_preview(f.capture(), nullptr, {0}, {}, [](int) { return true; });
+        REQUIRE(plain.draw.parts[0].runs.size() == 1);
+        CHECK(plain.draw.parts[0].runs[0].base);
+    }
+}
+
+TEST_CASE("A part over the triangle limit is not drawn and says how large it is", "[TexturePreview][orcamcp]")
+{
+    Fixture f(false);
+    TextureDisplacementBakeInput input = f.capture();
+    TextureBakePlan              plan;
+    plan.results.resize(1);
+    plan.results[0].mesh.its.vertices = {Vec3f(0, 0, 0), Vec3f(1, 0, 0), Vec3f(0, 1, 0)};
+    plan.results[0].mesh.its.indices.assign(max_part_triangles + 1, stl_triangle_vertex_indices(0, 1, 2));
+    const PreviewDraw draw = make_preview_draw(std::move(plan), input, {4}, {});
+    REQUIRE(draw.parts.size() == 1);
+    CHECK(draw.parts[0].skipped == "too_large");
+    CHECK(draw.parts[0].triangles == max_part_triangles + 1);
+    CHECK(draw.parts[0].mesh.indices.empty());
+    CHECK(draw.parts[0].volume_id == 4);
+    CHECK(draw.triangles() == 0);
 }
 
 TEST_CASE("The cache keeps one entry per object, four objects and two million triangles, least recently used first", "[TexturePreview][orcamcp]")
 {
-    Fixture f(false);   // the classic pipeline: quick, and the plan is a real one
-    const TextureDisplacementBakeInput input = f.capture();
-    const auto                         plan  = plan_of(input);
-    REQUIRE(plan->results.size() == 1);
-    const std::size_t each = preview_triangles(*plan);
-    REQUIRE(each > 0);
+    Fixture f(false);
+    const auto draw = draw_of(f);
+    const PreviewKey key{1, 2}, other{3, 4};
+    REQUIRE(draw->triangles() > 0);
 
     PreviewCache cache;
-    CHECK(cache.find(ObjectID(1), input) == nullptr);
-    REQUIRE(cache.put(ObjectID(1), input, plan, 1.5));
-    const auto hit = cache.find(ObjectID(1), input);
+    CHECK(cache.find(ObjectID(1), key) == nullptr);
+    REQUIRE(cache.put(ObjectID(1), key, draw, 1.5));
+    const auto hit = cache.find(ObjectID(1), key);
     REQUIRE(hit != nullptr);
-    CHECK(hit->seconds == 1.5);
-    CHECK(hit->plan == plan);
-    CHECK(cache.find(ObjectID(2), input) == nullptr);   // another object, same capture
+    CHECK_THAT(hit->seconds, Catch::Matchers::WithinAbs(1.5, 1e-9));
+    CHECK(hit->draw == draw);
+    CHECK(cache.find(ObjectID(2), key) == nullptr);   // another object, same key
+    CHECK(cache.find(ObjectID(1), other) == nullptr);   // same object, another capture
+    CHECK(cache.bytes() == draw->bytes());
 
-    SECTION("a new capture of an object replaces its entry") {
-        Fixture g(false);
-        g.volume->texture_displacement_layers.front().depth_mm = 3.f;
-        const TextureDisplacementBakeInput changed = g.capture();
-        REQUIRE(cache.put(ObjectID(1), changed, plan, 2.));
+    SECTION("a new preview of an object replaces its entry") {
+        REQUIRE(cache.put(ObjectID(1), other, draw, 2.));
         CHECK(cache.size() == 1);
-        CHECK(cache.find(ObjectID(1), input) == nullptr);
-        CHECK(cache.find(ObjectID(1), changed) != nullptr);
+        CHECK(cache.find(ObjectID(1), key) == nullptr);
+        CHECK(cache.find(ObjectID(1), other) != nullptr);
     }
     SECTION("the fifth object evicts the least recently used") {
         for (std::size_t id = 2; id <= PreviewCache::max_objects; ++id)
-            REQUIRE(cache.put(ObjectID(id), input, plan, 0.));
+            REQUIRE(cache.put(ObjectID(id), key, draw, 0.));
+        CHECK(cache.find(ObjectID(1), key) != nullptr);   // object 1 is now the most recently used
+        REQUIRE(cache.put(ObjectID(99), key, draw, 0.));
         CHECK(cache.size() == PreviewCache::max_objects);
-        CHECK(cache.find(ObjectID(1), input) != nullptr);   // object 1 is now the most recently used
-        REQUIRE(cache.put(ObjectID(99), input, plan, 0.));
-        CHECK(cache.size() == PreviewCache::max_objects);
-        CHECK(cache.find(ObjectID(1), input) != nullptr);
-        CHECK(cache.find(ObjectID(2), input) == nullptr);   // the oldest unused went
-        CHECK(cache.find(ObjectID(99), input) != nullptr);
+        CHECK(cache.find(ObjectID(1), key) != nullptr);
+        CHECK(cache.find(ObjectID(2), key) == nullptr);
+        CHECK(cache.find(ObjectID(99), key) != nullptr);
     }
-    SECTION("entries of objects that are gone are dropped") {
-        REQUIRE(cache.put(ObjectID(5), input, plan, 0.));
+    SECTION("entries of objects that are gone are dropped, and a project reset drops all") {
+        REQUIRE(cache.put(ObjectID(5), key, draw, 0.));
         cache.prune([](const ObjectID& id) { return id == ObjectID(5); });
         CHECK(cache.size() == 1);
-        CHECK(cache.find(ObjectID(1), input) == nullptr);
-        CHECK(cache.find(ObjectID(5), input) != nullptr);
+        CHECK(cache.find(ObjectID(5), key) != nullptr);
+        texture_preview_cache().put(ObjectID(7), key, draw, 0.);
+        REQUIRE(texture_preview_cache().size() >= 1);
+        drop_texture_previews();   // what Plater::priv::reset calls
+        CHECK(texture_preview_cache().size() == 0);
     }
-    SECTION("a cancelled or empty plan is not kept, and drops the object's old entry") {
-        auto cancelled      = std::make_shared<TextureBakePlan>(*plan);
-        cancelled->canceled = true;
-        CHECK_FALSE(cache.put(ObjectID(1), input, cancelled, 0.));
-        CHECK_FALSE(cache.put(ObjectID(1), input, nullptr, 0.));
+    SECTION("an empty draw is not kept, and drops the object's old entry") {
+        CHECK_FALSE(cache.put(ObjectID(1), key, nullptr, 0.));
         CHECK(cache.size() == 0);
     }
     SECTION("past the triangle cap the least recently used goes, and one over the cap alone is not kept") {
-        auto big = std::make_shared<TextureBakePlan>(*plan);
-        big->results.front().mesh.its.indices.resize(PreviewCache::max_triangles / 2 + 1);   // two of these are over the cap
-        REQUIRE(cache.put(ObjectID(2), input, big, 0.));
+        const auto big = [](std::size_t triangles) {
+            auto d = std::make_shared<PreviewDraw>();
+            d->parts.emplace_back();
+            d->parts[0].mesh.indices.resize(triangles);
+            return std::shared_ptr<const PreviewDraw>(d);
+        };
+        REQUIRE(cache.put(ObjectID(2), key, big(PreviewCache::max_triangles / 2 + 1), 0.));
         CHECK(cache.size() == 2);
-        REQUIRE(cache.put(ObjectID(3), input, big, 0.));
+        REQUIRE(cache.put(ObjectID(3), key, big(PreviewCache::max_triangles / 2 + 1), 0.));
         CHECK(cache.triangles() <= PreviewCache::max_triangles);
-        CHECK(cache.find(ObjectID(3), input) != nullptr);
-        CHECK(cache.find(ObjectID(1), input) == nullptr);
-        auto huge = std::make_shared<TextureBakePlan>(*plan);
-        huge->results.front().mesh.its.indices.resize(PreviewCache::max_triangles + 1);
-        CHECK_FALSE(cache.put(ObjectID(4), input, huge, 0.));
-        CHECK(cache.find(ObjectID(4), input) == nullptr);
+        CHECK(cache.find(ObjectID(3), key) != nullptr);
+        CHECK(cache.find(ObjectID(1), key) == nullptr);
+        CHECK_FALSE(cache.put(ObjectID(4), key, big(PreviewCache::max_triangles + 1), 0.));
+        CHECK(cache.find(ObjectID(4), key) == nullptr);
     }
 }
 
-TEST_CASE("The report says what was drawn, what was cached, what timed out and why nothing was shown", "[TexturePreview][orcamcp]")
+TEST_CASE("The report says what was drawn, cached, timed out, not reached, left undrawn and why nothing was shown", "[TexturePreview][orcamcp]")
 {
     Fixture f(false);
     PreviewObject done;
     done.object_id  = 2;
-    done.captured   = f.capture();
-    done.volume_ids = {0};
-    done.plan       = plan_of(done.captured);
+    done.draw       = draw_of(f);
     done.seconds    = 1.234;
     done.cached     = true;
     done.panel_open = true;
@@ -295,49 +445,81 @@ TEST_CASE("The report says what was drawn, what was cached, what timed out and w
     input.wait_s      = 100.;
     input.objects.push_back(done);
     input.without_layers = {0, 3};
+    input.outside_fit    = {6};
     PreviewSkip skip;
-    skip.object_id = 4;
-    skip.reason    = "painted nowhere";
+    skip.object_id  = 4;
+    skip.reason     = "painted nowhere";
     skip.next_steps = nlohmann::json::array({{{"tool", "paint_object"}}});
     input.skipped.push_back(skip);
+    PreviewCache cache;
+    cache.put(ObjectID(2), PreviewKey{1, 1}, done.draw, 1.234);
 
-    const nlohmann::json report = preview_report_json(input, 1, 1234);
+    const nlohmann::json report = preview_report_json(input, cache);
     CHECK(report["requested"] == true);
     CHECK(report["previewed"] == 1);
     CHECK(report["complete"] == true);
-    REQUIRE(report["objects"].size() == 1);
     const nlohmann::json& object = report["objects"][0];
-    CHECK(object["object_id"] == 2);
     CHECK(object["cached"] == true);
-    CHECK(object["seconds"] == 1.23);
+    CHECK_THAT(object["seconds"].get<double>(), Catch::Matchers::WithinAbs(1.23, 1e-9));
     CHECK(object["panel_open"] == true);
     REQUIRE(object["parts"].size() == 1);
-    CHECK(object["parts"][0]["volume_id"] == 0);
-    CHECK(object["parts"][0]["triangles_base"] == done.captured.volumes[0].base_mesh.indices.size());
-    CHECK(object["parts"][0]["triangles_preview"] == preview_triangles(*done.plan));
+    CHECK(object["parts"][0]["triangles_preview"] == done.draw->parts[0].triangles);
     CHECK(report["skipped"][0]["next_steps"][0]["tool"] == "paint_object");
     CHECK(report["no_texture_layers"] == nlohmann::json::array({0, 3}));
-    CHECK(report["cache"]["triangles"] == 1234);
-    CHECK(report["cache"]["max_objects"] == 4);
+    CHECK(report["outside_fit"] == nlohmann::json::array({6}));
+    CHECK(report["cache"]["objects"] == 1);
+    CHECK(report["cache"]["bytes"] == done.draw->bytes());
     CHECK(report["cache"]["max_triangles"] == 2000000);
     CHECK_FALSE(report.contains("note"));
 
-    SECTION("an object whose plan did not finish is timed out and the report is incomplete") {
-        input.objects.front().plan.reset();
-        const nlohmann::json timed = preview_report_json(input, 0, 0);
-        CHECK(timed["complete"] == false);
-        CHECK(timed["previewed"] == 0);
-        CHECK(timed["objects"][0]["timed_out"] == true);
-        const std::string note = timed["objects"][0]["note"];
-        CHECK(note.find("object 2") != std::string::npos);
+    SECTION("an object whose preview ran out of the wait is timed out, one never started is not reached, and fitting is advised only unnarrowed") {
+        PreviewObject slow;
+        slow.object_id = 3;
+        slow.attempted = true;
+        PreviewObject later;
+        later.object_id = 5;
+        input.objects.push_back(slow);
+        input.objects.push_back(later);
+        const nlohmann::json out = preview_report_json(input, cache);
+        CHECK(out["complete"] == false);
+        CHECK(out["previewed"] == 1);   // the cached one is still drawn
+        CHECK(out["objects"][0]["cached"] == true);
+        CHECK(out["objects"][1]["timed_out"] == true);
+        CHECK_FALSE(out["objects"][1].contains("not_reached"));
+        CHECK(out["objects"][2]["not_reached"] == true);
+        CHECK_FALSE(out["objects"][2].contains("timed_out"));
+        const std::string note = out["objects"][1]["note"];
         CHECK(note.find("100 s") != std::string::npos);
-        CHECK(note.find("ORCAMCP_TIMEOUT") != std::string::npos);
-        CHECK_FALSE(timed.contains("note"));   // the object's note says it
+        CHECK(note.find("fit a view to one object") != std::string::npos);
+        input.narrowed = true;
+        CHECK(std::string(preview_report_json(input, cache)["objects"][1]["note"]).find("fit a view") == std::string::npos);
+    }
+    SECTION("a preview kept but not drawn says so") {
+        input.objects.front().undrawn = "over_render_total";
+        const nlohmann::json out = preview_report_json(input, cache);
+        CHECK(out["complete"] == false);
+        CHECK(out["previewed"] == 0);
+        CHECK(out["objects"][0]["undrawn"] == "over_render_total");
+    }
+    SECTION("a part too large to hold is listed with its count") {
+        auto draw = std::make_shared<PreviewDraw>(*done.draw);
+        draw->parts[0].skipped   = "too_large";
+        draw->parts[0].triangles = 1234567;
+        input.objects.front().draw = draw;
+        const nlohmann::json out = preview_report_json(input, cache);
+        CHECK(out["objects"][0]["parts"][0]["skipped"] == "too_large");
+        CHECK(std::string(out["objects"][0]["parts"][0]["note"]).find("1234567") != std::string::npos);
+    }
+    SECTION("the classic preparation is reported") {
+        auto draw = std::make_shared<PreviewDraw>(*done.draw);
+        draw->preparation = "applied";
+        input.objects.front().draw = draw;
+        CHECK(preview_report_json(input, cache)["objects"][0]["preparation"] == "applied");
     }
     SECTION("nothing to preview says so") {
         PreviewReportInput none;
         none.plate_index = 3;
-        const nlohmann::json empty = preview_report_json(none, 0, 0);
+        const nlohmann::json empty = preview_report_json(none, cache);
         CHECK(empty["previewed"] == 0);
         CHECK(empty["complete"] == true);
         CHECK(std::string(empty["note"]).find("plate 3") != std::string::npos);

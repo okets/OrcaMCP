@@ -304,6 +304,7 @@
 #include "OrcaMCP/OrcaMCPGcodeCheck.hpp"
 #include "OrcaMCP/OrcaMCPModelLoad.hpp"
 #include "OrcaMCP/OrcaMCPQuit.hpp"
+#include "OrcaMCP/OrcaMCPTexturePreview.hpp"
 #include "OrcaMCP/OrcaMCPSliceCredit.hpp"
 #include "OrcaMCP/OrcaMCPSliceProgress.hpp"
 
@@ -10909,6 +10910,7 @@ void Plater::priv::delete_all_objects_from_model()
     // Stop and reset the Print content.
     background_process.reset();
     drop_mcp_gcode_export(); // Orca: its export went with the reset
+    OrcaMCP::drop_texture_previews(); // Orca MCP: the texture previews were of the objects that went
 
     //BBS: update partplate
     partplate_list.clear();
@@ -10980,6 +10982,7 @@ void Plater::priv::reset(bool apply_presets_change, bool reload_presets)
     // Stop and reset the Print content.
     this->background_process.reset();
     drop_mcp_gcode_export(); // Orca: its export went with the reset
+    OrcaMCP::drop_texture_previews(); // Orca MCP: the texture previews were of the objects that went
     model.clear_objects();
     // clear_objects() only drops the ModelObjects; the CAD recipe is Model-level state and would
     // otherwise be written into every project saved for the rest of the session.

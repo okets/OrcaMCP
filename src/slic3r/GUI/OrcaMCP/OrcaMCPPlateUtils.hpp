@@ -2,7 +2,9 @@
 #define slic3r_GUI_OrcaMCPPlateUtils_hpp_
 
 #include <nlohmann/json.hpp>
+#include <chrono>
 #include <functional>
+#include <set>
 #include <optional>
 #include <vector>
 
@@ -199,6 +201,7 @@ struct RenderJob
     // texture_preview: the objects whose painted texture layers are drawn as their bake would make them, as the first
     // step captured them (and, from the cache or the work, their plans), and what it left out.
     OrcaMCP::PreviewReportInput               texture_preview;
+    std::chrono::steady_clock::time_point     deadline = std::chrono::steady_clock::time_point::max();   // the work's, set by the caller: the draw is held to it
 };
 
 class OrcaMCPPlateUtils {

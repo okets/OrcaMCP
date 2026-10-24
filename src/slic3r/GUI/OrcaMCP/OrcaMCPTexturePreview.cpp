@@ -3,6 +3,15 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <sstream>
+
+#include <cereal/archives/binary.hpp>
+#include <cereal/types/utility.hpp>
+
+#include "libslic3r/TextureDisplacement.hpp"
+#include "slic3r/GUI/TextureDisplacementObject.hpp"
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
@@ -22,6 +31,94 @@ bool same_palette(const std::vector<PrintableColor>& a, const std::vector<Printa
                return x.rgb == y.rgb && x.a == y.a && x.b == y.b && x.num == y.num && x.den == y.den;
            });
 }
+
+template<class T> std::string serialized(const T& value)
+{
+    std::ostringstream os(std::ios::binary);
+    {
+        cereal::BinaryOutputArchive archive(os);
+        archive(value);
+    }
+    return os.str();
+}
+
+// Two 64-bit lanes over the bytes fed to it: a collision needs both to agree.
+struct Hasher
+{
+    std::uint64_t a = 0xcbf29ce484222325ull, b = 0x9e3779b97f4a7c15ull;
+
+    void word(std::uint64_t w)
+    {
+        a = (a ^ w) * 0x100000001b3ull;
+        a ^= a >> 32;
+        b = (b + w + 0x9e3779b97f4a7c15ull) * 0xff51afd7ed558ccdull;
+        b ^= b >> 29;
+    }
+    void bytes(const void* data, std::size_t size)
+    {
+        const unsigned char* p = static_cast<const unsigned char*>(data);
+        for (; size >= 8; size -= 8, p += 8) {
+            std::uint64_t w;
+            std::memcpy(&w, p, 8);
+            word(w);
+        }
+        std::uint64_t tail = size;
+        for (std::size_t i = 0; i < size; ++i)
+            tail = (tail << 8) ^ p[i];
+        word(tail + 0x1234567ull);
+    }
+    template<class T> void pod(const T& value) { bytes(&value, sizeof value); }
+    template<class T> void vec(const std::vector<T>& v) { word(v.size()); if (!v.empty()) bytes(v.data(), v.size() * sizeof(T)); }
+    void text(const std::string& s) { word(s.size()); bytes(s.data(), s.size()); }
+    void bits(const std::vector<bool>& v)
+    {
+        word(v.size());
+        std::uint64_t w = 0;
+        int           n = 0;
+        for (bool bit : v) {
+            w = (w << 1) | (bit ? 1u : 0u);
+            if (++n == 64) { word(w); w = 0; n = 0; }
+        }
+        word(w);
+    }
+    void splitting(const TriangleSelector::TriangleSplittingData& d)
+    {
+        word(d.triangles_to_split.size());
+        for (const auto& t : d.triangles_to_split) {
+            word(std::uint64_t(std::uint32_t(t.triangle_idx)));
+            word(std::uint64_t(std::uint32_t(t.bitstream_start_idx)));
+        }
+        bits(d.bitstream);
+        bits(d.used_states);
+    }
+};
+
+void hash_options(Hasher& h, TextureDisplacementOptions options)
+{
+    options.active_slot = options.panel_mode = 0;
+    if (options.pipeline_v2)
+        options.v2_max_triangles_k = 0;
+    h.text(serialized(options));
+}
+
+void hash_layers(Hasher& h, const std::vector<TextureDisplacementLayer>& layers)
+{
+    h.word(layers.size());
+    for (const TextureDisplacementLayer& layer : layers) {
+        h.pod(layer.preview_adjust.brightness);
+        h.pod(layer.preview_adjust.contrast);
+        h.pod(layer.preview_adjust.sharpness);
+        h.pod(layer.preview_adjust.blur);
+        h.pod(layer.preview_adjust.hue_deg);
+        if (layer.image_data)
+            h.vec(*layer.image_data);
+        else
+            h.word(0xdeadull);
+        TextureDisplacementLayer without = layer;
+        without.image_data.reset();
+        h.text(serialized(without));
+    }
+}
 } // namespace
 
 bool same_preview_input(const TextureDisplacementBakeInput& a, const TextureDisplacementBakeInput& b)
@@ -35,35 +132,214 @@ bool same_preview_input(const TextureDisplacementBakeInput& a, const TextureDisp
     return true;
 }
 
-std::size_t preview_triangles(const TextureBakePlan& plan)
+PreviewKey preview_key(const TextureDisplacementBakeInput& input, const PreviewColours& colours, int classic_budget_k)
+{
+    Hasher h;
+    h.word(std::uint64_t(std::uint32_t(classic_budget_k)));
+    h.word(input.volumes.size());
+    for (const PrintableColor& c : input.color.palette) { h.pod(c.rgb); h.pod(c.a); h.pod(c.b); h.pod(c.num); h.pod(c.den); }
+    h.word(input.color.palette.size());
+    for (const PrintableColor& c : input.color.palette_pure) { h.pod(c.rgb); h.pod(c.a); h.pod(c.b); h.pod(c.num); h.pod(c.den); }
+    h.pod(input.color.despeckle_passes);
+    for (const TextureDisplacementBakeVolume& v : input.volumes) {
+        h.word(v.volume_id.id);
+        h.pod(v.resting_drop);
+        h.pod(v.texture_anchor);
+        h.pod(v.volume_to_world.matrix());
+        h.vec(v.model_uv);
+        h.vec(v.base_mesh.vertices);
+        h.vec(v.base_mesh.indices);
+        for (const auto& mask : v.facets_data)
+            h.splitting(mask);
+        hash_layers(h, v.layers);
+        hash_options(h, v.options);
+    }
+    h.word(colours.colour_paint.size());
+    for (const auto& paint : colours.colour_paint)
+        h.splitting(paint);
+    for (const ColorRGBA& c : colours.extruders)
+        h.pod(c);
+    return {h.a, h.b};
+}
+
+std::size_t PreviewDraw::triangles() const
 {
     std::size_t total = 0;
-    for (const TextureBakeVolumeResult& result : plan.results)
-        total += result.mesh.its.indices.size();
+    for (const PreviewPart& part : parts)
+        total += part.mesh.indices.size();
     return total;
 }
 
-std::shared_ptr<const PreviewCache::Entry> PreviewCache::find(const ObjectID& object, const TextureDisplacementBakeInput& input)
+std::size_t PreviewDraw::bytes() const
 {
+    std::size_t total = 0;
+    for (const PreviewPart& part : parts)
+        total += part.mesh.vertices.size() * sizeof(Vec3f) + part.mesh.indices.size() * sizeof(stl_triangle_vertex_indices) + part.runs.size() * sizeof(PreviewRun);
+    return total;
+}
+
+PreviewDraw make_preview_draw(TextureBakePlan&& plan, const TextureDisplacementBakeInput& original, const std::vector<int>& volume_ids,
+                              const PreviewColours& colours)
+{
+    PreviewDraw draw;
+    // Colour slots: 0 the part's own colour, 1..P the palette (the texture's colours), then one per extruder state.
+    std::vector<ColorRGBA> table(1, ColorRGBA());
+    for (const PrintableColor& entry : original.color.palette)
+        table.emplace_back(entry.rgb.x(), entry.rgb.y(), entry.rgb.z(), 1.f);
+    const std::size_t palette = original.color.palette.size();
+    for (const ColorRGBA& extruder : colours.extruders)
+        table.push_back(extruder);
+
+    for (std::size_t i = 0; i < plan.results.size() && i < original.volumes.size(); ++i) {
+        PreviewPart part;
+        part.volume_id      = i < volume_ids.size() ? volume_ids[i] : -1;
+        part.triangles_base = original.volumes[i].base_mesh.indices.size();
+        indexed_triangle_set mesh = std::move(plan.results[i].mesh.its);
+        part.triangles = mesh.indices.size();
+        if (mesh.indices.empty()) {
+            draw.parts.push_back(std::move(part));
+            continue;   // this part's layers moved nothing: its own mesh is drawn
+        }
+        if (mesh.indices.size() > max_part_triangles) {
+            part.skipped = "too_large";
+            draw.parts.push_back(std::move(part));
+            continue;
+        }
+        // The slot of each triangle: the texture's colour, else the part's colour paint carried onto it, else its own colour.
+        std::vector<std::uint16_t> slot(mesh.indices.size(), 0);
+        const std::vector<std::uint8_t>& texture = plan.results[i].triangle_color;
+        std::vector<std::uint8_t>        painted;
+        if (i < colours.colour_paint.size() && !colours.colour_paint[i].bitstream.empty() && !colours.extruders.empty())
+            painted = transfer_facet_paint(original.volumes[i].base_mesh, colours.colour_paint[i], mesh);
+        for (std::size_t t = 0; t < slot.size(); ++t) {
+            if (t < texture.size() && texture[t] > 0 && std::size_t(texture[t]) <= palette)
+                slot[t] = std::uint16_t(texture[t]);
+            else if (t < painted.size() && painted[t] > 0 && std::size_t(painted[t]) <= colours.extruders.size())
+                slot[t] = std::uint16_t(palette + painted[t]);
+        }
+        // One counting sort into runs; only the index buffer is permuted, never the vertices.
+        std::vector<std::size_t> count(table.size() + 1, 0);
+        for (const std::uint16_t s : slot)
+            ++count[std::size_t(s) + 1];
+        std::vector<std::size_t> start(table.size() + 1, 0);
+        for (std::size_t s = 0; s < table.size(); ++s)
+            start[s + 1] = start[s] + count[s + 1];
+        part.mesh.vertices = std::move(mesh.vertices);
+        part.mesh.indices.resize(mesh.indices.size());
+        std::vector<std::size_t> next(start.begin(), start.end() - 1);
+        for (std::size_t t = 0; t < slot.size(); ++t)
+            part.mesh.indices[next[slot[t]]++] = mesh.indices[t];
+        for (std::size_t s = 0; s < table.size(); ++s)
+            if (start[s + 1] > start[s])
+                part.runs.push_back({{start[s] * 3, start[s + 1] * 3}, table[s], s == 0});
+        draw.parts.push_back(std::move(part));
+    }
+    return draw;
+}
+
+PreviewResult compute_preview(const TextureDisplacementBakeInput& captured, const TextureDisplacementPrepareInput* prepare,
+                              const std::vector<int>& volume_ids, const PreviewColours& colours,
+                              const std::function<bool(int)>& progress)
+{
+    PreviewResult result;
+    TextureDisplacementBakeInput work = preview_input(captured);
+    if (prepare != nullptr && !prepare->volumes.empty()) {
+        // The classic bake prepares first (remesh, adaptive refinement) and displaces what that leaves; the preview does
+        // the same on a copy, the paint carried exactly as the preparation carries it.
+        const TextureDisplacementPreparePlan prepared = plan_texture_prepare(*prepare, progress);
+        if (prepared.canceled) {
+            result.canceled = true;
+            return result;
+        }
+        bool lost = false, applied = false;
+        for (const TextureDisplacementPrepareResult& r : prepared.results)
+            lost = lost || r.paint_lost;
+        if (!lost)
+            for (std::size_t p = 0; p < prepared.results.size() && p < prepare->volumes.size(); ++p) {
+                if (prepared.results[p].mesh.indices.empty())
+                    continue;
+                for (TextureDisplacementBakeVolume& volume : work.volumes)
+                    if (volume.volume_id == prepare->volumes[p].volume_id) {
+                        volume.base_mesh   = prepared.results[p].mesh;
+                        volume.facets_data = prepared.results[p].masks;
+                        volume.model_uv    = prepared.results[p].uv;
+                        applied            = true;
+                    }
+            }
+        result.draw.preparation = lost ? "paint_lost" : applied ? "applied" : "unchanged";
+    }
+    TextureBakePlan plan = plan_texture_bake(work, progress);
+    if (plan.canceled) {
+        result.canceled = true;
+        return result;
+    }
+    std::string preparation = std::move(result.draw.preparation);
+    result.draw             = make_preview_draw(std::move(plan), captured, volume_ids, colours);
+    result.draw.preparation = std::move(preparation);
+    return result;
+}
+
+PreviewStamp capture_preview_stamp(const ModelObject& object)
+{
+    PreviewStamp stamp;
+    ModelObject& mutable_object = const_cast<ModelObject&>(object);
+    const std::vector<ModelVolume*> parts = painted_texture_parts(mutable_object);
+    const std::vector<float>        drops = resting_drops(object, parts);
+    stamp.anchor = texture_anchor(object);
+    if (const ModelVolume* owner = texture_stack_owner(object))
+        stamp.options = owner->texture_displacement_options;
+    for (std::size_t i = 0; i < parts.size(); ++i) {
+        PreviewStamp::Part part;
+        part.id       = parts[i]->id();
+        part.mesh     = parts[i]->mesh_ptr();
+        for (int slot = 0; slot < int(TEXTURE_DISPLACEMENT_MAX_LAYERS); ++slot)
+            part.masks[std::size_t(slot)] = parts[i]->texture_displacement_facet(slot).timestamp();
+        part.to_world = texture_displacement_volume_to_world(*parts[i]);
+        part.layers   = layers_for_part(object, *parts[i]);
+        part.drop     = drops[i];
+        part.uv       = parts[i]->texture_uv.size();
+        stamp.parts.push_back(std::move(part));
+    }
+    return stamp;
+}
+
+bool preview_stamp_current(const ModelObject& object, const PreviewStamp& stamp)
+{
+    const PreviewStamp now = capture_preview_stamp(object);
+    if (now.parts.size() != stamp.parts.size() || now.anchor != stamp.anchor || !same_bake_options(now.options, stamp.options))
+        return false;
+    for (std::size_t i = 0; i < now.parts.size(); ++i) {
+        const PreviewStamp::Part &a = now.parts[i], &b = stamp.parts[i];
+        if (a.id != b.id || a.mesh != b.mesh || a.masks != b.masks || a.to_world.matrix() != b.to_world.matrix() || a.drop != b.drop ||
+            a.uv != b.uv || !same_texture_layers(a.layers, b.layers))
+            return false;
+    }
+    return true;
+}
+
+std::shared_ptr<const PreviewCache::Entry> PreviewCache::find(const ObjectID& object, const PreviewKey& key)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
     for (const std::shared_ptr<Entry>& entry : m_entries)
-        if (entry->object == object && same_preview_input(entry->input, input)) {
+        if (entry->object == object && entry->key == key) {
             entry->used = ++m_clock;
             return entry;
         }
     return nullptr;
 }
 
-bool PreviewCache::put(const ObjectID& object, TextureDisplacementBakeInput input, std::shared_ptr<const TextureBakePlan> plan, double seconds)
+bool PreviewCache::put(const ObjectID& object, const PreviewKey& key, std::shared_ptr<const PreviewDraw> draw, double seconds)
 {
+    std::lock_guard<std::mutex> lock(m_mutex);
     m_entries.erase(std::remove_if(m_entries.begin(), m_entries.end(), [&](const std::shared_ptr<Entry>& e) { return e->object == object; }),
                     m_entries.end());
-    const std::size_t triangles = plan ? preview_triangles(*plan) : 0;
-    if (!plan || plan->canceled || triangles > max_triangles)
+    const std::size_t triangles = draw ? draw->triangles() : 0;
+    if (!draw || triangles > max_triangles)
         return false;
     auto entry       = std::make_shared<Entry>();
     entry->object    = object;
-    entry->input     = std::move(input);
-    entry->plan      = std::move(plan);
+    entry->key       = key;
+    entry->draw      = std::move(draw);
     entry->triangles = triangles;
     entry->seconds   = seconds;
     entry->used      = ++m_clock;
@@ -74,56 +350,127 @@ bool PreviewCache::put(const ObjectID& object, TextureDisplacementBakeInput inpu
 
 void PreviewCache::prune(const std::function<bool(const ObjectID&)>& exists)
 {
+    std::lock_guard<std::mutex> lock(m_mutex);
     m_entries.erase(std::remove_if(m_entries.begin(), m_entries.end(), [&](const std::shared_ptr<Entry>& e) { return !exists(e->object); }),
                     m_entries.end());
 }
 
+void PreviewCache::clear()
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_entries.clear();
+}
+
+std::size_t PreviewCache::size() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_entries.size();
+}
+
 std::size_t PreviewCache::triangles() const
 {
+    std::lock_guard<std::mutex> lock(m_mutex);
     std::size_t total = 0;
     for (const std::shared_ptr<Entry>& entry : m_entries)
         total += entry->triangles;
     return total;
 }
 
+std::size_t PreviewCache::bytes() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    std::size_t total = 0;
+    for (const std::shared_ptr<Entry>& entry : m_entries)
+        total += entry->draw->bytes();
+    return total;
+}
+
 void PreviewCache::evict_to_caps()
 {
-    while (m_entries.size() > max_objects || (m_entries.size() > 1 && triangles() > max_triangles)) {
+    const auto held = [this] {
+        std::size_t total = 0;
+        for (const std::shared_ptr<Entry>& entry : m_entries)
+            total += entry->triangles;
+        return total;
+    };
+    while (m_entries.size() > max_objects || (m_entries.size() > 1 && held() > max_triangles)) {
         const auto oldest = std::min_element(m_entries.begin(), m_entries.end(),
                                              [](const std::shared_ptr<Entry>& a, const std::shared_ptr<Entry>& b) { return a->used < b->used; });
         m_entries.erase(oldest);
     }
 }
 
-std::string preview_timed_out_message(int object_id, double wait_s)
+PreviewCache& texture_preview_cache()
+{
+    static PreviewCache cache;
+    return cache;
+}
+
+void drop_texture_previews()
+{
+    texture_preview_cache().clear();
+}
+
+std::string preview_timed_out_message(int object_id, double wait_s, bool narrowed)
 {
     char seconds[32];
     std::snprintf(seconds, sizeof seconds, "%.0f", std::max(0., wait_s));
     return "the texture preview of object " + std::to_string(object_id) + " needs more than the call's wait (" + seconds +
-           " s), so it is drawn unbaked: raise ORCAMCP_TIMEOUT, or preview one object (fit)";
+           " s), so it is drawn unbaked: raise ORCAMCP_TIMEOUT" +
+           (narrowed ? std::string() : ", or fit a view to one object ({object_id}), which previews only that object");
 }
 
-nlohmann::json preview_report_json(const PreviewReportInput& input, std::size_t cache_objects, std::size_t cache_triangles)
+std::string preview_not_reached_message(int object_id, bool narrowed)
+{
+    return "the call's wait ran out on a slower object before the texture preview of object " + std::to_string(object_id) +
+           " was started, so it is drawn unbaked: raise ORCAMCP_TIMEOUT" +
+           (narrowed ? std::string() : ", or fit a view to this object ({object_id}), which previews only that object");
+}
+
+nlohmann::json preview_report_json(const PreviewReportInput& input, const PreviewCache& cache)
 {
     using json = nlohmann::json;
-    json objects = json::array();
+    json objects   = json::array();
     int  previewed = 0;
     bool complete  = true;
     for (const PreviewObject& object : input.objects) {
         json entry = {{"object_id", object.object_id}, {"parts", json::array()}, {"cached", object.cached}};
-        if (!object.plan) {
+        if (!object.draw) {
             complete = false;
-            entry["timed_out"] = true;
-            entry["note"]      = preview_timed_out_message(object.object_id, input.wait_s);
+            if (object.attempted) {
+                entry["timed_out"] = true;
+                entry["note"]      = preview_timed_out_message(object.object_id, input.wait_s, input.narrowed);
+            } else {
+                entry["not_reached"] = true;
+                entry["note"]        = preview_not_reached_message(object.object_id, input.narrowed);
+            }
+            objects.push_back(std::move(entry));
+            continue;
+        }
+        if (!object.undrawn.empty()) {
+            complete = false;
+            entry["undrawn"] = object.undrawn;
+            entry["note"]    = object.undrawn == "over_render_total"
+                ? "this preview is kept but not drawn: one render draws at most " + std::to_string(PreviewCache::max_triangles) + " preview triangles; fit a view to this object to see it"
+                : "the call's time ran out before this preview could be uploaded, so it is drawn unbaked; render again (the preview is kept)";
             objects.push_back(std::move(entry));
             continue;
         }
         ++previewed;
         entry["seconds"] = std::round(object.seconds * 100.) / 100.;
-        for (std::size_t i = 0; i < object.captured.volumes.size() && i < object.plan->results.size(); ++i)
-            entry["parts"].push_back({{"volume_id", i < object.volume_ids.size() ? object.volume_ids[i] : -1},
-                                      {"triangles_base", object.captured.volumes[i].base_mesh.indices.size()},
-                                      {"triangles_preview", object.plan->results[i].mesh.its.indices.size()}});
+        if (!object.draw->preparation.empty())
+            entry["preparation"] = object.draw->preparation;
+        for (const PreviewPart& part : object.draw->parts) {
+            json p = {{"volume_id", part.volume_id}, {"triangles_base", part.triangles_base}, {"triangles_preview", part.triangles}};
+            if (!part.skipped.empty()) {
+                p["skipped"] = part.skipped;
+                p["note"]    = "this part's preview has " + std::to_string(part.triangles) + " triangles, more than the " +
+                               std::to_string(max_part_triangles) + " a render holds, so it is drawn unbaked: fit a coarser texture (resolution_mm) or a smaller region";
+            }
+            entry["parts"].push_back(std::move(p));
+        }
+        if (object.draw->preparation == "paint_lost")
+            entry["note"] = "the classic bake's preparation (remesh) would lose the paint, so the bake refuses it; this shows the surface without the preparation";
         if (object.panel_open) {
             entry["panel_open"] = true;
             entry["note"]       = "the texture panel is open on this object: its strokes since the panel last wrote them into the model are not in this preview";
@@ -143,11 +490,14 @@ nlohmann::json preview_report_json(const PreviewReportInput& input, std::size_t 
                    {"objects", std::move(objects)},
                    {"skipped", std::move(skipped)},
                    {"no_texture_layers", input.without_layers},
-                   {"cache", {{"objects", cache_objects}, {"triangles", cache_triangles},
+                   {"cache", {{"objects", cache.size()}, {"triangles", cache.triangles()}, {"bytes", cache.bytes()},
                               {"max_objects", PreviewCache::max_objects}, {"max_triangles", PreviewCache::max_triangles}}}};
+    if (!input.outside_fit.empty())
+        report["outside_fit"] = input.outside_fit;
     if (previewed == 0 && complete)
         report["note"] = "nothing was previewed: no object on plate " + std::to_string(input.plate_index) +
-                         " has texture layers with paint to show, so the picture is the plain one (skipped says why for each object that has layers)";
+                         (input.outside_fit.empty() ? " has texture layers with paint to show" : " inside the views' fit has texture layers with paint to show") +
+                         ", so the picture is the plain one (skipped says why for each object that has layers)";
     return report;
 }
 

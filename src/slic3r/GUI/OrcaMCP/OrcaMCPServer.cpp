@@ -1354,6 +1354,7 @@ void OrcaMCPServer::register_builtin_tools()
             RenderJob      job;
             const auto     started  = std::chrono::steady_clock::now();
             const auto     deadline = started + std::max(tool_wait_cap() - std::chrono::seconds(5), std::chrono::milliseconds(0));
+            job.deadline            = deadline;
             nlohmann::json early    = run_on_main_thread([&params, &job]() { return OrcaMCPPlateUtils::PrepareRender(params, job); });
             if (!early.is_null())
                 return early;
