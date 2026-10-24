@@ -60,6 +60,7 @@ struct ViewRequest
     // A camera object an earlier render returned, drawn again exactly (camera_position / target are then the
     // object's own, when it carries them).
     std::optional<CameraFrame>  replay;
+    std::optional<int>          replay_plate;              // the plate the replayed camera was drawn of, when it says
 
     bool exact() const { return mode == CameraMode::Exact; }
 };
@@ -101,6 +102,7 @@ struct ShaderSettings
     Vec3d                 light_dir_eye  = Vec3d(0., 0., 1.);   // unit vector in eye space
     float                 ambient        = 0.3f;                // the thumbnail shader's INTENSITY_AMBIENT
     bool                  front_light    = true;                // the second light
+    float                 top_gain       = 1.f;                 // scales the top light's diffuse term
     float                 specular       = 1.f;                 // 0 leaves the top light's specular highlight out
 
     bool is_default() const;

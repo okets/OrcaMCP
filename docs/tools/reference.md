@@ -3094,10 +3094,7 @@ starts at x ≈ 307. A camera aimed at another plate's area returns a flat image
 | `resolution` | integer | No | Pixels per view side (default 512, 32–2048). Prefer `fit` to an object over more pixels. |
 | `image_format` | `"png"` / `"jpeg"` | No | Default `png` for files, `jpeg` for inline base64. |
 | `overlays` | boolean / object | No | `true` (default) draws all; `false` none; or `{outline, grid, origin, labels, excluded}` booleans. `excluded` draws the hatched excluded areas and collision volumes (a height-limited one drawn at its height; in a layer plan, dashed when not at that layer). |
-| `light` | `"default"` / object | No | `{azimuth_deg, elevation_deg}` (azimuth 0 = from +X, counter-clockwise from above; elevation 1-90) or `{direction: [x,y,z]}` (the way the light travels, bed axes): one directional light with little fill and no highlight, so a shallow relief casts readable shading, e.g. `{azimuth_deg: 30, elevation_deg: 12}` for a 0.3 mm texture. The same bed-axis light in every view. 3D views only (refused with `layer_view`). Each entry answers `light: {direction, azimuth_deg, elevation_deg, applied}`; `applied: false` with a `warning` when the app's `mcp_render` shader did not build on this driver (`shader_fallback: true`) and the picture is lit as by default. |
-| `paint` | array | No | Channels to tint on the parts, as the paint panels colour them: `support` and `seam` (enforcer light green `#80ff80`, blocker light red `#ff8080`), `fuzzy_skin` (light green), `texture` (one colour per layer, from a fixed table apart from the object palette). The unpainted surface is then drawn neutral grey so the tints read, whatever `color_by` says. Ask one channel at a time to tell `support` from `seam`: they share the panels' colours. Colour paint is never an option: it is always drawn in its filaments' colours. Each entry answers `paint` and `tint_legend`: per tint `{channel, layer?, state, state_name, label, color, objects: [{object_id, facets, area_mm2}]}`; `facets` is `get_object_paint`'s leaf-triangle count and `area_mm2` the painted area of one instance (the first on the plate); a tint nothing carries has `objects: []`. 3D views only. |
-| `texture_layers` | array of integers 0-7 | No | With `paint: ["texture"]`: only these layer slots (default every slot a texture stack on the plate has a layer in). Without `texture` in `paint`: refused. |
-| `color_by` | `"object"` / `"filament"` | No | `object` (default): one colour per object, so objects tell apart. `filament`: each part in its filament's colour, as the 3D view. Every `objects_in_frame` entry says `color_source` (`palette`, `filament`, `paint`, `neutral` or `wipe_tower`) and `color` (`#rrggbb`, the label's colour): a part with colour paint is `paint` and reports its base filament's colour, as drawn (it used to report the palette colour). `relief` comes with a later release. |
+| `light` | `"default"` / object | No | One directional light with no highlight, so relief casts readable shading; a face square to it is drawn at about 0.9 of its colour, one turned away at about 0.28. **To rake what a view shows use `{from: "left" \| "right" \| "top" \| "bottom", elevation_deg}`**: the light comes from that side of each view's image, `elevation_deg` (1-90, default 20) above the surface the camera sees, so a low one grazes it (`{from: "left", elevation_deg: 12}` for a 0.3 mm texture); `{from: "front"}` lights from the camera. It turns with every view's camera. In bed axes instead: `{azimuth_deg, elevation_deg}` (azimuth 0 = from +X, counter-clockwise from above) or `{direction: [x,y,z]}` (the way the light travels); these can light a face from behind and give a dark picture. 3D views only (refused with `layer_view`). Each entry answers `light: {direction, azimuth_deg, elevation_deg, applied}` with the bed-axes light that view used (and `from`, `bed_elevation_deg` for a camera-relative one; the answer is accepted back); `applied: false` with a `warning` when the app's `mcp_render` shader did not build on this driver (`shader_fallback: true`) or nothing was drawn. |
 | `layer_view` | `"first_layer"` / object | No | A top-down plan instead of a 3D render: the **first-layer plan**, or **any sliced layer** as `{layer: N}` or `{z: mm}` — see below. Ignores `views`. |
 
 **A view** is one of:
@@ -3124,20 +3121,24 @@ keys a view takes, where it used to be ignored. `camera` (the object a render re
 | `ortho_height_mm` | number > 0 | Exact orthographic: the height of the image in mm (required there). |
 | `camera` | object | A camera a render returned as `views[i].camera`, sent back unchanged: the same view is drawn again at its viewport's resolution (a `resolution` that differs is an error). The view takes no other key. |
 
-A returned `camera` also goes back as the view itself (its `view_matrix`, `projection_matrix` and `viewport`, with the
+A returned `camera` carries its `plate_index` and is replayed only on that plate (another is refused). It also goes back as the view itself (its `view_matrix`, `projection_matrix` and `viewport`, with the
 informational keys it carries, which are ignored), and `preset: null` there is no preset. `fit` is strict: a key or form it
 does not know (`{"object": 2}`) is refused, in a layer plan's `fit` too. Every view's entry says `shader_fallback`: true when
 the app's `mcp_render` shader could not be built on this driver, so options that need it (V3's `light`) were not applied.
 
 **Close-ups.** A close-up is a small fit, not more pixels: `{"preset": "iso", "fit": {"point": [x, y, z], "radius_mm": 6}}`
-frames a 12 mm sphere, and the answer's `camera.mm_per_pixel` says the scale on the target plane (at 512 px, 12 mm is
-about 0.023 mm per pixel). An explicit `{camera_position, target}` in fit mode now frames the view's `fit` (before, it was
-always the plate's drawn objects plus 20%). The camera is never promised: fit mode may back the eye away to keep the near
-plane 100 mm from what is drawn (`camera.moved: true`, `camera.camera_position` the eye the picture was drawn from,
-`camera.requested_position` the one asked for). `camera_mode: "exact"` is the way to a real perspective from a chosen point,
+frames the 12 mm cube around the point (not the sphere) with the 1.08 margin, about 19 mm of height from iso, and the
+answer's `camera.mm_per_pixel` says the scale on the target plane (at 512 px, about 0.040 mm per pixel; a 20 mm box at 640
+px gave 0.038). An explicit `{camera_position, target}` in fit mode now frames the view's `fit` (before, it was
+always the plate's drawn objects plus 20%). The camera is never promised: fit mode backs the eye away until the near
+plane is 100 mm from what is drawn, and the drawn depth includes the whole build volume, so most preset and fit views
+answer `camera.moved: true`, `camera.camera_position` the eye the picture was drawn from and `camera.requested_position`
+the one asked for (`moved: false` only when the eye was already far enough). The framing is unaffected. `camera_mode: "exact"` is the way to a real perspective from a chosen point,
 e.g. `{"camera_position": [60, 0, 20], "target": [60, 40, 20], "camera_mode": "exact", "fov_deg": 40}` or, for a measured
 side view, `"projection": "orthographic", "ortho_height_mm": 20` (512 px: 0.0390625 mm per pixel). Exact near is
-max(0.5, 1% of the distance) mm; everything in front of the eye is drawn. A region inside a part is hidden by the part.
+max(0.5 mm, 1% of the eye's distance from the target) and anything nearer the eye is clipped, not drawn (`camera.near_mm`
+says where it is: a part 0.2 mm in front of an eye 100 mm away is cut); far is the farthest corner of the plate and the
+drawn parts, plus 10 mm. A region inside a part is hidden by the part.
 
 **Paint.** `paint` draws the painted facets of every part on the plate over the unbaked surface: `{"plate_index": 0,
 "paint": ["support"], "views": [{"preset": "iso", "fit": {"object_id": 0}}]}` shows support enforcers and blockers in the gizmos' own
@@ -3173,7 +3174,7 @@ while the paint is being prepared answers "the scene changed ..."; paint that ne
   "overlays": {"outline": true, "grid": true, "origin": true, "labels": true, "excluded": true},
   "camera": {"preset": "low", "fit": {"object_index": 8}, "input_frame": "bed_mm",
              "camera_mode": "fit", "projection": "perspective", "fov_deg": 11.2, "mm_per_pixel": 0.31,
-             "moved": false, "replayed": false,
+             "moved": true, "requested_position": [...], "replayed": false, "plate_index": 1, "near_mm": 109.0,
              "camera_position": [...], "target": [...], "view_matrix": [...], "projection_matrix": [...],
              "viewport": [0, 0, 512, 512], "type": "perspective", "pixel_origin": "top_left"}
 }]

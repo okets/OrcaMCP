@@ -143,7 +143,9 @@ json view_schema()
             {"moved", {{"type", "boolean"}, {"description", "See view_matrix. Ignored."}}},
             {"requested_position", {{"type", "array"}, {"description", "See view_matrix. Ignored."}}},
             {"replayed", {{"type", "boolean"}, {"description", "See view_matrix. Ignored."}}},
-            {"input_frame", {{"type", "string"}, {"description", "See view_matrix. Ignored."}}}
+            {"input_frame", {{"type", "string"}, {"description", "See view_matrix. Ignored."}}},
+            {"plate_index", {{"type", "integer"}, {"description", "See view_matrix: the plate the camera was drawn of; a replay on another plate is refused."}}},
+            {"near_mm", {{"type", "number"}, {"description", "See view_matrix. Ignored."}}}
         }}
     };
 }
@@ -153,11 +155,13 @@ json light_schema()
     return json{
         {"type", {"string", "object"}},
         {"additionalProperties", false},
-        {"description", "\"default\" (the 3D view's two lights) or a single directional light that rakes across a surface so texture relief reads, e.g. {azimuth_deg: 30, elevation_deg: 12}: azimuth 0 = from +X, counter-clockwise seen from above, elevation 1 to 90 degrees above the horizon. Or {direction: [x, y, z]}, the way the light travels in bed axes (from the light to the scene). Little fill light, no highlight. The answer's light says direction, azimuth_deg, elevation_deg, and applied: false with a warning when this driver could not build the render shader (shader_fallback). 3D views only."},
+        {"description", "\"default\" (the 3D view's two lights) or a single directional light that rakes across a surface so relief reads. To rake what a view shows, use {from: \"left\"|\"right\"|\"top\"|\"bottom\", elevation_deg}: the light comes from that side of each view's image, elevation_deg (1 to 90, default 20) above the surface the camera sees, so low grazes it and shows relief; {from: \"front\"} lights from the camera. It turns with each view's camera. In bed axes instead: {azimuth_deg, elevation_deg} (azimuth 0 = from +X, counter-clockwise seen from above, elevation 1 to 90 above the horizon) or {direction: [x, y, z]}, the way the light travels (from the light to the scene); these can light a face from behind, giving a dark picture. A face square to the light is drawn at about 0.9 of its colour, one turned away at about 0.28; no highlight. The answer's light gives the bed-axes direction used (direction, azimuth_deg, elevation_deg; bed_elevation_deg with from) and applied: false with a warning when the render shader could not be used (shader_fallback) or nothing was drawn. 3D views only."},
         {"properties", {
-            {"azimuth_deg", {{"type", "number"}, {"description", "Degrees; 0 = light from +X, counter-clockwise seen from above"}}},
-            {"elevation_deg", {{"type", "number"}, {"description", "Degrees above the horizon, 1 to 90"}}},
+            {"from", {{"type", "string"}, {"enum", {"left", "right", "top", "bottom", "front"}}, {"description", "Camera-relative: the side of the image the light comes from"}}},
+            {"azimuth_deg", {{"type", "number"}, {"description", "Bed axes. Degrees; 0 = light from +X, counter-clockwise seen from above"}}},
+            {"elevation_deg", {{"type", "number"}, {"description", "Degrees, 1 to 90: above the horizon (bed axes) or above the surface the camera sees (from)"}}},
             {"direction", vec3_schema("[x, y, z] the way the light travels, bed axes")},
+            {"bed_elevation_deg", {{"type", "number"}, {"description", "Accepted back from an answer; ignored"}}},
             {"applied", {{"type", "boolean"}, {"description", "Accepted back from an answer; ignored"}}},
             {"warning", {{"type", "string"}, {"description", "Accepted back from an answer; ignored"}}}
         }}

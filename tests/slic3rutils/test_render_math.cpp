@@ -467,3 +467,23 @@ TEST_CASE("an orthographic fit zooms to the orthographic limit", "[RenderMath]")
     const ScreenBBox sb = screen_bbox_of(frame, box);
     CHECK_THAT(fill_of(sb), Catch::Matchers::WithinAbs(1. / 1.08, 1e-6));
 }
+
+TEST_CASE("an exact camera clips what is nearer than its near plane, and says where that is", "[RenderMath]")
+{
+    CHECK(exact_near_plane_mm(100.) == 1.);
+    CHECK(exact_near_plane_mm(10.) == 0.5);      // never under half a millimetre
+    CHECK(exact_near_plane_mm(1000.) == 10.);
+
+    const Vec3d position(0., -100., 0.), target(0., 0., 0.);
+    for (const ExactCameraSpec& lens : {perspective_lens(30.), ortho_lens(40.)}) {
+        const CameraFrame frame = exact_camera_frame(position, target, lens, 512, 512, k_depth);
+        CHECK_THAT(frame_near_mm(frame), Catch::Matchers::WithinAbs(1., 1e-9));
+
+        auto ndc_z = [&frame](const Vec3d& p) {
+            const Eigen::Vector4d clip = frame.projection * (frame.view * Eigen::Vector4d(p.x(), p.y(), p.z(), 1.));
+            return clip.z() / clip.w();
+        };
+        CHECK(ndc_z(Vec3d(0., -99.8, 0.)) < -1.);    // 0.2 mm in front of the eye: before the near plane, not drawn
+        CHECK(ndc_z(Vec3d(0., -98.5, 0.)) > -1.);    // 1.5 mm in front: drawn
+    }
+}

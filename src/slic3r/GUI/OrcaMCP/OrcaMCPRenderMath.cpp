@@ -218,7 +218,7 @@ CameraFrame exact_camera_frame(const Vec3d& position, const Vec3d& target, const
     camera.look_at(position, target, stable_camera_up(position, target));
 
     const double distance = (target - position).norm();
-    const double near_z   = std::max(0.5, 0.01 * distance);
+    const double near_z   = exact_near_plane_mm(distance);
     double       far_z    = near_z + 1.;
     if (depth_box.defined)
         for (int i = 0; i < 8; ++i) {
@@ -231,6 +231,19 @@ CameraFrame exact_camera_frame(const Vec3d& position, const Vec3d& target, const
     const double top    = lens.perspective ? near_z * std::tan(0.5 * lens.fov_deg * PI / 180.) : 0.5 * lens.ortho_height_mm;
     camera.apply_projection(-top * aspect, top * aspect, -top, top, near_z, far_z);
     return camera_frame_of(camera);
+}
+
+double exact_near_plane_mm(double distance)
+{
+    return std::max(0.5, 0.01 * distance);
+}
+
+double frame_near_mm(const CameraFrame& frame)
+{
+    const Eigen::Matrix4d& p = frame.projection;
+    if (frame_is_perspective(frame))
+        return std::abs(p(2, 2) - 1.) > 1e-12 ? p(2, 3) / (p(2, 2) - 1.) : 0.;
+    return std::abs(p(2, 2)) > 1e-12 ? (p(2, 3) + 1.) / p(2, 2) : 0.;
 }
 
 bool frame_is_perspective(const CameraFrame& frame)

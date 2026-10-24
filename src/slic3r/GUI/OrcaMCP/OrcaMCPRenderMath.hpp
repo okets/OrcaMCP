@@ -102,6 +102,10 @@ CameraFrame exact_camera_frame(const Vec3d& position, const Vec3d& target, const
 // (0 for orthographic), the eye in bed mm, and the size of one pixel in mm on the plane through `target` square to
 // the view (everywhere, orthographic). 0 for a degenerate projection.
 bool   frame_is_perspective(const CameraFrame& frame);
+// An exact camera's near plane for an eye `distance` mm from its target: anything nearer the eye is clipped.
+double exact_near_plane_mm(double distance);
+// The near plane a frame's projection was built with, in mm from the eye (0 for a degenerate projection).
+double frame_near_mm(const CameraFrame& frame);
 double frame_fov_deg(const CameraFrame& frame);
 Vec3d  frame_eye(const CameraFrame& frame);
 double mm_per_pixel_at_target(const CameraFrame& frame, const Vec3d& target);

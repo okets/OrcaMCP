@@ -48,7 +48,7 @@ TEST_CASE("azimuth and elevation make the direction the light comes from", "[Ren
 TEST_CASE("a light round-trips between direction and angles", "[RenderLight]")
 {
     const LightRequest angles = *read_light({{"azimuth_deg", 30}, {"elevation_deg", 12}});
-    const json         answer = light_json(angles);
+    const json         answer = light_json(angles, Eigen::Matrix4d::Identity());
 
     // The answer's direction is the way the light travels: from the light to the scene.
     CHECK_THAT(answer["direction"][2].get<double>(), Catch::Matchers::WithinAbs(-std::sin(12. * k_pi / 180.), 1e-12));
@@ -136,4 +136,92 @@ TEST_CASE("the light is part of the request, and a layer plan refuses it", "[Ren
 
     r = read_render_request({{"plate_index", 0}, {"light", {{"elevation_deg", 12}}}}, error);
     CHECK_FALSE(r.has_value());
+}
+
+namespace {
+
+CameraFrame front_camera()
+{
+    // In front of the part (-Y), looking along +Y: the image's right is +X, up is +Z.
+    return exact_camera_frame(Vec3d(0., -100., 0.), Vec3d(0., 0., 0.), ExactCameraSpec{true, 30., 0.}, 256, 256,
+                              BoundingBoxf3(Vec3d(-50., -50., -50.), Vec3d(50., 50., 50.)));
+}
+
+} // namespace
+
+TEST_CASE("a camera-relative light comes from the side of the image it names", "[RenderLight]")
+{
+    const CameraFrame frame = front_camera();
+    const double      el    = 15. * k_pi / 180.;
+    const LightRequest left = *read_light({{"from", "left"}, {"elevation_deg", 15}});
+    const Vec3d        toward = light_toward_world(left, frame.view);
+    CHECK_THAT(toward.x(), Catch::Matchers::WithinAbs(-std::cos(el), 1e-9));   // the image's left is -X here
+    CHECK_THAT(toward.y(), Catch::Matchers::WithinAbs(-std::sin(el), 1e-9));   // and it is raised toward the camera (-Y)
+    CHECK_THAT(toward.z(), Catch::Matchers::WithinAbs(0., 1e-9));
+    CHECK(light_toward_world(*read_light({{"from", "right"}, {"elevation_deg", 15}}), frame.view).x() > 0.9);
+    CHECK(light_toward_world(*read_light({{"from", "top"}, {"elevation_deg", 15}}), frame.view).z() > 0.9);
+    CHECK(light_toward_world(*read_light({{"from", "bottom"}, {"elevation_deg", 15}}), frame.view).z() < -0.9);
+    CHECK((light_toward_world(*read_light({{"from", "front"}}), frame.view) - Vec3d(0., -1., 0.)).norm() < 1e-9);
+
+    // It grazes the surface the camera sees: a facet facing the camera is lit at sin(elevation), the shader's n.l.
+    const ShaderSettings s = raking_light_settings(left, frame.view);
+    CHECK_THAT(s.light_dir_eye.z(), Catch::Matchers::WithinAbs(std::sin(el), 1e-9));
+    CHECK_THAT(s.light_dir_eye.norm(), Catch::Matchers::WithinAbs(1., 1e-9));
+
+    // The same request turns with another camera: from above, the image's left is -X still, the toward-camera is +Z.
+    const CameraFrame top = exact_camera_frame(Vec3d(0., 0., 100.), Vec3d(0., 0., 0.), ExactCameraSpec{true, 30., 0.}, 256, 256,
+                                               BoundingBoxf3(Vec3d(-50., -50., -50.), Vec3d(50., 50., 50.)));
+    CHECK(light_toward_world(left, top.view).z() > 0.2);
+}
+
+TEST_CASE("a camera-relative light's answer names the bed-axes light and is accepted back", "[RenderLight]")
+{
+    const CameraFrame  frame  = front_camera();
+    const LightRequest left   = *read_light({{"from", "left"}, {"elevation_deg", 15}});
+    const json         answer = light_json(left, frame.view);
+    CHECK(answer["from"] == "left");
+    CHECK_THAT(answer["elevation_deg"].get<double>(), Catch::Matchers::WithinAbs(15., 1e-12));   // as asked
+    CHECK(answer.contains("bed_elevation_deg"));
+    CHECK(answer["direction"][0].get<double>() > 0.9);   // travelling +X: from the left
+
+    json back = answer;
+    back["applied"] = true;
+    const LightRequest again = *read_light(back);
+    CHECK(again.from == "left");
+    CHECK_THAT(again.elevation_deg, Catch::Matchers::WithinAbs(15., 1e-12));
+
+    CHECK(read_light({{"from", "left"}})->elevation_deg == 20.);   // the default
+    CHECK(refusal_of({{"from", "behind"}}).find("light.from") != std::string::npos);
+    CHECK(refusal_of({{"from", "left"}, {"elevation_deg", 0}}).find("between 1 and 90") != std::string::npos);
+}
+
+TEST_CASE("a light straight above is accepted back with any azimuth", "[RenderLight]")
+{
+    const LightRequest above  = *read_light({{"azimuth_deg", 17}, {"elevation_deg", 90}});
+    const json         answer = light_json(above, Eigen::Matrix4d::Identity());
+    CHECK_NOTHROW(read_light(answer));
+    json other = answer;
+    other["azimuth_deg"] = 200;   // the azimuth means nothing at 90 degrees
+    CHECK_NOTHROW(read_light(other));
+    other["elevation_deg"] = 60;
+    CHECK(refusal_of(other).find("different lights") != std::string::npos);
+}
+
+TEST_CASE("the raking light draws a lit face near 0.9 and a shadowed one near 0.28 of its colour", "[RenderLight]")
+{
+    for (const double emission : {0.3, 0.0, 0.2}) {
+        for (const json& request : {json({{"azimuth_deg", 30}, {"elevation_deg", 12}}), json({{"from", "left"}})}) {
+            const ShaderSettings s = raking_light_settings(*read_light(request), Eigen::Matrix4d::Identity(), emission);
+            INFO(request.dump() << " emission " << emission);
+            const double lit = raking_brightness(1., s, emission), shadow = raking_brightness(0., s, emission);
+            CHECK(lit >= 0.88);
+            CHECK(lit <= 0.92);
+            CHECK(shadow >= 0.25);
+            CHECK(shadow <= 0.30);
+            CHECK(raking_brightness(-0.5, s, emission) == shadow);   // turned away adds nothing
+            CHECK(raking_brightness(0.5, s, emission) > shadow);
+        }
+    }
+    // The default settings are the thumbnail shader's: its brightest face is 0.3 + 0.3 + 0.48 + the second light.
+    CHECK(raking_brightness(1., ShaderSettings{}, 0.3) == Catch::Approx(0.3 + 0.3 + k_top_diffuse));
 }

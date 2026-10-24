@@ -25,6 +25,7 @@ uniform bool use_light_dir;   // true: the top light comes from light_dir_eye (a
 uniform vec3 light_dir_eye;
 uniform float ambient;
 uniform bool front_light;     // false: the second light is left out
+uniform float top_gain;       // scales the top light's diffuse term (1 draws what thumbnail draws)
 uniform float specular;       // 0 leaves the top light's specular highlight out (1 draws what thumbnail draws)
 
 in vec3 v_position;
@@ -44,7 +45,7 @@ void main()
     vec3 top_dir = use_light_dir ? normalize(light_dir_eye) : LIGHT_TOP_DIR;
     float NdotL = max(dot(normal, top_dir), 0.0);
 
-    intensity.x = ambient + NdotL * LIGHT_TOP_DIFFUSE;
+    intensity.x = ambient + NdotL * LIGHT_TOP_DIFFUSE * top_gain;
     vec4 position = view_model_matrix * vec4(v_position, 1.0);
     intensity.y = specular * LIGHT_TOP_SPECULAR * pow(max(dot(-normalize(position.xyz), reflect(-top_dir, normal)), 0.0), LIGHT_TOP_SHININESS);
 

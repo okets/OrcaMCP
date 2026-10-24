@@ -109,7 +109,7 @@ bool is_camera_answer_key(const std::string& key)
 {
     static const char* const keys[] = {"view_matrix", "projection_matrix", "viewport", "type", "pixel_origin", "projection",
                                        "camera_mode", "fov_deg", "mm_per_pixel", "moved", "requested_position", "replayed",
-                                       "camera_position", "target", "preset", "fit", "input_frame"};
+                                       "camera_position", "target", "preset", "fit", "input_frame", "plate_index", "near_mm"};
     for (const char* k : keys)
         if (key == k)
             return true;
@@ -141,6 +141,8 @@ ViewRequest read_replay_view(const nlohmann::json& view, const nlohmann::json& c
         out.camera_position = read_point3(camera["camera_position"], "camera.camera_position");
     if (camera.contains("target") && is_number_array3(camera["target"]))
         out.target = read_point3(camera["target"], "camera.target");
+    if (camera.contains("plate_index") && camera["plate_index"].is_number_integer())
+        out.replay_plate = camera["plate_index"].get<int>();
     out.fit_json = nlohmann::json();
     return out;
 }
@@ -334,6 +336,11 @@ RenderRequest read_request(const nlohmann::json& payload)
     for (const nlohmann::json& view : views)
         out.views.push_back(read_view(view));
     adopt_replay_resolution(payload, out);
+    for (const ViewRequest& view : out.views)
+        if (view.replay_plate && *view.replay_plate != out.plate_index)
+            throw std::runtime_error("this camera was drawn of plate " + std::to_string(*view.replay_plate) + ", not plate " +
+                                     std::to_string(out.plate_index) + "; replay it with plate_index " + std::to_string(*view.replay_plate) +
+                                     ", or frame this plate with a preset");
     return out;
 }
 
@@ -363,12 +370,13 @@ bool ShaderSettings::is_default() const
 {
     const ShaderSettings d;
     return clipping_plane == d.clipping_plane && use_light_dir == d.use_light_dir && light_dir_eye == d.light_dir_eye &&
-           ambient == d.ambient && front_light == d.front_light && specular == d.specular;
+           ambient == d.ambient && front_light == d.front_light && specular == d.specular &&
+           top_gain == d.top_gain;
 }
 
 const std::vector<std::string>& shader_settings_uniform_names()
 {
-    static const std::vector<std::string> names = {"clipping_plane", "use_light_dir", "light_dir_eye", "ambient", "front_light", "specular"};
+    static const std::vector<std::string> names = {"clipping_plane", "use_light_dir", "light_dir_eye", "ambient", "front_light", "specular", "top_gain"};
     return names;
 }
 

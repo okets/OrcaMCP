@@ -599,7 +599,7 @@ static bool scene_unchanged_since(const RenderJob& job)
 // The camera a view's answer carries: the three keys pick_facet and a replay parse (written by the function they parse
 // with, so the halves cannot disagree about names or row order), then what the picture is for the reader. Pixel row 0 is
 // the top of the image and unproject_pixel_to_ray assumes that.
-static nlohmann::json camera_answer(const ResolvedView& view, const RenderCameraInfo& cam)
+static nlohmann::json camera_answer(const ResolvedView& view, const RenderCameraInfo& cam, int plate_index)
 {
     const OrcaMCP::ViewRequest& asked = view.request;
     const bool drawn_as_given = asked.exact() || asked.replay.has_value();
@@ -613,6 +613,8 @@ static nlohmann::json camera_answer(const ResolvedView& view, const RenderCamera
     json["fit"]           = asked.fit_json;
     json["input_frame"]   = asked.input_frame;
     json["replayed"]      = asked.replay.has_value();
+    json["plate_index"]   = plate_index;
+    json["near_mm"]       = OrcaMCP::frame_near_mm(cam.frame);
 
     // Fit mode may back the eye away to keep the near plane out (Camera::apply_projection): then camera_position is
     // the eye the picture was drawn from, and the position asked for is requested_position.
@@ -746,7 +748,7 @@ nlohmann::json OrcaMCPPlateUtils::DrawRender(RenderJob& job)
         // required keys are written by the same function pick_facet parses with, so the two halves
         // cannot disagree about names or row order; the rest is for the reader. Pixel row 0 is the
         // top of the image and unproject_pixel_to_ray assumes that.
-        const nlohmann::json camera_json = camera_answer(view, cam);
+        const nlohmann::json camera_json = camera_answer(view, cam, plate_index);
 
         nlohmann::json entry;
         entry["camera"] = camera_json;
@@ -758,10 +760,13 @@ nlohmann::json OrcaMCPPlateUtils::DrawRender(RenderJob& job)
         }
         entry["overlays"] = OrcaMCP::overlay_options_to_json(asked.overlays);
         if (asked.light) {
-            entry["light"] = OrcaMCP::light_json(*asked.light);
-            entry["light"]["applied"] = !report.shader_fallback;
+            entry["light"] = OrcaMCP::light_json(*asked.light, cam.frame.view);
+            const bool applied = report.completed && !report.shader_fallback;
+            entry["light"]["applied"] = applied;
             if (report.shader_fallback)
                 entry["light"]["warning"] = "This driver could not build the render shader, so the light was not applied: the picture is lit as the default 3D view is.";
+            else if (!report.completed)
+                entry["light"]["warning"] = "The picture was not drawn (no render shader or no 3D view), so the light was not applied.";
         }
         rendered.push_back({std::move(image), std::move(entry)});
     }
@@ -919,6 +924,9 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
     // driver (GLShadersManager logged it) the render falls back to thumbnail and its shading is ignored.
     GLShaderProgram* shader = wxGetApp().get_shader("mcp_render");
     const bool       shader_fallback = shader == nullptr;
+    if (report != nullptr)
+        report->shader_fallback = shader_fallback;
+        report->completed       = true;   // set before any early return: the answer reads it
     if (shader_fallback) {
         static std::once_flag logged;   // one line per app run, not one per picture
         std::call_once(logged, [] { BOOST_LOG_TRIVIAL(warning) << "RenderThumbnail: the mcp_render shader is not available, drawing with thumbnail"; });
@@ -1038,7 +1046,7 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
         OrcaMCP::ShaderSettings shading = options.shading;
         if (options.light) {
             const std::array<double, 4> clipping = shading.clipping_plane;
-            shading                              = OrcaMCP::raking_light_settings(*options.light, frame.view);
+            shading                              = OrcaMCP::raking_light_settings(*options.light, frame.view, options.emission);
             shading.clipping_plane               = clipping;   // a section view's cut stays
         }
         shader->set_uniform("clipping_plane", shading.clipping_plane);
@@ -1047,6 +1055,7 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
         shader->set_uniform("ambient", shading.ambient);
         shader->set_uniform("front_light", shading.front_light);
         shader->set_uniform("specular", shading.specular);
+        shader->set_uniform("top_gain", shading.top_gain);
     }
     RenderPass pass{view_matrix, projection_matrix, *shader, plate_index, visible_volumes};
 
@@ -1116,6 +1125,7 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
         report->plate_box     = plate->get_plate_box();
         report->scene         = {scene_volumes, scene_current};
         report->shader_fallback = shader_fallback;
+        report->completed       = true;
     }
     BOOST_LOG_TRIVIAL(info) << "RenderThumbnail: read " << thumbnail_data.width << "x" << thumbnail_data.height
                             << " from " << (offscreen.ok ? "offscreen framebuffer" : "current framebuffer")

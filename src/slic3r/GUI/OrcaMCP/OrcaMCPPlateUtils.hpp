@@ -83,6 +83,7 @@ struct RenderReport
     bool                        uniform_image = false;  // every pixel identical, before overlays
     BoundingBoxf3               plate_box;              // the requested plate's build volume, bed mm
     OrcaMCP::RenderScene        scene;                  // the 3D view's scene it drew from
+    bool                        completed = false;      // the picture was drawn (no early return)
     bool                        shader_fallback = false; // mcp_render did not build on this driver: drawn with thumbnail, shading ignored
 };
 

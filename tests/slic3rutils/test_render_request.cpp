@@ -360,3 +360,22 @@ TEST_CASE("A null preset is no preset", "[RenderRequest][orcamcp]")
     const json pose = {{"preset", nullptr}, {"camera_position", {0, -60, 20}}, {"target", {0, 0, 10}}};
     CHECK_FALSE(read_ok(one_view(pose)).views[0].preset.has_value());
 }
+
+TEST_CASE("A camera is replayed only on the plate it was drawn of", "[RenderRequest][orcamcp]")
+{
+    json camera = square_camera(512);
+    camera["plate_index"] = 2;
+    json payload = one_view({{"camera", camera}});
+    payload["plate_index"] = 0;
+    const std::string error = refusal_of(payload);
+    CHECK(error.find("drawn of plate 2, not plate 0") != std::string::npos);
+    CHECK(error.find("plate_index 2") != std::string::npos);
+    CHECK(refusal_of(one_view(camera)).find("drawn of plate 2") != std::string::npos);   // the inline form too
+
+    payload["plate_index"] = 2;
+    CHECK(read_ok(payload).views[0].replay.has_value());
+    camera.erase("plate_index");   // a camera from before plates were named is taken on any
+    payload["plate_index"] = 0;
+    payload["views"]       = json::array({{{"camera", camera}}});
+    CHECK(read_ok(payload).views[0].replay.has_value());
+}

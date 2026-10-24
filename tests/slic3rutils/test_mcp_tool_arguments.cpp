@@ -508,6 +508,8 @@ TEST_CASE("render_plate_view views are strict, and a camera and a fit a render r
     const json light = {{"direction", {-0.8, -0.4, -0.2}}, {"azimuth_deg", 26.57}, {"elevation_deg", 12.0}, {"applied", true}};
     CHECK(refusal("render_plate_view", {{"plate_index", 0}, {"light", light}}) == "");
     CHECK(refusal("render_plate_view", {{"plate_index", 0}, {"light", "default"}}) == "");
+    const json relative = {{"from", "left"}, {"elevation_deg", 12.0}, {"direction", {1, 0, 0}}, {"azimuth_deg", 0.0}, {"bed_elevation_deg", 12.0}};
+    CHECK(refusal("render_plate_view", {{"plate_index", 0}, {"light", relative}}) == "");
     CHECK(::contains(refusal("render_plate_view", {{"plate_index", 0}, {"light", {{"brightness", 2}}}}), "has no key \"brightness\""));
     // The paint options an answer echoes (paint, color_by) go back; texture_layers and the others are declared.
     CHECK(refusal("render_plate_view", {{"plate_index", 0}, {"paint", {"support", "texture"}}, {"texture_layers", {0, 3}}, {"color_by", "filament"}}) == "");

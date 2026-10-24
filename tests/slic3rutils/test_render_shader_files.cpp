@@ -7,6 +7,7 @@
 #include <sstream>
 #include <string>
 
+#include "slic3r/GUI/OrcaMCP/OrcaMCPRenderLight.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPRenderRequest.hpp"
 
 // The mcp_render shader (resources/shaders/{110,140}) is compiled only by the running app, so this is the one guard
@@ -114,6 +115,13 @@ TEST_CASE("mcp_render's default settings are what thumbnail does", "[RenderShade
         std::smatch match;
         REQUIRE(std::regex_search(thumbnail, match, ambient));
         CHECK(std::stod(match[1]) == Catch::Approx(double(defaults.ambient)));
+
+        // The raking light's brightness arithmetic uses thumbnail's top diffuse: 0.8 * INTENSITY_CORRECTION (0.6).
+        CHECK(thumbnail.find("#define LIGHT_TOP_DIFFUSE    (0.8 * INTENSITY_CORRECTION)") != std::string::npos);
+        CHECK(thumbnail.find("#define INTENSITY_CORRECTION 0.6") != std::string::npos);
+        CHECK(k_top_diffuse == Catch::Approx(0.8 * 0.6));
+        CHECK(defaults.top_gain == 1.f);
+        CHECK(mcp.find("NdotL * LIGHT_TOP_DIFFUSE * top_gain") != std::string::npos);
 
         // Left at the defaults the second light is on and the top light is the fixed one: thumbnail has the front light
         // term, and mcp_render takes it unless front_light is off and the fixed top direction unless use_light_dir.
