@@ -3095,6 +3095,9 @@ starts at x ≈ 307. A camera aimed at another plate's area returns a flat image
 | `image_format` | `"png"` / `"jpeg"` | No | Default `png` for files, `jpeg` for inline base64. |
 | `overlays` | boolean / object | No | `true` (default) draws all; `false` none; or `{outline, grid, origin, labels, excluded}` booleans. `excluded` draws the hatched excluded areas and collision volumes (a height-limited one drawn at its height; in a layer plan, dashed when not at that layer). |
 | `light` | `"default"` / object | No | `{azimuth_deg, elevation_deg}` (azimuth 0 = from +X, counter-clockwise from above; elevation 1-90) or `{direction: [x,y,z]}` (the way the light travels, bed axes): one directional light with little fill and no highlight, so a shallow relief casts readable shading, e.g. `{azimuth_deg: 30, elevation_deg: 12}` for a 0.3 mm texture. The same bed-axis light in every view. 3D views only (refused with `layer_view`). Each entry answers `light: {direction, azimuth_deg, elevation_deg, applied}`; `applied: false` with a `warning` when the app's `mcp_render` shader did not build on this driver (`shader_fallback: true`) and the picture is lit as by default. |
+| `paint` | array | No | Channels to tint on the parts, as the paint panels colour them: `support` and `seam` (enforcer light green `#80ff80`, blocker light red `#ff8080`), `fuzzy_skin` (light green), `texture` (one colour per layer, from a fixed table apart from the object palette). The unpainted surface is then drawn neutral grey so the tints read, whatever `color_by` says. Ask one channel at a time to tell `support` from `seam`: they share the panels' colours. Colour paint is never an option: it is always drawn in its filaments' colours. Each entry answers `paint` and `tint_legend`: per tint `{channel, layer?, state, state_name, label, color, objects: [{object_id, facets, area_mm2}]}`; `facets` is `get_object_paint`'s leaf-triangle count and `area_mm2` the painted area of one instance (the first on the plate); a tint nothing carries has `objects: []`. 3D views only. |
+| `texture_layers` | array of integers 0-7 | No | With `paint: ["texture"]`: only these layer slots (default every slot a texture stack on the plate has a layer in). Without `texture` in `paint`: refused. |
+| `color_by` | `"object"` / `"filament"` | No | `object` (default): one colour per object, so objects tell apart. `filament`: each part in its filament's colour, as the 3D view. Every `objects_in_frame` entry says `color_source` (`palette`, `filament`, `paint`, `neutral` or `wipe_tower`) and `color` (`#rrggbb`, the label's colour): a part with colour paint is `paint` and reports its base filament's colour, as drawn (it used to report the palette colour). `relief` comes with a later release. |
 | `layer_view` | `"first_layer"` / object | No | A top-down plan instead of a 3D render: the **first-layer plan**, or **any sliced layer** as `{layer: N}` or `{z: mm}` — see below. Ignores `views`. |
 
 **A view** is one of:
@@ -3136,9 +3139,18 @@ e.g. `{"camera_position": [60, 0, 20], "target": [60, 40, 20], "camera_mode": "e
 side view, `"projection": "orthographic", "ortho_height_mm": 20` (512 px: 0.0390625 mm per pixel). Exact near is
 max(0.5, 1% of the distance) mm; everything in front of the eye is drawn. A region inside a part is hidden by the part.
 
+**Paint.** `paint` draws the painted facets of every part on the plate over the unbaked surface: `{"plate_index": 0,
+"paint": ["support"], "views": [{"preset": "iso", "fit": {"object_id": 0}}]}` shows support enforcers and blockers in the gizmos' own
+colours on grey, and the legend says how many facets and mm2 each covers. Texture masks are drawn where they are painted, not as a
+baked relief. The tints do not need the `mcp_render` shader (`shader_fallback` is still reported for `light`). A scene that changes
+while the paint is being prepared answers "the scene changed ..."; paint that needs more than the call's wait answers an error naming
+`ORCAMCP_TIMEOUT` and one channel at a time.
+
 **Examples:**
 ```json
 {"name": "render_plate_view", "arguments": {"plate_index": 1, "save_to_file": true}}
+{"name": "render_plate_view", "arguments": {"plate_index": 0, "save_to_file": true, "paint": ["support", "seam"],
+  "color_by": "filament"}}
 {"name": "render_plate_view", "arguments": {"plate_index": 1, "save_to_file": true,
   "views": [{"preset": "low", "fit": {"object_id": 8}}, {"preset": "top"}]}}
 {"name": "render_plate_view", "arguments": {"plate_index": 1, "save_to_file": true, "layer_view": "first_layer"}}
@@ -3153,7 +3165,8 @@ max(0.5, 1% of the distance) mm; everything in front of the eye is drawn. A regi
   "frame": "bed_mm",
   "plate_origin": [307.2, 0.0],
   "objects_in_frame": [
-    {"object_index": 8, "name": "Top Frame-SOLID-2", "screen_bbox": [206, 184, 437, 315], "clipped": false}
+    {"object_index": 8, "name": "Top Frame-SOLID-2", "color_source": "palette", "color": "#e35a3d",
+     "screen_bbox": [206, 184, 437, 315], "clipped": false}
   ],
   "scene_current": true,
   "uniform_image": false,

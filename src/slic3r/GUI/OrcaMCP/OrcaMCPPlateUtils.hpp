@@ -14,6 +14,7 @@
 #include "slic3r/GUI/OrcaMCP/OrcaMCPMeshHealth.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPPaintSelect.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPRenderMath.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPRenderPaint.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPRenderRequest.hpp"
 #include "libslic3r/Color.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPBedExclusion.hpp"
@@ -33,6 +34,7 @@ struct RenderPass
     const Transform3d& projection;
     GLShaderProgram&   shader;
     int                plate_index;
+    const std::vector<GLVolume*>& drawn;   // the volumes this picture draws, in order
 };
 
 // How RenderThumbnail should draw. Defaults are vision v2's: each object in its palette colour on a
@@ -40,6 +42,8 @@ struct RenderPass
 struct RenderOptions
 {
     bool      palette_colors = true;                    // object_palette_color(object_index); false = filament colours
+    bool      neutral_base   = false;                   // paint tints asked for: unpainted surfaces in GLVolume::NEUTRAL_COLOR so they read
+    OrcaMCP::ColorBy color_by = OrcaMCP::ColorBy::Object; // what the report calls the colours' source
     ColorRGBA background{0.93f, 0.93f, 0.93f, 1.0f};
     float     emission = 0.3f;                          // the thumbnail shader's emission_factor
     // What the view is zoomed to. Unset: the plate's visible volumes, as before. A preset or a
@@ -67,7 +71,8 @@ struct RenderedVolume
     int           object_index = -1;                    // index into Model::objects; -1 for the wipe tower
     std::string   name;
     BoundingBoxf3 world_bbox;                           // bed mm
-    ColorRGBA     color;
+    ColorRGBA     color;                                // the colour the label is drawn in (a colour-painted part: its base filament's)
+    std::string   color_source = "palette";             // palette | filament | paint | neutral (OrcaMCP::color_source_of)
     bool          wipe_tower = false;
 };
 
@@ -172,6 +177,12 @@ struct RenderJob
     std::vector<BoundingBoxf3>                legacy_boxes;
     std::vector<OrcaMCP::ExclusionRegion>     exclusion_regions;
     std::vector<Work>                         work;                           // run by ComputeRender on the HTTP thread
+
+    // paint: the tints asked for, what the first step captured of the parts that carry them, and what the work made of it.
+    std::vector<OrcaMCP::PaintTint>           tints;
+    std::vector<OrcaMCP::PaintVolumeInput>    paint_inputs;
+    std::vector<OrcaMCP::PaintFacets>         paint_facets;
+    bool                                      paint_done = false;             // the work finished (else the call's wait ran out)
 };
 
 class OrcaMCPPlateUtils {

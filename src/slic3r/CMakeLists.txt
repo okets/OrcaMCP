@@ -507,6 +507,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/OrcaMCP/OrcaMCPBedExclusion.cpp
     GUI/OrcaMCP/OrcaMCPRenderLight.hpp
     GUI/OrcaMCP/OrcaMCPRenderLight.cpp
+    GUI/OrcaMCP/OrcaMCPRenderPaint.hpp
+    GUI/OrcaMCP/OrcaMCPRenderPaint.cpp
     GUI/OrcaMCP/OrcaMCPRenderRequest.hpp
     GUI/OrcaMCP/OrcaMCPRenderRequest.cpp
     GUI/OrcaMCP/OrcaMCPRenderSchema.cpp

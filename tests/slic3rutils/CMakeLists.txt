@@ -78,6 +78,7 @@ add_executable(${_TEST_NAME}_tests
     test_transform_frames.cpp
     test_render_math.cpp
     test_render_light.cpp
+    test_render_paint.cpp
     test_render_request.cpp
     test_render_shader_files.cpp
     test_mcp_image_files.cpp

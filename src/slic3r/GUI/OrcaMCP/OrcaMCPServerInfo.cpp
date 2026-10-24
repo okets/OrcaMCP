@@ -199,6 +199,7 @@ json tool_examples()
             {"close_up", R"({"plate_index": 0, "save_to_file": true, "views": [{"preset": "iso", "fit": {"point": [128, 128, 10], "radius_mm": 6}}]})"},
             {"exact_camera", R"({"plate_index": 0, "save_to_file": true, "views": [{"camera_position": [128, 60, 20], "target": [128, 128, 20], "camera_mode": "exact", "fov_deg": 40}]})"},
             {"raking_light", R"({"plate_index": 0, "save_to_file": true, "light": {"azimuth_deg": 30, "elevation_deg": 12}, "views": [{"preset": "iso", "fit": {"object_id": 0}}]})"},
+            {"paint", R"({"plate_index": 0, "save_to_file": true, "paint": ["support"], "views": [{"preset": "iso", "fit": {"object_id": 0}}]})"},
             {"replay_a_camera", "views: [{camera: <a camera object an earlier render returned>}] draws that view again, at its resolution"},
             {"first_layer_plan", R"({"plate_index": 1, "save_to_file": true, "layer_view": "first_layer"})"},
             {"sliced_layer_plan", R"({"plate_index": 0, "save_to_file": true, "layer_view": {"z": 10.0, "features": ["support", "support_interface"], "color_by": "filament"}})"},

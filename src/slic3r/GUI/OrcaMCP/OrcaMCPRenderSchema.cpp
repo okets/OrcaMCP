@@ -177,7 +177,7 @@ json views_schema()
 
 std::string render_plate_view_description()
 {
-    return "Render a picture of a plate, one object, a region or a sliced layer's toolpaths (layer_view). Omit views for a contact sheet of iso, top and front fitted to the plate. A view is a preset (iso|top|front|back|left|right|low) or {camera_position, target} in BED mm (the get_scene_info frame; plate N sits at plates[N].bounding_box), or add frame: \"plate_local\" to give them relative to the plate's front-left corner. By default (camera_mode fit) a custom camera gives only the direction: the picture is zoomed to the view's fit -- the plate, {object_id}, a box {min, max} or a point with radius_mm -- and the eye may be moved back (camera.moved says so). camera_mode exact honours the eye, with fov_deg, or projection orthographic with ortho_height_mm. A close-up is a small fit box, not more pixels: camera.mm_per_pixel says the scale. Pass a camera a render returned as views[i].camera to draw exactly that view again. The requested plate's objects are drawn, including any hanging over its edge, from the 3D scene whichever tab the app shows. Every view returns objects_in_frame, uniform_image (+hint), plate_origin and the camera; overlays (outline, 10 mm grid, origin, labels) are on by default. Use save_to_file=true for PNG paths. layer_view draws a top-down plan instead: \"first_layer\", or any sliced layer as {layer: N} or {z: mm}, filtered by features and filaments, with the layer's height, filaments and extruded areas -- the way to check supports, interfaces and which tool prints what on a given layer.";
+    return "Render a picture of a plate, one object, a region or a sliced layer's toolpaths (layer_view). Omit views for a contact sheet of iso, top and front fitted to the plate. A view is a preset (iso|top|front|back|left|right|low) or {camera_position, target} in BED mm (the get_scene_info frame; plate N sits at plates[N].bounding_box), or add frame: \"plate_local\" to give them relative to the plate's front-left corner. By default (camera_mode fit) a custom camera gives only the direction: the picture is zoomed to the view's fit -- the plate, {object_id}, a box {min, max} or a point with radius_mm -- and the eye may be moved back (camera.moved says so). camera_mode exact honours the eye, with fov_deg, or projection orthographic with ortho_height_mm. A close-up is a small fit box, not more pixels: camera.mm_per_pixel says the scale. Pass a camera a render returned as views[i].camera to draw exactly that view again. The requested plate's objects are drawn, including any hanging over its edge, from the 3D scene whichever tab the app shows. Every view returns objects_in_frame, uniform_image (+hint), plate_origin and the camera; overlays (outline, 10 mm grid, origin, labels) are on by default. paint draws support, seam, fuzzy_skin and texture-layer paint as the paint panels colour it (texture: one colour per layer, texture_layers to choose); colour paint is always drawn in its filaments' colours; color_by filament draws every part in its filament's colour instead of one colour per object. Use save_to_file=true for PNG paths. layer_view draws a top-down plan instead: \"first_layer\", or any sliced layer as {layer: N} or {z: mm}, filtered by features and filaments, with the layer's height, filaments and extruded areas -- the way to check supports, interfaces and which tool prints what on a given layer.";
 }
 
 json render_plate_view_schema()
@@ -207,6 +207,21 @@ json render_plate_view_schema()
                 {"description", "png or jpeg. Default: png when save_to_file is true (crisp overlays, alpha kept), jpeg for inline base64 (smaller)."}
             }},
             {"light", light_schema()},
+            {"paint", {
+                {"type", "array"},
+                {"items", {{"type", "string"}, {"enum", {"support", "seam", "fuzzy_skin", "texture"}}}},
+                {"description", "Paint to tint on the parts, as the paint panels colour it: support and seam enforcers light green and blockers light red, fuzzy_skin light green, texture one colour per layer (texture_layers chooses). The unpainted surface is then drawn neutral grey so the tints read. Colour paint is always drawn in its filaments' colours, without this. The answer's tint_legend gives each tint's colour and, per object, its facets (get_object_paint's count) and area_mm2 (one instance). Ask one channel at a time to tell support from seam in the picture: they share the panels' colours. 3D views only."}
+            }},
+            {"texture_layers", {
+                {"type", "array"},
+                {"items", {{"type", "integer"}, {"minimum", 0}, {"maximum", 7}}},
+                {"description", "With paint texture: only these layer slots (0 to 7). Default: every slot a texture stack on the plate has a layer in. A slot nothing is painted in is listed with no objects."}
+            }},
+            {"color_by", {
+                {"type", "string"},
+                {"enum", {"object", "filament"}},
+                {"description", "object (default): one colour per object, so objects tell apart. filament: each part in its filament's colour, as the 3D view. objects_in_frame[].color_source says where each part's colour came from: palette, filament, paint (colour paint, always its filaments' colours) or neutral (paint tints asked for)."}
+            }},
             {"views", views_schema()}
         }},
         {"required", {"plate_index"}}

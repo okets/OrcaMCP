@@ -64,6 +64,9 @@ struct ViewRequest
     bool exact() const { return mode == CameraMode::Exact; }
 };
 
+// What `color_by` draws each part in: the object's colour from the palette (the default), or its filament's.
+enum class ColorBy { Object, Filament };
+
 struct RenderRequest
 {
     int                  plate_index  = -1;
@@ -74,6 +77,9 @@ struct RenderRequest
     nlohmann::json       layer_view;                       // null: a 3D render
     std::vector<ViewRequest> views;                        // empty with a layer_view
     std::optional<LightRequest> light;                     // a single raking light; unset: the 3D view's two lights
+    std::vector<std::string> paint;                        // channels to tint, canonical order, no duplicates (support seam fuzzy_skin texture)
+    std::vector<int>     texture_layers;                   // texture only: the slots to tint, ascending; empty = every slot with a layer
+    ColorBy              color_by = ColorBy::Object;
     bool                 contact_sheet = false;            // no views asked: iso, top and front side by side
 };
 

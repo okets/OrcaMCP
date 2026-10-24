@@ -1,4 +1,5 @@
 #include "OrcaMCPPlateUtils.hpp"
+#include <memory>
 #include <mutex>
 #include "OrcaMCPPlateTools.hpp"
 #include "OrcaMCPLayerGcodeTools.hpp"
@@ -8,6 +9,9 @@
 #include "OrcaMCPCommon.hpp"
 #include "OrcaMCPMeshHealth.hpp"
 #include "OrcaMCPNextSteps.hpp"
+#include "OrcaMCPTextureDisplacement.hpp"
+#include "OrcaMCPPaintModel.hpp"
+#include "slic3r/GUI/TextureDisplacementObject.hpp"
 #include "slic3r/GUI/GLCanvas3D.hpp"
 #include "slic3r/GUI/OpenGLManager.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPRenderOverlay.hpp"
@@ -159,6 +163,8 @@ static void append_render_report(nlohmann::json& entry, const RenderReport& repo
             continue;
         in_frame.push_back({{"object_index", v.object_index},
                             {"name", v.name},
+                            {"color_source", v.color_source},
+                            {"color", OrcaMCP::hex_color(v.color)},
                             {"screen_bbox", {std::round(sb.x0), std::round(sb.y0), std::round(sb.x1), std::round(sb.y1)}},
                             {"clipped", sb.clipped}});
     }
@@ -431,6 +437,79 @@ static BoundingBoxf3 view_fit_box(const OrcaMCP::ViewRequest& view, PartPlate& p
     }
 }
 
+// What paint asks for, captured on the main thread: the tints (texture: the slots the plate's texture stacks have layers
+// in, unless texture_layers chose) and, per model part of every object on the plate, the annotation data of each tint
+// it carries. Parts that carry none are left out.
+static void capture_paint(const OrcaMCP::RenderRequest& asked, PartPlate& plate, RenderJob& job)
+{
+    if (asked.paint.empty())
+        return;
+    const ModelObjectPtrs& objects = wxGetApp().model().objects;
+    std::vector<size_t>    first_instance(objects.size(), size_t(-1));
+    std::vector<int>       slots_with_layers;
+    for (size_t oi = 0; oi < objects.size(); ++oi) {
+        for (size_t ii = 0; ii < objects[oi]->instances.size(); ++ii)
+            if (plate.contain_instance(int(oi), int(ii))) {
+                first_instance[oi] = ii;
+                break;
+            }
+        if (first_instance[oi] == size_t(-1))
+            continue;
+        const std::vector<int> slots = OrcaMCP::layer_slots_of(texture_stack_owner(*objects[oi]));
+        slots_with_layers.insert(slots_with_layers.end(), slots.begin(), slots.end());
+    }
+    job.tints = OrcaMCP::paint_tints(asked.paint, asked.texture_layers, slots_with_layers);
+
+    for (size_t oi = 0; oi < objects.size(); ++oi) {
+        if (first_instance[oi] == size_t(-1))
+            continue;
+        const ModelObject& object = *objects[oi];
+        for (size_t vi = 0; vi < object.volumes.size(); ++vi) {
+            const ModelVolume& volume = *object.volumes[vi];
+            if (!volume.is_model_part())
+                continue;
+            OrcaMCP::PaintVolumeInput input;
+            for (size_t t = 0; t < job.tints.size(); ++t) {
+                const FacetsAnnotation& annotation = OrcaMCP::annotation_for(volume, OrcaMCP::paint_channel_of(job.tints[t]));
+                if (!annotation.empty())
+                    input.per_tint.emplace_back(int(t), annotation.get_data());
+            }
+            if (input.per_tint.empty())
+                continue;
+            input.object_id        = int(oi);
+            input.volume_id        = int(vi);
+            input.object_identity  = object.id();
+            input.volume_identity  = volume.id();
+            input.mesh             = volume.mesh_ptr();
+            input.to_plate         = OrcaMCP::volume_to_plate(object, volume, first_instance[oi]);
+            job.paint_inputs.push_back(std::move(input));
+        }
+    }
+    RenderJob* self = &job;
+    job.work.push_back([self](const std::function<bool()>& stop) {
+        self->paint_facets = OrcaMCP::compute_paint_facets(self->paint_inputs, self->tints, stop);
+        self->paint_done   = !stop();
+    });
+}
+
+// True when the parts the paint was captured from are still the scene's: the same objects and volumes, meshes and paint.
+static bool paint_unchanged_since(const RenderJob& job)
+{
+    const ModelObjectPtrs& objects = wxGetApp().model().objects;
+    for (const OrcaMCP::PaintVolumeInput& in : job.paint_inputs) {
+        if (in.object_id < 0 || size_t(in.object_id) >= objects.size() || objects[in.object_id]->id() != in.object_identity)
+            return false;
+        const ModelObject& object = *objects[in.object_id];
+        if (in.volume_id < 0 || size_t(in.volume_id) >= object.volumes.size() || object.volumes[in.volume_id]->id() != in.volume_identity ||
+            object.volumes[in.volume_id]->mesh_ptr() != in.mesh)
+            return false;
+        for (const auto& [tint, data] : in.per_tint)
+            if (OrcaMCP::annotation_for(*object.volumes[in.volume_id], OrcaMCP::paint_channel_of(job.tints[size_t(tint)])).get_data() != data)
+                return false;
+    }
+    return true;
+}
+
 nlohmann::json OrcaMCPPlateUtils::PrepareRender(const nlohmann::json& payload, RenderJob& job)
 {
     std::string error;
@@ -484,6 +563,7 @@ nlohmann::json OrcaMCPPlateUtils::PrepareRender(const nlohmann::json& payload, R
         }
         job.views.push_back(std::move(resolved));
     }
+    capture_paint(asked, *plate, job);
 
     return nlohmann::json();
 }
@@ -513,7 +593,7 @@ static bool scene_unchanged_since(const RenderJob& job)
     } catch (const std::exception&) {
         return false;   // the object a fit framed is gone or no longer on the plate
     }
-    return true;
+    return paint_unchanged_since(job);
 }
 
 // The camera a view's answer carries: the three keys pick_facet and a replay parse (written by the function they parse
@@ -558,15 +638,73 @@ static nlohmann::json camera_answer(const ResolvedView& view, const RenderCamera
     return json;
 }
 
+// The tints' triangles as GL models, built once per call on the main thread and drawn after the volumes of each view.
+struct PaintOverlay
+{
+    const RenderJob*                      job = nullptr;
+    std::vector<std::unique_ptr<GLModel>> models;   // parallel to job->paint_facets
+
+    void build()
+    {
+        if (!models.empty())
+            return;
+        for (const OrcaMCP::PaintFacets& f : job->paint_facets) {
+            auto model = std::make_unique<GLModel>();
+            model->init_from(f.its);
+            model->set_color(job->tints[size_t(f.tint)].color);
+            models.push_back(std::move(model));
+        }
+    }
+
+    // Each tint over the surface it covers, pulled toward the camera so it wins the depth test against the coincident
+    // base surface, depth writes off (a tint, as the texture panel draws its own), lit by the picture's own shader.
+    void draw(RenderPass& pass)
+    {
+        build();
+        const ModelObjectPtrs& objects = wxGetApp().model().objects;
+        glsafe(::glEnable(GL_POLYGON_OFFSET_FILL));
+        glsafe(::glPolygonOffset(-2.f, -2.f));
+        glsafe(::glDepthMask(GL_FALSE));
+        for (const GLVolume* vol : pass.drawn) {
+            if (vol->is_wipe_tower)
+                continue;
+            const Transform3d model_matrix = vol->world_matrix();
+            const Matrix3d    normal       = pass.view.matrix().block(0, 0, 3, 3) * model_matrix.matrix().block(0, 0, 3, 3).inverse().transpose();
+            pass.shader.set_uniform("volume_world_matrix", model_matrix);
+            pass.shader.set_uniform("view_model_matrix", pass.view * model_matrix);
+            pass.shader.set_uniform("projection_matrix", pass.projection);
+            pass.shader.set_uniform("view_normal_matrix", normal);
+            if (vol->is_left_handed())
+                glFrontFace(GL_CW);
+            for (size_t i = 0; i < models.size(); ++i) {
+                const OrcaMCP::PaintFacets& f = job->paint_facets[i];
+                if (f.object_id == vol->composite_id.object_id && f.volume_id == vol->composite_id.volume_id &&
+                    size_t(f.object_id) < objects.size())
+                    models[i]->render(&pass.shader);
+            }
+            if (vol->is_left_handed())
+                glFrontFace(GL_CCW);
+        }
+        glsafe(::glDepthMask(GL_TRUE));
+        glsafe(::glDisable(GL_POLYGON_OFFSET_FILL));
+    }
+};
+
 nlohmann::json OrcaMCPPlateUtils::DrawRender(RenderJob& job)
 {
     const OrcaMCP::RenderRequest& asked = job.request;
     if (!scene_unchanged_since(job))
         return {{"status", "error"}, {"message", "the scene changed while the picture was being prepared; render again"}};
+    if (!job.tints.empty() && !job.paint_done)
+        return {{"status", "error"}, {"message", "the paint of the picture needs more than the call's wait: raise ORCAMCP_TIMEOUT, or ask for one channel at a time in paint"}};
 
     const int  plate_index = asked.plate_index;
     const int  resolution  = asked.resolution;
     const bool use_png     = asked.use_png;
+
+    PaintOverlay overlay;
+    overlay.job = &job;
+    const nlohmann::json legend = OrcaMCP::tint_legend_json(job.tints, job.paint_facets);
 
     struct Rendered { wxImage image; nlohmann::json entry; };
     std::vector<Rendered> rendered;
@@ -584,6 +722,11 @@ nlohmann::json OrcaMCPPlateUtils::DrawRender(RenderJob& job)
             options.zoom_box = view.fit_box;  // presets and object fits frame exactly what they were asked to
         options.orthographic = view.request.orthographic;
         options.light        = asked.light;
+        options.palette_colors = asked.color_by == OrcaMCP::ColorBy::Object;
+        options.color_by       = asked.color_by;
+        options.neutral_base   = !job.tints.empty();
+        if (!job.tints.empty())
+            options.after_volumes.push_back([&overlay](RenderPass& pass) { overlay.draw(pass); });
         if (view.request.replay)
             options.camera_frame = view.request.replay;
         else if (view.request.exact())
@@ -608,6 +751,11 @@ nlohmann::json OrcaMCPPlateUtils::DrawRender(RenderJob& job)
         nlohmann::json entry;
         entry["camera"] = camera_json;
         append_render_report(entry, report, cam.frame, plate_index);
+        entry["color_by"] = asked.color_by == OrcaMCP::ColorBy::Filament ? "filament" : "object";
+        if (!job.tints.empty()) {
+            entry["paint"]       = asked.paint;
+            entry["tint_legend"] = legend;
+        }
         entry["overlays"] = OrcaMCP::overlay_options_to_json(asked.overlays);
         if (asked.light) {
             entry["light"] = OrcaMCP::light_json(*asked.light);
@@ -900,7 +1048,7 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
         shader->set_uniform("front_light", shading.front_light);
         shader->set_uniform("specular", shading.specular);
     }
-    RenderPass pass{view_matrix, projection_matrix, *shader, plate_index};
+    RenderPass pass{view_matrix, projection_matrix, *shader, plate_index, visible_volumes};
 
     for (GLVolume* vol : visible_volumes) {
         // GLWipeTowerVolume keeps its per-filament colours in members this file cannot reach, and
@@ -910,8 +1058,17 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
         // Palette by object index (see RenderOptions): the question a picture answers is "which
         // object is that", and filament colours often coincide.
         const int object_index = vol->composite_id.object_id;
+        // The part's own filament colour, which colour paint always draws with (simple_render) and color_by filament asks for.
+        const ModelVolume* model_volume = (!vol->is_wipe_tower && object_index >= 0 && size_t(object_index) < model_objects.size() &&
+                                           vol->volume_idx() < model_objects[object_index]->volumes.size())
+                                              ? model_objects[object_index]->volumes[vol->volume_idx()] : nullptr;
+        const bool       colour_painted = model_volume != nullptr && vol->printable && !model_volume->mmu_segmentation_facets.empty();
+        const ColorRGBA  filament_color = (model_volume != nullptr && !extruder_colors.empty())
+                                              ? OrcaMCP::filament_color_for(model_volume->extruder_id(), extruder_colors) : vol->color;
         curr_color = vol->is_wipe_tower ? wipe_tower_color()
-                   : (options.palette_colors ? object_palette_color(object_index) : vol->color);
+                   : colour_painted     ? filament_color
+                   : options.neutral_base ? GLVolume::NEUTRAL_COLOR
+                   : (options.palette_colors ? object_palette_color(object_index) : filament_color);
         if (report != nullptr) {
             RenderedVolume drawn;
             drawn.object_index = vol->is_wipe_tower ? -1 : object_index;
@@ -922,6 +1079,8 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
             // and a picture framed to the object read as `clipped`.
             drawn.world_bbox   = vol->transformed_convex_hull_bounding_box();
             drawn.color        = curr_color;
+            drawn.color_source = vol->is_wipe_tower ? std::string("wipe_tower")
+                               : OrcaMCP::color_source_of(colour_painted, options.neutral_base, options.color_by);
             drawn.wipe_tower   = vol->is_wipe_tower;
             report->drawn.push_back(std::move(drawn));
         }

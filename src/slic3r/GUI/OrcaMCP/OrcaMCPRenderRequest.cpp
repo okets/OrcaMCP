@@ -248,6 +248,51 @@ void adopt_replay_resolution(const nlohmann::json& payload, RenderRequest& reque
     request.resolution = *replayed;
 }
 
+// paint (channels), texture_layers (slots) and color_by, read together because they refuse each other's mistakes.
+void read_paint_options(const nlohmann::json& payload, RenderRequest& out)
+{
+    const std::vector<std::string> channels = {"support", "seam", "fuzzy_skin", "texture"};
+    const std::string              channel_list = "support, seam, fuzzy_skin, texture";
+    if (payload.contains("paint")) {
+        const nlohmann::json& paint = payload["paint"];
+        if (!paint.is_array())
+            throw std::runtime_error("paint must be a list of channels to tint: " + channel_list);
+        for (const nlohmann::json& item : paint) {
+            const std::string name = item.is_string() ? item.get<std::string>() : std::string();
+            if (std::find(channels.begin(), channels.end(), name) == channels.end())
+                throw std::runtime_error("paint: " + (item.is_string() ? "\"" + name + "\"" : item.dump()) +
+                                         " is not a channel; the channels are " + channel_list +
+                                         " (colour paint is always drawn in its filaments' colours)");
+        }
+        for (const std::string& channel : channels)   // canonical order, duplicates dropped
+            for (const nlohmann::json& item : paint)
+                if (item.get<std::string>() == channel) {
+                    out.paint.push_back(channel);
+                    break;
+                }
+    }
+    if (payload.contains("texture_layers")) {
+        const nlohmann::json& layers = payload["texture_layers"];
+        if (std::find(out.paint.begin(), out.paint.end(), "texture") == out.paint.end())
+            throw std::runtime_error("texture_layers chooses which texture layers paint draws; add \"texture\" to paint, or leave texture_layers out");
+        if (!layers.is_array())
+            throw std::runtime_error("texture_layers must be a list of layer slots, each an integer 0 to 7");
+        for (const nlohmann::json& slot : layers) {
+            if (!slot.is_number_integer() || slot.get<long long>() < 0 || slot.get<long long>() > 7)
+                throw std::runtime_error("texture_layers: " + slot.dump() + " is not a layer slot; a slot is an integer 0 to 7");
+            out.texture_layers.push_back(slot.get<int>());
+        }
+        std::sort(out.texture_layers.begin(), out.texture_layers.end());
+        out.texture_layers.erase(std::unique(out.texture_layers.begin(), out.texture_layers.end()), out.texture_layers.end());
+    }
+    if (payload.contains("color_by")) {
+        const std::string by = payload["color_by"].is_string() ? payload["color_by"].get<std::string>() : std::string();
+        if (by == "object")        out.color_by = ColorBy::Object;
+        else if (by == "filament") out.color_by = ColorBy::Filament;
+        else throw std::runtime_error("color_by must be \"object\" (one colour per object, the default) or \"filament\" (each part in its filament's colour)");
+    }
+}
+
 RenderRequest read_request(const nlohmann::json& payload)
 {
     if (payload.is_null() || payload.value("plate_index", -1) == -1)
@@ -267,12 +312,15 @@ RenderRequest read_request(const nlohmann::json& payload)
 
     if (payload.contains("light"))
         out.light = read_light(payload["light"]);
+    read_paint_options(payload, out);
     out.layer_view = payload.value("layer_view", nlohmann::json());
     if (out.layer_view == "")  // "" was always read as no layer view
         out.layer_view = nlohmann::json();
     if (!out.layer_view.is_null()) {
         if (out.light)
             throw std::runtime_error("light is for 3D views; a layer_view is a plan drawn from the G-code. Leave light out, or leave layer_view out");
+        if (!out.paint.empty() || payload.contains("color_by") || payload.contains("texture_layers"))
+            throw std::runtime_error("paint, texture_layers and color_by are for 3D views; a layer_view is a plan drawn from the G-code. Leave them out, or leave layer_view out");
         return out;  // a layer plan ignores views
     }
 
