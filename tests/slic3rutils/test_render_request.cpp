@@ -380,12 +380,46 @@ TEST_CASE("A camera is replayed only on the plate it was drawn of", "[RenderRequ
     CHECK(read_ok(payload).views[0].replay.has_value());
 }
 
+TEST_CASE("texture_preview's object form is read by the bake's rules and accepted back as the answer reports it", "[RenderRequest][orcamcp][TexturePreview]")
+{
+    const RenderRequest plain = read_ok({{"plate_index", 0}, {"texture_preview", true}});
+    CHECK_FALSE(plain.texture_preview_settings.given);
+    CHECK(plain.texture_preview_settings.echo == true);
+
+    const RenderRequest r = read_ok({{"plate_index", 0}, {"texture_preview", {{"resolution_mm", 0.5}, {"budget_k", 300}}}});
+    CHECK(r.texture_preview);
+    CHECK(r.texture_preview_settings.given);
+    CHECK(*r.texture_preview_settings.resolution_mm == Catch::Approx(0.5f));
+    CHECK(*r.texture_preview_settings.budget_k == 300);
+    CHECK(r.texture_preview_settings.echo == nlohmann::json({{"resolution_mm", 0.5f}, {"budget_k", 300}}));
+
+    // null and 0 / -1 are automatic, as in bake_texture_displacement, and are reported as null
+    const RenderRequest automatic = read_ok({{"plate_index", 0}, {"texture_preview", {{"resolution_mm", 0}, {"budget_k", -1}}}});
+    CHECK(automatic.texture_preview_settings.resolution_auto);
+    CHECK(automatic.texture_preview_settings.budget_auto);
+    CHECK(automatic.texture_preview_settings.echo == nlohmann::json({{"resolution_mm", nullptr}, {"budget_k", nullptr}}));
+    CHECK(read_ok({{"plate_index", 0}, {"texture_preview", {{"resolution_mm", nullptr}}}}).texture_preview_settings.resolution_auto);
+    CHECK(read_ok({{"plate_index", 0}, {"texture_preview", nlohmann::json::object()}}).texture_preview_settings.given);
+
+    // the answer's `requested` is a valid request again
+    const RenderRequest again = read_ok({{"plate_index", 0}, {"texture_preview", automatic.texture_preview_settings.echo}});
+    CHECK(again.texture_preview_settings.echo == automatic.texture_preview_settings.echo);
+    const RenderRequest again2 = read_ok({{"plate_index", 0}, {"texture_preview", r.texture_preview_settings.echo}});
+    CHECK(again2.texture_preview_settings.echo == r.texture_preview_settings.echo);
+
+    // refusals: the bake's ranges, strict keys, the other pipeline's budget
+    CHECK(refusal_of({{"plate_index", 0}, {"texture_preview", {{"resolution_mm", 5}}}}).find("resolution_mm must be") != std::string::npos);
+    CHECK(refusal_of({{"plate_index", 0}, {"texture_preview", {{"budget_k", 9000}}}}).find("budget_k must be") != std::string::npos);
+    CHECK(refusal_of({{"plate_index", 0}, {"texture_preview", {{"classic_budget_k", 100}}}}).find("Its keys: resolution_mm, budget_k") != std::string::npos);
+    CHECK(refusal_of({{"plate_index", 0}, {"texture_preview", {{"resolution_mm", 0.5}}}, {"layer_view", "first_layer"}}).find("3D views") != std::string::npos);
+}
+
 TEST_CASE("texture_preview is read as a flag and refused where it cannot be drawn", "[RenderRequest][orcamcp][TexturePreview]")
 {
     CHECK_FALSE(read_ok({{"plate_index", 0}}).texture_preview);
     CHECK(read_ok({{"plate_index", 0}, {"texture_preview", true}}).texture_preview);
     CHECK_FALSE(read_ok({{"plate_index", 0}, {"texture_preview", false}, {"layer_view", "first_layer"}}).texture_preview);
-    CHECK(refusal_of({{"plate_index", 0}, {"texture_preview", "yes"}}).find("true or false") != std::string::npos);
+    CHECK(refusal_of({{"plate_index", 0}, {"texture_preview", "yes"}}).find("{resolution_mm, budget_k}") != std::string::npos);
     CHECK(refusal_of({{"plate_index", 0}, {"texture_preview", true}, {"layer_view", "first_layer"}}).find("3D views") != std::string::npos);
     CHECK(refusal_of({{"plate_index", 0}, {"texture_preview", true}, {"paint", {"texture"}}}).find("separately") != std::string::npos);
     CHECK(refusal_of({{"plate_index", 0}, {"texture_preview", true}, {"section", {{"plane", "z"}, {"at_mm", 5}}}}).find("separately") != std::string::npos);

@@ -22,6 +22,21 @@
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
+// texture_preview's object form: the resolution and triangle budget of the bake it previews, read by
+// bake_texture_displacement's own readers (a null or 0 resolution_mm and a null or -1 budget_k are automatic).
+// `given` is false for plain true (the panel's preview: the stack's resolution, the render's cap as budget).
+struct TexturePreviewSettings
+{
+    bool                 given = false;
+    std::optional<float> resolution_mm;
+    bool                 resolution_auto = false;
+    std::optional<int>   budget_k;
+    bool                 budget_auto = false;
+    // What was asked, in the shape a request takes it (an automatic value is null): the answer's texture_preview.requested.
+    nlohmann::json       echo = true;
+};
+TexturePreviewSettings read_texture_preview_settings(const nlohmann::json& value);
+
 // What a view's camera frames. Kind::Object is one object's instances on the plate; Box and Point are a region
 // in bed mm (plate-local with the view's frame: plate_local), a Point being a sphere of radius_mm.
 struct FitRequest
@@ -91,6 +106,7 @@ struct RenderRequest
     std::optional<double> relief_range_mm;                 // color_by relief: the colour scale's half range; unset = the measured extremes
     std::optional<double> detail_range_deg;                // color_by detail: the scale's top; unset = the measured 98th percentile
     bool                 texture_preview = false;          // draw each object's painted texture layers as its bake would make them (nothing is baked)
+    TexturePreviewSettings texture_preview_settings;       // its object form
     bool                 contact_sheet = false;            // no views asked: iso, top and front side by side
 };
 

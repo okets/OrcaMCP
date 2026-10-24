@@ -571,6 +571,7 @@ static void capture_texture_preview(PartPlate& plate, RenderJob& job)
     const ModelObjectPtrs&       objects = wxGetApp().model().objects;
     OrcaMCP::PreviewReportInput& report  = job.texture_preview;
     report.plate_index = job.request.plate_index;
+    report.requested   = job.request.texture_preview_settings.echo;
     const std::optional<std::set<int>> fitted = fitted_objects(job, plate);
     report.narrowed = fitted.has_value();
     for (size_t oi = 0; oi < objects.size(); ++oi) {
@@ -614,6 +615,20 @@ static void capture_texture_preview(PartPlate& plate, RenderJob& job)
             skip(unpainted, true);
             continue;
         }
+        // The object form previews the bake with its resolution and budget, as bake_options writes them.
+        const OrcaMCP::TexturePreviewSettings& wanted = job.request.texture_preview_settings;
+        entry.keep_budget = wanted.given;
+        if (wanted.given)
+            for (TextureDisplacementBakeVolume& volume : entry.captured.volumes) {
+                if (wanted.resolution_auto)
+                    volume.options.v2_refine_mm = 0.f;
+                else if (wanted.resolution_mm)
+                    volume.options.v2_refine_mm = *wanted.resolution_mm;
+                if (wanted.budget_auto)
+                    volume.options.v2_max_triangles_k = -1;
+                else if (wanted.budget_k)
+                    volume.options.v2_max_triangles_k = *wanted.budget_k;
+            }
         const auto too_large = std::find_if(entry.captured.volumes.begin(), entry.captured.volumes.end(), [](const TextureDisplacementBakeVolume& v) {
             return v.base_mesh.indices.size() > OrcaMCP::max_part_triangles;
         });
@@ -663,7 +678,7 @@ static void capture_texture_preview(PartPlate& plate, RenderJob& job)
         std::vector<size_t> todo;
         for (size_t i = 0; i < objects.size(); ++i) {
             OrcaMCP::PreviewObject& object = objects[i];
-            object.key = OrcaMCP::preview_key(object.captured, object.colours, object.classic_budget_k);
+            object.key = OrcaMCP::preview_key(object.captured, object.colours, object.classic_budget_k, object.keep_budget);
             if (const auto kept = cache.find(object.identity, object.key)) {
                 object.draw    = kept->draw;
                 object.cached  = true;
@@ -688,7 +703,7 @@ static void capture_texture_preview(PartPlate& plate, RenderJob& job)
             object.attempted = true;
             const auto started = std::chrono::steady_clock::now();
             OrcaMCP::PreviewResult result = OrcaMCP::compute_preview(object.captured, object.classic_budget_k > 0 ? &object.prepare : nullptr,
-                                                                     object.volume_ids, object.colours, progress);
+                                                                     object.volume_ids, object.colours, progress, object.keep_budget);
             if (result.canceled)
                 break;   // the wait ran out in this one; the ones after it are not reached
             object.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();

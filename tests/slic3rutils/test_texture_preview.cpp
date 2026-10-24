@@ -121,7 +121,7 @@ std::shared_ptr<const PreviewDraw> draw_of(const Fixture& f)
 
 } // namespace
 
-TEST_CASE("The preview's input zeroes the triangle budget of v2 parts only and touches nothing else", "[TexturePreview][orcamcp]")
+TEST_CASE("The preview's input sets the triangle budget of v2 parts to the render's cap, or keeps the asked one up to it", "[TexturePreview][orcamcp]")
 {
     Fixture v2(true);
     v2.volume->texture_displacement_options.v2_max_triangles_k = 40;
@@ -129,7 +129,18 @@ TEST_CASE("The preview's input zeroes the triangle budget of v2 parts only and t
     TextureDisplacementBakeInput       after  = preview_input(before);
     REQUIRE(after.volumes.size() == 1);
     CHECK(before.volumes[0].options.v2_max_triangles_k == 40);
-    CHECK(after.volumes[0].options.v2_max_triangles_k == 0);
+    CHECK(after.volumes[0].options.v2_max_triangles_k == max_part_triangles_k);
+    CHECK(max_part_triangles_k * 1000 == int(max_part_triangles));
+    CHECK(preview_input(before, true).volumes[0].options.v2_max_triangles_k == 40);   // an asked budget is kept
+    for (const int asked : {0, 4000}) {
+        TextureDisplacementBakeInput big = before;
+        big.volumes[0].options.v2_max_triangles_k = asked;
+        CHECK(preview_input(big, true).volumes[0].options.v2_max_triangles_k == max_part_triangles_k);   // none, or more than a render holds: the cap
+    }
+    TextureDisplacementBakeInput automatic = before;
+    automatic.volumes[0].options.v2_max_triangles_k = -1;
+    CHECK(preview_input(automatic, true).volumes[0].options.v2_max_triangles_k == -1);   // automatic is the bake's 750 k, under the cap
+    CHECK(key_of(before, {}, 0) != preview_key(before, {}, 0, true));
     after.volumes[0].options.v2_max_triangles_k = 40;
     CHECK(same_bake_volume(after.volumes[0], before.volumes[0], false));
 
@@ -347,6 +358,63 @@ TEST_CASE("The part's own colour paint is carried onto the preview and the rest 
     }
 }
 
+TEST_CASE("The resolution that fits the cap is computed from the refinement's size", "[TexturePreview][orcamcp]")
+{
+    // 4x the triangles at a 0.25 mm edge: twice the edge (0.5 mm), plus the 5 % margin, rounded up to 0.01
+    CHECK(suggested_resolution_mm(0.25, 4000000, 1000000) == Catch::Approx(0.53));
+    CHECK(suggested_resolution_mm(0.25, 1000000, 1000000) == Catch::Approx(0.27));
+    CHECK(suggested_resolution_mm(0.25, 0, 1000000) == 0.);       // not known
+    CHECK(suggested_resolution_mm(1.9, 4000000, 1000000) == 0.);   // beyond the bake's 2 mm: no resolution fits
+}
+
+TEST_CASE("A part the cap simplified says so, with the unsimplified count and a real argument that fits", "[TexturePreview][orcamcp]")
+{
+    Fixture f(true);
+    f.volume->texture_displacement_options.v2_refine_mm = 0.25f;
+    const TextureDisplacementBakeInput input = f.capture();
+    TextureBakePlan plan;
+    plan.results.resize(1);
+    plan.results[0].mesh.its.vertices = {Vec3f(0, 0, 0), Vec3f(1, 0, 0), Vec3f(0, 1, 0)};
+    plan.results[0].mesh.its.indices.assign(900000, stl_triangle_vertex_indices(0, 1, 2));
+    plan.results[0].stats.triangles_refined = 2247936;
+    plan.results[0].stats.budget_limited    = true;
+    const PreviewDraw draw = make_preview_draw(std::move(plan), input, {0}, {});
+    REQUIRE(draw.parts.size() == 1);
+    const PreviewPart& part = draw.parts[0];
+    CHECK(part.skipped.empty());
+    CHECK(part.simplified_to_cap);
+    CHECK(part.triangles_unsimplified == 2247936);
+    CHECK(part.suggested_resolution_mm == Catch::Approx(suggested_resolution_mm(0.25, 2247936, max_part_triangles)));
+    const std::string note = preview_part_note(part);
+    CHECK(note.find("texture_preview: {resolution_mm: ") != std::string::npos);
+    CHECK(note.find("2247936") != std::string::npos);
+    CHECK(note.find("simplified to that") != std::string::npos);
+    CHECK(note.find("coarser texture") == std::string::npos);   // the old advice named no argument
+
+    // an asked budget under the cap is the user's: not the cap's doing
+    Fixture asked(true);
+    asked.volume->texture_displacement_options.v2_refine_mm = 0.25f;
+    asked.volume->texture_displacement_options.v2_max_triangles_k = 300;
+    TextureBakePlan plan2;
+    plan2.results.resize(1);
+    plan2.results[0].mesh.its.vertices = {Vec3f(0, 0, 0), Vec3f(1, 0, 0), Vec3f(0, 1, 0)};
+    plan2.results[0].mesh.its.indices.assign(300000, stl_triangle_vertex_indices(0, 1, 2));
+    plan2.results[0].stats.triangles_refined = 2247936;
+    const PreviewDraw kept = make_preview_draw(std::move(plan2), asked.capture(), {0}, {}, true);
+    CHECK_FALSE(kept.parts[0].simplified_to_cap);
+    CHECK(preview_part_note(kept.parts[0]).empty());
+
+    // still over the cap after the budget: unbaked, and the note names the arguments that help
+    TextureBakePlan plan3;
+    plan3.results.resize(1);
+    plan3.results[0].mesh.its.vertices = {Vec3f(0, 0, 0), Vec3f(1, 0, 0), Vec3f(0, 1, 0)};
+    plan3.results[0].mesh.its.indices.assign(max_part_triangles + 5, stl_triangle_vertex_indices(0, 1, 2));
+    plan3.results[0].stats.triangles_refined = 3000000;
+    const PreviewDraw over = make_preview_draw(std::move(plan3), input, {0}, {});
+    CHECK(over.parts[0].skipped == "too_large");
+    CHECK(preview_part_note(over.parts[0]).find("texture_preview: {resolution_mm: ") != std::string::npos);
+}
+
 TEST_CASE("A part over the triangle limit is not drawn and says how large it is", "[TexturePreview][orcamcp]")
 {
     Fixture f(false);
@@ -456,6 +524,8 @@ TEST_CASE("The report says what was drawn, cached, timed out, not reached, left 
 
     const nlohmann::json report = preview_report_json(input, cache);
     CHECK(report["requested"] == true);
+    input.requested = nlohmann::json({{"resolution_mm", 0.5}, {"budget_k", nullptr}});
+    CHECK(preview_report_json(input, cache)["requested"] == nlohmann::json({{"resolution_mm", 0.5}, {"budget_k", nullptr}}));
     CHECK(report["previewed"] == 1);
     CHECK(report["complete"] == true);
     const nlohmann::json& object = report["objects"][0];

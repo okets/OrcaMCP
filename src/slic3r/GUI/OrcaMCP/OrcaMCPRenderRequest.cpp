@@ -3,7 +3,38 @@
 #include <algorithm>
 #include <stdexcept>
 
+#include "slic3r/GUI/OrcaMCP/OrcaMCPTextureDisplacement.hpp"
+
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
+
+TexturePreviewSettings read_texture_preview_settings(const nlohmann::json& value)
+{
+    if (!value.is_object())
+        throw std::runtime_error("texture_preview must be true, false or {resolution_mm, budget_k}");
+    for (auto it = value.begin(); it != value.end(); ++it)
+        if (it.key() != "resolution_mm" && it.key() != "budget_k")
+            throw std::runtime_error("texture_preview has no key \"" + it.key() + "\". Its keys: resolution_mm, budget_k");
+    std::string error;
+    const std::optional<BakeRequest> bake = read_bake_request(value, error);   // the bake's own ranges and null/auto rules
+    if (!bake)
+        throw std::runtime_error("texture_preview: " + error);
+    TexturePreviewSettings out;
+    out.given           = true;
+    out.resolution_mm   = bake->resolution_mm;
+    out.resolution_auto = bake->resolution_auto;
+    out.budget_k        = bake->budget_k;
+    out.budget_auto     = bake->budget_auto;
+    out.echo            = nlohmann::json::object();
+    if (out.resolution_mm)
+        out.echo["resolution_mm"] = *out.resolution_mm;
+    else if (out.resolution_auto)
+        out.echo["resolution_mm"] = nullptr;
+    if (out.budget_k)
+        out.echo["budget_k"] = *out.budget_k;
+    else if (out.budget_auto)
+        out.echo["budget_k"] = nullptr;
+    return out;
+}
 
 namespace {
 
@@ -359,9 +390,13 @@ RenderRequest read_request(const nlohmann::json& payload)
         out.section = read_section(payload["section"]);
     read_paint_options(payload, out);
     if (payload.contains("texture_preview")) {
-        if (!payload["texture_preview"].is_boolean())
-            throw std::runtime_error("texture_preview must be true or false");
-        out.texture_preview = payload["texture_preview"].get<bool>();
+        const nlohmann::json& preview = payload["texture_preview"];
+        if (preview.is_boolean()) {
+            out.texture_preview = preview.get<bool>();
+        } else {
+            out.texture_preview_settings = read_texture_preview_settings(preview);
+            out.texture_preview          = true;
+        }
     }
     out.layer_view = payload.value("layer_view", nlohmann::json());
     if (out.layer_view == "")  // "" was always read as no layer view

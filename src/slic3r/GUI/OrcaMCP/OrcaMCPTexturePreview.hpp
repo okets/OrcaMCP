@@ -34,9 +34,20 @@ namespace Slic3r { namespace GUI { namespace OrcaMCP {
 // already ~72 MB on the main thread's upload. The triangles drawn in one call are held to PreviewCache::max_triangles.
 constexpr std::size_t max_part_triangles = 1000000;
 
-// The panel's preview from the bake's input: the one difference GLGizmoTextureDisplacement::queue_preview_job makes
-// (v2 pipeline: no simplification, v2_max_triangles_k = 0). Everything else is untouched.
-TextureDisplacementBakeInput preview_input(TextureDisplacementBakeInput bake_input);
+// The triangle budget a render's plan is held to, in thousands: the part cap.
+constexpr int max_part_triangles_k = int(max_part_triangles / 1000);
+
+// The bake's input as the preview plans it. The texture panel's preview plans with no simplification
+// (v2_max_triangles_k = 0), which a part of millions of triangles would make too large to draw after all the work;
+// the preview plans with the render's cap as the triangle budget instead, as the bake's budget simplifies: a part under
+// the cap is as the unbudgeted one (flat faces harvested), a part over it is simplified to it. `keep_budget` (the object
+// form of texture_preview) keeps the input's own budget, held to the cap (0 and a larger one become the cap). A classic
+// part is untouched.
+TextureDisplacementBakeInput preview_input(TextureDisplacementBakeInput bake_input, bool keep_budget = false);
+
+// The resolution_mm at which a refinement of `refined` triangles at `current_mm` would fit `cap` triangles (the count goes
+// with the square of the edge), rounded up to 0.01 mm; 0 when no resolution in the bake's range (0.02 to 2 mm) does.
+double suggested_resolution_mm(double current_mm, std::size_t refined, std::size_t cap);
 
 // Two captures a preview would draw alike (the budget left out: the preview ignores it).
 bool same_preview_input(const TextureDisplacementBakeInput& a, const TextureDisplacementBakeInput& b);
@@ -57,7 +68,8 @@ struct PreviewKey
     bool operator==(const PreviewKey& o) const { return a == o.a && b == o.b; }
     bool operator!=(const PreviewKey& o) const { return !(*this == o); }
 };
-PreviewKey preview_key(const TextureDisplacementBakeInput& input, const PreviewColours& colours, int classic_budget_k);
+// `keep_budget`: the capture holds a budget the preview keeps (preview_input).
+PreviewKey preview_key(const TextureDisplacementBakeInput& input, const PreviewColours& colours, int classic_budget_k, bool keep_budget = false);
 
 // One run of triangles of a previewed part drawn in one colour (`base`: the part's own colour, which the draw knows).
 struct PreviewRun
@@ -74,6 +86,9 @@ struct PreviewPart
     std::size_t          triangles_base = 0;      // the part's own triangles
     std::size_t          triangles = 0;           // the preview's (0: the layers moved nothing there)
     std::string          skipped;                 // "too_large": not drawn
+    std::size_t          triangles_unsimplified = 0;   // the refinement's count before the budget simplified it (0: not known, a classic part)
+    bool                 simplified_to_cap = false;    // the render's cap, not the stack's budget, is what simplified it
+    double               suggested_resolution_mm = 0.; // the resolution_mm at which it would fit unsimplified (0: none does)
     indexed_triangle_set mesh;                    // empty when not drawn
     std::vector<PreviewRun> runs;
 };
@@ -97,12 +112,12 @@ struct PreviewResult
 };
 PreviewResult compute_preview(const TextureDisplacementBakeInput& captured, const TextureDisplacementPrepareInput* prepare,
                               const std::vector<int>& volume_ids, const PreviewColours& colours,
-                              const std::function<bool(int)>& progress);
+                              const std::function<bool(int)>& progress, bool keep_budget = false);
 
 // The draw of a finished plan (what compute_preview ends with): colour runs by texture colour, else the part's colour
 // paint carried onto the preview's triangles, else the part's colour. Any thread.
 PreviewDraw make_preview_draw(TextureBakePlan&& plan, const TextureDisplacementBakeInput& original, const std::vector<int>& volume_ids,
-                              const PreviewColours& colours);
+                              const PreviewColours& colours, bool keep_budget = false);
 
 // What a captured scene was, cheap to compare with the live one on the main thread (no mesh copy, no image compare
 // beyond the pointer): per part its id, mesh, the eight masks' timestamps, layers, options and placement.
@@ -177,6 +192,7 @@ struct PreviewObject
     TextureDisplacementBakeInput           captured;            // freed once planned
     TextureDisplacementPrepareInput        prepare;             // classic parts: the preparation the bake runs first; freed once planned
     int                                    classic_budget_k = 0;
+    bool                                   keep_budget = false; // texture_preview's object form: the capture's own budget is kept
     PreviewColours                         colours;
     std::vector<int>                       volume_ids;
     PreviewStamp                           stamp;
@@ -201,6 +217,7 @@ struct PreviewReportInput
 {
     int                        plate_index = 0;
     double                     wait_s      = 0.;            // the call's wait, for the timed-out message
+    nlohmann::json             requested   = true;          // what texture_preview asked for, in the shape a request takes it
     bool                       narrowed    = false;         // the views fit objects, so only those were previewed
     std::vector<int>           outside_fit;                 // textured objects the views' fit left out (drawn unbaked)
     std::vector<PreviewObject> objects;
@@ -218,6 +235,8 @@ nlohmann::json preview_report_json(const PreviewReportInput& input, const Previe
 // already fit objects, so fitting would not help.
 std::string preview_timed_out_message(int object_id, double wait_s, bool narrowed);
 std::string preview_not_reached_message(int object_id, bool narrowed);
+// The note a drawn part carries when the cap shaped its preview (empty when it did not): simplified_to_cap, or too_large.
+std::string preview_part_note(const PreviewPart& part);
 
 }}} // namespace Slic3r::GUI::OrcaMCP
 

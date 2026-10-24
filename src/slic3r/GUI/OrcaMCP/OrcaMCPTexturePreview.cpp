@@ -16,12 +16,23 @@
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
-TextureDisplacementBakeInput preview_input(TextureDisplacementBakeInput bake_input)
+TextureDisplacementBakeInput preview_input(TextureDisplacementBakeInput bake_input, bool keep_budget)
 {
     for (TextureDisplacementBakeVolume& volume : bake_input.volumes)
-        if (volume.options.pipeline_v2)
-            volume.options.v2_max_triangles_k = 0;
+        if (volume.options.pipeline_v2) {
+            int& budget = volume.options.v2_max_triangles_k;
+            if (!keep_budget || budget == 0 || budget > max_part_triangles_k)
+                budget = max_part_triangles_k;
+        }
     return bake_input;
+}
+
+double suggested_resolution_mm(double current_mm, std::size_t refined, std::size_t cap)
+{
+    if (current_mm <= 0. || refined == 0 || cap == 0)
+        return 0.;
+    const double fit = std::ceil(current_mm * std::sqrt(double(refined) / double(cap)) * 1.05 * 100.) / 100.;   // 5 % over: the count is not exactly 1/edge^2
+    return fit >= 0.02 && fit <= 2. ? fit : 0.;
 }
 
 namespace {
@@ -94,10 +105,10 @@ struct Hasher
     }
 };
 
-void hash_options(Hasher& h, TextureDisplacementOptions options)
+void hash_options(Hasher& h, TextureDisplacementOptions options, bool keep_budget)
 {
     options.active_slot = options.panel_mode = 0;
-    if (options.pipeline_v2)
+    if (options.pipeline_v2 && !keep_budget)
         options.v2_max_triangles_k = 0;
     h.text(serialized(options));
 }
@@ -133,10 +144,11 @@ bool same_preview_input(const TextureDisplacementBakeInput& a, const TextureDisp
     return true;
 }
 
-PreviewKey preview_key(const TextureDisplacementBakeInput& input, const PreviewColours& colours, int classic_budget_k)
+PreviewKey preview_key(const TextureDisplacementBakeInput& input, const PreviewColours& colours, int classic_budget_k, bool keep_budget)
 {
     Hasher h;
     h.word(std::uint64_t(std::uint32_t(classic_budget_k)));
+    h.word(keep_budget ? 1 : 0);
     h.word(input.volumes.size());
     for (const PrintableColor& c : input.color.palette) { h.pod(c.rgb); h.pod(c.a); h.pod(c.b); h.pod(c.num); h.pod(c.den); }
     h.word(input.color.palette.size());
@@ -153,7 +165,7 @@ PreviewKey preview_key(const TextureDisplacementBakeInput& input, const PreviewC
         for (const auto& mask : v.facets_data)
             h.splitting(mask);
         hash_layers(h, v.layers);
-        hash_options(h, v.options);
+        hash_options(h, v.options, keep_budget);
     }
     h.word(colours.colour_paint.size());
     for (const auto& paint : colours.colour_paint)
@@ -180,7 +192,7 @@ std::size_t PreviewDraw::bytes() const
 }
 
 PreviewDraw make_preview_draw(TextureBakePlan&& plan, const TextureDisplacementBakeInput& original, const std::vector<int>& volume_ids,
-                              const PreviewColours& colours)
+                              const PreviewColours& colours, bool keep_budget)
 {
     PreviewDraw draw;
     // Colour slots: 0 the part's own colour, 1..P the palette (the texture's colours), then one per extruder state.
@@ -197,6 +209,19 @@ PreviewDraw make_preview_draw(TextureBakePlan&& plan, const TextureDisplacementB
         part.triangles_base = original.volumes[i].base_mesh.indices.size();
         indexed_triangle_set mesh = std::move(plan.results[i].mesh.its);
         part.triangles = mesh.indices.size();
+        const TextureBakeStats&               stats   = plan.results[i].stats;
+        const TextureDisplacementBakeVolume&  source  = original.volumes[i];
+        part.triangles_unsimplified = stats.triangles_refined;
+        const int budget_k = !source.options.pipeline_v2 ? 0 : !keep_budget ? max_part_triangles_k
+                           : (source.options.v2_max_triangles_k == 0 || source.options.v2_max_triangles_k > max_part_triangles_k) ? max_part_triangles_k
+                           : source.options.v2_max_triangles_k;
+        part.simplified_to_cap = budget_k == max_part_triangles_k && stats.triangles_refined > max_part_triangles;
+        if (stats.triangles_refined > max_part_triangles) {
+            const double edge = source.options.v2_refine_mm > 0.f
+                ? double(source.options.v2_refine_mm)
+                : std::max(0.05, double(recommend_v2_resolution(source.base_mesh, source.layers, source.volume_to_world).edge_mm));
+            part.suggested_resolution_mm = suggested_resolution_mm(edge, stats.triangles_refined, max_part_triangles);
+        }
         if (mesh.indices.empty()) {
             draw.parts.push_back(std::move(part));
             continue;   // this part's layers moved nothing: its own mesh is drawn
@@ -240,10 +265,10 @@ PreviewDraw make_preview_draw(TextureBakePlan&& plan, const TextureDisplacementB
 
 PreviewResult compute_preview(const TextureDisplacementBakeInput& captured, const TextureDisplacementPrepareInput* prepare,
                               const std::vector<int>& volume_ids, const PreviewColours& colours,
-                              const std::function<bool(int)>& progress)
+                              const std::function<bool(int)>& progress, bool keep_budget)
 {
     PreviewResult result;
-    TextureDisplacementBakeInput work = preview_input(captured);
+    TextureDisplacementBakeInput work = preview_input(captured, keep_budget);
     if (prepare != nullptr && !prepare->volumes.empty()) {
         // The classic bake prepares first (remesh, adaptive refinement) and displaces what that leaves; the preview does
         // the same on a copy, the paint carried exactly as the preparation carries it.
@@ -275,7 +300,7 @@ PreviewResult compute_preview(const TextureDisplacementBakeInput& captured, cons
         return result;
     }
     std::string preparation = std::move(result.draw.preparation);
-    result.draw             = make_preview_draw(std::move(plan), captured, volume_ids, colours);
+    result.draw             = make_preview_draw(std::move(plan), captured, volume_ids, colours, keep_budget);
     result.draw.preparation = std::move(preparation);
     return result;
 }
@@ -429,6 +454,26 @@ std::string preview_not_reached_message(int object_id, bool narrowed)
            (narrowed ? std::string() : ", or fit a view to this object ({object_id}), which previews only that object");
 }
 
+std::string preview_part_note(const PreviewPart& part)
+{
+    const auto number = [](double v) {
+        std::ostringstream os;
+        os << v;
+        return os.str();
+    };
+    const std::string fit = part.suggested_resolution_mm > 0.
+        ? "texture_preview: {resolution_mm: " + number(part.suggested_resolution_mm) + "} previews it unsimplified"
+        : "clear_object_paint on the layers you do not need, or paint a smaller region, brings it under the cap";
+    if (part.skipped == "too_large")
+        return "this part's preview has " + std::to_string(part.triangles) + " triangles, more than the " + std::to_string(max_part_triangles) +
+               " a render holds even simplified to that, so it is drawn unbaked: " + (part.triangles_unsimplified > 0 ? fit : "bake_texture_displacement it, or " + fit);
+    if (part.simplified_to_cap)
+        return "the unsimplified preview has " + std::to_string(part.triangles_unsimplified) + " triangles, more than the " + std::to_string(max_part_triangles) +
+               " a render holds, so it is simplified to that (the bake's triangle budget set to the cap): the finest detail is merged. " + fit +
+               "; texture_preview: {resolution_mm, budget_k} previews a bake planned with those settings";
+    return std::string();
+}
+
 nlohmann::json preview_report_json(const PreviewReportInput& input, const PreviewCache& cache)
 {
     using json = nlohmann::json;
@@ -464,13 +509,19 @@ nlohmann::json preview_report_json(const PreviewReportInput& input, const Previe
             entry["preparation"] = object.draw->preparation;
         for (const PreviewPart& part : object.draw->parts) {
             json p = {{"volume_id", part.volume_id}, {"triangles_base", part.triangles_base}, {"triangles_preview", part.triangles}};
-            if (!part.skipped.empty()) {
+            if (part.triangles_unsimplified > 0)
+                p["triangles_unsimplified"] = part.triangles_unsimplified;
+            if (part.simplified_to_cap)
+                p["simplified_to_cap"] = true;
+            if (!part.skipped.empty())
                 p["skipped"] = part.skipped;
-                p["note"]    = "this part's preview has " + std::to_string(part.triangles) + " triangles, more than the " +
-                               std::to_string(max_part_triangles) + " a render holds, so it is drawn unbaked: fit a coarser texture (resolution_mm) or a smaller region";
-            }
+            if (const std::string note = preview_part_note(part); !note.empty())
+                p["note"] = note;
             entry["parts"].push_back(std::move(p));
         }
+        if (object.keep_budget && object.classic_budget_k > 0 && input.requested.is_object() && !input.requested.empty())
+            entry["note"] = "this object is on the classic pipeline, whose preparation budget is classic_budget_k: the default pipeline's resolution_mm and budget_k were not used "
+                            "(bake_texture_displacement takes classic_budget_k)";
         if (object.draw->preparation == "paint_lost")
             entry["note"] = "the classic bake's preparation (remesh) would lose the paint, so the bake refuses it; this shows the surface without the preparation";
         if (object.panel_open) {
@@ -486,7 +537,7 @@ nlohmann::json preview_report_json(const PreviewReportInput& input, const Previe
             entry["next_steps"] = skip.next_steps;
         skipped.push_back(std::move(entry));
     }
-    json report = {{"requested", true},
+    json report = {{"requested", input.requested},
                    {"previewed", previewed},
                    {"complete", complete},
                    {"objects", std::move(objects)},
