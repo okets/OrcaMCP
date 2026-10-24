@@ -295,8 +295,13 @@ int BBLPrinterAgent::connect_printer(const PrinterConnectionParams& params)
             use_ssl_for_mqtt = machine->local_use_ssl;
     }
 #endif
+    BOOST_LOG_TRIVIAL(info) << "native_connect_diagnostic stage=vendor_ready plugin_agent_present="
+                            << static_cast<bool>(agent) << " connect_function_present="
+                            << static_cast<bool>(func) << " use_ssl=" << use_ssl_for_mqtt;
     if (func && agent) {
-        return func(agent, params.dev_id, params.host, params.username, params.password, use_ssl_for_mqtt);
+        const int result = func(agent, params.dev_id, params.host, params.username, params.password, use_ssl_for_mqtt);
+        BOOST_LOG_TRIVIAL(info) << "native_connect_diagnostic stage=vendor_return result=" << result;
+        return result;
     }
     return -1;
 }

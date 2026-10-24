@@ -2432,6 +2432,7 @@ void GUI_App::init_networking_callbacks()
 
         m_agent->set_on_local_connect_fn(
             [this](int state, std::string dev_id, std::string msg) {
+                BOOST_LOG_TRIVIAL(info) << "native_connect_diagnostic stage=local_callback state=" << state;
                 if (is_closing()) {
                     return;
                 }
