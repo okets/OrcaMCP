@@ -16,6 +16,7 @@ Live comparison:         ORCAMCP_LIVE_SCHEMA_TEST_PORT=<port of your build> pyth
 
 import json
 import os
+from pathlib import Path
 import sys
 import unittest
 import urllib.request
@@ -116,6 +117,24 @@ class ValueSchemaAcceptsLists(unittest.TestCase):
             key = by_name[name]["inputSchema"]["properties"]["settings"]["items"]["properties"]["key"]
             with self.subTest(tool=name):
                 self.assertEqual(key["type"], "string")
+
+
+class FlushVolumeUnitsTests(unittest.TestCase):
+    def test_flush_volume_contract_uses_native_cubic_millimeters(self):
+        # These numbers are the native config values, not converted milliliters.
+        tools = server_tools_by_name()
+        descriptions = {
+            "get_flush_volumes": tools["get_flush_volumes"]["description"],
+            "set_flush_volumes.matrix": tools["set_flush_volumes"]["inputSchema"]["properties"]["matrix"]["description"],
+        }
+        for name, description in descriptions.items():
+            with self.subTest(tool=name):
+                self.assertIn("mm3", description)
+                self.assertNotIn("mL", description)
+        source = (Path(__file__).resolve().parents[2] /
+                  "src/slic3r/GUI/OrcaMCP/OrcaMCPFilamentTools.cpp").read_text(encoding="utf-8")
+        self.assertIn('"Get the per-extruder flush-volume matrices (mm3 to purge switching', source)
+        self.assertIn('"NxN matrix, row = from-filament, column = to-filament, mm3"', source)
 
 
 class RunningServerTests(unittest.TestCase):

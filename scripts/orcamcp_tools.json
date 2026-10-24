@@ -1321,7 +1321,7 @@
     },
     {
       "category": "Filaments & colour",
-      "description": "Get the per-extruder flush-volume matrices (mL to purge switching from filament X to Y) and the flush multiplier used to scale them.",
+      "description": "Get the per-extruder flush-volume matrices (mm3 to purge switching from filament X to Y) and the flush multiplier used to scale them.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {},
@@ -3883,7 +3883,7 @@
             "type": "number"
           },
           "matrix": {
-            "description": "NxN matrix, row = from-filament, column = to-filament, mL",
+            "description": "NxN matrix, row = from-filament, column = to-filament, mm3",
             "items": {
               "items": {
                 "type": "number"
