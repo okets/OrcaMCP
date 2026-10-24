@@ -3098,7 +3098,7 @@ starts at x ≈ 307. A camera aimed at another plate's area returns a flat image
 
 **A view** is one of:
 ```json
-{"preset": "iso" | "top" | "front" | "back" | "left" | "right" | "low", "fit": "plate" | {"object_index": 8}}
+{"preset": "iso" | "top" | "front" | "back" | "left" | "right" | "low", "fit": "plate" | {"object_id": 8}}
 {"camera_position": [x, y, z], "target": [x, y, z], "frame": "bed_mm" | "plate_local"}
 ```
 `fit` defaults to the plate (its footprint at the height of what is on it). Fitting an object
@@ -3106,16 +3106,19 @@ frames it and zooms to it: a closer camera, not more pixels. It frames the objec
 the requested plate; an object that plate does not hold is an error naming the plate(s) it is on.
 Before v2.5.0.6 it framed instance 0 whichever plate that was on. `low` looks at the first layers from
 the front, slightly downward — brims, support feet, bottom edges. `frame: "plate_local"` lets an
-explicit camera be given relative to the plate's front-left corner.
+explicit camera be given relative to the plate's front-left corner. `fit` takes `{object_id}`, the index
+every tool takes; `{object_index}` is the same number, kept (both given and different is an error).
+A view is **strict**: a key it does not declare (`fov`, `zoom`, `distance`) is refused with -32602 and the list of
+keys a view takes, where it used to be ignored. `camera` (the object a render returned) is declared and accepted.
 An explicit camera's `camera_position` and `target` set the viewing direction only: the image is fitted to the plate's
 drawn objects (`frame_camera` / `fit_zoom_to_box`, 20% margin), so a close-up of part of an object is not possible today;
-`fit: {object_index}` frames one whole object.
+`fit: {object_id}` frames one whole object.
 
 **Examples:**
 ```json
 {"name": "render_plate_view", "arguments": {"plate_index": 1, "save_to_file": true}}
 {"name": "render_plate_view", "arguments": {"plate_index": 1, "save_to_file": true,
-  "views": [{"preset": "low", "fit": {"object_index": 8}}, {"preset": "top"}]}}
+  "views": [{"preset": "low", "fit": {"object_id": 8}}, {"preset": "top"}]}}
 {"name": "render_plate_view", "arguments": {"plate_index": 1, "save_to_file": true, "layer_view": "first_layer"}}
 {"name": "render_plate_view", "arguments": {"plate_index": 0, "save_to_file": true,
   "layer_view": {"z": 10.0, "features": ["support", "support_interface"], "color_by": "filament"}}}

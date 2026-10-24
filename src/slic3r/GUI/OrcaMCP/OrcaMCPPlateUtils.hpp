@@ -2,7 +2,9 @@
 #define slic3r_GUI_OrcaMCPPlateUtils_hpp_
 
 #include <nlohmann/json.hpp>
+#include <functional>
 #include <optional>
+#include <vector>
 
 #include "libslic3r/GCode/ThumbnailData.hpp"
 #include "slic3r/GUI/Camera.hpp"
@@ -12,15 +14,27 @@
 #include "slic3r/GUI/OrcaMCP/OrcaMCPMeshHealth.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPPaintSelect.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPRenderMath.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPRenderRequest.hpp"
 #include "libslic3r/Color.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPBedExclusion.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPPlateOccupancy.hpp"
+
+namespace Slic3r { class GLVolume; class GLShaderProgram; }
 
 namespace Slic3r { namespace GUI {
 
 // The camera a thumbnail was rendered with, so a pixel of that image can be turned back into a
 // ray later. The matrices and viewport are kept in pick_facet's own CameraFrame, so seeing and
 // pointing cannot drift into two different ideas of the same camera.
+// What a render hook is handed: the camera and the shader in use while a volume (or a pass) is drawn.
+struct RenderPass
+{
+    const Transform3d& view;
+    const Transform3d& projection;
+    GLShaderProgram&   shader;
+    int                plate_index;
+};
+
 // How RenderThumbnail should draw. Defaults are vision v2's: each object in its palette colour on a
 // light background, lit enough that unlit faces still read.
 struct RenderOptions
@@ -31,6 +45,16 @@ struct RenderOptions
     // What the view is zoomed to. Unset: the plate's visible volumes, as before. A preset or a
     // `fit` sets it, otherwise "fit to one object" would move the camera but not narrow the view.
     std::optional<BoundingBoxf3> zoom_box;
+
+    // Hooks later render options plug into; all empty by default, which draws what the render has always drawn.
+    // draw_volume runs before each volume's own drawing and returns true when it drew the volume itself (the
+    // texture preview); after_volumes run once the volumes are drawn, shader still in use (paint tints, section
+    // caps); shading is what the shader is told (light, clipping plane); camera_frame draws with exactly these
+    // matrices instead of framing a box (the exact camera).
+    std::function<bool(const GLVolume&, RenderPass&)>   draw_volume;
+    std::vector<std::function<void(RenderPass&)>>       after_volumes;
+    OrcaMCP::ShaderSettings                             shading;
+    std::optional<OrcaMCP::CameraFrame>                 camera_frame;
 };
 
 // One volume RenderThumbnail actually drew, with what an agent needs to name and locate it.
@@ -50,6 +74,7 @@ struct RenderReport
     bool                        uniform_image = false;  // every pixel identical, before overlays
     BoundingBoxf3               plate_box;              // the requested plate's build volume, bed mm
     OrcaMCP::RenderScene        scene;                  // the 3D view's scene it drew from
+    bool                        shader_fallback = false; // mcp_render did not build on this driver: drawn with thumbnail, shading ignored
 };
 
 struct RenderCameraInfo
@@ -120,9 +145,41 @@ namespace OrcaMCP {
 std::vector<ExclusionRegion> plate_exclusion_regions(PartPlate& plate);
 } // namespace OrcaMCP
 
+// One view of a 3D render as the first step resolved it: the request, the box it frames and its camera in bed mm.
+struct ResolvedView
+{
+    OrcaMCP::ViewRequest request;
+    BoundingBoxf3        fit_box;
+    Vec3d                camera_position = Vec3d::Zero();
+    Vec3d                target          = Vec3d::Zero();
+};
+
+// A render_plate_view call in three steps (as repair_mesh): PrepareRender reads the request and captures what it
+// needs (main thread), ComputeRender does the work that needs no scene (HTTP thread; empty until a render option
+// has mesh work to do), DrawRender draws on the main thread and checks the scene is still what was captured.
+struct RenderJob
+{
+    using Work = std::function<void(const std::function<bool()>& stop)>;
+
+    OrcaMCP::RenderRequest                    request;
+    std::vector<ResolvedView>                 views;
+    BoundingBoxf3                             plate_box;
+    std::vector<BoundingBoxf3>                legacy_boxes;
+    std::vector<OrcaMCP::ExclusionRegion>     exclusion_regions;
+    std::vector<std::pair<const ModelObject*, ObjectID>> captured_objects;   // the model's objects when captured
+    std::vector<Work>                         work;                           // run by ComputeRender on the HTTP thread
+};
+
 class OrcaMCPPlateUtils {
 public:
-    static nlohmann::json RenderPlateView(const nlohmann::json& params);
+    // Main thread. Reads and checks `payload` (render_plate_view's arguments) and captures the scene into `job`.
+    // Returns the answer when the call is answered here (a layer view, which is drawn on the CPU), else null.
+    // Throws std::runtime_error with what to send instead for a request it refuses.
+    static nlohmann::json PrepareRender(const nlohmann::json& payload, RenderJob& job);
+    // HTTP thread. Runs job.work, each piece stopping at `stop`.
+    static void ComputeRender(RenderJob& job, const std::function<bool()>& stop);
+    // Main thread. Draws every view and answers; an error answer when the scene changed since PrepareRender.
+    static nlohmann::json DrawRender(RenderJob& job);
     // `mesh_health` is model_mesh_health(model), read once for the call: every object entry's
     // mesh_warning, and its features when asked for, come from it.
     static nlohmann::json GetCurrentProject(const bool with_model_object_features,

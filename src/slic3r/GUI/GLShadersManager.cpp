@@ -4,6 +4,7 @@
 #include "3DScene.hpp"
 #include "GUI_App.hpp"
 
+#include <boost/log/trivial.hpp>
 #include <cassert>
 #include <algorithm>
 #include <string>
@@ -72,6 +73,16 @@ std::pair<bool, std::string> GLShadersManager::init()
     valid &= append_shader("gouraud_light", { prefix + "gouraud_light.vs", prefix + "gouraud_light.fs" });
     //used to render thumbnail
     valid &= append_shader("thumbnail", { prefix + "thumbnail.vs", prefix + "thumbnail.fs"});
+    // OrcaMCP's renders: thumbnail plus a clipping plane and a light of the caller's. Optional: one that does not
+    // compile or link on a driver is logged and left out (render_plate_view then draws with thumbnail), and
+    // never fails the app's startup.
+    {
+        const size_t error_size = error.size();
+        if (!append_shader("mcp_render", { prefix + "mcp_render.vs", prefix + "mcp_render.fs" })) {
+            error.resize(error_size);
+            BOOST_LOG_TRIVIAL(warning) << "The mcp_render shader did not compile or link on this driver; render_plate_view draws with the thumbnail shader";
+        }
+    }
     // used to render printbed
     valid &= append_shader("printbed", { prefix + "printbed.vs", prefix + "printbed.fs" });
 #if !SLIC3R_OPENGL_ES

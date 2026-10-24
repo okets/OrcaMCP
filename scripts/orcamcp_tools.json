@@ -2802,7 +2802,12 @@
           "views": {
             "description": "Views to render. Omit for the default contact sheet (iso, top, front). Each view: a preset with optional fit, or camera_position + target (bed mm unless frame is plate_local).",
             "items": {
+              "additionalProperties": false,
               "properties": {
+                "camera": {
+                  "description": "A camera object an earlier render returned, to draw the same view again.",
+                  "type": "object"
+                },
                 "camera_position": {
                   "description": "[x, y, z] in bed mm, same frame as get_scene_info",
                   "items": {
@@ -2811,7 +2816,17 @@
                   "type": "array"
                 },
                 "fit": {
-                  "description": "\"plate\" (default) or {\"object_index\": n} to frame one object -- its instances on this plate; an object this plate does not hold is an error naming its plate. A closer camera beats more pixels."
+                  "description": "\"plate\" (default) or {\"object_id\": n} to frame one object -- its instances on this plate; an object this plate does not hold is an error naming its plate (object_index is the same number, kept). A closer camera beats more pixels.",
+                  "properties": {
+                    "object_id": {
+                      "description": "The object to frame (get_scene_info's object_id)",
+                      "type": "integer"
+                    },
+                    "object_index": {
+                      "description": "Same as object_id, kept",
+                      "type": "integer"
+                    }
+                  }
                 },
                 "frame": {
                   "description": "Frame of camera_position/target: bed_mm (default, the get_scene_info frame) or plate_local (from this plate's front-left corner).",

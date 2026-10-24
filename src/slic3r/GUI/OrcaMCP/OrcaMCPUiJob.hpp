@@ -13,6 +13,7 @@
 #include "slic3r/GUI/Jobs/Job.hpp"
 #include "libslic3r/ObjectID.hpp"
 #include "libslic3r/Point.hpp"
+#include "slic3r/Utils/ThreadCancel.hpp"
 
 // The UI worker's jobs a tool starts -- arrange_objects' and clone_object's arrange, auto_orient's and
 // flatten_object's orient, fill_bed_with_instances' fill -- and the tool's wait for them.
@@ -137,6 +138,13 @@ private:
     std::chrono::milliseconds m_previous;
 };
 std::chrono::milliseconds tool_wait_cap();
+
+// The stop test of work done on the HTTP thread (a plan, a repair, a render's compute step): the app is
+// quitting (this_thread_cancelled), or the call's wait has run out at `deadline`.
+inline std::function<bool()> stop_at(std::chrono::steady_clock::time_point deadline)
+{
+    return [deadline] { return Slic3r::this_thread_cancelled() || std::chrono::steady_clock::now() > deadline; };
+}
 
 // The objects' ids in the model's order, before a job that can re-sort them: an arrange sorts every
 // object of the model by its arrange order (PartPlateList::rebuild_plates_after_arrangement), those on

@@ -505,6 +505,9 @@ set(SLIC3R_GUI_SOURCES
     GUI/OrcaMCP/OrcaMCPMeshTools.cpp
     GUI/OrcaMCP/OrcaMCPBedExclusion.hpp
     GUI/OrcaMCP/OrcaMCPBedExclusion.cpp
+    GUI/OrcaMCP/OrcaMCPRenderRequest.hpp
+    GUI/OrcaMCP/OrcaMCPRenderRequest.cpp
+    GUI/OrcaMCP/OrcaMCPRenderSchema.cpp
     GUI/OrcaMCP/OrcaMCPTextureDisplacement.hpp
     GUI/OrcaMCP/OrcaMCPTextureDisplacement.cpp
     GUI/OrcaMCP/OrcaMCPPlateOccupancy.hpp

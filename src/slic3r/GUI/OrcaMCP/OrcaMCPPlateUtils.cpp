@@ -204,16 +204,6 @@ static BoundingBoxf3 object_fit_box_on_plate(int object_index, int plate_index)
     throw std::runtime_error(OrcaMCP::object_not_on_plate_message(object_index, plate_index, on_plate));
 }
 
-// [x, y, z] or {x, y, z}, bed mm.
-static Vec3d read_vec3(const nlohmann::json& v, const char* what)
-{
-    if (v.is_array() && v.size() >= 3)
-        return Vec3d(v[0].get<double>(), v[1].get<double>(), v[2].get<double>());
-    if (v.is_object())
-        return Vec3d(v.value("x", 0.0), v.value("y", 0.0), v.value("z", 0.0));
-    throw std::runtime_error(std::string(what) + " must be [x, y, z]");
-}
-
 // How a render hands its picture back: a file, or inline base64.
 struct ImageOutput
 {
@@ -424,98 +414,107 @@ static nlohmann::json render_sliced_layer_view(const PlanTarget& target, const O
     return nlohmann::json::array({entry});
 }
 
-nlohmann::json OrcaMCPPlateUtils::RenderPlateView(const nlohmann::json& params) {
-    nlohmann::json payload = params.value("payload", nlohmann::json::object());
-    if (payload.is_null() || payload.value("plate_index", -1) == -1) {
-        BOOST_LOG_TRIVIAL(error) << "RenderPlateView: missing plate_index";
-        throw std::runtime_error("Missing required parameter plate_index");
+nlohmann::json OrcaMCPPlateUtils::PrepareRender(const nlohmann::json& payload, RenderJob& job)
+{
+    std::string error;
+    std::optional<OrcaMCP::RenderRequest> request = OrcaMCP::read_render_request(payload, error);
+    if (!request) {
+        BOOST_LOG_TRIVIAL(error) << "RenderPlateView: " << error;
+        throw std::runtime_error(error);
     }
-    const int         plate_index  = payload.value("plate_index", -1);
-    const bool        save_to_file = payload.value("save_to_file", false);
-    const int         resolution   = std::clamp(payload.value("resolution", 512), 32, 2048);
-    // Files default to PNG; inline base64 defaults to JPEG, where size matters more than crispness.
-    const std::string image_format = payload.value("image_format", std::string(save_to_file ? "png" : "jpeg"));
-    if (image_format != "png" && image_format != "jpeg")
-        throw std::runtime_error("image_format must be \"png\" or \"jpeg\"");
-    const bool use_png = image_format == "png";
-    // Overlays default on (true/missing); false disables all; an object picks per overlay.
-    const OrcaMCP::OverlayOptions overlay_options = OrcaMCP::overlay_options_from_json(payload.value("overlays", nlohmann::json(true)));
+    job.request = std::move(*request);
+    const OrcaMCP::RenderRequest& asked = job.request;
 
-    PartPlate* plate = wxGetApp().plater()->get_partplate_list().get_plate(plate_index);
+    PartPlate* plate = wxGetApp().plater()->get_partplate_list().get_plate(asked.plate_index);
     if (plate == nullptr)
         throw std::runtime_error("plate_index out of range");
-    const BoundingBoxf3              plate_box      = plate->get_plate_box();
-    const std::vector<BoundingBoxf3>             legacy_boxes      = plate->get_exclude_areas();
-    const std::vector<OrcaMCP::ExclusionRegion> exclusion_regions = OrcaMCP::plate_exclusion_regions(*plate);
+    job.plate_box          = plate->get_plate_box();
+    job.legacy_boxes       = plate->get_exclude_areas();
+    job.exclusion_regions  = OrcaMCP::plate_exclusion_regions(*plate);
 
     // A layer plan is a different picture altogether: top-down, drawn on the CPU. "first_layer" from
     // the sliced Print (or footprints when unsliced); {layer} / {z} from the sliced G-code.
-    const nlohmann::json layer_view = payload.value("layer_view", nlohmann::json());
-    if (!layer_view.is_null() && layer_view != "") {  // "" was always read as no layer view
+    if (!asked.layer_view.is_null()) {
         // Read before anything is looked up, so a malformed request is reported as that, not as "unsliced".
-        const OrcaMCP::LayerView asked = OrcaMCP::parse_layer_view(layer_view);
-        const PlanTarget target{*plate, plate_index, plate_box, legacy_boxes, exclusion_regions, resolution, overlay_options, {save_to_file, use_png}};
-        return asked.first_layer ? render_first_layer_view(target) : render_sliced_layer_view(target, asked.sliced);
+        const OrcaMCP::LayerView layer_asked = OrcaMCP::parse_layer_view(asked.layer_view);
+        const PlanTarget target{*plate, asked.plate_index, job.plate_box, job.legacy_boxes, job.exclusion_regions, asked.resolution,
+                                asked.overlays, {asked.save_to_file, asked.use_png}};
+        return layer_asked.first_layer ? render_first_layer_view(target) : render_sliced_layer_view(target, layer_asked.sliced);
     }
 
-    // No views: a contact sheet of the three presets an agent reaches for first, fitted to the plate.
-    nlohmann::json views         = payload.value("views", nlohmann::json());
-    const bool     contact_sheet = !views.is_array();
-    if (contact_sheet)
-        views = nlohmann::json::array({{{"preset", "iso"}}, {{"preset", "top"}}, {{"preset", "front"}}});
-    if (views.empty())
-        throw std::runtime_error("views must not be empty");
-
-    struct Rendered { wxImage image; nlohmann::json entry; };
-    std::vector<Rendered> rendered;
-    int view_index = 0;
-    for (const auto& view : views) {
-        if (!view.is_object())
-            throw std::runtime_error("each view must be an object");
-
+    for (const OrcaMCP::ViewRequest& view : asked.views) {
+        ResolvedView resolved;
+        resolved.request = view;
         // What the camera frames: the plate, or one object (a closer camera beats more pixels).
         // "plate" is the plate's footprint at the height of what is on it -- the full build volume
         // would push the parts into the bottom third of every picture.
-        BoundingBoxf3  fit_box  = plate_contents_box(*plate, plate_box);
-        nlohmann::json fit_json = "plate";
-        if (view.contains("fit") && view["fit"].is_object() && view["fit"].contains("object_index")) {
-            const int oi = view["fit"]["object_index"].get<int>();
-            fit_box      = object_fit_box_on_plate(oi, plate_index);
-            fit_json     = view["fit"];
-        }
-
-        Vec3d       camera_position, target;
-        std::string preset_name;
-        std::string input_frame = view.value("frame", std::string("bed_mm"));
-        if (view.contains("preset")) {
-            OrcaMCP::CameraPreset preset;
-            preset_name = view["preset"].get<std::string>();
-            if (!OrcaMCP::camera_preset_from_string(preset_name, preset))
-                throw std::runtime_error("unknown preset '" + preset_name + "'; use iso, top, front, back, left, right or low");
-            OrcaMCP::preset_camera(preset, fit_box, camera_position, target);
-            input_frame = "bed_mm";
+        resolved.fit_box = view.fit.kind == OrcaMCP::FitRequest::Kind::Object ? object_fit_box_on_plate(view.fit.object_id, asked.plate_index)
+                                                                              : plate_contents_box(*plate, job.plate_box);
+        if (view.preset) {
+            OrcaMCP::preset_camera(*view.preset, resolved.fit_box, resolved.camera_position, resolved.target);
         } else {
-            if (!view.contains("camera_position") || !view.contains("target"))
-                throw std::runtime_error("each view needs a preset, or camera_position and target");
-            camera_position = read_vec3(view["camera_position"], "camera_position");
-            target          = read_vec3(view["target"], "target");
-            if (input_frame == "plate_local") {
+            resolved.camera_position = *view.camera_position;
+            resolved.target          = *view.target;
+            if (view.input_frame == "plate_local") {
                 // Relative to this plate's front-left corner; converted so the renderer sees bed mm.
-                const Vec3d origin(plate_box.min.x(), plate_box.min.y(), 0.);
-                camera_position += origin;
-                target += origin;
-            } else if (input_frame != "bed_mm") {
-                throw std::runtime_error("frame must be \"bed_mm\" or \"plate_local\"");
+                const Vec3d origin(job.plate_box.min.x(), job.plate_box.min.y(), 0.);
+                resolved.camera_position += origin;
+                resolved.target += origin;
             }
         }
+        job.views.push_back(std::move(resolved));
+    }
+
+    for (const ModelObject* object : wxGetApp().model().objects)
+        job.captured_objects.emplace_back(object, object->id());
+    return nlohmann::json();
+}
+
+void OrcaMCPPlateUtils::ComputeRender(RenderJob& job, const std::function<bool()>& stop)
+{
+    for (const RenderJob::Work& piece : job.work) {
+        if (stop())
+            break;
+        piece(stop);
+    }
+}
+
+// True when the model still holds the objects the first step captured, each the same one.
+static bool scene_unchanged_since(const RenderJob& job)
+{
+    const ModelObjectPtrs& objects = wxGetApp().model().objects;
+    if (objects.size() != job.captured_objects.size())
+        return false;
+    for (size_t i = 0; i < objects.size(); ++i)
+        if (objects[i] != job.captured_objects[i].first || objects[i]->id() != job.captured_objects[i].second)
+            return false;
+    return true;
+}
+
+nlohmann::json OrcaMCPPlateUtils::DrawRender(RenderJob& job)
+{
+    const OrcaMCP::RenderRequest& asked = job.request;
+    if (!scene_unchanged_since(job) || wxGetApp().plater()->get_partplate_list().get_plate(asked.plate_index) == nullptr)
+        return {{"status", "error"}, {"message", "the scene changed while the picture was being prepared; render again"}};
+
+    const int  plate_index = asked.plate_index;
+    const int  resolution  = asked.resolution;
+    const bool use_png     = asked.use_png;
+
+    struct Rendered { wxImage image; nlohmann::json entry; };
+    std::vector<Rendered> rendered;
+    for (const ResolvedView& view : job.views) {
+        const Vec3d&       camera_position = view.camera_position;
+        const Vec3d&       target          = view.target;
+        const std::string& preset_name     = view.request.preset_name;
 
         ThumbnailData data;
         data.set(resolution, resolution);
         RenderCameraInfo cam;
         RenderReport     report;
         RenderOptions options;
-        if (!preset_name.empty() || !fit_json.is_string())
-            options.zoom_box = fit_box;  // presets and object fits frame exactly what they were asked to
+        if (view.request.preset || !view.request.fit_json.is_string())
+            options.zoom_box = view.fit_box;  // presets and object fits frame exactly what they were asked to
         RenderThumbnail(data, camera_position, target, plate_index, &cam, options, &report);
 
         // Overlays go on the finished pixels, projected through the very camera that drew them.
@@ -524,8 +523,8 @@ nlohmann::json OrcaMCPPlateUtils::RenderPlateView(const nlohmann::json& params) 
         for (const RenderedVolume& v : report.drawn)
             if (!v.wipe_tower)
                 labels.push_back({std::to_string(v.object_index), v.world_bbox.center(), v.color});
-        OrcaMCP::draw_overlays(image, cam.frame, report.plate_box, OrcaMCP::exclusion_overlays(legacy_boxes, exclusion_regions, std::nullopt),
-                               labels, overlay_options);
+        OrcaMCP::draw_overlays(image, cam.frame, report.plate_box, OrcaMCP::exclusion_overlays(job.legacy_boxes, job.exclusion_regions, std::nullopt),
+                               labels, asked.overlays);
 
         // Everything pick_facet needs to turn a pixel of this image back into a ray. The three
         // required keys are written by the same function pick_facet parses with, so the two halves
@@ -537,23 +536,22 @@ nlohmann::json OrcaMCPPlateUtils::RenderPlateView(const nlohmann::json& params) 
         camera_json["camera_position"] = {camera_position.x(), camera_position.y(), camera_position.z()};  // bed mm, after any conversion
         camera_json["target"]          = {target.x(), target.y(), target.z()};
         camera_json["preset"]          = preset_name.empty() ? nlohmann::json(nullptr) : nlohmann::json(preset_name);
-        camera_json["fit"]             = fit_json;
-        camera_json["input_frame"]     = input_frame;
+        camera_json["fit"]             = view.request.fit_json;
+        camera_json["input_frame"]     = view.request.input_frame;
 
         nlohmann::json entry;
         entry["camera"] = camera_json;
         append_render_report(entry, report, cam.frame, plate_index);
-        entry["overlays"] = OrcaMCP::overlay_options_to_json(overlay_options);
+        entry["overlays"] = OrcaMCP::overlay_options_to_json(asked.overlays);
         rendered.push_back({std::move(image), std::move(entry)});
-        ++view_index;
     }
 
     nlohmann::json result = nlohmann::json::array();
-    if (!contact_sheet) {
+    if (!asked.contact_sheet) {
         int idx = 0;
         for (Rendered& r : rendered) {
-            if (save_to_file) r.entry["file_path"] = save_image_to_file(r.image, idx, use_png);
-            else              r.entry["base64"]    = encode_image_to_base64(r.image, use_png);
+            if (asked.save_to_file) r.entry["file_path"] = save_image_to_file(r.image, idx, use_png);
+            else                    r.entry["base64"]    = encode_image_to_base64(r.image, use_png);
             result.push_back(std::move(r.entry));
             ++idx;
         }
@@ -574,8 +572,8 @@ nlohmann::json OrcaMCPPlateUtils::RenderPlateView(const nlohmann::json& params) 
     entry["contact_sheet"] = true;
     entry["columns"]       = int(rendered.size());
     entry["views"]         = std::move(columns);
-    if (save_to_file) entry["file_path"] = save_image_to_file(sheet, 0, use_png);
-    else              entry["base64"]    = encode_image_to_base64(sheet, use_png);
+    if (asked.save_to_file) entry["file_path"] = save_image_to_file(sheet, 0, use_png);
+    else                    entry["base64"]    = encode_image_to_base64(sheet, use_png);
     result.push_back(std::move(entry));
     return result;
 }
@@ -697,7 +695,14 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
     using OrcaMCP::is_uniform_rgba;
     const Camera::EType camera_type = Camera::EType::Perspective;  // Fixed camera type
 
-    GLShaderProgram* shader = wxGetApp().get_shader("thumbnail");
+    // mcp_render is thumbnail plus the light and clipping plane of the caller's; if it did not build on this
+    // driver (GLShadersManager logged it) the render falls back to thumbnail and its shading is ignored.
+    GLShaderProgram* shader = wxGetApp().get_shader("mcp_render");
+    const bool       shader_fallback = shader == nullptr;
+    if (shader_fallback) {
+        BOOST_LOG_TRIVIAL(warning) << "RenderThumbnail: the mcp_render shader is not available, drawing with thumbnail";
+        shader = wxGetApp().get_shader("thumbnail");
+    }
     if (shader == nullptr) {
         BOOST_LOG_TRIVIAL(info) << "RenderThumbnail: shader is null, returning directly";
         return;
@@ -772,14 +777,20 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
     camera.set_type(camera_type);
     camera.set_viewport(0, 0, thumbnail_data.width, thumbnail_data.height);
     camera.apply_viewport();
-    OrcaMCP::frame_camera(camera, camera_position, target, fit_box, depth_box);
-    const Transform3d& view_matrix       = camera.get_view_matrix();
-    const Transform3d& projection_matrix = camera.get_projection_matrix();
+    // The matrices are copied out, not referenced: `camera` is a local. An exact camera (options.camera_frame)
+    // is drawn with its own matrices; otherwise the camera frames fit_box.
+    OrcaMCP::CameraFrame frame;
+    if (options.camera_frame) {
+        frame = *options.camera_frame;
+    } else {
+        OrcaMCP::frame_camera(camera, camera_position, target, fit_box, depth_box);
+        frame = OrcaMCP::camera_frame_of(camera);
+    }
+    const Transform3d view_matrix(frame.view);
+    const Transform3d projection_matrix(frame.projection);
 
-    // Copied out here, not returned by reference: `camera` is a local and both matrices above are
-    // references into it.
     if (out_camera != nullptr) {
-        out_camera->frame       = OrcaMCP::camera_frame_of(camera);
+        out_camera->frame       = frame;
         out_camera->perspective = camera_type == Camera::EType::Perspective;
     }
 
@@ -798,6 +809,15 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
     shader->start_using();
     shader->set_uniform("emission_factor", options.emission);
     shader->set_uniform("ban_light", false);
+    if (!shader_fallback) {
+        const OrcaMCP::ShaderSettings& shading = options.shading;
+        shader->set_uniform("clipping_plane", shading.clipping_plane);
+        shader->set_uniform("use_light_dir", shading.use_light_dir);
+        shader->set_uniform("light_dir_eye", shading.light_dir_eye);
+        shader->set_uniform("ambient", shading.ambient);
+        shader->set_uniform("front_light", shading.front_light);
+    }
+    RenderPass pass{view_matrix, projection_matrix, *shader, plate_index};
 
     for (GLVolume* vol : visible_volumes) {
         // GLWipeTowerVolume keeps its per-filament colours in members this file cannot reach, and
@@ -837,9 +857,12 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
             model_matrix.matrix().block(0, 0, 3, 3).inverse().transpose();
         shader->set_uniform("view_normal_matrix", view_normal_matrix);
 
-        vol->simple_render(shader, model_objects, extruder_colors, false);
+        if (!(options.draw_volume && options.draw_volume(*vol, pass)))
+            vol->simple_render(shader, model_objects, extruder_colors, false);
         vol->is_active = is_active;
     }
+    for (const auto& after : options.after_volumes)
+        after(pass);
 
     shader->stop_using();
     glsafe(::glDisable(GL_DEPTH_TEST));
@@ -850,6 +873,7 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
         report->uniform_image = is_uniform_rgba(thumbnail_data.pixels, thumbnail_data.width, thumbnail_data.height);
         report->plate_box     = plate->get_plate_box();
         report->scene         = {scene_volumes, scene_current};
+        report->shader_fallback = shader_fallback;
     }
     BOOST_LOG_TRIVIAL(info) << "RenderThumbnail: read " << thumbnail_data.width << "x" << thumbnail_data.height
                             << " from " << (offscreen.ok ? "offscreen framebuffer" : "current framebuffer")

@@ -169,7 +169,7 @@ TEST_CASE("Nested objects without additionalProperties false take any key", "[Mc
 {
     // A render's own camera or a paint call's bands may be passed back with the extra fields its response
     // carries; a paint seed is a point or pick_facet's answer.
-    CHECK("" == refusal("render_plate_view", {{"plate_index", 0}, {"views", {{{"preset", "iso"}, {"input_frame", "bed_mm"}}}}}));
+    CHECK("" == refusal("render_plate_view", {{"plate_index", 0}, {"views", {{{"preset", "iso"}, {"camera", {{"type", "perspective"}, {"input_frame", "bed_mm"}}}}}}}));
     CHECK("" == refusal("paint_object", {{"object_id", 0}, {"selection", "bands"}, {"axis", "z"},
                                          {"bands", {{{"from", 0}, {"to", 1}, {"filament", 1}, {"facet_count", 7}}}}}));
     CHECK("" == refusal("paint_object", {{"object_id", 0}, {"selection", "connected"}, {"seed", {{"facet", 3}, {"normal", {0, 0, 1}}}}}));
@@ -463,4 +463,22 @@ TEST_CASE("Every required argument and nested required key is a declared propert
     };
     for (const auto& [name, tool] : OrcaMCPServer::registered_tools())
         check(listed_schema(name), name);
+}
+
+TEST_CASE("render_plate_view views are strict, and a camera and a fit a render returned are taken back", "[McpToolArguments][orcamcp][tools]")
+{
+    // A view with a key the schema does not declare (fov, zoom, distance) is refused, not ignored.
+    const json fov = {{"plate_index", 0}, {"views", json::array({{{"preset", "iso"}, {"fov", 30}}})}};
+    CHECK(::contains(refusal("render_plate_view", fov), "has no key \"fov\""));
+
+    // What a render returns in a view's shape goes back in: the fit it echoed (object_id or object_index) and the
+    // camera object (view_matrix, projection_matrix, viewport and the informational keys).
+    const json camera = {{"view_matrix", json::array({1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1})},
+                         {"projection_matrix", json::array({1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1})},
+                         {"viewport", json::array({0, 0, 512, 512})},
+                         {"type", "perspective"}, {"pixel_origin", "top_left"}, {"preset", nullptr}, {"fit", {{"object_id", 1}}}};
+    json view = {{"preset", "iso"}, {"fit", {{"object_id", 1}}}, {"frame", "bed_mm"}, {"camera", camera}};
+    CHECK(refusal("render_plate_view", {{"plate_index", 0}, {"views", json::array({view})}}) == "");
+    view["fit"] = {{"object_index", 1}};
+    CHECK(refusal("render_plate_view", {{"plate_index", 0}, {"views", json::array({view})}}) == "");
 }

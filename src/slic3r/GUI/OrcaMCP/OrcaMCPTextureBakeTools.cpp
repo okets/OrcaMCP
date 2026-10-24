@@ -103,12 +103,6 @@ void update_object_list(Plater& plater, const ModelObject& object)
         wxGetApp().obj_list()->update_info_items(std::size_t(it - objects.begin()));
 }
 
-// The stop test of a plan on the HTTP thread: the app is quitting, or the call's wait has run out.
-std::function<bool()> stop_at(Clock::time_point deadline)
-{
-    return [deadline] { return Slic3r::this_thread_cancelled() || Clock::now() > deadline; };
-}
-
 // The panel's closing of an open toolbar tool, right before a change. Null to go on, else the error answer.
 std::optional<nlohmann::json> close_tool_before(Plater& plater, int object_id, std::size_t volumes, std::string& closed_tool)
 {

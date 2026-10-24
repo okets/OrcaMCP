@@ -431,7 +431,7 @@ nlohmann::json repair_one_object_tool(const nlohmann::json& params)
     const auto     wait_cap    = tool_wait_cap();
     const auto     deadline    = Clock::now() + wait_cap;
     CgalRepairPlan plan        = Slic3r::plan_cgal_repair(std::move(request.input), {},
-                                                          [deadline] { return Slic3r::this_thread_cancelled() || Clock::now() > deadline; });
+                                                          stop_at(deadline));
     const bool     past_cap    = Clock::now() > deadline;
     const double   wait_cap_s  = std::chrono::duration<double>(wait_cap).count();
     return run_on_main_thread([&]() -> nlohmann::json { return finish_repair(request, plan, past_cap, wait_cap_s); });
