@@ -187,10 +187,32 @@ void read_lens(const nlohmann::json& view, ViewRequest& out)
         out.fov_deg = 30.;
 }
 
+ViewRequest read_view(const nlohmann::json& view);
+
+// A view with compare_with is drawn with the earlier picture's camera, so it takes that and nothing that frames a
+// camera; a `camera` it carries (the earlier picture's own, as an answer returned it) is checked against the record
+// by the caller.
+ViewRequest read_compared_view(const nlohmann::json& view)
+{
+    if (!view["compare_with"].is_string() || view["compare_with"].get<std::string>().empty())
+        throw std::runtime_error("compare_with must be the file_path of an earlier render_plate_view picture (a PNG saved with save_to_file)");
+    nlohmann::json rest = view;
+    rest.erase("compare_with");
+    for (const auto& item : rest.items())
+        if (item.key() != "camera")
+            throw std::runtime_error("a view with compare_with is drawn with the earlier picture's camera; it takes no " + item.key() +
+                                     " (only compare_with, and optionally that picture's camera)");
+    ViewRequest out = rest.empty() ? ViewRequest() : read_view(rest);
+    out.compare_with = view["compare_with"].get<std::string>();
+    return out;
+}
+
 ViewRequest read_view(const nlohmann::json& view)
 {
     if (!view.is_object())
         throw std::runtime_error("each view must be an object");
+    if (view.contains("compare_with"))
+        return read_compared_view(view);
     if (view.contains("camera"))
         return read_replay_view(view, view["camera"]);
     if (view.contains("view_matrix"))
@@ -304,6 +326,7 @@ RenderRequest read_request(const nlohmann::json& payload)
     out.plate_index  = payload.value("plate_index", -1);
     out.save_to_file = payload.value("save_to_file", false);
     out.resolution   = std::clamp(payload.value("resolution", 512), 32, 2048);
+    out.resolution_given = payload.contains("resolution") && !payload["resolution"].is_null();
     // Files default to PNG; inline base64 defaults to JPEG, where size matters more than crispness.
     const std::string image_format = payload.value("image_format", std::string(out.save_to_file ? "png" : "jpeg"));
     if (image_format != "png" && image_format != "jpeg")
@@ -334,6 +357,9 @@ RenderRequest read_request(const nlohmann::json& payload)
             throw std::runtime_error("paint, texture_layers and color_by are for 3D views; a layer_view is a plan drawn from the G-code. Leave them out, or leave layer_view out");
         if (out.texture_preview)
             throw std::runtime_error("texture_preview is for 3D views; a layer_view is a plan drawn from the G-code. Leave it out, or leave layer_view out");
+        if (payload.contains("views") && payload["views"].is_array() &&
+            std::any_of(payload["views"].begin(), payload["views"].end(), [](const nlohmann::json& v) { return v.is_object() && v.contains("compare_with"); }))
+            throw std::runtime_error("compare_with is for 3D views; a layer_view is a plan drawn from the G-code. Leave it out, or leave layer_view out");
         return out;  // a layer plan ignores views
     }
 
@@ -351,6 +377,9 @@ RenderRequest read_request(const nlohmann::json& payload)
         throw std::runtime_error("views must not be empty");
     for (const nlohmann::json& view : views)
         out.views.push_back(read_view(view));
+    for (const ViewRequest& view : out.views)
+        if (view.compare_with && out.views.size() > 1)
+            throw std::runtime_error("compare_with compares one view with one earlier picture; send it in a call of one view");
     adopt_replay_resolution(payload, out);
     for (const ViewRequest& view : out.views)
         if (view.replay_plate && *view.replay_plate != out.plate_index)

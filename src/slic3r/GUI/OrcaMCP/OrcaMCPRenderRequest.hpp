@@ -62,6 +62,9 @@ struct ViewRequest
     // object's own, when it carries them).
     std::optional<CameraFrame>  replay;
     std::optional<int>          replay_plate;              // the plate the replayed camera was drawn of, when it says
+    // compare_with: the file_path of an earlier picture of this session. The view is then drawn with that picture's
+    // camera (resolved by the caller from the records); `replay` is set to a camera the view itself gave, if any.
+    std::optional<std::string>  compare_with;
 
     bool exact() const { return mode == CameraMode::Exact; }
 };
@@ -74,6 +77,7 @@ struct RenderRequest
     int                  plate_index  = -1;
     bool                 save_to_file = false;
     int                  resolution   = 512;
+    bool                 resolution_given = false;         // the call named a resolution
     bool                 use_png      = true;
     OverlayOptions       overlays;
     nlohmann::json       layer_view;                       // null: a 3D render

@@ -510,6 +510,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/OrcaMCP/OrcaMCPRenderLight.cpp
     GUI/OrcaMCP/OrcaMCPRenderPaint.hpp
     GUI/OrcaMCP/OrcaMCPRenderPaint.cpp
+    GUI/OrcaMCP/OrcaMCPRenderCompare.hpp
+    GUI/OrcaMCP/OrcaMCPRenderCompare.cpp
     GUI/OrcaMCP/OrcaMCPRenderSection.hpp
     GUI/OrcaMCP/OrcaMCPRenderSection.cpp
     GUI/OrcaMCP/OrcaMCPTexturePreview.hpp

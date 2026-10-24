@@ -392,3 +392,23 @@ TEST_CASE("texture_preview is read as a flag and refused where it cannot be draw
     // the other channels are checked against the previewed parts when the scene is read, not here
     CHECK(read_ok({{"plate_index", 0}, {"texture_preview", true}, {"paint", {"support"}}}).texture_preview);
 }
+
+TEST_CASE("compare_with is read as a view of its own and refused where it cannot work", "[RenderRequest][orcamcp][RenderCompare]")
+{
+    const std::string path = "/tmp/orcamcp_render_1_2_3_0.png";
+    const RenderRequest r  = read_ok({{"plate_index", 0}, {"views", json::array({{{"compare_with", path}}})}});
+    REQUIRE(r.views.size() == 1);
+    REQUIRE(r.views[0].compare_with.has_value());
+    CHECK(*r.views[0].compare_with == path);
+    CHECK_FALSE(r.views[0].replay.has_value());   // the camera is the record's, found by the caller
+    CHECK_FALSE(r.resolution_given);
+    CHECK(read_ok({{"plate_index", 0}, {"resolution", 256}, {"views", json::array({{{"compare_with", path}}})}}).resolution_given);
+
+    // no camera of its own, and no contact sheet
+    CHECK(refusal_of({{"plate_index", 0}, {"views", json::array({{{"compare_with", path}, {"preset", "iso"}}})}}).find("takes no preset") != std::string::npos);
+    CHECK(refusal_of({{"plate_index", 0}, {"views", json::array({{{"compare_with", path}, {"fit", "plate"}}})}}).find("takes no fit") != std::string::npos);
+    CHECK(refusal_of({{"plate_index", 0}, {"views", json::array({{{"compare_with", path}}, {{"preset", "top"}}})}}).find("one view") != std::string::npos);
+    CHECK(refusal_of({{"plate_index", 0}, {"views", json::array({{{"compare_with", 3}}})}}).find("file_path") != std::string::npos);
+    CHECK(refusal_of({{"plate_index", 0}, {"views", json::array({{{"compare_with", ""}}})}}).find("file_path") != std::string::npos);
+    CHECK(refusal_of({{"plate_index", 0}, {"layer_view", "first_layer"}, {"views", json::array({{{"compare_with", path}}})}}).find("3D views") != std::string::npos);
+}

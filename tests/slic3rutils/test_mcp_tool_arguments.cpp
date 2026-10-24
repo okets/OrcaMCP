@@ -493,6 +493,11 @@ TEST_CASE("render_plate_view views are strict, and a camera and a fit a render r
     // The whole camera object, as the view itself.
     CHECK(refusal("render_plate_view", {{"plate_index", 0}, {"views", json::array({answered})}}) == "");
 
+    // compare_with is a view key, alone or with the earlier picture's own camera; a misspelling is not.
+    CHECK(refusal("render_plate_view", {{"plate_index", 0}, {"views", json::array({{{"compare_with", "/tmp/orcamcp_render_1_2_3_0.png"}}})}}) == "");
+    CHECK(refusal("render_plate_view", {{"plate_index", 0}, {"views", json::array({{{"compare_with", "/tmp/orcamcp_render_1_2_3_0.png"}, {"camera", answered}}})}}) == "");
+    CHECK(::contains(refusal("render_plate_view", {{"plate_index", 0}, {"views", json::array({{{"compare", "x"}}})}}), "has no key \"compare\""));
+
     // The new view keys, and the fit shapes, are declared; a misspelling is not.
     const json exact = {{"camera_position", {0, -60, 20}}, {"target", {0, 0, 10}}, {"camera_mode", "exact"},
                         {"projection", "perspective"}, {"fov_deg", 40}, {"ortho_height_mm", 20}};

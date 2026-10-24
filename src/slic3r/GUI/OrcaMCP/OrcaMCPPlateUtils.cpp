@@ -6,6 +6,7 @@
 #include "OrcaMCPInstanceBox.hpp"
 #include "OrcaMCPImageFiles.hpp"
 #include "OrcaMCPPlateOccupancy.hpp"
+#include "OrcaMCPRenderCompare.hpp"
 #include "OrcaMCPCommon.hpp"
 #include "OrcaMCPMeshHealth.hpp"
 #include "OrcaMCPNextSteps.hpp"
@@ -807,6 +808,23 @@ static bool section_unchanged_since(const RenderJob& job)
     return true;
 }
 
+// A view that compares with an earlier picture is drawn with that picture's camera, at its size. The earlier picture
+// must be one of this session's own (the records say which); a camera the view carries must be that picture's.
+static void adopt_compared_camera(const std::string& path, int plate_index, OrcaMCP::ViewRequest& view, OrcaMCP::RenderRequest& request)
+{
+    const OrcaMCP::RenderRecord& record = OrcaMCP::compare_record(
+        OrcaMCP::render_records(), path, plate_index, request.resolution_given ? std::optional<int>(request.resolution) : std::nullopt);
+    if (view.replay) {
+        if (!OrcaMCP::same_camera(*view.replay, record.frame, 1e-4))
+            throw std::runtime_error("compare_with: the view's camera is not the camera of that picture; leave the camera out to draw the picture's own");
+    } else {
+        view.replay = record.frame;
+        view.mode   = OrcaMCP::CameraMode::Exact;
+        view.orthographic = !OrcaMCP::frame_is_perspective(record.frame);
+    }
+    request.resolution = record.resolution;
+}
+
 nlohmann::json OrcaMCPPlateUtils::PrepareRender(const nlohmann::json& payload, RenderJob& job)
 {
     std::string error;
@@ -835,9 +853,12 @@ nlohmann::json OrcaMCPPlateUtils::PrepareRender(const nlohmann::json& payload, R
         return layer_asked.first_layer ? render_first_layer_view(target) : render_sliced_layer_view(target, layer_asked.sliced);
     }
 
-    for (const OrcaMCP::ViewRequest& view : asked.views) {
+    for (const OrcaMCP::ViewRequest& asked_view : asked.views) {
         ResolvedView resolved;
-        resolved.request = view;
+        resolved.request = asked_view;
+        if (asked_view.compare_with)
+            adopt_compared_camera(*asked_view.compare_with, asked.plate_index, resolved.request, job.request);
+        const OrcaMCP::ViewRequest& view = resolved.request;
         // What the camera frames: the plate, one object, or a region (a closer camera beats more pixels).
         const Vec3d plate_origin(job.plate_box.min.x(), job.plate_box.min.y(), 0.);
         resolved.fit_box = view_fit_box(view, *plate, job.plate_box, asked.plate_index);
@@ -1105,6 +1126,39 @@ struct TexturePreviewOverlay
     }
 };
 
+// The earlier picture of a compared view, read from its file: one of this server's PNGs of the size it was drawn at.
+static wxImage load_compared_picture(const OrcaMCP::RenderRecord& record)
+{
+    namespace fs = boost::filesystem;
+    boost::system::error_code ec;
+    const auto bytes = fs::file_size(record.path, ec);
+    if (ec)
+        throw std::runtime_error("compare_with: the earlier picture's file is gone; render it again with save_to_file");
+    if (bytes > OrcaMCP::k_max_compare_file_bytes)
+        throw std::runtime_error("compare_with: the earlier picture's file is too large to compare");
+    wxLogNull   quiet;
+    wxImage     picture;
+    if (!picture.LoadFile(wxString::FromUTF8(record.path), wxBITMAP_TYPE_PNG) || !picture.IsOk())
+        throw std::runtime_error("compare_with: the earlier picture could not be read as a PNG; render it again with save_to_file");
+    if (picture.GetWidth() != record.resolution || picture.GetHeight() != record.resolution)
+        throw std::runtime_error("compare_with: the earlier picture's file is not the size it was drawn at; render it again with save_to_file");
+    return picture;
+}
+
+static std::vector<uint8_t> rgb_of(const wxImage& image)
+{
+    const unsigned char* data = image.GetData();
+    return std::vector<uint8_t>(data, data + size_t(image.GetWidth()) * size_t(image.GetHeight()) * 3);
+}
+
+static wxImage image_of_rgb(const std::vector<uint8_t>& rgb, int width, int height)
+{
+    wxImage image(width, height, false);
+    std::memcpy(image.GetData(), rgb.data(), rgb.size());
+    image.InitAlpha();
+    return image;
+}
+
 nlohmann::json OrcaMCPPlateUtils::DrawRender(RenderJob& job)
 {
     const OrcaMCP::RenderRequest& asked = job.request;
@@ -1117,6 +1171,20 @@ nlohmann::json OrcaMCPPlateUtils::DrawRender(RenderJob& job)
         return {{"status", "error"}, {"message", "a section needs the render shader (mcp_render), which this driver could not build, so the cut cannot be drawn; leave section out"}};
     if (asked.section && !job.section_done)
         return {{"status", "error"}, {"message", "cutting the section needs more than the call's wait: raise ORCAMCP_TIMEOUT, or cut a plate with fewer or lighter objects"}};
+
+    // compare_with: the earlier picture is read first, so a file that is gone costs no render.
+    std::optional<wxImage> compared_before;
+    const OrcaMCP::RenderRecord* compared_record = nullptr;
+    if (!asked.views.empty() && asked.views.front().compare_with) {
+        try {
+            compared_record = OrcaMCP::render_records().find(*asked.views.front().compare_with);
+            if (compared_record == nullptr)
+                throw std::runtime_error("compare_with: that picture is no longer remembered; render it again with save_to_file");
+            compared_before = load_compared_picture(*compared_record);
+        } catch (const std::exception& e) {
+            return {{"status", "error"}, {"message", e.what()}};
+        }
+    }
 
     nlohmann::json texture_preview_report;
     TexturePreviewOverlay preview_overlay;
@@ -1140,7 +1208,7 @@ nlohmann::json OrcaMCPPlateUtils::DrawRender(RenderJob& job)
     overlay.job = &job;
     const nlohmann::json legend = OrcaMCP::tint_legend_json(job.tints, job.paint_result);
 
-    struct Rendered { wxImage image; nlohmann::json entry; };
+    struct Rendered { wxImage image; nlohmann::json entry; OrcaMCP::CameraFrame frame; };
     std::vector<Rendered> rendered;
     for (const ResolvedView& view : job.views) {
         const Vec3d&       camera_position = view.camera_position;
@@ -1223,15 +1291,37 @@ nlohmann::json OrcaMCPPlateUtils::DrawRender(RenderJob& job)
             else if (!report.completed)
                 entry["light"]["warning"] = "The picture was not drawn (no render shader or no 3D view), so the light was not applied.";
         }
-        rendered.push_back({std::move(image), std::move(entry)});
+        rendered.push_back({std::move(image), std::move(entry), cam.frame});
     }
 
     nlohmann::json result = nlohmann::json::array();
+    if (compared_before && rendered.size() == 1) {
+        // Before, now and a mask of what changed, side by side; the sheet is not a picture to compare with later.
+        Rendered& now = rendered.front();
+        constexpr int threshold = 24;
+        const std::vector<uint8_t> before_rgb = rgb_of(*compared_before), now_rgb = rgb_of(now.image);
+        const OrcaMCP::ImageDifference difference = OrcaMCP::image_difference(before_rgb, now_rgb, resolution, resolution, threshold);
+        const wxImage mask = image_of_rgb(OrcaMCP::difference_picture(now_rgb, difference, resolution, resolution), resolution, resolution);
+        wxImage sheet(resolution * 3, resolution);
+        sheet.InitAlpha();
+        sheet.Paste(*compared_before, 0, 0);
+        sheet.Paste(now.image, resolution, 0);
+        sheet.Paste(mask, resolution * 2, 0);
+        now.entry["comparison"] = OrcaMCP::comparison_json(compared_record->path, difference, resolution, threshold);
+        if (asked.save_to_file) now.entry["file_path"] = save_image_to_file(sheet, 0, use_png);
+        else                    now.entry["base64"]    = encode_image_to_base64(sheet, use_png);
+        result.push_back(std::move(now.entry));
+        return result;
+    }
     if (!asked.contact_sheet) {
         int idx = 0;
         for (Rendered& r : rendered) {
-            if (asked.save_to_file) r.entry["file_path"] = save_image_to_file(r.image, idx, use_png);
-            else                    r.entry["base64"]    = encode_image_to_base64(r.image, use_png);
+            if (asked.save_to_file) {
+                r.entry["file_path"] = save_image_to_file(r.image, idx, use_png);
+                OrcaMCP::render_records().remember({r.entry["file_path"].get<std::string>(), r.frame, resolution, plate_index, use_png});
+            } else {
+                r.entry["base64"] = encode_image_to_base64(r.image, use_png);
+            }
             result.push_back(std::move(r.entry));
             ++idx;
         }
