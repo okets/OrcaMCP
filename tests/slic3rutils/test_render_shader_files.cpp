@@ -128,5 +128,10 @@ TEST_CASE("mcp_render's default settings are what thumbnail does", "[RenderShade
         CHECK(defaults.clipping_plane[1] == 0.);
         CHECK(defaults.clipping_plane[2] == 0.);
         CHECK(defaults.clipping_plane[3] > 0.);
+
+        // The specular scale multiplies thumbnail's highlight, so the default 1 leaves it as it is.
+        CHECK(defaults.specular == 1.f);
+        CHECK(mcp.find("intensity.y = specular * LIGHT_TOP_SPECULAR *") != std::string::npos);
+        CHECK(thumbnail.find("intensity.y = LIGHT_TOP_SPECULAR *") != std::string::npos);
     }
 }

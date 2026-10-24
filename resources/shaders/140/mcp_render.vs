@@ -25,6 +25,7 @@ uniform bool use_light_dir;   // true: the top light comes from light_dir_eye (a
 uniform vec3 light_dir_eye;
 uniform float ambient;
 uniform bool front_light;     // false: the second light is left out
+uniform float specular;       // 0 leaves the top light's specular highlight out (1 draws what thumbnail draws)
 
 in vec3 v_position;
 in vec3 v_normal;
@@ -45,7 +46,7 @@ void main()
 
     intensity.x = ambient + NdotL * LIGHT_TOP_DIFFUSE;
     vec4 position = view_model_matrix * vec4(v_position, 1.0);
-    intensity.y = LIGHT_TOP_SPECULAR * pow(max(dot(-normalize(position.xyz), reflect(-top_dir, normal)), 0.0), LIGHT_TOP_SHININESS);
+    intensity.y = specular * LIGHT_TOP_SPECULAR * pow(max(dot(-normalize(position.xyz), reflect(-top_dir, normal)), 0.0), LIGHT_TOP_SHININESS);
 
     // Perform the same lighting calculation for the 2nd light source (no specular applied).
     if (front_light) {

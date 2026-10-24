@@ -148,6 +148,22 @@ json view_schema()
     };
 }
 
+json light_schema()
+{
+    return json{
+        {"type", {"string", "object"}},
+        {"additionalProperties", false},
+        {"description", "\"default\" (the 3D view's two lights) or a single directional light that rakes across a surface so texture relief reads, e.g. {azimuth_deg: 30, elevation_deg: 12}: azimuth 0 = from +X, counter-clockwise seen from above, elevation 1 to 90 degrees above the horizon. Or {direction: [x, y, z]}, the way the light travels in bed axes (from the light to the scene). Little fill light, no highlight. The answer's light says direction, azimuth_deg, elevation_deg, and applied: false with a warning when this driver could not build the render shader (shader_fallback). 3D views only."},
+        {"properties", {
+            {"azimuth_deg", {{"type", "number"}, {"description", "Degrees; 0 = light from +X, counter-clockwise seen from above"}}},
+            {"elevation_deg", {{"type", "number"}, {"description", "Degrees above the horizon, 1 to 90"}}},
+            {"direction", vec3_schema("[x, y, z] the way the light travels, bed axes")},
+            {"applied", {{"type", "boolean"}, {"description", "Accepted back from an answer; ignored"}}},
+            {"warning", {{"type", "string"}, {"description", "Accepted back from an answer; ignored"}}}
+        }}
+    };
+}
+
 json views_schema()
 {
     return json{
@@ -190,6 +206,7 @@ json render_plate_view_schema()
                 {"enum", {"png", "jpeg"}},
                 {"description", "png or jpeg. Default: png when save_to_file is true (crisp overlays, alpha kept), jpeg for inline base64 (smaller)."}
             }},
+            {"light", light_schema()},
             {"views", views_schema()}
         }},
         {"required", {"plate_index"}}

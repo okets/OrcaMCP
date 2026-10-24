@@ -3094,6 +3094,7 @@ starts at x ≈ 307. A camera aimed at another plate's area returns a flat image
 | `resolution` | integer | No | Pixels per view side (default 512, 32–2048). Prefer `fit` to an object over more pixels. |
 | `image_format` | `"png"` / `"jpeg"` | No | Default `png` for files, `jpeg` for inline base64. |
 | `overlays` | boolean / object | No | `true` (default) draws all; `false` none; or `{outline, grid, origin, labels, excluded}` booleans. `excluded` draws the hatched excluded areas and collision volumes (a height-limited one drawn at its height; in a layer plan, dashed when not at that layer). |
+| `light` | `"default"` / object | No | `{azimuth_deg, elevation_deg}` (azimuth 0 = from +X, counter-clockwise from above; elevation 1-90) or `{direction: [x,y,z]}` (the way the light travels, bed axes): one directional light with little fill and no highlight, so a shallow relief casts readable shading, e.g. `{azimuth_deg: 30, elevation_deg: 12}` for a 0.3 mm texture. The same bed-axis light in every view. 3D views only (refused with `layer_view`). Each entry answers `light: {direction, azimuth_deg, elevation_deg, applied}`; `applied: false` with a `warning` when the app's `mcp_render` shader did not build on this driver (`shader_fallback: true`) and the picture is lit as by default. |
 | `layer_view` | `"first_layer"` / object | No | A top-down plan instead of a 3D render: the **first-layer plan**, or **any sliced layer** as `{layer: N}` or `{z: mm}` — see below. Ignores `views`. |
 
 **A view** is one of:

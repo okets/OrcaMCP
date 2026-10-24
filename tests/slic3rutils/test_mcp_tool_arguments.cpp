@@ -504,6 +504,11 @@ TEST_CASE("render_plate_view views are strict, and a camera and a fit a render r
     CHECK(refusal("render_plate_view", {{"plate_index", 0}, {"views", json::array({sphere})}}) == "");
     const json radius = {{"preset", "iso"}, {"fit", {{"point", {5, 5, 5}}, {"radius", 3}}}};
     CHECK(::contains(refusal("render_plate_view", {{"plate_index", 0}, {"views", json::array({radius})}}), "has no key \"radius\""));
+    // The light an answer returns (with what a fallback adds) is taken back; an unknown light key is refused.
+    const json light = {{"direction", {-0.8, -0.4, -0.2}}, {"azimuth_deg", 26.57}, {"elevation_deg", 12.0}, {"applied", true}};
+    CHECK(refusal("render_plate_view", {{"plate_index", 0}, {"light", light}}) == "");
+    CHECK(refusal("render_plate_view", {{"plate_index", 0}, {"light", "default"}}) == "");
+    CHECK(::contains(refusal("render_plate_view", {{"plate_index", 0}, {"light", {{"brightness", 2}}}}), "has no key \"brightness\""));
     const json corner = {{"preset", "iso"}, {"fit", {{"box", {{"min", {0, 0, 0}}, {"centre", {1, 1, 1}}}}}}};
     CHECK(::contains(refusal("render_plate_view", {{"plate_index", 0}, {"views", json::array({corner})}}), "has no key \"centre\""));
 }

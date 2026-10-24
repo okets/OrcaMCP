@@ -58,6 +58,7 @@ struct RenderOptions
     // camera_mode exact: the eye is the one given, with this lens, built inside the render from the depth box it draws.
     std::optional<OrcaMCP::ExactCameraSpec>             exact_camera;
     bool                                                orthographic = false;   // fit mode, orthographic projection
+    std::optional<OrcaMCP::LightRequest>                light;                  // a raking light: shading is worked out per camera
 };
 
 // One volume RenderThumbnail actually drew, with what an agent needs to name and locate it.

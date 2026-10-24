@@ -2761,6 +2761,41 @@
               "object"
             ]
           },
+          "light": {
+            "additionalProperties": false,
+            "description": "\"default\" (the 3D view's two lights) or a single directional light that rakes across a surface so texture relief reads, e.g. {azimuth_deg: 30, elevation_deg: 12}: azimuth 0 = from +X, counter-clockwise seen from above, elevation 1 to 90 degrees above the horizon. Or {direction: [x, y, z]}, the way the light travels in bed axes (from the light to the scene). Little fill light, no highlight. The answer's light says direction, azimuth_deg, elevation_deg, and applied: false with a warning when this driver could not build the render shader (shader_fallback). 3D views only.",
+            "properties": {
+              "applied": {
+                "description": "Accepted back from an answer; ignored",
+                "type": "boolean"
+              },
+              "azimuth_deg": {
+                "description": "Degrees; 0 = light from +X, counter-clockwise seen from above",
+                "type": "number"
+              },
+              "direction": {
+                "description": "[x, y, z] the way the light travels, bed axes",
+                "items": {
+                  "type": "number"
+                },
+                "maxItems": 3,
+                "minItems": 3,
+                "type": "array"
+              },
+              "elevation_deg": {
+                "description": "Degrees above the horizon, 1 to 90",
+                "type": "number"
+              },
+              "warning": {
+                "description": "Accepted back from an answer; ignored",
+                "type": "string"
+              }
+            },
+            "type": [
+              "string",
+              "object"
+            ]
+          },
           "overlays": {
             "description": "Self-locating overlays drawn on the image: plate outline, 10 mm grid, origin with X/Y, numbered object labels, hatched excluded areas and collision volumes (a height-limited one drawn at its height; in a layer plan, dashed when not at that layer). true/omitted = all, false = none, or an object {outline, grid, origin, labels, excluded} of booleans.",
             "properties": {

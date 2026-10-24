@@ -583,6 +583,7 @@ nlohmann::json OrcaMCPPlateUtils::DrawRender(RenderJob& job)
         if (view.request.preset || !view.request.fit_json.is_string())
             options.zoom_box = view.fit_box;  // presets and object fits frame exactly what they were asked to
         options.orthographic = view.request.orthographic;
+        options.light        = asked.light;
         if (view.request.replay)
             options.camera_frame = view.request.replay;
         else if (view.request.exact())
@@ -608,6 +609,12 @@ nlohmann::json OrcaMCPPlateUtils::DrawRender(RenderJob& job)
         entry["camera"] = camera_json;
         append_render_report(entry, report, cam.frame, plate_index);
         entry["overlays"] = OrcaMCP::overlay_options_to_json(asked.overlays);
+        if (asked.light) {
+            entry["light"] = OrcaMCP::light_json(*asked.light);
+            entry["light"]["applied"] = !report.shader_fallback;
+            if (report.shader_fallback)
+                entry["light"]["warning"] = "This driver could not build the render shader, so the light was not applied: the picture is lit as the default 3D view is.";
+        }
         rendered.push_back({std::move(image), std::move(entry)});
     }
 
@@ -879,12 +886,19 @@ void OrcaMCPPlateUtils::RenderThumbnail(ThumbnailData& thumbnail_data,
     shader->set_uniform("emission_factor", options.emission);
     shader->set_uniform("ban_light", false);
     if (!shader_fallback) {
-        const OrcaMCP::ShaderSettings& shading = options.shading;
+        // A raking light is fixed in bed axes; the shader takes it in eye space, through this camera.
+        OrcaMCP::ShaderSettings shading = options.shading;
+        if (options.light) {
+            const std::array<double, 4> clipping = shading.clipping_plane;
+            shading                              = OrcaMCP::raking_light_settings(*options.light, frame.view);
+            shading.clipping_plane               = clipping;   // a section view's cut stays
+        }
         shader->set_uniform("clipping_plane", shading.clipping_plane);
         shader->set_uniform("use_light_dir", shading.use_light_dir);
         shader->set_uniform("light_dir_eye", shading.light_dir_eye);
         shader->set_uniform("ambient", shading.ambient);
         shader->set_uniform("front_light", shading.front_light);
+        shader->set_uniform("specular", shading.specular);
     }
     RenderPass pass{view_matrix, projection_matrix, *shader, plate_index};
 

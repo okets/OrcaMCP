@@ -265,11 +265,16 @@ RenderRequest read_request(const nlohmann::json& payload)
     // Overlays default on (true/missing); false disables all; an object picks per overlay.
     out.overlays = overlay_options_from_json(payload.value("overlays", nlohmann::json(true)));
 
+    if (payload.contains("light"))
+        out.light = read_light(payload["light"]);
     out.layer_view = payload.value("layer_view", nlohmann::json());
     if (out.layer_view == "")  // "" was always read as no layer view
         out.layer_view = nlohmann::json();
-    if (!out.layer_view.is_null())
+    if (!out.layer_view.is_null()) {
+        if (out.light)
+            throw std::runtime_error("light is for 3D views; a layer_view is a plan drawn from the G-code. Leave light out, or leave layer_view out");
         return out;  // a layer plan ignores views
+    }
 
     // No views: a contact sheet of the three presets an agent reaches for first, fitted to the plate.
     nlohmann::json views = payload.value("views", nlohmann::json());
@@ -310,12 +315,12 @@ bool ShaderSettings::is_default() const
 {
     const ShaderSettings d;
     return clipping_plane == d.clipping_plane && use_light_dir == d.use_light_dir && light_dir_eye == d.light_dir_eye &&
-           ambient == d.ambient && front_light == d.front_light;
+           ambient == d.ambient && front_light == d.front_light && specular == d.specular;
 }
 
 const std::vector<std::string>& shader_settings_uniform_names()
 {
-    static const std::vector<std::string> names = {"clipping_plane", "use_light_dir", "light_dir_eye", "ambient", "front_light"};
+    static const std::vector<std::string> names = {"clipping_plane", "use_light_dir", "light_dir_eye", "ambient", "front_light", "specular"};
     return names;
 }
 

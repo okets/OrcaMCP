@@ -15,6 +15,7 @@
 #include <nlohmann/json.hpp>
 
 #include "libslic3r/Point.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPRenderLight.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPRenderMath.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPRenderOverlay.hpp"
 
@@ -72,6 +73,7 @@ struct RenderRequest
     OverlayOptions       overlays;
     nlohmann::json       layer_view;                       // null: a 3D render
     std::vector<ViewRequest> views;                        // empty with a layer_view
+    std::optional<LightRequest> light;                     // a single raking light; unset: the 3D view's two lights
     bool                 contact_sheet = false;            // no views asked: iso, top and front side by side
 };
 
@@ -93,6 +95,7 @@ struct ShaderSettings
     Vec3d                 light_dir_eye  = Vec3d(0., 0., 1.);   // unit vector in eye space
     float                 ambient        = 0.3f;                // the thumbnail shader's INTENSITY_AMBIENT
     bool                  front_light    = true;                // the second light
+    float                 specular       = 1.f;                 // 0 leaves the top light's specular highlight out
 
     bool is_default() const;
 };
