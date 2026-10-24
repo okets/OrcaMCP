@@ -165,7 +165,7 @@ ResolutionAdvice bake_resolution_advice(const BakeRun& run)
 {
     std::vector<AdvicePart> parts;
     for (const TextureDisplacementBakeVolume& volume : run.work.volumes)
-        parts.push_back({&volume.base_mesh, volume.volume_to_world});
+        parts.push_back({&volume.base_mesh, volume.volume_to_world, volume.model_uv.empty() ? nullptr : &volume.model_uv});
     std::vector<Slic3r::TextureDisplacementLayer> layers;
     if (!run.work.volumes.empty())
         layers = run.work.volumes.front().layers;

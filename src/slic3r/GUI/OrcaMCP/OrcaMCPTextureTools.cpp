@@ -732,6 +732,7 @@ struct PendingStack
     std::vector<MaskInput>                                     inputs;
     nlohmann::json                                             ignored = nlohmann::json::array();
     nlohmann::json                                             parts   = nlohmann::json::array();
+    std::vector<Slic3r::Vec2f>                       model_uv;    // its UV channel, if it has one
     indexed_triangle_set                             mesh;        // the stack owner's, for the recommended resolution
 };
 
@@ -779,6 +780,8 @@ nlohmann::json capture_stack(const nlohmann::json& params, std::optional<int> on
     out.to_world     = Slic3r::texture_displacement_volume_to_world(*owner);
     out.owner_has_uv = owner->has_texture_uv();
     out.mesh         = owner->mesh().its;
+    if (owner->has_texture_uv())
+        out.model_uv = owner->texture_uv;
     const LibraryCopy library = library_copy();
     for (const Slic3r::TextureDisplacementLayer& layer : owner->texture_displacement_layers) {
         StackLayerFacts facts;
@@ -817,7 +820,7 @@ nlohmann::json get_texture_displacement(const nlohmann::json& params)
     std::vector<Slic3r::TextureDisplacementLayer> stack_layers;
     for (const StackLayerFacts& facts : pending.layers)
         stack_layers.push_back(facts.layer);
-    const ResolutionAdvice advice = resolution_advice(stack_layers, {{&pending.mesh, pending.to_world}},
+    const ResolutionAdvice advice = resolution_advice(stack_layers, {{&pending.mesh, pending.to_world, pending.model_uv.empty() ? nullptr : &pending.model_uv}},
                                                       pending.options.v2_refine_mm);
     answer["recommended_resolution_mm"] = recommended_resolution_json(advice);
     if (const std::string text = resolution_alias_warning(advice); !text.empty())

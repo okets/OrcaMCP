@@ -2104,25 +2104,63 @@ TEST_CASE("a smooth is refused above the facet cap, and unused bake settings are
     CHECK(bake_inactive_settings(*budget, true).empty());
 }
 
-TEST_CASE("a bake's resolution is judged against the texture's detail", "[McpTexture][orcamcp]")
+namespace {
+// A height map of `period`-pixel stripes (half dark, half light), diagonal when `slope` is non-zero.
+std::vector<uint8_t> stripe_image(int width, int height, int period, int slope)
 {
-    // 6 mm tile of 512 px, a hard-edged image (1 texel per edge): the texture needs 0.05 mm (the floor).
-    const ResolutionAdvice fine = resolution_advice_from(6.f / 512.f, 1.f, 0.7f);
-    CHECK(fine.recommended_mm == Catch::Approx(0.05f));
+    std::vector<uint8_t> px(size_t(width) * size_t(height));
+    for (int y = 0; y < height; ++y)
+        for (int x = 0; x < width; ++x)
+            px[size_t(y) * size_t(width) + size_t(x)] = ((x + slope * y) % period) < period / 2 ? 30 : 220;
+    return px;
+}
+} // namespace
+
+TEST_CASE("a bake's resolution is judged against the texture's feature size on the part", "[McpTexture][orcamcp]")
+{
+    // Wide diagonal stripes, 32 px a stripe, 512x256 over a model UV that spans about 6 mm per 32 px: the feature is ~6 mm, so
+    // 0.5 mm carries it (the false alarm of the texel-size rule, which asked for 0.05 mm).
+    const float mm_per_px = 6.f / 32.f;
+    const float stripes   = texture_feature_mm(stripe_image(512, 256, 64, 1), 512, 256, mm_per_px, mm_per_px);
+    CHECK(stripes > 4.f);
+    const ResolutionAdvice wide = resolution_advice_from(stripes, 0.5f);
+    CHECK(wide.recommended_mm > 1.f);
+    CHECK_FALSE(wide.aliasing);
+    CHECK(resolution_alias_warning(wide).empty());
+
+    // A knurl: 0.19 mm period at 6 mm per 512-px tile (~0.0117 mm a pixel): runs of ~8 px, half a period of 0.1 mm, baked at 0.7 mm.
+    const float texel = 6.f / 512.f;
+    const float knurl = texture_feature_mm(stripe_image(512, 512, 16, 0), 512, 512, texel, texel);
+    CHECK(knurl == Catch::Approx(8 * texel).margin(0.02f));
+    const ResolutionAdvice fine = resolution_advice_from(knurl, 0.7f);
+    CHECK(fine.recommended_mm == Catch::Approx(0.05f)); // half of 0.09 mm, at the floor
     CHECK(fine.aliasing);
     CHECK(resolution_alias_warning(fine).find("0.7") != std::string::npos);
-    CHECK(resolution_alias_warning(fine).find("0.05") != std::string::npos);
     CHECK(recommended_resolution_json(fine) == json(fine.recommended_mm));
 
-    // A smooth image (4 texels per edge) of 12.5 mm over 256 px: 0.2 mm; 0.3 mm is within the factor of two.
-    const ResolutionAdvice smooth = resolution_advice_from(12.5f / 256.f, 4.f, 0.3f);
-    CHECK(smooth.recommended_mm == Catch::Approx(0.2f));
-    CHECK_FALSE(smooth.aliasing);
-    CHECK(resolution_alias_warning(smooth).empty());
+    // The floor is on the recommendation only: a feature the floor would round up still warns above it.
+    CHECK(resolution_advice_from(0.02f, 0.06f).aliasing);
+    CHECK_FALSE(resolution_advice_from(0.02f, 0.05f).aliasing);
 
-    // No texture: nothing to size by, nothing to warn about.
-    const ResolutionAdvice none = resolution_advice_from(0.f, 0.f, 5.f);
+    // Nothing to size by: a flat image, a single edge.
+    CHECK(texture_feature_mm(std::vector<uint8_t>(64 * 64, 100), 64, 64, 1.f, 1.f) == 0.f);
+    const ResolutionAdvice none = resolution_advice_from(0.f, 5.f);
     CHECK(none.recommended_mm == 0.f);
     CHECK_FALSE(none.aliasing);
     CHECK(recommended_resolution_json(none).is_null());
+}
+
+TEST_CASE("a model's UV channel gives the millimetres a UV unit spans", "[McpTexture][orcamcp]")
+{
+    // A 10 x 10 mm square of two triangles mapped onto the unit UV square: 10 mm a unit; at half the UV size, 20 mm.
+    indexed_triangle_set mesh;
+    mesh.vertices = {{0, 0, 0}, {10, 0, 0}, {10, 10, 0}, {0, 10, 0}};
+    mesh.indices  = {{0, 1, 2}, {0, 2, 3}};
+    const std::vector<Vec2f> full = {{0, 0}, {1, 0}, {1, 1}, {0, 0}, {1, 1}, {0, 1}};
+    CHECK(model_uv_mm_per_unit(mesh, Transform3d::Identity(), full) == Catch::Approx(10.f));
+    std::vector<Vec2f> half = full;
+    for (Vec2f& uv : half)
+        uv *= 0.5f;
+    CHECK(model_uv_mm_per_unit(mesh, Transform3d::Identity(), half) == Catch::Approx(20.f));
+    CHECK(model_uv_mm_per_unit(mesh, Transform3d::Identity(), {}) == 0.f);
 }

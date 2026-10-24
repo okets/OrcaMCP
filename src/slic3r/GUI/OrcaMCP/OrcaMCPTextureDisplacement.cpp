@@ -2726,32 +2726,110 @@ std::string bake_budget_warning(std::size_t needed, std::size_t kept)
            "(prepare_texture_mesh) or bake again with a larger budget_k.";
 }
 
-ResolutionAdvice resolution_advice_from(float texel_mm, float pixels_per_edge, float used_mm)
+float texture_feature_mm(const std::vector<uint8_t>& pixels, int width, int height, float mm_u, float mm_v)
+{
+    if (width < 4 || height < 4 || pixels.size() < size_t(width) * size_t(height) || mm_u <= 0.f || mm_v <= 0.f)
+        return 0.f;
+    double sum = 0.;
+    for (size_t i = 0; i < size_t(width) * size_t(height); ++i)
+        sum += pixels[i];
+    const double mean = sum / double(size_t(width) * size_t(height));
+    std::vector<std::pair<float, float>> runs; // length in mm, weight
+    const auto scan = [&](int lines, int length, int line_stride, int pixel_stride, float mm, int max_lines) {
+        const int step = std::max(1, lines / max_lines);
+        for (int line = 0; line < lines; line += step) {
+            const uint8_t* row = pixels.data() + size_t(line) * size_t(line_stride);
+            int            start = 0;
+            bool           above = row[0] > mean;
+            for (int i = 1; i <= length; ++i) {
+                const bool end = i == length;
+                if (!end && (row[size_t(i) * size_t(pixel_stride)] > mean) == above)
+                    continue;
+                // Runs cut by the image's edge are only part of a feature: left out.
+                if (start > 0 && !end)
+                    runs.emplace_back(float(i - start) * mm, float(i - start) * mm);
+                start = i;
+                if (!end)
+                    above = !above;
+            }
+        }
+    };
+    scan(height, width, width, 1, mm_u, 256);
+    scan(width, height, 1, width, mm_v, 256);
+    if (runs.empty())
+        return 0.f;
+    std::sort(runs.begin(), runs.end());
+    double total = 0.;
+    for (const auto& r : runs)
+        total += r.second;
+    double seen = 0.;
+    for (const auto& r : runs) {
+        seen += r.second;
+        if (seen >= 0.1 * total)
+            return r.first;
+    }
+    return runs.back().first;
+}
+
+ResolutionAdvice resolution_advice_from(float feature_mm, float used_mm)
 {
     ResolutionAdvice out;
     out.used_mm = used_mm;
-    if (texel_mm <= 0.f)
+    if (feature_mm <= 0.f)
         return out;
-    out.recommended_mm = std::max(0.05f, texel_mm * std::max(1.f, pixels_per_edge));
-    out.recommended_mm = std::ceil(out.recommended_mm * 100.f) / 100.f;
-    out.aliasing       = used_mm > out.recommended_mm * resolution_alias_factor;
+    out.feature_mm     = feature_mm;
+    out.recommended_mm = std::max(0.05f, std::round(0.5f * feature_mm * 100.f) / 100.f);
+    out.aliasing       = used_mm > out.recommended_mm;
     return out;
+}
+
+float model_uv_mm_per_unit(const indexed_triangle_set& mesh, const Transform3d& to_world, const std::vector<Vec2f>& uv)
+{
+    if (uv.size() != mesh.indices.size() * 3)
+        return 0.f;
+    double surface = 0., uv_area = 0.;
+    for (size_t t = 0; t < mesh.indices.size(); ++t) {
+        const stl_triangle_vertex_indices& f = mesh.indices[t];
+        const Vec3d a = to_world * mesh.vertices[size_t(f[0])].cast<double>(), b = to_world * mesh.vertices[size_t(f[1])].cast<double>(),
+                    c = to_world * mesh.vertices[size_t(f[2])].cast<double>();
+        surface += 0.5 * (b - a).cross(c - a).norm();
+        const Vec2d u0 = uv[t * 3].cast<double>(), u1 = uv[t * 3 + 1].cast<double>(), u2 = uv[t * 3 + 2].cast<double>();
+        uv_area += 0.5 * std::abs((u1 - u0).x() * (u2 - u0).y() - (u1 - u0).y() * (u2 - u0).x());
+    }
+    return (surface > 0. && uv_area > 1e-12) ? float(std::sqrt(surface / uv_area)) : 0.f;
 }
 
 ResolutionAdvice resolution_advice(const std::vector<TextureDisplacementLayer>& layers, const std::vector<AdvicePart>& parts, float chosen_mm)
 {
-    float texel = 0.f, per_edge = 0.f, automatic = 0.f;
-    for (const AdvicePart& part : parts) {
-        if (part.mesh == nullptr)
+    float automatic = 0.f, feature = 0.f;
+    for (const AdvicePart& part : parts)
+        if (part.mesh != nullptr)
+            automatic = std::max(automatic, Slic3r::recommend_v2_resolution(*part.mesh, {}, part.to_world).edge_mm);
+    for (const TextureDisplacementLayer& layer : layers) {
+        if (layer.empty() || layer.tiling_scale <= 0.f)
             continue;
-        const Slic3r::V2Resolution rec = Slic3r::recommend_v2_resolution(*part.mesh, layers, part.to_world);
-        automatic = std::max(automatic, rec.edge_mm);
-        if (rec.texel_mm > 0.f && (texel <= 0.f || rec.texel_mm < texel)) {
-            texel    = rec.texel_mm;
-            per_edge = rec.pixels_per_edge;
-        }
+        const Slic3r::DecodedHeightTexture& tex = Slic3r::decode_height_texture(layer);
+        if (tex.width <= 0 || tex.height <= 0)
+            continue;
+        const float tiled_u = layer.tiling_scale / float(tex.width);
+        const auto  measure = [&](float mm_u, float mm_v) {
+            const float f = texture_feature_mm(tex.pixels, tex.width, tex.height, mm_u, mm_v);
+            if (f > 0.f && (feature <= 0.f || f < feature))
+                feature = f;
+        };
+        bool by_uv = false;
+        if (layer.projection_method == Slic3r::TextureProjectionMethod::ModelUV)
+            for (const AdvicePart& part : parts) {
+                const float unit = part.mesh != nullptr && part.model_uv != nullptr ? model_uv_mm_per_unit(*part.mesh, part.to_world, *part.model_uv) : 0.f;
+                if (unit > 0.f) {
+                    measure(unit / float(tex.width), unit / float(tex.height));
+                    by_uv = true;
+                }
+            }
+        if (!by_uv)
+            measure(tiled_u, tiled_u);
     }
-    return resolution_advice_from(texel, per_edge, chosen_mm > 0.f ? chosen_mm : automatic);
+    return resolution_advice_from(feature, chosen_mm > 0.f ? chosen_mm : automatic);
 }
 
 json recommended_resolution_json(const ResolutionAdvice& a)
@@ -2764,8 +2842,8 @@ std::string resolution_alias_warning(const ResolutionAdvice& a)
     if (!a.aliasing)
         return {};
     auto text = [](float v) { std::string t = std::to_string(v); t.erase(t.find_last_not_of('0') + 1); if (!t.empty() && t.back() == '.') t.pop_back(); return t; };
-    return "The texture will alias at the resolution used (" + text(a.used_mm) + " mm): its detail needs about " + text(a.recommended_mm) +
-           " mm. Set resolution_mm to " + text(a.recommended_mm) + " (more triangles: raise budget_k with it) or accept a coarser relief.";
+    return "The texture will alias at the resolution used (" + text(a.used_mm) + " mm): its finest common feature is about " + text(a.feature_mm) +
+           " mm on the part, so its detail needs about " + text(a.recommended_mm) + " mm. Set resolution_mm to " + text(a.recommended_mm) + " (more triangles: raise budget_k with it) or accept a coarser relief.";
 }
 
 json bake_mixed_filaments_json(const std::vector<int>& slots, int filaments_before)

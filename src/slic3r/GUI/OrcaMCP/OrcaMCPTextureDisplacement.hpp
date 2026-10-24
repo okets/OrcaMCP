@@ -553,23 +553,31 @@ nlohmann::json bake_budget_json(std::size_t needed, std::size_t kept);
 // triangles were split) and what to do. Empty when the budget did not cap the detail (needed 0).
 std::string bake_budget_warning(std::size_t needed, std::size_t kept);
 
-// Whether a bake's resolution can carry the texture's detail. The texture-driven resolution is the finest layer's texel size times
-// the texels one edge may span for its sharpness (`recommend_v2_resolution`'s texel_mm and pixels_per_edge, floored at the
-// library's 0.05 mm); the resolution used is coarser than that by more than `resolution_alias_factor` when the texture aliases.
+// Whether a bake's resolution can carry the texture's detail. What aliases is the pattern's finest common feature on the part,
+// not the pixel grid: `texture_feature_mm` measures the run lengths of the height map between crossings of its mean level, along
+// rows and columns, and takes the length-weighted 10th percentile, in mm through the layer's mapping. The recommendation is
+// half that feature, floored at 0.05 mm; the texture aliases when the resolution used is coarser than the recommendation.
 struct ResolutionAdvice
 {
-    float recommended_mm = 0.f; // 0: no texture to size by
+    float recommended_mm = 0.f; // 0: no texture feature to size by
+    float feature_mm     = 0.f;
     float used_mm        = 0.f;
     bool  aliasing       = false;
 };
-constexpr float resolution_alias_factor = 2.f;
-ResolutionAdvice resolution_advice_from(float texel_mm, float pixels_per_edge, float used_mm);
-// One part as the advice reads it: its mesh and where it stands in world mm.
+// The finest common feature of a height map (`pixels`, row-major, width x height) in mm, given the mm one pixel spans along a row
+// (`mm_u`) and down a column (`mm_v`). 0 for an image with no crossing of its mean level (flat, or one edge only).
+float texture_feature_mm(const std::vector<uint8_t>& pixels, int width, int height, float mm_u, float mm_v);
+ResolutionAdvice resolution_advice_from(float feature_mm, float used_mm);
+// One part as the advice reads it: its mesh, where it stands in world mm, and its UV channel (null: none; a ModelUV layer then
+// maps by its tile size like the others).
 struct AdvicePart
 {
     const indexed_triangle_set* mesh = nullptr;
     Transform3d                 to_world = Transform3d::Identity();
+    const std::vector<Vec2f>*   model_uv = nullptr;
 };
+// mm per unit of a UV channel: sqrt(surface area in world mm / UV area). 0 when the channel does not cover the mesh.
+float model_uv_mm_per_unit(const indexed_triangle_set& mesh, const Transform3d& to_world, const std::vector<Vec2f>& uv);
 // The advice for a stack on `parts`; `chosen_mm` is the stack's resolution_mm (0 or less: automatic, the coarsest part's).
 ResolutionAdvice resolution_advice(const std::vector<TextureDisplacementLayer>& layers, const std::vector<AdvicePart>& parts, float chosen_mm);
 // {recommended_resolution_mm}, null when there is no texture to size by.
