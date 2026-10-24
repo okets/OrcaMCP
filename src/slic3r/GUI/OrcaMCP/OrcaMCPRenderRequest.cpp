@@ -313,8 +313,24 @@ void read_paint_options(const nlohmann::json& payload, RenderRequest& out)
         const std::string by = payload["color_by"].is_string() ? payload["color_by"].get<std::string>() : std::string();
         if (by == "object")        out.color_by = ColorBy::Object;
         else if (by == "filament") out.color_by = ColorBy::Filament;
-        else throw std::runtime_error("color_by must be \"object\" (one colour per object, the default) or \"filament\" (each part in its filament's colour)");
+        else if (by == "relief")   out.color_by = ColorBy::Relief;
+        else if (by == "detail")   out.color_by = ColorBy::Detail;
+        else throw std::runtime_error("color_by must be \"object\" (one colour per object, the default), \"filament\" (each part in its filament's colour), "
+                                      "\"relief\" (depth from the surface before the texture) or \"detail\" (the angle between neighbouring facets, for any mesh)");
     }
+    const auto positive = [&payload](const char* key) -> std::optional<double> {
+        if (!payload.contains(key))
+            return std::nullopt;
+        if (!payload[key].is_number() || !(payload[key].get<double>() > 0.))
+            throw std::runtime_error(std::string(key) + " must be a number above 0");
+        return payload[key].get<double>();
+    };
+    out.relief_range_mm  = positive("relief_range_mm");
+    out.detail_range_deg = positive("detail_range_deg");
+    if (out.relief_range_mm && out.color_by != ColorBy::Relief)
+        throw std::runtime_error("relief_range_mm is the scale of color_by relief; add color_by relief, or leave relief_range_mm out");
+    if (out.detail_range_deg && out.color_by != ColorBy::Detail)
+        throw std::runtime_error("detail_range_deg is the scale of color_by detail; add color_by detail, or leave detail_range_deg out");
 }
 
 RenderRequest read_request(const nlohmann::json& payload)
@@ -353,8 +369,9 @@ RenderRequest read_request(const nlohmann::json& payload)
             throw std::runtime_error("light is for 3D views; a layer_view is a plan drawn from the G-code. Leave light out, or leave layer_view out");
         if (out.section)
             throw std::runtime_error("section is for 3D views; a layer_view is a plan drawn from the G-code. Leave section out, or leave layer_view out");
-        if (!out.paint.empty() || payload.contains("color_by") || payload.contains("texture_layers"))
-            throw std::runtime_error("paint, texture_layers and color_by are for 3D views; a layer_view is a plan drawn from the G-code. Leave them out, or leave layer_view out");
+        if (!out.paint.empty() || payload.contains("color_by") || payload.contains("texture_layers") || payload.contains("relief_range_mm") ||
+            payload.contains("detail_range_deg"))
+            throw std::runtime_error("paint, texture_layers, color_by and its ranges are for 3D views; a layer_view is a plan drawn from the G-code. Leave them out, or leave layer_view out");
         if (out.texture_preview)
             throw std::runtime_error("texture_preview is for 3D views; a layer_view is a plan drawn from the G-code. Leave it out, or leave layer_view out");
         if (payload.contains("views") && payload["views"].is_array() &&

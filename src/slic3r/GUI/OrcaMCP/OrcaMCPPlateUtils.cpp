@@ -706,6 +706,81 @@ static bool texture_preview_unchanged_since(const RenderJob& job)
     return true;
 }
 
+// What color_by relief and detail colour, captured on the main thread: every model part of the objects on the plate (inside
+// the views' fit), and the work that colours them (HTTP thread, after the texture previews it may read).
+static void capture_relief(PartPlate& plate, RenderJob& job)
+{
+    const ModelObjectPtrs&             objects = wxGetApp().model().objects;
+    const std::optional<std::set<int>> fitted  = fitted_objects(job, plate);
+    for (size_t oi = 0; oi < objects.size(); ++oi) {
+        ModelObject& object = *objects[oi];
+        size_t       first  = size_t(-1);
+        for (size_t ii = 0; ii < object.instances.size() && first == size_t(-1); ++ii)
+            if (plate.contain_instance(int(oi), int(ii)))
+                first = ii;
+        if (first == size_t(-1) || (fitted && fitted->count(int(oi)) == 0))
+            continue;
+        const bool has_layers = OrcaMCP::needs_bake_fast(object, texture_stack_owner(object));
+        for (size_t vi = 0; vi < object.volumes.size(); ++vi) {
+            const ModelVolume& volume = *object.volumes[vi];
+            if (!volume.is_model_part())
+                continue;
+            OrcaMCP::ReliefPartInput part;
+            part.object_id          = int(oi);
+            part.volume_id          = int(vi);
+            part.object_identity    = object.id();
+            part.volume_identity    = volume.id();
+            part.mesh               = volume.mesh_ptr();
+            part.volume_matrix      = volume.get_matrix();
+            part.to_world           = object.instances[first]->get_transformation().get_matrix() * volume.get_matrix();
+            part.has_unbaked_layers = has_layers;
+            job.relief_parts.push_back(std::move(part));
+        }
+    }
+    RenderJob* self = &job;
+    job.work.push_back([self](const std::function<bool()>& stop) {
+        // A previewed object's parts are coloured on the displaced mesh the preview made; a part the preview did not draw says why.
+        for (OrcaMCP::ReliefPartInput& part : self->relief_parts) {
+            const auto previewed = std::find_if(self->texture_preview.objects.begin(), self->texture_preview.objects.end(),
+                                                [&part](const OrcaMCP::PreviewObject& o) { return o.object_id == part.object_id; });
+            if (previewed == self->texture_preview.objects.end())
+                continue;
+            if (!previewed->draw || !previewed->undrawn.empty()) {
+                part.unusable = "the texture preview of this object was not drawn (timed_out, not_reached or too large: see texture_preview), so there is no relief to measure";
+                continue;
+            }
+            const auto drawn = std::find_if(previewed->draw->parts.begin(), previewed->draw->parts.end(),
+                                            [&part](const OrcaMCP::PreviewPart& p) { return p.volume_id == part.volume_id; });
+            if (drawn == previewed->draw->parts.end())
+                continue;   // not a part the texture reaches: measured like any other part
+            if (!drawn->skipped.empty() || drawn->mesh.indices.empty())
+                part.unusable = drawn->skipped.empty() ? "the texture layers move nothing on this part, so it has no relief"
+                                                       : "the part was not previewed (" + drawn->skipped + "), so there is no relief to measure";
+            else
+                part.previewed = &drawn->mesh;
+        }
+        const bool detail = self->request.color_by == OrcaMCP::ColorBy::Detail;
+        self->relief = OrcaMCP::compute_relief(self->relief_parts, detail, detail ? self->request.detail_range_deg : self->request.relief_range_mm,
+                                               OrcaMCP::bake_references(), stop);
+        self->relief_done = true;
+    });
+}
+
+// True when the parts relief was captured from are still the scene's: the same objects and volumes with the same meshes.
+static bool relief_unchanged_since(const RenderJob& job)
+{
+    const Model& model = wxGetApp().model();
+    for (const OrcaMCP::ReliefPartInput& part : job.relief_parts) {
+        if (part.object_id < 0 || size_t(part.object_id) >= model.objects.size() || model.objects[part.object_id]->id() != part.object_identity)
+            return false;
+        const ModelObject& object = *model.objects[part.object_id];
+        if (part.volume_id < 0 || size_t(part.volume_id) >= object.volumes.size() || object.volumes[part.volume_id]->id() != part.volume_identity ||
+            object.volumes[part.volume_id]->mesh_ptr() != part.mesh)
+            return false;
+    }
+    return true;
+}
+
 // The section's plane in bed mm. "app" and a ratio are the 3D view's own arithmetic (GLCanvas3D::section_view_plane) on the
 // view's bounding box -- the current plate's volumes, as the view sweeps -- or, for a ratio on another plate, that plate's
 // contents. `section` gets the app's normal and ratio filled in.
@@ -889,6 +964,8 @@ nlohmann::json OrcaMCPPlateUtils::PrepareRender(const nlohmann::json& payload, R
     }
     if (asked.texture_preview)
         capture_texture_preview(*plate, job);
+    if (asked.color_by == OrcaMCP::ColorBy::Relief || asked.color_by == OrcaMCP::ColorBy::Detail)
+        capture_relief(*plate, job);
 
     return nlohmann::json();
 }
@@ -919,7 +996,7 @@ static bool scene_unchanged_since(const RenderJob& job)
     } catch (const std::exception&) {
         return false;   // the object a fit framed is gone or no longer on the plate
     }
-    return paint_unchanged_since(job) && section_unchanged_since(job) && texture_preview_unchanged_since(job);
+    return paint_unchanged_since(job) && section_unchanged_since(job) && texture_preview_unchanged_since(job) && relief_unchanged_since(job);
 }
 
 // The camera a view's answer carries: the three keys pick_facet and a replay parse (written by the function they parse
@@ -1126,6 +1203,81 @@ struct TexturePreviewOverlay
     }
 };
 
+// The coloured parts of color_by relief / detail as GL models, built once per call on the main thread and drawn in place of
+// the parts' own meshes (the draw_volume hook), each colour run in its ramp colour. A part whose upload would start past the
+// call's deadline is left in its own colour and says so in the report.
+struct ReliefOverlay
+{
+    struct Part
+    {
+        int                                    object_id = -1, volume_id = -1;
+        GLModel                                model;
+        const std::vector<OrcaMCP::ColourRun>* runs = nullptr;
+    };
+    std::vector<std::unique_ptr<Part>> parts;
+
+    void build(RenderJob& job)
+    {
+        for (OrcaMCP::ReliefPartDraw& draw : job.relief.draws) {
+            ReliefPartReportRef report(job, draw);
+            if (std::chrono::steady_clock::now() > job.deadline + std::chrono::seconds(3)) {
+                report.leave("draw_deadline: the upload of the earlier parts used the call's time; fit one object");
+                continue;
+            }
+            auto part       = std::make_unique<Part>();
+            part->object_id = draw.object_id;
+            part->volume_id = draw.volume_id;
+            part->runs      = &draw.runs.runs;
+            part->model.init_from(draw.runs.mesh);
+            parts.push_back(std::move(part));
+        }
+    }
+
+    bool has(int object_id, int volume_id) const
+    {
+        return std::any_of(parts.begin(), parts.end(), [&](const std::unique_ptr<Part>& p) { return p->object_id == object_id && p->volume_id == volume_id; });
+    }
+
+    bool draw(const GLVolume& vol, RenderPass& pass)
+    {
+        for (const std::unique_ptr<Part>& part : parts) {
+            if (part->object_id != vol.composite_id.object_id || part->volume_id != vol.composite_id.volume_id)
+                continue;
+            const ColorRGBA base = vol.model.get_color();
+            if (vol.is_left_handed())
+                glFrontFace(GL_CW);
+            for (const OrcaMCP::ColourRun& run : *part->runs) {
+                part->model.set_color(run.base ? base : adjust_color_for_rendering(run.color));
+                part->model.render(run.range, &pass.shader);
+            }
+            if (vol.is_left_handed())
+                glFrontFace(GL_CCW);
+            return true;
+        }
+        return false;
+    }
+
+private:
+    // The report entry of a draw, to mark it undrawn.
+    struct ReliefPartReportRef
+    {
+        OrcaMCP::ReliefPartReport* entry = nullptr;
+        ReliefPartReportRef(RenderJob& job, const OrcaMCP::ReliefPartDraw& draw)
+        {
+            for (OrcaMCP::ReliefPartReport& r : job.relief.report.parts)
+                if (r.object_id == draw.object_id && r.volume_id == draw.volume_id)
+                    entry = &r;
+        }
+        void leave(const std::string& reason)
+        {
+            if (entry == nullptr)
+                return;
+            entry->coloured = false;
+            entry->reason   = reason;
+        }
+    };
+};
+
 // The earlier picture of a compared view, read from its file: one of this server's PNGs of the size it was drawn at.
 static wxImage load_compared_picture(const OrcaMCP::RenderRecord& record)
 {
@@ -1186,6 +1338,11 @@ nlohmann::json OrcaMCPPlateUtils::DrawRender(RenderJob& job)
         }
     }
 
+    const bool relief_asked = asked.color_by == OrcaMCP::ColorBy::Relief || asked.color_by == OrcaMCP::ColorBy::Detail;
+    if (relief_asked && !job.relief_done)
+        return {{"status", "error"}, {"message", "colouring the picture by " + std::string(asked.color_by == OrcaMCP::ColorBy::Detail ? "detail" : "relief") +
+                                                 " needs more than the call's wait: raise ORCAMCP_TIMEOUT, or fit one object (views fit {object_id})"}};
+
     nlohmann::json texture_preview_report;
     TexturePreviewOverlay preview_overlay;
     if (asked.texture_preview) {
@@ -1196,6 +1353,13 @@ nlohmann::json OrcaMCPPlateUtils::DrawRender(RenderJob& job)
         });
         preview_overlay.build(job);
         texture_preview_report = OrcaMCP::preview_report_json(job.texture_preview, cache);
+    }
+
+    ReliefOverlay relief_overlay;
+    nlohmann::json relief_report;
+    if (relief_asked) {
+        relief_overlay.build(job);
+        relief_report = OrcaMCP::relief_report_json(job.relief.report);
     }
 
     const int  plate_index = asked.plate_index;
@@ -1228,11 +1392,13 @@ nlohmann::json OrcaMCPPlateUtils::DrawRender(RenderJob& job)
             options.shading.clipping_plane = OrcaMCP::shader_clipping_plane(job.section_plane);
             options.after_volumes.push_back([&section_overlay](RenderPass& pass) { section_overlay.draw(pass); });
         }
-        options.palette_colors = asked.color_by == OrcaMCP::ColorBy::Object;
+        options.palette_colors = asked.color_by != OrcaMCP::ColorBy::Filament;
         options.color_by       = asked.color_by;
         options.neutral_base   = !asked.paint.empty();
-        if (asked.texture_preview)
-            options.draw_volume = [&preview_overlay](const GLVolume& vol, RenderPass& pass) { return preview_overlay.draw(vol, pass); };
+        if (asked.texture_preview || relief_asked)
+            options.draw_volume = [&preview_overlay, &relief_overlay, &asked, relief_asked](const GLVolume& vol, RenderPass& pass) {
+                return (relief_asked && relief_overlay.draw(vol, pass)) || (asked.texture_preview && preview_overlay.draw(vol, pass));
+            };
         if (!job.tints.empty())
             options.after_volumes.push_back([&overlay](RenderPass& pass) { overlay.draw(pass); });
         if (view.request.replay)
@@ -1240,6 +1406,10 @@ nlohmann::json OrcaMCPPlateUtils::DrawRender(RenderJob& job)
         else if (view.request.exact())
             options.exact_camera = OrcaMCP::exact_spec_of(view.request);
         RenderThumbnail(data, camera_position, target, plate_index, &cam, options, &report);
+
+        for (RenderedVolume& v : report.drawn)
+            if (relief_asked && !v.wipe_tower && relief_overlay.has(v.object_index, v.volume_id))
+                v.color_source = asked.color_by == OrcaMCP::ColorBy::Detail ? "detail" : "relief";
 
         // Overlays go on the finished pixels, projected through the very camera that drew them.
         wxImage image = OrcaMCP::thumbnail_to_wximage(data);
@@ -1259,7 +1429,16 @@ nlohmann::json OrcaMCPPlateUtils::DrawRender(RenderJob& job)
         nlohmann::json entry;
         entry["camera"] = camera_json;
         append_render_report(entry, report, cam.frame, plate_index);
-        entry["color_by"] = asked.color_by == OrcaMCP::ColorBy::Filament ? "filament" : "object";
+        entry["color_by"] = asked.color_by == OrcaMCP::ColorBy::Filament ? "filament" : asked.color_by == OrcaMCP::ColorBy::Relief ? "relief" :
+                            asked.color_by == OrcaMCP::ColorBy::Detail ? "detail" : "object";
+        if (relief_asked) {
+            nlohmann::json& shown = entry[asked.color_by == OrcaMCP::ColorBy::Detail ? "detail" : "relief"];
+            shown = relief_report;
+            const bool any_drawn = !relief_overlay.parts.empty();
+            shown["applied"] = any_drawn && report.completed;
+            if (report.shader_fallback)
+                shown["warning"] = "This driver could not build the render shader, so the picture is lit as the default 3D view is; the colours are drawn all the same.";
+        }
         if (!asked.paint.empty()) {
             entry["paint"]       = asked.paint;
             entry["tint_legend"] = legend;

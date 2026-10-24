@@ -16,6 +16,7 @@
 #include "slic3r/GUI/OrcaMCP/OrcaMCPMeshHealth.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPPaintSelect.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPRenderMath.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPRelief.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPRenderPaint.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPRenderRequest.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPTexturePreview.hpp"
@@ -201,6 +202,11 @@ struct RenderJob
     // texture_preview: the objects whose painted texture layers are drawn as their bake would make them, as the first
     // step captured them (and, from the cache or the work, their plans), and what it left out.
     OrcaMCP::PreviewReportInput               texture_preview;
+    // color_by relief / detail: the model parts of the objects on the plate as the first step captured them, and what the work
+    // made of them (the numbers, and the triangles in colour runs).
+    std::vector<OrcaMCP::ReliefPartInput>     relief_parts;
+    OrcaMCP::ReliefOutput                     relief;
+    bool                                      relief_done = false;            // the work ran (else the call's wait ran out first)
     std::chrono::steady_clock::time_point     deadline = std::chrono::steady_clock::time_point::max();   // the work's, set by the caller: the draw is held to it
 };
 

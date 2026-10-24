@@ -493,6 +493,11 @@ TEST_CASE("render_plate_view views are strict, and a camera and a fit a render r
     // The whole camera object, as the view itself.
     CHECK(refusal("render_plate_view", {{"plate_index", 0}, {"views", json::array({answered})}}) == "");
 
+    // color_by relief / detail with their ranges are declared; a misspelt range is not.
+    CHECK(refusal("render_plate_view", {{"plate_index", 0}, {"color_by", "relief"}, {"relief_range_mm", 0.2}, {"texture_preview", true}}) == "");
+    CHECK(refusal("render_plate_view", {{"plate_index", 0}, {"color_by", "detail"}, {"detail_range_deg", 10}}) == "");
+    CHECK(::contains(refusal("render_plate_view", {{"plate_index", 0}, {"color_by", "relief"}, {"relief_range", 0.2}}), "has no argument \"relief_range\""));
+
     // compare_with is a view key, alone or with the earlier picture's own camera; a misspelling is not.
     CHECK(refusal("render_plate_view", {{"plate_index", 0}, {"views", json::array({{{"compare_with", "/tmp/orcamcp_render_1_2_3_0.png"}}})}}) == "");
     CHECK(refusal("render_plate_view", {{"plate_index", 0}, {"views", json::array({{{"compare_with", "/tmp/orcamcp_render_1_2_3_0.png"}, {"camera", answered}}})}}) == "");

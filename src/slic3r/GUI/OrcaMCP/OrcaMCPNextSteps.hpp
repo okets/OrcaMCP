@@ -160,6 +160,8 @@ std::vector<NextStep> texture_preview_next_steps(int plate_index, int object_id,
 // arguments name the first object, the why all of `objects`.
 std::vector<NextStep> texture_changes_next_steps(const std::vector<int>& objects, const nlohmann::json& changes);
 std::vector<NextStep> texture_changes_next_steps(int object_id, const nlohmann::json& changes);
+// After a bake: see how deep the relief is. The bake kept the surface it displaced, so color_by relief can measure it.
+std::vector<NextStep> relief_next_steps(int plate_index, int object_id);
 std::vector<NextStep> baked_texture_next_steps(int object_id, bool needs_bake, int slots_added, std::optional<int> plate_index);
 
 // What a budget-limited bake leads to (`needed` / `kept` triangles, `resolution_mm` the bake used): prepare_texture_mesh, an

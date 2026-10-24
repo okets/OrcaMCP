@@ -412,3 +412,23 @@ TEST_CASE("compare_with is read as a view of its own and refused where it cannot
     CHECK(refusal_of({{"plate_index", 0}, {"views", json::array({{{"compare_with", ""}}})}}).find("file_path") != std::string::npos);
     CHECK(refusal_of({{"plate_index", 0}, {"layer_view", "first_layer"}, {"views", json::array({{{"compare_with", path}}})}}).find("3D views") != std::string::npos);
 }
+
+TEST_CASE("color_by relief and detail take their own scale and nothing else's", "[RenderRequest][orcamcp][Relief]")
+{
+    CHECK(read_ok({{"plate_index", 0}, {"color_by", "relief"}}).color_by == ColorBy::Relief);
+    CHECK(read_ok({{"plate_index", 0}, {"color_by", "detail"}}).color_by == ColorBy::Detail);
+    CHECK_FALSE(read_ok({{"plate_index", 0}, {"color_by", "relief"}}).relief_range_mm.has_value());
+    const RenderRequest r = read_ok({{"plate_index", 0}, {"color_by", "relief"}, {"relief_range_mm", 0.25}});
+    REQUIRE(r.relief_range_mm.has_value());
+    CHECK_THAT(*r.relief_range_mm, Catch::Matchers::WithinAbs(0.25, 1e-12));
+    REQUIRE(read_ok({{"plate_index", 0}, {"color_by", "detail"}, {"detail_range_deg", 12}}).detail_range_deg.has_value());
+
+    CHECK(refusal_of({{"plate_index", 0}, {"relief_range_mm", 0.25}}).find("add color_by relief") != std::string::npos);
+    CHECK(refusal_of({{"plate_index", 0}, {"color_by", "detail"}, {"relief_range_mm", 0.25}}).find("add color_by relief") != std::string::npos);
+    CHECK(refusal_of({{"plate_index", 0}, {"color_by", "relief"}, {"detail_range_deg", 5}}).find("add color_by detail") != std::string::npos);
+    CHECK(refusal_of({{"plate_index", 0}, {"color_by", "relief"}, {"relief_range_mm", 0}}).find("above 0") != std::string::npos);
+    CHECK(refusal_of({{"plate_index", 0}, {"color_by", "relief"}, {"relief_range_mm", "wide"}}).find("above 0") != std::string::npos);
+    CHECK(refusal_of({{"plate_index", 0}, {"color_by", "sepia"}}).find("relief") != std::string::npos);
+    CHECK(refusal_of({{"plate_index", 0}, {"layer_view", "first_layer"}, {"color_by", "relief"}}).find("3D views") != std::string::npos);
+    CHECK(refusal_of({{"plate_index", 0}, {"layer_view", "first_layer"}, {"relief_range_mm", 1}}).find("color_by relief") != std::string::npos);
+}

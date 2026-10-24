@@ -1,5 +1,6 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPTexturePreview.cpp -- see the header.
 #include "OrcaMCPTexturePreview.hpp"
+#include "OrcaMCPRelief.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -409,6 +410,7 @@ PreviewCache& texture_preview_cache()
 void drop_texture_previews()
 {
     texture_preview_cache().clear();
+    drop_bake_references();   // the surfaces kept for color_by relief belong to the project that is gone too
 }
 
 std::string preview_timed_out_message(int object_id, double wait_s, bool narrowed)

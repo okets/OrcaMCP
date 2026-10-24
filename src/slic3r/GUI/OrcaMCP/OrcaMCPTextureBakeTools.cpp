@@ -8,6 +8,7 @@
 #include "OrcaMCPServer.hpp"
 #include "OrcaMCPCommon.hpp"
 #include "OrcaMCPNextSteps.hpp"
+#include "OrcaMCPRelief.hpp"
 #include "OrcaMCPMeshRepair.hpp"
 #include "OrcaMCPPartEdits.hpp"
 #include "OrcaMCPPartTools.hpp"
@@ -321,6 +322,20 @@ nlohmann::json finish_bake_prepare(BakeRun& run, BakePlanned& planned, double wa
     return nlohmann::json();
 }
 
+// Main thread, after a bake committed: the surface each committed part had before it is kept in memory, keyed by the part's
+// new id and the fingerprint of the mesh the bake made, for render_plate_view's color_by relief (a later undo, redo, repair or
+// re-bake gives the part another mesh and so ignores the reference). `commit` are the indexes of run.work.volumes the bake
+// committed, in the order outcome.committed lists the new ids.
+void remember_bake_references(const ModelObject& object, const BakeRun& run, const std::vector<std::size_t>& commit, const TextureBakeOutcome& outcome)
+{
+    for (std::size_t k = 0; k < outcome.committed.size() && k < commit.size(); ++k) {
+        const ModelVolume* volume = volume_by_id(object, outcome.committed[k]);
+        if (volume == nullptr || commit[k] >= run.work.volumes.size())
+            continue;
+        bake_references().remember(volume->id(), mesh_fingerprint(volume->mesh().its), run.work.volumes[commit[k]].base_mesh, volume->get_matrix());
+    }
+}
+
 // Main thread: the bake applied when the object is still as captured, under one undo step (the one a classic bake's
 // preparation opened, `snapshot_taken`, else its own). `may_close` lets an open toolbar tool close first (only now that the
 // call changes something); closing flushes its paint into the model, so when that changed what was planned `replan` is set
@@ -375,6 +390,8 @@ nlohmann::json finish_bake(BakeRun& run, BakePlanned& planned, double wait_s, bo
         outcome = apply_texture_bake(*plater, run.work, planned.bake);
     }
 
+    remember_bake_references(object, run, commit, outcome);
+
     // The answer, from what the bake committed.
     const bool changed = !outcome.committed.empty();
     nlohmann::json answer = {{"status", "success"}, {"object_id", run.object_id}, {"pipeline", run.used.pipeline_v2 ? "default" : "classic"},
@@ -428,6 +445,8 @@ nlohmann::json finish_bake(BakeRun& run, BakePlanned& planned, double wait_s, bo
     answer["active_warnings"] = get_active_warnings_json(plater);
     add_next_steps(answer, baked_texture_next_steps(run.object_id, needs_bake, slots_added, answer.contains("plate_index") && answer["plate_index"].is_number_integer() ?
                                                                                                 std::optional<int>(answer["plate_index"].get<int>()) : std::nullopt));
+    if (changed && answer.contains("plate_index") && answer["plate_index"].is_number_integer())
+        append_next_steps(answer, relief_next_steps(answer["plate_index"].get<int>(), run.object_id));
     append_next_steps(answer, budget_limited_next_steps(run.object_id, outcome.refined, outcome.budget, advice.used_mm));
     add_turntable_preview_if_requested(answer, run.request.include_preview);
     return finish(std::move(answer));

@@ -225,7 +225,7 @@ TEST_CASE("The request refuses a paint channel, layer or colouring it does not k
     CHECK(refusal_of({{"plate_index", 0}, {"texture_layers", {1}}}).find("add \"texture\" to paint") != std::string::npos);
     CHECK(refusal_of({{"plate_index", 0}, {"paint", {"texture"}}, {"texture_layers", {8}}}).find("slot is an integer 0 to 7") != std::string::npos);
     CHECK(refusal_of({{"plate_index", 0}, {"paint", {"texture"}}, {"texture_layers", {1.5}}}).find("not a layer slot") != std::string::npos);
-    CHECK(refusal_of({{"plate_index", 0}, {"color_by", "relief"}}).find("color_by must be") != std::string::npos);
+    CHECK(refusal_of({{"plate_index", 0}, {"color_by", "sepia"}}).find("color_by must be") != std::string::npos);
     CHECK(refusal_of({{"plate_index", 0}, {"layer_view", "first_layer"}, {"paint", {"support"}}}).find("3D views") != std::string::npos);
 }
 

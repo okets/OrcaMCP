@@ -81,6 +81,7 @@ add_executable(${_TEST_NAME}_tests
     test_render_paint.cpp
     test_render_section.cpp
     test_render_compare.cpp
+    test_relief.cpp
     test_texture_preview.cpp
     test_render_request.cpp
     test_render_shader_files.cpp

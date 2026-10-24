@@ -202,6 +202,8 @@ json tool_examples()
             {"paint", R"({"plate_index": 0, "save_to_file": true, "paint": ["support"], "views": [{"preset": "iso", "fit": {"object_id": 0}}]})"},
             {"section", R"({"plate_index": 0, "save_to_file": true, "section": {"plane": "z", "at_mm": 15}, "views": [{"preset": "iso", "fit": {"object_id": 0}}]})"},
             {"texture_before_the_bake", R"({"plate_index": 0, "save_to_file": true, "texture_preview": true, "light": {"azimuth_deg": 30, "elevation_deg": 12}, "views": [{"preset": "iso", "fit": {"object_id": 0}}]})"},
+            {"relief_depth", R"({"plate_index": 0, "save_to_file": true, "color_by": "relief", "light": {"azimuth_deg": 30, "elevation_deg": 15}, "views": [{"preset": "iso", "fit": {"object_id": 0}}]})"},
+            {"detail_any_mesh", "color_by detail needs no reference: it shows a texture's pattern, its aliasing and bands where the triangles change size on any mesh; color_by relief colours a baked texture by depth from the surface before the bake (or an unbaked one with texture_preview)"},
             {"before_and_after", "render with save_to_file, change the model, then render with views: [{compare_with: <the earlier file_path>}]: the same camera, a picture of before | now | difference and comparison.changed_fraction"},
             {"replay_a_camera", "views: [{camera: <a camera object an earlier render returned>}] draws that view again, at its resolution"},
             {"first_layer_plan", R"({"plate_index": 1, "save_to_file": true, "layer_view": "first_layer"})"},

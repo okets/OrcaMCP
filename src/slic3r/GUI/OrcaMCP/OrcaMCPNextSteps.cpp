@@ -359,6 +359,20 @@ std::vector<NextStep> texture_changes_next_steps(int object_id, const nlohmann::
     return texture_changes_next_steps(std::vector<int>{object_id}, changes);
 }
 
+std::vector<NextStep> relief_next_steps(int plate_index, int object_id)
+{
+    if (plate_index < 0)
+        return {};
+    return {{"render_plate_view",
+             "see how deep the baked texture on object " + std::to_string(object_id) + " is: color_by relief colours each facet by its distance from the surface before the bake "
+             "(kept for this session), under a raking light",
+             {{"plate_index", plate_index},
+              {"views", nlohmann::json::array({{{"preset", "iso"}, {"fit", {{"object_id", object_id}}}}})},
+              {"color_by", "relief"},
+              {"light", {{"azimuth_deg", 30}, {"elevation_deg", 15}}},
+              {"save_to_file", true}}}};
+}
+
 std::vector<NextStep> baked_texture_next_steps(int object_id, bool needs_bake, int slots_added, std::optional<int> plate_index)
 {
     const std::string lost = slots_added > 0 ? "object " + std::to_string(object_id) + "'s mesh changed and mixed filament slots were added, so every plate lost its slice" :

@@ -69,8 +69,9 @@ struct ViewRequest
     bool exact() const { return mode == CameraMode::Exact; }
 };
 
-// What `color_by` draws each part in: the object's colour from the palette (the default), or its filament's.
-enum class ColorBy { Object, Filament };
+// What `color_by` draws each part in: the object's colour from the palette (the default), its filament's, the depth of
+// the relief from the surface before the texture (relief), or the angle between neighbouring facets (detail).
+enum class ColorBy { Object, Filament, Relief, Detail };
 
 struct RenderRequest
 {
@@ -87,6 +88,8 @@ struct RenderRequest
     std::vector<std::string> paint;                        // channels to tint, canonical order, no duplicates (support seam fuzzy_skin texture)
     std::vector<int>     texture_layers;                   // texture only: the slots to tint, ascending; empty = every slot with a layer
     ColorBy              color_by = ColorBy::Object;
+    std::optional<double> relief_range_mm;                 // color_by relief: the colour scale's half range; unset = the measured extremes
+    std::optional<double> detail_range_deg;                // color_by detail: the scale's top; unset = the measured 98th percentile
     bool                 texture_preview = false;          // draw each object's painted texture layers as its bake would make them (nothing is baked)
     bool                 contact_sheet = false;            // no views asked: iso, top and front side by side
 };
