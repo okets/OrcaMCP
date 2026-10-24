@@ -257,7 +257,7 @@ void plan_batch(std::vector<CgalRepairInput>& inputs, std::chrono::steady_clock:
                 std::vector<std::optional<CgalRepairPlan>>& plans, std::vector<bool>& in_time)
 {
     using Clock    = std::chrono::steady_clock;
-    const auto stop = [deadline] { return Slic3r::this_thread_cancelled() || Clock::now() > deadline; };
+    const auto stop = stop_at(deadline);
     plans.resize(inputs.size());
     in_time.assign(inputs.size(), false);
     for (std::size_t i = 0; i < inputs.size() && !stop(); ++i) {

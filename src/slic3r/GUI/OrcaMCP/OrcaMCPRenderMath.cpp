@@ -144,7 +144,7 @@ void preset_camera(CameraPreset preset, const BoundingBoxf3& fit, Vec3d& positio
 }
 
 double fit_zoom_to_box(const Vec3d& position, const Vec3d& target, const Vec3d& up, const BoundingBoxf3& box,
-                       int width, int height, double margin)
+                       int width, int height, double margin, bool perspective)
 {
     if (!box.defined || width <= 0 || height <= 0 || !(margin > 0.))
         return 0.;
@@ -175,7 +175,7 @@ double fit_zoom_to_box(const Vec3d& position, const Vec3d& target, const Vec3d& 
         const double depth = -rel.dot(unit_z);  // along the view, from the camera
         limit(half_w, x);                       // orthographic: the camera far away
         limit(half_h, y);
-        if (depth > 1e-9) {                     // perspective: distance / depth times larger here
+        if (perspective && depth > 1e-9) {      // perspective: distance / depth times larger here
             limit(half_w, x * distance / depth);
             limit(half_h, y * distance / depth);
         }
@@ -198,7 +198,8 @@ void frame_camera(Camera& camera, const Vec3d& position, const Vec3d& target, co
     camera.set_scene_box(drawn);
     camera.look_at(position, target, up);
     const std::array<int, 4>& viewport = camera.get_viewport();
-    const double zoom = fit_zoom_to_box(position, target, up, fit, viewport[2], viewport[3], k_fit_margin);
+    const double zoom = fit_zoom_to_box(position, target, up, fit, viewport[2], viewport[3], k_fit_margin,
+                                        camera.get_type() != Camera::EType::Ortho);
     if (zoom > 0.)
         camera.set_zoom(zoom);
     // Near and far planes around everything that may be drawn, the fitted box included when it
@@ -206,6 +207,61 @@ void frame_camera(Camera& camera, const Vec3d& position, const Vec3d& target, co
     BoundingBoxf3 depth_box = drawn;
     depth_box.merge(fit);
     camera.apply_projection(depth_box);
+}
+
+CameraFrame exact_camera_frame(const Vec3d& position, const Vec3d& target, const ExactCameraSpec& lens, int width,
+                               int height, const BoundingBoxf3& depth_box)
+{
+    Camera camera;
+    camera.set_type(lens.perspective ? Camera::EType::Perspective : Camera::EType::Ortho);
+    camera.set_viewport(0, 0, unsigned(width), unsigned(height));
+    camera.look_at(position, target, stable_camera_up(position, target));
+
+    const double distance = (target - position).norm();
+    const double near_z   = std::max(0.5, 0.01 * distance);
+    double       far_z    = near_z + 1.;
+    if (depth_box.defined)
+        for (int i = 0; i < 8; ++i) {
+            const Vec3d corner((i & 1) ? depth_box.max.x() : depth_box.min.x(),
+                               (i & 2) ? depth_box.max.y() : depth_box.min.y(),
+                               (i & 4) ? depth_box.max.z() : depth_box.min.z());
+            far_z = std::max(far_z, (corner - position).norm() + 10.);
+        }
+    const double aspect = height > 0 ? double(width) / double(height) : 1.;
+    const double top    = lens.perspective ? near_z * std::tan(0.5 * lens.fov_deg * PI / 180.) : 0.5 * lens.ortho_height_mm;
+    camera.apply_projection(-top * aspect, top * aspect, -top, top, near_z, far_z);
+    return camera_frame_of(camera);
+}
+
+bool frame_is_perspective(const CameraFrame& frame)
+{
+    return std::abs(frame.projection(3, 2) + 1.) < 1e-9;
+}
+
+double frame_fov_deg(const CameraFrame& frame)
+{
+    if (!frame_is_perspective(frame) || !(std::abs(frame.projection(1, 1)) > 1e-12))
+        return 0.;
+    return 2. * std::atan(1. / frame.projection(1, 1)) * 180. / PI;
+}
+
+Vec3d frame_eye(const CameraFrame& frame)
+{
+    return frame.view.inverse().block<3, 1>(0, 3);
+}
+
+double mm_per_pixel_at_target(const CameraFrame& frame, const Vec3d& target)
+{
+    const double p11 = frame.projection(1, 1);
+    if (!(std::abs(p11) > 1e-12) || frame.viewport[3] <= 0)
+        return 0.;
+    // Half the image's height in mm on the plane: depth / p11 (perspective), 1 / p11 (orthographic).
+    double half_height = 1. / std::abs(p11);
+    if (frame_is_perspective(frame)) {
+        const Eigen::Vector4d eye_space = frame.view * Eigen::Vector4d(target.x(), target.y(), target.z(), 1.);
+        half_height *= -eye_space.z();
+    }
+    return 2. * half_height / double(frame.viewport[3]);
 }
 
 CameraFrame camera_frame_of(const Camera& camera)
@@ -225,7 +281,7 @@ std::string object_not_on_plate_message(int object_index, int plate_index, const
             plates.push_back(p);
     std::sort(plates.begin(), plates.end());
 
-    std::string message = "fit.object_index: object " + std::to_string(object_index) + " is not on plate " +
+    std::string message = "fit.object_id: object " + std::to_string(object_index) + " is not on plate " +
                           std::to_string(plate_index);
     if (plates.empty())
         return message + "; it is not on any plate (get_scene_info lists it under unplaced_objects)";

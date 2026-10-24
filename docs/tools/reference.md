@@ -3110,9 +3110,30 @@ explicit camera be given relative to the plate's front-left corner. `fit` takes 
 every tool takes; `{object_index}` is the same number, kept (both given and different is an error).
 A view is **strict**: a key it does not declare (`fov`, `zoom`, `distance`) is refused with -32602 and the list of
 keys a view takes, where it used to be ignored. `camera` (the object a render returned) is declared and accepted.
-An explicit camera's `camera_position` and `target` set the viewing direction only: the image is fitted to the plate's
-drawn objects (`frame_camera` / `fit_zoom_to_box`, 20% margin), so a close-up of part of an object is not possible today;
-`fit: {object_id}` frames one whole object.
+
+| View key | Type | Description |
+|----------|------|-------------|
+| `preset`, `fit`, `frame`, `camera_position`, `target` | | As above. `fit` also takes `{box: {min: [x,y,z], max: [x,y,z]}}` and `{point: [x,y,z], radius_mm: r}`, in bed mm (plate-local with `frame: "plate_local"`, a preset too). One fit form per view. |
+| `camera_mode` | `"fit"` (default) / `"exact"` | `fit`: `camera_position` and `target` give the direction; the picture is zoomed to the view's `fit` and the eye may be moved back. `exact`: the eye is at `camera_position`, looking at `target`, and nothing moves it; takes no preset and no `fit`. |
+| `projection` | `"perspective"` (default) / `"orthographic"` | In fit mode an orthographic view is zoomed to the fit's orthographic limit. |
+| `fov_deg` | number 5-120 | Exact perspective: the vertical field of view (default 30). |
+| `ortho_height_mm` | number > 0 | Exact orthographic: the height of the image in mm (required there). |
+| `camera` | object | A camera a render returned as `views[i].camera`, sent back unchanged: the same view is drawn again at its viewport's resolution (a `resolution` that differs is an error). The view takes no other key. |
+
+A returned `camera` also goes back as the view itself (its `view_matrix`, `projection_matrix` and `viewport`, with the
+informational keys it carries, which are ignored), and `preset: null` there is no preset. `fit` is strict: a key or form it
+does not know (`{"object": 2}`) is refused, in a layer plan's `fit` too. Every view's entry says `shader_fallback`: true when
+the app's `mcp_render` shader could not be built on this driver, so options that need it (V3's `light`) were not applied.
+
+**Close-ups.** A close-up is a small fit, not more pixels: `{"preset": "iso", "fit": {"point": [x, y, z], "radius_mm": 6}}`
+frames a 12 mm sphere, and the answer's `camera.mm_per_pixel` says the scale on the target plane (at 512 px, 12 mm is
+about 0.023 mm per pixel). An explicit `{camera_position, target}` in fit mode now frames the view's `fit` (before, it was
+always the plate's drawn objects plus 20%). The camera is never promised: fit mode may back the eye away to keep the near
+plane 100 mm from what is drawn (`camera.moved: true`, `camera.camera_position` the eye the picture was drawn from,
+`camera.requested_position` the one asked for). `camera_mode: "exact"` is the way to a real perspective from a chosen point,
+e.g. `{"camera_position": [60, 0, 20], "target": [60, 40, 20], "camera_mode": "exact", "fov_deg": 40}` or, for a measured
+side view, `"projection": "orthographic", "ortho_height_mm": 20` (512 px: 0.0390625 mm per pixel). Exact near is
+max(0.5, 1% of the distance) mm; everything in front of the eye is drawn. A region inside a part is hidden by the part.
 
 **Examples:**
 ```json
@@ -3137,6 +3158,8 @@ drawn objects (`frame_camera` / `fit_zoom_to_box`, 20% margin), so a close-up of
   "uniform_image": false,
   "overlays": {"outline": true, "grid": true, "origin": true, "labels": true, "excluded": true},
   "camera": {"preset": "low", "fit": {"object_index": 8}, "input_frame": "bed_mm",
+             "camera_mode": "fit", "projection": "perspective", "fov_deg": 11.2, "mm_per_pixel": 0.31,
+             "moved": false, "replayed": false,
              "camera_position": [...], "target": [...], "view_matrix": [...], "projection_matrix": [...],
              "viewport": [0, 0, 512, 512], "type": "perspective", "pixel_origin": "top_left"}
 }]

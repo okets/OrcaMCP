@@ -7,6 +7,7 @@
 // render_plate_view's request is read before anything is looked up or drawn (OrcaMCPRenderRequest.cpp):
 // defaults, clamps, and every refusal, apart from the app.
 
+using namespace Slic3r;
 using namespace Slic3r::GUI::OrcaMCP;
 using json = nlohmann::json;
 
@@ -135,8 +136,25 @@ TEST_CASE("fit takes object_id and object_index as the same number", "[RenderReq
 
     // Anything else frames the plate, as before.
     CHECK(fit_of("plate").fit.kind == FitRequest::Kind::Plate);
-    CHECK(fit_of(json::object()).fit.kind == FitRequest::Kind::Plate);
+    CHECK(fit_of(nullptr).fit.kind == FitRequest::Kind::Plate);
     CHECK(fit_of("plate").fit_json == "plate");
+}
+
+TEST_CASE("A fit that is not one of its forms is refused, not read as the plate", "[RenderRequest][orcamcp]")
+{
+    auto fit_refusal = [](const json& fit) { return refusal_of({{"plate_index", 0}, {"views", json::array({{{"preset", "iso"}, {"fit", fit}}})}}); };
+    CHECK(fit_refusal({{"object", 2}}).find("fit has no key \"object\"") != std::string::npos);
+    CHECK(fit_refusal(json::object()).find("fit must be") != std::string::npos);
+    CHECK(fit_refusal("object 2").find("fit must be") != std::string::npos);
+    CHECK(fit_refusal(3).find("fit must be") != std::string::npos);
+}
+
+TEST_CASE("A layer plan reads its fit as a view does", "[RenderRequest][orcamcp]")
+{
+    CHECK(read_fit_request(json({{"object_id", 4}})).object_id == 4);
+    CHECK(read_fit_request(json({{"object_index", 4}})).object_id == 4);
+    CHECK(read_fit_request(json("plate")).kind == FitRequest::Kind::Plate);
+    CHECK_THROWS(read_fit_request(json({{"object", 4}})));
 }
 
 TEST_CASE("The default shader settings change nothing", "[RenderRequest][orcamcp]")
@@ -148,4 +166,197 @@ TEST_CASE("The default shader settings change nothing", "[RenderRequest][orcamcp
     s = ShaderSettings{};
     s.front_light = false;
     CHECK_FALSE(s.is_default());
+}
+
+// V1: close-ups, the exact camera and camera replay.
+
+namespace {
+
+json one_view(const json& view) { return {{"plate_index", 0}, {"views", json::array({view})}}; }
+
+json square_camera(int size, bool perspective = true)
+{
+    json projection = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, -1.02, -2.02, 0, 0, perspective ? -1 : 0, perspective ? 0 : 1};
+    return {{"view_matrix", {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, -50, 0, 0, 0, 1}},
+            {"projection_matrix", projection},
+            {"viewport", {0, 0, size, size}}};
+}
+
+} // namespace
+
+TEST_CASE("A fit takes a box or a point with a radius, in bed mm or plate-local", "[RenderRequest][orcamcp]")
+{
+    const RenderRequest box = read_ok(one_view({{"preset", "iso"}, {"fit", {{"box", {{"min", {1, 2, 3}}, {"max", {4, 5, 6}}}}}}}));
+    CHECK(box.views[0].fit.kind == FitRequest::Kind::Box);
+    CHECK(box.views[0].fit_json.contains("box"));
+    const auto bb = region_fit_box(box.views[0].fit, Vec3d(100., 200., 0.));
+    CHECK(bb.min == Vec3d(101., 202., 3.));
+    CHECK(bb.max == Vec3d(104., 205., 6.));
+
+    const RenderRequest point = read_ok(one_view({{"preset", "top"}, {"frame", "plate_local"}, {"fit", {{"point", {10, 20, 5}}, {"radius_mm", 4}}}}));
+    CHECK(point.views[0].fit.kind == FitRequest::Kind::Point);
+    CHECK(point.views[0].input_frame == "plate_local");   // a preset keeps the frame when its fit is a region
+    const auto pb = region_fit_box(point.views[0].fit, Vec3d::Zero());
+    CHECK(pb.min == Vec3d(6., 16., 1.));
+    CHECK(pb.max == Vec3d(14., 24., 9.));
+
+    CHECK(read_ok(one_view({{"preset", "top"}, {"frame", "plate_local"}})).views[0].input_frame == "bed_mm");
+}
+
+TEST_CASE("A fit region that is not one is refused", "[RenderRequest][orcamcp]")
+{
+    auto fit_refusal = [](const json& fit) { return refusal_of(one_view({{"preset", "iso"}, {"fit", fit}})); };
+    CHECK(fit_refusal({{"point", {0, 0, 0}}}).find("radius_mm") != std::string::npos);
+    CHECK(fit_refusal({{"point", {0, 0, 0}}, {"radius_mm", 0}}).find("above 0") != std::string::npos);
+    CHECK(fit_refusal({{"radius_mm", 3}}).find("goes with fit.point") != std::string::npos);
+    CHECK(fit_refusal({{"box", {{"min", {5, 0, 0}}, {"max", {1, 1, 1}}}}}).find("must not exceed") != std::string::npos);
+    CHECK(fit_refusal({{"box", {{"min", {0, 0}}, {"max", {1, 1, 1}}}}}).find("fit.box.min") != std::string::npos);
+    CHECK(fit_refusal({{"box", {{"min", {0, 0, 0}}}}}).find("{min") != std::string::npos);
+    CHECK(fit_refusal({{"object_id", 1}, {"point", {0, 0, 0}}, {"radius_mm", 2}}).find("one of") != std::string::npos);
+}
+
+TEST_CASE("An exact camera needs a position and target and takes a lens", "[RenderRequest][orcamcp]")
+{
+    const json pose = {{"camera_position", {0, -60, 20}}, {"target", {0, 0, 10}}};
+    json       perspective = pose;
+    perspective["camera_mode"] = "exact";
+    const ViewRequest p = read_ok(one_view(perspective)).views[0];
+    CHECK(p.exact());
+    CHECK_FALSE(p.orthographic);
+    CHECK(exact_spec_of(p).fov_deg == 30.);   // the default
+
+    perspective["fov_deg"] = 60;
+    CHECK(exact_spec_of(read_ok(one_view(perspective)).views[0]).fov_deg == 60.);
+
+    json ortho = pose;
+    ortho["camera_mode"] = "exact";
+    ortho["projection"]  = "orthographic";
+    ortho["ortho_height_mm"] = 20;
+    const ViewRequest o = read_ok(one_view(ortho)).views[0];
+    CHECK(o.orthographic);
+    CHECK_FALSE(exact_spec_of(o).perspective);
+    CHECK(exact_spec_of(o).ortho_height_mm == 20.);
+
+    // Fit mode may be orthographic too.
+    json fit_ortho = pose;
+    fit_ortho["projection"] = "orthographic";
+    const ViewRequest f = read_ok(one_view(fit_ortho)).views[0];
+    CHECK(f.orthographic);
+    CHECK_FALSE(f.exact());
+}
+
+TEST_CASE("The exact camera's refusals say what to send instead", "[RenderRequest][orcamcp]")
+{
+    const json pose = {{"camera_position", {0, -60, 20}}, {"target", {0, 0, 10}}};
+    auto with = [&pose](const json& extra) {
+        json view = pose;
+        view.update(extra);
+        return refusal_of(one_view(view));
+    };
+    CHECK(refusal_of(one_view({{"camera_mode", "exact"}, {"preset", "iso"}})).find("frame a region with fit") != std::string::npos);
+    CHECK(with({{"camera_mode", "exact"}, {"fit", {{"object_id", 0}}}}).find("frame a region with fit") != std::string::npos);
+    CHECK(refusal_of(one_view({{"camera_mode", "exact"}})).find("needs camera_position and target") != std::string::npos);
+    CHECK(with({{"fov_deg", 40}}).find("camera_mode exact") != std::string::npos);
+    CHECK(with({{"ortho_height_mm", 20}, {"projection", "orthographic"}}).find("camera_mode exact") != std::string::npos);
+    CHECK(with({{"camera_mode", "exact"}, {"fov_deg", 4}}).find("between 5 and 120") != std::string::npos);
+    CHECK(with({{"camera_mode", "exact"}, {"fov_deg", 121}}).find("between 5 and 120") != std::string::npos);
+    CHECK(with({{"camera_mode", "exact"}, {"projection", "orthographic"}}).find("ortho_height_mm") != std::string::npos);
+    CHECK(with({{"camera_mode", "exact"}, {"projection", "orthographic"}, {"ortho_height_mm", 0}}).find("above 0") != std::string::npos);
+    CHECK(with({{"camera_mode", "exact"}, {"projection", "orthographic"}, {"ortho_height_mm", 5}, {"fov_deg", 40}}).find("perspective") != std::string::npos);
+    CHECK(with({{"camera_mode", "exact"}, {"ortho_height_mm", 5}}).find("projection orthographic") != std::string::npos);
+    CHECK(with({{"camera_mode", "wide"}}).find("\"fit\" or \"exact\"") != std::string::npos);
+    CHECK(with({{"projection", "fisheye"}}).find("perspective") != std::string::npos);
+    CHECK(refusal_of(one_view({{"camera_position", {1, 2, 3}}, {"target", {1, 2, 3}}})).find("same point") != std::string::npos);
+}
+
+TEST_CASE("A camera a render returned is replayed at its own resolution", "[RenderRequest][orcamcp]")
+{
+    const RenderRequest r = read_ok(one_view({{"camera", square_camera(768)}}));
+    REQUIRE(r.views[0].replay.has_value());
+    CHECK(r.resolution == 768);
+    CHECK(r.views[0].replay->viewport[2] == 768);
+    CHECK(r.views[0].exact());
+    CHECK_FALSE(r.views[0].camera_position.has_value());   // the camera carried none
+
+    json with_pose = square_camera(512);
+    with_pose["camera_position"] = {1, 2, 3};
+    with_pose["target"] = {4, 5, 6};
+    const ViewRequest v = read_ok(one_view({{"camera", with_pose}})).views[0];
+    REQUIRE(v.camera_position.has_value());
+    CHECK(*v.camera_position == Vec3d(1., 2., 3.));
+    CHECK(*v.target == Vec3d(4., 5., 6.));
+
+    CHECK(read_ok(one_view({{"camera", square_camera(512, false)}})).views[0].orthographic);
+    CHECK_FALSE(read_ok(one_view({{"camera", square_camera(512)}})).views[0].orthographic);
+}
+
+TEST_CASE("A replay refuses another resolution, another key and a camera it cannot draw", "[RenderRequest][orcamcp]")
+{
+    json payload = one_view({{"camera", square_camera(512)}});
+    payload["resolution"] = 1024;
+    CHECK(refusal_of(payload).find("leave resolution out") != std::string::npos);
+    payload["resolution"] = 512;
+    CHECK(read_ok(payload).resolution == 512);
+
+    CHECK(refusal_of(one_view({{"camera", square_camera(512)}, {"preset", "iso"}})).find("takes no other key") != std::string::npos);
+    CHECK(refusal_of(one_view({{"camera", square_camera(512)}, {"fit", {{"object_id", 1}}}})).find("(got fit)") != std::string::npos);
+    CHECK(refusal_of(one_view({{"camera", {{"view_matrix", json::array()}}}})).find("view_matrix, projection_matrix and viewport") != std::string::npos);
+
+    json wide = square_camera(512);
+    wide["viewport"] = {0, 0, 512, 256};
+    CHECK(refusal_of(one_view({{"camera", wide}})).find("square") != std::string::npos);
+
+    json views = {{"plate_index", 0}, {"views", json::array({{{"camera", square_camera(512)}}, {{"camera", square_camera(256)}}})}};
+    CHECK(refusal_of(views).find("different resolutions") != std::string::npos);
+}
+
+TEST_CASE("An exact camera, written as the answer writes it, is read back as the same frame", "[RenderRequest][orcamcp][RenderMath]")
+{
+    const Vec3d position(30., -80., 45.), target(40., 10., 12.);
+    const BoundingBoxf3 depth(Vec3d(0., 0., 0.), Vec3d(270., 270., 300.));
+    const CameraFrame drawn = exact_camera_frame(position, target, ExactCameraSpec{true, 33., 0.}, 640, 640, depth);
+
+    json camera = camera_frame_to_json(drawn);
+    camera["camera_position"] = {position.x(), position.y(), position.z()};
+    camera["target"] = {target.x(), target.y(), target.z()};
+    camera["type"] = "perspective";
+    camera["moved"] = false;
+    camera["mm_per_pixel"] = 0.1;
+    camera["fit"] = nullptr;
+
+    const RenderRequest r = read_ok(one_view({{"camera", camera}}));
+    REQUIRE(r.views[0].replay.has_value());
+    CHECK(r.resolution == 640);
+    CHECK((r.views[0].replay->view - drawn.view).norm() == 0.);
+    CHECK((r.views[0].replay->projection - drawn.projection).norm() == 0.);
+    CHECK(r.views[0].replay->viewport == drawn.viewport);
+    CHECK(*r.views[0].camera_position == position);
+}
+
+TEST_CASE("A camera a render returned is a view as it stands, and as views[i].camera", "[RenderRequest][orcamcp]")
+{
+    // The whole camera object of an answer: the three replay keys and every informational one.
+    json camera = square_camera(512);
+    camera.update({{"type", "perspective"}, {"projection", "perspective"}, {"camera_mode", "fit"}, {"fov_deg", 30.0},
+                   {"pixel_origin", "top_left"}, {"preset", nullptr}, {"fit", nullptr}, {"input_frame", "bed_mm"},
+                   {"mm_per_pixel", 0.1}, {"moved", true}, {"requested_position", {1, 2, 3}}, {"replayed", false},
+                   {"camera_position", {4, 5, 6}}, {"target", {0, 0, 0}}});
+    const RenderRequest inline_view = read_ok(one_view(camera));
+    REQUIRE(inline_view.views[0].replay.has_value());
+    CHECK(*inline_view.views[0].camera_position == Vec3d(4., 5., 6.));
+    const RenderRequest nested = read_ok(one_view({{"camera", camera}}));
+    CHECK(nested.views[0].replay->view == inline_view.views[0].replay->view);
+
+    // A key a camera does not carry is refused, never ignored.
+    json extra = camera;
+    extra["zoom"] = 2;
+    CHECK(refusal_of(one_view(extra)).find("(got zoom)") != std::string::npos);
+    // views[i].camera takes nothing beside it, null preset or not.
+    CHECK(refusal_of(one_view({{"camera", camera}, {"preset", nullptr}, {"frame", "bed_mm"}})).find("takes no other key") != std::string::npos);
+}
+
+TEST_CASE("A null preset is no preset", "[RenderRequest][orcamcp]")
+{
+    const json pose = {{"preset", nullptr}, {"camera_position", {0, -60, 20}}, {"target", {0, 0, 10}}};
+    CHECK_FALSE(read_ok(one_view(pose)).views[0].preset.has_value());
 }

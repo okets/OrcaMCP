@@ -324,3 +324,146 @@ TEST_CASE("an object fit on a plate that does not hold it names where it is", "[
     const std::string nowhere = object_not_on_plate_message(4, 0, {-1});
     CHECK(nowhere.find("not on any plate") != std::string::npos);
 }
+
+// V1: the exact camera and close-ups.
+
+namespace {
+
+const BoundingBoxf3 k_depth(Vec3d(0., 0., 0.), Vec3d(270., 270., 300.));
+
+ExactCameraSpec perspective_lens(double fov) { return {true, fov, 0.}; }
+ExactCameraSpec ortho_lens(double height_mm) { return {false, 30., height_mm}; }
+
+} // namespace
+
+TEST_CASE("an exact camera puts the target at the image centre, perspective or orthographic", "[RenderMath]")
+{
+    const Vec3d position(40., -60., 90.), target(120., 130., 20.);
+    for (const ExactCameraSpec& lens : {perspective_lens(40.), ortho_lens(30.)}) {
+        const CameraFrame frame = exact_camera_frame(position, target, lens, 512, 512, k_depth);
+        Vec2d px;
+        REQUIRE(project_point_to_pixel(frame, target, px));
+        CHECK_THAT(px.x(), Catch::Matchers::WithinAbs(256., 1e-6));
+        CHECK_THAT(px.y(), Catch::Matchers::WithinAbs(256., 1e-6));
+        CHECK(frame_is_perspective(frame) == lens.perspective);
+    }
+}
+
+TEST_CASE("an exact camera keeps the eye where it was asked and reads it back", "[RenderMath]")
+{
+    const Vec3d position(40., -60., 90.), target(120., 130., 20.);
+    for (const ExactCameraSpec& lens : {perspective_lens(40.), ortho_lens(30.)}) {
+        const CameraFrame frame = exact_camera_frame(position, target, lens, 512, 512, k_depth);
+        const Vec3d eye = frame_eye(frame);
+        CHECK_THAT(eye.x(), Catch::Matchers::WithinAbs(position.x(), 1e-6));
+        CHECK_THAT(eye.y(), Catch::Matchers::WithinAbs(position.y(), 1e-6));
+        CHECK_THAT(eye.z(), Catch::Matchers::WithinAbs(position.z(), 1e-6));
+    }
+}
+
+TEST_CASE("an exact perspective's field of view is the one asked for", "[RenderMath]")
+{
+    const Vec3d position(0., -100., 0.), target(0., 0., 0.);   // looking along +Y
+    const double fov = 40.;
+    const CameraFrame frame = exact_camera_frame(position, target, perspective_lens(fov), 512, 512, k_depth);
+    CHECK_THAT(frame_fov_deg(frame), Catch::Matchers::WithinAbs(fov, 1e-9));
+
+    // A point at half the field of view off the axis, on the target plane, lands on the image edge (y up = pixel 0).
+    const double half = 100. * std::tan(0.5 * fov * 3.141592653589793 / 180.);
+    Vec2d px;
+    REQUIRE(project_point_to_pixel(frame, Vec3d(0., 0., half), px));
+    CHECK_THAT(px.y(), Catch::Matchers::WithinAbs(0., 1e-6));
+    REQUIRE(project_point_to_pixel(frame, Vec3d(half, 0., 0.), px));
+    CHECK_THAT(px.x(), Catch::Matchers::WithinAbs(512., 1e-6));   // square image: the same horizontally
+}
+
+TEST_CASE("an exact orthographic camera's scale is the image height over its pixels", "[RenderMath]")
+{
+    const Vec3d position(0., -100., 0.), target(0., 0., 0.);
+    const CameraFrame frame = exact_camera_frame(position, target, ortho_lens(20.), 512, 512, k_depth);
+    CHECK_THAT(mm_per_pixel_at_target(frame, target), Catch::Matchers::WithinAbs(0.0390625, 1e-12));
+    CHECK_THAT(frame_fov_deg(frame), Catch::Matchers::WithinAbs(0., 1e-12));
+    // The same scale anywhere in depth.
+    CHECK_THAT(mm_per_pixel_at_target(frame, Vec3d(0., 500., 0.)), Catch::Matchers::WithinAbs(0.0390625, 1e-12));
+}
+
+TEST_CASE("an exact perspective's scale follows the distance", "[RenderMath]")
+{
+    const double fov = 30.;
+    const Vec3d  target(0., 0., 0.);
+    const CameraFrame near_frame = exact_camera_frame(Vec3d(0., -50., 0.), target, perspective_lens(fov), 512, 512, k_depth);
+    const CameraFrame far_frame  = exact_camera_frame(Vec3d(0., -100., 0.), target, perspective_lens(fov), 512, 512, k_depth);
+    const double expected = 2. * 50. * std::tan(0.5 * fov * 3.141592653589793 / 180.) / 512.;
+    CHECK_THAT(mm_per_pixel_at_target(near_frame, target), Catch::Matchers::WithinAbs(expected, 1e-9));
+    CHECK_THAT(mm_per_pixel_at_target(far_frame, target), Catch::Matchers::WithinAbs(2. * expected, 1e-9));
+}
+
+TEST_CASE("an exact camera's near plane is in front of the eye and the depth box is inside its range", "[RenderMath]")
+{
+    const Vec3d position(135., -40., 60.), target(135., 135., 10.);
+    for (const ExactCameraSpec& lens : {perspective_lens(30.), ortho_lens(400.)}) {
+        const CameraFrame frame = exact_camera_frame(position, target, lens, 512, 512, k_depth);
+        int checked = 0;
+        for (int i = 0; i < 8; ++i) {
+            const Vec3d corner((i & 1) ? k_depth.max.x() : k_depth.min.x(), (i & 2) ? k_depth.max.y() : k_depth.min.y(),
+                               (i & 4) ? k_depth.max.z() : k_depth.min.z());
+            const Eigen::Vector4d eye_space = frame.view * Eigen::Vector4d(corner.x(), corner.y(), corner.z(), 1.);
+            if (-eye_space.z() <= 0.5)
+                continue;   // at or behind the near plane: the eye stands inside the box's reach, as asked
+            const Eigen::Vector4d clip = frame.projection * eye_space;
+            const double ndc_z = clip.z() / clip.w();
+            CHECK(ndc_z <= 1. + 1e-9);
+            CHECK(ndc_z >= -1. - 1e-9);
+            ++checked;
+        }
+        CHECK(checked > 0);
+    }
+}
+
+TEST_CASE("the centre pixel of an exact perspective looks from the eye through the target", "[RenderMath]")
+{
+    const Vec3d position(10., -80., 40.), target(60., 20., 5.);
+    const CameraFrame frame = exact_camera_frame(position, target, perspective_lens(35.), 512, 512, k_depth);
+    Vec3d origin, dir;
+    REQUIRE(unproject_pixel_to_ray(frame, 256., 256., origin, dir));
+    const Vec3d toward = (target - position).normalized();
+    CHECK_THAT(dir.dot(toward), Catch::Matchers::WithinAbs(1., 1e-9));
+    const Vec3d off = (target - origin) - dir * (target - origin).dot(dir);   // the target's distance from the ray
+    CHECK_THAT(off.norm(), Catch::Matchers::WithinAbs(0., 1e-6));
+    // The ray starts on the near plane, 0.01 of the distance (or 0.5 mm) in front of the eye.
+    CHECK_THAT((origin - position).norm(), Catch::Matchers::WithinAbs(std::max(0.5, 0.01 * (target - position).norm()), 1e-6));
+}
+
+TEST_CASE("a 10 mm box framed in fit mode fills the image up to the margin", "[RenderMath]")
+{
+    const BoundingBoxf3 box(Vec3d(125., 125., 0.), Vec3d(135., 135., 10.));
+    Vec3d position, target;
+    preset_camera(CameraPreset::Front, box, position, target);
+    const CameraFrame frame = framed(position, target, box);
+    const ScreenBBox  sb    = screen_bbox_of(frame, box);
+    REQUIRE(sb.visible);
+    CHECK_FALSE(sb.clipped);
+    CHECK(fill_of(sb) <= 1. / k_fit_margin + 1e-6);
+    CHECK(fill_of(sb) > 0.5);
+    // The scale reads back as mm per pixel: 10 mm spans about fill * 512 pixels.
+    CHECK(mm_per_pixel_at_target(frame, target) < 10. / (0.5 * 512));
+}
+
+TEST_CASE("an orthographic fit zooms to the orthographic limit", "[RenderMath]")
+{
+    const Vec3d position(0., 0., 100.), target(0., 0., 0.), up(0., 1., 0.);
+    const BoundingBoxf3 box(Vec3d(-5., -5., -5.), Vec3d(5., 5., 5.));
+    const double ortho = fit_zoom_to_box(position, target, up, box, 512, 512, 1.08, false);
+    const double persp = fit_zoom_to_box(position, target, up, box, 512, 512, 1.08, true);
+    CHECK_THAT(ortho, Catch::Matchers::WithinAbs(256. / 1.08 / 5., 1e-9));
+    CHECK(persp < ortho);   // corners nearer the camera project larger
+
+    Slic3r::GUI::Camera camera;
+    camera.set_type(Slic3r::GUI::Camera::EType::Ortho);
+    camera.set_viewport(0, 0, 512, 512);
+    frame_camera(camera, position, target, box, k_plate);
+    const CameraFrame frame = camera_frame_of(camera);
+    CHECK_FALSE(frame_is_perspective(frame));
+    const ScreenBBox sb = screen_bbox_of(frame, box);
+    CHECK_THAT(fill_of(sb), Catch::Matchers::WithinAbs(1. / 1.08, 1e-6));
+}

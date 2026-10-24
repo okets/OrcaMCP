@@ -20,12 +20,29 @@
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
-// What a view's camera frames. Kind::Object is one object's instances on the plate.
+// What a view's camera frames. Kind::Object is one object's instances on the plate; Box and Point are a region
+// in bed mm (plate-local with the view's frame: plate_local), a Point being a sphere of radius_mm.
 struct FitRequest
 {
-    enum class Kind { Plate, Object } kind = Kind::Plate;
-    int object_id = -1;
+    enum class Kind { Plate, Object, Box, Point } kind = Kind::Plate;
+    int    object_id = -1;
+    Vec3d  box_min   = Vec3d::Zero(), box_max = Vec3d::Zero();   // Box
+    Vec3d  point     = Vec3d::Zero();                             // Point
+    double radius_mm = 0.;                                        // Point
 };
+
+// A `fit` value as a view or a layer plan states it: "plate", {object_id | object_index}, {box}, or {point, radius_mm}.
+// Throws std::runtime_error naming what to send for any other value or key.
+FitRequest read_fit_request(const nlohmann::json& fit);
+
+// The box a Box or Point fit frames, in bed mm: `frame_origin` is added to the given coordinates (the plate's
+// front-left corner for plate_local, else zero). A Point's box is its centre +- radius. Undefined for the
+// other kinds.
+BoundingBoxf3 region_fit_box(const FitRequest& fit, const Vec3d& frame_origin);
+
+// fit mode: the camera gives only the direction, the picture is zoomed to the fit and the eye may be moved back.
+// exact: the eye is where camera_position says, with fov_deg or an orthographic ortho_height_mm.
+enum class CameraMode { Fit, Exact };
 
 struct ViewRequest
 {
@@ -35,6 +52,15 @@ struct ViewRequest
     std::string                 input_frame = "bed_mm";    // "bed_mm" or "plate_local"; a preset is always bed_mm
     FitRequest                  fit;
     nlohmann::json              fit_json = "plate";        // echoed in the answer's camera.fit
+    CameraMode                  mode = CameraMode::Fit;
+    bool                        orthographic = false;      // projection: orthographic
+    std::optional<double>       fov_deg;                   // exact perspective (30 when not given)
+    std::optional<double>       ortho_height_mm;           // exact orthographic
+    // A camera object an earlier render returned, drawn again exactly (camera_position / target are then the
+    // object's own, when it carries them).
+    std::optional<CameraFrame>  replay;
+
+    bool exact() const { return mode == CameraMode::Exact; }
 };
 
 struct RenderRequest
@@ -48,6 +74,9 @@ struct RenderRequest
     std::vector<ViewRequest> views;                        // empty with a layer_view
     bool                 contact_sheet = false;            // no views asked: iso, top and front side by side
 };
+
+// A camera frame's lens as a request would state it: ExactCameraSpec of an exact view.
+ExactCameraSpec exact_spec_of(const ViewRequest& view);
 
 // The call's payload (render_plate_view's arguments). Nullopt, with `error` the message to answer, when a
 // value is malformed. `fit` takes {object_id} or {object_index} (the same number; both given and different

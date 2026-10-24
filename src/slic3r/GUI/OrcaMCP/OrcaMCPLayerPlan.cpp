@@ -1,4 +1,5 @@
 #include "OrcaMCPLayerPlan.hpp"
+#include "OrcaMCPRenderRequest.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -118,12 +119,13 @@ std::vector<int> parse_filaments(const nlohmann::json& value)
 
 std::optional<int> parse_fit(const nlohmann::json& value)
 {
-    if (value.is_string() && value.get<std::string>() == "plate")
+    // The same reader as a 3D view's fit; a layer plan frames the plate or one object only.
+    const FitRequest fit = read_fit_request(value);
+    if (fit.kind == FitRequest::Kind::Plate)
         return std::nullopt;
-    int index = 0;
-    if (value.is_object() && value.contains("object_index") && parse_integer_param(value["object_index"], index))
-        return index;
-    throw std::runtime_error("fit must be \"plate\" or {\"object_index\": n}");
+    if (fit.kind == FitRequest::Kind::Object)
+        return fit.object_id;
+    throw std::runtime_error("a layer plan's fit is \"plate\" or {\"object_id\": n}; a box or point is for a 3D view");
 }
 
 nlohmann::json layer_ref_json(const std::optional<PrintedLayerRef>& ref)

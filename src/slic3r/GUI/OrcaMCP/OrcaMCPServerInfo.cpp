@@ -196,11 +196,14 @@ json tool_examples()
             {"contact_sheet", R"({"plate_index": 1, "save_to_file": true})"},
             {"preset_views", R"({"plate_index": 1, "save_to_file": true, "views": [{"preset": "iso"}, {"preset": "low", "fit": {"object_id": 8}}]})"},
             {"explicit_camera", R"({"plate_index": 0, "save_to_file": true, "views": [{"camera_position": [300, -200, 150], "target": [128, 128, 30]}]})"},
+            {"close_up", R"({"plate_index": 0, "save_to_file": true, "views": [{"preset": "iso", "fit": {"point": [128, 128, 10], "radius_mm": 6}}]})"},
+            {"exact_camera", R"({"plate_index": 0, "save_to_file": true, "views": [{"camera_position": [128, 60, 20], "target": [128, 128, 20], "camera_mode": "exact", "fov_deg": 40}]})"},
+            {"replay_a_camera", "views: [{camera: <a camera object an earlier render returned>}] draws that view again, at its resolution"},
             {"first_layer_plan", R"({"plate_index": 1, "save_to_file": true, "layer_view": "first_layer"})"},
             {"sliced_layer_plan", R"({"plate_index": 0, "save_to_file": true, "layer_view": {"z": 10.0, "features": ["support", "support_interface"], "color_by": "filament"}})"},
             {"coordinate_frame", "camera_position/target are BED mm, the get_scene_info frame; plate N is at plates[N].bounding_box. Add frame: \"plate_local\" to give them from the plate's front-left corner. Presets never need coordinates."},
             {"read_the_numbers_first", "Check uniform_image (and its hint) and objects_in_frame before reading the image; a flat image means the camera saw nothing on that plate."},
-            {"tip", "ALWAYS use save_to_file=true (PNG paths). Prefer fit: {object_id} over a higher resolution."},
+            {"tip", "ALWAYS use save_to_file=true (PNG paths). Prefer a closer fit ({object_id}, {box}, {point, radius_mm}) over a higher resolution; camera.mm_per_pixel is the scale."},
             {"when_to_use", "Before/after transforms, to verify object state, to analyze geometry; layer_view first_layer for brim, support feet and adhesion questions; layer_view {layer} or {z} to see any sliced layer's supports, interfaces and which filament prints what, with the areas (objects_at_height overhang) that say whether support covers an overhang"}
         }},
         {"get_texture_library", {

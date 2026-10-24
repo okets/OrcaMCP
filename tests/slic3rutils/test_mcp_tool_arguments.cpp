@@ -481,4 +481,29 @@ TEST_CASE("render_plate_view views are strict, and a camera and a fit a render r
     CHECK(refusal("render_plate_view", {{"plate_index", 0}, {"views", json::array({view})}}) == "");
     view["fit"] = {{"object_index", 1}};
     CHECK(refusal("render_plate_view", {{"plate_index", 0}, {"views", json::array({view})}}) == "");
+
+    // The camera a render answers with now (camera_mode, projection, fov_deg, mm_per_pixel, moved, requested_position,
+    // replayed...) goes back as a view's camera, unchanged.
+    json answered = camera;
+    answered.update({{"camera_mode", "fit"}, {"projection", "perspective"}, {"fov_deg", 30.0}, {"mm_per_pixel", 0.05},
+                     {"moved", true}, {"requested_position", {1, 2, 3}}, {"camera_position", {4, 5, 6}}, {"target", {0, 0, 0}},
+                     {"replayed", false}, {"input_frame", "bed_mm"}});
+    CHECK(refusal("render_plate_view", {{"plate_index", 0}, {"views", json::array({{{"camera", answered}}})}}) == "");
+
+    // The whole camera object, as the view itself.
+    CHECK(refusal("render_plate_view", {{"plate_index", 0}, {"views", json::array({answered})}}) == "");
+
+    // The new view keys, and the fit shapes, are declared; a misspelling is not.
+    const json exact = {{"camera_position", {0, -60, 20}}, {"target", {0, 0, 10}}, {"camera_mode", "exact"},
+                        {"projection", "perspective"}, {"fov_deg", 40}, {"ortho_height_mm", 20}};
+    CHECK(refusal("render_plate_view", {{"plate_index", 0}, {"views", json::array({exact})}}) == "");
+    const json region = {{"preset", "iso"}, {"frame", "plate_local"},
+                         {"fit", {{"box", {{"min", {0, 0, 0}}, {"max", {10, 10, 10}}}}}}};
+    CHECK(refusal("render_plate_view", {{"plate_index", 0}, {"views", json::array({region})}}) == "");
+    const json sphere = {{"preset", "iso"}, {"fit", {{"point", {5, 5, 5}}, {"radius_mm", 3}}}};
+    CHECK(refusal("render_plate_view", {{"plate_index", 0}, {"views", json::array({sphere})}}) == "");
+    const json radius = {{"preset", "iso"}, {"fit", {{"point", {5, 5, 5}}, {"radius", 3}}}};
+    CHECK(::contains(refusal("render_plate_view", {{"plate_index", 0}, {"views", json::array({radius})}}), "has no key \"radius\""));
+    const json corner = {{"preset", "iso"}, {"fit", {{"box", {{"min", {0, 0, 0}}, {"centre", {1, 1, 1}}}}}}};
+    CHECK(::contains(refusal("render_plate_view", {{"plate_index", 0}, {"views", json::array({corner})}}), "has no key \"centre\""));
 }

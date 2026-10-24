@@ -55,6 +55,9 @@ struct RenderOptions
     std::vector<std::function<void(RenderPass&)>>       after_volumes;
     OrcaMCP::ShaderSettings                             shading;
     std::optional<OrcaMCP::CameraFrame>                 camera_frame;
+    // camera_mode exact: the eye is the one given, with this lens, built inside the render from the depth box it draws.
+    std::optional<OrcaMCP::ExactCameraSpec>             exact_camera;
+    bool                                                orthographic = false;   // fit mode, orthographic projection
 };
 
 // One volume RenderThumbnail actually drew, with what an agent needs to name and locate it.
@@ -152,6 +155,7 @@ struct ResolvedView
     BoundingBoxf3        fit_box;
     Vec3d                camera_position = Vec3d::Zero();
     Vec3d                target          = Vec3d::Zero();
+    bool                 pose_known      = true;   // false: a replayed camera that carries no camera_position / target
 };
 
 // A render_plate_view call in three steps (as repair_mesh): PrepareRender reads the request and captures what it
@@ -166,7 +170,6 @@ struct RenderJob
     BoundingBoxf3                             plate_box;
     std::vector<BoundingBoxf3>                legacy_boxes;
     std::vector<OrcaMCP::ExclusionRegion>     exclusion_regions;
-    std::vector<std::pair<const ModelObject*, ObjectID>> captured_objects;   // the model's objects when captured
     std::vector<Work>                         work;                           // run by ComputeRender on the HTTP thread
 };
 

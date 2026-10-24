@@ -100,3 +100,33 @@ TEST_CASE("mcp_render keeps thumbnail's fragment colour", "[RenderShaderFiles]")
         CHECK(thumbnail.find("clipping_plane") == std::string::npos);
     }
 }
+
+TEST_CASE("mcp_render's default settings are what thumbnail does", "[RenderShaderFiles]")
+{
+    const ShaderSettings defaults;
+    for (const char* version : {"110", "140"}) {
+        const std::string thumbnail = read_all(shaders_dir() / version / "thumbnail.vs");
+        const std::string mcp       = read_all(shaders_dir() / version / "mcp_render.vs");
+        INFO("dialect " << version);
+
+        // The ambient intensity the shipped thumbnail shader uses is the default the render sets.
+        static const std::regex ambient(R"(#define\s+INTENSITY_AMBIENT\s+([0-9.]+))");
+        std::smatch match;
+        REQUIRE(std::regex_search(thumbnail, match, ambient));
+        CHECK(std::stod(match[1]) == Catch::Approx(double(defaults.ambient)));
+
+        // Left at the defaults the second light is on and the top light is the fixed one: thumbnail has the front light
+        // term, and mcp_render takes it unless front_light is off and the fixed top direction unless use_light_dir.
+        CHECK(defaults.front_light);
+        CHECK_FALSE(defaults.use_light_dir);
+        CHECK(thumbnail.find("LIGHT_FRONT_DIR") != std::string::npos);
+        CHECK(mcp.find("if (front_light)") != std::string::npos);
+        CHECK(mcp.find("use_light_dir ?") != std::string::npos);
+
+        // The default clipping plane (0, 0, 0, 1) cuts nothing: dot(world_pos, plane) is world_pos.w = 1.
+        CHECK(defaults.clipping_plane[0] == 0.);
+        CHECK(defaults.clipping_plane[1] == 0.);
+        CHECK(defaults.clipping_plane[2] == 0.);
+        CHECK(defaults.clipping_plane[3] > 0.);
+    }
+}

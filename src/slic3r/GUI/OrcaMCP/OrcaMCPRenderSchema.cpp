@@ -51,20 +51,35 @@ json layer_view_schema()
                             {"description", "feature (default): the Preview's feature colours. filament: each slot's colour, as the Preview's Filament view. The legend says which colour is which."}
                         }},
                         {"fit", {
-                            {"description", "\"plate\" (default) or {\"object_index\": n} to frame that object with what it prints on this layer: its support lines, and on the first layer its brim and raft."}
+                            {"description", "\"plate\" (default) or {\"object_id\": n} to frame that object (object_index is the same number, kept) with what it prints on this layer: its support lines, and on the first layer its brim and raft."}
                         }}
                     }}
                 };
 }
 
-// A view's `fit`: the plate, or one object by its object_id (object_index is the same number, kept).
+json vec3_schema(const char* description)
+{
+    return json{{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 3}, {"maxItems", 3}, {"description", description}};
+}
+
+// A view's `fit`: the plate, one object by its object_id (object_index is the same number, kept), a box or a point
+// with a radius.
 json fit_schema()
 {
     return json{
-        {"description", "\"plate\" (default) or {\"object_id\": n} to frame one object -- its instances on this plate; an object this plate does not hold is an error naming its plate (object_index is the same number, kept). A closer camera beats more pixels."},
+        {"description", "\"plate\" (default), {\"object_id\": n} to frame one object -- its instances on this plate; an object this plate does not hold is an error naming its plate (object_index is the same number, kept) --, {box: {min: [x,y,z], max: [x,y,z]}} to frame a region, or {point: [x,y,z], radius_mm: r} to frame a sphere; coordinates in bed mm, or plate-local with the view's frame. A close-up is a small fit, not more pixels."},
+        {"additionalProperties", false},
         {"properties", {
             {"object_id", {{"type", "integer"}, {"description", "The object to frame (get_scene_info's object_id)"}}},
-            {"object_index", {{"type", "integer"}, {"description", "Same as object_id, kept"}}}
+            {"object_index", {{"type", "integer"}, {"description", "Same as object_id, kept"}}},
+            {"box", {
+                {"type", "object"},
+                {"additionalProperties", false},
+                {"description", "A region to frame: its corners in mm."},
+                {"properties", {{"min", vec3_schema("[x, y, z] low corner")}, {"max", vec3_schema("[x, y, z] high corner")}}}
+            }},
+            {"point", vec3_schema("[x, y, z] centre of the sphere to frame (with radius_mm)")},
+            {"radius_mm", {{"type", "number"}, {"description", "Radius in mm of the sphere around point (above 0)"}}}
         }}
     };
 }
@@ -85,7 +100,7 @@ json view_schema()
             {"frame", {
                 {"type", "string"},
                 {"enum", {"bed_mm", "plate_local"}},
-                {"description", "Frame of camera_position/target: bed_mm (default, the get_scene_info frame) or plate_local (from this plate's front-left corner)."}
+                {"description", "Frame of camera_position/target and of a fit box or point: bed_mm (default, the get_scene_info frame) or plate_local (from this plate's front-left corner)."}
             }},
             {"camera_position", {
                 {"type", "array"},
@@ -97,10 +112,38 @@ json view_schema()
                 {"items", {{"type", "number"}}},
                 {"description", "[x, y, z] in bed mm; point it at the plate's objects (get_scene_info positions)"}
             }},
+            {"camera_mode", {
+                {"type", "string"},
+                {"enum", {"fit", "exact"}},
+                {"description", "fit (default): camera_position and target give the direction, the picture is zoomed to `fit` and the eye may be moved back. exact: the eye is at camera_position, looking at target, with fov_deg (perspective) or ortho_height_mm (orthographic); takes no preset or fit."}
+            }},
+            {"projection", {
+                {"type", "string"},
+                {"enum", {"perspective", "orthographic"}},
+                {"description", "perspective (default) or orthographic."}
+            }},
+            {"fov_deg", {
+                {"type", "number"},
+                {"description", "camera_mode exact, perspective: the vertical field of view in degrees, 5 to 120 (default 30)."}
+            }},
+            {"ortho_height_mm", {
+                {"type", "number"},
+                {"description", "camera_mode exact, orthographic: the height of the image in mm (required there, above 0)."}
+            }},
             {"camera", {
                 {"type", "object"},
-                {"description", "A camera object an earlier render returned, to draw the same view again."}
-            }}
+                {"description", "A camera object an earlier render returned (views[i].camera), unchanged, to draw exactly that view again at its resolution. Takes no other key in the view."}
+            }},
+            {"view_matrix", {{"type", "array"}, {"description", "A returned camera, sent as the view itself (view_matrix, projection_matrix, viewport and the keys below it carries): drawn exactly, like camera. The keys type, pixel_origin, mm_per_pixel, moved, requested_position, replayed and input_frame are accepted and ignored; camera_mode, projection, fov_deg, camera_position, target, preset and fit are ignored there too."}}},
+            {"projection_matrix", {{"type", "array"}, {"description", "See view_matrix."}}},
+            {"viewport", {{"type", "array"}, {"description", "See view_matrix: [x, y, width, height], a square."}}},
+            {"type", {{"type", "string"}, {"description", "See view_matrix. Ignored."}}},
+            {"pixel_origin", {{"type", "string"}, {"description", "See view_matrix. Ignored."}}},
+            {"mm_per_pixel", {{"type", "number"}, {"description", "See view_matrix. Ignored."}}},
+            {"moved", {{"type", "boolean"}, {"description", "See view_matrix. Ignored."}}},
+            {"requested_position", {{"type", "array"}, {"description", "See view_matrix. Ignored."}}},
+            {"replayed", {{"type", "boolean"}, {"description", "See view_matrix. Ignored."}}},
+            {"input_frame", {{"type", "string"}, {"description", "See view_matrix. Ignored."}}}
         }}
     };
 }
@@ -118,7 +161,7 @@ json views_schema()
 
 std::string render_plate_view_description()
 {
-    return "Render a picture of a plate, one object, or a sliced layer's toolpaths (layer_view). Omit views for a contact sheet of iso, top and front fitted to the plate. A view is {preset: iso|top|front|back|left|right|low, fit: \"plate\" | {object_index}} or explicit {camera_position, target} in BED mm (the get_scene_info frame; plate N sits at plates[N].bounding_box) -- or add frame: \"plate_local\" to give them relative to the plate's front-left corner. An explicit camera_position and target set the viewing direction only: the image is always fitted to the plate's drawn objects (20% margin), so a close-up of part of an object is not possible today; fit {object_index} frames one whole object. The requested plate's objects are drawn, including any hanging over its edge, from the 3D scene whichever tab the app shows. Every view returns objects_in_frame, uniform_image (+hint), plate_origin and the camera; overlays (outline, 10 mm grid, origin, labels) are on by default. Use save_to_file=true for PNG paths. layer_view draws a top-down plan instead: \"first_layer\", or any sliced layer as {layer: N} or {z: mm}, filtered by features and filaments, with the layer's height, filaments and extruded areas -- the way to check supports, interfaces and which tool prints what on a given layer.";
+    return "Render a picture of a plate, one object, a region or a sliced layer's toolpaths (layer_view). Omit views for a contact sheet of iso, top and front fitted to the plate. A view is a preset (iso|top|front|back|left|right|low) or {camera_position, target} in BED mm (the get_scene_info frame; plate N sits at plates[N].bounding_box), or add frame: \"plate_local\" to give them relative to the plate's front-left corner. By default (camera_mode fit) a custom camera gives only the direction: the picture is zoomed to the view's fit -- the plate, {object_id}, a box {min, max} or a point with radius_mm -- and the eye may be moved back (camera.moved says so). camera_mode exact honours the eye, with fov_deg, or projection orthographic with ortho_height_mm. A close-up is a small fit box, not more pixels: camera.mm_per_pixel says the scale. Pass a camera a render returned as views[i].camera to draw exactly that view again. The requested plate's objects are drawn, including any hanging over its edge, from the 3D scene whichever tab the app shows. Every view returns objects_in_frame, uniform_image (+hint), plate_origin and the camera; overlays (outline, 10 mm grid, origin, labels) are on by default. Use save_to_file=true for PNG paths. layer_view draws a top-down plan instead: \"first_layer\", or any sliced layer as {layer: N} or {z: mm}, filtered by features and filaments, with the layer's height, filaments and extruded areas -- the way to check supports, interfaces and which tool prints what on a given layer.";
 }
 
 json render_plate_view_schema()

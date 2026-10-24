@@ -68,9 +68,10 @@ constexpr double k_fit_margin = 1.08;
 // camera than the target project larger, and the orthographic one the view tends to as the camera
 // backs away. Camera::apply_projection may back the camera away along its axis to keep the near
 // plane 100 mm out; the box's projection moves monotonically between those two limits as it does,
-// so it fits wherever the camera ends up. 0 when there is nothing to fit.
+// so it fits wherever the camera ends up. With `perspective` false only the orthographic limit applies (an
+// orthographic camera). 0 when there is nothing to fit.
 double fit_zoom_to_box(const Vec3d& position, const Vec3d& target, const Vec3d& up, const BoundingBoxf3& box,
-                       int width, int height, double margin);
+                       int width, int height, double margin, bool perspective = true);
 
 // Points `camera` from `position` at `target` and zooms it so the whole of `fit` is in frame, with
 // a depth range covering both `fit` and `drawn` -- the plate and every volume the picture will draw,
@@ -80,6 +81,30 @@ double fit_zoom_to_box(const Vec3d& position, const Vec3d& target, const Vec3d& 
 // arithmetic only, none of its GL calls, so it is tested without a GL context.
 void frame_camera(Camera& camera, const Vec3d& position, const Vec3d& target, const BoundingBoxf3& fit,
                   const BoundingBoxf3& drawn);
+
+// An exact camera (camera_mode exact): the eye is where it was asked to be, the lens is given, and nothing moves the
+// camera back to keep a near plane out (Camera::apply_projection does, in fit mode).
+struct ExactCameraSpec
+{
+    bool   perspective      = true;
+    double fov_deg          = 30.;   // vertical, perspective
+    double ortho_height_mm  = 0.;    // the image's height in mm, orthographic
+};
+
+// View: Camera::look_at from `position` to `target` (stable_camera_up). Projection: perspective with the vertical
+// `fov_deg` (the horizontal follows the image's aspect), or orthographic spanning `ortho_height_mm`. Near is
+// max(0.5, 0.01 * |target - position|) mm and far the farthest corner of `depth_box` from the eye plus 10 mm, so
+// everything in `depth_box` in front of the eye is inside [near, far].
+CameraFrame exact_camera_frame(const Vec3d& position, const Vec3d& target, const ExactCameraSpec& lens, int width,
+                               int height, const BoundingBoxf3& depth_box);
+
+// What a frame's matrices say about the camera: perspective or orthographic, the vertical field of view in degrees
+// (0 for orthographic), the eye in bed mm, and the size of one pixel in mm on the plane through `target` square to
+// the view (everywhere, orthographic). 0 for a degenerate projection.
+bool   frame_is_perspective(const CameraFrame& frame);
+double frame_fov_deg(const CameraFrame& frame);
+Vec3d  frame_eye(const CameraFrame& frame);
+double mm_per_pixel_at_target(const CameraFrame& frame, const Vec3d& target);
 
 // The view, projection and viewport `camera` draws with, as pick_facet and the overlays read them.
 CameraFrame camera_frame_of(const Camera& camera);
