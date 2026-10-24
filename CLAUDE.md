@@ -1425,6 +1425,8 @@ echo "BX the texture panel still holds the seam-path search and the palette's mi
 echo "BY the texture panel's Unjoin renames no group: unjoining the lowest chart of a group leaves the others in the group it was named for (a move to unjoin_island fixes it; 1 = bug still there): $(U src/slic3r/GUI/Gizmos/GLGizmoTextureDisplacement.cpp | grep -c 'layer->island_groups\[size_t(chart)\] = chart;')"
 echo "BZ upstream's 3MF drops a part's UV channel (ModelVolume::texture_uv) on save (rel2506/16; a feature: non-zero = upstream has its own, compare): $(U src/libslic3r/Format/bbs_3mf.cpp | grep -c 'texture_uv')"
 echo "CA the texture bake's stages never ask the cancel hook from inside (align edges, displace, the decimation's setup, regularize, relocate, repair, the colour pass), nor do the isotropic remesh or the uniform subdivision, so a cancel waits out the stage (rel2506/17; 1 = upstream still lacks the checks: keep ours; 0 = upstream added its own): $(U src/libslic3r/TextureBake/TextureBakeFlip.hpp | grep -c 'const StopFn &stop' | sed 's/^[1-9].*/0/;s/^0$/1/') / $(U src/libslic3r/TextureBake/TextureBakeDisplace.cpp | awk '/^TriSoup apply_displacement/{f=1} f&&/on_progress\(/{print 0; d=1; exit} f&&/^}/{print 1; d=1; exit} END{if(!d) print "unknown"}') / $(U src/libslic3r/MeshBoolean.hpp | grep -A4 'remesh_isotropic' | grep -c 'std::function<bool()>' | sed 's/^[1-9].*/0/;s/^0$/1/') / $(U src/libslic3r/TextureDisplacement.hpp | grep -A1 '^indexed_triangle_set subdivide_mesh_uniform' | grep -c 'progress' | sed 's/^[1-9].*/0/;s/^0$/1/')"
+echo "CB OrcaMCP's renders use a shader of their own, mcp_render, registered in GLShadersManager (a feature: 0 = keep ours): $(U src/slic3r/GUI/GLShadersManager.cpp | grep -c 'mcp_render')"
+echo "CC the section view's plane arithmetic is inside _get_section_view_plane, which MCP's renders need too (a move: 0 = keep ours): $(U src/slic3r/GUI/GLCanvas3D.hpp | grep -c 'section_view_plane(const BoundingBoxf3')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -2178,6 +2180,22 @@ single calls into libraries -- TriangleSelector's constructor, `deserialize` and
 800 k triangles in the classic pipeline), `its_face_neighbors`, the unwrap, `cut_mesh_at_steps`, the PNG decode and the
 CGAL conversions around the remesh -- which are linear and bounded by the shutdown rule in "Shutdown". On a 1 (upstream still lacks the checks)
 keep ours; on a 0 for one, upstream added its own polls in that stage: take upstream's and re-run `libslic3r_tests "[cancel]"`.
+
+Item CB is a feature, not a fix: MCP's `render_plate_view` draws with a shader of its own, `mcp_render`
+(`resources/shaders/{110,140}/mcp_render.*`): the `thumbnail` shader plus a clipping plane (the section view, item CC),
+a single raking light and a switch for the second light. Ours registers it in `GLShadersManager::init` right after
+`thumbnail`, as an optional shader: one that does not build on a driver is logged and left out of the startup error
+list, and the render falls back to `thumbnail` and says so (`shader_fallback`). On a 0, upstream has moved or renamed
+the registration: re-add ours beside `thumbnail` and re-run `slic3rutils_tests "[RenderShaderFiles]"`.
+
+Item CC is a move: `GLCanvas3D::_get_section_view_plane` swept the section view's plane along its normal across the
+bounding sphere of the view's volumes (0 = the end the normal points to, 1 = the opposite end) inline. Ours moves that
+arithmetic, unchanged, into the static `GLCanvas3D::section_view_plane(box, normal, ratio)`, which the member calls and
+MCP's `render_plate_view` `section` (`"app"` and the ratio form, `OrcaMCPPlateUtils.cpp`) calls too, so the render cuts
+where the window does. On a 0, upstream changed or moved the function: redo the move on its version and re-run
+`slic3rutils_tests "[RenderSection]"`, whose "section view's plane sweeps the bounding sphere" test holds it to numbers
+written by hand. The cut faces themselves are ours (`OrcaMCPRenderSection.cpp`): upstream's `MeshClipper` caps each model
+part on its own and subtracts no negative volume, ours unions the parts and subtracts them, as the slicer prints.
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices

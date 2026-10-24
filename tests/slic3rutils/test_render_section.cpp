@@ -278,11 +278,10 @@ TEST_CASE("The answer lists the drawn objects, adds instances up and explains an
     SectionCap hidden; hidden.object_id = 5; hidden.instance_id = 0; hidden.effect = SectionEffect::Cut; hidden.area_mm2 = 9.; hidden.islands = 1;
     SectionCap other;  other.object_id = 3; other.instance_id = 0; other.effect = SectionEffect::KeepsAll;
 
-    const json answer = section_json(asked, plane, {first, second, hidden, other}, {{2, 0}, {2, 1}, {3, 0}}, true);
+    const json answer = section_json(asked, plane, {first, second, hidden, other}, {{2, 0}, {2, 1}, {3, 0}});
     CHECK(answer["normal"] == json::array({0.0, 0.0, 1.0}));
     CHECK(answer["point"] == json::array({0.0, 0.0, 10.0}));
     CHECK(answer["source"] == "plane");
-    CHECK(answer["applied"] == true);
     CHECK(answer["empty"] == false);
     CHECK_FALSE(answer.contains("notes"));
     CHECK_FALSE(answer.contains("ratio_used"));
@@ -293,30 +292,105 @@ TEST_CASE("The answer lists the drawn objects, adds instances up and explains an
     CHECK(answer["objects"][0]["instances"].size() == 2);
     CHECK(answer["objects"][1]["effect"] == "keeps_all");
 
-    // Nothing cut: empty, with the reason; a section that could not be applied says that too.
-    const json none = section_json(asked, plane, {other}, {{3, 0}}, false);
+    // Nothing cut: empty, with the reason.
+    const json none = section_json(asked, plane, {other}, {{3, 0}});
     CHECK(none["empty"] == true);
-    REQUIRE(none["notes"].size() == 2);
+    REQUIRE(none["notes"].size() == 1);
     CHECK(none["notes"][0].get<std::string>().find("uncut view") != std::string::npos);
-    CHECK(none["notes"][1].get<std::string>().find("not applied") != std::string::npos);
+    CHECK_FALSE(none.contains("applied"));
     SectionCap gone; gone.object_id = 3; gone.instance_id = 0; gone.effect = SectionEffect::RemovesAll;
-    CHECK(section_json(asked, plane, {gone}, {{3, 0}}, true)["notes"][0].get<std::string>().find("removes every object") != std::string::npos);
-    CHECK(section_json(asked, plane, {}, {}, true)["notes"][0].get<std::string>().find("Nothing was drawn") != std::string::npos);
+    CHECK(section_json(asked, plane, {gone}, {{3, 0}})["notes"][0].get<std::string>().find("removes every object") != std::string::npos);
+    CHECK(section_json(asked, plane, {}, {})["notes"][0].get<std::string>().find("Nothing was drawn") != std::string::npos);
 
     // The ratio form says the ratio it used.
     SectionRequest swept = read_section({{"normal", {0, 0, 1}}, {"ratio", 0.5}});
-    CHECK(section_json(swept, plane, {first}, {{2, 0}}, true)["ratio_used"] == 0.5);
-    CHECK(section_json(swept, plane, {first}, {{2, 0}}, true)["source"] == "ratio");
+    CHECK(section_json(swept, plane, {first}, {{2, 0}})["ratio_used"] == 0.5);
+    CHECK(section_json(swept, plane, {first}, {{2, 0}})["source"] == "ratio");
 }
 
 TEST_CASE("What a section answers goes back in as the same plane", "[RenderSection][orcamcp]")
 {
     const SectionPlane plane = plane_through_point(Vec3d(1, 0, 1), Vec3d(10, 10, 10));
     SectionCap cut; cut.object_id = 0; cut.instance_id = 0; cut.effect = SectionEffect::Cut; cut.area_mm2 = 5.; cut.islands = 1;
-    const json answer = section_json(read_section({{"normal", {1, 0, 1}}, {"ratio", 0.4}}), plane, {cut}, {{0, 0}}, true);
+    const json answer = section_json(read_section({{"normal", {1, 0, 1}}, {"ratio", 0.4}}), plane, {cut}, {{0, 0}});
     const SectionRequest again = read_section(answer);
     REQUIRE(again.form == SectionRequest::Form::PointNormal);
     const SectionPlane back = plane_through_point(again.normal, again.point);
     CHECK(back.normal.isApprox(plane.normal, 1e-9));
     CHECK(back.offset == Catch::Approx(plane.offset));
+}
+
+TEST_CASE("A sunk part is cut and counted above the bed only", "[RenderSection][orcamcp]")
+{
+    // A 20 mm cube from z = -10 to 10, cut by x = 5: the full square is 400, the part at z >= 0 is 20 x 10.
+    Transform3d sunk = Transform3d::Identity();
+    sunk.translate(Vec3d(0, 0, -10));
+    const SectionCap vertical = section_cap(body_of(cube(20), sunk), plane_through_point(Vec3d::UnitX(), Vec3d(5, 0, 0)), never);
+    CHECK(vertical.area_mm2 == Catch::Approx(200.).margin(0.1));
+    CHECK(vertical.islands == 1);
+    CHECK(triangles_area(vertical.triangles) == Catch::Approx(vertical.area_mm2).margin(0.1));
+    for (const Vec3f& v : vertical.triangles.vertices)
+        CHECK(v.z() >= -0.0011f);
+    // A tilted plane (x + z = 10 here) is clipped on its slanted face too: the cut runs from (10, -, 0) up to (0, -, 10).
+    const SectionCap tilted = section_cap(body_of(cube(20), sunk), plane_through_point(Vec3d(1, 0, 1), Vec3d(5, 0, 5)), never);
+    for (const Vec3f& v : tilted.triangles.vertices)
+        CHECK(v.z() >= -0.0011f);
+    CHECK(tilted.area_mm2 > 0.);
+    // A horizontal cut wholly below the bed has nothing left; one above it is whole.
+    CHECK(section_cap(body_of(cube(20), sunk), plane_through_point(Vec3d::UnitZ(), Vec3d(0, 0, -5)), never).area_mm2 == 0.);
+    CHECK(section_cap(body_of(cube(20), sunk), plane_through_point(Vec3d::UnitZ(), Vec3d(0, 0, 5)), never).area_mm2 == Catch::Approx(400.).epsilon(1e-4));
+}
+
+TEST_CASE("An object with open edges is named in the section's notes", "[RenderSection][orcamcp]")
+{
+    SectionBody body = body_of(cube(20));
+    body.parts[0].open_edges = true;
+    body.object_id = 7;
+    const SectionPlane plane = plane_through_point(Vec3d::UnitZ(), Vec3d(0, 0, 10));
+    const SectionCap   cap   = section_cap(body, plane, never);
+    CHECK(cap.open_edges);
+    CHECK_FALSE(section_cap(body_of(cube(20)), plane, never).open_edges);
+    const json answer = section_json(read_section({{"plane", "z"}, {"at_mm", 10}}), plane, {cap}, {{7, 1}});
+    REQUIRE(answer.contains("notes"));
+    CHECK(answer["notes"][0].get<std::string>().find("Object 7 has open edges") == 0);
+    // Not for an object the picture does not show, nor a negative part's open edges.
+    CHECK(section_json(read_section({{"plane", "z"}, {"at_mm", 10}}), plane, {cap}, {{3, 0}}).dump().find("open edges") == std::string::npos);
+    body.parts[0].open_edges = false;
+    body.parts.push_back({cube(5), Transform3d::Identity(), ObjectID(), 1, true, true});
+    CHECK_FALSE(section_cap(body, plane, never).open_edges);
+}
+
+TEST_CASE("A plane that removed everything is told apart from one that cut nothing", "[RenderSection][orcamcp]")
+{
+    const SectionPlane plane = plane_through_point(Vec3d::UnitZ(), Vec3d(0, 0, -5));
+    SectionCap gone; gone.object_id = 1; gone.instance_id = 0; gone.effect = SectionEffect::RemovesAll;
+    SectionCap kept; kept.object_id = 2; kept.instance_id = 0; kept.effect = SectionEffect::KeepsAll;
+    const SectionRequest asked = read_section({{"plane", "z"}, {"at_mm", -5}});
+    CHECK(section_removed_everything(section_json(asked, plane, {gone}, {{1, 0}})));
+    CHECK_FALSE(section_removed_everything(section_json(asked, plane, {kept}, {{2, 0}})));
+    CHECK_FALSE(section_removed_everything(section_json(asked, plane, {gone, kept}, {{1, 0}, {2, 0}})));
+    CHECK_FALSE(section_removed_everything(section_json(asked, plane, {}, {})));
+}
+
+TEST_CASE("The box a ratio sweeps is the plate's instances, not its footprint", "[RenderSection][orcamcp]")
+{
+    const BoundingBoxf3 footprint(Vec3d(0, 0, 0), Vec3d(256, 256, 10));
+    const BoundingBoxf3 cube_box(Vec3d(100, 100, 0), Vec3d(120, 120, 20));
+    const BoundingBoxf3 other(Vec3d(130, 100, 0), Vec3d(150, 120, 20));
+    const BoundingBoxf3 current(Vec3d(0, 0, 0), Vec3d(40, 40, 40)), all(Vec3d(0, 0, 0), Vec3d(500, 500, 40)), none;
+
+    // Another plate: its own instances merged -- the sphere of two 20 mm cubes, not of the 256 mm bed.
+    BoundingBoxf3 box = section_sweep_box(false, false, current, all, {cube_box, other}, footprint);
+    CHECK(box.min == Vec3d(100, 100, 0));
+    CHECK(box.max == Vec3d(150, 120, 20));
+    // A ratio of 0.5 through a lone cube's sphere is through its centre (a bed-sized box would put it elsewhere).
+    CHECK(GLCanvas3D::section_view_plane(section_sweep_box(false, false, current, all, {cube_box}, footprint), Vec3d::UnitZ(), 0.5).get_offset() == Catch::Approx(10.));
+    // The current plate: the view's own box; an empty plate with no instances: the footprint.
+    CHECK(section_sweep_box(false, true, current, all, {cube_box}, footprint).max == Vec3d(40, 40, 40));
+    CHECK(section_sweep_box(false, true, none, all, {cube_box}, footprint).max == Vec3d(120, 120, 20));   // a ratio does not borrow the other plates
+    CHECK(section_sweep_box(false, false, current, all, {}, footprint).max == Vec3d(256, 256, 10));
+    // "app" is the view's: the current plate's volumes whatever plate is drawn, else all volumes (upstream's fallback).
+    CHECK(section_sweep_box(true, false, current, all, {cube_box}, footprint).max == Vec3d(40, 40, 40));
+    CHECK(section_sweep_box(true, false, none, all, {cube_box}, footprint).max == Vec3d(500, 500, 40));
+    CHECK(section_sweep_box(true, true, none, none, {cube_box}, footprint).max == Vec3d(120, 120, 20));
 }

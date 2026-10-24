@@ -657,9 +657,14 @@ static OrcaMCP::SectionPlane resolve_section(OrcaMCP::SectionRequest& section, P
         section.normal.normalize();
     }
     const bool on_current = plate_index == wxGetApp().plater()->get_partplate_list().get_curr_plate_index();
-    BoundingBoxf3 box = (section.form == Form::App || on_current) ? canvas->volumes_bounding_box(true) : BoundingBoxf3();
-    if (!box.defined)
-        box = plate_contents_box(plate, plate_box);
+    std::vector<BoundingBoxf3> instance_boxes;
+    const ModelObjectPtrs&     objects = wxGetApp().model().objects;
+    for (size_t oi = 0; oi < objects.size(); ++oi)
+        for (size_t ii = 0; ii < objects[oi]->instances.size(); ++ii)
+            if (plate.contain_instance(int(oi), int(ii)))
+                instance_boxes.push_back(OrcaMCP::instance_box(*objects[oi], ii));
+    const BoundingBoxf3 box = OrcaMCP::section_sweep_box(section.form == Form::App, on_current, canvas->volumes_bounding_box(true),
+                                                         canvas->volumes_bounding_box(), instance_boxes, plate_box);
     const ClippingPlane swept = GLCanvas3D::section_view_plane(box, section.normal, section.ratio);
     if (!swept.is_active())
         throw std::runtime_error("there is nothing on the plate for the section to sweep; send {normal, point} or {plane: x|y|z, at_mm}");
@@ -686,7 +691,8 @@ static void capture_section(PartPlate& plate, RenderJob& job)
                 if (!volume.is_model_part() && !volume.is_negative_volume())
                     continue;
                 solid = solid || volume.is_model_part();
-                body.parts.push_back({volume.mesh_ptr(), OrcaMCP::volume_to_plate(object, volume, ii), volume.id(), int(vi), volume.is_negative_volume()});
+                body.parts.push_back({volume.mesh_ptr(), OrcaMCP::volume_to_plate(object, volume, ii), volume.id(), int(vi), volume.is_negative_volume(),
+                                      volume.mesh_ptr()->stats().open_edges > 0});
             }
             if (solid)
                 job.section_bodies.push_back(std::move(body));
@@ -1139,7 +1145,12 @@ nlohmann::json OrcaMCPPlateUtils::DrawRender(RenderJob& job)
             for (const RenderedVolume& v : report.drawn)
                 if (!v.wipe_tower)
                     shown.emplace_back(v.object_index, v.instance_id);
-            entry["section"] = OrcaMCP::section_json(job.section, job.section_plane, job.section_caps, shown, report.completed && !report.shader_fallback);
+            entry["section"] = OrcaMCP::section_json(job.section, job.section_plane, job.section_caps, shown);
+            // A plane that removed everything left a blank picture: the section's note says what to move, not the camera.
+            if (OrcaMCP::section_removed_everything(entry["section"]) && entry.contains("hint")) {
+                entry["hint"] = "the section plane removed every object, so nothing is left to see; see section.notes";
+                entry.erase("next_steps");
+            }
         }
         if (asked.light) {
             entry["light"] = OrcaMCP::light_json(*asked.light, cam.frame.view);

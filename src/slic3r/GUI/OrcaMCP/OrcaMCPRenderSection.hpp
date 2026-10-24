@@ -16,6 +16,7 @@
 #include <nlohmann/json.hpp>
 
 #include "libslic3r/ObjectID.hpp"
+#include "libslic3r/BoundingBox.hpp"
 #include "libslic3r/Point.hpp"
 #include "libslic3r/TriangleMesh.hpp"
 
@@ -61,6 +62,7 @@ struct SectionPart
     ObjectID                            identity;   // the volume's, for the scene-unchanged check
     int                                 volume_id = -1;
     bool                                negative  = false;
+    bool                                open_edges = false;   // the mesh has open edges: slicing drops an open chain, so the cut may be short
 };
 
 // One instance of an object: what a section cuts together.
@@ -84,20 +86,33 @@ struct SectionCap
     double               area_mm2    = 0.;
     int                  islands     = 0;
     indexed_triangle_set triangles;      // world mm, on the plane, facing the removed side
+    bool                 open_edges  = false;   // a part of the body has open edges
     bool                 complete    = true;   // false: `stop` said so first
 };
 
-// The cut face of `body` at `plane`: every positive part sliced, unioned, minus the negative parts (as the 3D view's
-// MeshClipper does), triangulated. Area in mm2 and the number of islands (outlines, each with its holes). Stops
+// The cut face of `body` at `plane`: every positive part sliced, unioned, minus the negative parts (what prints; the 3D
+// view's own caps cut each model part on its own and subtract nothing), and only where the cut is at or above the bed
+// (z >= SINKING_Z_THRESHOLD: what is below it is neither drawn nor printed), triangulated. Area in mm2 and the number of islands (outlines, each with its holes). Stops
 // between parts.
 SectionCap section_cap(const SectionBody& body, const SectionPlane& plane, const std::function<bool()>& stop);
 
 // The answer's `section` for the plane: normal, point (the plane's closest point to the origin), source ("app",
-// "ratio" or "plane"), removes, ratio_used for the app and ratio forms, cap_color, applied, empty, objects
-// [{object_id, section_area_mm2, islands, effect, instances?}] and notes. `drawn` are the (object_id, instance_id) the
-// picture shows; a body not in it is left out. `applied` is false when the picture could not be cut.
+// "ratio" or "plane"), removes, ratio_used for the app and ratio forms, cap_color, empty, objects
+// [{object_id, section_area_mm2, islands, effect, instances?}] and notes (an empty cut, an object with open edges).
+// `drawn` are the (object_id, instance_id) the picture shows; a body not in it is left out.
 nlohmann::json section_json(const SectionRequest& asked, const SectionPlane& plane, const std::vector<SectionCap>& caps,
-                            const std::vector<std::pair<int, int>>& drawn, bool applied);
+                            const std::vector<std::pair<int, int>>& drawn);
+
+// True when `section` (a section_json) cut nothing because the plane removed every object it met.
+bool section_removed_everything(const nlohmann::json& section);
+
+// The box "app" and a ratio sweep along the normal, as the 3D view takes it: `current_plate` is its volumes_bounding_box(true)
+// and `all_plates` its volumes_bounding_box() (either may be undefined), `instances` the boxes of the rendered plate's own
+// instances. "app" is the view's: the current plate's volumes, else all of them (upstream's fallback when that plate is
+// empty), else the rendered plate's instances. A ratio is the same for the current plate; on another plate it is that plate's
+// instances only (not its whole footprint). `plate_box` when nothing else is defined.
+BoundingBoxf3 section_sweep_box(bool app_form, bool plate_is_current, const BoundingBoxf3& current_plate, const BoundingBoxf3& all_plates,
+                                const std::vector<BoundingBoxf3>& instances, const BoundingBoxf3& plate_box);
 
 // The cut faces' colour, as the 3D view draws them.
 constexpr float k_section_cap_grey = 0.25f;

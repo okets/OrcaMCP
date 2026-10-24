@@ -7,6 +7,7 @@
 
 #include "libslic3r/ClipperUtils.hpp"
 #include "libslic3r/ExPolygon.hpp"
+#include "libslic3r/Model.hpp"
 #include "libslic3r/Tesselate.hpp"
 #include "libslic3r/TriangleMeshSlicer.hpp"
 
@@ -149,6 +150,28 @@ ExPolygons slice_part(const SectionPart& part, const Transform3d& to_plane_frame
     return union_ex(slice_mesh(part.mesh->its, float(0.), params));
 }
 
+// `cut` (outlines in the plane's frame) where the world z is at least SINKING_Z_THRESHOLD: a sunk part's cut is not drawn
+// below the bed (the shader discards it) and does not print there. `back` takes the plane's frame to the world.
+ExPolygons above_the_bed(const ExPolygons& cut, const Transform3d& back)
+{
+    if (cut.empty())
+        return cut;
+    const double z0 = (back * Vec3d(0., 0., 0.)).z();
+    const double a  = (back * Vec3d(1., 0., 0.)).z() - z0;
+    const double b  = (back * Vec3d(0., 1., 0.)).z() - z0;
+    const double limit = double(SINKING_Z_THRESHOLD) - z0;   // a*x + b*y >= limit keeps
+    const double len   = std::hypot(a, b);
+    if (len < 1e-9)   // a plane parallel to the bed: all or nothing
+        return limit <= 0. ? cut : ExPolygons();
+    const Vec2d  n(a / len, b / len), t(-n.y(), n.x());
+    const Vec2d  q0 = n * (limit / len);
+    constexpr double reach = 3000.;   // mm, well past any bed
+    Polygon half;
+    for (const Vec2d& corner : std::array<Vec2d, 4>{Vec2d(q0 - t * reach), Vec2d(q0 + t * reach), Vec2d(q0 + t * reach + n * 2. * reach), Vec2d(q0 - t * reach + n * 2. * reach)})
+        half.points.emplace_back(scaled<coord_t>(corner.x()), scaled<coord_t>(corner.y()));
+    return intersection_ex(cut, ExPolygons{ExPolygon(half)});
+}
+
 } // namespace
 
 SectionCap section_cap(const SectionBody& body, const SectionPlane& plane, const std::function<bool()>& stop)
@@ -156,6 +179,9 @@ SectionCap section_cap(const SectionBody& body, const SectionPlane& plane, const
     SectionCap cap;
     cap.object_id   = body.object_id;
     cap.instance_id = body.instance_id;
+
+    for (const SectionPart& part : body.parts)
+        cap.open_edges = cap.open_edges || (!part.negative && part.open_edges);
 
     // Which sides of the plane the solid lies on.
     double lowest = std::numeric_limits<double>::max(), highest = std::numeric_limits<double>::lowest();
@@ -197,6 +223,8 @@ SectionCap section_cap(const SectionBody& body, const SectionPlane& plane, const
     if (!holes.empty())
         cut = diff_ex(cut, union_ex(holes));
 
+    cut = above_the_bed(cut, to_plane_frame.inverse());
+
     double scaled_area = 0.;
     for (const ExPolygon& poly : cut)
         scaled_area += poly.area();
@@ -218,7 +246,7 @@ SectionCap section_cap(const SectionBody& body, const SectionPlane& plane, const
 }
 
 nlohmann::json section_json(const SectionRequest& asked, const SectionPlane& plane, const std::vector<SectionCap>& caps,
-                            const std::vector<std::pair<int, int>>& drawn, bool applied)
+                            const std::vector<std::pair<int, int>>& drawn)
 {
     using nlohmann::json;
     const Vec3d closest = plane.normal * plane.offset;
@@ -230,7 +258,6 @@ nlohmann::json section_json(const SectionRequest& asked, const SectionPlane& pla
     if (asked.form == SectionRequest::Form::App || asked.form == SectionRequest::Form::Ratio)
         out["ratio_used"] = asked.ratio;
     out["cap_color"] = "#404040";
-    out["applied"]   = applied;
 
     // The instances the picture shows, grouped by object in the order they were cut.
     std::vector<int>                       object_order;
@@ -283,11 +310,41 @@ nlohmann::json section_json(const SectionRequest& asked, const SectionPlane& pla
         else
             notes.push_back("The plane cuts no object: some lie wholly on the kept side and some wholly on the removed side. Move the plane.");
     }
-    if (!applied)
-        notes.push_back("The section was not applied: the render shader that cuts was not available.");
+    std::vector<int> open;
+    for (const SectionCap& cap : caps)
+        if (cap.open_edges && std::find(drawn.begin(), drawn.end(), std::make_pair(cap.object_id, cap.instance_id)) != drawn.end() &&
+            std::find(open.begin(), open.end(), cap.object_id) == open.end())
+            open.push_back(cap.object_id);
+    for (int object_id : open)
+        notes.push_back("Object " + std::to_string(object_id) + " has open edges: slicing drops an open outline, so its cut face may be missing or its section_area_mm2 too low (get_mesh_health lists them, repair_mesh closes them).");
     if (!notes.empty())
         out["notes"] = notes;
     return out;
 }
 
+bool section_removed_everything(const nlohmann::json& section)
+{
+    if (!section.value("empty", false) || !section.contains("objects") || section["objects"].empty())
+        return false;
+    for (const nlohmann::json& object : section["objects"])
+        if (object.value("effect", "") != "removes_all")
+            return false;
+    return true;
+}
+
+BoundingBoxf3 section_sweep_box(bool app_form, bool plate_is_current, const BoundingBoxf3& current_plate, const BoundingBoxf3& all_plates,
+                                const std::vector<BoundingBoxf3>& instances, const BoundingBoxf3& plate_box)
+{
+    if ((app_form || plate_is_current) && current_plate.defined)
+        return current_plate;
+    if (app_form && all_plates.defined)
+        return all_plates;
+    BoundingBoxf3 own;
+    for (const BoundingBoxf3& box : instances)
+        if (box.defined)
+            own.merge(box);
+    return own.defined ? own : plate_box;
+}
+
 }}} // namespace Slic3r::GUI::OrcaMCP
+
