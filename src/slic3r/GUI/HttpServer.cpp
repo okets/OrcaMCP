@@ -334,7 +334,7 @@ std::string HttpServer::try_start()
     }
 }
 
-boost::asio::ip::tcp::acceptor HttpServer::listen_on_loopback(boost::asio::io_service& io_service, boost::asio::ip::port_type port)
+boost::asio::ip::tcp::acceptor HttpServer::listen_on_loopback(boost::asio::io_context& io_service, boost::asio::ip::port_type port)
 {
     const boost::asio::ip::tcp::endpoint endpoint = loopback_endpoint(port);
     boost::asio::ip::tcp::acceptor       acceptor(io_service);
