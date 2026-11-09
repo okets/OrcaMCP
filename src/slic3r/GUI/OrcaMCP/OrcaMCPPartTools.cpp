@@ -912,6 +912,30 @@ std::vector<std::string> primitive_shape_names()
     return names;
 }
 
+// The object list's menu name of a tool shape ("cube" -> "Cube"), empty when the shape is none of them.
+std::string primitive_menu_name(const std::string& shape)
+{
+    for (const auto& [name, menu_name] : primitive_shapes())
+        if (name == shape)
+            return menu_name;
+    return {};
+}
+
+// The `size` argument of a primitive, as add_volume and add_primitive_object take it.
+nlohmann::json primitive_size_schema()
+{
+    return {{"type", "object"},
+            {"description", "With shape: the primitive's size in mm, every field of its shape, each above 0 and at most 1000. "
+                            "cube x, y, z; cylinder, cone, disc diameter, height; sphere diameter; torus inner_diameter, tube_diameter. "
+                            "Left out: a tenth of the bed's longest side"},
+            {"properties", {
+                {"x", {{"type", "number"}}}, {"y", {{"type", "number"}}}, {"z", {{"type", "number"}}},
+                {"diameter", {{"type", "number"}}}, {"height", {{"type", "number"}}},
+                {"inner_diameter", {{"type", "number"}}}, {"tube_diameter", {{"type", "number"}}}
+            }},
+            {"additionalProperties", false}};
+}
+
 // Whether the instance's rotation, scale or mirror is the identity: what add_volume's primitive moves
 // into the volumes (ObjectList::apply_object_instance_transfrom_to_all_volumes).
 bool has_turn_or_scale(const Geometry::Transformation& transformation)
@@ -957,9 +981,7 @@ nlohmann::json add_volume_on_main_thread(const nlohmann::json& params)
     std::string         menu_shape, file_path;
     std::vector<double> size_values; // empty: the built-in default size
     if (has_shape) {
-        for (const auto& [name, menu_name] : primitive_shapes())
-            if (name == *shape)
-                menu_shape = menu_name;
+        menu_shape = primitive_menu_name(*shape);
         if (menu_shape.empty())
             return error_response("shape must be one of: cube, cylinder, sphere, cone, disc, torus");
         if (params.contains("size")) {
@@ -1017,6 +1039,50 @@ nlohmann::json add_volume_on_main_thread(const nlohmann::json& params)
     answer = guard.report(std::move(answer));
     drop_modifier_tip(answer);
     return with_closed_tool(std::move(answer), closed_tool);
+}
+
+// ---- add_primitive_object ----
+
+nlohmann::json add_primitive_object_on_main_thread(const nlohmann::json& params)
+{
+    Plater*     plater = wxGetApp().plater();
+    std::string error;
+    const std::string shape = string_arg(params, "shape", error);
+    if (!error.empty())
+        return error_response(error);
+    const std::string menu_shape = primitive_menu_name(shape);
+    if (menu_shape.empty())
+        return error_response("shape must be one of: cube, cylinder, sphere, cone, disc, torus");
+    std::vector<double> size_values; // empty: the built-in default size
+    if (params.contains("size")) {
+        PrimitiveSize given = primitive_size_values(shape, params["size"]);
+        if (!given.refusal.empty())
+            return error_response(given.refusal);
+        size_values = std::move(given.values);
+    }
+    if (const auto refusal = ui_job_refusal(*plater, "add_primitive_object"))
+        return error_response(*refusal);
+
+    std::string closed_tool;
+    if (const auto refusal = close_toolbar_tool_before_change(*plater, -1, 0, closed_tool))
+        return *refusal;
+    // The canvas's Add Primitive adds nothing while something is selected.
+    plater->deselect_all();
+    McpDialogSuppressionGuard guard;
+    const std::size_t         count_before = plater->model().objects.size();
+    // Not interactive: the given size, else the built-in default, never the size dialog.
+    wxGetApp().obj_list()->load_shape_object(menu_shape, /*interactive=*/false, size_values.empty() ? nullptr : &size_values);
+    const Model& model = plater->model();
+    if (model.objects.size() <= count_before)
+        return with_closed_tool(guard.fail_on_errors(error_response("No object was added")), closed_tool);
+
+    const int      object_id = int(model.objects.size()) - 1;
+    nlohmann::json answer    = {{"status", "success"},
+                                {"changed", true},
+                                {"object_id", object_id},
+                                {"object", model_object_summary_json(*model.objects[std::size_t(object_id)], object_id)}};
+    answer["active_warnings"] = get_active_warnings_json(plater);
+    return with_closed_tool(guard.report(std::move(answer)), closed_tool);
 }
 
 // ---- set_volume_type ----
@@ -1374,21 +1440,36 @@ void Slic3r::GUI::OrcaMCPServer::register_part_tools()
                            {"description", "A primitive, as the object list's submenu offers them; or give file_path"}}},
                 {"file_path", {{"type", "string"},
                                {"description", "A model file (STL, 3MF, STEP, OBJ, ...) whose meshes become the volume; or give shape"}}},
-                {"size", {{"type", "object"},
-                          {"description", "With shape: the primitive's size in mm, every field of its shape, each above 0 and at most 1000. "
-                                          "cube x, y, z; cylinder, cone, disc diameter, height; sphere diameter; torus inner_diameter, tube_diameter. "
-                                          "Left out: a tenth of the bed's longest side"},
-                          {"properties", {
-                              {"x", {{"type", "number"}}}, {"y", {{"type", "number"}}}, {"z", {{"type", "number"}}},
-                              {"diameter", {{"type", "number"}}}, {"height", {{"type", "number"}}},
-                              {"inner_diameter", {{"type", "number"}}}, {"tube_diameter", {{"type", "number"}}}
-                          }},
-                          {"additionalProperties", false}}}
+                {"size", primitive_size_schema()}
             }},
             {"required", {"object_id", "type"}}
         },
         [](const nlohmann::json& params) -> nlohmann::json {
             return run_on_main_thread([&params]() -> nlohmann::json { return add_volume_on_main_thread(params); });
+        }
+    });
+
+    register_tool({
+        "add_primitive_object",
+        ToolCategory::Models,
+        "Add a cube, cylinder, ... as an object",
+        "Add a primitive (cube, cylinder, sphere, cone, disc or torus) to the scene as a new object, as the canvas's Add "
+        "Primitive does. It is sized a tenth of the bed's longest side, or by size (mm, every field of the shape: cube x, y, "
+        "z; cylinder, cone, disc diameter, height; sphere diameter; torus inner_diameter, tube_diameter), and placed as the "
+        "canvas places it. The answer: the new object (object_id, the last one, and its description). One undo step. An open "
+        "toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange, orient or bed fill runs. add_volume "
+        "adds a primitive to an object instead.",
+        {
+            {"type", "object"},
+            {"properties", {
+                {"shape", {{"type", "string"}, {"enum", primitive_shape_names()},
+                           {"description", "A primitive, as the canvas's Add Primitive offers them"}}},
+                {"size", primitive_size_schema()}
+            }},
+            {"required", {"shape"}}
+        },
+        [](const nlohmann::json& params) -> nlohmann::json {
+            return run_on_main_thread([&params]() -> nlohmann::json { return add_primitive_object_on_main_thread(params); });
         }
     });
 

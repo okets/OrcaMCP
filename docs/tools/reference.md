@@ -30,7 +30,7 @@ into a call that reports success and changes nothing. See [Error Handling](#erro
 | Category | Tools |
 |----------|-------|
 | **Scene** | `get_scene_info`, `new_project`, `load_project`, `save_project`, `export_3mf`, `export_stl` |
-| **Models** | `load_model`, `auto_orient`, `arrange_objects`, `get_object_info`, `get_mesh_health`, `repair_mesh`, `get_object_components`, `rename_object`, `set_object_printable`, `split_object`, `add_volume`, `set_volume_type`, `assemble_objects`, `merge_parts`, `invalidate_cut_info`, `reload_from_disk`, `replace_volume_with_file` |
+| **Models** | `load_model`, `auto_orient`, `arrange_objects`, `get_object_info`, `get_mesh_health`, `repair_mesh`, `get_object_components`, `rename_object`, `set_object_printable`, `split_object`, `add_primitive_object`, `add_volume`, `set_volume_type`, `assemble_objects`, `merge_parts`, `invalidate_cut_info`, `reload_from_disk`, `replace_volume_with_file` |
 | **Transforms** | `move_object`, `drop_to_bed`, `rotate_object`, `scale_object`, `mirror_object`, `flatten_object`, `clone_object`, `set_instance_count`, `fill_bed_with_instances`, `cut_object`, `delete_object`, `transform_objects` |
 | **Plates** | `add_plate`, `select_plate`, `delete_plate`, `set_prime_tower_position`, `set_plate_settings` |
 | **Config** | `get_presets`, `install_presets`, `get_edited_presets`, `get_config_values`, `select_preset`, `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset`, `get_valid_config_keys` |
@@ -1035,6 +1035,27 @@ open toolbar tool is closed first (`closed_toolbar_tool`).
 The workflow an agent once had to hand to the user -- split to parts, delete the small piece, merge
 the rest -- is `split_object` `to: "parts"`, `get_object_components`, `delete_object` with `volume_id`,
 `merge_parts`.
+
+---
+
+### add_primitive_object
+Add a primitive to the scene as a new object, as the canvas's Add Primitive does
+(`ObjectList::load_shape_object`).
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `shape` | string | Yes | `cube`, `cylinder`, `sphere`, `cone`, `disc`, `torus` |
+| `size` | object | No | The primitive's size in mm, every field of its shape (as `add_volume`'s `size`): cube `x`, `y`, `z`; cylinder, cone, disc `diameter`, `height`; sphere `diameter`; torus `inner_diameter`, `tube_diameter`. Left out: a tenth of the bed's longest side |
+
+The new object is the scene's last one, placed as the canvas places it. The answer: `object_id` and
+`object` (the object's description, as `get_scene_info` gives it). One undo step (the list's own). An
+open toolbar tool is closed first (`closed_toolbar_tool`); refused while an arrange, orient or bed fill
+runs. `add_volume` adds a primitive to an existing object instead.
+
+```json
+{"name": "add_primitive_object", "arguments": {"shape": "cylinder", "size": {"diameter": 20, "height": 30}}}
+```
 
 ---
 
