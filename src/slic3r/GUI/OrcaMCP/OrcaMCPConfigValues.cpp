@@ -262,6 +262,23 @@ nlohmann::json config_values_json(const ConfigSources& sources, const std::vecto
     return result;
 }
 
+std::string config_group_of(const ConfigSources& sources, const std::string& key)
+{
+    return source_name(source_of(sources, key));
+}
+
+nlohmann::json unavailable_json(const std::optional<std::string>& hidden, const std::optional<std::string>& disabled)
+{
+    if (!hidden && !disabled)
+        return nullptr;
+    const auto reason = [](const std::optional<std::string>& text) -> nlohmann::json {
+        if (!text)
+            return nullptr;
+        return text->empty() ? std::string("no reason given") : *text;
+    };
+    return {{"hidden", reason(hidden)}, {"disabled", reason(disabled)}};
+}
+
 nlohmann::json unsaved_changes_json(const ConfigSources& sources)
 {
     const DirtyKeys dirty_keys(sources);

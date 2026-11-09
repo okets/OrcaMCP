@@ -39,6 +39,8 @@
 #include "slic3r/GUI/BackgroundSlicingProcess.hpp"
 #include "slic3r/GUI/MainFrame.hpp"
 #include "slic3r/GUI/GUI_ObjectList.hpp"
+#include "slic3r/GUI/Tab.hpp"
+#include "slic3r/GUI/OptionStateRegistry.hpp"
 #include <wx/base64.h>
 #include <wx/mstream.h>
 #include <wx/txtstrm.h>
@@ -984,6 +986,35 @@ nlohmann::json OrcaMCPServer::handle_get_preview_base64(const nlohmann::json& pa
     };
 }
 
+namespace {
+// Why the settings tab of `group` ("print", "filament", "printer") hides or greys out `key`: null when
+// it does neither, or when no tab exists (headless). Main thread.
+std::optional<std::string> tab_reason(const wxString* reason)
+{
+    if (reason == nullptr)
+        return std::nullopt;
+    return into_u8(*reason);
+}
+
+nlohmann::json unavailable_in_tab(const std::string& group, const std::string& key)
+{
+    Preset::Type type;
+    if (group == "print")
+        type = Preset::TYPE_PRINT;
+    else if (group == "filament")
+        type = Preset::TYPE_FILAMENT;
+    else if (group == "printer")
+        type = Preset::TYPE_PRINTER;
+    else
+        return nullptr;
+    const Tab* tab = wxGetApp().get_tab(type);
+    if (tab == nullptr)
+        return nullptr;
+    const OptionStateRegistry& registry = tab->option_state_registry();
+    return unavailable_json(tab_reason(registry.hidden_reason(key)), tab_reason(registry.disabled_reason(key)));
+}
+} // namespace
+
 void OrcaMCPServer::register_builtin_tools()
 {
     // ==================== SERVER INFO ====================
@@ -1298,7 +1329,8 @@ void OrcaMCPServer::register_builtin_tools()
         "flashforge_obico_token) are never shown: a set one reads \"<redacted>\", and a changed one is "
         "dirty as {changed: true, secret: true}. An unknown key is an error naming it (get_valid_config_keys "
         "lists valid ones); a known key that belongs to no preset type nor the project (an object-only "
-        "setting) is listed under not_in_presets.",
+        "setting) is listed under not_in_presets. unavailable gives, per group and key, why the settings "
+        "tab hides (hidden) or greys out (disabled) a setting; left out for one it shows.",
         {
             {"type", "object"},
             {"properties", {
@@ -1341,8 +1373,19 @@ void OrcaMCPServer::register_builtin_tools()
             }
             return run_on_main_thread([keys, dirty_only]() -> nlohmann::json {
                 const ConfigSources sources = config_sources_from(*wxGetApp().preset_bundle);
-                if (!keys.empty())
-                    return config_values_json(sources, keys, dirty_only);
+                if (!keys.empty()) {
+                    nlohmann::json result      = config_values_json(sources, keys, dirty_only);
+                    nlohmann::json unavailable = nlohmann::json::object();
+                    for (const auto& [group, entries] : result["values"].items())
+                        for (const auto& [key, value] : entries.items()) {
+                            const nlohmann::json reason = unavailable_in_tab(group, key);
+                            if (!reason.is_null())
+                                unavailable[group][key] = reason;
+                        }
+                    if (!unavailable.empty())
+                        result["unavailable"] = unavailable;
+                    return result;
+                }
                 nlohmann::json result = {{"status", "success"}, {"presets", selected_presets_json(sources)}};
                 if (dirty_only)
                     result["dirty"] = unsaved_changes_json(sources);
@@ -1476,7 +1519,8 @@ void OrcaMCPServer::register_builtin_tools()
         "with more than one physical slot, since 2.5.0.6), and the answer's filament says which preset and "
         "slots it reached. A preset other slots share is refused unless include_sharing_slots; switching the "
         "Filament settings to another slot's preset is refused while they hold unsaved changes (save_preset or "
-        "reset_preset first).",
+        "reset_preset first). unavailable lists the written settings a settings tab hides or greys out, "
+        "each with its reason (key, hidden, disabled), so a change that takes no effect says why.",
         {
             {"type", "object"},
             {"properties", {
@@ -1642,6 +1686,18 @@ void OrcaMCPServer::register_builtin_tools()
                         has_invalid = true;
                     }
 
+                // Settings now written that a tab hides or greys out, with its reason; read after the tabs
+                // were updated so the reasons are current.
+                nlohmann::json unavailable = nlohmann::json::array();
+                for (const auto& [type, values] : written)
+                    for (const auto& [key, value] : values) {
+                        if (std::find(applied_keys.begin(), applied_keys.end(), key) == applied_keys.end())
+                            continue;
+                        const nlohmann::json reason = unavailable_in_tab(type, key);
+                        if (!reason.is_null())
+                            unavailable.push_back({{"key", key}, {"hidden", reason["hidden"]}, {"disabled", reason["disabled"]}});
+                    }
+
                 std::string status = has_error ? "error" : (has_invalid ? "partial" : "success");
 
                 Plater* plater = wxGetApp().plater();
@@ -1657,6 +1713,8 @@ void OrcaMCPServer::register_builtin_tools()
                     {"duplicate_keys", duplicate_keys},
                     {"active_warnings", get_active_warnings_json(plater)}
                 };
+                if (!unavailable.empty())
+                    response["unavailable"] = unavailable;
                 if (writes_filament) {
                     // Where the filament settings went: the preset the Filament settings edit, and every slot
                     // using it, which all print with the change.

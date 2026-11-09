@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -307,4 +308,30 @@ TEST_CASE("a key no preset type lists is read from whichever selected preset car
     presets.printer_edited.config.set_deserialize_strict("printer_settings_id", "Creator 5 Pro 0.4");
     CHECK(config_values_json(presets.sources(), {"printer_settings_id"}, false)["values"]["printer"]["printer_settings_id"] ==
           "Creator 5 Pro 0.4");
+}
+
+TEST_CASE("a setting no tab restricts has no unavailable entry", "[orcamcp][ConfigValues]")
+{
+    CHECK(unavailable_json(std::nullopt, std::nullopt).is_null());
+}
+
+TEST_CASE("a disabled setting reports its reason and no hidden one", "[orcamcp][ConfigValues]")
+{
+    const nlohmann::json result = unavailable_json(std::nullopt, std::string("Needs support enabled"));
+    CHECK(result["hidden"].is_null());
+    CHECK(result["disabled"] == "Needs support enabled");
+}
+
+TEST_CASE("a restriction recorded with no text reads as no reason given", "[orcamcp][ConfigValues]")
+{
+    const nlohmann::json result = unavailable_json(std::string(), std::nullopt);
+    CHECK(result["hidden"] == "no reason given");
+    CHECK(result["disabled"].is_null());
+}
+
+TEST_CASE("a key's group is the one get_config_values reports it under", "[orcamcp][ConfigValues]")
+{
+    const ConfigSources sources;
+    CHECK(config_group_of(sources, "support_type") == "print");
+    CHECK(config_group_of(sources, "no_such_key_at_all") == "none");
 }

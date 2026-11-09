@@ -1,5 +1,6 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPConfigValues.hpp
 #pragma once
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -71,6 +72,14 @@ nlohmann::json config_values_json(const ConfigSources& sources, const std::vecto
 // Every unsaved change: {print|printer: {key: {value, saved}}, filament: {key: {slots, value, saved}}};
 // a credential's entry is {changed: true, secret: true}, with no value.
 nlohmann::json unsaved_changes_json(const ConfigSources& sources);
+
+// The group a key is reported under and apply_config takes as its `type`: "print", "filament",
+// "printer", "project", or "none" for a key no preset type nor the project holds.
+std::string config_group_of(const ConfigSources& sources, const std::string& key);
+
+// Why a tab hides or greys out a setting: null when it does neither, else {hidden, disabled}, each a
+// reason or null. A restriction recorded with no text reads "no reason given".
+nlohmann::json unavailable_json(const std::optional<std::string>& hidden, const std::optional<std::string>& disabled);
 
 }} // namespace GUI::OrcaMCP
 } // namespace Slic3r

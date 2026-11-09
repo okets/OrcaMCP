@@ -2222,6 +2222,7 @@ takes for it. A filament setting has one value per slot.
 | `dirty` | The keys whose value differs from the saved preset, with the saved value; a changed credential is `{changed: true, secret: true}`, with neither value. For a filament key: `slots`, the slots whose preset the Filament tab is editing, and their `saved` value. Omitted when nothing differs. With `dirty_only` and no `keys`, every unsaved change as `{key: {value, saved}}` (filament: `{slots, value, saved}`) |
 | `not_judged` | `{keys, reason}` for the project settings asked for: they have no saved preset to compare with, so neither `dirty` nor its absence says anything about them. Listed with `dirty_only` too, rather than dropped |
 | `not_in_presets` | Known keys that belong to no preset type nor the project (an object-only key such as `extruder`) |
+| `unavailable` | `{group: {key: {hidden, disabled}}}` for the keys a settings tab hides or greys out, each a reason text or `null` (`"no reason given"` when recorded without text); left out for keys the tab shows. Read from the tab's option state registry, so it is empty headless |
 
 A key's group comes from the preset type that defines it, so a filament setting is still recognised
 when a slot's preset no longer exists (its value there is `null`). A key no preset type lists but a
@@ -2380,6 +2381,7 @@ each has its own field now:
 |---|---|
 | `unknown_keys` | No such config key. Check `get_valid_config_keys`. |
 | `rejected_values` | The key exists; this value was not accepted. Each entry is `{"key", "reason", "expected"}`, where `expected` names the shape that would have worked. |
+| `unavailable` | Settings just written that a settings tab hides or greys out: `[{key, hidden, disabled}]`, each a reason or `null`, read after the tabs updated. Left out when none |
 
 Two more refusals land in `rejected_values`:
 
