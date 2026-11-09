@@ -137,6 +137,25 @@ ScopedGeometryImportRequest::ScopedGeometryImportRequest(const std::optional<Geo
 
 ScopedGeometryImportRequest::~ScopedGeometryImportRequest() { g_current_request.reset(); }
 
+MultipartChoice choose_multipart(const std::optional<std::string>& multipart, const std::optional<GeometryImportRequest>& request)
+{
+    MultipartChoice choice;
+    const bool      separate_objects = request && request->load_as && *request->load_as == "separate_objects";
+    if (multipart && *multipart != "merge" && *multipart != "separate") {
+        choice.refusal = "multipart must be one of: merge, separate";
+        return choice;
+    }
+    if (separate_objects && multipart && *multipart == "merge") {
+        choice.refusal = "import_options.load_as: \"separate_objects\" and multipart: \"merge\" ask for opposite things "
+                         "(separate objects, and one object with parts); leave multipart out or send \"separate\".";
+        return choice;
+    }
+    choice.answer = multipart ? *multipart : (separate_objects ? "separate" : "merge");
+    if (!multipart && separate_objects)
+        choice.note = "The multi-part question was answered separate, as import_options.load_as: separate_objects asks.";
+    return choice;
+}
+
 const GeometryImportRequest* current_geometry_import_request()
 {
     return g_current_request ? &*g_current_request : nullptr;

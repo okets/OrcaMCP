@@ -25,6 +25,30 @@ TEST_CASE("import_options reads every field", "[McpGeometryImport][orcamcp]")
     CHECK_FALSE(read_geometry_import_request(nlohmann::json::object()).request.has_value());
 }
 
+TEST_CASE("multipart follows load_as separate_objects", "[McpGeometryImport][orcamcp]")
+{
+    GeometryImportRequest sep;
+    sep.load_as = "separate_objects";
+    GeometryImportRequest single;
+    single.load_as = "single_object";
+
+    CHECK(choose_multipart(std::nullopt, std::nullopt).answer == "merge");
+    CHECK(choose_multipart(std::nullopt, std::nullopt).note.empty());
+    CHECK(choose_multipart(std::nullopt, single).answer == "merge");
+    CHECK(choose_multipart(std::string("separate"), std::nullopt).answer == "separate");
+    CHECK(choose_multipart(std::string("merge"), single).answer == "merge");
+
+    const MultipartChoice defaulted = choose_multipart(std::nullopt, sep);
+    CHECK(defaulted.answer == "separate");
+    CHECK(mentions(defaulted.note, "separate_objects"));
+    CHECK(choose_multipart(std::string("separate"), sep).note.empty());
+
+    const MultipartChoice refused = choose_multipart(std::string("merge"), sep);
+    CHECK(mentions(refused.refusal, "separate_objects"));
+    CHECK(mentions(refused.refusal, "merge"));
+    CHECK(mentions(choose_multipart(std::string("both"), std::nullopt).refusal, "merge, separate"));
+}
+
 TEST_CASE("an unknown load_as is refused", "[McpGeometryImport][orcamcp]")
 {
     const auto r = read(R"({"load_as":"pile"})");

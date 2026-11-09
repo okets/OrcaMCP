@@ -36,6 +36,17 @@ std::optional<std::string> geometry_import_refusal(const GeometryImportRequest& 
 void apply_geometry_import_request(const GeometryImportRequest& request, const std::string& format, GeometryImportOptions& options);
 void apply_geometry_import_request(const GeometryImportRequest& request, GeometryImportNamePolicy& policy);
 
+// How load_model answers the multi-part prompt ("several objects at multiple heights: one object with
+// parts?"): `multipart` as given ("merge" or "separate", nullopt when left out) against the import's
+// load_as. load_as separate_objects with multipart left out answers "separate" (`note` says so);
+// with an explicit "merge" it is refused, since the two ask for opposite things.
+struct MultipartChoice {
+    std::string answer;  // "merge" or "separate"
+    std::string refusal; // non-empty: the call is refused
+    std::string note;    // non-empty: an info_messages line for an answer the call did not state
+};
+MultipartChoice choose_multipart(const std::optional<std::string>& multipart, const std::optional<GeometryImportRequest>& request);
+
 // The request of the running load_model call (main thread only), for the plater's import hooks.
 class ScopedGeometryImportRequest
 {
