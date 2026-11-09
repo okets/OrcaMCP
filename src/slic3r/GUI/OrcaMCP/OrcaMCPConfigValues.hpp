@@ -81,5 +81,9 @@ std::string config_group_of(const ConfigSources& sources, const std::string& key
 // reason or null. A restriction recorded with no text reads "no reason given".
 nlohmann::json unavailable_json(const std::optional<std::string>& hidden, const std::optional<std::string>& disabled);
 
+// The GUI field's check on the printer's excluded bed area: more than one point must make one simple polygon
+// (edges that do not cross). `value_text` is the setting's serialized form, "x1xy1,x2xy2,...". Null when valid.
+std::optional<std::string> bed_exclude_area_refusal(const std::string& value_text);
+
 }} // namespace GUI::OrcaMCP
 } // namespace Slic3r

@@ -310,4 +310,12 @@ nlohmann::json unsaved_changes_json(const ConfigSources& sources)
     return changes;
 }
 
+std::optional<std::string> bed_exclude_area_refusal(const std::string& value_text)
+{
+    ConfigOptionPoints points;
+    if (!points.deserialize(value_text) || points.values.size() < 2 || is_valid_bed_exclude_area(points.values))
+        return std::nullopt;
+    return "the excluded bed area must be one simple polygon with an area: its edges must not cross";
+}
+
 }}} // namespace Slic3r::GUI::OrcaMCP

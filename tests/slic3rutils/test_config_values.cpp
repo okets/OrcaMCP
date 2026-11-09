@@ -335,3 +335,17 @@ TEST_CASE("a key's group is the one get_config_values reports it under", "[orcam
     CHECK(config_group_of(sources, "support_type") == "print");
     CHECK(config_group_of(sources, "no_such_key_at_all") == "none");
 }
+
+TEST_CASE("an excluded bed area whose edges cross is refused", "[orcamcp][ConfigValues]")
+{
+    const auto refusal = bed_exclude_area_refusal("0x0,10x10,10x0,0x10");
+    REQUIRE(refusal.has_value());
+    CHECK(*refusal == "the excluded bed area must be one simple polygon with an area: its edges must not cross");
+}
+
+TEST_CASE("an excluded bed area that is a simple polygon, empty or one point is accepted", "[orcamcp][ConfigValues]")
+{
+    CHECK_FALSE(bed_exclude_area_refusal("0x0,10x0,10x10,0x10").has_value());
+    CHECK_FALSE(bed_exclude_area_refusal("").has_value());
+    CHECK_FALSE(bed_exclude_area_refusal("5x5").has_value());
+}

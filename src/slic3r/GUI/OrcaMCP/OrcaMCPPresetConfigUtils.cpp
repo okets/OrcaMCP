@@ -550,6 +550,14 @@ ApplyConfigResult OrcaMCPPresetConfigUtils::ApplyConfig(const nlohmann::json& it
                 result.rejected.push_back({key, *refusal, OrcaMCP::filament_number_expected()});
                 continue;
             }
+            // The settings field refuses a polygon whose edges cross, and so does this.
+            if (key == "bed_exclude_area") {
+                if (const auto refusal = OrcaMCP::bed_exclude_area_refusal(value_str)) {
+                    result.invalid.push_back(key);
+                    result.rejected.push_back({key, *refusal, "points x1xy1,x2xy2,... forming a simple polygon"});
+                    continue;
+                }
+            }
             config->set_deserialize(key, value_str, context);
         } catch (const std::exception& e) {
             BOOST_LOG_TRIVIAL(error) << "ApplyConfig: '" << key << ":" << value_str << "' failed: " << e.what();

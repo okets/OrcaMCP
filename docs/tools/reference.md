@@ -2383,7 +2383,7 @@ each has its own field now:
 | `rejected_values` | The key exists; this value was not accepted. Each entry is `{"key", "reason", "expected"}`, where `expected` names the shape that would have worked. |
 | `unavailable` | Settings just written that a settings tab hides or greys out: `[{key, hidden, disabled}]`, each a reason or `null`, read after the tabs updated. Left out when none |
 
-Two more refusals land in `rejected_values`:
+Three more refusals land in `rejected_values`:
 
 - **A filament slot the project cannot take there.** A setting that names a slot by its number
   (`support_filament`, `support_interface_filament`, `wipe_tower_filament`, the per-feature
@@ -2392,6 +2392,9 @@ Two more refusals land in `rejected_values`:
   unresolved). `set_object_config` and `set_object_layer_range` refuse the same, and `extruder` there too.
   Before v2.5.0.6 the objects and ranges stored any number, and `apply_config` reported a mixed support
   filament applied while the Print settings put the default back.
+- **An excluded bed area whose edges cross.** `bed_exclude_area` with more than one point must make one simple
+  polygon (`is_valid_bed_exclude_area`), as the printer settings' field insists; `expected` is
+  `points x1xy1,x2xy2,... forming a simple polygon`.
 - **A value the settings' own rules changed right after it was written** (the rules the Print, Filament
   and Printer settings apply as a user edits them, such as a support style the support type does not
   have): the entry's `reason` says what the value is now, and the key is not in `applied_keys`.
