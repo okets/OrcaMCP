@@ -592,8 +592,6 @@ public:
 
     //update object's index caused by original object deleted
     void update_object_index(int obj_idx_removed, int obj_idx_max);
-    // Orca: every instance of the object leaves this plate; whether it held one.
-    bool remove_object_instances(int obj_id);
     // Orca: the object's instances after `instance_id_removed` move down one index; whether it held one.
     bool renumber_instances_after(int obj_id, int instance_id_removed);
 

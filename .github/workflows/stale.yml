@@ -12,6 +12,8 @@ permissions:
 
 jobs:
   stale:
+    # Orca: upstream's housekeeping; never on the OrcaMCP fork, where it would close issues or approve runs.
+    if: github.repository == 'OrcaSlicer/OrcaSlicer'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/stale@v11

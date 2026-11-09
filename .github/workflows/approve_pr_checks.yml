@@ -26,6 +26,8 @@ permissions: {}
 
 jobs:
   approve:
+    # Orca: upstream's housekeeping; never on the OrcaMCP fork, where it would close issues or approve runs.
+    if: github.repository == 'OrcaSlicer/OrcaSlicer'
     name: Approve PR checks
     runs-on: ubuntu-24.04
     timeout-minutes: 10

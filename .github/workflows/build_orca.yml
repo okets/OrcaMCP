@@ -820,7 +820,7 @@ jobs:
           # A red build has to be attributable to a commit in *this* repo -- either a code
           # change or a deliberate bump of this SHA. Bump it when syncing with upstream.
           test_repo_dir="${{ runner.temp }}/orca-test-repo"
-          test_repo_sha="88a0d942a"   # OrcaSlicer/orca-test-repo, 2026-10-20: the revision upstream's green runs of 2026-10-22 used
+          test_repo_sha="4674f68bbc"  # OrcaSlicer/orca-test-repo, 2026-10-26: the revision upstream's green run of e2db7e5ef1 (2026-11-09) used
           rm -rf "$test_repo_dir"
           git clone --filter=blob:none https://github.com/OrcaSlicer/orca-test-repo.git "$test_repo_dir"
           git -C "$test_repo_dir" checkout --quiet "$test_repo_sha"
