@@ -649,6 +649,7 @@ G-code preview, model files are refused too; `new_project` returns to an editabl
 | `file_path` | string | Yes | Path to STL, OBJ, 3MF, STEP, AMF, SVG or DRC file |
 | `include_preview` | boolean | No | Return turntable preview path |
 | `multipart` | string | No | `merge` (default) or `separate`. When the file holds several objects at different heights, the slicer asks whether they are one object's parts: `merge` joins them into one object named after the file (as the GUI suggests), `separate` keeps each as its own object. Nothing splits a merged object again, so choose here. |
+| `import_options` | object | No | Choices for a STEP, AMF or CAD 3MF import (a 3MF without project settings), in place of the user's saved ones; nothing is saved. Refused, before anything loads, for any other file and for a 3MF project. Keys: `keep_names`, `sort_names` (booleans), `load_as` (`assembly`, `single_object`, `separate_objects`; STEP and AMF only), `name_cleanup` (`remove` or `replace`) and `replacement` (the text for each character a name cannot hold; needs `name_cleanup: replace`). What it leaves out takes the saved choice; a STEP's tessellation always keeps the saved values. `info_messages` says whether "the call's options" or "the saved options" answered. |
 
 **Example:**
 ```json

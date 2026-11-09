@@ -22,6 +22,7 @@
 #include "OrcaMCPSliceEstimate.hpp"
 #include "OrcaMCPNextSteps.hpp"
 #include "OrcaMCPServerInfo.hpp"
+#include "OrcaMCPGeometryImport.hpp"
 #include "OrcaMCPModelLoad.hpp"
 #include "OrcaMCPProtocolVersions.hpp"
 #include "OrcaMCPRequestGuard.hpp"
@@ -3647,13 +3648,30 @@ void OrcaMCPServer::register_builtin_tools()
         "the project, with its settings, use load_project. next_steps names get_mesh_health for a "
         "loaded object with the mesh warning icon, and get_object_components for one with a part made "
         "of several shells (a loose part or stray fragment). loaded_objects carry get_scene_info's texture "
-        "fields (texture_layers, needs_bake, model_uv): model_uv is true for an OBJ that brought its UVs.",
+        "fields (texture_layers, needs_bake, model_uv): model_uv is true for an OBJ that brought its UVs. "
+        "A STEP, AMF or CAD 3MF (a 3MF without project settings) import asks how to load it: import_options "
+        "chooses for this call, and what it leaves out takes the user's saved choice.",
         {
             {"type", "object"},
             {"properties", {
                 {"file_path", {
                     {"type", "string"},
                     {"description", "Path to model file"}
+                }},
+                {"import_options", {
+                    {"type", "object"},
+                    {"additionalProperties", false},
+                    {"description", "Choices for a STEP, AMF or CAD 3MF import, in place of the user's saved ones (not "
+                                    "saved); refused for any other file. A STEP's tessellation keeps the saved values."},
+                    {"properties", {
+                        {"keep_names", {{"type", "boolean"}, {"description", "Keep the names stored in the file"}}},
+                        {"sort_names", {{"type", "boolean"}, {"description", "Sort parts by name (with keep_names)"}}},
+                        {"load_as", {{"type", "string"}, {"enum", {"assembly", "single_object", "separate_objects"}},
+                                     {"description", "STEP and AMF only: one assembly of parts, one single object, or separate objects"}}},
+                        {"name_cleanup", {{"type", "string"}, {"enum", {"remove", "replace"}},
+                                          {"description", "What to do with characters a name cannot hold: remove them, or replace each"}}},
+                        {"replacement", {{"type", "string"}, {"description", "The text replacing each such character; needs name_cleanup: replace"}}}
+                    }}
                 }},
                 {"include_preview", {
                     {"type", "boolean"},
@@ -3677,7 +3695,18 @@ void OrcaMCPServer::register_builtin_tools()
             if (multipart != "merge" && multipart != "separate")
                 return nlohmann::json{{"status", "error"}, {"message", "multipart must be one of: merge, separate"}};
             const int multipart_answer = multipart == "merge" ? wxID_YES : wxID_NO;
-            return run_on_main_thread([file_path, include_preview, multipart_answer]() {
+            // import_options is read and checked against the file before anything is loaded.
+            const GeometryImportRead import_read = read_geometry_import_request(params);
+            if (!import_read.refusal.empty())
+                return nlohmann::json{{"status", "error"}, {"message", import_read.refusal}};
+            if (import_read.request) {
+                const std::string format = geometry_import_format(file_path);
+                if (const auto refusal = geometry_import_refusal(*import_read.request, format,
+                                                                 format == "3mf" && is_geometry_only_3mf(file_path)))
+                    return nlohmann::json{{"status", "error"}, {"message", *refusal}};
+            }
+            const std::optional<GeometryImportRequest> import_request = import_read.request;
+            return run_on_main_thread([file_path, include_preview, multipart_answer, import_request]() {
                 Plater* plater = wxGetApp().plater();
 
                 // A G-code file or sliced bundle replaces the whole scene; objects cannot be added to
@@ -3697,6 +3726,7 @@ void OrcaMCPServer::register_builtin_tools()
                 files.Add(wxString::FromUTF8(file_path));
                 McpDialogSuppressionGuard suppression_guard;
                 suppression_guard.answer_prompt(MCP_PROMPT_MULTIPART, multipart_answer, multipart_answer_note(multipart_answer));
+                const ScopedGeometryImportRequest scoped_import_request(import_request);
                 const bool loaded = plater->load_files(files);
                 // The error dialogs the load raised (show_error, captured) are reported apart.
                 auto info_messages = suppression_guard.notices();

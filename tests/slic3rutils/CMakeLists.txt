@@ -105,6 +105,7 @@ add_executable(${_TEST_NAME}_tests
     test_mcp_argument_values.cpp
     test_mcp_ui_job.cpp
     test_mcp_model_load.cpp
+    test_mcp_geometry_import.cpp
     test_mcp_next_steps.cpp
     test_mcp_scene_description.cpp
     test_mcp_suppression.cpp

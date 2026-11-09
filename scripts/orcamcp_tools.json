@@ -1764,13 +1764,49 @@
     },
     {
       "category": "Models",
-      "description": "Add a model file's objects (STL, 3MF, OBJ, STEP, ...) to the scene, keeping the current presets: a 3MF brings its geometry only, never its settings, and never renames the project. To open a 3MF as the project, with its settings, use load_project. next_steps names get_mesh_health for a loaded object with the mesh warning icon, and get_object_components for one with a part made of several shells (a loose part or stray fragment). loaded_objects carry get_scene_info's texture fields (texture_layers, needs_bake, model_uv): model_uv is true for an OBJ that brought its UVs.",
+      "description": "Add a model file's objects (STL, 3MF, OBJ, STEP, ...) to the scene, keeping the current presets: a 3MF brings its geometry only, never its settings, and never renames the project. To open a 3MF as the project, with its settings, use load_project. next_steps names get_mesh_health for a loaded object with the mesh warning icon, and get_object_components for one with a part made of several shells (a loose part or stray fragment). loaded_objects carry get_scene_info's texture fields (texture_layers, needs_bake, model_uv): model_uv is true for an OBJ that brought its UVs. A STEP, AMF or CAD 3MF (a 3MF without project settings) import asks how to load it: import_options chooses for this call, and what it leaves out takes the user's saved choice.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
           "file_path": {
             "description": "Path to model file",
             "type": "string"
+          },
+          "import_options": {
+            "additionalProperties": false,
+            "description": "Choices for a STEP, AMF or CAD 3MF import, in place of the user's saved ones (not saved); refused for any other file. A STEP's tessellation keeps the saved values.",
+            "properties": {
+              "keep_names": {
+                "description": "Keep the names stored in the file",
+                "type": "boolean"
+              },
+              "load_as": {
+                "description": "STEP and AMF only: one assembly of parts, one single object, or separate objects",
+                "enum": [
+                  "assembly",
+                  "single_object",
+                  "separate_objects"
+                ],
+                "type": "string"
+              },
+              "name_cleanup": {
+                "description": "What to do with characters a name cannot hold: remove them, or replace each",
+                "enum": [
+                  "remove",
+                  "replace"
+                ],
+                "type": "string"
+              },
+              "replacement": {
+                "description": "The text replacing each such character; needs name_cleanup: replace",
+                "type": "string"
+              },
+              "sort_names": {
+                "description": "Sort parts by name (with keep_names)",
+                "type": "boolean"
+              }
+            },
+            "type": "object"
           },
           "include_preview": {
             "description": "Return turntable preview path",

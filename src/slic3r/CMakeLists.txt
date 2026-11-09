@@ -589,6 +589,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/OrcaMCP/OrcaMCPProjectMatch.cpp
     GUI/OrcaMCP/OrcaMCPModelLoad.hpp
     GUI/OrcaMCP/OrcaMCPModelLoad.cpp
+    GUI/OrcaMCP/OrcaMCPGeometryImport.hpp
+    GUI/OrcaMCP/OrcaMCPGeometryImport.cpp
     GUI/OrcaMCP/MCPClientConfig.hpp
     GUI/OrcaMCP/MCPClientConfig.cpp
     GUI/OptionsGroup.cpp

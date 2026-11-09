@@ -313,6 +313,7 @@
 #include "OrcaMCP/OrcaMCPCommon.hpp"
 #include "OrcaMCP/OrcaMCPExports.hpp"
 #include "OrcaMCP/OrcaMCPGcodeCheck.hpp"
+#include "OrcaMCP/OrcaMCPGeometryImport.hpp"
 #include "OrcaMCP/OrcaMCPModelLoad.hpp"
 #include "OrcaMCP/OrcaMCPQuit.hpp"
 #include "OrcaMCP/OrcaMCPTexturePreview.hpp"
@@ -9047,16 +9048,22 @@ bool mcp_skip_step_mesh_dialog(double linear, double angle, bool split_compound,
 // options the user saved answer it, and the tool's answer says which.
 static void mcp_answer_geometry_import_options(const std::string& format, GeometryImportOptions& options)
 {
-    if (!options.show_dialog || !is_mcp_dialog_suppression_enabled())
+    if (!is_mcp_dialog_suppression_enabled())
         return;
+    // The call's own choices win over the saved ones, and nothing is saved.
+    const OrcaMCP::GeometryImportRequest* request = OrcaMCP::current_geometry_import_request();
+    if (request == nullptr && !options.show_dialog)
+        return;
+    if (request != nullptr)
+        OrcaMCP::apply_geometry_import_request(*request, format, options);
     options.show_dialog = false;
-    std::string answer = std::string("the saved options: keep original names ") + (options.keep_names ? "yes" : "no") +
-                         ", sort by name " + (options.keep_names && options.sort_names ? "yes" : "no");
+    std::string answer = std::string(request != nullptr ? "the call's options" : "the saved options") + ": keep original names " +
+                         (options.keep_names ? "yes" : "no") + ", sort by name " + (options.keep_names && options.sort_names ? "yes" : "no");
     if (format == "amf" || format == "step")
         answer += std::string(", load as ") +
                   (options.separate_objects ? "separate objects" : options.load_as_assembly ? "an assembly" : "a single object");
     if (format == "step")
-        answer += (boost::format(", linear deflection %1%, angle deflection %2%, split compound %3%") % options.linear_deflection %
+        answer += (boost::format(", linear deflection %1%, angle deflection %2%, split compound %3% (the saved values)") % options.linear_deflection %
                    options.angle_deflection % (options.split_compound ? "yes" : "no")).str();
     std::string title = format == "3mf" ? "3MF" : format == "amf" ? "AMF" : "STEP";
     add_mcp_suppressed_answer(title + " geometry import options", answer);
@@ -9329,14 +9336,18 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                 if (staged->names_kept)
                     named_models.push_back(&staged->model);
             // Orca: MCP's suppression answers the name clean-up as a silent load does, with the saved rule.
-            const bool mcp_names = !silence && name_policy.show_dialog && is_mcp_dialog_suppression_enabled();
+            const OrcaMCP::GeometryImportRequest* mcp_request = !silence && is_mcp_dialog_suppression_enabled() ? OrcaMCP::current_geometry_import_request() : nullptr;
+            const bool mcp_names = !silence && is_mcp_dialog_suppression_enabled() && (name_policy.show_dialog || mcp_request != nullptr);
+            if (mcp_request != nullptr)
+                OrcaMCP::apply_geometry_import_request(*mcp_request, name_policy);
             if (silence || mcp_names)
                 name_policy.show_dialog = false;
             if (!prepare_geometry_import_names(q, named_models, name_policy))
                 return empty_result;
             if (mcp_names && name_policy.used)
                 add_mcp_suppressed_answer("Unsupported characters in names",
-                                          name_policy.remove ? "the saved rule: remove them" : "the saved rule: replace each with \"" + name_policy.replacement + "\"");
+                                          std::string(mcp_request != nullptr ? "the call's rule: " : "the saved rule: ") +
+                                              (name_policy.remove ? "remove them" : "replace each with \"" + name_policy.replacement + "\""));
             if (visible_part_settings && !silence)
                 MessageDialog(q, _L("Some imported objects contain modifiers or parts with individual settings. They are shown as assemblies so that these settings remain visible."),
                               _L("Geometry import"), wxOK | wxICON_INFORMATION).ShowModal();
