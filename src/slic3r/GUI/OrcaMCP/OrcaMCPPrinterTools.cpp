@@ -562,6 +562,7 @@ void OrcaMCPServer::register_printer_tools()
             std::string              host_type;
             std::string              prep_error;
             nlohmann::json           project_filaments;
+            bool                     manual_filament_change = false;
             int                      plate_idx = 0;
             std::optional<double>    estimated_print_s;
             std::vector<std::string> info_messages;
@@ -590,6 +591,7 @@ void OrcaMCPServer::register_printer_tools()
                     estimated_print_s = normal_mode_print_time_s(result->print_statistics);
                 if (!resolve_print_host_config(cfg, host_type, prep_error))
                     return nlohmann::json::object();
+                manual_filament_change = preset_uses_manual_filament_change();
 
                 // Material mapping is a Flashforge-only concern, and so is this snapshot.
                 if (host_type == "flashforge")
@@ -632,7 +634,10 @@ void OrcaMCPServer::register_printer_tools()
                 if (const auto busy = printer_busy_refusal(status))
                     return error_response(*busy);
 
-                const bool use_material_station = params.value("use_material_station", default_use_material_station(status.has_material_station, preset_uses_manual_filament_change()));
+                const bool use_material_station = params.value("use_material_station", default_use_material_station(status.has_material_station, manual_filament_change));
+                if (status.has_material_station && manual_filament_change && !params.contains("use_material_station"))
+                    info_messages.push_back("Material station not used: the printer profile uses manual filament change "
+                                            "(pass use_material_station: true to use it).");
                 if (use_material_station) {
                     nlohmann::json mapping_error;
                     if (!resolve_material_mappings(requested_mappings, status.slots, project_filaments,

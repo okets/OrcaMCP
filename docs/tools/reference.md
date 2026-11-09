@@ -4684,7 +4684,7 @@ look at a dialog or to test a refusal.
 | `leveling_before_print` | boolean | No | Level the bed first. Omitted: on a Creator 5 or 5 Pro, on when the plate's estimated time is 4 h or more; off on other models |
 | `flow_calibration` | boolean | No | Calibrate the flow first. Omitted: as `leveling_before_print` |
 | `time_lapse` | boolean | No | Ask the printer to record a time-lapse (default `false`) |
-| `use_material_station`, `material_mappings` | | No | `use_material_station` defaults to on when the printer reports a station, unless the printer profile uses manual filament change. Direct sends to a Flashforge host with local-API credentials only (`true`, or a mapping, is refused anywhere else); see Material mapping below |
+| `use_material_station`, `material_mappings` | | No | `use_material_station` defaults to on when the printer reports a station, unless the printer profile uses manual filament change (an `info_messages` line says so). Direct sends to a Flashforge host with local-API credentials only (`true`, or a mapping, is refused anywhere else); see Material mapping below |
 | `allow_material_mismatch` | boolean | No | Send even when a mapped slot holds another material family than the filament it feeds (default `false`); see Material mismatch below. As `use_material_station`, a Flashforge with local-API credentials only |
 | `file_name` | string | No | Name to store the upload under. Direct sends only |
 | `all_plates` | boolean | No | Dialog sends only (`direct: false`): send every plate |
