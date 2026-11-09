@@ -142,3 +142,26 @@ TEST_CASE("The options are reported in the arguments' names, with the print sequ
         if (key != "for_print_sequence")
             CHECK(properties.contains(key));
 }
+
+TEST_CASE("spacing_mm is refused for a plate whose print sequence differs from the global one", "[ArrangeOptions][orcamcp]")
+{
+    ArrangeOptionsRequest spacing;
+    spacing.spacing_mm = 5.;
+    ArrangeOptionsRequest rotate;
+    rotate.auto_rotate = true;
+
+    const auto refusal = plate_spacing_refusal(spacing, false);
+    REQUIRE(refusal.has_value());
+    CHECK(refusal->find("spacing_mm") != std::string::npos);
+    CHECK(refusal->find("automatic") != std::string::npos);
+
+    CHECK_FALSE(plate_spacing_refusal(spacing, true).has_value());
+    CHECK_FALSE(plate_spacing_refusal(rotate, false).has_value());
+    CHECK_FALSE(plate_spacing_refusal(ArrangeOptionsRequest{}, false).has_value());
+}
+
+TEST_CASE("The print sequence an arrange ran with is named as the plate has it", "[ArrangeOptions][orcamcp]")
+{
+    CHECK(arrange_print_sequence_name(true) == "by object");
+    CHECK(arrange_print_sequence_name(false) == "by layer");
+}

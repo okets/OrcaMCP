@@ -184,6 +184,13 @@ std::optional<std::string> automatic_spacing_note(PartPlate& plate, const Arrang
                        "as the plate's Arrange does; spacing_mm applies to plates that follow the global sequence");
 }
 
+// The print sequence the plate's arrange runs with, and whether it is the global one.
+bool plate_arranges_by_object(PartPlate& plate, bool& same_as_global)
+{
+    same_as_global = true;
+    return plate.get_real_print_seq(&same_as_global) == PrintSequence::ByObject;
+}
+
 nlohmann::json placements_after(const std::vector<ObjectTransforms>& scope)
 {
     nlohmann::json objects = nlohmann::json::array();
@@ -520,6 +527,10 @@ nlohmann::json start_fill_bed(const nlohmann::json& params, const ArrangeOptions
         return error_response("Instance " + std::to_string(instance_id) + " of object " + std::to_string(object_id) +
                               " stands on no plate, and a fill fills the plate the instance stands on: move it onto one with move_object "
                               "first, or name another instance");
+    bool plate_same_as_global = true;
+    plate_arranges_by_object(*plates.get_plate(start.plate_index), plate_same_as_global);
+    if (const auto refusal = plate_spacing_refusal(request, plate_same_as_global))
+        return error_response(*refusal);
     if (const auto refusal = plan_options(*plater, request, start.options))
         return error_response(*refusal);
     if (const auto refusal = close_toolbar_tool(*plater, start.closed_tool))
@@ -622,6 +633,12 @@ nlohmann::json arrange_objects(const nlohmann::json& params)
             return error_response(*refusal);
         if (!all_plates && plates.is_locked(target))
             return error_response(locked_plate_refusal(target));
+        if (!all_plates) {
+            bool same = true;
+            plate_arranges_by_object(*plates.get_plate(target), same);
+            if (const auto refusal = plate_spacing_refusal(*request, same))
+                return error_response(*refusal);
+        }
         if (const auto refusal = plan_options(*plater, *request, options))
             return error_response(*refusal);
 
@@ -631,7 +648,9 @@ nlohmann::json arrange_objects(const nlohmann::json& params)
             scope = scene_objects(*plater);
         } else {
             make_plate_current(*plater, target);
-            facts = {{"scope", "plate"}, {"plate_index", target}};
+            bool same = true;
+            const bool by_object = plate_arranges_by_object(*plates.get_plate(target), same);
+            facts = {{"scope", "plate"}, {"plate_index", target}, {"arranged_print_sequence", arrange_print_sequence_name(by_object)}};
             if (const auto note = automatic_spacing_note(*plates.get_plate(target), options.after))
                 facts["spacing_note"] = *note;
             scope = current_plate_objects(*plater);

@@ -94,6 +94,17 @@ std::optional<std::string> apply_arrange_options(const ArrangeOptionsRequest& re
     return std::nullopt;
 }
 
+std::optional<std::string> plate_spacing_refusal(const ArrangeOptionsRequest& request, bool plate_same_as_global)
+{
+    if (plate_same_as_global || !request.spacing_mm)
+        return std::nullopt;
+    return std::string("spacing_mm is not used for this plate: its own print sequence differs from the global one, so its arrange "
+                       "spaces objects automatically, as the plate's Arrange does. Leave spacing_mm out, or change the plate's "
+                       "print sequence (set_plate_settings) or use all_plates, which arranges by the global sequence");
+}
+
+std::string arrange_print_sequence_name(bool plate_by_object) { return plate_by_object ? "by object" : "by layer"; }
+
 std::vector<std::string> changed_arrange_options(const ArrangeOptions& before, const ArrangeOptions& after)
 {
     std::vector<std::string> changed;

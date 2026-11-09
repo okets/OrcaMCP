@@ -70,6 +70,16 @@ std::optional<ArrangeOptionsRequest> read_arrange_options(const nlohmann::json& 
 std::optional<std::string> apply_arrange_options(const ArrangeOptionsRequest& request, const ArrangeOptions& defaults,
                                                  bool avoid_region_offered, ArrangeOptions& current);
 
+// A plate-scoped arrange of a plate whose own print sequence differs from the global one spaces its
+// objects automatically (ArrangeJob's init_arrange_params sets the distance to 0 there), so a spacing_mm
+// the call gives would be saved and never used: the reason it is refused, or nothing. The other options
+// are read from the global mode's set whichever plate it is, so they stay allowed.
+std::optional<std::string> plate_spacing_refusal(const ArrangeOptionsRequest& request, bool plate_same_as_global);
+
+// "by object" or "by layer": the print sequence a plate's arrange runs with (its own, as
+// init_arrange_params takes it), which the answer reports beside the options' set.
+std::string arrange_print_sequence_name(bool plate_by_object);
+
 // The names (as the arguments spell them) of the options whose value differs.
 std::vector<std::string> changed_arrange_options(const ArrangeOptions& before, const ArrangeOptions& after);
 

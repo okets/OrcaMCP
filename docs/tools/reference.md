@@ -751,8 +751,12 @@ The options are the arrange menu's, and are saved as the menu saves them: the ap
 section, spacing and auto-rotate per print sequence (by layer, by object), align to Y in memory only.
 Every later arrange uses them -- the GUI's, `clone_object`'s, `fill_bed_with_instances`'.
 `arrange_options` reports the ones in force, with `for_print_sequence`, and `options_changed` which
-this call changed. A plate whose own print sequence differs from the global one is arranged with
-automatic spacing, as the plate's icon does (`spacing_note`).
+this call changed; `for_print_sequence` names the set the options belong to, which is the global
+print sequence's (the arrange reads them there). A plate-scoped arrange (and a bed fill) runs with
+the plate's own print sequence, reported as `arranged_print_sequence`; when that differs from the
+global one the plate is arranged with automatic spacing, as the plate's icon does, so a `spacing_mm`
+in the call is refused (it would be saved and never used) and a saved spacing is noted in
+`spacing_note`.
 
 Answered once the arrange has been applied, with `objects` as `auto_orient` gives them: each one's
 `position`, `plate_index` and `changed` where the arrange put it (see
