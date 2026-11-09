@@ -21197,7 +21197,7 @@ void Plater::export_stl(bool extended, bool selection_only, bool multi_stls, Fil
     else
         mesh_to_export = mesh_to_export_sla;
 
-    auto get_save_file = [file_type](std::string const & dir, std::string const & object_name) {
+    auto get_save_file = [file_type](std::string const & dir, std::string const & name) {
         std::string ext = "";
         switch (file_type) {
         case FT_STL: ext = ".stl"; break;
