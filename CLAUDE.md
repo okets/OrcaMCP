@@ -2259,6 +2259,26 @@ Say what changed (fixes, new verbs on its socket, crash reports still open, whet
 whether it now looks stable, and nothing more; the user decides. On 2026-09-29 it was crashy on macOS while
 sketching, most of its tools untested by its author, and upstream's only changes since its merge were build fixes.
 
+### Upstream pull requests we wait for — check at every sync
+
+Upstream changes the user is waiting on. At every sync, check each and report its state to the user first in
+the sync report, before the new features. When one has merged and the merge brought it in, say so, and say what
+the user can stop doing.
+
+```bash
+gh pr view 17404 -R OrcaSlicer/OrcaSlicer --json state,mergedAt,mergeCommit -q '"#17404 \(.state) merged \(.mergedAt) \(.mergeCommit.oid)"'
+```
+
+- **#17404, gantry movement direction for print by object** (opened 2026-11-09 by noobydp). The Creator 5 Pro's
+  gantry spans the bed front to back and moves left to right; Orca assumes the opposite, so its by-object arrange and
+  collision check pass layouts the gantry hits. The PR adds a "Gantry movement direction" printer setting, X in the
+  Creator 5 / 5 Pro profiles. On 2026-11-09 a by-object print on the user's Creator 5 Pro hit an earlier object and
+  bent an extruder; until the fix is in a release, **the user does not print on the right side of the plate in
+  by-object mode**. Neither it nor Flash Studio (1.7.16, same profile values and empty tool-change G-code) covers
+  the firmware's own travel to a tool dock, which the slicer never sees. When it merges: after the sync, check that
+  the Creator 5 Pro profiles select X, arrange two tall objects by object, and tell the user. Remove this entry
+  once it has shipped in an OrcaMCP release.
+
 ### Alternative: Rebase (cleaner history)
 
 ```bash

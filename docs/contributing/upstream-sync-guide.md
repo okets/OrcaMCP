@@ -26,7 +26,9 @@ The details of each step are in CLAUDE.md, "Syncing with Upstream".
    conflict that sits on a carried fix. Rewrite each probe that missed.
 3. **Review the change list for MCP tools to add, update or remove**: three read-only reviews in parallel (GUI;
    libslic3r; printers, network and CI), reported major features first, each in its own paragraph with effort and a
-   recommendation (CLAUDE.md, "Every sync: review the change list for MCP tools"). Report the Design tab's state too.
+   recommendation (CLAUDE.md, "Every sync: review the change list for MCP tools"). Report the Design tab's state too,
+   and, first in the report, the state of each upstream pull request the user waits for (CLAUDE.md, "Upstream pull
+   requests we wait for": #17404, by-object gantry direction, since 2026-11-09).
 4. **Rebuild the deps** when `deps/` changed: the fork carries nothing there, so `git restore --source=upstream/main
    --worktree -- deps` in the main checkout lets `./build_release_macos.sh -d -x -j 12` rebuild them in place while
    the merge goes on.
