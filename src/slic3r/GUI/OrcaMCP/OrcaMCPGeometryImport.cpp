@@ -100,6 +100,10 @@ std::optional<std::string> geometry_import_refusal(const GeometryImportRequest& 
     if (format == "3mf" && request.load_as)
         return std::string("import_options.load_as does not apply to a CAD 3MF: its import offers keep_names, sort_names "
                            "and the name clean-up only (load_as is for STEP and AMF)");
+    if (format == "step" && request.load_as && *request.load_as == "separate_objects")
+        return std::string("import_options.load_as: \"separate_objects\" is for AMF only; a STEP takes assembly or "
+                           "single_object (assembly, single_object). Use multipart: \"separate\" to keep objects at "
+                           "different heights apart.");
     return std::nullopt;
 }
 

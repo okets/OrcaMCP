@@ -1864,7 +1864,7 @@
                 "type": "boolean"
               },
               "load_as": {
-                "description": "STEP and AMF only: one assembly of parts, one single object, or separate objects",
+                "description": "STEP and AMF: assembly (parts of one object) or single_object; separate_objects is AMF only (refused for a STEP)",
                 "enum": [
                   "assembly",
                   "single_object",

@@ -130,3 +130,16 @@ TEST_CASE("apply sets the name rule", "[McpGeometryImport][orcamcp]")
     apply_geometry_import_request(request, policy);
     CHECK(policy.remove);
 }
+
+TEST_CASE("separate_objects is refused for a STEP and taken by an AMF", "[McpGeometryImport][orcamcp]")
+{
+    GeometryImportRequest request;
+    request.load_as = "separate_objects";
+    const auto refusal = geometry_import_refusal(request, "step", false);
+    REQUIRE(refusal.has_value());
+    CHECK(mentions(*refusal, "separate_objects"));
+    CHECK(mentions(*refusal, "assembly, single_object"));
+    CHECK_FALSE(geometry_import_refusal(request, "amf", false).has_value());
+    request.load_as = "assembly";
+    CHECK_FALSE(geometry_import_refusal(request, "step", false).has_value());
+}

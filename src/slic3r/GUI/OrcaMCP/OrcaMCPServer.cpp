@@ -3737,7 +3737,7 @@ void OrcaMCPServer::register_builtin_tools()
                         {"keep_names", {{"type", "boolean"}, {"description", "Keep the names stored in the file"}}},
                         {"sort_names", {{"type", "boolean"}, {"description", "Sort parts by name (with keep_names)"}}},
                         {"load_as", {{"type", "string"}, {"enum", {"assembly", "single_object", "separate_objects"}},
-                                     {"description", "STEP and AMF only: one assembly of parts, one single object, or separate objects"}}},
+                                     {"description", "STEP and AMF: assembly (parts of one object) or single_object; separate_objects is AMF only (refused for a STEP)"}}},
                         {"name_cleanup", {{"type", "string"}, {"enum", {"remove", "replace"}},
                                           {"description", "What to do with characters a name cannot hold: remove them, or replace each"}}},
                         {"replacement", {{"type", "string"}, {"description", "The text replacing each such character; needs name_cleanup: replace"}}}
