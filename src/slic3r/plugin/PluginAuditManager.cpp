@@ -24,6 +24,7 @@
 #include <mutex>
 #include <memory>
 #include <slic3r/GUI/BindDialog.hpp>
+#include <slic3r/GUI/GUI.hpp>
 #include <slic3r/GUI/GUI_App.hpp>
 #include <slic3r/GUI/MsgDialog.hpp>
 #include <slic3r/plugin/PluginFsUtils.hpp>
@@ -923,6 +924,14 @@ void append_permission_dialog_tip(wxString& message)
 // Must run on the GUI thread.
 bool show_permission_dialog(PermissionMessage message, const wxString& title)
 {
+    // Orca: a security prompt. Inside an MCP tool call nobody is at the screen, and suppression's Yes would
+    // grant the plugin access no one chose: the request is denied, and the answer says so. Only the user grants
+    // it, in the Plugins dialog.
+    if (GUI::is_mcp_dialog_suppression_enabled()) {
+        GUI::add_mcp_suppressed_answer(title.utf8_string() + ": " + message.text.utf8_string(),
+                                       "No: an agent cannot grant a plugin access; the user can, in the Plugins dialog's Permissions tab");
+        return false;
+    }
     auto* config = GUI::wxGetApp().app_config;
     const bool show_tip = config == nullptr || config->get("hide_plugin_permission_tip") != "1";
     if (show_tip)

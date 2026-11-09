@@ -9042,6 +9042,26 @@ bool mcp_skip_step_mesh_dialog(double linear, double angle, bool split_compound,
     return true;
 }
 
+// MCP automation: a geometry import's options dialog (AMF, CAD 3MF, and STEP's mesh dialog, which carries the
+// same choices) is not opened under suppression, where it would be answered Cancel and nothing loaded: the
+// options the user saved answer it, and the tool's answer says which.
+static void mcp_answer_geometry_import_options(const std::string& format, GeometryImportOptions& options)
+{
+    if (!options.show_dialog || !is_mcp_dialog_suppression_enabled())
+        return;
+    options.show_dialog = false;
+    std::string answer = std::string("the saved options: keep original names ") + (options.keep_names ? "yes" : "no") +
+                         ", sort by name " + (options.keep_names && options.sort_names ? "yes" : "no");
+    if (format == "amf" || format == "step")
+        answer += std::string(", load as ") +
+                  (options.separate_objects ? "separate objects" : options.load_as_assembly ? "an assembly" : "a single object");
+    if (format == "step")
+        answer += (boost::format(", linear deflection %1%, angle deflection %2%, split compound %3%") % options.linear_deflection %
+                   options.angle_deflection % (options.split_compound ? "yes" : "no")).str();
+    std::string title = format == "3mf" ? "3MF" : format == "amf" ? "AMF" : "STEP";
+    add_mcp_suppressed_answer(title + " geometry import options", answer);
+}
+
 std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_files,
                                              LoadStrategy strategy,
                                              bool ask_multi,
@@ -9278,6 +9298,8 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                     auto inserted = import_options.emplace(staged->format, geometry_import_options(*wxGetApp().app_config, staged->format));
                     if (silence)
                         inserted.first->second.show_dialog = false;
+                    else if (inserted.second)
+                        mcp_answer_geometry_import_options(staged->format, inserted.first->second);
                 }
                 staged->cad_3mf = staged->format == "3mf" && is_geometry_only_3mf(input_files[index].string());
                 // One AMF/3MF dialog per format, at its first file; a 3MF project has nothing to choose.
@@ -9306,10 +9328,15 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
             for (const auto& staged : staged_files)
                 if (staged->names_kept)
                     named_models.push_back(&staged->model);
-            if (silence)
+            // Orca: MCP's suppression answers the name clean-up as a silent load does, with the saved rule.
+            const bool mcp_names = !silence && name_policy.show_dialog && is_mcp_dialog_suppression_enabled();
+            if (silence || mcp_names)
                 name_policy.show_dialog = false;
             if (!prepare_geometry_import_names(q, named_models, name_policy))
                 return empty_result;
+            if (mcp_names && name_policy.used)
+                add_mcp_suppressed_answer("Unsupported characters in names",
+                                          name_policy.remove ? "the saved rule: remove them" : "the saved rule: replace each with \"" + name_policy.replacement + "\"");
             if (visible_part_settings && !silence)
                 MessageDialog(q, _L("Some imported objects contain modifiers or parts with individual settings. They are shown as assemblies so that these settings remain visible."),
                               _L("Geometry import"), wxOK | wxICON_INFORMATION).ShowModal();

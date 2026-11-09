@@ -984,7 +984,9 @@ nlohmann::json add_volume_on_main_thread(const nlohmann::json& params)
     const bool                         turned  = has_turn_or_scale(object->instances[0]->get_transformation());
     ObjectList*                        list    = wxGetApp().obj_list();
     if (has_shape)
-        list->load_generic_subobject(menu_shape, *type);
+        // Not interactive: the primitive's built-in default size, never the size dialog, which MCP's
+        // suppression would answer Cancel, adding nothing.
+        list->load_generic_subobject(menu_shape, *type, /*interactive=*/false);
     else
         list->load_subobject(*type);
     const std::vector<int> added = volumes_not_in(*object, before);
