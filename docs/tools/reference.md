@@ -213,7 +213,11 @@ and a stray shell; the object list's warning icon shows for it):
     "settings": {"name": "", "locked": false, "bed_type": "global", "print_sequence": "global",
                  "first_layer_filament_order": "auto", "other_layers_filament_order": "auto", "spiral_vase": "global"},
     "effective": {"bed_type": "Textured PEI Plate", "print_sequence": "by layer", "spiral_vase": false},
-    "layer_gcodes": [{"layer": 42, "z_mm": 8.4, "type": "pause"}]
+    "layer_gcodes": [{"layer": 42, "z_mm": 8.4, "type": "pause"}],
+    "print_order": null,
+    "print_order_differs": null,
+    "print_order_note": null,
+    "print_order_unknown": "not by object"
   }],
   "unplaced_objects": [],
   "open_dialogs": [],
@@ -230,6 +234,13 @@ and a stray shell; the object list's warning icon shows for it):
   ]
 }
 ```
+
+Each plate's `print_order` is the order a by-object plate prints its instances in, `[{object_id, instance_id}]`,
+as the slicer's clearance check works it out: an object may print later than its place in the object list, to
+avoid a collision. `print_order_differs` says it is not the object list's order, and `print_order_note` carries
+the app's words naming what moves. Only the current plate has one (its Print takes the pending settings first);
+any other plate, and a plate not printed by object, has `null` in all three and `print_order_unknown` saying why
+(`"not by object"`, `"not the current plate"`, a busy pipeline, nothing to print).
 
 Each plate's `layer_gcodes` is its G-code at a layer, as the Preview's layer slider shows it: `layer`
 (1-based, `null` while the plate's layers are not known -- never sliced, changed since, a settings change

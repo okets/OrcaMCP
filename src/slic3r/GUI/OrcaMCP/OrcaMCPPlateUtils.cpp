@@ -3,6 +3,9 @@
 #include <mutex>
 #include "OrcaMCPPlateTools.hpp"
 #include "OrcaMCPLayerGcodeTools.hpp"
+#include "OrcaMCPObjectOrder.hpp"
+#include "OrcaMCPSliceProgress.hpp"
+#include "libslic3r/Print.hpp"
 #include "OrcaMCPInstanceBox.hpp"
 #include "OrcaMCPImageFiles.hpp"
 #include "OrcaMCPPlateOccupancy.hpp"
@@ -2113,9 +2116,45 @@ std::vector<OrcaMCP::ExclusionRegion> OrcaMCP::plate_exclusion_regions(PartPlate
                                      Vec2d(origin.x(), origin.y()));
 }
 
+namespace {
+
+// get_scene_info's print_order keys for `plate`: the order a by-object plate prints in, which upstream's clearance
+// check works out from the plate's Print (and may put an object later than its place in the object list). Only the
+// current plate, whose Print the pending settings have reached, and only while no slice or export uses that Print:
+// the check reads it and writes each instance's arrange_order.
+nlohmann::json plate_print_order_json(PartPlate& plate, bool is_current, bool by_object)
+{
+    if (!by_object)
+        return OrcaMCP::print_order_unknown_json("not by object");
+    if (!is_current)
+        return OrcaMCP::print_order_unknown_json("not the current plate");
+    Plater* plater = wxGetApp().plater();
+    const OrcaMCP::PipelineState state = OrcaMCP::pipeline_state(*plater, plater->get_partplate_list().get_plate_count());
+    if (OrcaMCP::pipeline_busy(state) != OrcaMCP::PipelineBusy::idle)
+        return OrcaMCP::print_order_unknown_json("the pipeline is busy: " + OrcaMCP::pipeline_busy_text(state));
+
+    PrintBase*   base   = nullptr;
+    GCodeResult* result = nullptr;
+    plate.get_print(&base, &result, nullptr);
+    const Print* print = dynamic_cast<const Print*>(base);
+    if (print == nullptr || print->empty() || print->objects().empty())
+        return OrcaMCP::print_order_unknown_json("the plate has nothing the slicer prints");
+
+    StringObjectException warning;
+    Print::sequential_print_clearance_valid(*print, nullptr, nullptr, &warning);
+
+    std::vector<std::pair<const ModelInstance*, int>> positions;
+    for (const PrintObject* print_object : print->objects())
+        for (const PrintInstance& instance : print_object->instances())
+            positions.emplace_back(instance.model_instance, instance.model_instance->arrange_order);
+    return OrcaMCP::print_order_json(positions, plater->model(), warning.string);
+}
+
+} // namespace
+
 nlohmann::json OrcaMCPPlateUtils::PlateJson(const PlateEntry& plate)
 {
-    return {
+    nlohmann::json json = {
         {"name", plate.name},
         {"plate_index", plate.index},
         {"index", plate.index},  // the same, kept for older readers
@@ -2131,6 +2170,8 @@ nlohmann::json OrcaMCPPlateUtils::PlateJson(const PlateEntry& plate)
         {"effective", plate.effective},
         {"layer_gcodes", plate.layer_gcodes}
     };
+    json.update(plate.print_order);
+    return json;
 }
 
 nlohmann::json OrcaMCPPlateUtils::SceneJson(const std::string& hash_code, bool sequential_print, const BoundingBoxf3& bed,
@@ -2173,6 +2214,7 @@ nlohmann::json OrcaMCPPlateUtils::GetPlates(bool with_model_object_features, con
         entry.settings   = plate_settings.at("settings");
         entry.effective  = plate_settings.at("effective");
         entry.layer_gcodes = OrcaMCP::plate_layer_gcodes_json(*plate);
+        entry.print_order  = plate_print_order_json(*plate, entry.is_current, entry.effective.at("print_sequence") == "by object");
 
         // Everything standing on this plate, in one list and one frame: the model objects, the
         // prime tower, and the printer's own excluded bed areas. An agent looking for free space

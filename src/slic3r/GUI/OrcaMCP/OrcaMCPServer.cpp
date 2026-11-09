@@ -1072,7 +1072,9 @@ void OrcaMCPServer::register_builtin_tools()
         "area `bed` is) and the objects on it, with position, size, filaments and mesh_warning, and the texture "
         "displacement state of each object: texture_layers (its layer count), needs_bake (some layer is "
         "painted and not yet baked into the mesh) and model_uv (a part carries a UV channel). Call it "
-        "first. An object's object_id is what every tool's object_id takes; object_index is the same "
+        "first. A by-object plate's print_order (the current plate only) lists the instances in the order that will print, "
+        "which may differ from the object list's: a plate with no order says why. "
+        "An object's object_id is what every tool's object_id takes; object_index is the same "
         "number, kept for older readers, and internal_id is the app's own number, which no tool takes. "
         "Each plate also carries `occupancy`, the complete list of what stands on it in plate "
         "millimetres -- every object's printed footprint (brim included), the prime tower's "
@@ -1123,6 +1125,12 @@ void OrcaMCPServer::register_builtin_tools()
             return run_on_main_thread([with_features, include_preview, preview_views, preview_resolution]() {
                 // Read once: every object entry's mesh_warning and features come from it.
                 const std::vector<MeshHealth> mesh_health = model_mesh_health(wxGetApp().plater()->model());
+                // The current plate's print_order is read from its Print, which a settings change made just before
+                // this call has not reached yet.
+                {
+                    McpDialogSuppressionGuard suppression_guard;
+                    apply_pending_settings(*wxGetApp().plater(), suppression_guard);
+                }
                 nlohmann::json result = OrcaMCPPlateUtils::GetCurrentProject(with_features, mesh_health);
 
                 add_turntable_preview_if_requested(result, include_preview, preview_views, preview_resolution);

@@ -3,6 +3,8 @@
 
 #include "libslic3r/Model.hpp"
 
+#include <algorithm>
+
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
 std::string object_order_names() { return "name, filament, height or size"; }
@@ -25,6 +27,39 @@ bool plate_in_order(std::vector<ModelObject*> plate_objects, ObjectOrder order, 
     const std::vector<ModelObject*> before = plate_objects;
     sort_objects(plate_objects, order, descending);
     return plate_objects == before;
+}
+
+nlohmann::json print_order_json(const std::vector<std::pair<const ModelInstance*, int>>& by_position, const Model& model,
+                                const std::string& warning)
+{
+    std::vector<std::pair<const ModelInstance*, int>> sorted = by_position;
+    std::stable_sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b) { return a.second < b.second; });
+
+    std::vector<std::pair<int, int>> order;
+    for (const auto& entry : sorted) {
+        const ModelObject* object = entry.first == nullptr ? nullptr : entry.first->get_object();
+        const auto         found  = std::find(model.objects.begin(), model.objects.end(), object);
+        if (found == model.objects.end())
+            continue;
+        const auto& instances = (*found)->instances;
+        const auto  instance  = std::find(instances.begin(), instances.end(), entry.first);
+        if (instance == instances.end())
+            continue;
+        order.emplace_back(int(found - model.objects.begin()), int(instance - instances.begin()));
+    }
+
+    nlohmann::json list = nlohmann::json::array();
+    for (const auto& [object_id, instance_id] : order)
+        list.push_back({{"object_id", object_id}, {"instance_id", instance_id}});
+    return {{"print_order", std::move(list)},
+            {"print_order_differs", !std::is_sorted(order.begin(), order.end())},
+            {"print_order_note", warning.empty() ? nlohmann::json(nullptr) : nlohmann::json(warning)},
+            {"print_order_unknown", nullptr}};
+}
+
+nlohmann::json print_order_unknown_json(const std::string& why)
+{
+    return {{"print_order", nullptr}, {"print_order_differs", nullptr}, {"print_order_note", nullptr}, {"print_order_unknown", why}};
 }
 
 }}} // namespace Slic3r::GUI::OrcaMCP
