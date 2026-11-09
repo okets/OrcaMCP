@@ -362,6 +362,43 @@ rest of the review's list, texture displacement first, is in the project memory 
 
 ---
 
+## Sync: November 2026
+
+| Metric | Value |
+|--------|-------|
+| Sync date | 2026-11-09 (e2db7e5ef1) |
+| Upstream commits | 445 since 373ffaa13f |
+| Conflicts | 31 files |
+| Branch | `sync-upstream-2026-11-09`, merged in a worktree; deps rebuilt in the main checkout |
+
+**What upstream fixed for us**, taken and our patches dropped: the Moonraker storage state (D), the reset that freed
+the prints under a slice (O, our #15989), the printable flag on a reloaded volume (AD), the two IslandLocator classes
+(BV, our PR), the prime tower decided from the old filaments (BD, our #15991), a deleted object's other instances (AM's
+first part), cube.stl.stl names (BE's third part), the Creator 5 Pro chamber heating. Item D's probe still read "bug"
+once fixed; BD's, AM's and BE's matched our spelling only: read upstream's side of every conflict.
+
+**What took real work**
+
+- **New upstream dialogs under MCP.** The primitive size dialog, the STEP/AMF/CAD 3MF import options and name
+  clean-up, and the plugin permission prompt either made a tool do nothing (answered Cancel) or would have answered
+  for the user (Yes). Found by the GUI review before any test: read every new `DPIDialog` and `MsgDialog` the merge
+  brings in. Items CE and CF.
+- **Header trims** (9cb9f9694f, cbbe590230): GUI_App.hpp no longer includes HttpServer.hpp (the server is a
+  `unique_ptr`), and fork sources must include the wx headers they use: the PCH-off build of the fork's 177 own
+  sources found `wx/mstream.h` and `wx/txtstrm.h` after the PCH build found `wx/base64.h`.
+- **Boost 1.87:** `io_service` is `io_context` in HttpServer, fork code included.
+- **Two new upstream cron workflows** (`stale.yml`, `approve_pr_checks.yml`) ran ungated on forks; gated to
+  `OrcaSlicer/OrcaSlicer`.
+- **Line endings:** upstream's `build_all.yml` is CRLF, ours LF, so the whole file conflicts: take upstream's file in LF
+  and re-apply the fork's diff from the old base as a patch.
+
+**Verified before the push:** the app and tests built (4,548 C++ cases, 568 Python tests), the fork's sources compiled
+with the PCH off, `check-fork-customizations.sh`, and a live check on an isolated instance (Creator 5 Pro: a STEP load,
+add_volume, a two-filament slice whose first slice had its prime tower and exported without a second slice,
+printable/undo).
+
+---
+
 ## Post-Sync Tasks
 
 - [ ] Update CLAUDE.md if any MCP patterns changed
