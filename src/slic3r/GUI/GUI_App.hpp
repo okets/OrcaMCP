@@ -5,6 +5,7 @@
 #include <boost/algorithm/string/classification.hpp>
 #include <atomic>
 #include <boost/optional/optional.hpp>
+#include <boost/thread/thread.hpp>
 #include <chrono>
 #include <cstdint>
 #include <cstddef>
@@ -16,22 +17,16 @@
 #include "libslic3r/Semver.hpp"
 #include <memory>
 #include <set>
-#include "slic3r/GUI/GLShader.hpp"
 #include <string>
-#include "ActionRegistry.hpp"
-#include "ImGuiWrapper.hpp"
-#include "ConfigWizard.hpp"
-#include "OpenGLManager.hpp"
+#include "ConfigWizardTypes.hpp"
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r_version.h"
 #include "slic3r/GUI/UserNotification.hpp"
+#include "slic3r/Utils/CloudDeleteQueue.hpp"
 #include "slic3r/Utils/CloudProvider.hpp"
-#include "slic3r/GUI/Jobs/UpgradeNetworkJob.hpp"
-#include "slic3r/GUI/HttpServer.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPLoginServer.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPMainThreadGate.hpp"
-#include "../Utils/PrintHost.hpp"
 #include "libslic3r/Point.hpp"
 
 #include <vector>
@@ -65,6 +60,8 @@ class wxMenuBar;
 class wxTopLevelWindow;
 class wxDataViewCtrl;
 class wxBookCtrlBase;
+class wxGLCanvas;
+class wxGLContext;
 // BBS
 class Notebook;
 struct wxLanguageInfo;
@@ -84,6 +81,8 @@ class MachineObject;
 class NetworkAgent;
 class IPrinterAgent;
 class TaskManager;
+class GLShaderProgram;
+class PrintHostJobQueue;
 
 // Same typedef as in bambu_networking.hpp, so this header need not include it.
 typedef std::function<bool()> WasCancelledFn;
@@ -115,6 +114,13 @@ class NetworkErrorDialog;
 class PluginsDialog;
 class SpeedDialWebDialog;
 class TerminalDialog;
+class ActionRegistry;
+class HttpServer;
+class ImGuiWrapper;
+class OpenGLManager;
+class UpgradeNetworkJob;
+
+typedef std::function<void(int status, int percent, bool& cancel)> InstallProgressFn;
 
 
 enum FileType
@@ -308,7 +314,7 @@ private:
     const wxLanguageInfo		 *m_language_info_best   = nullptr;
     wxString                    m_active_language_code;
 
-    OpenGLManager m_opengl_mgr;
+    std::unique_ptr<OpenGLManager> m_opengl_mgr;
     std::unique_ptr<RemovableDriveManager> m_removable_drive_manager;
 
     std::unique_ptr<ImGuiWrapper> m_imgui;
@@ -327,7 +333,7 @@ private:
     Slic3r::UserManager* m_user_manager { nullptr };
     Slic3r::TaskManager* m_task_manager { nullptr };
     NetworkAgent* m_agent { nullptr };
-    std::map<std::string, std::string> need_delete_presets;   // store setting ids of preset
+    CloudDeleteQueue m_cloud_delete_queue; // cloud deletes of synced presets, sent by the preset sync thread
     std::vector<bool> m_create_preset_blocked { false, false, false, false, false, false }; // excceed limit
     std::vector<std::string> m_pending_conflict_setting_ids; // setting_id from the most recent 409 conflict
     bool m_networking_compatible { false };
@@ -353,6 +359,9 @@ private:
     FilamentColorCodeQuery* m_filament_color_code_query{ nullptr };
 
     boost::thread    m_sync_update_thread;
+    // Startup cloud plugin sync; joined on logout, in OnExit(), CleanUp() and on macOS end session.
+    boost::thread    m_startup_cloud_plugin_fetch_thread;
+    std::function<void()> m_startup_cloud_report; // run by post_init() if the results came earlier
     std::shared_ptr<int> m_user_sync_token;
     std::atomic<bool>    m_restart_sync_pending {false};
     std::atomic<bool>    m_sync_user_preset_dlg_active {false}; // a manual "Sync Presets" progress dialog is on screen (see restart_sync_user_preset)
@@ -375,10 +384,11 @@ private:
     uint64_t         m_cloud_handoff_gen { 0 };
     bool             m_show_error_msgdlg{false};
     wxString         m_info_dialog_content;
-    HttpServer       m_http_server;    // MCP, on the first free port from LOCALHOST_PORT (OrcaMCPPortChoice.hpp)
+    std::unique_ptr<HttpServer> m_http_server; // MCP, on the first free port from LOCALHOST_PORT (OrcaMCPPortChoice.hpp)
     bool             m_mcp_port_chosen{false}; // chosen once: a sign-in asks for the server on every message
-    // The cloud login's loopback callback: a second port of m_http_server, served on its thread.
-    OrcaMCP::LoginCallbackServer m_login_server{m_http_server, &HttpServer::auth_handle_request, ORCA_CLOUD_PROVIDER,
+    // The cloud login's loopback callback: a second port of m_http_server, served on its thread. Made
+    // after m_http_server, which the constructor makes first.
+    OrcaMCP::LoginCallbackServer m_login_server{*m_http_server, &HttpServer::auth_handle_request, ORCA_CLOUD_PROVIDER,
                                                 OrcaMCP::main_thread_gate()};
     bool             m_show_gcode_window{true};
     boost::thread    m_check_network_thread;
@@ -446,6 +456,8 @@ public:
 
     bool is_closing() const { return m_is_closing.load(std::memory_order_acquire); }
     void set_closing(bool closing) { m_is_closing.store(closing, std::memory_order_release); }
+    // Called once closing can no longer be vetoed: ends the process if closing does not finish in time.
+    void start_exit_watchdog();
     
     // SoftFever
     bool show_gcode_window() const { return m_show_gcode_window; }
@@ -654,7 +666,7 @@ public:
     PluginsDialog* m_plugins_dlg{nullptr};
     SpeedDialWebDialog* m_speed_dial_dialog{nullptr};
     TerminalDialog* m_terminal_dlg{nullptr};
-    ActionRegistry  m_action_registry;
+    std::unique_ptr<ActionRegistry> m_action_registry;
 
 
     void            start_http_server(const std::string& provider = ORCA_CLOUD_PROVIDER);
@@ -712,13 +724,12 @@ public:
     bool            checked_tab(Tab* tab);
     //BBS: add preset combox re-active logic
     void            load_current_presets(bool active_preset_combox = false, bool check_printer_presets = true);
-    std::map<std::string, std::string> &get_delete_cache_presets();
-    std::map<std::string, std::string> get_delete_cache_presets_lock();
     void            process_delete_presets();
-    void            delete_preset_from_cloud(std::string setting_id, std::string preset_file_path);
-    void            preset_deleted_from_cloud(std::string setting_id);
+    // Queues the cloud delete of a user preset synced to the signed-in account; any other preset is ignored.
+    void            delete_preset_from_cloud(const Preset& preset);
     void            scan_orphaned_info_files();
-    static std::string extract_setting_id_from_info(const std::string& info_file_path);
+    // Changes whenever the signed-in account whose presets are loaded changes.
+    uint64_t        user_preset_session() const { return m_cloud_delete_queue.generation(); }
 
     wxString        filter_string(wxString str);
 	wxString        current_language_code() const { return m_active_language_code.empty() && m_wxLocale ? m_wxLocale->GetCanonicalName() : m_active_language_code; }
@@ -730,12 +741,15 @@ public:
     void            open_preferences(PreferencesTab tab, const std::string& highlight_option = std::string());
     void            open_presetbundledialog(size_t open_on_tab = 0, const std::string& highlight_option = std::string());
     void            open_plugins_dialog(size_t open_on_tab = 0, const std::string& highlight_option = std::string());
+    // Called on the GUI thread after an audit prompt stores a grant outside the Plugins dialog.
+    // Refreshes an existing dialog instance; never creates or raises it.
+    void            notify_plugin_permissions_changed(const std::string& plugin_key);
     // Dialog-free plugin actions used by the speed dial: they never require the Plugins dialog to be open.
     void            refresh_plugins();
     void            install_local_plugin();
     void            open_terminal_dialog();
     void            open_speed_dial();
-    ActionRegistry& action_registry() { return m_action_registry; }
+    ActionRegistry& action_registry() { return *m_action_registry; }
     void            open_exportpresetbundledialog(size_t open_on_tab = 0, const std::string& highlight_option = std::string());
     virtual bool OnExceptionInMainLoop() override;
     // Calls wxLaunchDefaultBrowser if user confirms in dialog.
@@ -833,7 +847,7 @@ public:
 
     void            open_web_page_localized(const std::string &http_address);
     bool            may_switch_to_SLA_preset(const wxString& caption);
-    bool            run_wizard(ConfigWizard::RunReason reason, ConfigWizard::StartPage start_page = ConfigWizard::SP_WELCOME);
+    bool            run_wizard(RunReason reason, StartPage start_page = StartPage::SP_WELCOME);
     void            show_desktop_integration_dialog();
 
 #if ENABLE_THUMBNAIL_GENERATOR_DEBUG
@@ -841,12 +855,12 @@ public:
     void            gcode_thumbnails_debug();
 #endif // ENABLE_THUMBNAIL_GENERATOR_DEBUG
 
-    OpenGLManager& get_opengl_manager() { return m_opengl_mgr; }
-    GLShaderProgram* get_shader(const std::string& shader_name) { return m_opengl_mgr.get_shader(shader_name); }
-    GLShaderProgram* get_current_shader() { return m_opengl_mgr.get_current_shader(); }
+    OpenGLManager& get_opengl_manager() { return *m_opengl_mgr; }
+    GLShaderProgram* get_shader(const std::string& shader_name);
+    GLShaderProgram* get_current_shader();
 
-    bool is_gl_version_greater_or_equal_to(unsigned int major, unsigned int minor) const { return m_opengl_mgr.get_gl_info().is_version_greater_or_equal_to(major, minor); }
-    bool is_glsl_version_greater_or_equal_to(unsigned int major, unsigned int minor) const { return m_opengl_mgr.get_gl_info().is_glsl_version_greater_or_equal_to(major, minor); }
+    bool is_gl_version_greater_or_equal_to(unsigned int major, unsigned int minor) const;
+    bool is_glsl_version_greater_or_equal_to(unsigned int major, unsigned int minor) const;
     int  GetSingleChoiceIndex(const wxString& message, const wxString& caption, const wxArrayString& choices, int initialSelection);
 
     // extend is stl/3mf/gcode/step etc 

@@ -6,7 +6,7 @@
 #include <chrono>
 #include <boost/asio/ip/basic_endpoint.hpp>
 #include <functional>
-#include <boost/asio/io_service.hpp>
+#include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/streambuf.hpp>
 #include <iostream>
@@ -247,7 +247,7 @@ private:
     // Windows lets a second process bind a port another is listening on: two OrcaMCP instances then
     // shared one port, and either could answer a call. So Windows gets SO_EXCLUSIVEADDRUSE instead.
     // Throws what binding throws.
-    static boost::asio::ip::tcp::acceptor listen_on_loopback(boost::asio::io_service& io_service, boost::asio::ip::port_type port);
+    static boost::asio::ip::tcp::acceptor listen_on_loopback(boost::asio::io_context& io_service, boost::asio::ip::port_type port);
 
     class IOServer
     {
@@ -255,7 +255,7 @@ private:
         using Acceptor = boost::asio::ip::tcp::acceptor;
 
         HttpServer&                        server;
-        boost::asio::io_service            io_service;
+        boost::asio::io_context            io_service;
         Acceptor                           acceptor;
         std::set<std::shared_ptr<session>> sessions;
         std::shared_ptr<Acceptor>          also;                     // listen_also's listener

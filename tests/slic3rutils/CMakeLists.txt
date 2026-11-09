@@ -3,9 +3,11 @@ add_executable(${_TEST_NAME}_tests
     ${_TEST_NAME}_tests_main.cpp
     test_bambu_filament_ids.cpp
     test_bed_exclusion_fields.cpp
+    test_cloud_delete_queue.cpp
     test_config_value_formatter.cpp
     test_creality_cfs_match.cpp
     test_agent_storage_state.cpp
+    test_creality_print.cpp
     test_dev_mapping.cpp
     test_device_access.cpp
     test_moonraker_printer_agent.cpp
@@ -13,6 +15,8 @@ add_executable(${_TEST_NAME}_tests
     test_filament_bitmap_utils.cpp
     test_colour_picker_field.cpp
     test_filament_color_picker.cpp
+    test_ams_materials_setting.cpp
+    test_gcode_preview_colors.cpp
     test_device_progress.cpp
     test_device_manager_integration.cpp
     test_web_media_controller.cpp
@@ -24,6 +28,7 @@ add_executable(${_TEST_NAME}_tests
     test_network_versions.cpp
     test_orca_cloud_agent.cpp
     test_action_source.cpp
+    test_option_state_registry.cpp
     test_plugin_host_api.cpp
     # Exercise seam enums and predicates through the embedded Python host API.
     test_precise_seam_plugin.cpp
@@ -32,10 +37,12 @@ add_executable(${_TEST_NAME}_tests
     test_plugin_capabilities_in_use.cpp
     test_plugin_status.cpp
     test_printer_agent.cpp
+    test_qidi_printer_agent.cpp
     test_plugin_install.cpp
     test_plugin_lifecycle.cpp
     test_plugin_resource_texture.cpp
     test_plugin_printer_agent.cpp
+    test_post_processor.cpp
     test_printhost.cpp
     test_slicing_pipeline_bindings.cpp
     test_slicing_pipeline_config.cpp
@@ -128,7 +135,10 @@ add_executable(${_TEST_NAME}_tests
     test_instance_edits.cpp
     test_plate_settings.cpp
     test_plugin_json_depth.cpp
+    test_plugin_permission_validation.cpp
     test_shortcuts.cpp
+    test_speed_dial_dismiss.cpp
+    test_speed_dial_position.cpp
     test_texture_color_palette.cpp
     test_texture_island_view.cpp
     test_timelapse_codecs.cpp
@@ -136,6 +146,8 @@ add_executable(${_TEST_NAME}_tests
     test_imgui_wrapper.cpp
     test_user_manager.cpp
     test_sequential_clearance.cpp
+    test_object_list.cpp
+    test_geometry_import.cpp
     ../fff_print/test_helpers.cpp
     )
 
@@ -145,14 +157,17 @@ endif ()
 
 if (MSVC)
     target_link_libraries(${_TEST_NAME}_tests Setupapi.lib)
-    # Every test starts as every libslic3r_gui source does, with the Windows headers first: the GUI
-    # library gets them from its PCH, or this same force-include with the PCH off
-    # (src/slic3r/CMakeLists.txt). Without it, a test that reaches wx after libslic3r headers (as
-    # PartPlate.hpp does) fails in wx/msw/private.h and asio.
-    target_compile_options(${_TEST_NAME}_tests PRIVATE "/FIslic3r/win_platform.hpp")
 endif ()
 
 target_link_libraries(${_TEST_NAME}_tests test_common libslic3r_gui libslic3r pybind11::embed Catch2::Catch2WithMain)
+if (SLIC3R_PCH AND NOT SLIC3R_SYNTAXONLY)
+    add_precompiled_header(${_TEST_NAME}_tests ${CMAKE_SOURCE_DIR}/src/slic3r/pchheader.hpp FORCEINCLUDE)
+elseif (MSVC)
+    # Orca: with the PCH off, every test starts as every libslic3r_gui source does, with the Windows
+    # headers first (src/slic3r/CMakeLists.txt). Without them, a test that reaches wx after libslic3r
+    # headers (as PartPlate.hpp does) fails in wx/msw/private.h and asio.
+    target_compile_options(${_TEST_NAME}_tests PRIVATE "/FIslic3r/win_platform.hpp")
+endif ()
 
 # The golden tools file test_mcp_tool_list.cpp checks the MCP tool registry against, and rewrites
 # when ORCAMCP_UPDATE_TOOLS_GOLDEN=1. CI's test jobs check out scripts/ at this same path.
@@ -164,6 +179,7 @@ target_compile_definitions(${_TEST_NAME}_tests PRIVATE ORCAMCP_TOOLS_GOLDEN_FILE
 set(ORCAMCP_REFERENCE_DOC "${CMAKE_SOURCE_DIR}/docs/tools/reference.md")
 file(TO_NATIVE_PATH "${ORCAMCP_REFERENCE_DOC}" ORCAMCP_REFERENCE_DOC)
 target_compile_definitions(${_TEST_NAME}_tests PRIVATE ORCAMCP_REFERENCE_DOC=R"\(${ORCAMCP_REFERENCE_DOC}\)")
+
 set_property(TARGET ${_TEST_NAME}_tests PROPERTY FOLDER "tests")
 
 orcaslicer_copy_test_dlls(${_TEST_NAME}_tests)

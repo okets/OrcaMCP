@@ -1,8 +1,10 @@
 #ifndef slic3r_PrintHostSendDialog_hpp_
 #define slic3r_PrintHostSendDialog_hpp_
 
+#include <atomic>
 #include <map>
 #include <cstddef>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -12,6 +14,7 @@
 #include <wx/string.h>
 #include <wx/event.h>
 #include <wx/dialog.h>
+#include <wx/gdicmn.h>
 
 #include "GUI_Utils.hpp"
 #include "MsgDialog.hpp"
@@ -25,6 +28,7 @@ class wxComboBox;
 class ComboBox;
 class wxDataViewListCtrl;
 class wxFlexGridSizer;
+class wxStaticBox;
 class wxStaticText;
 class wxWrapSizer;
 class CheckBox;
@@ -34,6 +38,7 @@ namespace Slic3r { namespace GUI { class BitmapComboBox; } }
 namespace Slic3r {
 
 class AppConfig;
+struct CrealityPrinterInfo;
 
 namespace GUI {
 
@@ -204,15 +209,29 @@ public:
                                 const wxArrayString&           storage_names,
                                 bool                           switch_to_device_tab,
                                 PrintHost*                     printhost);
+    ~CrealityPrintHostSendDialog() override;
 
     virtual void                               init() override;
     virtual std::map<std::string, std::string> extendedInfo() const override;
 
+protected:
+    void on_dpi_changed(const wxRect& suggested_rect) override;
+
 private:
     static constexpr const char* CONFIG_KEY_ENABLESELFTEST = "crealityprint_enable_self_test";
 
+    void show_printer(const CrealityPrinterInfo& info);
+    void show_read_failure(const wxString& message);
+    void end_read();
+    void fit_content();
+    void add_printer_box(const CrealityPrinterInfo& info);
+
     bool        m_enableSelfTest;
     PrintHost*  m_printhost;
+    wxStaticText* m_status_label{nullptr};
+    wxStaticBox*  m_printer_box{nullptr};
+    wxStaticText* m_notice{nullptr};
+    std::shared_ptr<std::atomic<bool>> m_alive{std::make_shared<std::atomic<bool>>(true)};
 
     struct SlotInfo {
         std::string tool_id;   // e.g. "T1A"
@@ -257,6 +276,7 @@ public:
                                   bool                            supports_material_station,
                                   std::vector<Slic3r::FlashforgeMaterialSlot> slots,
                                   const std::vector<FilamentInfo>& project_filaments,
+                                  bool                            manual_filament_change,
                                   int                             product_id = 0); // the printer's `pid`
 
     virtual void init() override;
@@ -304,6 +324,7 @@ private:
     bool                             m_use_material_station {false};
     bool                             m_supports_material_station {false};
     bool                             m_slots_loaded {false};
+    bool                             m_manual_filament_change {false};
 };
 
 wxDECLARE_EVENT(EVT_PRINTHOST_PROGRESS, PrintHostQueueDialog::Event);
