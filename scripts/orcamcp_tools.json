@@ -2098,6 +2098,44 @@
       "summary": "Start a new, empty project"
     },
     {
+      "category": "Plates",
+      "description": "Sort a plate's objects, as the plate menu's Order By does; on a by-object plate the object list's order is the print order. by: name, filament, height or size. The current plate, or plate_index (made current first), or with all_plates every plate; each plate's objects are sorted within the list positions it holds. descending: false (default) sorts ascending, true descending (the app reverses a list that already has the order, so this call sorts again until the direction is the one asked). Objects already in that order: changed false, no undo step. Else one undo step. Answers plates (each plate_index with its object_ids in order) and object_id_changes: a sort renumbers the objects, those on other plates too. Refused while an arrange, orient or other UI job runs; an open toolbar tool is closed first (closed_toolbar_tool).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "all_plates": {
+            "description": "Sort every plate, each within its own list positions. Default false",
+            "type": "boolean"
+          },
+          "by": {
+            "description": "What to sort by",
+            "enum": [
+              "name",
+              "filament",
+              "height",
+              "size"
+            ],
+            "type": "string"
+          },
+          "descending": {
+            "description": "Sort from the largest or last to the smallest or first. Default false",
+            "type": "boolean"
+          },
+          "plate_index": {
+            "description": "The plate to sort, made current first. Default: the current plate",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "by"
+        ],
+        "type": "object"
+      },
+      "name": "order_objects",
+      "summary": "Sort a plate's objects (print order)"
+    },
+    {
       "category": "Painting",
       "description": "Paint an object's surface as the GUI's paint tools do: filament colours for a multi-colour print, support enforcers and blockers, the seam, or fuzzy skin -- per-triangle data, the same the paint gizmos write. To put a whole object or volume on one filament, use set_object_filament. mode selects which: color (multi-material / MMU segmentation), support, seam, fuzzy_skin or texture. texture paints where one texture displacement layer applies (texture_layer: the layer's slot; state painted or none). selection selects where: bands along a plate axis (an even split across a list of filaments, or explicit ranges), a box, a sphere, the whole volume, or visible: the facets seen from `view` (front-facing and not hidden by the object's other facets), as the texture panel's Project only on visible does, in any mode; only the target instance's own model parts can hide a facet (other instances and objects never do), and view direction current is the 3D view's camera, the default one before the canvas has been drawn. connected fills the surface region around a seed without crossing an edge sharper than `angle` -- the way to paint a feature such as a bag or a sleeve; component paints one shell by id; state repaints every facet now in one state (match_filament, or match_state outside colour mode) with filament / state and leaves the rest, e.g. everything painted with filament 1 becomes filament 3 (remap_paint renumbers several at once). Very large meshes (millions of facets) take seconds to minutes; the work runs off the GUI thread, but the bridge's ORCAMCP_TIMEOUT (default 120 s) may still need raising. ALL COORDINATES ARE PLATE MILLIMETRES -- the same frame get_object_info reports its bounding_box and position in, not object-local coordinates. But for the numbers, use THIS call's own bounding_box in the response (or get_object_paint's), not get_object_info's: that one spans every instance of the object, and matches this tool's, which is instance_id's alone, only when the object has one instance. A facet belongs to the band or region containing its centroid. Paint lives on the volume, so it applies to every instance; instance_id only says whose transform reads your coordinates. Verify with get_object_paint, undo with undo, reset with clear_object_paint. Painted support enforcers do nothing while enable_support is off: next_steps then names the set_object_config call that turns it on with a (manual) support_type, for support only where painted. A paint panel open in the app is closed first, as the user would close it (closed_toolbar_tool), since it would write its own copy of the paint over this one. Texture paint changes the mask only: nothing reaches the print until the layers are baked into the mesh.",
       "inputSchema": {

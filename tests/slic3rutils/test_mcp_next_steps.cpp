@@ -711,3 +711,12 @@ TEST_CASE("The name check catches a next step whose tool is misspelt", "[McpNext
     CHECK(unknown == std::set<std::string>{"get_mesh_heath"});
     CHECK(unusable({"get_mesh_health", "a wrong argument", {{"object", 0}}}).has_value());
 }
+
+TEST_CASE("A changed object order points at get_scene_info, an unchanged one at nothing", "[McpNextSteps][orcamcp]")
+{
+    const std::vector<NextStep> steps = object_order_next_steps(true);
+    REQUIRE(steps.size() == 1);
+    CHECK(steps[0].tool == "get_scene_info");
+    CHECK(steps[0].why == "to read the plates' new object ids and order");
+    CHECK(object_order_next_steps(false).empty());
+}

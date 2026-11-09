@@ -416,6 +416,13 @@ std::string named_ids(const std::string& noun, const std::vector<int>& ids)
 
 } // namespace
 
+std::vector<NextStep> object_order_next_steps(bool changed)
+{
+    if (!changed)
+        return {};
+    return {{"get_scene_info", "to read the plates' new object ids and order", nullptr}};
+}
+
 std::vector<NextStep> added_instances_next_steps(int object_id, int plate_index, const std::vector<int>& crowded,
                                                  const std::vector<int>& partly_off, const std::vector<int>& on_no_plate)
 {

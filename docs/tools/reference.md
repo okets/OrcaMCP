@@ -32,7 +32,7 @@ into a call that reports success and changes nothing. See [Error Handling](#erro
 | **Scene** | `get_scene_info`, `new_project`, `load_project`, `save_project`, `export_3mf`, `export_stl` |
 | **Models** | `load_model`, `auto_orient`, `arrange_objects`, `get_object_info`, `get_mesh_health`, `repair_mesh`, `get_object_components`, `rename_object`, `set_object_printable`, `split_object`, `add_primitive_object`, `add_volume`, `set_volume_type`, `assemble_objects`, `merge_parts`, `invalidate_cut_info`, `reload_from_disk`, `replace_volume_with_file` |
 | **Transforms** | `move_object`, `drop_to_bed`, `rotate_object`, `scale_object`, `mirror_object`, `flatten_object`, `clone_object`, `set_instance_count`, `fill_bed_with_instances`, `cut_object`, `delete_object`, `transform_objects` |
-| **Plates** | `add_plate`, `select_plate`, `delete_plate`, `set_prime_tower_position`, `set_plate_settings` |
+| **Plates** | `add_plate`, `select_plate`, `delete_plate`, `order_objects`, `set_prime_tower_position`, `set_plate_settings` |
 | **Config** | `get_presets`, `install_presets`, `get_edited_presets`, `get_config_values`, `select_preset`, `apply_config`, `clone_preset`, `save_preset`, `delete_preset`, `reset_preset`, `get_valid_config_keys` |
 | **Per-Object** | `get_object_config`, `set_object_config`, `reset_object_config` |
 | **Layer Ranges** | `get_object_layer_ranges`, `set_object_layer_range`, `delete_object_layer_range` |
@@ -1821,6 +1821,33 @@ entries reports where it ended up in each.
 ---
 
 ## Plate Tools
+
+### order_objects
+Sort a plate's objects, as the plate menu's Order By does. On a by-object plate the object list's order is
+the print order.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `by` | string | Yes | `name`, `filament`, `height` or `size` |
+| `descending` | boolean | No | Sort descending. Default false (ascending) |
+| `plate_index` | integer | No | The plate to sort, made current first. Default: the current plate |
+| `all_plates` | boolean | No | Sort every plate. Not with `plate_index` |
+
+Each plate's objects are sorted within the list positions that plate holds, so other plates keep theirs.
+The app reverses a list that already has the order, so the tool sorts again until the direction asked is
+the one the objects have. Objects already in that order: `changed: false`, no undo step; otherwise one
+undo step. A sort renumbers objects, those on other plates too. An open toolbar tool is closed first
+(`closed_toolbar_tool`); refused while an arrange, orient or other UI job runs.
+
+**Returns:** `changed`, `by`, `descending`, `plates` (each `plate_index` with its `object_ids` in order),
+`object_id_changes`, and `next_steps` (`get_scene_info`) after a change.
+
+```json
+{"name": "order_objects", "arguments": {"by": "height", "descending": true, "plate_index": 0}}
+```
+
+---
 
 ### add_plate
 Add a new build plate to the project.

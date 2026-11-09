@@ -134,6 +134,7 @@ add_executable(${_TEST_NAME}_tests
     test_part_edits.cpp
     test_arrange_options.cpp
     test_instance_edits.cpp
+    test_mcp_object_order.cpp
     test_plate_settings.cpp
     test_plugin_json_depth.cpp
     test_plugin_permission_validation.cpp

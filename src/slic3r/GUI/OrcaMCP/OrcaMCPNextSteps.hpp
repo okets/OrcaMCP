@@ -74,6 +74,10 @@ std::vector<NextStep> repair_timed_out_next_steps(const std::vector<int>& timed_
 std::vector<NextStep> added_instances_next_steps(int object_id, int plate_index, const std::vector<int>& crowded,
                                                  const std::vector<int>& partly_off, const std::vector<int>& on_no_plate);
 
+// What order_objects' change leads to: get_scene_info, which lists each object's new object_id (a sort
+// renumbers the objects of the plates it sorted). Nothing when the order already held.
+std::vector<NextStep> object_order_next_steps(bool changed);
+
 // What fill_bed_with_instances' instances on no plate (`on_no_plate`, of the object's `instance_count`)
 // lead to: the fill's estimate added more than its plate's arrange fit. arrange_objects of every plate
 // puts them on plates of their own; or they are removed -- set_instance_count when they are the last

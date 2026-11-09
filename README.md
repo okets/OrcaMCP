@@ -20,7 +20,7 @@
 ## What this is
 
 OrcaMCP is OrcaSlicer with a [Model Context Protocol](https://modelcontextprotocol.io/) server
-built into the application. Point Claude Code, or any MCP client, at it and the agent gets 116
+built into the application. Point Claude Code, or any MCP client, at it and the agent gets 117
 tools that do what you do with the mouse: load and cut models, paint them, change any setting,
 slice, look at the result, and send it to the printer. It runs on your machine and talks to your
 printers over your own network. Nothing goes to a cloud.
@@ -203,7 +203,7 @@ that used to mean an afternoon in menus.
    claude mcp add --transport http orca-slicer http://127.0.0.1:13618/mcp
    ```
 
-   That reaches the one window on that port, and only while it runs, with the app's 112 tools. The
+   That reaches the one window on that port, and only while it runs, with the app's 113 tools. The
    bridge adds four of its own (`start_orca`, `wait_for_slice`, `list_instances`, `select_instance`)
    and answers while the app is down, so it stays the recommended way. See
    [Configuration](docs/setup/configuration.md).
@@ -242,7 +242,7 @@ API, with no cloud account and no closed network plugin. Details, limits and set
 
 ## Tools
 
-116 tools, by category: 112 in the app, and 4 the bridge answers itself. Parameters and examples
+117 tools, by category: 113 in the app, and 4 the bridge answers itself. Parameters and examples
 for each are in the [tools reference](docs/tools/reference.md).
 
 | Category | Tools |
@@ -250,7 +250,7 @@ for each are in the [tools reference](docs/tools/reference.md).
 | **Scene** | `export_3mf`, `export_stl`, `get_scene_info`, `load_project`, `new_project`, `save_project` |
 | **Models** | `add_volume`, `arrange_objects`, `assemble_objects`, `auto_orient`, `get_mesh_health`, `get_object_components`, `get_object_info`, `invalidate_cut_info`, `load_model`, `merge_parts`, `reload_from_disk`, `rename_object`, `repair_mesh`, `replace_volume_with_file`, `set_object_printable`, `set_volume_type`, `split_object` |
 | **Transforms** | `clone_object`, `cut_object`, `delete_object`, `drop_to_bed`, `fill_bed_with_instances`, `flatten_object`, `mirror_object`, `move_object`, `rotate_object`, `scale_object`, `set_instance_count`, `transform_objects` |
-| **Plates** | `add_plate`, `delete_plate`, `select_plate`, `set_plate_settings`, `set_prime_tower_position` |
+| **Plates** | `add_plate`, `delete_plate`, `order_objects`, `select_plate`, `set_plate_settings`, `set_prime_tower_position` |
 | **Config** | `apply_config`, `clone_preset`, `delete_preset`, `get_config_values`, `get_edited_presets`, `get_presets`, `get_valid_config_keys`, `install_presets`, `reset_preset`, `save_preset`, `select_preset` |
 | **Per-object** | `get_object_config`, `reset_object_config`, `set_object_config` |
 | **Layer ranges** | `delete_object_layer_range`, `get_object_layer_ranges`, `set_object_layer_range` |

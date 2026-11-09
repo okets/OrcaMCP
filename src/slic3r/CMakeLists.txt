@@ -504,6 +504,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/OrcaMCP/OrcaMCPPlateTools.cpp
     GUI/OrcaMCP/OrcaMCPArrangeTools.hpp
     GUI/OrcaMCP/OrcaMCPArrangeTools.cpp
+    GUI/OrcaMCP/OrcaMCPObjectOrder.hpp
+    GUI/OrcaMCP/OrcaMCPObjectOrder.cpp
     GUI/OrcaMCP/OrcaMCPNextSteps.hpp
     GUI/OrcaMCP/OrcaMCPNextSteps.cpp
     GUI/OrcaMCP/OrcaMCPMeshTools.cpp

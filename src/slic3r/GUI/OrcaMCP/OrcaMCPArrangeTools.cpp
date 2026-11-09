@@ -6,6 +6,7 @@
 #include "OrcaMCPInstanceBox.hpp"
 #include "OrcaMCPInstanceEdits.hpp"
 #include "OrcaMCPNextSteps.hpp"
+#include "OrcaMCPObjectOrder.hpp"
 #include "OrcaMCPPartEdits.hpp"
 #include "OrcaMCPPlateSettings.hpp"
 #include "OrcaMCPPlateUtils.hpp"
@@ -368,6 +369,121 @@ nlohmann::json set_instance_count(const nlohmann::json& params)
     });
 }
 
+// ---- order_objects ----
+
+// The objects on plate `plate_index`, in list order, as ObjectList::order_objects reads a plate's: those
+// whose instance 0 stands on it.
+std::vector<ModelObject*> objects_on_plate(Plater& plater, int plate_index)
+{
+    std::vector<ModelObject*> found;
+    GUI::PartPlateList&       plates = plater.get_partplate_list();
+    const Model&              model  = plater.model();
+    for (std::size_t i = 0; i < model.objects.size(); ++i)
+        if (plates.find_instance(int(i), 0) == plate_index)
+            found.push_back(model.objects[i]);
+    return found;
+}
+
+// The plates a sort covers: every plate, or `target` alone.
+std::vector<int> plates_to_order(const GUI::PartPlateList& plates, bool all_plates, int target)
+{
+    std::vector<int> covered;
+    for (int i = 0; i < plates.get_plate_count(); ++i)
+        if (all_plates || i == target)
+            covered.push_back(i);
+    return covered;
+}
+
+bool plates_in_order(Plater& plater, const std::vector<int>& covered, ObjectOrder order, bool descending)
+{
+    for (const int plate_index : covered)
+        if (!plate_in_order(objects_on_plate(plater, plate_index), order, descending))
+            return false;
+    return true;
+}
+
+nlohmann::json plates_object_ids(Plater& plater, const std::vector<int>& covered)
+{
+    nlohmann::json plates = nlohmann::json::array();
+    for (const int plate_index : covered) {
+        nlohmann::json ids = nlohmann::json::array();
+        for (const ModelObject* object : objects_on_plate(plater, plate_index))
+            ids.push_back(object_index_of(plater.model(), object->id()));
+        plates.push_back({{"plate_index", plate_index}, {"object_ids", ids}});
+    }
+    return plates;
+}
+
+// The object list's Order By, as many times as it takes to land in the direction asked: it reverses a list
+// that already has the order, so a descending sort of an unsorted plate is two calls.
+bool run_order_objects(Plater& plater, const std::vector<int>& covered, ObjectOrder order, bool all_plates, bool descending)
+{
+    Plater::SingleSnapshot snapshot(&plater);
+    for (int attempt = 0; attempt < 2 && !plates_in_order(plater, covered, order, descending); ++attempt)
+        wxGetApp().obj_list()->order_objects(order, all_plates);
+    return plates_in_order(plater, covered, order, descending);
+}
+
+nlohmann::json order_objects_on_main_thread(ObjectOrder order, const std::string& by, bool descending, bool all_plates,
+                                            std::optional<int> plate_index)
+{
+    Plater* plater = wxGetApp().plater();
+    if (!plater->get_ui_job_worker().is_idle())
+        return error_response(ui_job_busy_message("order_objects"));
+    GUI::PartPlateList& plates = plater->get_partplate_list();
+    const int           target = plate_index.value_or(plates.get_curr_plate_index());
+    if (const auto refusal = plate_index_error(target, plates.get_plate_count()))
+        return error_response(*refusal);
+    const std::vector<int> covered = plates_to_order(plates, all_plates, target);
+
+    nlohmann::json answer = {{"status", "success"}, {"by", by}, {"descending", descending}, {"changed", false}};
+    std::string    closed_tool;
+    if (!plates_in_order(*plater, covered, order, descending)) {
+        if (const auto refusal = close_toolbar_tool(*plater, closed_tool))
+            return *refusal;
+        if (!all_plates)
+            make_plate_current(*plater, target);
+        const std::vector<ObjectID> before = object_order(plater->model());
+        McpDialogSuppressionGuard   guard;
+        if (!run_order_objects(*plater, covered, order, all_plates, descending))
+            return with_closed_tool(guard.fail_on_errors(error_response("The app did not put the objects in the requested order, so check "
+                                                                        "get_scene_info for the order they have now")),
+                                    closed_tool);
+        answer["changed"]           = true;
+        answer["object_id_changes"] = object_id_changes(before, plater->model());
+        answer                      = guard.report(std::move(answer));
+    } else {
+        answer["object_id_changes"] = nlohmann::json::array();
+        answer["note"]              = "the objects already stand in that order, so nothing was changed";
+    }
+    answer["plates"] = plates_object_ids(*plater, covered);
+    add_next_steps(answer, object_order_next_steps(answer["changed"].get<bool>()));
+    answer["active_warnings"] = get_active_warnings_json(plater);
+    return with_closed_tool(std::move(answer), closed_tool);
+}
+
+nlohmann::json order_objects(const nlohmann::json& params)
+{
+    std::string error;
+    const auto  by_value = params.find("by");
+    const bool  all_plates = read_flag(params, "all_plates", error).value_or(false);
+    const bool  descending = read_flag(params, "descending", error).value_or(false);
+    const auto  plate_index = read_plate_index(params, error);
+    if (!error.empty())
+        return error_response(error);
+    if (by_value == params.end() || !by_value->is_string())
+        return error_response("order_objects needs by: " + object_order_names());
+    const std::string by = by_value->get<std::string>();
+    const auto        order = object_order_named(by);
+    if (!order)
+        return error_response("order_objects by \"" + by + "\" is not an order: by is " + object_order_names());
+    if (all_plates && plate_index)
+        return error_response("give all_plates or plate_index, not both: all_plates sorts every plate");
+    return run_on_main_thread([&]() -> nlohmann::json {
+        return order_objects_on_main_thread(*order, by, descending, all_plates, plate_index);
+    });
+}
+
 // ---- fill_bed_with_instances ----
 
 struct FillBedStart
@@ -590,4 +706,24 @@ void Slic3r::GUI::OrcaMCPServer::register_arrange_tools()
         "piece of a cut, an instance on no plate, and while another job runs; an open toolbar tool is closed first (closed_toolbar_tool).",
         {{"type", "object"}, {"properties", fill_properties}, {"required", {"object_id"}}},
         [](const nlohmann::json& params) -> nlohmann::json { return fill_bed_with_instances(params); }});
+
+    register_tool({
+        "order_objects",
+        ToolCategory::Plates,
+        "Sort a plate's objects (print order)",
+        "Sort a plate's objects, as the plate menu's Order By does; on a by-object plate the object list's order is the print order. "
+        "by: name, filament, height or size. The current plate, or plate_index (made current first), or with all_plates every plate; "
+        "each plate's objects are sorted within the list positions it holds. descending: false (default) sorts ascending, true "
+        "descending (the app reverses a list that already has the order, so this call sorts again until the direction is the one asked). "
+        "Objects already in that order: changed false, no undo step. Else one undo step. Answers plates (each plate_index with its "
+        "object_ids in order) and object_id_changes: a sort renumbers the objects, those on other plates too. Refused while an "
+        "arrange, orient or other UI job runs; an open toolbar tool is closed first (closed_toolbar_tool).",
+        {{"type", "object"},
+         {"properties",
+          {{"by", {{"type", "string"}, {"enum", {"name", "filament", "height", "size"}}, {"description", "What to sort by"}}},
+           {"descending", {{"type", "boolean"}, {"description", "Sort from the largest or last to the smallest or first. Default false"}}},
+           {"plate_index", {{"type", "integer"}, {"minimum", 0}, {"description", "The plate to sort, made current first. Default: the current plate"}}},
+           {"all_plates", {{"type", "boolean"}, {"description", "Sort every plate, each within its own list positions. Default false"}}}}},
+         {"required", {"by"}}},
+        [](const nlohmann::json& params) -> nlohmann::json { return order_objects(params); }});
 }
