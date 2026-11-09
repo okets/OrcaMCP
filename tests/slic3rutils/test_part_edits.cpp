@@ -772,3 +772,10 @@ TEST_CASE("a size of 0 or 2000 is refused", "[PartEdits][orcamcp]")
     CHECK(!primitive_size_values("sphere", {{"diameter", "10"}}).refusal.empty());
     CHECK(primitive_size_values("sphere", {{"diameter", 1000}}).refusal.empty());
 }
+
+TEST_CASE("a size that is not an object is refused", "[PartEdits][orcamcp]")
+{
+    const PrimitiveSize size = primitive_size_values("cube", nlohmann::json(nullptr));
+    CHECK(mentions(size.refusal, "size must be an object"));
+    CHECK(size.values.empty());
+}
