@@ -275,3 +275,11 @@ TEST_CASE("The refusal says why the arguments would be dropped", "[McpPrintOptio
     CHECK(mentions(no_api, "serial number and check code"));
     CHECK(mentions(no_api, "add_physical_printer"));
 }
+
+TEST_CASE("The material station defaults off for a profile with manual filament change", "[McpPrintOptions][orcamcp]")
+{
+    CHECK(default_use_material_station(true, true) == false);
+    CHECK(default_use_material_station(true, false) == true);
+    CHECK(default_use_material_station(false, false) == false);
+    CHECK(default_use_material_station(false, true) == false);
+}

@@ -103,4 +103,9 @@ FlashforgeApi::PrintOptions to_print_options(const PrintOptionChoices& choices);
 // (`printer_model`).
 nlohmann::json print_options_json(const PrintOptionChoices& choices, const GateFacts& facts);
 
+// Whether a send uses the material station when the caller said nothing: when the printer reports one,
+// unless the printer profile changes filament by hand (manual_filament_change), as the Flashforge send
+// dialog starts it.
+bool default_use_material_station(bool printer_has_station, bool manual_filament_change);
+
 }}} // namespace Slic3r::GUI::OrcaMCP

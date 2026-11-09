@@ -3773,7 +3773,7 @@
             "type": "boolean"
           },
           "use_material_station": {
-            "description": "Print from the material station (default: true when the printer reports one). Direct sends to a Flashforge host with local-API credentials only; true is refused anywhere else.",
+            "description": "Print from the material station (default: true when the printer reports one, unless the printer profile uses manual filament change). Direct sends to a Flashforge host with local-API credentials only; true is refused anywhere else.",
             "type": "boolean"
           }
         },

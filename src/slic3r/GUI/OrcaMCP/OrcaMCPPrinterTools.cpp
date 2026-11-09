@@ -238,6 +238,16 @@ nlohmann::json material_mapping_schema()
     };
 }
 
+// The printer preset the plate slices with changes filament by hand. A preset without the option: false.
+bool preset_uses_manual_filament_change()
+{
+    PresetBundle* bundle = wxGetApp().preset_bundle;
+    if (!bundle)
+        return false;
+    const DynamicPrintConfig& config = bundle->printers.get_edited_preset().config;
+    return config.has("manual_filament_change") && config.opt_bool("manual_filament_change");
+}
+
 } // namespace
 
 void OrcaMCPServer::register_printer_tools()
@@ -485,7 +495,7 @@ void OrcaMCPServer::register_printer_tools()
                 {"use_material_station", {
                     {"type", "boolean"},
                     {"description", "Print from the material station (default: true when the printer reports "
-                                    "one). Direct sends to a Flashforge host with local-API credentials only; "
+                                    "one, unless the printer profile uses manual filament change). Direct sends to a Flashforge host with local-API credentials only; "
                                     "true is refused anywhere else."}
                 }},
                 {"material_mappings", {
@@ -622,7 +632,7 @@ void OrcaMCPServer::register_printer_tools()
                 if (const auto busy = printer_busy_refusal(status))
                     return error_response(*busy);
 
-                const bool use_material_station = params.value("use_material_station", status.has_material_station);
+                const bool use_material_station = params.value("use_material_station", default_use_material_station(status.has_material_station, preset_uses_manual_filament_change()));
                 if (use_material_station) {
                     nlohmann::json mapping_error;
                     if (!resolve_material_mappings(requested_mappings, status.slots, project_filaments,
