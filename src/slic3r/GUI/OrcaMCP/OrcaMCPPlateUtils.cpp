@@ -2140,13 +2140,19 @@ nlohmann::json plate_print_order_json(PartPlate& plate, bool is_current, bool by
     if (print == nullptr || print->empty() || print->objects().empty())
         return OrcaMCP::print_order_unknown_json("the plate has nothing the slicer prints");
 
+    // The plate's settings reach its Print only once the pending update runs (held back while a job runs, say): a Print
+    // that is not by object yet, or not applied, would describe an older layout, and is never checked.
+    if (print->config().print_sequence != PrintSequence::ByObject)
+        return OrcaMCP::print_order_unknown_json("the plate's settings are not applied to the slicer yet");
+
     StringObjectException warning;
     Print::sequential_print_clearance_valid(*print, nullptr, nullptr, &warning);
 
-    std::vector<std::pair<const ModelInstance*, int>> positions;
+    std::vector<OrcaMCP::PrintedInstance> positions;
     for (const PrintObject* print_object : print->objects())
         for (const PrintInstance& instance : print_object->instances())
-            positions.emplace_back(instance.model_instance, instance.model_instance->arrange_order);
+            positions.push_back({print_object->model_object()->id(), instance.model_instance->id(),
+                                 instance.model_instance->arrange_order});
     return OrcaMCP::print_order_json(positions, plater->model(), warning.string);
 }
 

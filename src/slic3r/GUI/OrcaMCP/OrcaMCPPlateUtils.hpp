@@ -2,6 +2,7 @@
 #define slic3r_GUI_OrcaMCPPlateUtils_hpp_
 
 #include <nlohmann/json.hpp>
+#include "OrcaMCPObjectOrder.hpp"
 #include <chrono>
 #include <functional>
 #include <set>
@@ -154,7 +155,7 @@ struct PlateEntry
     nlohmann::json settings       = nlohmann::json::object(); // the plate's own settings (set_plate_settings' shape)
     nlohmann::json effective      = nlohmann::json::object(); // what applies on it
     nlohmann::json layer_gcodes   = nlohmann::json::array();  // its G-code at a layer (plate_layer_gcodes_json)
-    nlohmann::json print_order    = {{"print_order", nullptr}, {"print_order_differs", nullptr}, {"print_order_note", nullptr}, {"print_order_unknown", nullptr}}; // print_order, print_order_differs, print_order_note, print_order_unknown
+    nlohmann::json print_order    = OrcaMCP::print_order_unknown_json("not by object"); // print_order, print_order_differs, print_order_note, print_order_unknown
 };
 
 namespace OrcaMCP {

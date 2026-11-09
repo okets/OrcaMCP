@@ -66,9 +66,19 @@ TEST_CASE("print_order_json orders by position and maps instances to indices", "
     Slic3r::ModelObject* b = cube_of_height(model, "b", 10);
     b->add_instance();
 
+    // A Print keeps its own copy of the model, whose objects and instances have other addresses and the same ids.
+    Slic3r::Model copy;
+    copy.assign_copy(model);
+    REQUIRE(copy.objects.size() == 2);
+    REQUIRE(copy.objects[0] != a);
+    const Slic3r::ModelObject* ca = copy.objects[0];
+    const Slic3r::ModelObject* cb = copy.objects[1];
+    const auto printed = [](const Slic3r::ModelObject* o, size_t i, int position) {
+        return PrintedInstance{o->id(), o->instances[i]->id(), position};
+    };
+
     // b's second instance prints first, then a, then b's first.
-    const std::vector<std::pair<const Slic3r::ModelInstance*, int>> positions = {
-        {a->instances[0], 2}, {b->instances[0], 3}, {b->instances[1], 1}};
+    const std::vector<PrintedInstance> positions = {printed(ca, 0, 2), printed(cb, 0, 3), printed(cb, 1, 1)};
     const nlohmann::json json = print_order_json(positions, model, "b is printed later\nthan a");
 
     REQUIRE(json["print_order"].size() == 3);
@@ -85,7 +95,7 @@ TEST_CASE("print_order_json: the object list's order is not a difference", "[Mcp
     Slic3r::Model model;
     Slic3r::ModelObject* a = cube_of_height(model, "a", 10);
     Slic3r::ModelObject* b = cube_of_height(model, "b", 10);
-    const nlohmann::json json = print_order_json({{b->instances[0], 2}, {a->instances[0], 1}}, model, "");
+    const nlohmann::json json = print_order_json({{b->id(), b->instances[0]->id(), 2}, {a->id(), a->instances[0]->id(), 1}}, model, "");
     CHECK(json["print_order_differs"] == false);
     CHECK(json["print_order_note"].is_null());
     CHECK(json["print_order"][0]["object_id"] == 0);

@@ -29,20 +29,21 @@ bool plate_in_order(std::vector<ModelObject*> plate_objects, ObjectOrder order, 
     return plate_objects == before;
 }
 
-nlohmann::json print_order_json(const std::vector<std::pair<const ModelInstance*, int>>& by_position, const Model& model,
+nlohmann::json print_order_json(const std::vector<PrintedInstance>& by_position, const Model& model,
                                 const std::string& warning)
 {
-    std::vector<std::pair<const ModelInstance*, int>> sorted = by_position;
-    std::stable_sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b) { return a.second < b.second; });
+    std::vector<PrintedInstance> sorted = by_position;
+    std::stable_sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b) { return a.position < b.position; });
 
     std::vector<std::pair<int, int>> order;
-    for (const auto& entry : sorted) {
-        const ModelObject* object = entry.first == nullptr ? nullptr : entry.first->get_object();
-        const auto         found  = std::find(model.objects.begin(), model.objects.end(), object);
+    for (const PrintedInstance& entry : sorted) {
+        const auto found = std::find_if(model.objects.begin(), model.objects.end(),
+                                        [&](const ModelObject* object) { return object->id() == entry.object_id; });
         if (found == model.objects.end())
             continue;
         const auto& instances = (*found)->instances;
-        const auto  instance  = std::find(instances.begin(), instances.end(), entry.first);
+        const auto  instance  = std::find_if(instances.begin(), instances.end(),
+                                             [&](const ModelInstance* i) { return i->id() == entry.instance_id; });
         if (instance == instances.end())
             continue;
         order.emplace_back(int(found - model.objects.begin()), int(instance - instances.begin()));

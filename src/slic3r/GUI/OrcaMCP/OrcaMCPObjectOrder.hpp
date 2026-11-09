@@ -26,13 +26,22 @@ std::string object_order_names();
 // sort_objects, the app's own sort, would leave them as they are.
 bool plate_in_order(std::vector<ModelObject*> plate_objects, ObjectOrder order, bool descending);
 
+// One printed instance as a Print knows it: the ids of its ModelObject and ModelInstance (a Print keeps its own copy of
+// the model, whose copies keep their ids, so ids are what finds them in the Plater's model) and its 1-based print position.
+struct PrintedInstance
+{
+    ObjectID object_id;
+    ObjectID instance_id;
+    int      position = 0;
+};
+
 // A by-object plate's print order as get_scene_info reports it: `by_position` holds each printed instance with
 // its 1-based print position (ModelInstance::arrange_order, written by Print::sequential_print_clearance_valid),
 // `warning` upstream's words for objects printed later than their place in the object list ("" when none).
 // Gives {print_order: [{object_id, instance_id}] in print order, print_order_differs (the order is not the
 // object list's, object then instance), print_order_note (the warning, null when empty), print_order_unknown: null}.
 // An instance of no object of `model` is left out.
-nlohmann::json print_order_json(const std::vector<std::pair<const ModelInstance*, int>>& by_position, const Model& model,
+nlohmann::json print_order_json(const std::vector<PrintedInstance>& by_position, const Model& model,
                                 const std::string& warning);
 
 // The same four keys for a plate with no order, and why: "not by object", "not the current plate", ...

@@ -240,7 +240,8 @@ as the slicer's clearance check works it out: an object may print later than its
 avoid a collision. `print_order_differs` says it is not the object list's order, and `print_order_note` carries
 the app's words naming what moves. Only the current plate has one (its Print takes the pending settings first);
 any other plate, and a plate not printed by object, has `null` in all three and `print_order_unknown` saying why
-(`"not by object"`, `"not the current plate"`, a busy pipeline, nothing to print).
+(`"not by object"`, `"not the current plate"`, `"the pipeline is busy: ..."`,
+`"the plate has nothing the slicer prints"`, `"the plate's settings are not applied to the slicer yet"`).
 
 Each plate's `layer_gcodes` is its G-code at a layer, as the Preview's layer slider shows it: `layer`
 (1-based, `null` while the plate's layers are not known -- never sliced, changed since, a settings change
