@@ -732,3 +732,43 @@ TEST_CASE("A drop is refused for a volume with an instance, a one-volume object,
     CHECK(mentions(drop_refusal(1, one, 0, std::nullopt, {}), "one volume"));
     CHECK(mentions(drop_refusal(0, pair, 0, std::nullopt, {0, 5}), "cut"));
 }
+
+TEST_CASE("a cube's size is x, y, z in that order", "[PartEdits][orcamcp]")
+{
+    const PrimitiveSize size = primitive_size_values("cube", {{"z", 30}, {"x", 10}, {"y", 20}});
+    CHECK(size.refusal.empty());
+    CHECK(size.values == std::vector<double>{10., 20., 30.});
+}
+
+TEST_CASE("a torus's size is inner then tube diameter", "[PartEdits][orcamcp]")
+{
+    const PrimitiveSize size = primitive_size_values("torus", {{"tube_diameter", 4}, {"inner_diameter", 15}});
+    CHECK(size.refusal.empty());
+    CHECK(size.values == std::vector<double>{15., 4.});
+    CHECK(primitive_size_values("disc", {{"height", 1}, {"diameter", 30}}).values == std::vector<double>{30., 1.});
+    CHECK(primitive_size_values("sphere", {{"diameter", 12}}).values == std::vector<double>{12.});
+}
+
+TEST_CASE("a field of another shape is refused", "[PartEdits][orcamcp]")
+{
+    const PrimitiveSize size = primitive_size_values("cube", {{"diameter", 10}});
+    CHECK(mentions(size.refusal, "x, y, z"));
+    CHECK(size.values.empty());
+}
+
+TEST_CASE("a missing field is refused", "[PartEdits][orcamcp]")
+{
+    const PrimitiveSize size = primitive_size_values("cylinder", {{"diameter", 10}});
+    CHECK(mentions(size.refusal, "height"));
+    CHECK(size.values.empty());
+    CHECK(!primitive_size_values("cube", nlohmann::json::array()).refusal.empty());
+}
+
+TEST_CASE("a size of 0 or 2000 is refused", "[PartEdits][orcamcp]")
+{
+    CHECK(mentions(primitive_size_values("sphere", {{"diameter", 0}}).refusal, "diameter"));
+    CHECK(!primitive_size_values("sphere", {{"diameter", 2000}}).refusal.empty());
+    CHECK(!primitive_size_values("sphere", {{"diameter", -1}}).refusal.empty());
+    CHECK(!primitive_size_values("sphere", {{"diameter", "10"}}).refusal.empty());
+    CHECK(primitive_size_values("sphere", {{"diameter", 1000}}).refusal.empty());
+}

@@ -1453,6 +1453,7 @@ echo "CC the section view's plane arithmetic is inside _get_section_view_plane, 
 echo "CD the texture panel's true preview is the bake without simplification, which MCP's texture_preview copies (1 = unchanged; 0 = re-read queue_preview_job and match it) / Plater::priv::reset and delete_all_objects_from_model drop MCP's cached previews (a hook: 0 = expected, keep ours): $(U src/slic3r/GUI/Gizmos/GLGizmoTextureDisplacement.cpp | grep -c 'entry.options.v2_max_triangles_k = 0') / $(U src/slic3r/GUI/Plater.cpp | grep -c 'drop_texture_previews')"
 echo "CE a plugin's permission prompt is a MsgDialog with Yes, which MCP's suppression answers Yes inside a tool call, granting access no one chose (a security hook: 1 = expected, keep ours; 0 = upstream gates it itself, compare): $(U src/slic3r/plugin/PluginAuditManager.cpp | grep -c 'PermissionDialog dialog(message, title, show_tip)')"
 echo "CF a geometry import's options and name clean-up dialogs (AMF, CAD 3MF, STEP) are skipped only for a silent load, so under MCP they are answered Cancel and the load fails (a hook: 0 = expected, keep ours): $(U src/slic3r/GUI/Plater.cpp | grep -c 'mcp_answer_geometry_import_options')"
+echo "CG upstream's primitive size lives in a dialog only: ObjectList's load_generic_subobject / load_shape_object take no size (a hook: 0 = expected, keep ours): $(U src/slic3r/GUI/GUI_ObjectList.hpp | grep -c 'const std::vector<double>\* size')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -2211,6 +2212,17 @@ loaded. Ours treats suppression as a silent load there: the options the user sav
 (`ScopedGeometryImportRequest`, `OrcaMCPGeometryImport.cpp`; the call's choices win, nothing is saved; a STEP's tessellation keeps
 the saved values). On a non-zero
 count, upstream has a function of that name: compare.
+
+Item CG is a hook: since 0ef9015904 a primitive's size (the object list's Add Part / Modifier / ... > Cube and friends, and
+Add Shape) comes from `PrimitiveSizeDialog`, through the file-static `primitive_size` (saved size, dialog, built-in default).
+MCP's `add_volume` cannot answer a dialog, so it added every primitive at the default, a tenth of the bed's longest side.
+Ours threads an optional `const std::vector<double>* size` through `ObjectList::load_generic_subobject`,
+`load_shape_object` and `primitive_size`: given, and as long as the shape's `primitive_size_fields`, it is used as it is, with
+no dialog and nothing saved; otherwise upstream's behaviour is unchanged. The tool reads its `size` object by shape name
+(`primitive_size_values`, `OrcaMCPPartEdits.cpp`: every field of the shape required, each above 0 and at most 1000 mm, the
+fields in upstream's `primitive_size_fields` order) and refuses before anything changes. On a non-zero count, upstream passes
+a size itself: use its parameter and re-run `slic3rutils_tests "[PartEdits]"`; when it changes `primitive_size_fields`, change
+`primitive_size_values` with it.
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices

@@ -952,13 +952,22 @@ nlohmann::json add_volume_on_main_thread(const nlohmann::json& params)
     const bool has_file  = file.has_value();
     if (has_shape == has_file)
         return error_response("give exactly one of shape (a primitive: cube, cylinder, sphere, cone, disc, torus) or file_path (a model file)");
-    std::string menu_shape, file_path;
+    if (params.contains("size") && !has_shape)
+        return error_response("size sets a primitive's dimensions: give it with shape, not with file_path");
+    std::string         menu_shape, file_path;
+    std::vector<double> size_values; // empty: the built-in default size
     if (has_shape) {
         for (const auto& [name, menu_name] : primitive_shapes())
             if (name == *shape)
                 menu_shape = menu_name;
         if (menu_shape.empty())
             return error_response("shape must be one of: cube, cylinder, sphere, cone, disc, torus");
+        if (params.contains("size")) {
+            PrimitiveSize given = primitive_size_values(*shape, params["size"]);
+            if (!given.refusal.empty())
+                return error_response(given.refusal);
+            size_values = std::move(given.values);
+        }
     } else {
         file_path = *file;
         boost::system::error_code ec;
@@ -984,9 +993,9 @@ nlohmann::json add_volume_on_main_thread(const nlohmann::json& params)
     const bool                         turned  = has_turn_or_scale(object->instances[0]->get_transformation());
     ObjectList*                        list    = wxGetApp().obj_list();
     if (has_shape)
-        // Not interactive: the primitive's built-in default size, never the size dialog, which MCP's
-        // suppression would answer Cancel, adding nothing.
-        list->load_generic_subobject(menu_shape, *type, /*interactive=*/false);
+        // Not interactive: the given size, else the primitive's built-in default, never the size dialog,
+        // which MCP's suppression would answer Cancel, adding nothing.
+        list->load_generic_subobject(menu_shape, *type, /*interactive=*/false, size_values.empty() ? nullptr : &size_values);
     else
         list->load_subobject(*type);
     const std::vector<int> added = volumes_not_in(*object, before);
@@ -1349,7 +1358,8 @@ void Slic3r::GUI::OrcaMCPServer::register_part_tools()
         "Add a part, modifier or support volume",
         "Add a volume to an object, as the object list's Add Part / Negative Part / Modifier / Support Blocker / Support "
         "Enforcer does: a primitive (shape) or a model file (file_path). A primitive is sized a tenth of the bed's longest "
-        "side and stands beside the object at its right-front corner, on the bed: move_object and scale_object with "
+        "side, or by size (mm, every field of the shape: cube x, y, z; cylinder, cone, disc diameter, height; sphere diameter; "
+        "torus inner_diameter, tube_diameter), and stands beside the object at its right-front corner, on the bed: move_object and scale_object with "
         "volume_id place and size it. As the object list does, adding a primitive moves the object's rotation and scale "
         "from its instance into its volumes (instance_transform_moved_to_volumes says when). A file's volume keeps the "
         "position its file gives it. A modifier changes only the settings set_object_config with volume_id gives it. The "
@@ -1363,7 +1373,17 @@ void Slic3r::GUI::OrcaMCPServer::register_part_tools()
                 {"shape", {{"type", "string"}, {"enum", primitive_shape_names()},
                            {"description", "A primitive, as the object list's submenu offers them; or give file_path"}}},
                 {"file_path", {{"type", "string"},
-                               {"description", "A model file (STL, 3MF, STEP, OBJ, ...) whose meshes become the volume; or give shape"}}}
+                               {"description", "A model file (STL, 3MF, STEP, OBJ, ...) whose meshes become the volume; or give shape"}}},
+                {"size", {{"type", "object"},
+                          {"description", "With shape: the primitive's size in mm, every field of its shape, each above 0 and at most 1000. "
+                                          "cube x, y, z; cylinder, cone, disc diameter, height; sphere diameter; torus inner_diameter, tube_diameter. "
+                                          "Left out: a tenth of the bed's longest side"},
+                          {"properties", {
+                              {"x", {{"type", "number"}}}, {"y", {{"type", "number"}}}, {"z", {{"type", "number"}}},
+                              {"diameter", {{"type", "number"}}}, {"height", {{"type", "number"}}},
+                              {"inner_diameter", {{"type", "number"}}}, {"tube_diameter", {{"type", "number"}}}
+                          }},
+                          {"additionalProperties", false}}}
             }},
             {"required", {"object_id", "type"}}
         },

@@ -534,4 +534,69 @@ std::optional<std::string> name_refusal(const std::string& name)
     return std::nullopt;
 }
 
+// ---- add_volume's primitive size ----
+
+namespace {
+
+std::vector<std::string> primitive_size_field_names(const std::string& shape)
+{
+    if (shape == "cube")
+        return {"x", "y", "z"};
+    if (shape == "cylinder" || shape == "cone" || shape == "disc")
+        return {"diameter", "height"};
+    if (shape == "sphere")
+        return {"diameter"};
+    if (shape == "torus")
+        return {"inner_diameter", "tube_diameter"};
+    return {};
+}
+
+std::string joined_names(const std::vector<std::string>& names)
+{
+    std::string text;
+    for (const std::string& name : names)
+        text += (text.empty() ? "" : ", ") + name;
+    return text;
+}
+
+constexpr double max_primitive_size_mm = 1000.;
+
+} // namespace
+
+PrimitiveSize primitive_size_values(const std::string& shape, const nlohmann::json& size)
+{
+    PrimitiveSize           result;
+    const auto              names = primitive_size_field_names(shape);
+    const std::string       takes = "a " + shape + "'s size takes " + joined_names(names);
+    if (names.empty()) {
+        result.refusal = "size is for a primitive shape: cube, cylinder, sphere, cone, disc or torus";
+        return result;
+    }
+    if (!size.is_object()) {
+        result.refusal = "size must be an object; " + takes;
+        return result;
+    }
+    for (const auto& [key, value] : size.items())
+        if (std::find(names.begin(), names.end(), key) == names.end()) {
+            result.refusal = "size has no field \"" + key + "\" for a " + shape + "; " + takes;
+            return result;
+        }
+    for (const std::string& name : names) {
+        if (!size.contains(name)) {
+            result.refusal = "size is missing " + name + "; " + takes + ", all required";
+            result.values.clear();
+            return result;
+        }
+        const nlohmann::json& value = size.at(name);
+        const double          mm    = value.is_number() ? value.get<double>() : 0.;
+        if (!value.is_number() || !std::isfinite(mm) || mm <= 0. || mm > max_primitive_size_mm) {
+            result.refusal = "size." + name + " must be a number above 0 and at most " + std::to_string(int(max_primitive_size_mm)) + " mm";
+            result.values.clear();
+            return result;
+        }
+        result.values.push_back(mm);
+    }
+    return result;
+}
+
 }}} // namespace Slic3r::GUI::OrcaMCP

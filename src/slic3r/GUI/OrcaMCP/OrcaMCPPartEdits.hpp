@@ -214,5 +214,20 @@ std::optional<std::string> merge_parts_refusal(int object_id, const ModelObject&
 // list refuses (Plater::has_illegal_filename_characters).
 std::optional<std::string> name_refusal(const std::string& name);
 
+// ---- add_volume's primitive size ----
+
+// A primitive's size in the order of the object list's size dialog (ObjectList's primitive_size_fields), or why
+// `size` cannot be one: `refusal` names the fields the shape takes.
+struct PrimitiveSize
+{
+    std::vector<double> values;
+    std::string         refusal; // empty when values holds the size
+};
+
+// `shape` is the tool's name for it (cube, cylinder, sphere, cone, disc, torus). Fields: cube x, y, z; cylinder, cone
+// and disc diameter, height; sphere diameter; torus inner_diameter, tube_diameter. Every field of the shape is
+// required, a number above 0 and at most 1000 mm; a field of another shape is refused.
+PrimitiveSize primitive_size_values(const std::string& shape, const nlohmann::json& size);
+
 }} // namespace GUI::OrcaMCP
 } // namespace Slic3r

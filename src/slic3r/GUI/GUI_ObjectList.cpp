@@ -2629,9 +2629,12 @@ static void apply_saved_primitive_size(std::vector<PrimitiveSizeDialog::Field>& 
 
 // interactive starts from the size the user saved and asks for the size unless the user turned the dialog off;
 // otherwise the primitive gets its built-in default size. nullopt when the user cancels.
-static std::optional<std::vector<double>> primitive_size(const std::string& type_name, bool interactive)
+// A given `size` (MCP's add_volume), in the fields' order, is used as it is, with no dialog and nothing saved.
+static std::optional<std::vector<double>> primitive_size(const std::string& type_name, bool interactive, const std::vector<double>* given = nullptr)
 {
     std::vector<PrimitiveSizeDialog::Field> fields     = primitive_size_fields(type_name);
+    if (given != nullptr && given->size() == fields.size())
+        return *given;
     AppConfig*                              app_config = wxGetApp().app_config;
     if (interactive && !fields.empty()) {
         apply_saved_primitive_size(fields, app_config->get("primitive_size", type_name));
@@ -2689,13 +2692,13 @@ static TriangleMesh create_mesh(const std::string& type_name, const std::vector<
     return mesh;
 }
 
-void ObjectList::load_generic_subobject(const std::string& type_name, const ModelVolumeType type, bool interactive)
+void ObjectList::load_generic_subobject(const std::string& type_name, const ModelVolumeType type, bool interactive, const std::vector<double>* size_values)
 {
     // BBS: single snapshot
     Plater::SingleSnapshot single(wxGetApp().plater());
 
     if (type == ModelVolumeType::INVALID) {
-        load_shape_object(type_name, interactive);
+        load_shape_object(type_name, interactive, size_values);
         return;
     }
 
@@ -2714,7 +2717,7 @@ void ObjectList::load_generic_subobject(const std::string& type_name, const Mode
     if (instance_idx == -1)
         return;
 
-    const std::optional<std::vector<double>> size = primitive_size(type_name, interactive);
+    const std::optional<std::vector<double>> size = primitive_size(type_name, interactive, size_values);
     if (!size)
         return;
 
@@ -2799,7 +2802,7 @@ void ObjectList::switch_to_object_process()
     }
 }
 
-void ObjectList::load_shape_object(const std::string &type_name, bool interactive)
+void ObjectList::load_shape_object(const std::string &type_name, bool interactive, const std::vector<double>* size_values)
 {
     const Selection& selection = wxGetApp().plater()->canvas3D()->get_selection();
     //assert(selection.get_object_idx() == -1); // Add nothing is something is selected on 3DScene
@@ -2810,7 +2813,7 @@ void ObjectList::load_shape_object(const std::string &type_name, bool interactiv
     if (obj_idx < 0)
         return;
 
-    const std::optional<std::vector<double>> size = primitive_size(type_name, interactive);
+    const std::optional<std::vector<double>> size = primitive_size(type_name, interactive, size_values);
     if (!size)
         return;
 
