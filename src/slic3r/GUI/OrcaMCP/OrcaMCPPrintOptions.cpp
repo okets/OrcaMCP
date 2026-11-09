@@ -161,9 +161,9 @@ nlohmann::json print_options_json(const PrintOptionChoices& choices, const GateF
             {"printer_model", facts.printer_model.empty() ? nlohmann::json(nullptr) : nlohmann::json(facts.printer_model)}};
 }
 
-bool default_use_material_station(bool printer_has_station, bool manual_filament_change)
+bool default_use_material_station(bool printer_has_station, bool manual_filament_change, bool mappings_given)
 {
-    return printer_has_station && !manual_filament_change;
+    return printer_has_station && (mappings_given || !manual_filament_change);
 }
 
 }}} // namespace Slic3r::GUI::OrcaMCP

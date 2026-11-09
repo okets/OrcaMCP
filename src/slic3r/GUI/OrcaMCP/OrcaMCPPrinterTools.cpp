@@ -495,7 +495,7 @@ void OrcaMCPServer::register_printer_tools()
                 {"use_material_station", {
                     {"type", "boolean"},
                     {"description", "Print from the material station (default: true when the printer reports "
-                                    "one, unless the printer profile uses manual filament change). Direct sends to a Flashforge host with local-API credentials only; "
+                                    "one, unless the printer profile uses manual filament change; a non-empty material_mappings implies true). Direct sends to a Flashforge host with local-API credentials only; "
                                     "true is refused anywhere else."}
                 }},
                 {"material_mappings", {
@@ -634,8 +634,9 @@ void OrcaMCPServer::register_printer_tools()
                 if (const auto busy = printer_busy_refusal(status))
                     return error_response(*busy);
 
-                const bool use_material_station = params.value("use_material_station", default_use_material_station(status.has_material_station, manual_filament_change));
-                if (status.has_material_station && manual_filament_change && !params.contains("use_material_station"))
+                const bool use_material_station = params.value("use_material_station", default_use_material_station(status.has_material_station, manual_filament_change,
+                                                                                                                  !requested_mappings.empty()));
+                if (!use_material_station && status.has_material_station && manual_filament_change && !params.contains("use_material_station"))
                     info_messages.push_back("Material station not used: the printer profile uses manual filament change "
                                             "(pass use_material_station: true to use it).");
                 if (use_material_station) {

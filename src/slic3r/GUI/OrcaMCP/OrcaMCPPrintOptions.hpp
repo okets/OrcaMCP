@@ -106,6 +106,8 @@ nlohmann::json print_options_json(const PrintOptionChoices& choices, const GateF
 // Whether a send uses the material station when the caller said nothing: when the printer reports one,
 // unless the printer profile changes filament by hand (manual_filament_change), as the Flashforge send
 // dialog starts it.
-bool default_use_material_station(bool printer_has_station, bool manual_filament_change);
+// A non-empty material_mappings list asks for the station, so it implies true: the mapping would
+// otherwise be dropped and the print would start without it.
+bool default_use_material_station(bool printer_has_station, bool manual_filament_change, bool mappings_given = false);
 
 }}} // namespace Slic3r::GUI::OrcaMCP

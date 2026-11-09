@@ -282,4 +282,9 @@ TEST_CASE("The material station defaults off for a profile with manual filament 
     CHECK(default_use_material_station(true, false) == true);
     CHECK(default_use_material_station(false, false) == false);
     CHECK(default_use_material_station(false, true) == false);
+    // A mapping asks for the station even on a manual-filament-change profile; no station, no use.
+    CHECK(default_use_material_station(true, true, true) == true);
+    CHECK(default_use_material_station(true, false, true) == true);
+    CHECK(default_use_material_station(false, true, true) == false);
+    CHECK(default_use_material_station(true, true, false) == false);
 }
