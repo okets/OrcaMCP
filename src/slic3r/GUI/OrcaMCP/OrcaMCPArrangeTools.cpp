@@ -435,14 +435,15 @@ nlohmann::json order_objects_on_main_thread(ObjectOrder order, const std::string
     if (const auto refusal = plate_index_error(target, plates.get_plate_count()))
         return error_response(*refusal);
     const std::vector<int> covered = plates_to_order(plates, all_plates, target);
+    // A plate named by plate_index is made current first, though its objects may already be in order.
+    if (plate_index && !all_plates)
+        make_plate_current(*plater, target);
 
     nlohmann::json answer = {{"status", "success"}, {"by", by}, {"descending", descending}, {"changed", false}};
     std::string    closed_tool;
     if (!plates_in_order(*plater, covered, order, descending)) {
         if (const auto refusal = close_toolbar_tool(*plater, closed_tool))
             return *refusal;
-        if (!all_plates)
-            make_plate_current(*plater, target);
         const std::vector<ObjectID> before = object_order(plater->model());
         McpDialogSuppressionGuard   guard;
         if (!run_order_objects(*plater, covered, order, all_plates, descending))

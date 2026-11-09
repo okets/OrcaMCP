@@ -223,7 +223,7 @@
     },
     {
       "category": "Models",
-      "description": "Add a primitive (cube, cylinder, sphere, cone, disc or torus) to the scene as a new object, as the canvas's Add Primitive does. It is sized a tenth of the bed's longest side, or by size (mm, every field of the shape: cube x, y, z; cylinder, cone, disc diameter, height; sphere diameter; torus inner_diameter, tube_diameter), and placed as the canvas places it. The answer: the new object (object_id, the last one, and its description). One undo step. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange, orient or bed fill runs. add_volume adds a primitive to an object instead.",
+      "description": "Add a primitive (cube, cylinder, sphere, cone, disc or torus) to the scene as a new object, as the canvas's Add Primitive does. It is sized the app's default for its shape, or by size (mm, every field of the shape: cube x, y, z; cylinder, cone, disc diameter, height; sphere diameter; torus inner_diameter, tube_diameter), and placed as the canvas places it. The answer: the new object (object_id, the last one, and its description). One undo step. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange, orient or bed fill runs. add_volume adds a primitive to an object instead.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -241,7 +241,7 @@
           },
           "size": {
             "additionalProperties": false,
-            "description": "With shape: the primitive's size in mm, every field of its shape, each above 0 and at most 1000. cube x, y, z; cylinder, cone, disc diameter, height; sphere diameter; torus inner_diameter, tube_diameter. Left out: a tenth of the bed's longest side",
+            "description": "With shape: the primitive's size in mm, every field of its shape, each above 0 and at most 1000. cube x, y, z; cylinder, cone, disc diameter, height; sphere diameter; torus inner_diameter, tube_diameter. Left out: the app's default size for the shape",
             "properties": {
               "diameter": {
                 "type": "number"
@@ -278,7 +278,7 @@
     },
     {
       "category": "Models",
-      "description": "Add a volume to an object, as the object list's Add Part / Negative Part / Modifier / Support Blocker / Support Enforcer does: a primitive (shape) or a model file (file_path). A primitive is sized a tenth of the bed's longest side, or by size (mm, every field of the shape: cube x, y, z; cylinder, cone, disc diameter, height; sphere diameter; torus inner_diameter, tube_diameter), and stands beside the object at its right-front corner, on the bed: move_object and scale_object with volume_id place and size it. As the object list does, adding a primitive moves the object's rotation and scale from its instance into its volumes (instance_transform_moved_to_volumes says when). A file's volume keeps the position its file gives it. A modifier changes only the settings set_object_config with volume_id gives it. The answer: the new volume (volume_id, box and position in plate mm) and every volume. One undo step. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange, orient or bed fill runs.",
+      "description": "Add a volume to an object, as the object list's Add Part / Negative Part / Modifier / Support Blocker / Support Enforcer does: a primitive (shape) or a model file (file_path). A primitive is sized the app's default for its shape, or by size (mm, every field of the shape: cube x, y, z; cylinder, cone, disc diameter, height; sphere diameter; torus inner_diameter, tube_diameter), and stands beside the object at its right-front corner, on the bed: move_object and scale_object with volume_id place and size it. As the object list does, adding a primitive moves the object's rotation and scale from its instance into its volumes (instance_transform_moved_to_volumes says when). A file's volume keeps the position its file gives it. A modifier changes only the settings set_object_config with volume_id gives it. The answer: the new volume (volume_id, box and position in plate mm) and every volume. One undo step. An open toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange, orient or bed fill runs.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -305,7 +305,7 @@
           },
           "size": {
             "additionalProperties": false,
-            "description": "With shape: the primitive's size in mm, every field of its shape, each above 0 and at most 1000. cube x, y, z; cylinder, cone, disc diameter, height; sphere diameter; torus inner_diameter, tube_diameter. Left out: a tenth of the bed's longest side",
+            "description": "With shape: the primitive's size in mm, every field of its shape, each above 0 and at most 1000. cube x, y, z; cylinder, cone, disc diameter, height; sphere diameter; torus inner_diameter, tube_diameter. Left out: the app's default size for the shape",
             "properties": {
               "diameter": {
                 "type": "number"
@@ -1896,7 +1896,7 @@
             "type": "boolean"
           },
           "multipart": {
-            "description": "When the file holds several objects at different heights, the slicer asks whether they are one object's parts. merge (default, as the GUI suggests) joins them into one object named after the file; separate keeps each as its own object. No other file is affected.",
+            "description": "When the file holds several objects at different heights, the slicer asks whether they are one object's parts. merge (default, as the GUI suggests) joins them into one object named after the file; separate keeps each as its own object. With import_options.load_as: separate_objects the default is separate, and merge is refused. No other file is affected.",
             "enum": [
               "merge",
               "separate"
@@ -3773,7 +3773,7 @@
             "type": "boolean"
           },
           "use_material_station": {
-            "description": "Print from the material station (default: true when the printer reports one, unless the printer profile uses manual filament change). Direct sends to a Flashforge host with local-API credentials only; true is refused anywhere else.",
+            "description": "Print from the material station (default: true when the printer reports one, unless the printer profile uses manual filament change; a non-empty material_mappings implies true). Direct sends to a Flashforge host with local-API credentials only; true is refused anywhere else.",
             "type": "boolean"
           }
         },

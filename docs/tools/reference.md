@@ -238,7 +238,7 @@ and a stray shell; the object list's warning icon shows for it):
 Each plate's `print_order` is the order a by-object plate prints its instances in, `[{object_id, instance_id}]`,
 as the slicer's clearance check works it out: an object may print later than its place in the object list, to
 avoid a collision. `print_order_differs` says it is not the object list's order, and `print_order_note` carries
-the app's words naming what moves. Only the current plate has one (its Print takes the pending settings first);
+the app's words naming what moves, or, when the clearance check fails (objects too close), its error. Only the current plate has one (its Print takes the pending settings first);
 any other plate, and a plate not printed by object, has `null` in all three and `print_order_unknown` saying why
 (`"not by object"`, `"not the current plate"`, `"the pipeline is busy: ..."`,
 `"the plate has nothing the slicer prints"`, `"the plate's settings are not applied to the slicer yet"`).
@@ -660,7 +660,7 @@ G-code preview, model files are refused too; `new_project` returns to an editabl
 |-----------|------|----------|-------------|
 | `file_path` | string | Yes | Path to STL, OBJ, 3MF, STEP, AMF, SVG or DRC file |
 | `include_preview` | boolean | No | Return turntable preview path |
-| `multipart` | string | No | `merge` (default) or `separate`. When the file holds several objects at different heights, the slicer asks whether they are one object's parts: `merge` joins them into one object named after the file (as the GUI suggests), `separate` keeps each as its own object. Nothing splits a merged object again, so choose here. |
+| `multipart` | string | No | `merge` (default) or `separate`; with `import_options.load_as: separate_objects` the default is `separate` (an `info_messages` line says so) and an explicit `merge` is refused. When the file holds several objects at different heights, the slicer asks whether they are one object's parts: `merge` joins them into one object named after the file (as the GUI suggests), `separate` keeps each as its own object. Nothing splits a merged object again, so choose here. |
 | `import_options` | object | No | Choices for a STEP, AMF or CAD 3MF import (a 3MF without project settings), in place of the user's saved ones; nothing is saved. Refused, before anything loads, for any other file and for a 3MF project. Keys: `keep_names`, `sort_names` (booleans), `load_as` (`assembly`, `single_object`, `separate_objects`; STEP and AMF only), `name_cleanup` (`remove` or `replace`) and `replacement` (the text for each character a name cannot hold; needs `name_cleanup: replace`). What it leaves out takes the saved choice; a STEP's tessellation always keeps the saved values. `info_messages` says whether "the call's options" or "the saved options" answered. |
 
 **Example:**
@@ -1058,7 +1058,7 @@ Add a primitive to the scene as a new object, as the canvas's Add Primitive does
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `shape` | string | Yes | `cube`, `cylinder`, `sphere`, `cone`, `disc`, `torus` |
-| `size` | object | No | The primitive's size in mm, every field of its shape (as `add_volume`'s `size`): cube `x`, `y`, `z`; cylinder, cone, disc `diameter`, `height`; sphere `diameter`; torus `inner_diameter`, `tube_diameter`. Left out: a tenth of the bed's longest side |
+| `size` | object | No | The primitive's size in mm, every field of its shape (as `add_volume`'s `size`): cube `x`, `y`, `z`; cylinder, cone, disc `diameter`, `height`; sphere `diameter`; torus `inner_diameter`, `tube_diameter`. Left out: the app's default size for the shape |
 
 The new object is the scene's last one, placed as the canvas places it. The answer: `object_id` and
 `object` (the object's description, as `get_scene_info` gives it). One undo step (the list's own). An
@@ -1083,7 +1083,7 @@ Support Blocker / Add Support Enforcer does.
 | `shape` | string | One of the two | A primitive: `cube`, `cylinder`, `sphere`, `cone`, `disc`, `torus` (`ObjectList::load_generic_subobject`) |
 | `file_path` | string | One of the two | A model file whose meshes become the volume (the list's Load..., `ObjectList::load_subobject`; its file chooser is answered with this path) |
 
-- **A primitive** is sized a tenth of the bed's longest side and stands beside the object at its
+- **A primitive** is sized the app's default for its shape (`primitive_size_fields`' own: a tenth of the bed's longest side for most, a thinner disc, a torus of its own proportions) and stands beside the object at its
   right-front corner, on the bed: `next_steps` points at `move_object` (and `scale_object`) with
   `volume_id`. As the object list does, it moves the object's rotation and scale from its instance into
   its volumes: `instance_transform_moved_to_volumes` says so when there were any, and `rotation_degrees`
@@ -4941,6 +4941,7 @@ nothing to suggest has no `next_steps`.
 | | `get_print_estimate` with the `plate_index` of a sliced plate (the selected one when it has a result) | `already_sliced` |
 | `slice_all`, `export_gcode` | `get_presets` with `installed: false, type: printer` | `no_printer` (for `export_gcode`, its error) with no printer installed: its answer lists the makers (`vendors_not_installed`), and called again with `vendor` and `name_contains` the user's printer's presets, which `install_presets` installs |
 | | `select_preset` with `type: printer` and an installed printer | the built-in default printer is selected while one is installed |
+| `order_objects` | `get_scene_info` | the order changed (`changed: true`): read the plates' new object ids and order |
 | `export_gcode` | `wait_for_slice` | `export_started`: the file is still being written, past the call's own wait |
 | `cancel_slice` | `wait_for_slice` | the cancelled slice is still stopping: its completion is not taken in yet |
 | `add_layer_gcode`, `delete_layer_gcode` | `slice_all` | the call changed the plate's layer G-code, so it lost its slice |

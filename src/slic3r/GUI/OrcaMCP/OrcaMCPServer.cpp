@@ -1158,11 +1158,15 @@ void OrcaMCPServer::register_builtin_tools()
                 const std::vector<MeshHealth> mesh_health = model_mesh_health(wxGetApp().plater()->model());
                 // The current plate's print_order is read from its Print, which a settings change made just before
                 // this call has not reached yet.
+                std::vector<std::string> pending_messages;
                 {
                     McpDialogSuppressionGuard suppression_guard;
                     apply_pending_settings(*wxGetApp().plater(), suppression_guard);
+                    pending_messages = suppression_guard.messages();
                 }
                 nlohmann::json result = OrcaMCPPlateUtils::GetCurrentProject(with_features, mesh_health);
+                if (!pending_messages.empty())
+                    result["info_messages"] = pending_messages;
 
                 add_turntable_preview_if_requested(result, include_preview, preview_views, preview_resolution);
                 if (result.contains("preview_path"))
@@ -3749,7 +3753,8 @@ void OrcaMCPServer::register_builtin_tools()
                     {"description", "When the file holds several objects at different heights, the slicer asks "
                                     "whether they are one object's parts. merge (default, as the GUI suggests) "
                                     "joins them into one object named after the file; separate keeps each as its "
-                                    "own object. No other file is affected."}
+                                    "own object. With import_options.load_as: separate_objects the default is "
+                                    "separate, and merge is refused. No other file is affected."}
                 }}
             }},
             {"required", {"file_path"}}
@@ -3757,10 +3762,11 @@ void OrcaMCPServer::register_builtin_tools()
         [](const nlohmann::json& params) -> nlohmann::json {
             std::string file_path = params["file_path"];
             bool include_preview = params.value("include_preview", false);
-            const nlohmann::json multipart = params.value("multipart", nlohmann::json("merge"));
-            if (multipart != "merge" && multipart != "separate")
+            if (params.contains("multipart") && !params.at("multipart").is_string())
                 return nlohmann::json{{"status", "error"}, {"message", "multipart must be one of: merge, separate"}};
-            const int multipart_answer = multipart == "merge" ? wxID_YES : wxID_NO;
+            std::optional<std::string> multipart_given;
+            if (params.contains("multipart"))
+                multipart_given = params.at("multipart").get<std::string>();
             // import_options is read and checked against the file before anything is loaded.
             const GeometryImportRead import_read = read_geometry_import_request(params);
             if (!import_read.refusal.empty())
@@ -3772,7 +3778,12 @@ void OrcaMCPServer::register_builtin_tools()
                     return nlohmann::json{{"status", "error"}, {"message", *refusal}};
             }
             const std::optional<GeometryImportRequest> import_request = import_read.request;
-            return run_on_main_thread([file_path, include_preview, multipart_answer, import_request]() {
+            const MultipartChoice multipart_choice = choose_multipart(multipart_given, import_request);
+            if (!multipart_choice.refusal.empty())
+                return nlohmann::json{{"status", "error"}, {"message", multipart_choice.refusal}};
+            const int multipart_answer = multipart_choice.answer == "merge" ? wxID_YES : wxID_NO;
+            const std::string multipart_note = multipart_choice.note;
+            return run_on_main_thread([file_path, include_preview, multipart_answer, multipart_note, import_request]() {
                 Plater* plater = wxGetApp().plater();
 
                 // A G-code file or sliced bundle replaces the whole scene; objects cannot be added to
@@ -3796,6 +3807,8 @@ void OrcaMCPServer::register_builtin_tools()
                 const bool loaded = plater->load_files(files);
                 // The error dialogs the load raised (show_error, captured) are reported apart.
                 auto info_messages = suppression_guard.notices();
+                if (!multipart_note.empty() && suppression_guard.prompt_asked(MCP_PROMPT_MULTIPART))
+                    info_messages.push_back(multipart_note);
 
                 // load_files reports true for a 3MF or ZIP that added nothing (a suppressed ZIP
                 // picker, a file without geometry) and for any G-code, so success is judged by what

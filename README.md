@@ -248,7 +248,7 @@ for each are in the [tools reference](docs/tools/reference.md).
 | Category | Tools |
 |----------|-------|
 | **Scene** | `export_3mf`, `export_stl`, `get_scene_info`, `load_project`, `new_project`, `save_project` |
-| **Models** | `add_volume`, `arrange_objects`, `assemble_objects`, `auto_orient`, `get_mesh_health`, `get_object_components`, `get_object_info`, `invalidate_cut_info`, `load_model`, `merge_parts`, `reload_from_disk`, `rename_object`, `repair_mesh`, `replace_volume_with_file`, `set_object_printable`, `set_volume_type`, `split_object` |
+| **Models** | `add_primitive_object`, `add_volume`, `arrange_objects`, `assemble_objects`, `auto_orient`, `get_mesh_health`, `get_object_components`, `get_object_info`, `invalidate_cut_info`, `load_model`, `merge_parts`, `reload_from_disk`, `rename_object`, `repair_mesh`, `replace_volume_with_file`, `set_object_printable`, `set_volume_type`, `split_object` |
 | **Transforms** | `clone_object`, `cut_object`, `delete_object`, `drop_to_bed`, `fill_bed_with_instances`, `flatten_object`, `mirror_object`, `move_object`, `rotate_object`, `scale_object`, `set_instance_count`, `transform_objects` |
 | **Plates** | `add_plate`, `delete_plate`, `order_objects`, `select_plate`, `set_plate_settings`, `set_prime_tower_position` |
 | **Config** | `apply_config`, `clone_preset`, `delete_preset`, `get_config_values`, `get_edited_presets`, `get_presets`, `get_valid_config_keys`, `install_presets`, `reset_preset`, `save_preset`, `select_preset` |

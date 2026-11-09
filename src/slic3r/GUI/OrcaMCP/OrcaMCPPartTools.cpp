@@ -927,7 +927,7 @@ nlohmann::json primitive_size_schema()
     return {{"type", "object"},
             {"description", "With shape: the primitive's size in mm, every field of its shape, each above 0 and at most 1000. "
                             "cube x, y, z; cylinder, cone, disc diameter, height; sphere diameter; torus inner_diameter, tube_diameter. "
-                            "Left out: a tenth of the bed's longest side"},
+                            "Left out: the app's default size for the shape"},
             {"properties", {
                 {"x", {{"type", "number"}}}, {"y", {{"type", "number"}}}, {"z", {{"type", "number"}}},
                 {"diameter", {{"type", "number"}}}, {"height", {{"type", "number"}}},
@@ -1423,8 +1423,8 @@ void Slic3r::GUI::OrcaMCPServer::register_part_tools()
         ToolCategory::Models,
         "Add a part, modifier or support volume",
         "Add a volume to an object, as the object list's Add Part / Negative Part / Modifier / Support Blocker / Support "
-        "Enforcer does: a primitive (shape) or a model file (file_path). A primitive is sized a tenth of the bed's longest "
-        "side, or by size (mm, every field of the shape: cube x, y, z; cylinder, cone, disc diameter, height; sphere diameter; "
+        "Enforcer does: a primitive (shape) or a model file (file_path). A primitive is sized the app's default for its shape, "
+        "or by size (mm, every field of the shape: cube x, y, z; cylinder, cone, disc diameter, height; sphere diameter; "
         "torus inner_diameter, tube_diameter), and stands beside the object at its right-front corner, on the bed: move_object and scale_object with "
         "volume_id place and size it. As the object list does, adding a primitive moves the object's rotation and scale "
         "from its instance into its volumes (instance_transform_moved_to_volumes says when). A file's volume keeps the "
@@ -1454,7 +1454,7 @@ void Slic3r::GUI::OrcaMCPServer::register_part_tools()
         ToolCategory::Models,
         "Add a cube, cylinder, ... as an object",
         "Add a primitive (cube, cylinder, sphere, cone, disc or torus) to the scene as a new object, as the canvas's Add "
-        "Primitive does. It is sized a tenth of the bed's longest side, or by size (mm, every field of the shape: cube x, y, "
+        "Primitive does. It is sized the app's default for its shape, or by size (mm, every field of the shape: cube x, y, "
         "z; cylinder, cone, disc diameter, height; sphere diameter; torus inner_diameter, tube_diameter), and placed as the "
         "canvas places it. The answer: the new object (object_id, the last one, and its description). One undo step. An open "
         "toolbar tool is closed first (closed_toolbar_tool). Refused while an arrange, orient or bed fill runs. add_volume "

@@ -2146,14 +2146,16 @@ nlohmann::json plate_print_order_json(PartPlate& plate, bool is_current, bool by
         return OrcaMCP::print_order_unknown_json("the plate's settings are not applied to the slicer yet");
 
     StringObjectException warning;
-    Print::sequential_print_clearance_valid(*print, nullptr, nullptr, &warning);
+    const StringObjectException clearance = Print::sequential_print_clearance_valid(*print, nullptr, nullptr, &warning);
+    // An error (objects too close, say) is the app's words for why the plate cannot print by object as laid out.
+    const std::string note = clearance.string.empty() ? warning.string : (warning.string.empty() ? clearance.string : clearance.string + " " + warning.string);
 
     std::vector<OrcaMCP::PrintedInstance> positions;
     for (const PrintObject* print_object : print->objects())
         for (const PrintInstance& instance : print_object->instances())
             positions.push_back({print_object->model_object()->id(), instance.model_instance->id(),
                                  instance.model_instance->arrange_order});
-    return OrcaMCP::print_order_json(positions, plater->model(), warning.string);
+    return OrcaMCP::print_order_json(positions, plater->model(), note);
 }
 
 } // namespace

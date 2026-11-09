@@ -39,7 +39,7 @@ struct PrintedInstance
 // its 1-based print position (ModelInstance::arrange_order, written by Print::sequential_print_clearance_valid),
 // `warning` upstream's words for objects printed later than their place in the object list ("" when none).
 // Gives {print_order: [{object_id, instance_id}] in print order, print_order_differs (the order is not the
-// object list's, object then instance), print_order_note (the warning, null when empty), print_order_unknown: null}.
+// object list's, object then instance), print_order_note (the warning, or the clearance error; null when empty), print_order_unknown: null}.
 // An instance of no object of `model` is left out.
 nlohmann::json print_order_json(const std::vector<PrintedInstance>& by_position, const Model& model,
                                 const std::string& warning);
