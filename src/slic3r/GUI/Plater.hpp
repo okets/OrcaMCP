@@ -885,6 +885,8 @@ public:
     bool can_delete_plate() const;
     // Undoable rename; use for user edits instead of PartPlate::set_plate_name().
     void rename_plate(int plate_index, const std::string& name);
+    // What follows a plate's new name: a G-code export that uses {plate_name} is refreshed. MCP's set_plate_settings calls it too.
+    void refresh_after_plate_rename(int plate_index, bool slice_was_valid);
     bool can_increase_instances() const;
     bool can_decrease_instances() const;
     bool can_set_instance_to_object() const;

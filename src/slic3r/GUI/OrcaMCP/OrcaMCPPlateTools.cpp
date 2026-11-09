@@ -188,8 +188,13 @@ nlohmann::json set_plate_settings_on_main_thread(const nlohmann::json& params)
                 apply_dialog_settings(*plater, plate, *request, changes);
                 mark_plate_unsliced(plates, plate_index);
             }
-            if (request->name && *request->name != before.name)
+            if (request->name && *request->name != before.name) {
+                const bool slice_was_valid = plate.is_slice_result_valid();
                 plate.set_plate_name(*request->name);
+                plater->refresh_after_plate_rename(plate_index, slice_was_valid);
+                if (slice_was_valid && !plate.is_slice_result_valid())
+                    answer["slice_invalidated"] = true;
+            }
             if (request->locked && *request->locked != before.locked)
                 plates.lock_plate(plate_index, *request->locked);
             if (!changes_slicing(changes))

@@ -1982,6 +1982,9 @@ which changed. `get_scene_info` reports both for every plate.
   `"global"` leave those settings on the objects; `next_steps` then names `reset_object_config` for
   them. On a plate that follows a vase turned on in the print settings, `"on"` changes nothing (the
   plate keeps following it; `spiral_vase_note`).
+- **Name:** a rename runs what the plate's own rename runs after the name (`Plater::refresh_after_plate_rename`): when the
+  plate's slice was valid and the new name invalidates it (a G-code export that uses `{plate_name}`), the answer carries
+  `slice_invalidated: true` and, on the current plate, the re-export starts.
 - **Refused, before anything changes:** a change to a plate's own bed type on a printer that is not
   Bambu Lab's (the dialog greys it out there; the plate follows the global bed type, `apply_config`'s
   project `curr_bed_type`), a bed type the printer does not offer, a filament order that does not list

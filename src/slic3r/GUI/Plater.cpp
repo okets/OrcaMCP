@@ -25095,8 +25095,17 @@ void Plater::rename_plate(int plate_index, const std::string& name)
     const bool was_valid = plate->is_slice_result_valid();
     plate->set_plate_name(name);
 
+    refresh_after_plate_rename(plate_index, was_valid);
+}
+
+void Plater::refresh_after_plate_rename(int plate_index, bool slice_was_valid)
+{
+    PartPlate* plate = p->partplate_list.get_plate(plate_index);
+    if (plate == nullptr)
+        return;
+
     // The rename invalidated a G-code export that uses {plate_name}: refresh the current plate.
-    if (was_valid && !plate->is_slice_result_valid() && plate_index == p->partplate_list.get_curr_plate_index()) {
+    if (slice_was_valid && !plate->is_slice_result_valid() && plate_index == p->partplate_list.get_curr_plate_index()) {
         p->main_frame->update_slice_print_status(MainFrame::eEventPlateUpdate, true);
         // Start one re-export: auto-reslice would cancel a background run started here.
         if (p->background_processing_enabled())
