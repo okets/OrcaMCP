@@ -39,6 +39,8 @@
 #include "slic3r/GUI/MainFrame.hpp"
 #include "slic3r/GUI/GUI_ObjectList.hpp"
 #include <wx/base64.h>
+#include <wx/mstream.h>
+#include <wx/txtstrm.h>
 #include "slic3r/GUI/DeviceManager.hpp"
 #include "slic3r/GUI/DeviceCore/DevManager.h"
 #include "slic3r/GUI/GLCanvas3D.hpp"
