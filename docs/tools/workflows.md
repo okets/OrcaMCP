@@ -430,6 +430,15 @@ drops texture paint; the answer's `texture_changes` says what was lost.
 4. send_to_printer        Upload AND START the print (start_print: false only uploads)
 ```
 
+To open the existing native machine-select **Print plate** dialog for the user to review,
+call `send_to_printer` with `direct: false` and `dialog_mode: "print_plate"`.
+This schedules only the dialog; it does not upload or start a print. It requires
+the current plate's valid slice, passing G-code checks, idle slicing/UI jobs,
+no open modal dialog, and a printer whose native Print route uses machine select.
+`all_plates: true` is refused. Check `get_scene_info.open_dialogs` after the response
+to confirm it opened: readiness is checked again on the GUI thread before opening.
+Omitting `dialog_mode` preserves the existing send/storage dialog behavior.
+
 **For OctoPrint/Klipper:**
 ```json
 // Check printer is configured
