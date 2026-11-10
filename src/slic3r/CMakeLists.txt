@@ -564,6 +564,17 @@ set(SLIC3R_GUI_SOURCES
     GUI/OrcaMCP/OrcaMCPSourceFiles.hpp
     GUI/OrcaMCP/OrcaMCPSourceFiles.cpp
     GUI/OrcaMCP/OrcaMCPSourceFileTools.cpp
+    GUI/OrcaMCP/OrcaMCPDigest.hpp
+    GUI/OrcaMCP/OrcaMCPMoveFrame.hpp
+    GUI/OrcaMCP/OrcaMCPMoveFrame.cpp
+    GUI/OrcaMCP/OrcaMCPPlateAnalysis.hpp
+    GUI/OrcaMCP/OrcaMCPPlateAnalysis.cpp
+    GUI/OrcaMCP/OrcaMCPPhysicalSegments.hpp
+    GUI/OrcaMCP/OrcaMCPPhysicalSegments.cpp
+    GUI/OrcaMCP/OrcaMCPResultIdentity.hpp
+    GUI/OrcaMCP/OrcaMCPResultIdentity.cpp
+    GUI/OrcaMCP/OrcaMCPLayerGeometry.hpp
+    GUI/OrcaMCP/OrcaMCPLayerGeometry.cpp
     GUI/OrcaMCP/OrcaMCPLayerPlan.hpp
     GUI/OrcaMCP/OrcaMCPLayerPlan.cpp
     GUI/OrcaMCP/OrcaMCPPresetConfigUtils.hpp
