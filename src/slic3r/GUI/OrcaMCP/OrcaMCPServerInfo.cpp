@@ -169,7 +169,8 @@ json suggested_flows()
                 {"step4", "4. Send to printer"},
                 {"tool4", "send_to_printer"},
                 {"example4", R"({"start_print": false})"},
-                {"note3", "On a print host a bare call uploads AND STARTS the print, with no dialog. Pass start_print=false to upload only, or direct=false to open the send dialog for the user."}
+                {"note3", "On a print host a bare call uploads AND STARTS the print, with no dialog. Pass start_print=false to upload only, or direct=false to open the send dialog for the user."},
+                {"print_plate_dialog", "Use direct=false and dialog_mode=print_plate to schedule the native machine-select Print plate dialog for the user to review the current valid sliced plate only. No upload or print starts; confirm opening with get_scene_info.open_dialogs."}
             }},
             {"octoprint_note", "For print hosts (Flashforge, Moonraker/Klipper, OctoPrint, ...): print_host must be configured in the printer preset. The upload runs without a dialog unless direct=false."},
             {"bambu_note", "For Bambu: use select_printer with dev_id first if needed. Dialog shows printer selection."}

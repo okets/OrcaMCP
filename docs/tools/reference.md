@@ -4692,6 +4692,7 @@ look at a dialog or to test a refusal.
 | `allow_material_mismatch` | boolean | No | Send even when a mapped slot holds another material family than the filament it feeds (default `false`); see Material mismatch below. As `use_material_station`, a Flashforge with local-API credentials only |
 | `file_name` | string | No | Name to store the upload under. Direct sends only |
 | `all_plates` | boolean | No | Dialog sends only (`direct: false`): send every plate |
+| `dialog_mode` | string | No | `send` (default): the send or storage dialog, as before. `print_plate`: only with `direct: false` and without `all_plates`, open the native machine-select **Print plate** dialog for the current sliced plate and leave the send and start to the user. Nothing is uploaded or started; the plate must hold a valid slice that passed its G-code check, no slice or UI job may be running, no modal dialog may be open, and the printer's native Print route must use machine select. Confirm it opened with `get_scene_info`'s `open_dialogs` |
 
 Refused, as the GUI's Print and Send buttons are off, when a plate it would send failed the check
 its slice ran on its G-code (`get_slicing_status`'s `plates[].gcode_check`): "The send did not

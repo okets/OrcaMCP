@@ -6,12 +6,16 @@
 #include "OrcaMCPPrinterControl.hpp"
 #include "OrcaMCPPrinterUtils.hpp"
 #include "OrcaMCPPrintOptions.hpp"
+#include "OrcaMCPPrintDialog.hpp"
+#include "OrcaMCPQuit.hpp"
 #include "OrcaMCPProjectMatch.hpp"
 #include "OrcaMCPSliceEstimate.hpp"
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/GUI/Plater.hpp"
+#include "slic3r/GUI/GLToolbar.hpp"
+#include "slic3r/GUI/SendDialogRouting.hpp"
 #include "slic3r/GUI/DeviceManager.hpp"
 #include "slic3r/GUI/DeviceCore/DevManager.h"
 #include "slic3r/GUI/FlashforgeConsoleHandler.hpp"
@@ -117,13 +121,45 @@ std::optional<std::string> gcode_check_send_refusal(GUI::PartPlateList& plates, 
     return std::nullopt;
 }
 
-// send_to_printer with direct=false: hand the send over to the user's own dialog.
-nlohmann::json open_send_dialog(bool all_plates)
+std::optional<std::string> print_plate_dialog_refusal(int expected_plate)
 {
-    return run_on_main_thread([all_plates]() {
+    Plater* plater = wxGetApp().plater();
+    if (!plater || wxGetApp().is_closing())
+        return print_dialog_refusal({false, false, true, false, true, true, true});
+    auto& plates = plater->get_partplate_list();
+    PartPlate* plate = plates.get_curr_plate();
+    if (auto refusal = print_dialog_refusal({true, plater->is_background_process_slicing(),
+            plater->get_ui_job_worker().is_idle() && !plater->is_export_gcode_scheduled(), current_modal_state().anything_open(),
+            plates.get_curr_plate_index() == expected_plate, plate && plate->is_slice_result_valid(),
+            wxGetApp().preset_bundle && wxGetApp().app_config &&
+                choose_send_dialog_for_current_printer() == SendDialogKind::MachineSelect}))
+        return refusal;
+    return gcode_check_send_refusal(plates, expected_plate, expected_plate);
+}
+
+// send_to_printer with direct=false: hand the send over to the user's own dialog.
+nlohmann::json open_send_dialog(bool all_plates, bool print_plate = false)
+{
+    return run_on_main_thread([all_plates, print_plate]() {
         Plater* plater = wxGetApp().plater();
         if (!plater)
             return error_response("Plater not available");
+
+        if (print_plate) {
+            const int plate_idx = plater->get_partplate_list().get_curr_plate_index();
+            if (auto refusal = print_plate_dialog_refusal(plate_idx))
+                return error_response(*refusal);
+            wxGetApp().CallAfter([plate_idx]() {
+                dispatch_print_dialog_if_ready([plate_idx] { return print_plate_dialog_refusal(plate_idx); }, [] {
+                    SimpleEvent event(EVT_GLTOOLBAR_PRINT_PLATE);
+                    wxGetApp().plater()->GetEventHandler()->ProcessEvent(event);
+                });
+            });
+            return nlohmann::json{{"status", "dialog_scheduled"}, {"method", "print_plate"},
+                {"plate_index", plate_idx},
+                {"note", "The native Print plate dialog is scheduled for the user to review. No upload or print is initiated. "
+                         "Read get_scene_info.open_dialogs to confirm it opened; readiness is checked again before opening."}};
+        }
 
         // Check if slicing is complete
         if (plater->is_background_process_slicing())
@@ -443,6 +479,8 @@ void OrcaMCPServer::register_printer_tools()
         "without any dialog: on a Flashforge printer with a material station the project's filaments are "
         "mapped onto the loaded slots automatically (pass material_mappings to choose the slots "
         "yourself). Pass direct=false to open OrcaSlicer's send dialog and leave the send to the user. "
+        "With direct=false, dialog_mode=print_plate opens the existing native machine-select Print plate dialog "
+        "for the user to review the current sliced plate, without uploading or starting; other printer routes are refused. "
         "Refused, as the GUI's Print and Send buttons are off, when a plate it would send failed the check its "
         "slice ran on its G-code (get_slicing_status's plates[].gcode_check). "
         "On a Flashforge the printer can calibrate the flow and level the bed before it starts; each adds minutes, "
@@ -459,6 +497,12 @@ void OrcaMCPServer::register_printer_tools()
         {
             {"type", "object"},
             {"properties", {
+                {"dialog_mode", {
+                    {"type", "string"}, {"enum", {"send", "print_plate"}},
+                    {"description", "Default send preserves the existing send/storage dialog. print_plate requires direct=false "
+                                    "and all_plates=false; schedules the native machine-select Print plate dialog only. "
+                                    "The user reviews that dialog and starts or sends from it."}
+                }},
                 {"direct", {
                     {"type", "boolean"},
                     {"description", "When true (default), upload straight to the printer. When false, open "
@@ -519,6 +563,8 @@ void OrcaMCPServer::register_printer_tools()
         [](const nlohmann::json& params) -> nlohmann::json {
             if (params.contains("direct") && !params.at("direct").is_boolean())
                 return error_response("direct must be a boolean");
+            if (auto refusal = print_dialog_argument_refusal(params))
+                return error_response(*refusal);
             PrintOptionRequest option_request;
             std::string        option_error;
             if (!read_print_option_request(params, option_request, option_error))
@@ -544,7 +590,7 @@ void OrcaMCPServer::register_printer_tools()
             if (!params.value("direct", true)) {
                 if (std::optional<std::string> refusal = ignored_arguments_refusal(flashforge_asked, SendReach::SendDialog, std::string()))
                     return error_response(*refusal);
-                return open_send_dialog(all_plates);
+                return open_send_dialog(all_plates, params.value("dialog_mode", std::string("send")) == "print_plate");
             }
 
             if (all_plates)
