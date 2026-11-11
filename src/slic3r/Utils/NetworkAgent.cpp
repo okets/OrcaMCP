@@ -902,6 +902,8 @@ int NetworkAgent::command_axis_control(std::string dev_id, std::string axis, dou
 
 int NetworkAgent::connect_printer(const PrinterConnectionParams& params)
 {
+    BOOST_LOG_TRIVIAL(info) << "native_connect_diagnostic stage=dispatch printer_agent_present="
+                            << static_cast<bool>(m_printer_agent);
     if (m_printer_agent)
         return m_printer_agent->connect_printer(params);
     return -1;
