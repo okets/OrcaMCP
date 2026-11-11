@@ -1,6 +1,17 @@
 #include "OrcaMCPPlateUtils.hpp"
 #include <memory>
 #include <mutex>
+#include "OrcaMCPLayerGeometry.hpp"
+#include "OrcaMCPPhysicalSegments.hpp"
+#include "OrcaMCPPlateAnalysis.hpp"
+#include "libslic3r/Print.hpp"
+#include "OrcaMCPServer.hpp"
+#include "slic3r/GUI/BuildCommit.hpp"
+#include "libslic3r_version.h"
+#include <boost/uuid/random_generator.hpp>
+#include <boost/uuid/uuid_io.hpp>
+#include <wx/thread.h>
+#include <cassert>
 #include "OrcaMCPPlateTools.hpp"
 #include "OrcaMCPLayerGcodeTools.hpp"
 #include "OrcaMCPObjectOrder.hpp"
@@ -452,6 +463,91 @@ static BoundingBoxf3 view_fit_box(const OrcaMCP::ViewRequest& view, PartPlate& p
         return OrcaMCP::region_fit_box(view.fit, view.input_frame == "plate_local" ? Vec3d(plate_box.min.x(), plate_box.min.y(), 0.) : Vec3d::Zero());
     default:
         return plate_contents_box(plate, plate_box);
+    }
+}
+
+// One nonce and one encoding shared by geometry and analysis, across every layer/page of a result.
+static OrcaMCP::GeometryIdentity native_query_identity(PartPlate& plate, int plate_index, const GCodeProcessorResult& result)
+{
+    int print_index = 0;
+    plate.get_print(nullptr, nullptr, &print_index);
+    static const std::string session = boost::uuids::to_string(boost::uuids::random_generator()());
+    return {session, std::to_string(print_index), plate_index, result.id, SoftFever_VERSION, OrcaMCPServer::version(),
+        build_commit_hash && std::string(build_commit_hash) != "0000000" ? nlohmann::json(build_commit_label) : nlohmann::json(nullptr), result.move_frame};
+}
+
+nlohmann::json OrcaMCPPlateUtils::GetPlateAnalysis(const nlohmann::json& params)
+{
+    assert(wxIsMainThread());
+    const auto started = std::chrono::steady_clock::now();
+    try {
+        OrcaMCP::PlateAnalysisRequest request;
+        try { request = OrcaMCP::parse_plate_analysis_request(params); }
+        catch (const nlohmann::json::exception& e) { throw OrcaMCP::GeometryError("invalid_arguments", e.what()); }
+        Plater& plater = *wxGetApp().plater();
+        PartPlate* plate = plater.get_partplate_list().get_plate(request.plate_index);
+        if (!plate) throw OrcaMCP::GeometryError("invalid_plate", "plate_index does not name an existing plate");
+        if (!plater.ready_for_geometry_read())
+            throw OrcaMCP::GeometryError("slice_busy", "Background slice work is active or awaiting completion; retry later");
+        if (plater.is_background_process_slicing() || plater.is_background_process_update_scheduled())
+            throw OrcaMCP::GeometryError("no_valid_slice", "A slice or pending settings update has not completed");
+        if (!plate->is_slice_result_valid()) throw OrcaMCP::GeometryError("no_valid_slice", "The plate has no valid completed slice");
+        const GCodeProcessorResult* result = plate->get_slice_result();
+        if (!result) throw OrcaMCP::GeometryError("no_valid_slice", "The plate has no processor result");
+        const Print* print = plate->fff_print();
+        // Source admission deliberately precedes result ID, move count, statistics and profile reads.
+        // Loaded sliced plates remain unsupported both before and after cached-file move loading.
+        OrcaMCP::require_analysis_source({plater.only_gcode_mode(), plater.is_gcode_3mf(), print != nullptr,
+            print && !print->objects().empty(), print && print->is_step_done(psSlicingFinished), print && print->is_step_done(psGCodeExport)});
+        if (result->moves.size() <= 1) throw OrcaMCP::GeometryError("no_valid_slice", "The native result has no physical move stream");
+        const auto identity = native_query_identity(*plate, request.plate_index, *result);
+        const auto controls = request.detail ? nlohmann::json::object() : OrcaMCP::analysis_controls(print->full_print_config());
+        auto out = OrcaMCP::plate_analysis_page(*result, request, identity, controls, started);
+        BOOST_LOG_TRIVIAL(info) << "get_plate_analysis " << (request.detail ? "detail" : "summary") << ": "
+            << out.dump().size() << " bytes; timing " << out["timing_ms"].dump()
+            << "; inspected " << out.value("inspected_moves", size_t(0));
+        return out;
+    } catch (const OrcaMCP::GeometryError& e) {
+        return {{"status", "error"}, {"code", e.code}, {"message", e.what()}};
+    }
+}
+
+nlohmann::json OrcaMCPPlateUtils::GetLayerGeometry(const nlohmann::json& params)
+{
+    assert(wxIsMainThread());
+    const auto started = std::chrono::steady_clock::now();
+    try {
+        OrcaMCP::LayerGeometryRequest request;
+        try { request = OrcaMCP::parse_layer_geometry_request(params); }
+        catch (const nlohmann::json::exception& e) { throw OrcaMCP::GeometryError("invalid_arguments", e.what()); }
+        Plater& plater = *wxGetApp().plater();
+        PartPlate* plate = plater.get_partplate_list().get_plate(request.plate_index);
+        if (!plate) throw OrcaMCP::GeometryError("invalid_plate", "plate_index does not name an existing plate");
+        // This comes BEFORE explicit-slice semantics: contention and every non-quiescent state must
+        // remain retryable slice_busy, including automatic/export runs with m_is_slicing == false.
+        if (!plater.ready_for_geometry_read())
+            throw OrcaMCP::GeometryError("slice_busy", "Background slice work is active or awaiting completion; retry later");
+        if (plater.is_background_process_slicing() || plater.is_background_process_update_scheduled())
+            throw OrcaMCP::GeometryError("no_valid_slice", "A slice or pending settings update has not completed");
+        if (plater.only_gcode_mode() || plater.is_gcode_3mf() || plate->fff_print() == nullptr)
+            throw OrcaMCP::GeometryError("unsupported_source", "Geometry requires a native FFF project slice");
+        if (!plate->is_slice_result_valid())
+            throw OrcaMCP::GeometryError("no_valid_slice", "The plate has no valid completed slice");
+        // First result access is after synchronized admission. No events, callbacks, or pointers escape.
+        const GCodeProcessorResult* result = plate->get_slice_result();
+        if (!result) throw OrcaMCP::GeometryError("no_valid_slice", "The plate has no processor result");
+        const auto layers = OrcaMCP::physical_gcode_layers(result->moves);
+        const auto identity = native_query_identity(*plate, request.plate_index, *result);
+        OrcaMCP::GeometryPageMetrics metrics;
+        auto out = OrcaMCP::layer_geometry_page(result->moves, layers, request, identity,
+            plater.get_extruder_colors_from_plater_config(result).size(), &metrics);
+        size_t points = 0;
+        for (const auto& path : out["paths"]) points += path["points"].size();
+        BOOST_LOG_TRIVIAL(info) << "get_layer_geometry: " << out.dump().size() << " bytes, " << points
+            << " points, digest " << metrics.digest_ms << " ms, serialization " << metrics.serialization_ms << " ms, total " << std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count() << " ms";
+        return out;
+    } catch (const OrcaMCP::GeometryError& e) {
+        return {{"status", "error"}, {"code", e.code}, {"message", e.what()}};
     }
 }
 

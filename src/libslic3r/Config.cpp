@@ -700,6 +700,7 @@ bool ConfigBase::set_deserialize_raw(const t_config_option_key &opt_key_src, con
 	    }
 	}
 
+    if (substituted) substitutions_ctxt.value_was_substituted = true;
     if (substituted && (substitutions_ctxt.rule == ForwardCompatibilitySubstitutionRule::Enable ||
                         substitutions_ctxt.rule == ForwardCompatibilitySubstitutionRule::EnableSystemSilent)) {
         // Log the substitution.
@@ -1403,8 +1404,11 @@ private:
 };
 
 // Load the config keys from the tail of a G-code file.
-ConfigSubstitutions ConfigBase::load_from_gcode_file(const std::string &file, ForwardCompatibilitySubstitutionRule compatibility_rule)
+ConfigSubstitutions ConfigBase::load_from_gcode_file(const std::string &file, ForwardCompatibilitySubstitutionRule compatibility_rule,
+                                                    std::set<std::string>* explicit_frame_keys)
 {
+    if (explicit_frame_keys) explicit_frame_keys->clear();
+    std::set<std::string> substituted_frame_keys; // At most the four literal frame-relevant keys.
     // Read a 64k block from the end of the G-code.
 	boost::nowide::ifstream ifs(file);
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(":  before parse_file %1%") % file.c_str();
@@ -1482,7 +1486,15 @@ ConfigSubstitutions ConfigBase::load_from_gcode_file(const std::string &file, Fo
                 boost::trim(key);
                 boost::trim(value);
                 try {
+                    substitutions_ctxt.value_was_substituted = false;
                     this->set_deserialize(key, value, substitutions_ctxt);
+                    if (explicit_frame_keys && (key == "belt_printer" || key == "z_offset" ||
+                        key == "extruder_offset" || key == "initial_layer_print_height")) {
+                        if (substitutions_ctxt.value_was_substituted) {
+                            substituted_frame_keys.insert(key);
+                            explicit_frame_keys->erase(key);
+                        } else if (substituted_frame_keys.count(key) == 0) explicit_frame_keys->insert(key);
+                    }
                     ++ key_value_pairs;
                 } catch (UnknownOptionException & /* e */) {
                     // ignore

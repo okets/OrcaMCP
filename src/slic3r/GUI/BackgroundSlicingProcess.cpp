@@ -24,6 +24,7 @@
 #include <memory>
 #include "libslic3r/Polygon.hpp"
 #include <wx/app.h>
+#include <wx/thread.h>
 #include <wx/event.h>
 #include <wx/panel.h>
 #include <wx/stdpaths.h>
@@ -130,6 +131,22 @@ std::pair<std::string, std::vector<size_t>> SlicingProcessCompletedEvent::format
         error = _u8L("Unknown C++ exception.");
     }
     return std::make_pair(std::move(error), std::vector<size_t>{monospace});
+}
+
+// Implementation-only test seam; no result access and no observation survives a GUI callback.
+bool geometry_readiness_snapshot(std::mutex &mutex, const BackgroundSlicingProcess::State &state)
+{
+    std::unique_lock<std::mutex> lock(mutex, std::try_to_lock);
+    if (!lock.owns_lock()) return false;
+    const BackgroundSlicingProcess::State observed = state;
+    lock.unlock(); // No classification, logging, allocation or result reads while holding this lock.
+    return observed == BackgroundSlicingProcess::STATE_INITIAL || observed == BackgroundSlicingProcess::STATE_IDLE;
+}
+
+bool BackgroundSlicingProcess::ready_for_geometry_read()
+{
+    assert(wxIsMainThread()); // GUI thread only; never retain this observation across callbacks.
+    return geometry_readiness_snapshot(m_mutex, m_state);
 }
 
 BackgroundSlicingProcess::BackgroundSlicingProcess()

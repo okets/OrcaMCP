@@ -34,6 +34,7 @@
 #include <sstream>
 #include <string>
 #include <tuple>
+#include <set>
 #include <utility>
 #include <vector>
 
@@ -399,6 +400,8 @@ TEST_CASE("Reloaded moves name their lines in G-code a script rewrote in place",
     for (size_t i = edited.find('\n'); i != std::string::npos; i = edited.find('\n', i + 1))
         newline_ends.push_back(i + 1);
     CHECK(result.lines_ends == newline_ends);
+    CHECK(result.move_frame.source_file_state == MoveFrameSourceFileState::ReloadSucceeded);
+    CHECK(result.move_frame.basis == MoveFrameBasis::FileReprocess);
 
     // Every move that came from a line now names the same line one further down.
     REQUIRE(result.moves.size() == exported_moves.size());
@@ -428,6 +431,8 @@ TEST_CASE("Rewritten G-code that cannot be re-read keeps the moves and hides the
     print.reload_gcode_moves(&result);
 
     CHECK(result.lines_ends.empty());
+    CHECK(result.move_frame.source_file_state == MoveFrameSourceFileState::ReloadFailed);
+    CHECK(result.move_frame.reason == MoveFrameReason::ReloadFailedSourceMismatch);
     REQUIRE(result.moves.size() == exported_moves.size());
     CHECK(result.moves.back().gcode_id == exported_moves.back().gcode_id);
 }
@@ -885,4 +890,207 @@ TEST_CASE("A cube on the 64th nozzle of a 64-nozzle printer slices, and fails th
     CHECK(result.gcode_check_result.print_area_error_infos.count(nozzles - 1) == size_t(expected));
     REQUIRE(result.limit_filament_maps.size() == 1);
     CHECK(result.limit_filament_maps[0] == uint64_t(expected) << (nozzles - 1));
+}
+
+TEST_CASE("Move frame capture starts unavailable and follows result copy move and reset", "[GCodeProcessor][MoveFrame]")
+{
+    GCodeProcessorResult source{}, copied{}, moved{};
+    CHECK_FALSE(source.move_frame.captured);
+    source.move_frame.captured = true;
+    source.move_frame.xy_mm = {12.25, -30.5};
+    source.move_frame.z_offset_mm = 0.375f;
+    source.move_frame.extruder_offsets_mm = {Vec3f(1.25f, -2.5f, 0.125f)};
+    source.move_frame.config_kind = MoveFrameConfigKind::TypedPrintConfig;
+    source.move_frame.reason = MoveFrameReason::UnsupportedTransform;
+    source.move_frame.basis = MoveFrameBasis::FileReprocess;
+    source.move_frame.explicit_frame_keys = 15;
+    source.move_frame.classification = MoveFrameClassification::UnsupportedTransform;
+    source.move_frame.first_layer_height_mm = 0.25f;
+    source.move_frame.belt_config_known = true;
+    source.move_frame.belt_configured = true;
+    source.move_frame.processor_belt_printer = true;
+    source.move_frame.machine_transform_known = true;
+    source.move_frame.machine_transform_active = true;
+    source.move_frame.belt_header_observed = true;
+    source.move_frame.belt_tilt_angle = 45.f;
+    source.move_frame.belt_z_origin = 1.5f;
+    source.move_frame.source_file_state = MoveFrameSourceFileState::ReloadSucceeded;
+    copied = source;
+    CHECK(copied.move_frame.captured);
+    CHECK_THAT(copied.move_frame.xy_mm[0], Catch::Matchers::WithinAbs(12.25, 0.));
+    CHECK_THAT(copied.move_frame.z_offset_mm, Catch::Matchers::WithinAbs(0.375, 0.));
+    REQUIRE(copied.move_frame.extruder_offsets_mm.size() == 1);
+    CHECK_THAT(copied.move_frame.extruder_offsets_mm[0].y(), Catch::Matchers::WithinAbs(-2.5, 0.));
+    moved = std::move(source);
+    CHECK(moved.move_frame.captured);
+    CHECK(moved.move_frame.config_kind == MoveFrameConfigKind::TypedPrintConfig);
+    CHECK(copied.move_frame.basis == MoveFrameBasis::FileReprocess);
+    CHECK(moved.move_frame.basis == copied.move_frame.basis);
+    CHECK(copied.move_frame.explicit_frame_keys == 15);
+    CHECK(moved.move_frame.explicit_frame_keys == copied.move_frame.explicit_frame_keys);
+    CHECK(copied.move_frame.classification == MoveFrameClassification::UnsupportedTransform);
+    CHECK(moved.move_frame.classification == copied.move_frame.classification);
+    CHECK(copied.move_frame.reason == MoveFrameReason::UnsupportedTransform);
+    CHECK(moved.move_frame.reason == copied.move_frame.reason);
+    CHECK(copied.move_frame.belt_config_known); CHECK(moved.move_frame.belt_config_known);
+    CHECK(copied.move_frame.belt_configured); CHECK(moved.move_frame.belt_configured);
+    CHECK(copied.move_frame.processor_belt_printer); CHECK(moved.move_frame.processor_belt_printer);
+    CHECK(copied.move_frame.machine_transform_known); CHECK(moved.move_frame.machine_transform_known);
+    CHECK(copied.move_frame.machine_transform_active); CHECK(moved.move_frame.machine_transform_active);
+    CHECK(copied.move_frame.belt_header_observed); CHECK(moved.move_frame.belt_header_observed);
+    CHECK_THAT(copied.move_frame.belt_tilt_angle, Catch::Matchers::WithinAbs(45., 0.));
+    CHECK_THAT(moved.move_frame.belt_z_origin, Catch::Matchers::WithinAbs(1.5, 0.));
+    CHECK(copied.move_frame.source_file_state == MoveFrameSourceFileState::ReloadSucceeded);
+    CHECK(moved.move_frame.source_file_state == copied.move_frame.source_file_state);
+    CHECK_THAT(moved.move_frame.xy_mm[1], Catch::Matchers::WithinAbs(-30.5, 0.));
+    moved.reset();
+    CHECK_FALSE(moved.move_frame.captured);
+    CHECK(moved.move_frame.reason == MoveFrameReason::NotCaptured);
+    CHECK(moved.move_frame.extruder_offsets_mm.empty());
+}
+
+TEST_CASE("Streaming frame captures actual mapped inputs after dummy initialization", "[GCodeProcessor][MoveFrame]")
+{
+    FullPrintConfig config;
+    config.filament_diameter.values = {1.75, 1.75};
+    config.filament_map.values = {2, 1};
+    config.extruder_offset.values = {Vec2d(2.5, -0.25), Vec2d(-1.5, 4.)};
+    config.z_offset.value = 0.125;
+    config.belt_printer.value = false;
+    GCodeProcessor processor;
+    processor.set_xy_offset(256.125, -33.0625);
+    processor.initialize_result_moves(); // Dummy does not start capture/invalidate subsequent apply.
+    processor.apply_config(config);
+    processor.initialize("frame-stream.gcode");
+    processor.process_buffer("M83\nG90\nT0\nG1 X10 Y20 Z0.4 F3000\nG1 X11 E1 F1200\n");
+    processor.finalize(false);
+    const auto& frame = processor.get_result().move_frame;
+    REQUIRE(frame.captured);
+    CHECK(frame.reason == MoveFrameReason::None);
+    CHECK(frame.basis == MoveFrameBasis::StreamingExport);
+    CHECK(frame.config_kind == MoveFrameConfigKind::TypedPrintConfig);
+    CHECK_THAT(frame.xy_mm[0], Catch::Matchers::WithinAbs(256.125, 0.));
+    CHECK_THAT(frame.z_offset_mm, Catch::Matchers::WithinAbs(double(float(config.z_offset.value)), 0.));
+    REQUIRE(frame.extruder_offsets_mm.size() == 2);
+    CHECK_THAT(frame.extruder_offsets_mm[0].x(), Catch::Matchers::WithinAbs(-1.5, 0.));
+    CHECK_THAT(frame.extruder_offsets_mm[1].x(), Catch::Matchers::WithinAbs(2.5, 0.));
+    const auto& endpoint = processor.get_result().moves.back();
+    REQUIRE(size_t(endpoint.extruder_id) < frame.extruder_offsets_mm.size());
+    const Vec3f expected = Vec3f(float(11. + 256.125), float(20. - 33.0625), float(0.4 - float(config.z_offset.value))) + frame.extruder_offsets_mm[endpoint.extruder_id];
+    CHECK_THAT(endpoint.position.x(), Catch::Matchers::WithinAbs(expected.x(), 0.));
+    processor.reset();
+    CHECK_FALSE(processor.get_result().move_frame.captured);
+}
+
+TEST_CASE("Frame normalization refuses inputs changed and restored during processing", "[GCodeProcessor][MoveFrame]")
+{
+    for (bool config_change : {false, true}) {
+        FullPrintConfig config;
+        config.belt_printer.value = false;
+        GCodeProcessor processor;
+        processor.initialize_result_moves(); processor.apply_config(config);
+        processor.process_buffer("M83\nT0\nG1 X10 Z0.2 E1 F1200\n");
+        if (config_change) {
+            config.z_offset.value = 1.; processor.apply_config(config);
+            config.z_offset.value = 0.; processor.apply_config(config);
+        } else {
+            processor.set_xy_offset(1., 2.); processor.set_xy_offset(0., 0.);
+        }
+        processor.process_buffer("G1 X20 E1\n"); processor.finalize(false);
+        CHECK_FALSE(processor.get_result().move_frame.captured);
+        CHECK(processor.get_result().move_frame.reason == MoveFrameReason::InputsChangedDuringProcessing);
+    }
+}
+
+namespace {
+std::string frame_gcode_config(const std::string& frame_lines)
+{
+    std::string out = "; generated by OrcaSlicer\nM83\nG90\nT0\nG1 X10 Y20 Z0.4 F3000\nG1 X11 E1 F1200\n; CONFIG_BLOCK_START\n";
+    // The loader's existing minimum-entry validation still applies. These literal ordinary keys
+    // exercise presence independently of the seeded defaults without introducing another parser.
+    for (int i = 0; i < 80; ++i) out += "; layer_height = 0.2\n";
+    return out + frame_lines + "; CONFIG_BLOCK_END\n";
+}
+}
+
+TEST_CASE("Literal file frame keys remain distinct from seeded defaults and silent substitutions", "[GCodeProcessor][MoveFrame]")
+{
+    for (const std::string belt : {"", "; belt_printer = 0\n", "; belt_printer = nonsense\n", "; belt_printer = 0\n; belt_printer = nonsense\n; belt_printer = 0\n"}) {
+        ScopedTemporaryFile file(".gcode");
+        save_string_file(file.path(), frame_gcode_config(belt + "; z_offset = 0.125\n; single_extruder_multi_material = 0\n; extruder_offset = 2x3,4x5,6x7\n"));
+        DynamicPrintConfig config;
+        config.apply(FullPrintConfig::defaults());
+        std::set<std::string> keys;
+        config.load_from_gcode_file(file.string(), ForwardCompatibilitySubstitutionRule::EnableSilent, &keys);
+        CHECK(keys.count("belt_printer") == (belt == "; belt_printer = 0\n" ? 1 : 0));
+        CHECK(keys.count("z_offset") == 1);
+        CHECK(keys.count("extruder_offset") == 1);
+        CHECK(keys.size() <= 4);
+        GCodeProcessor processor;
+        processor.set_xy_offset(256.125, -33.0625);
+        processor.process_file(file.string());
+        const auto& frame = processor.get_result().move_frame;
+        CHECK(frame.captured == (belt == "; belt_printer = 0\n"));
+        CHECK(frame.config_kind == MoveFrameConfigKind::ExplicitGcodeConfigBlock);
+        CHECK(frame.basis == MoveFrameBasis::FileReprocess);
+        if (frame.captured) {
+            CHECK_THAT(frame.xy_mm[0], Catch::Matchers::WithinAbs(256.125, 0.));
+            CHECK_THAT(frame.z_offset_mm, Catch::Matchers::WithinAbs(0.125, 0.));
+            REQUIRE(frame.extruder_offsets_mm.size() == processor.get_result().filaments_count);
+            CHECK_THAT(frame.extruder_offsets_mm[0].x(), Catch::Matchers::WithinAbs(2., 0.));
+        } else CHECK(frame.reason == MoveFrameReason::ConfigurationUnknown);
+    }
+}
+
+TEST_CASE("Default-only and unsupported producers never establish a nonbelt frame", "[GCodeProcessor][MoveFrame]")
+{
+    for (const std::string header : {"", "; G-Code generated by Simplify3D(R) Version 4.1\n"}) {
+        ScopedTemporaryFile file(".gcode");
+        save_string_file(file.path(), header + "M83\nG90\nT0\nG1 X10 Z0.2 E1 F1200\n");
+        GCodeProcessor processor;
+        processor.process_file(file.string());
+        CHECK_FALSE(processor.get_result().move_frame.captured);
+        CHECK(processor.get_result().move_frame.config_kind == MoveFrameConfigKind::NoneOrDefaulted);
+    }
+}
+
+TEST_CASE("Belt configuration refuses ordinary normalization even at zero tilt", "[GCodeProcessor][MoveFrame]")
+{
+    for (bool belt : {false, true}) {
+        FullPrintConfig config; config.belt_printer.value = belt;
+        GCodeProcessor processor; processor.initialize_result_moves(); processor.apply_config(config);
+        processor.process_buffer("M83\nT0\nG1 X10 Z0.2 E1 F1200\n"); processor.finalize(false);
+        REQUIRE(processor.get_result().move_frame.captured);
+        CHECK(processor.get_result().move_frame.classification == (belt ? MoveFrameClassification::UnsupportedTransform : MoveFrameClassification::OrdinaryNonbeltTranslation));
+    }
+}
+
+TEST_CASE("Reload transfers its own frame with moves while retaining native result identity", "[GCodeProcessor][MoveFrame]")
+{
+    Print print; Model model;
+    Test::init_print({Test::cube(20)}, print, model);
+    GCodeProcessorResult result;
+    const auto gcode = Test::gcode(print, &result);
+    REQUIRE(result.move_frame.captured);
+    const auto id = result.id;
+    const auto volumes = result.print_statistics.total_volumes_per_extruder;
+    ScopedTemporaryFile file(".gcode"); save_string_file(file.path(), gcode);
+    result.filename = file.string();
+    print.set_plate_origin(Vec3d(1024.125, -256.25, 0.));
+    print.reload_gcode_moves(&result);
+    CHECK(result.id == id);
+    CHECK(result.print_statistics.total_volumes_per_extruder == volumes);
+    REQUIRE(result.move_frame.captured);
+    CHECK(result.move_frame.basis == MoveFrameBasis::FileReprocess);
+    CHECK(result.move_frame.source_file_state == MoveFrameSourceFileState::ReloadSucceeded);
+    CHECK_THAT(result.move_frame.xy_mm[0], Catch::Matchers::WithinAbs(1024.125, 0.));
+    CHECK_THAT(result.move_frame.xy_mm[1], Catch::Matchers::WithinAbs(-256.25, 0.));
+    const auto retained_xy = result.move_frame.xy_mm;
+    save_string_file(file.path(), "; generated by OrcaSlicer\n; config stripped\n");
+    print.reload_gcode_moves(&result);
+    CHECK(result.move_frame.source_file_state == MoveFrameSourceFileState::ReloadFailed);
+    CHECK(result.move_frame.reason == MoveFrameReason::ReloadFailedSourceMismatch);
+    REQUIRE(result.move_frame.captured); // Retained diagnostics do not establish edited-file correspondence.
+    CHECK_THAT(result.move_frame.xy_mm[0], Catch::Matchers::WithinAbs(retained_xy[0], 0.));
+    CHECK_THAT(result.move_frame.xy_mm[1], Catch::Matchers::WithinAbs(retained_xy[1], 0.));
 }

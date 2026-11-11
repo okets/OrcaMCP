@@ -493,3 +493,18 @@ TEST_CASE("first_layer_print_min/max track the derived IMEX slice offset",
     CHECK_THAT(shifted_max.y() - shifted_layer.max_y,
                WithinAbs(baseline_max.y() - baseline_layer.max_y, 1e-3));
 }
+
+TEST_CASE("Captured processor origin is the exact plate origin rather than an expanded bed box", "[ImexSliceOffset][MoveFrame]")
+{
+    Print print; Model model;
+    init_print({cube(20)}, print, model);
+    const Vec3d origin(512.125, -256.0625, 0.);
+    print.set_plate_origin(origin);
+    GCodeProcessorResult result;
+    gcode(print, &result);
+    REQUIRE(result.move_frame.captured);
+    CHECK_THAT(result.move_frame.xy_mm[0], WithinAbs(origin.x(), 0.));
+    CHECK_THAT(result.move_frame.xy_mm[1], WithinAbs(origin.y(), 0.));
+    print.set_plate_origin(Vec3d::Zero());
+    CHECK_THAT(result.move_frame.xy_mm[0], WithinAbs(origin.x(), 0.)); // No live-config rewrite.
+}

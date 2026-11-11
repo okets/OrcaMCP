@@ -1,4 +1,5 @@
 #include "Plater.hpp"
+#include <wx/thread.h>
 #include "../Utils/NetworkAgent.hpp"
 #include "IPrinterAgent.hpp"
 #include "CalibUtils.hpp"
@@ -24765,6 +24766,13 @@ int Plater::delete_plate(int plate_index, OrcaMCP::PlateListChangeDuringSlice* s
 void Plater::set_bed_position(Vec2d& pos)
 {
     p->bed.set_position(pos);
+}
+
+// Same-callback GUI admission; background work on any plate is refused.
+bool Plater::ready_for_geometry_read()
+{
+    assert(wxIsMainThread());
+    return p->background_process.ready_for_geometry_read();
 }
 
 //BBS: is the background process slicing currently
