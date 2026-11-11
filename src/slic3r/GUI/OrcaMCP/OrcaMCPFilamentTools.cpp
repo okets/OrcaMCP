@@ -497,7 +497,7 @@ void OrcaMCPServer::register_filament_tools()
         "get_flush_volumes",
         ToolCategory::FilamentsColour,
         "Per-extruder flush-volume matrices",
-        "Get the per-extruder flush-volume matrices (mL to purge switching from filament X to Y) "
+        "Get the per-extruder flush-volume matrices (mm3 to purge switching from filament X to Y) "
         "and the flush multiplier used to scale them.",
         {{"type", "object"}, {"properties", nlohmann::json::object()}},
         [](const nlohmann::json&) -> nlohmann::json {
@@ -522,7 +522,7 @@ void OrcaMCPServer::register_filament_tools()
                 {"matrix", {
                     {"type", "array"},
                     {"items", {{"type", "array"}, {"items", {{"type", "number"}}}}},
-                    {"description", "NxN matrix, row = from-filament, column = to-filament, mL"}
+                    {"description", "NxN matrix, row = from-filament, column = to-filament, mm3"}
                 }},
                 {"extruder", {{"type", "integer"}, {"description", "0-based extruder, default 0"}}},
                 {"flush_multiplier", {{"type", "number"}, {"description", "Optional scale factor for this extruder"}}}
