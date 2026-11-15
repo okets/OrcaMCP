@@ -25,6 +25,12 @@ or arguments that are not an object are refused before the tool runs, with JSON-
 naming the problem and what the tool takes -- never ignored, so a misspelled argument cannot turn
 into a call that reports success and changes nothing. See [Error Handling](#error-handling).
 
+See [native sliced-layer geometry](layer-geometry.md) for the bounded XYZ query, paging,
+identity, frame and support-ribbon limitations.
+
+See [native plate analysis](plate-analysis.md) for whole-plate material accounting,
+bounded physical-record reducers and comparison limitations.
+
 ## Quick Reference Table
 
 | Category | Tools |
@@ -39,9 +45,9 @@ into a call that reports success and changes nothing. See [Error Handling](#erro
 | **Filaments & colour** | `get_filaments`, `add_filament_slot`, `delete_filament_slot`, `set_object_filament`, `set_mixed_filament`, `delete_mixed_filament`, `set_filament_color`, `get_flush_volumes`, `set_flush_volumes`, `auto_calc_flush_volumes`, `get_toolchanger_config`, `suggest_color_mix`, `get_color_palette` |
 | **Painting** | `paint_object`, `remap_paint`, `get_object_paint`, `clear_object_paint`, `set_brim_ears`, `pick_facet` |
 | **Texture displacement** | `get_texture_library`, `delete_user_texture`, `get_texture_displacement`, `set_texture_displacement`, `get_texture_unwrap`, `set_texture_unwrap`, `bake_texture_displacement`, `prepare_texture_mesh` |
-| **Slicing** | `slice_all`, `cancel_slice`, `wait_for_slice` (bridge-only), `get_slicing_status`, `export_gcode`, `get_print_estimate`, `add_layer_gcode`, `delete_layer_gcode` |
-| **Visualization** | `render_plate_view`, `get_preview_base64`, `set_gcode_view_type`, `show_view` |
-| **Printers** | `get_printers`, `select_printer`, `add_physical_printer`, `discover_printers`, `send_to_printer`, `get_printer_status`, `printer_control`, `list_printer_files`, `print_printer_file`, `match_project_to_printer` |
+| **Slicing** | `get_plate_analysis`, `slice_all`, `cancel_slice`, `wait_for_slice` (bridge-only), `get_slicing_status`, `export_gcode`, `get_print_estimate`, `add_layer_gcode`, `delete_layer_gcode` |
+| **Visualization** | `get_layer_geometry`, `render_plate_view`, `get_preview_base64`, `set_gcode_view_type`, `show_view` |
+| **Printers** | `get_printers`, `select_printer`, `add_physical_printer`, `discover_printers`, `send_to_printer`, `start_bambu_print`, `get_bambu_print_submission`, `get_printer_status`, `printer_control`, `list_printer_files`, `print_printer_file`, `match_project_to_printer` |
 | **Adaptive** | `apply_adaptive_layer_height`, `clear_adaptive_layer_height` |
 | **History** | `undo`, `redo` |
 | **Info** | `get_server_info`, `quit_app`, `start_orca` (bridge-only), `list_instances` (bridge-only), `select_instance` (bridge-only) |
@@ -4674,6 +4680,22 @@ the call returns the live error. So does a printer that answered with a refusal 
 HTTP error, unreadable answer): only an unreachable printer falls back to its last status.
 
 ---
+
+### start_bambu_print
+
+Inspect or submit the current selected plate through Orca's native Bambu `PrintJob`.
+See [native Bambu print submission](native-bambu-print.md) for the request, native
+readiness checks, AMS numbering and submission/observed-state distinction.
+`dry_run` defaults to `true` and exports/uploads/sends nothing. An actual start
+requires `dry_run: false`, an explicit selected `printer_id`, the dry run's
+`expected_slice_id`, a `request_id` and explicit `mappings`.
+
+### get_bambu_print_submission
+
+Read the submission outcome for a `request_id` in the current Orca process.
+This tool never resends. A native submission reported `submitted` is separate
+from observed physical printer state; `uncertain` requires reconciliation.
+Request IDs are not retained across application restarts.
 
 ### send_to_printer
 Upload the selected plate's sliced G-code to the configured print host **and start printing it**:

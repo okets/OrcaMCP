@@ -5966,6 +5966,8 @@ void Print::reload_gcode_moves(GCodeProcessorResult* result) const
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": cannot re-read the G-code file " << result->filename << ": " << ex.what();
         std::lock_guard<std::mutex> lock(result->result_mutex);
         result->lines_ends.clear();
+        result->move_frame.source_file_state = MoveFrameSourceFileState::ReloadFailed;
+        result->move_frame.reason = MoveFrameReason::ReloadFailedSourceMismatch;
         return;
     }
 
@@ -5973,6 +5975,8 @@ void Print::reload_gcode_moves(GCodeProcessorResult* result) const
     std::lock_guard<std::mutex> lock(result->result_mutex);
     result->moves      = std::move(reloaded.moves);
     result->lines_ends = std::move(reloaded.lines_ends);
+    reloaded.move_frame.source_file_state = MoveFrameSourceFileState::ReloadSucceeded;
+    result->move_frame = std::move(reloaded.move_frame);
 }
 
 std::tuple<float, float> Print::object_skirt_offset(double margin_height) const

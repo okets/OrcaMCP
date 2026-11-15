@@ -192,6 +192,22 @@ json tool_examples()
             }},
             {"tip", "Use bed info to calculate valid positions. Object positions are center points."}
         }},
+        {"get_plate_analysis", {
+            {"summary", R"({"plate_index": 0, "section": "summary"})"},
+            {"detail", R"({"plate_index": 0, "section": "detail", "max_moves": 10000})"},
+            {"paging", "Copy next_cursor unchanged; detail pages commit physical boundaries and count every tail/predecessor/forward inspection. Reduce page-local parts only after completing the stream."},
+            {"source", "Native process and export steps must both be complete. Loaded sliced projects, including unchanged cached re-slices, are unsupported."},
+            {"coordinate_frame", "Every page carries result-bound captured processor offsets, frame_digest and normalization availability. No live config or default-only file provenance is proof; join only equal result/frame identities."},
+            {"admission", "Worker readiness contention/nonquiescence returns retryable slice_busy globally. After readiness passes, pending settings or explicit slice state returns no_valid_slice."},
+            {"accounting", "Profile material costs exclude time_cost; currency is not recorded. Flush is native tagged accounting with incomplete coverage and is already included in total. Controls are live after-slice evidence, not immutable slice-time provenance."}
+        }},
+        {"get_layer_geometry", {
+            {"query", R"({"plate_index": 0, "layer": 1, "features": ["support", "support_interface"], "max_points": 512})"},
+            {"paging", "Copy next_cursor unchanged; repeat the same resolved layer and canonical filters. max_points may change."},
+            {"coordinate_frame", "Captured processor-preview coordinates, per-filament translation only when available. Geometry v3 digest binds frame_digest; retain native Seam/start-code limitations and rebind after export."},
+            {"limits", "8192 points and 64 KiB complete success JSON. Bed XYZ centerlines preserve native width, height and raw label; no support topology or contact ownership."},
+            {"busy", "Worker readiness contention/nonquiescence returns retryable status:error code:slice_busy globally. After readiness passes, pending settings or explicit slice state returns code:no_valid_slice."}
+        }},
         {"render_plate_view", {
             {"contact_sheet", R"({"plate_index": 1, "save_to_file": true})"},
             {"preset_views", R"({"plate_index": 1, "save_to_file": true, "views": [{"preset": "iso"}, {"preset": "low", "fit": {"object_id": 8}}]})"},

@@ -2689,6 +2689,8 @@ void GCodeProcessorResult::reset() {
     //BBS: add mutex for protection of gcode result
     lock();
 
+    move_frame = {};
+
     // moves and lines_ends grow with the print: free them, as no reset result reuses the capacity.
     clear_and_shrink(moves);
     plate_mass = {};
@@ -3135,6 +3137,12 @@ bool GCodeProcessor::check_multi_extruder_gcode_valid(const int                 
 
 void GCodeProcessor::apply_config(const PrintConfig& config)
 {
+    invalidate_move_frame_inputs();
+    m_frame_config = {};
+    m_frame_config.config_kind = MoveFrameConfigKind::TypedPrintConfig;
+    m_frame_config.belt_config_known = true;
+    m_frame_config.belt_configured = config.belt_printer.value;
+    m_frame_config.machine_transform_known = true;
     m_parser.apply_config(config);
 
     m_flavor = config.gcode_flavor;
@@ -3303,6 +3311,10 @@ void GCodeProcessor::apply_config(const PrintConfig& config)
 
 void GCodeProcessor::apply_config(const DynamicPrintConfig& config)
 {
+    invalidate_move_frame_inputs();
+    m_frame_config = {}; // File caller attaches explicit literal-key proof AFTER successful apply.
+    if (const auto* belt = config.option<ConfigOptionBool>("belt_printer"))
+        m_frame_config.belt_configured = belt->value;
     m_parser.apply_config(config);
 
     // Belt printer: remember the file's belt keys for export_config_for_render(). The
@@ -3732,6 +3744,12 @@ void GCodeProcessor::apply_config(const DynamicPrintConfig& config)
 
 void GCodeProcessor::reset()
 {
+    m_frame_config = {};
+    m_frame_snapshot = {};
+    m_frame_basis = MoveFrameBasis::StreamingExport;
+    m_frame_started = false;
+    m_frame_belt_header_observed = false;
+    m_frame_failure = MoveFrameReason::None;
     m_units = EUnits::Millimeters;
     m_global_positioning_type = EPositioningType::Absolute;
     m_e_local_positioning_type = EPositioningType::Absolute;
@@ -3869,6 +3887,13 @@ DynamicConfig GCodeProcessor::export_config_for_render() const
 // throws CanceledException through print->throw_if_canceled() (sent by the caller as callback).
 void GCodeProcessor::process_file(const std::string& filename, std::function<void()> cancel_callback)
 {
+    m_frame_config = {};
+    m_frame_snapshot = {};
+    m_result.move_frame = {};
+    m_frame_basis = MoveFrameBasis::FileReprocess;
+    m_frame_started = false;
+    m_frame_belt_header_observed = false;
+    m_frame_failure = MoveFrameReason::None;
     CNumericLocalesSetter locales_setter;
 
     // pre-processing
@@ -3901,7 +3926,8 @@ void GCodeProcessor::process_file(const std::string& filename, std::function<voi
             // Silently substitute unknown values by new ones for loading configurations from OrcaSlicer's own G-code.
             // Showing substitution log or errors may make sense, but we are not really reading many values from the G-code config,
             // thus a probability of incorrect substitution is low and the G-code viewer is a consumer-only anyways.
-            config.load_from_gcode_file(filename, ForwardCompatibilitySubstitutionRule::EnableSilent);
+            std::set<std::string> explicit_frame_keys;
+            config.load_from_gcode_file(filename, ForwardCompatibilitySubstitutionRule::EnableSilent, &explicit_frame_keys);
 
             // Get the correct printer vendor based on the `printer_model` field
             auto printer_model_opt = config.opt<ConfigOptionString>("printer_model");
@@ -3917,6 +3943,14 @@ void GCodeProcessor::process_file(const std::string& filename, std::function<voi
             }
 
             apply_config(config);
+            m_frame_config.config_kind = MoveFrameConfigKind::ExplicitGcodeConfigBlock;
+            constexpr const char* keys[] = {"belt_printer", "z_offset", "extruder_offset", "initial_layer_print_height"};
+            for (unsigned i = 0; i < 4; ++i)
+                if (explicit_frame_keys.count(keys[i])) m_frame_config.explicit_frame_keys |= static_cast<unsigned char>(1u << i);
+            m_frame_config.belt_config_known = explicit_frame_keys.count("belt_printer") != 0;
+            // All supported general transforms are belt-gated. Explicit non-belt evidence, together
+            // with the actual processor transform observation, permits conservative classification.
+            m_frame_config.machine_transform_known = m_frame_config.belt_config_known;
         }
         else if (m_producer == EProducer::Simplify3D)
             apply_config_simplify3d(filename);
@@ -3945,6 +3979,12 @@ void GCodeProcessor::process_file(const std::string& filename, std::function<voi
 
 void GCodeProcessor::initialize(const std::string& filename)
 {
+    m_frame_snapshot = {};
+    m_result.move_frame = {};
+    m_frame_basis = MoveFrameBasis::StreamingExport;
+    m_frame_started = false;
+    m_frame_belt_header_observed = false;
+    m_frame_failure = MoveFrameReason::None;
     assert(is_decimal_separator_point());
 
     // process gcode
@@ -3994,6 +4034,65 @@ void GCodeProcessor::update_exclusion_volume_path_check_result()
     m_result.exclusion_volume_conflict_used_unknown_z = hit.used_unknown_z;
 }
 
+void GCodeProcessor::invalidate_move_frame_inputs()
+{
+    if (m_frame_started) m_frame_failure = MoveFrameReason::InputsChangedDuringProcessing;
+}
+
+void GCodeProcessor::begin_move_frame(int filament)
+{
+    if (m_frame_started) {
+        if (m_frame_snapshot.captured && (filament < 0 || size_t(filament) >= m_frame_snapshot.extruder_offsets_mm.size()))
+            m_frame_failure = MoveFrameReason::InvalidFilamentSlot;
+        return;
+    }
+    m_frame_started = true;
+    m_frame_snapshot = m_frame_config;
+    auto& frame = m_frame_snapshot;
+    frame.basis = m_frame_basis;
+    frame.reason = MoveFrameReason::ConfigurationUnknown;
+    if (!frame.belt_config_known || frame.config_kind == MoveFrameConfigKind::NoneOrDefaulted) return;
+    const size_t count = m_result.filaments_count;
+    if (count == 0 || count > MAXIMUM_EXTRUDER_NUMBER) { frame.reason = MoveFrameReason::InvalidSlotCount; return; }
+    if (m_extruder_offsets.size() < count) { frame.reason = MoveFrameReason::UnresolvedOffsets; return; }
+    if (filament < 0 || size_t(filament) >= count) { frame.reason = MoveFrameReason::InvalidFilamentSlot; return; }
+    frame.xy_mm = {{m_x_offset, m_y_offset}};
+    frame.z_offset_mm = m_z_offset;
+    frame.first_layer_height_mm = m_first_layer_height;
+    frame.machine_transform_active = m_machine_frame_transform.is_active();
+    frame.processor_belt_printer = m_belt_printer;
+    if (!std::isfinite(m_x_offset) || !std::isfinite(m_y_offset) || !std::isfinite(m_z_offset) || !std::isfinite(m_first_layer_height)) {
+        frame.reason = MoveFrameReason::NonfiniteInputs; return;
+    }
+    for (size_t i = 0; i < count; ++i)
+        if (!m_extruder_offsets[i].allFinite()) { frame.reason = MoveFrameReason::NonfiniteInputs; return; }
+    frame.extruder_offsets_mm.assign(m_extruder_offsets.begin(), m_extruder_offsets.begin() + count);
+    frame.captured = true;
+    frame.reason = MoveFrameReason::None;
+}
+
+void GCodeProcessor::finalize_move_frame()
+{
+    auto frame = m_frame_snapshot;
+    frame.belt_header_observed = m_frame_belt_header_observed;
+    frame.belt_tilt_angle = m_result.belt_tilt_angle;
+    frame.belt_z_origin = m_result.belt_z_origin;
+    if (m_frame_failure != MoveFrameReason::None) { frame.captured = false; frame.reason = m_frame_failure; }
+    if (frame.captured && (!std::isfinite(frame.belt_tilt_angle) || !std::isfinite(frame.belt_z_origin))) {
+        frame.captured = false; frame.reason = MoveFrameReason::NonfiniteInputs;
+    }
+    if (frame.captured) {
+        if (frame.belt_configured || frame.processor_belt_printer || frame.belt_header_observed || frame.belt_tilt_angle != 0.f ||
+            frame.belt_z_origin != 0.f || frame.machine_transform_active) {
+            frame.classification = MoveFrameClassification::UnsupportedTransform;
+            frame.reason = MoveFrameReason::UnsupportedTransform;
+        } else if (frame.machine_transform_known) {
+            frame.classification = MoveFrameClassification::OrdinaryNonbeltTranslation;
+        } else { frame.captured = false; frame.reason = MoveFrameReason::ConfigurationUnknown; }
+    }
+    m_result.move_frame = std::move(frame);
+}
+
 void GCodeProcessor::finalize(bool post_process)
 {
     m_result.z_offset = m_z_offset;
@@ -4037,6 +4136,7 @@ void GCodeProcessor::finalize(bool post_process)
     update_exclusion_volume_path_check_result();
     //BBS: update slice warning
     update_slice_warnings();
+    finalize_move_frame();
 }
 
 double GCodeProcessor::get_time(PrintEstimatedStatistics::ETimeMode mode) const
@@ -4486,6 +4586,7 @@ void GCodeProcessor::process_tags(const std::string_view comment, bool producers
     // header carries it outside the config block; the config block lists the key
     // for every printer, belt or not.
     if (!m_in_config_block && boost::starts_with(comment, " belt_slice_rotation_angle = ")) {
+        m_frame_belt_header_observed = true; // Even angle zero is positive belt/header evidence.
         try {
             m_result.belt_tilt_angle = std::abs(std::stof(std::string(comment.substr(29))));
         } catch (...) {}
@@ -7524,6 +7625,7 @@ void GCodeProcessor::process_filament_change(int id)
 void GCodeProcessor::store_move_vertex(EMoveType type, EMovePathType path_type, bool internal_only)
 {
     int filament_id = get_filament_id();
+    if (!internal_only) begin_move_frame(filament_id);
     const auto normal_mode = PrintEstimatedStatistics::ETimeMode::Normal;
     const size_t normal_mode_id = static_cast<size_t>(normal_mode);
     const float delta_x = std::abs(m_end_position[X] - m_start_position[X]);

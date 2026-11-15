@@ -70,6 +70,7 @@ add_executable(${_TEST_NAME}_tests
     test_hex_color.cpp
     test_color_recipe.cpp
     test_material_mapping.cpp
+    test_mcp_bambu_print.cpp
     test_mcp_print_options.cpp
     test_paint_geometry.cpp
     test_scalar_params.cpp
@@ -98,6 +99,11 @@ add_executable(${_TEST_NAME}_tests
     test_layer_ranges.cpp
     test_object_settings.cpp
     test_layer_plan.cpp
+    test_layer_geometry.cpp
+    test_geometry_readiness.cpp
+    test_physical_segments.cpp
+    test_plate_analysis.cpp
+    test_move_frame.cpp
     test_filament_model.cpp
     test_filament_slots.cpp
     test_mcp_tool_list.cpp

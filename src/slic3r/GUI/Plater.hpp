@@ -978,6 +978,8 @@ public:
     void set_bed_position(Vec2d& pos);
     //BBS: is the background process slicing currently
     bool is_background_process_slicing() const;
+    // GUI thread only, within a single non-yielding read; refuses work on any plate globally.
+    bool ready_for_geometry_read();
     // Orca: called by PartPlateList before it frees or reorders Prints or plates: stops a slice, and
     // cancels a Slice All run (OrcaMCPSliceCredit.hpp).
     OrcaMCP::PlateListChangeDuringSlice stop_slice_for_plate_list_change();

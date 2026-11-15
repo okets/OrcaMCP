@@ -19,6 +19,8 @@
 #include "slic3r/Utils/ThreadCancel.hpp"
 #include "OrcaMCPGcodeCheck.hpp"
 #include "OrcaMCPLayerRanges.hpp"
+#include "OrcaMCPLayerGeometry.hpp"
+#include "OrcaMCPPlateAnalysis.hpp"
 #include "OrcaMCPSliceEstimate.hpp"
 #include "OrcaMCPNextSteps.hpp"
 #include "OrcaMCPServerInfo.hpp"
@@ -1399,6 +1401,73 @@ void OrcaMCPServer::register_builtin_tools()
     });
 
     // ==================== VISUALIZATION ====================
+
+    register_tool({
+        "get_layer_geometry",
+        ToolCategory::Visualization,
+        "Read native layer centerlines",
+        "Read ordered XYZ extrusion centerlines from one valid completed native FFF plate slice. Required plate_index (0-based) "
+        "and exactly one layer (Preview slider, 1-based) or finite z in mm (nearest printed height; ties lower, outside clamps). "
+        "Optional features and filaments (1-based native processor filament slots, no filament_maps remap) are nonempty set filters. "
+        "max_points defaults to 512, range 2..8192 including repeated boundary points; complete success JSON is capped at 64 KiB. "
+        "Pass next_cursor unchanged with the same resolved layer and canonical filters; max_points may change. Returns status:success, "
+        "schema_version:1, source:gcode_processor, application_version, orcamcp_version, build_commit (or null), plate_index, result_id, "
+        "layer_digest, slice_valid:true, units:mm, frame:bed, axes:[x,y,z], representation:extrusion_centerlines, layer, filters, paths, "
+        "empty_layer, nothing_matched, has_more and next_cursor. Each path has start_move, feature, filament, width_mm, height_mm, "
+        "object_label_id (raw G-code label, -1 unknown; no object ownership), continues and points. Exact XYZ retains layer-start "
+        "predecessors and changing vase Z; no simplification. Support/interface paths are ribbons, not support topology or contact proof. "
+        "Travel, custom purge and other roles are excluded. No slicing, rendering, export or mutation. Process/result identity and a full "
+        "selected-layer digest fence cursors; each call costs O(layer). Worker readiness contention or a nonquiescent background-worker "
+        "state returns retryable status:error code:slice_busy globally across plates. After readiness passes, pending settings or explicit "
+        "slice state returns code:no_valid_slice. Other endpoint codes: invalid_arguments, invalid_plate, "
+        "no_valid_slice, stale_slice, unsupported_source, output_limit. Endpoint errors are normal JSON tool content; framework schema "
+        "rejections remain JSON-RPC -32602 and unexpected faults -32603. Every success includes coordinate_frame metadata captured "
+        "with the moves: processor-preview offsets for each resolved filament, exact native float values, configuration provenance, "
+        "normalization availability, start-code Z-pinning policy and frame_digest bound to result_id. The legacy frame:bed label "
+        "means processor-preview coordinates. Normalize only when the captured frame permits per-filament translation; no live "
+        "config or legacy result Z field is inferred. Geometry v3 digests include frame_digest. Synthetic Seam predecessors and "
+        "unknown start-code pin windows still require explicit oracle classification; an export must be rebound to the new result.",
+        OrcaMCP::layer_geometry_schema(),
+        [](const nlohmann::json& params) -> nlohmann::json {
+            return run_on_main_thread([params]() { return OrcaMCPPlateUtils::GetLayerGeometry(params); });
+        }
+    });
+
+    register_tool({
+        "get_plate_analysis",
+        ToolCategory::Slicing,
+        "Read native plate accounting or records",
+        "Read one native FFF plate result without slicing, applying settings, rendering or exporting. Required plate_index "
+        "(0-based); section defaults to summary or accepts detail. Integral JSON numbers are accepted, booleans/fractions "
+        "and unknown keys refused. Both sections require native Print objects and completed slicing/export steps; loaded "
+        "sliced sources remain unsupported after cached loading. Worker readiness contention or a nonquiescent background-worker "
+        "state returns retryable slice_busy globally across plates. After readiness passes, pending settings or explicit slice state "
+        "returns no_valid_slice. Summary is single-page: native_estimate, "
+        "accounting, slice_inputs (live Print controls after slice, not proven slice-time binding), pricing (currency null; "
+        "profile_money material costs excluding time_cost), profile_inputs for all slots, sources legend, material_categories, "
+        "material_category_totals and unattributed. Total already includes flush; native tagged flush coverage is not proven "
+        "complete. Missing/invalid positive-volume inputs yield null; zero price is flagged. Detail alone permits max_moves "
+        "5..10000 (default 10000) and cursor. Every inspected MoveVertex counts, including tail, predecessor and skipped "
+        "internal_only copies. Commit only at physical boundaries; copy next_cursor unchanged, same plate/detail, optional "
+        "changed max_moves. Detail returns partial:true, range, inspected_moves, total_moves, final_layer, minimal accounting, "
+        "layer_parts, occupancy_parts and ordered Tool_change/Color_change events with native indices/roles/one-based filament "
+        "slots (no physical-nozzle remap). Reduce counts, signed delta E, XYZ/XY lengths and swept XY area; no volume from width, "
+        "no support topology/contact ownership or per-change purge. Seam remains a physical predecessor. Common status:success "
+        "schema_version:1/source:gcode_processor and versions/build/result identity/slice_valid/section/timing_ms/has_more/next_cursor "
+        "appear on every page; complete success JSON <=64 KiB including timing. Result identity plus O(1) shape fences cursors, "
+        "not a content hash. No-progress physical units or excessive metadata return output_limit. Normal endpoint errors are "
+        "exactly {status:error,code,message}: invalid_arguments,invalid_plate,slice_busy,no_valid_slice,unsupported_source,"
+        "stale_slice,output_limit; schema transport failures remain -32602 and unexpected faults -32603. Every summary/detail "
+        "success includes coordinate_frame captured with moves, bounded per-filament offsets, normalization availability and "
+        "frame_digest bound to result_id. Only positively captured ordinary non-belt translation may normalize an oracle; "
+        "no live-config/default-only proof, file hash or legacy result Z is inferred. Consumers joining detail pages require "
+        "identical frame_digest as well as result_id; the unchanged detail cursor is not an arbitrary metadata-mutation detector. "
+        "Start-code pinning and synthetic Seam predecessor effects remain explicit oracle limitations.",
+        OrcaMCP::plate_analysis_schema(),
+        [](const nlohmann::json& params) -> nlohmann::json {
+            return run_on_main_thread([params]() { return OrcaMCPPlateUtils::GetPlateAnalysis(params); });
+        }
+    });
 
     // render_plate_view - Render plate thumbnail
     register_tool({

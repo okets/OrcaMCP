@@ -222,6 +222,8 @@ public:
     static void ComputeRender(RenderJob& job, const std::function<bool()>& stop);
     // Main thread. Draws every view and answers; an error answer when the scene changed since PrepareRender.
     static nlohmann::json DrawRender(RenderJob& job);
+    static nlohmann::json GetPlateAnalysis(const nlohmann::json& params);
+    static nlohmann::json GetLayerGeometry(const nlohmann::json& params);
     // `mesh_health` is model_mesh_health(model), read once for the call: every object entry's
     // mesh_warning, and its features when asked for, come from it.
     static nlohmann::json GetCurrentProject(const bool with_model_object_features,

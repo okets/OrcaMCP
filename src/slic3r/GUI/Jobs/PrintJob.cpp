@@ -67,6 +67,36 @@ static wxString wait_sending_finish         = _L("Print task sending times out."
 //static wxString desc_wait_sending_finish    = _L("The printer timed out while receiving a print job. Please check if the network is functioning properly and send the print again.");
 //static wxString desc_wait_sending_finish    = _L("The printer timed out while receiving a print job. Please check if the network is functioning properly.");
 
+std::shared_ptr<PrintJob> make_print_job_for_machine(MachineObject& machine)
+{
+    auto job = std::make_shared<PrintJob>(machine.get_dev_id());
+    job->m_dev_ip = machine.get_dev_ip();
+    job->m_ftp_folder = machine.get_ftp_folder();
+    job->m_access_code = machine.get_access_code();
+#if !BBL_RELEASE_TO_PUBLIC
+    job->m_local_use_ssl_for_ftp = wxGetApp().app_config->get("enable_ssl_for_ftp") == "true" ? true : false;
+    job->m_local_use_ssl = wxGetApp().app_config->get("enable_ssl_for_mqtt") == "true" ? true : false;
+#else
+    job->m_local_use_ssl_for_ftp = machine.local_use_ssl_for_ftp;
+    job->m_local_use_ssl = machine.local_use_ssl;
+#endif
+    job->connection_type = machine.connection_type();
+    job->cloud_print_only = machine.is_support_cloud_print_only;
+
+    job->sdcard_state = machine.GetStorage()->get_sdcard_state();
+    job->has_sdcard =  wxGetApp().app_config->get("allow_abnormal_storage") == "true"
+            ? (job->sdcard_state == DevStorage::SdcardState::HAS_SDCARD_NORMAL
+               || job->sdcard_state == DevStorage::SdcardState::HAS_SDCARD_ABNORMAL)
+            : job->sdcard_state == DevStorage::SdcardState::HAS_SDCARD_NORMAL;
+
+    job->could_emmc_print = machine.can_use_emmc_print();
+    if (machine.is_support_print_with_emmc && !job->could_emmc_print) {
+        BOOST_LOG_TRIVIAL(info) << "print_job: emmc print disabled by config";
+    }
+
+    return job;
+}
+
 PrintJob::PrintJob(std::string dev_id)
 : m_plater{wxGetApp().plater()},
     m_dev_id(dev_id),
@@ -514,7 +544,7 @@ void PrintJob::process(Ctl &ctl)
                         }
 
                         //get errors
-                        if (code > 100 || code < 0 || stage == SendingPrintJobStage::PrintingStageERROR) {
+                        if (m_notify_plater && (code > 100 || code < 0 || stage == SendingPrintJobStage::PrintingStageERROR)) {
                             if (code == BAMBU_NETWORK_ERR_PRINT_WR_FILE_OVER_SIZE || code == BAMBU_NETWORK_ERR_PRINT_SP_FILE_OVER_SIZE) {
                                 m_plater->update_print_error_info(code, desc_file_too_large, info);
                             }else if (code == BAMBU_NETWORK_ERR_PRINT_WR_FILE_NOT_EXIST || code == BAMBU_NETWORK_ERR_PRINT_SP_FILE_NOT_EXIST){
@@ -733,18 +763,20 @@ void PrintJob::process(Ctl &ctl)
         // wait for printer mqtt ready the same job id
 
         BOOST_LOG_TRIVIAL(error) << "print_job: send ok.";
-        wxCommandEvent* evt = new wxCommandEvent(m_print_job_completed_id);
-        if (!m_completed_evt_data.empty())
-            evt->SetString(m_completed_evt_data);
-        else
-            evt->SetString(m_dev_id);
-        if (m_print_job_completed_id == wxGetApp().plater()->get_send_calibration_finished_event()) {
-            int sel = wxGetApp().mainframe->get_calibration_curr_tab();
-            if (sel >= 0) {
-                evt->SetInt(sel);
+        if (m_notify_plater) {
+            wxCommandEvent* evt = new wxCommandEvent(m_print_job_completed_id);
+            if (!m_completed_evt_data.empty())
+                evt->SetString(m_completed_evt_data);
+            else
+                evt->SetString(m_dev_id);
+            if (m_print_job_completed_id == wxGetApp().plater()->get_send_calibration_finished_event()) {
+                int sel = wxGetApp().mainframe->get_calibration_curr_tab();
+                if (sel >= 0) {
+                    evt->SetInt(sel);
+                }
             }
+            wxQueueEvent(m_plater, evt);
         }
-        wxQueueEvent(m_plater, evt);
         m_job_finished = true;
         m_lifecycle_success = true;
     }

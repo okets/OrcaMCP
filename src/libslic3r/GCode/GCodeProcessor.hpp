@@ -82,6 +82,38 @@ inline constexpr float DEFAULT_FILAMENT_DENSITY = 1.245f;
         {"head_wrap_detect", SkipType::stHeadWrapDetect}
     };
 
+// Captured processing inputs belong to the move stream, never to current live Print settings.
+enum class MoveFrameBasis { None, StreamingExport, FileReprocess };
+enum class MoveFrameConfigKind { NoneOrDefaulted, TypedPrintConfig, ExplicitGcodeConfigBlock };
+enum class MoveFrameClassification { Unknown, OrdinaryNonbeltTranslation, UnsupportedTransform };
+enum class MoveFrameReason {
+    None, NotCaptured, ConfigurationUnknown, UnsupportedTransform, InvalidSlotCount, UnresolvedOffsets,
+    NonfiniteInputs, InputsChangedDuringProcessing, InvalidFilamentSlot, ReloadFailedSourceMismatch
+};
+enum class MoveFrameSourceFileState { NotVerified, ReloadSucceeded, ReloadFailed };
+struct MoveFrameProvenance {
+    bool captured = false;
+    MoveFrameBasis basis = MoveFrameBasis::None;
+    MoveFrameConfigKind config_kind = MoveFrameConfigKind::NoneOrDefaulted;
+    unsigned char explicit_frame_keys = 0; // belt=1, z=2, extruder=4, initial height=8.
+    MoveFrameClassification classification = MoveFrameClassification::Unknown;
+    MoveFrameReason reason = MoveFrameReason::NotCaptured;
+    std::array<double, 2> xy_mm{{0., 0.}};
+    float z_offset_mm = 0.f; // Own value copied from processor; legacy result.z_offset is not a source.
+    std::vector<Vec3f> extruder_offsets_mm; // Exactly configured slot count, bounded to 64.
+    float first_layer_height_mm = 0.f;
+    bool start_custom_z_pinned = true;
+    bool belt_config_known = false;
+    bool belt_configured = false;
+    bool processor_belt_printer = false;
+    bool machine_transform_known = false;
+    bool machine_transform_active = false;
+    bool belt_header_observed = false;
+    float belt_tilt_angle = 0.f;
+    float belt_z_origin = 0.f;
+    MoveFrameSourceFileState source_file_state = MoveFrameSourceFileState::NotVerified;
+};
+
     struct PrintEstimatedStatistics
     {
         enum class ETimeMode : unsigned char
@@ -331,6 +363,7 @@ inline constexpr float DEFAULT_FILAMENT_DENSITY = 1.245f;
         std::string filename;
         unsigned int id;
         std::vector<MoveVertex> moves;
+        MoveFrameProvenance move_frame;
         ObjectMass plate_mass;
         // One per object instance, and one per connected body of the instances of several, when the sliced objects were at hand.
         std::vector<ObjectMass> object_masses;
@@ -436,6 +469,7 @@ inline constexpr float DEFAULT_FILAMENT_DENSITY = 1.245f;
             filename = std::forward<Other>(other).filename;
             id = std::forward<Other>(other).id;
             moves = std::forward<Other>(other).moves;
+            move_frame = std::forward<Other>(other).move_frame;
             plate_mass = std::forward<Other>(other).plate_mass;
             object_masses = std::forward<Other>(other).object_masses;
             body_masses = std::forward<Other>(other).body_masses;
@@ -1318,6 +1352,15 @@ inline constexpr float DEFAULT_FILAMENT_DENSITY = 1.245f;
         bool m_manual_filament_change{ false };
 
         //BBS: x, y offset for gcode generated
+        MoveFrameProvenance m_frame_config;
+        MoveFrameProvenance m_frame_snapshot;
+        MoveFrameBasis m_frame_basis = MoveFrameBasis::StreamingExport;
+        bool m_frame_started = false;
+        bool m_frame_belt_header_observed = false;
+        MoveFrameReason m_frame_failure = MoveFrameReason::None;
+        void invalidate_move_frame_inputs();
+        void begin_move_frame(int filament);
+        void finalize_move_frame();
         double          m_x_offset{ 0 };
         double          m_y_offset{ 0 };
 
@@ -1443,6 +1486,7 @@ inline constexpr float DEFAULT_FILAMENT_DENSITY = 1.245f;
         // Hand the nozzle grouping context to the estimator BEFORE the streaming replay, so the
         // per-slot machine-limit resolution can follow the active nozzle. Null is fine (slot 0).
         void initialize_from_context(const std::shared_ptr<MultiNozzleUtils::NozzleGroupResultBase>& nozzle_group_result) {
+            invalidate_move_frame_inputs();
             m_nozzle_group_result = nozzle_group_result;
         }
 
@@ -1481,7 +1525,10 @@ inline constexpr float DEFAULT_FILAMENT_DENSITY = 1.245f;
         float get_first_layer_time(PrintEstimatedStatistics::ETimeMode mode) const;
 
         //BBS: set offset for gcode writer
-        void set_xy_offset(double x, double y) { m_x_offset = x; m_y_offset = y; }
+        void set_xy_offset(double x, double y) {
+            if (x != m_x_offset || y != m_y_offset) invalidate_move_frame_inputs();
+            m_x_offset = x; m_y_offset = y;
+        }
 
         // Orca: if true, only change new layer if ETags::Layer_Change occurs
         // otherwise when we got a lift of z during extrusion, a new layer will be added

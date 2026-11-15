@@ -211,6 +211,9 @@ public:
 		STATE_EXIT,
 		STATE_EXITED,
 	};
+    // GUI-thread-only snapshot, valid only within the same non-yielding GUI callback. A later
+    // GUI launch can invalidate it. No worker self-starts from INITIAL/IDLE.
+    bool ready_for_geometry_read();
 	State 	state() 	const { return m_state; }
 	bool    idle() 		const { return m_state == STATE_IDLE; }
 	bool    running() 	const { return m_state == STATE_STARTED || m_state == STATE_RUNNING || m_state == STATE_FINISHED || m_state == STATE_CANCELED; }

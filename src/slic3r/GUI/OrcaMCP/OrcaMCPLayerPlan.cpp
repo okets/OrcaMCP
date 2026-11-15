@@ -46,16 +46,6 @@ double round_to(double value, int decimals)
 }
 double area_mm2(const ExPolygons& shape) { return area(shape) * SCALING_FACTOR * SCALING_FACTOR; }
 
-// The height layer [begin, end) prints at: where its last extrusion is, else its last move, else the
-// height of the layer before it (a layer change with nothing in it).
-double layer_height_of(const std::vector<GcodeMove>& moves, size_t begin, size_t end, double previous_z)
-{
-    for (size_t i = end; i > begin; --i)
-        if (is_feature_extrusion(moves[i - 1]))
-            return moves[i - 1].position.z();
-    return end > begin ? double(moves[end - 1].position.z()) : previous_z;
-}
-
 std::string drawable_feature_list()
 {
     std::string list;
@@ -266,64 +256,6 @@ void draw_legend(wxImage& image, const std::vector<LegendEntry>& legend)
 
 } // namespace
 
-// --- which layer -----------------------------------------------------------------------------
-
-std::vector<GcodeLayer> gcode_layers(const std::vector<GcodeMove>& moves)
-{
-    std::vector<GcodeLayer> layers;
-    if (moves.empty())
-        return layers;
-    const unsigned count = moves.back().layer_id + 1;
-    layers.reserve(count);
-    size_t begin = 0;
-    double z     = 0.;
-    for (unsigned id = 0; id < count; ++id) {
-        const auto end = std::partition_point(moves.begin() + begin, moves.end(), [id](const GcodeMove& m) { return m.layer_id <= id; });
-        GcodeLayer layer;
-        layer.begin = begin;
-        layer.end   = size_t(end - moves.begin());
-        layer.z = z = layer_height_of(moves, layer.begin, layer.end, z);
-        layers.push_back(layer);
-        begin = layer.end;
-    }
-    return layers;
-}
-
-size_t layer_by_number(const std::vector<GcodeLayer>& layers, int number)
-{
-    if (layers.empty())
-        throw std::runtime_error("the plate's G-code has no layers");
-    if (number < 1 || size_t(number) > layers.size())
-        throw std::runtime_error("layer " + std::to_string(number) + " does not exist: this plate's G-code has layers 1.." +
-                                 std::to_string(layers.size()) + ", numbered as the Preview's layer slider numbers them");
-    return size_t(number - 1);
-}
-
-LayerAtHeight layer_nearest_z(const std::vector<GcodeLayer>& layers, double z)
-{
-    if (layers.empty())
-        throw std::runtime_error("the plate's G-code has no layers");
-    // A layer at exactly the height asked for wins. Otherwise the nearest does, and distances within
-    // half the thousandth the G-code writes heights to are the same distance, so a height between two
-    // layers goes to the lower one; real layers can be a thousandth apart, so that is as wide as it gets.
-    const double exact = 1e-6, same = 0.0005;
-    double       best  = std::numeric_limits<double>::max();
-    for (const GcodeLayer& layer : layers)
-        best = std::min(best, std::abs(layer.z - z));
-    const double  reach = best < exact ? exact : best + same;
-    LayerAtHeight hit;
-    bool          found = false;
-    for (size_t i = 0; i < layers.size(); ++i)
-        if (std::abs(layers[i].z - z) <= reach && (!found || layers[i].z < layers[hit.index].z - exact)) {
-            hit.index = i;
-            found     = true;
-        }
-    for (size_t i = 0; i < layers.size(); ++i)
-        if (i != hit.index && std::abs(layers[i].z - layers[hit.index].z) < exact)
-            hit.also_at.push_back(int(i) + 1);
-    return hit;
-}
-
 // --- the request -----------------------------------------------------------------------------
 
 bool LayerPlanRequest::draws(ExtrusionFeature feature) const
@@ -425,26 +357,23 @@ std::vector<ToolpathRun> layer_toolpaths(const std::vector<GcodeMove>& moves, co
 {
     std::vector<ToolpathRun> runs;
     bool                     open = false;  // the last run takes the next extrusion if it matches
-    for (size_t i = std::max<size_t>(layer.begin, 1); i < layer.end; ++i) {
-        const GcodeMove& m = moves[i];
-        if (!is_feature_extrusion(m)) {
+    visit_layer_segments(moves, layer, [&](const NativeLayerSegment& segment) {
+        const GcodeMove& m = segment.move;
+        const ExtrusionFeature feature = segment.feature;
+        const int filament = segment.filament;
+        if (!segment.extrusion || !request.draws(feature) || !request.draws(filament)) {
             open = false;
-            continue;
-        }
-        const ExtrusionFeature feature  = extrusion_feature_of(m.extrusion_role);
-        const int              filament = filament_of(m);
-        if (!request.draws(feature) || !request.draws(filament)) {
-            open = false;
-            continue;
+            return true;
         }
         const bool continues = open && runs.back().feature == feature && runs.back().filament == filament &&
                                std::abs(runs.back().width - m.width) < 1e-3f;
         if (!continues) {
-            runs.push_back({feature, filament, m.width, {xy_of(moves[i - 1])}});
+            runs.push_back({feature, filament, m.width, {xy_of(segment.previous)}});
             open = true;
         }
         runs.back().points.push_back(xy_of(m));
-    }
+        return true;
+    });
     return runs;
 }
 

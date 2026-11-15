@@ -244,14 +244,6 @@ TEST_CASE("get_server_info rejects an unknown section and names the valid ones",
 
 // ==================== TOOL NAMES IN THE DOCUMENTATION ====================
 
-TEST_CASE("Every tool get_server_info mentions is a real tool", "[orcamcp][tools]")
-{
-    const mcp_tool_references::ToolNames names(OrcaMCPServer::registered_tools());
-    const auto unknown = mcp_tool_references::unknown_in_json(get_server_info({{"section", "all"}}), names);
-    INFO("get_server_info names tools that do not exist:\n" << mcp_tool_references::describe(unknown));
-    CHECK(unknown.empty());
-}
-
 namespace {
 
 // Response fields and status words tool descriptions name that look like tool names ("slice_run",
@@ -260,9 +252,17 @@ const std::set<std::string> response_words_named_in_descriptions{"slice_run",   
                                                                   "export_started", "cut_info_invalidated_for", "new_object_ids",
                                                                   "arrange_options", "fill_bed_started", "object_id_changes",
                                                                   "instances_on_no_plate", "undo_warning", "slice_started",
-                                                                  "print_options"};
+                                                                  "print_options", "slice_valid", "start_move", "slice_busy", "slice_inputs"};
 
 } // namespace
+
+TEST_CASE("Every tool get_server_info mentions is a real tool", "[orcamcp][tools]")
+{
+    const mcp_tool_references::ToolNames names(OrcaMCPServer::registered_tools(), response_words_named_in_descriptions);
+    const auto unknown = mcp_tool_references::unknown_in_json(get_server_info({{"section", "all"}}), names);
+    INFO("get_server_info names tools that do not exist:\n" << mcp_tool_references::describe(unknown));
+    CHECK(unknown.empty());
+}
 
 TEST_CASE("Every tool name a tool's own text mentions is a real tool", "[orcamcp][tools]")
 {
@@ -586,4 +586,15 @@ TEST_CASE("Start-up work that throws something other than a std::exception is ca
     const std::string    failure = once.run([] { throw 42; });
     CHECK_FALSE(failure.empty());
     CHECK(once.run([] {}) == failure);
+}
+
+TEST_CASE("Native Bambu print tools advertise dry run and explicit identity", "[orcamcp][tools]")
+{
+    const auto& tools = OrcaMCPServer::registered_tools();
+    const auto& start = tools.at("start_bambu_print");
+    CHECK(start.input_schema["properties"]["dry_run"]["default"] == true);
+    CHECK(start.input_schema["properties"].contains("expected_slice_id"));
+    CHECK(start.input_schema["properties"].contains("request_id"));
+    CHECK(start.input_schema["required"] == nlohmann::json::array({"printer_id", "mappings"}));
+    CHECK(tools.at("get_bambu_print_submission").input_schema["required"] == nlohmann::json::array({"request_id"}));
 }

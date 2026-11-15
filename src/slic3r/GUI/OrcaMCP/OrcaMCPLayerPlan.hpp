@@ -26,7 +26,7 @@
 #include "libslic3r/BoundingBox.hpp"
 #include "libslic3r/Color.hpp"
 #include "libslic3r/GCode/GCodeProcessor.hpp"
-#include "slic3r/GUI/OrcaMCP/OrcaMCPExtrusionFeatures.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPLayerGeometry.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPFirstLayerPlan.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPRenderOverlay.hpp"
 
@@ -37,41 +37,7 @@ class Print;
 class PrintObject;
 namespace GUI { namespace OrcaMCP {
 
-using GcodeMove = GCodeProcessorResult::MoveVertex;
-
-// --- which layer -----------------------------------------------------------------------------
-
-// One printed layer of the G-code: its moves are [begin, end) of GCodeProcessorResult::moves, and z is
-// the height it prints at -- where its last extrusion is, which for a spiral vase is the top of the
-// climb. Layer i is the one the Preview's slider numbers i + 1.
-struct GcodeLayer
-{
-    size_t begin = 0, end = 0;
-    double z     = 0.;
-};
-
-// Every layer of `moves`, found by binary search on MoveVertex::layer_id, which the processor only
-// ever counts up (one per layer change), so this costs a few probes per layer, not a pass over moves.
-std::vector<GcodeLayer> gcode_layers(const std::vector<GcodeMove>& moves);
-
-// The layer the slider calls `number` (1-based). Throws, naming the valid range, when there is none.
-size_t layer_by_number(const std::vector<GcodeLayer>& layers, int number);
-
-struct LayerAtHeight
-{
-    size_t           index = 0;  // into the layers
-    std::vector<int> also_at;    // other layer numbers printed at the same height (a by-object print)
-};
-
-// The layer printed nearest to `z` mm. A height exactly between two goes to the lower; one outside
-// the print goes to its first or last layer. Throws when there are no layers.
-LayerAtHeight layer_nearest_z(const std::vector<GcodeLayer>& layers, double z);
-
 // --- the request -----------------------------------------------------------------------------
-
-// The features a plan can draw: every ExtrusionFeature but `other` (start G-code purge lines and the
-// like), in the enum's order.
-constexpr size_t k_plan_feature_count = size_t(ExtrusionFeature::other);
 
 enum class LayerColorBy { feature, filament };
 

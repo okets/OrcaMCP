@@ -156,3 +156,17 @@ TEST_CASE("Moonraker discovery leaves another agent's saved machine alone", "[De
         "dev_type":"","dev_signal":"0","connect_type":"lan","bind_state":"free"})");
     REQUIRE((manager.get_local_machine(saved.dev_id) != nullptr) == (owner == MOONRAKER_PRINTER_AGENT_ID));
 }
+
+TEST_CASE("Native Bambu start loses full snapshot evidence when the device goes offline", "[DeviceAccess]")
+{
+    MachineObject machine(nullptr, nullptr, "example", "example-device", "127.0.0.1");
+    CHECK_FALSE(machine.native_start_snapshot_ready);
+    machine.native_start_snapshot_ready = true;
+    machine.set_online_state(false);
+    CHECK_FALSE(machine.native_start_snapshot_ready);
+    machine.set_online_state(true);
+    CHECK_FALSE(machine.native_start_snapshot_ready);
+    machine.native_start_snapshot_ready = true;
+    machine.reset();
+    CHECK_FALSE(machine.native_start_snapshot_ready);
+}

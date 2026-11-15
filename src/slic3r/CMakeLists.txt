@@ -112,6 +112,7 @@ set(SLIC3R_GUI_SOURCES
     GUI/DesktopIntegrationDialog.cpp
     GUI/DesktopIntegrationDialog.hpp
     GUI/DeviceManager.cpp
+    GUI/NativeBambuPrintSnapshot.hpp
     GUI/DeviceManager.hpp
     GUI/Downloader.cpp
     GUI/DownloaderFileGet.cpp
@@ -564,6 +565,17 @@ set(SLIC3R_GUI_SOURCES
     GUI/OrcaMCP/OrcaMCPSourceFiles.hpp
     GUI/OrcaMCP/OrcaMCPSourceFiles.cpp
     GUI/OrcaMCP/OrcaMCPSourceFileTools.cpp
+    GUI/OrcaMCP/OrcaMCPDigest.hpp
+    GUI/OrcaMCP/OrcaMCPMoveFrame.hpp
+    GUI/OrcaMCP/OrcaMCPMoveFrame.cpp
+    GUI/OrcaMCP/OrcaMCPPlateAnalysis.hpp
+    GUI/OrcaMCP/OrcaMCPPlateAnalysis.cpp
+    GUI/OrcaMCP/OrcaMCPPhysicalSegments.hpp
+    GUI/OrcaMCP/OrcaMCPPhysicalSegments.cpp
+    GUI/OrcaMCP/OrcaMCPResultIdentity.hpp
+    GUI/OrcaMCP/OrcaMCPResultIdentity.cpp
+    GUI/OrcaMCP/OrcaMCPLayerGeometry.hpp
+    GUI/OrcaMCP/OrcaMCPLayerGeometry.cpp
     GUI/OrcaMCP/OrcaMCPLayerPlan.hpp
     GUI/OrcaMCP/OrcaMCPLayerPlan.cpp
     GUI/OrcaMCP/OrcaMCPPresetConfigUtils.hpp
@@ -582,6 +594,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/OrcaMCP/OrcaMCPPrinterUtils.cpp
     GUI/OrcaMCP/OrcaMCPPrintOptions.hpp
     GUI/OrcaMCP/OrcaMCPPrintOptions.cpp
+    GUI/OrcaMCP/OrcaMCPBambuPrint.hpp
+    GUI/OrcaMCP/OrcaMCPBambuPrint.cpp
     GUI/OrcaMCP/OrcaMCPPrinterTools.cpp
     GUI/OrcaMCP/OrcaMCPPrinterControl.hpp
     GUI/OrcaMCP/OrcaMCPPrinterControl.cpp
