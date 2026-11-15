@@ -19,6 +19,7 @@ add_executable(${_TEST_NAME}_tests
     test_gcode_preview_colors.cpp
     test_device_progress.cpp
     test_device_manager_integration.cpp
+    test_camera_capture.cpp
     test_web_media_controller.cpp
     test_scene_raycaster.cpp
     test_scene_benchmark.cpp

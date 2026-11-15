@@ -2,6 +2,7 @@
 #pragma once
 #include <chrono>
 #include <functional>
+#include <exception>
 #include <memory>
 #include <optional>
 
@@ -11,11 +12,15 @@ namespace Slic3r {
 // waiting for the GUI thread) and the printer agents' bounded GUI-thread calls both go through it, so
 // they keep one set of rules:
 //
-// - Work that has started is waited for, however long it takes: it may use what its caller owns, so it
+// - In run(), work that has started is waited for, however long it takes: it may use what its caller owns, so it
 //   may capture the caller's locals by reference.
 // - A caller released before its work started -- by close(), or by its bound running out -- gets false
 //   at once, and that work never runs, even when the queue reaches it later.
 // - What the work throws is rethrown to its caller, which is always released.
+//
+// run_owned_until is the separate strict-deadline contract for value-owned work;
+// it can release a caller while its work finishes safely. Existing run() callers
+// keep the reference-lifetime behavior above.
 //
 // No wx: the queue is passed in, so the tests drive it with queues of their own
 // (tests/slic3rutils/test_queued_call.cpp, test_mcp_shutdown.cpp).
@@ -31,6 +36,15 @@ public:
     // released before it started, by close() or once `bound` (when given) ran out. What `work` threw
     // is rethrown here.
     bool run(std::function<void()> work, std::optional<std::chrono::milliseconds> bound = std::nullopt);
+
+    // Strict caller deadline, including work that has already started. Unlike run(),
+    // work MUST own all captured state: it can continue after this returns false.
+    // Work still queued at the deadline is abandoned and never starts.
+    bool run_owned_until(std::function<void()> work, std::chrono::steady_clock::time_point deadline);
+
+    // Nonblocking, value-owned cleanup. A closed gate skips it (the native app
+    // owns shutdown teardown). on_error runs on the queue thread and must not throw.
+    void post_owned(std::function<void()> work, std::function<void(std::exception_ptr)> on_error);
 
     // Releases every caller whose work has not started, and makes every later run() return false.
     // Once closed it stays closed. Returns true when this call closed it. Safe from any thread.

@@ -582,6 +582,9 @@ set(SLIC3R_GUI_SOURCES
     GUI/OrcaMCP/OrcaMCPPrinterUtils.cpp
     GUI/OrcaMCP/OrcaMCPPrintOptions.hpp
     GUI/OrcaMCP/OrcaMCPPrintOptions.cpp
+    GUI/CameraCapture.hpp
+    GUI/OrcaMCP/OrcaMCPBambuCamera.hpp
+    GUI/OrcaMCP/OrcaMCPBambuCamera.cpp
     GUI/OrcaMCP/OrcaMCPPrinterTools.cpp
     GUI/OrcaMCP/OrcaMCPPrinterControl.hpp
     GUI/OrcaMCP/OrcaMCPPrinterControl.cpp

@@ -1,6 +1,10 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPMainThreadGate.hpp
 #pragma once
 #include <functional>
+#include <chrono>
+#include <memory>
+#include <optional>
+#include <utility>
 #include <nlohmann/json.hpp>
 #include "OrcaMCPJsonRpcError.hpp"
 #include "slic3r/Utils/QueuedCall.hpp"
@@ -30,11 +34,24 @@ using McpWork        = std::function<nlohmann::json()>;
 inline nlohmann::json call_through(MainThreadGate& gate, const McpWork& work)
 {
     // By reference: the gate never runs the work once this caller has been released, and waits for it
-    // once it has started.
+    // once it has started. The camera's value-owned deadline variant below does not
+// borrow its caller's stack.
     nlohmann::json value;
     if (!gate.run([&] { value = work(); }))
         throw McpShuttingDown();
     return value;
+}
+
+// Value-owned alternative for a strict request deadline. A running work item
+// may outlive its caller; neither work nor its captures may borrow caller locals.
+// nullopt means timeout/shutdown and carries no partially produced result.
+inline std::optional<nlohmann::json> call_owned_until(MainThreadGate& gate, McpWork work,
+                                                     std::chrono::steady_clock::time_point deadline)
+{
+    auto value = std::make_shared<nlohmann::json>();
+    if (!gate.run_owned_until([value, work = std::move(work)] { *value = work(); }, deadline))
+        return std::nullopt;
+    return std::move(*value);
 }
 
 // The app's gate to the wx main thread, posting through wxGetApp().CallAfter (defined in
