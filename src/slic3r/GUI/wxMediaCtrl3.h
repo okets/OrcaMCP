@@ -57,6 +57,10 @@ public:
     void BeginExternalStream();
     void EndExternalStream();
 
+    // Copies only a real decoded frame, never the idle image. Main-thread caller.
+    bool CopyDecodedFrame(wxImage& image, std::chrono::steady_clock::time_point& decoded,
+                          std::chrono::system_clock::time_point& received) const;
+
     void SetIdleImage(wxString const & image);
 
     wxMediaState GetState() override;
@@ -83,6 +87,8 @@ protected:
     void NotifyStopped();
 
 private:
+    std::chrono::steady_clock::time_point m_decoded_at{};
+    std::chrono::system_clock::time_point m_received_at{};
     wxString m_idle_image;
     wxMediaState m_state  = wxMEDIASTATE_STOPPED;
     int m_error  = 0;

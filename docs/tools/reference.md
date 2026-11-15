@@ -41,7 +41,7 @@ into a call that reports success and changes nothing. See [Error Handling](#erro
 | **Texture displacement** | `get_texture_library`, `delete_user_texture`, `get_texture_displacement`, `set_texture_displacement`, `get_texture_unwrap`, `set_texture_unwrap`, `bake_texture_displacement`, `prepare_texture_mesh` |
 | **Slicing** | `slice_all`, `cancel_slice`, `wait_for_slice` (bridge-only), `get_slicing_status`, `export_gcode`, `get_print_estimate`, `add_layer_gcode`, `delete_layer_gcode` |
 | **Visualization** | `render_plate_view`, `get_preview_base64`, `set_gcode_view_type`, `show_view` |
-| **Printers** | `get_printers`, `select_printer`, `add_physical_printer`, `discover_printers`, `send_to_printer`, `get_printer_status`, `printer_control`, `list_printer_files`, `print_printer_file`, `match_project_to_printer` |
+| **Printers** | `get_bambu_camera_frame`, `get_printers`, `select_printer`, `add_physical_printer`, `discover_printers`, `send_to_printer`, `get_printer_status`, `printer_control`, `list_printer_files`, `print_printer_file`, `match_project_to_printer` |
 | **Adaptive** | `apply_adaptive_layer_height`, `clear_adaptive_layer_height` |
 | **History** | `undo`, `redo` |
 | **Info** | `get_server_info`, `quit_app`, `start_orca` (bridge-only), `list_instances` (bridge-only), `select_instance` (bridge-only) |
@@ -4414,6 +4414,23 @@ change), `closed_toolbar_tool`, `next_steps` (`bake_texture_displacement` while 
 ---
 
 ## Printer Tools
+
+### get_bambu_camera_frame
+
+Capture one fresh JPEG from the selected connected native LAN Bambu camera.
+Supply `printer_id` matching the selected native device. The MCP response carries
+an image block and JSON text with identity, native decode/receive timestamp,
+`age_ms`, and dimensions. Camera exposure time is unavailable. The image must be
+newly decoded after the call began and no more than two seconds old at encoding.
+
+The tool borrows running playback or briefly starts idle native playback, waits
+at most eight seconds including GUI queue waits and cleanup (or the bridge's
+shorter wait budget), and stops only the session it owns. A stalled GUI returns
+an error with `cleanup_pending:true` and no image; owned cleanup runs when the
+GUI resumes, or native shutdown tears the player down. Native credentials remain internal. Printer/owner changes,
+stale frames, unavailable camera and timeout return an error without image.
+See [native camera capture](../HLSD/bambu-camera-capture.md) for ownership,
+limits, and qualification. This tool neither starts nor controls a print.
 
 ### get_printers
 List available printers.

@@ -1243,6 +1243,25 @@
       "summary": "Lay an object flat on its best face"
     },
     {
+      "category": "Printers",
+      "description": "Capture one fresh frame from the selected connected native LAN Bambu printer. printer_id must match the native selection. Borrows owner playback or briefly starts idle playback, waits at most 8 seconds, and stops only capture-owned playback. Returns JPEG image content plus printer identity, native receive/decode time (not camera exposure time), dimensions and age. Unavailable, changed identity, stale and timeout outcomes return no image. Never starts a print or returns camera URLs/credentials.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "printer_id": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "printer_id"
+        ],
+        "type": "object"
+      },
+      "name": "get_bambu_camera_frame",
+      "summary": "Capture a native Bambu camera frame"
+    },
+    {
       "category": "Filaments & colour",
       "description": "Enumerate an achievable palette of filament mixes (pairs, and optionally triples) from the printer's loaded physical filaments -- a shortlist to choose from before painting.",
       "inputSchema": {

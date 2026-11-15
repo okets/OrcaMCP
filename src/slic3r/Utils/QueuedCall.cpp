@@ -49,6 +49,34 @@ bool QueuedCalls::run(std::function<void()> work, std::optional<std::chrono::mil
     return true;
 }
 
+bool QueuedCalls::run_owned_until(std::function<void()> work, std::chrono::steady_clock::time_point deadline)
+{
+    if (is_closed() || std::chrono::steady_clock::now() >= deadline)
+        return false;
+    auto call = std::make_shared<Call>();
+    m_post([state = m_state, call, work = std::move(work), post = m_post] { run_queued(*state, *call, work, post); });
+    std::unique_lock<std::mutex> lock(m_state->mutex);
+    if (!m_state->changed.wait_until(lock, deadline, [&] { return call->done || m_state->closed; }))
+        call->abandoned = true;
+    if (!call->done || std::chrono::steady_clock::now() >= deadline) {
+        call->abandoned = true;
+        return false;
+    }
+    if (call->error)
+        std::rethrow_exception(call->error);
+    return true;
+}
+
+void QueuedCalls::post_owned(std::function<void()> work, std::function<void(std::exception_ptr)> on_error)
+{
+    if (is_closed()) return;
+    auto call = std::make_shared<Call>();
+    m_post([state = m_state, call, work = std::move(work), on_error = std::move(on_error), post = m_post] {
+        run_queued(*state, *call, work, post);
+        if (call->error) on_error(call->error);
+    });
+}
+
 void QueuedCalls::run_queued(State& state, Call& call, const std::function<void()>& work, const Post& post)
 {
     {

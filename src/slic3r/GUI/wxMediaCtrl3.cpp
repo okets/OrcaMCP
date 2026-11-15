@@ -59,6 +59,7 @@ wxMediaCtrl3::~wxMediaCtrl3()
         std::unique_lock<std::mutex> lk(m_mutex);
         m_url.reset(new wxURI);
         m_frame = wxImage(m_idle_image);
+        m_decoded_at = {};
         m_cond.notify_all();
     }
     m_thread.join();
@@ -72,6 +73,7 @@ void wxMediaCtrl3::Load(wxURI url)
     if (m_external)
         return;
     m_video_size = wxDefaultSize;
+    m_decoded_at = {};
     m_error = 0;
     m_url.reset(new wxURI(url));
     m_cond.notify_all();
@@ -96,6 +98,7 @@ void wxMediaCtrl3::Stop()
     std::unique_lock<std::mutex> lk(m_mutex);
     m_url.reset();
     m_frame = wxImage(m_idle_image);
+    m_decoded_at = {};
     NotifyStopped();
     m_cond.notify_all();
     Refresh();
@@ -110,6 +113,8 @@ void wxMediaCtrl3::SetExternalFrame(const wxImage& frame, wxSize videoSize)
         if (!m_external)
             return;
         m_frame = frame;
+        m_decoded_at = std::chrono::steady_clock::now();
+        m_received_at = std::chrono::system_clock::now();
         m_video_size = videoSize.IsFullySpecified() ? videoSize : frame.GetSize();
         adjust_frame_size(m_frame_size, m_video_size, GetSize());
     }
@@ -126,6 +131,8 @@ void wxMediaCtrl3::SetExternalFrame(const wxBitmap& frame, wxSize videoSize)
         if (!m_external)
             return;
         m_frame = frame;
+        m_decoded_at = std::chrono::steady_clock::now();
+        m_received_at = std::chrono::system_clock::now();
         m_video_size = videoSize.IsFullySpecified() ? videoSize : frame.GetSize();
         adjust_frame_size(m_frame_size, m_video_size, GetSize());
     }
@@ -141,6 +148,7 @@ void wxMediaCtrl3::BeginExternalStream()
     m_active_url.reset();
     m_video_size = wxDefaultSize;
     m_frame = wxImage(m_idle_image);
+    m_decoded_at = {};
     m_cond.notify_all();
     Refresh();
 }
@@ -153,8 +161,25 @@ void wxMediaCtrl3::EndExternalStream()
     m_active_url.reset();
     m_video_size = wxDefaultSize;
     m_frame = wxImage(m_idle_image);
+    m_decoded_at = {};
     m_cond.notify_all();
     Refresh();
+}
+
+bool wxMediaCtrl3::CopyDecodedFrame(wxImage& image, std::chrono::steady_clock::time_point& decoded,
+                                   std::chrono::system_clock::time_point& received) const
+{
+    std::unique_lock<std::mutex> lk(m_mutex);
+    if (m_decoded_at == std::chrono::steady_clock::time_point{} || !m_frame.IsOk())
+        return false;
+#ifdef _WIN32
+    image = m_frame.ConvertToImage();
+#else
+    image = m_frame.Copy();
+#endif
+    decoded = m_decoded_at;
+    received = m_received_at;
+    return image.IsOk();
 }
 
 void wxMediaCtrl3::SetIdleImage(wxString const &image)
@@ -165,6 +190,7 @@ void wxMediaCtrl3::SetIdleImage(wxString const &image)
     if (m_url == nullptr) {
         std::unique_lock<std::mutex> lk(m_mutex);
         m_frame = wxImage(m_idle_image);
+        m_decoded_at = {};
         assert(m_frame.IsOk());
         Refresh();
     }
@@ -444,6 +470,7 @@ int wxMediaCtrl3::PlayFfmpeg(std::shared_ptr<wxURI> const &url, std::unique_lock
                     }
                 }
                 auto frame_size = m_frame_size;
+                if (frame_size.x <= 0 || frame_size.y <= 0) frame_size = m_video_size;
                 lock.unlock();
 #ifdef _WIN32
                 wxBitmap frame;
@@ -455,8 +482,11 @@ int wxMediaCtrl3::PlayFfmpeg(std::shared_ptr<wxURI> const &url, std::unique_lock
                 lock.lock();
                 if (m_url != url)
                     break;
-                if (frame.IsOk())
+                if (frame.IsOk()) {
                     m_frame = frame;
+                    m_decoded_at = std::chrono::steady_clock::now();
+                    m_received_at = std::chrono::system_clock::now();
+                }
                 if (!m_refresh_pending.exchange(true)) {
                     CallAfter([this] {
                         m_refresh_pending.store(false);
@@ -540,6 +570,7 @@ void wxMediaCtrl3::PlayThread()
                 }
                 if (error == 0) {
                     auto frame_size = m_frame_size;
+                    if (frame_size.x <= 0 || frame_size.y <= 0) frame_size = m_video_size;
                     lk.unlock();
                     decoder.decode(sample);
 #ifdef _WIN32
@@ -577,6 +608,8 @@ void wxMediaCtrl3::PlayThread()
                             m_last_PTS_practical = now;
                         }
                         m_frame = bm;
+                        m_decoded_at = std::chrono::steady_clock::now();
+                        m_received_at = std::chrono::system_clock::now();
                     }
                     CallAfter([this] { Refresh(); });
                 }
