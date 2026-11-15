@@ -1,3 +1,12 @@
+# Explicit SDK selection excludes clang's implicit host /usr/local/include.
+# Recipes importing dependency headers as system includes need this isolation.
+set(_dep_header_sdk "${CMAKE_OSX_SYSROOT}")
+if(NOT _dep_header_sdk)
+    execute_process(COMMAND xcrun --show-sdk-path
+        OUTPUT_VARIABLE _dep_header_sdk OUTPUT_STRIP_TRAILING_WHITESPACE
+        COMMAND_ERROR_IS_FATAL ANY)
+endif()
+set(DEP_TARGET_HEADER_SDK "-DCMAKE_OSX_SYSROOT=${_dep_header_sdk}")
 
 # This ensures dependencies don't use SDK features which are not available in the version specified by Deployment target
 # That can happen when one uses a recent SDK but specifies an older Deployment target

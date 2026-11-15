@@ -338,6 +338,7 @@ function build_slicer() {
                     ${BUILD_TESTS:+-DBUILD_TESTS=ON} \
                     -DCMAKE_BUILD_TYPE="$BUILD_CONFIG" \
                     -DCMAKE_OSX_ARCHITECTURES="${_ARCH}" \
+                    -DCMAKE_OSX_SYSROOT="$(xcrun --show-sdk-path)" \
                     -DCMAKE_OSX_DEPLOYMENT_TARGET="${OSX_DEPLOYMENT_TARGET}" \
                     -DCMAKE_IGNORE_PREFIX_PATH="${CMAKE_IGNORE_PREFIX_PATH}" \
                     "${CMAKE_CCACHE_ARGS[@]}" \

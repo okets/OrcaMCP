@@ -11,7 +11,13 @@ This guide covers building OrcaSlicer with OrcaMCP from source.
 xcode-select --install
 
 # Homebrew packages
-brew install cmake ninja ccache
+brew install cmake ninja ccache autoconf automake libtool gettext texinfo
+```
+
+MPFR also requires Homebrew Texinfo on `PATH`:
+
+```bash
+export PATH="$(brew --prefix texinfo)/bin:$PATH"
 ```
 
 ### Linux (Ubuntu/Debian)
@@ -146,7 +152,7 @@ rm -rf build/CMakeCache.txt build/CMakeFiles
 
 macOS:
 ```bash
-brew install cmake ninja ccache
+brew install cmake ninja ccache autoconf automake libtool gettext texinfo
 ```
 
 ### OpenGL Issues (Linux)
@@ -190,6 +196,10 @@ MCP server files are in `src/slic3r/GUI/OrcaMCP/`. After modifying these, a full
 ```bash
 ./build_release_macos.sh -d  # Builds deps only
 ```
+
+### Mixed Homebrew Architectures
+
+The embedded macOS Python build uses an explicit SDK and restricts pkg-config discovery to the dependency prefix. This prevents Intel Homebrew headers and libraries under `/usr/local` from leaking into an arm64 runtime. The macOS build script selects an explicit SDK for the main application; Curl, DataChannel, and OpenCV also use an explicit SDK so imported system include directories select the matching dependency headers. Other dependency recipes do not yet enforce this SDK isolation globally. The dependency recipes honor `CMAKE_BUILD_PARALLEL_LEVEL`, including nested Make builds; use `-j4` to bound their parallelism.
 
 ## Cross-Platform Notes
 
