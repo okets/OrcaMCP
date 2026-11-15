@@ -1243,6 +1243,25 @@
       "summary": "Lay an object flat on its best face"
     },
     {
+      "category": "Printers",
+      "description": "Read a request_id submitted in this Orca process. queued/submitted/uncertain describe submission, not physical printing. observed_printer is independent fresh native state, not correlated proof of this job. Never resends. Unknown IDs after restart require manual reconciliation.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "request_id": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "name": "get_bambu_print_submission",
+      "summary": "Observe native Bambu submission"
+    },
+    {
       "category": "Filaments & colour",
       "description": "Enumerate an achievable palette of filament mixes (pairs, and optionally triples) from the printer's loaded physical filaments -- a shortlist to choose from before painting.",
       "inputSchema": {
@@ -5264,6 +5283,76 @@
       },
       "name": "split_object",
       "summary": "Split an object into objects or parts"
+    },
+    {
+      "category": "Printers",
+      "description": "Dry-run by default: inspect the current selected sliced plate, explicit selected LAN P1S 0.4 printer and project-to-AMS mapping without exporting or sending anything. Actual submission requires dry_run=false, expected_slice_id from inspection and a unique request_id. Uses Orca PrintJob; never opens a dialog. AMS IDs/slots are zero-based; project filaments are one-based. Exact native material family/profile identity and fresh native idle telemetry are required. A repeated request_id never resends within this process. Submission success does not prove physical printing; poll get_bambu_print_submission. After restart all request IDs are forgotten: reconcile with the printer before any new call. Bed must be clear before actual submission.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "bed_leveling": {
+            "default": true,
+            "type": "boolean"
+          },
+          "dry_run": {
+            "default": true,
+            "type": "boolean"
+          },
+          "expected_slice_id": {
+            "description": "Native slice identity returned by dry run; required for actual start",
+            "type": "string"
+          },
+          "mappings": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "ams_id": {
+                  "maximum": 3,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "project_filament": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "slot_id": {
+                  "maximum": 3,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "project_filament",
+                "ams_id",
+                "slot_id"
+              ],
+              "type": "object"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "printer_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "request_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "timelapse": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "printer_id",
+          "mappings"
+        ],
+        "type": "object"
+      },
+      "name": "start_bambu_print",
+      "summary": "Inspect or submit a native Bambu print"
     },
     {
       "category": "Filaments & colour",

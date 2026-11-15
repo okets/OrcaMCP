@@ -3680,19 +3680,7 @@ void SelectMachineDialog::on_send_print()
         }
     }
 
-    m_print_job = std::make_shared<PrintJob>(m_printer_last_select);
-    m_print_job->m_dev_ip = obj_->get_dev_ip();
-    m_print_job->m_ftp_folder = obj_->get_ftp_folder();
-    m_print_job->m_access_code = obj_->get_access_code();
-#if !BBL_RELEASE_TO_PUBLIC
-    m_print_job->m_local_use_ssl_for_ftp = wxGetApp().app_config->get("enable_ssl_for_ftp") == "true" ? true : false;
-    m_print_job->m_local_use_ssl = wxGetApp().app_config->get("enable_ssl_for_mqtt") == "true" ? true : false;
-#else
-    m_print_job->m_local_use_ssl_for_ftp = obj_->local_use_ssl_for_ftp;
-    m_print_job->m_local_use_ssl = obj_->local_use_ssl;
-#endif
-    m_print_job->connection_type = obj_->connection_type();
-    m_print_job->cloud_print_only = obj_->is_support_cloud_print_only;
+    m_print_job = make_print_job_for_machine(*obj_);
 
     if (m_print_type == PrintFromType::FROM_NORMAL) {
         BOOST_LOG_TRIVIAL(info) << "print_job: m_print_type = from_normal";
@@ -3738,16 +3726,6 @@ void SelectMachineDialog::on_send_print()
         BOOST_LOG_TRIVIAL(error) << "build_nozzle_info errors";
     }
 
-    m_print_job->sdcard_state = obj_->GetStorage()->get_sdcard_state();
-    m_print_job->has_sdcard =  wxGetApp().app_config->get("allow_abnormal_storage") == "true"
-            ? (m_print_job->sdcard_state == DevStorage::SdcardState::HAS_SDCARD_NORMAL
-               || m_print_job->sdcard_state == DevStorage::SdcardState::HAS_SDCARD_ABNORMAL)
-            : m_print_job->sdcard_state == DevStorage::SdcardState::HAS_SDCARD_NORMAL;
-
-    m_print_job->could_emmc_print = obj_->can_use_emmc_print();
-    if (obj_->is_support_print_with_emmc && !m_print_job->could_emmc_print) {
-        BOOST_LOG_TRIVIAL(info) << "print_job: emmc print disabled by config";
-    }
 
 
     bool timelapse_option = m_checkbox_list["timelapse"]->IsShown()?true:false;

@@ -518,6 +518,9 @@ public:
     int stage_curr = 0;
     int stage_remaining_seconds = 0; 
     int m_push_count = 0;
+    // Admission evidence for headless native start, never inferred from saved device config.
+    // Cleared on offline/reset; only a complete LAN status/AMS snapshot establishes it.
+    bool native_start_snapshot_ready = false;
     int m_full_msg_count = 0; /*the full message count, there are full or diff messages from network*/
     bool calibration_done { false };
 

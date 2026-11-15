@@ -587,3 +587,14 @@ TEST_CASE("Start-up work that throws something other than a std::exception is ca
     CHECK_FALSE(failure.empty());
     CHECK(once.run([] {}) == failure);
 }
+
+TEST_CASE("Native Bambu print tools advertise dry run and explicit identity", "[orcamcp][tools]")
+{
+    const auto& tools = OrcaMCPServer::registered_tools();
+    const auto& start = tools.at("start_bambu_print");
+    CHECK(start.input_schema["properties"]["dry_run"]["default"] == true);
+    CHECK(start.input_schema["properties"].contains("expected_slice_id"));
+    CHECK(start.input_schema["properties"].contains("request_id"));
+    CHECK(start.input_schema["required"] == nlohmann::json::array({"printer_id", "mappings"}));
+    CHECK(tools.at("get_bambu_print_submission").input_schema["required"] == nlohmann::json::array({"request_id"}));
+}

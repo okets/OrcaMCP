@@ -4,6 +4,7 @@
 #include <boost/filesystem/path.hpp>
 #include <boost/filesystem/operations.hpp>
 #include <functional>
+#include <memory>
 #include <string>
 #include <wx/string.h>
 #include <exception>
@@ -13,6 +14,7 @@
 #include "slic3r/GUI/DeviceCore/DevStorage.h" 
 
 namespace Slic3r {
+class MachineObject;
 namespace GUI {
 
 class Plater;
@@ -54,6 +56,7 @@ class PrintJob : public Job
     std::function<void()> m_enter_ip_address_fun_fail{ nullptr };
     std::function<void()> m_enter_ip_address_fun_success{ nullptr };
     Plater *m_plater;
+    bool m_notify_plater = true;
 
 public:
     PrintPrepareData job_data;
@@ -127,6 +130,11 @@ public:
         return 100;
     }
 
+    // Headless callers observe submission separately from physical printer state.
+    void notify_plater_on_completion(bool enabled) { m_notify_plater = enabled; }
+    bool submission_attempted() const { return m_lifecycle_started; }
+    bool submission_succeeded() const { return m_lifecycle_success; }
+
     bool is_finished() { return m_job_finished;  }
     void set_print_job_finished_event(int event_id, wxString evt_data = wxEmptyString) {
         m_print_job_completed_id = event_id;
@@ -145,6 +153,9 @@ public:
     void set_calibration_task(bool is_calibration);
 
 };
+
+// Shared native connection/storage configuration; credentials stay inside the process.
+std::shared_ptr<PrintJob> make_print_job_for_machine(MachineObject& machine);
 
 }} // namespace Slic3r::GUI
 

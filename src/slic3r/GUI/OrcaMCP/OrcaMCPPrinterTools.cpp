@@ -1,6 +1,7 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPPrinterTools.cpp
 #include "OrcaMCPServer.hpp"
 #include "OrcaMCPCommon.hpp"
+#include "OrcaMCPBambuPrint.hpp"
 #include "OrcaMCPGcodeCheck.hpp"
 #include "OrcaMCPNextSteps.hpp"
 #include "OrcaMCPPrinterControl.hpp"
@@ -252,6 +253,7 @@ bool preset_uses_manual_filament_change()
 
 void OrcaMCPServer::register_printer_tools()
 {
+    register_bambu_print_tools();
     // get_printers - Get list of available printers
     register_tool({
         "get_printers",

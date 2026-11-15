@@ -1,3 +1,4 @@
+#include "NativeBambuPrintSnapshot.hpp"
 #include "PrinterNetworkTypes.hpp"
 #include <nlohmann/json.hpp>
 #include "DeviceManager.hpp"
@@ -2609,6 +2610,7 @@ void MachineObject::reset()
     subscribe_counter = SUBSCRIBE_RETRY_COUNT;
     m_push_count = 0;
     m_full_msg_count = 0;
+    native_start_snapshot_ready = false;
     is_220V_voltage = false;
     get_version_retry = 0;
     camera_recording = false;
@@ -2785,7 +2787,10 @@ void MachineObject::set_online_state(bool on_off)
 {
     const bool changed = (m_is_online != on_off);
     m_is_online = on_off;
-    if (!on_off) m_active_state = NotActive;
+    if (!on_off) {
+        m_active_state = NotActive;
+        native_start_snapshot_ready = false;
+    }
     if (changed) {
         LifecycleEventContext ctx;
         ctx.name  = dev_id;
@@ -4124,6 +4129,10 @@ int MachineObject::parse_json(std::string tunnel, std::string payload, bool key_
                     update_filament_list();
                     if (jj.contains("ams")) {
                         DevFilaSystemParser::ParseV1_0(jj, this, m_fila_system.get(), key_field_only);
+                        // A delta restored from an earlier connection must not establish readiness.
+                        const auto& raw = j_pre["print"];
+                        if (!key_field_only && tunnel == "lan" && native_bambu_print_snapshot_complete(raw))
+                            native_start_snapshot_ready = true;
                     }
 
                     /* vitrual tray*/

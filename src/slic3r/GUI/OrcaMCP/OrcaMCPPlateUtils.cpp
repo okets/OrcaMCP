@@ -1,3 +1,4 @@
+#include "OrcaMCPResultIdentity.hpp"
 #include "OrcaMCPPlateUtils.hpp"
 #include <memory>
 #include <mutex>
@@ -474,6 +475,12 @@ static OrcaMCP::GeometryIdentity native_query_identity(PartPlate& plate, int pla
     static const std::string session = boost::uuids::to_string(boost::uuids::random_generator()());
     return {session, std::to_string(print_index), plate_index, result.id, SoftFever_VERSION, OrcaMCPServer::version(),
         build_commit_hash && std::string(build_commit_hash) != "0000000" ? nlohmann::json(build_commit_label) : nlohmann::json(nullptr), result.move_frame};
+}
+
+std::string OrcaMCP::plate_native_result_identity(PartPlate& plate, int plate_index)
+{
+    const auto* result = plate.get_slice_result();
+    return result ? OrcaMCP::native_result_identity(native_query_identity(plate, plate_index, *result)) : std::string();
 }
 
 nlohmann::json OrcaMCPPlateUtils::GetPlateAnalysis(const nlohmann::json& params)
