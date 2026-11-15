@@ -1,7 +1,4 @@
 
-include(ProcessorCount)
-ProcessorCount(NPROC)
-
 set(_python_version "3.12.13")
 string(REGEX REPLACE "^([0-9]+\\.[0-9]+)\\..*" "\\1" _python_version_short "${_python_version}")
 set(_python_url "https://www.python.org/ftp/python/${_python_version}/Python-${_python_version}.tar.xz")
@@ -182,7 +179,16 @@ if(WIN32)
             -P ${CMAKE_CURRENT_LIST_DIR}/stage_windows.cmake
     )
 elseif(APPLE)
-    # macOS configuration
+    # An explicit SDK excludes host /usr/local headers from clang discovery.
+    # pkg-config must likewise use only the target dependency prefix.
+    set(_python_sdk "${CMAKE_OSX_SYSROOT}")
+    if(NOT _python_sdk)
+        execute_process(COMMAND xcrun --show-sdk-path
+            OUTPUT_VARIABLE _python_sdk OUTPUT_STRIP_TRAILING_WHITESPACE
+            COMMAND_ERROR_IS_FATAL ANY)
+    endif()
+    set(_python_sdk_flags "-isysroot ${_python_sdk}")
+    set(_python_pkgconfig "${DESTDIR}/lib/pkgconfig:${DESTDIR}/share/pkgconfig")
     if(CMAKE_OSX_ARCHITECTURES)
         set(_python_target_arch "${CMAKE_OSX_ARCHITECTURES}")
     else()
@@ -210,7 +216,7 @@ elseif(APPLE)
         message(FATAL_ERROR "Unsupported macOS Python target architecture: ${_python_target_arch}")
     endif()
 
-    set(_python_arch_flags "-arch ${_python_arch_flag} -mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}")
+    set(_python_arch_flags "-arch ${_python_arch_flag} -mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET} ${_python_sdk_flags}")
     # No -rpath: all other deps are static, so libpython has no shared
     # dependencies to find there. headerpad reserves load-command space for
     # the post-install -add_rpath below.
@@ -224,7 +230,7 @@ elseif(APPLE)
     # keeps the pipe()/dup2() fallbacks (python/cpython#153711).
     if(IS_CROSS_COMPILE)
         set(_python_build_tgt --build=${_python_build_arch}-apple-darwin --host=${_python_host_arch}-apple-darwin)
-        set(_python_build_arch_flags "-arch ${_python_build_arch_flag} -mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}")
+        set(_python_build_arch_flags "-arch ${_python_build_arch_flag} -mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET} ${_python_sdk_flags}")
         set(_python_build_ldflags "${_python_build_arch_flags} -Wl,-rpath,${DESTDIR}/lib")
         set(_python_build_python_dir "<SOURCE_DIR>/build-python-host")
         set(_python_build_python "${_python_build_python_dir}/python")
@@ -239,6 +245,7 @@ elseif(APPLE)
                CFLAGS='${_python_build_arch_flags}' \
                CXXFLAGS='${_python_build_arch_flags}' \
                LDFLAGS='${_python_build_ldflags}' \
+               PKG_CONFIG_LIBDIR='${_python_pkgconfig}' \
                MACOSX_DEPLOYMENT_TARGET='${CMAKE_OSX_DEPLOYMENT_TARGET}' \
                ../configure \
                  --prefix='${_python_build_python_dir}/install' \
@@ -255,6 +262,7 @@ elseif(APPLE)
                CFLAGS='${_python_arch_flags}' \
                CXXFLAGS='${_python_arch_flags}' \
                LDFLAGS='${_python_ldflags}' \
+               PKG_CONFIG_LIBDIR='${_python_pkgconfig}' \
                MACOSX_DEPLOYMENT_TARGET='${CMAKE_OSX_DEPLOYMENT_TARGET}' \
                ./configure \
                  --prefix='${DESTDIR}/libpython' \
@@ -277,6 +285,7 @@ elseif(APPLE)
             "CFLAGS=${_python_arch_flags}"
             "CXXFLAGS=${_python_arch_flags}"
             "LDFLAGS=${_python_ldflags}"
+            "PKG_CONFIG_LIBDIR=${_python_pkgconfig}"
             "MACOSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}"
             ./configure
             --prefix=${DESTDIR}/libpython

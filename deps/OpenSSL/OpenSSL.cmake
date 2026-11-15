@@ -1,7 +1,4 @@
 
-include(ProcessorCount)
-ProcessorCount(NPROC)
-
 if(DEFINED OPENSSL_ARCH)
     set(_cross_arch ${OPENSSL_ARCH})
 else()

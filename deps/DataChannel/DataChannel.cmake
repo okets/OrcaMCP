@@ -24,6 +24,7 @@ endif()
 orcaslicer_add_cmake_project(DataChannel
     DEPENDS ${OPENSSL_PKG}
     CMAKE_ARGS
+        ${DEP_TARGET_HEADER_SDK}
         -DNO_EXAMPLES=ON
         -DNO_TESTS=ON
         -DNO_WEBSOCKET=ON
