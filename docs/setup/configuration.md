@@ -13,7 +13,7 @@ and GitHub Copilot. The entry runs the bridge, copied to `~/.orcamcp/`, with the
 {
   "mcpServers": {
     "orca-slicer": {
-      "command": "/Applications/OrcaMCP.app/Contents/MacOS/python/bin/python3",
+      "command": "/Applications/OrcaMCP.app/Contents/MacOS/python/bin/python3.12",
       "args": ["-I", "/Users/you/.orcamcp/orcamcp-bridge.py"]
     }
   }
