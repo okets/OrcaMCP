@@ -124,11 +124,11 @@ check "bundle plist template takes the identifier from CMake" \
     '<string>[$]\{MACOSX_BUNDLE_GUI_IDENTIFIER\}</string>' \
     "Upstream hardcodes com.orcaslicer.OrcaSlicer here; a merge that restores it silently wins."
 
-# Two code paths build this DMG -- signed and unsigned -- and both must rename.
-check_count "DMG renames the bundle to the fork's name (both paths)" \
+# Three code paths build this DMG -- signed, unsigned, and a pull request's per-arch one -- and all must rename.
+check_count "DMG renames the bundle to the fork's name (all three paths)" \
     .github/workflows/build_orca.yml \
     'OrcaSlicer\.app .*\$\{\{ env\.app_name \}\}_dmg/\$\{\{ env\.app_name \}\}\.app' \
-    2 \
+    3 \
     "CMake always builds OrcaSlicer.app. Shipping that name installs over a user's real Orca Slicer."
 
 check_absent "DMG does not ship the upstream bundle name" \

@@ -6,6 +6,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <exception>
+#include <iterator>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -113,6 +114,9 @@ CgalRepairInput capture_cgal_repair(const ModelObject &object, int volume_idx, b
     for (size_t i = 0; i < object.volumes.size(); ++i) {
         const ModelVolume *volume = object.volumes[i];
         if (!input.whole_object && int(i) != volume_idx)
+            continue;
+        // Upstream's rule (db9968b9ee): a painted modifier follows the mesh of its host, never repaired itself.
+        if (volume->is_painted_modifier())
             continue;
         CgalRepairVolume target{i, volume->id(), volume->name, volume->mesh_ptr()};
         target.painting_stamps = painting_stamps(*volume);
