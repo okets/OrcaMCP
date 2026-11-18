@@ -27,6 +27,10 @@ Configuration (Claude Code):
     }
 """
 
+# Annotations stay text, never evaluated: the bridge runs on Python 3.9 (macOS's own, a Linux system's),
+# where `str | None` raises (scripts/tests/test_bridge_python_version.py).
+from __future__ import annotations
+
 import sys
 import datetime
 import http.client
