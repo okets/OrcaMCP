@@ -43,7 +43,7 @@ runs the bridge's modules (`ctypes`, `concurrent.futures`, `urllib`, `http.clien
    - Linux inside an AppImage (`APPIMAGE` set: the runtime sits under a mount path that changes each launch), or
      no bundled runtime found: `python3` resolved on `PATH` to its absolute path, run once to check it is 3.9 or
      newer. None, or too old: Connect fails with a message saying to install the distribution's `python3`.
-   - Upstream's two functions move out of the anonymous namespace and are declared in `PythonInterpreter.hpp`
+   - Upstream's two functions move out of the anonymous namespace and are declared in a header of their own, `plugin/BundledPython.hpp`
      (no other change): carried item CI, with probes for the move and for upstream still shipping the runtime.
 2. **The bridge runs on Python 3.9** (`from __future__ import annotations`; nothing else needs 3.10), for Linux
    systems and hand-written setups. A Python test holds the import in place, saying why.

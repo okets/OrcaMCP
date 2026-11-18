@@ -77,7 +77,8 @@
 ### Task 3: The interpreter, and Connect writing every client
 
 **Files:**
-- Modify: `src/slic3r/plugin/PythonInterpreter.hpp`, `src/slic3r/plugin/PythonInterpreter.cpp` (move `find_bundled_python_home` and `find_python_executable` out of the anonymous namespace into `Slic3r`, declared in the header; bodies unchanged)
+- Create: `src/slic3r/plugin/BundledPython.hpp` (declares `find_bundled_python_home` and `find_python_executable` in `Slic3r`; a header of their own, so MCPClientConfig does not include Python's C headers through PythonInterpreter.hpp)
+- Modify: `src/slic3r/plugin/PythonInterpreter.cpp` (the two functions move out of the anonymous namespace into `Slic3r`; bodies unchanged)
 - Modify: `MCPClientConfig.hpp/.cpp`, `CLAUDE.md` (carried item CI and its probe)
 - Test: `tests/slic3rutils/test_mcp_client_config.cpp`
 
@@ -94,7 +95,7 @@
 - [ ] **Step 1: Write the failing tests:** `"the app's own Python is chosen wherever its path stays put"`; `"inside an AppImage the system's Python 3.9 or newer is chosen"` (3.9 taken, 3.8 refused with the exact error, none refused); `"Connect replaces Codex's old python3 table"` and `"Connect never rewrites a config it cannot parse"` (both through `write_client_entry` on files in a temporary folder; the unparsable JSON file is byte-identical after).
 - [ ] **Step 2: Run**; expected: compile failure.
 - [ ] **Step 3: Implement**; add carried item CI to CLAUDE.md's probe list:
-  `echo "CI upstream's bundled Python finder is file-private, which ours declares in PythonInterpreter.hpp for MCP's Connect (a move: 0 = expected, keep ours) / upstream still ships the runtime (1 = expected; 0 = Connect has no Python to name): $(U src/slic3r/plugin/PythonInterpreter.hpp | grep -c find_bundled_python_home) / $(U src/CMakeLists.txt | grep -c 'Copying Python runtime into the build tree')"`
+  `echo "CI upstream's bundled Python finder is file-private, which ours declares in BundledPython.hpp for MCP's Connect (a move: 0 = expected, keep ours) / upstream still ships the runtime (1 = expected; 0 = Connect has no Python to name): $(U src/slic3r/plugin/PythonInterpreter.cpp | grep -c 'BundledPython.hpp') / $(U src/CMakeLists.txt | grep -c 'Copying Python runtime into the build tree')"`
   with a paragraph in the items' style saying what each count means.
 - [ ] **Step 4: Run** `slic3rutils_tests "[McpClientConfig],[McpAtomicWrite]"`; expected: pass.
 - [ ] **Step 5: Commit.**
