@@ -68,6 +68,11 @@ Decisions made apart from the app, so they are unit-tested without it (`tests/sl
 the entry for each client, the TOML table replacement, whether an entry is ours, whether it is outdated, and the
 interpreter choice from its inputs (bundled path, AppImage, system interpreter and its version).
 
+7. **An entry is updated, never replaced** (found in review, 2026-11-19). Connect and the refresh set the
+   entry's command and arguments (and a client's required `type` / `tools`); every other field -- `env` with
+   `ORCAMCP_TIMEOUT` or `ORCAMCP_PORT`, which the docs tell users to set there, Codex's `env` subtable,
+   `enabled` -- is kept, and each Codex timeout is the larger of the user's and ours.
+
 ## Non-goals and anti-goals
 
 - Not the repository's own `.mcp.json` (developers have Python), not the MSIX Store package, not a native bridge.

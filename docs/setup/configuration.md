@@ -30,7 +30,9 @@ off calls the bridge allows 120 s.
 **OrcaMCP keeps its entries current.** Each launch of the installed app checks every AI app's config for an
 `orca-slicer` entry that runs `~/.orcamcp/orcamcp-bridge.py` and rewrites it when it differs from what
 Connect would write now: an older `python3` entry, or one naming a Python the app no longer has after it
-moved. An entry that runs any other bridge (a repository's, by hand) is never touched. Configs are written
+moved. Only its command and arguments change: its other settings (`env` with `ORCAMCP_TIMEOUT`, Codex's
+`[mcp_servers.orca-slicer.env]`, a longer Codex timeout you set) are kept. An entry that runs any other
+bridge (a repository's, by hand) is never touched. Configs are written
 atomically, keep their permissions, and stay links when they are links. Test launches (`--datadir`, a build
 in a source folder) touch nothing.
 
