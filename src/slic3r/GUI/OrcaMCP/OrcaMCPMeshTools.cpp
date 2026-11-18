@@ -74,6 +74,9 @@ nlohmann::json start_repair(const nlohmann::json& params, RepairRequest& request
     }
     if (const auto volume_error = repair_volume_error(request.object_id, object->volumes.size(), volume_id))
         return error_response(*volume_error);
+    if (volume_id)
+        if (const auto painted = painted_modifier_refusal(request.object_id, *object, *volume_id, "it is never repaired on its own"))
+            return error_response(*painted);
     request.volume_id           = volume_id.value_or(-1);
     request.keep_painting_given = params.contains("keep_painting");
     if (request.keep_painting_given && !parse_boolean_param(params.at("keep_painting"), request.keep_painting))

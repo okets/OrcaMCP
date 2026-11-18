@@ -4,6 +4,7 @@
 #include "mesh_fixtures.hpp"
 #include "slic3r/GUI/GUI_ObjectList.hpp"
 #include "slic3r/GUI/ObjectDataViewModel.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPFilamentModel.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPPartEdits.hpp"
 #include "libslic3r/Geometry.hpp"
 #include "libslic3r/Model.hpp"
@@ -90,6 +91,26 @@ TEST_CASE("The part tools take the volume type names get_object_info reports", "
     CHECK(volume_type_from_name("support_blocker") == ModelVolumeType::SUPPORT_BLOCKER);
     CHECK(volume_type_from_name("support_enforcer") == ModelVolumeType::SUPPORT_ENFORCER);
     CHECK_FALSE(volume_type_from_name("negative_part"));
+}
+
+TEST_CASE("A painted modifier is refused where it follows its host part, and the refusal names the host", "[PartEdits][orcamcp]")
+{
+    // Upstream's painted modifier (db9968b9ee) shares its host part's mesh and placement.
+    Model        model;
+    ModelObject& object  = two_part_object(model);
+    ModelVolume* host    = object.volumes[1];
+    ModelVolume* painted = object.add_painted_modifier(*host);
+    const int    painted_id = int(std::find(object.volumes.begin(), object.volumes.end(), painted) - object.volumes.begin());
+    const int    host_id    = int(std::find(object.volumes.begin(), object.volumes.end(), host) - object.volumes.begin());
+    const std::string host_text = "volume " + std::to_string(host_id) + ", the part it is painted on";
+
+    CHECK(volume_type_name(ModelVolumeType::PAINTED_MODIFIER) == "painted_modifier");
+    CHECK(mentions(volume_transform_refusal(0, object, painted_id, {}), host_text));
+    CHECK(mentions(volume_type_change_refusal(0, object, painted_id, ModelVolumeType::PARAMETER_MODIFIER, {}), host_text));
+    CHECK(mentions(painted_modifier_refusal(0, object, painted_id, "it is never repaired on its own"), "never repaired"));
+    // It takes a modifier's settings, and nothing is refused for an ordinary part.
+    CHECK_FALSE(volume_settings_refusal(0, painted_id, *painted));
+    CHECK_FALSE(painted_modifier_refusal(0, object, host_id, "anything"));
 }
 
 TEST_CASE("A volume id names one of the object's volumes", "[PartEdits][orcamcp]")

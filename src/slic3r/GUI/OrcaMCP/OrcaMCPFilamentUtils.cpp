@@ -198,7 +198,7 @@ bool set_object_filament(int object_id, int volume_id, int slot, bool include_mo
     if (volume_id >= 0) {
         if (volume_id >= int(obj->volumes.size())) { error = "Invalid volume_id"; return false; }
         vol = obj->volumes[volume_id];
-        if (!vol->is_model_part() && !vol->is_modifier()) {
+        if (!vol->is_model_part() && !vol->is_region_modifier()) {
             error = "Only model parts and modifiers accept a filament";
             return false;
         }

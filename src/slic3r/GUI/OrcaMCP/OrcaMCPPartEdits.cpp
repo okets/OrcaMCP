@@ -159,6 +159,20 @@ std::optional<std::string> volume_id_error(int object_id, const ModelObject& obj
            std::to_string(int(object.volumes.size()) - 1) + ", as get_object_info lists them";
 }
 
+std::optional<std::string> painted_modifier_refusal(int object_id, const ModelObject& object, int volume_id, const std::string& what)
+{
+    const ModelVolume& volume = *object.volumes[std::size_t(volume_id)];
+    if (!volume.is_painted_modifier())
+        return std::nullopt;
+    std::string host = "the part it is painted on";
+    if (const ModelVolume* part = object.painted_modifier_host(volume))
+        for (std::size_t i = 0; i < object.volumes.size(); ++i)
+            if (object.volumes[i] == part)
+                host = "volume " + std::to_string(i) + ", the part it is painted on";
+    return volume_text(object_id, volume_id) + " is a painted modifier: it shares the mesh and placement of " + host +
+           ", so " + what + ". Act on that part instead";
+}
+
 std::size_t model_part_count(const ModelObject& object)
 {
     return std::size_t(std::count_if(object.volumes.begin(), object.volumes.end(), [](const ModelVolume* v) { return v->is_model_part(); }));
@@ -318,6 +332,8 @@ std::optional<std::string> volume_type_change_refusal(int object_id, const Model
         return error;
     if (!cut_siblings.empty())
         return cut_refusal(object_id, cut_siblings, "its volumes keep their types");
+    if (const auto painted = painted_modifier_refusal(object_id, object, volume_id, "its type cannot be changed"))
+        return painted;
     const ModelVolume& volume = *object.volumes[std::size_t(volume_id)];
     if (to != ModelVolumeType::MODEL_PART && volume.is_model_part() && model_part_count(object) == 1)
         return volume_text(object_id, volume_id) + " is the object's last solid part, whose type cannot be changed (the object "
@@ -360,6 +376,8 @@ std::optional<std::string> volume_transform_refusal(int object_id, const ModelOb
         return error;
     if (object.volumes.size() == 1)
         return object_text(object_id) + " has one volume, which moves with the object: transform the whole object (omit volume_id)";
+    if (const auto painted = painted_modifier_refusal(object_id, object, volume_id, "it is not moved, rotated, scaled or mirrored on its own"))
+        return painted;
     const ModelVolume& volume = *object.volumes[std::size_t(volume_id)];
     if (!cut_siblings.empty() && (volume.is_model_part() || volume.is_cut_connector()))
         return cut_refusal(object_id, cut_siblings, "its solid parts and connectors are not moved, rotated, scaled or mirrored on their own");
@@ -487,7 +505,7 @@ std::optional<std::string> setting_key_refusal(const std::string& key, SettingsH
 
 std::optional<std::string> volume_settings_refusal(int object_id, int volume_id, const ModelVolume& volume)
 {
-    if (volume.is_model_part() || volume.is_modifier())
+    if (volume.is_model_part() || volume.is_region_modifier())
         return std::nullopt;
     const std::string type = volume_type_name(volume.type());
     return volume_text(object_id, volume_id) + " is a " + type +

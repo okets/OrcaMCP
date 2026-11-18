@@ -16,7 +16,8 @@ int own_filament_of(const ModelVolume& volume)
 // only ones PartPlate::get_extruders counts (via ModelVolume::get_extruders).
 bool prints_filament(const ModelVolume& volume)
 {
-    return volume.is_model_part() || volume.is_modifier();
+    // A painted modifier counts as a mesh modifier does (ModelVolume::get_extruders).
+    return volume.is_model_part() || volume.is_region_modifier();
 }
 
 void sort_unique(std::vector<int>& slots)
@@ -32,6 +33,7 @@ std::string volume_type_name(ModelVolumeType type)
     switch (type) {
     case ModelVolumeType::MODEL_PART:         return "part";
     case ModelVolumeType::PARAMETER_MODIFIER: return "modifier";
+    case ModelVolumeType::PAINTED_MODIFIER:   return "painted_modifier";
     case ModelVolumeType::NEGATIVE_VOLUME:    return "negative_volume";
     case ModelVolumeType::SUPPORT_BLOCKER:    return "support_blocker";
     case ModelVolumeType::SUPPORT_ENFORCER:   return "support_enforcer";
@@ -88,7 +90,7 @@ std::vector<ClearedOverride> clear_volume_filament_overrides(ModelObject& object
     std::vector<ClearedOverride> cleared;
     for (size_t i = 0; i < object.volumes.size(); ++i) {
         ModelVolume& v = *object.volumes[i];
-        const bool eligible = v.is_model_part() || (include_modifiers && v.is_modifier());
+        const bool eligible = v.is_model_part() || (include_modifiers && v.is_region_modifier());
         if (!eligible || !v.config.has("extruder"))
             continue;
         ClearedOverride c;
@@ -124,7 +126,7 @@ bool filament_assignment_changes(const ModelObject& object, int volume_id, int s
     if (sets_other_slot(object.config))
         return true;
     for (const ModelVolume* v : object.volumes)
-        if ((v->is_model_part() || (include_modifiers && v->is_modifier())) && v->config.has("extruder"))
+        if ((v->is_model_part() || (include_modifiers && v->is_region_modifier())) && v->config.has("extruder"))
             return true;
     return false;
 }

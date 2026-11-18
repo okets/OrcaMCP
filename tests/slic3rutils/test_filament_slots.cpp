@@ -84,6 +84,26 @@ TEST_CASE("deleting a filament renumbers each support filament in its own config
     CHECK_FALSE(object->config.has("support_interface_filament"));
 }
 
+TEST_CASE("deleting or merging a filament renumbers the brim filament, which prints from a physical slot only", "[FilamentSlots]")
+{
+    // brim_filament_id is upstream's (12c9ee813b), in ConfigManipulation's physical-only keys.
+    Model        model;
+    ModelObject* object = object_with_two_parts(model);
+    object->config.set_key_value("brim_filament_id", new ConfigOptionInt(3));
+    GUI::renumber_filament_settings(*object, GUI::FilamentRenumbering::deletion(1));
+    CHECK(support_filament(object->config, "brim_filament_id") == 2);
+
+    // Slot 2 merged into physical slot 3: the brim follows it, numbered as after the delete.
+    object->config.set_key_value("brim_filament_id", new ConfigOptionInt(2));
+    GUI::renumber_filament_settings(*object, GUI::FilamentRenumbering::deletion(1, 2, false));
+    CHECK(support_filament(object->config, "brim_filament_id") == 3);
+
+    // Merged into a mixed slot: a brim cannot print from one, so it takes the default.
+    object->config.set_key_value("brim_filament_id", new ConfigOptionInt(2));
+    GUI::renumber_filament_settings(*object, GUI::FilamentRenumbering::deletion(1, 3, true));
+    CHECK_FALSE(object->config.has("brim_filament_id"));
+}
+
 TEST_CASE("deleting a filament leaves the support filaments before it as they are", "[FilamentSlots]")
 {
     Model        model;

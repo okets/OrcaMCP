@@ -198,6 +198,10 @@ std::optional<std::string> setting_key_refusal(const std::string& key, SettingsH
 // modifiers only (PrintApply), so a negative volume's, a blocker's or an enforcer's would be inert.
 std::optional<std::string> volume_settings_refusal(int object_id, int volume_id, const ModelVolume& volume);
 
+// A painted modifier shares its host part's mesh and placement (upstream's PAINTED_MODIFIER): `what` cannot be done to
+// it on its own. The refusal names the host's volume_id. nullopt for any other volume; `volume_id` must be valid.
+std::optional<std::string> painted_modifier_refusal(int object_id, const ModelObject& object, int volume_id, const std::string& what);
+
 // ---- assemble_objects and merge_parts ----
 
 // Why the objects cannot be assembled into one, or nothing: two or more distinct objects, none of them
