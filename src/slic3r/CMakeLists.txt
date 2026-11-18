@@ -843,6 +843,7 @@ set(SLIC3R_GUI_SOURCES
     GUI/wxExtensions.hpp
     GUI/wxMediaCtrl3.cpp
     GUI/wxMediaCtrl3.h
+    plugin/BundledPython.hpp
     plugin/PythonInterpreter.cpp
     plugin/PythonInterpreter.hpp
     plugin/PythonPluginBridge.cpp

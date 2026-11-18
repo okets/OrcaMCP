@@ -1215,6 +1215,10 @@ void GUI_App::post_init()
     // The user's ~/.orcamcp bridge follows the app they run, never a test launch (--datadir, or a build).
     MCPClientConfig::refresh_shared_bridge_at_startup(m_datadir_redefined, into_u8(wxStandardPaths::Get().GetExecutablePath()));
 
+    // The same rule for the AI apps' entries of ours: rewritten when they differ from what Connect
+    // would write now, never a developer's entry and never from a test launch.
+    MCPClientConfig::refresh_client_entries_at_startup(m_datadir_redefined, into_u8(wxStandardPaths::Get().GetExecutablePath()));
+
     // remove old log files over LOG_FILES_MAX_NUM
     std::string log_addr = data_dir();
     if (!log_addr.empty()) {

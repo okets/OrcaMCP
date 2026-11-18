@@ -1,12 +1,17 @@
 #include "MCPClientConfig.hpp"
+#include "OrcaMCPAtomicWrite.hpp"
 
 #include <boost/filesystem.hpp>
 #include <boost/log/trivial.hpp>
 #include <boost/nowide/fstream.hpp>
 #include <boost/algorithm/string.hpp>
+#include <slic3r/Utils/BoostProcessCompat.hpp>
+#include "slic3r/plugin/BundledPython.hpp"  // The app's own Python, for the entries Connect writes
 #include <wx/stdpaths.h>
 #include <wx/utils.h>
 #include <algorithm>
+#include <chrono>
+#include <cstdlib>
 #include <fstream>
 #include <sstream>
 #include <regex>
@@ -256,7 +261,94 @@ std::string read_whole_file(const boost::filesystem::path& path)
     return content.str();
 }
 
+// What Connect and the startup refresh say when no interpreter can run the bridge (the user's words,
+// fixed: the docs and troubleshooting page quote them). Each names the install the user actually has:
+// an AppImage ships no Python by design and the fix is the distribution's package; any other install
+// lost the runtime it ships, so reinstalling is the first thing to try.
+const char* const NO_PYTHON_MESSAGE_APPIMAGE = "Connecting needs Python 3.9 or newer, which this AppImage does not "
+                                               "include: install your distribution's python3 package, then press "
+                                               "Connect again.";
+const char* const NO_PYTHON_MESSAGE_INSTALL  = "Connecting needs Python 3.9 or newer, which this OrcaMCP install does "
+                                               "not include: reinstall OrcaMCP, or install Python 3.9 or newer, then "
+                                               "press Connect again.";
+
+// The system's python3 on PATH, and its version: run once in the bridge's own isolated mode, printing
+// "3 12" on stdout, waited for at most 5 s. Anything short of a version read -- none found, no output,
+// too slow to answer, a launch that fails -- leaves the inputs as they are, as if there were no
+// system Python. Never throws: the app asks for an interpreter on paths that must not fail.
+void probe_system_python(MCPClientConfig::InterpreterInputs& inputs)
+{
+    namespace bp = boost::process;
+    try {
+        const boost::filesystem::path python3 = bp::search_path("python3");
+        if (python3.empty())
+            return;
+
+        bp::ipstream out;
+        bp::child    proc(python3.string(), std::string("-I"), std::string("-c"),
+                          std::string("import sys; print(*sys.version_info[:2])"), bp::std_out > out);
+        if (!proc.wait_for(std::chrono::seconds(5))) {
+            proc.terminate();
+            return;
+        }
+
+        std::string line;
+        std::getline(out, line);
+        // "major" and "minor" are macros in Linux's sysmacros.h: spell them out.
+        int              version_major = 0;
+        int              version_minor = 0;
+        std::istringstream words(line);
+        if (!(words >> version_major >> version_minor) || version_major <= 0)
+            return;
+
+        inputs.system_python = python3.string();
+        inputs.system_major  = version_major;
+        inputs.system_minor  = version_minor;
+    } catch (...) {
+        inputs.system_python.clear();
+        inputs.system_major = inputs.system_minor = 0;
+    }
+}
+
 } // namespace
+
+// The bundled interpreter wherever its path stays put; a Linux AppImage mounts its own at a new path
+// every launch, so there, and where no runtime was found, the system's python3 runs the bridge when it
+// is 3.9 or newer -- the version the bridge holds itself to (from __future__ import annotations).
+MCPClientConfig::InterpreterChoice MCPClientConfig::choose_interpreter(const InterpreterInputs& inputs)
+{
+    if (!inputs.bundled.empty() && !inputs.in_appimage)
+        return InterpreterChoice{inputs.bundled, {}};
+    if (!inputs.system_python.empty() && inputs.system_major >= 3 &&
+        (inputs.system_major > 3 || inputs.system_minor >= 9))
+        return InterpreterChoice{inputs.system_python, {}};
+    return InterpreterChoice{{}, inputs.in_appimage ? NO_PYTHON_MESSAGE_APPIMAGE : NO_PYTHON_MESSAGE_INSTALL};
+}
+
+MCPClientConfig::InterpreterChoice MCPClientConfig::bridge_interpreter()
+{
+    InterpreterInputs inputs;
+    try {
+        const boost::filesystem::path python_home = Slic3r::find_bundled_python_home();
+        if (!python_home.empty()) {
+            const boost::filesystem::path executable = Slic3r::find_python_executable(python_home);
+            if (!executable.empty())
+                inputs.bundled = executable.string();
+        }
+    } catch (...) {
+        // A folder the finder could not inspect is "no bundled runtime": the system Python is asked,
+        // and this never throws into the startup path or into a Connect click.
+        inputs.bundled.clear();
+    }
+#ifdef __linux__
+    const char* appimage = std::getenv("APPIMAGE");
+    inputs.in_appimage   = appimage != nullptr && appimage[0] != '\0';
+#endif
+    // Running a probe costs a process start: ask the system only when the bundled answer is not taken.
+    if (inputs.bundled.empty() || inputs.in_appimage)
+        probe_system_python(inputs);
+    return choose_interpreter(inputs);
+}
 
 bool MCPClientConfig::file_content_differs(const std::string& original, const std::string& copy)
 {
@@ -374,7 +466,16 @@ MCPClientConfig::BridgeCommand MCPClientConfig::bridge_command(const std::string
 // The orca-slicer entry a client's config holds: the bridge command, plus the client's own extra fields.
 nlohmann::json MCPClientConfig::server_entry(const MCPClientInfo& info, const BridgeCommand& command)
 {
-    nlohmann::json entry;
+    return updated_entry(info, nlohmann::json(), command);
+}
+
+// An entry updated, never replaced: the command, args and the client's required fields are ours, and
+// every other field of an entry that already exists -- env (ORCAMCP_TIMEOUT, ORCAMCP_PORT), cwd, a
+// client's own flags -- is kept as it is. Our docs tell users to put their settings in `env`.
+nlohmann::json MCPClientConfig::updated_entry(const MCPClientInfo& info, const nlohmann::json& existing,
+                                              const BridgeCommand& command)
+{
+    nlohmann::json entry = existing.is_object() ? existing : nlohmann::json::object();
     entry["command"] = command.command;
     entry["args"]    = command.args;
 
@@ -382,8 +483,8 @@ nlohmann::json MCPClientConfig::server_entry(const MCPClientInfo& info, const Br
     if (info.requires_type_field)
         entry["type"] = "stdio";
 
-    // GitHub Copilot requires "tools": ["*"]
-    if (info.requires_tools_field)
+    // GitHub Copilot requires "tools": ["*"] -- and keeps the user's own list when the entry has one.
+    if (info.requires_tools_field && !entry.contains("tools"))
         entry["tools"] = nlohmann::json::array({"*"});
 
     return entry;
@@ -412,21 +513,35 @@ std::string MCPClientConfig::toml_basic_string(const std::string& value)
     return out;
 }
 
-std::string MCPClientConfig::toml_server_table(const BridgeCommand& command)
+namespace {
+
+// Codex's timeouts Connect writes: room for the bridge to start, and to answer a call (over its own
+// 120 s). An existing table's larger value is kept; never shorten what the user asked for.
+constexpr int STARTUP_TIMEOUT_SEC = 20;
+constexpr int TOOL_TIMEOUT_SEC    = 140;
+
+// The two lines that say what to run, as the new table writes them and an updated one puts back.
+std::string toml_command_lines(const MCPClientConfig::BridgeCommand& command)
 {
     std::string args = "[";
     for (size_t i = 0; i < command.args.size(); ++i) {
         if (i > 0)
             args += ", ";
-        args += toml_basic_string(command.args[i]);
+        args += MCPClientConfig::toml_basic_string(command.args[i]);
     }
     args += "]";
 
-    return "[mcp_servers." + SERVER_NAME + "]\n"
-           "command = " + toml_basic_string(command.command) + "\n"
-           "args = " + args + "\n"
-           "startup_timeout_sec = 20\n"
-           "tool_timeout_sec = 140\n";
+    return "command = " + MCPClientConfig::toml_basic_string(command.command) + "\n"
+           "args = " + args + "\n";
+}
+
+} // namespace
+
+std::string MCPClientConfig::toml_server_table(const BridgeCommand& command)
+{
+    return "[mcp_servers." + SERVER_NAME + "]\n" + toml_command_lines(command) +
+           "startup_timeout_sec = " + std::to_string(STARTUP_TIMEOUT_SEC) + "\n"
+           "tool_timeout_sec = " + std::to_string(TOOL_TIMEOUT_SEC) + "\n";
 }
 
 namespace {
@@ -472,6 +587,52 @@ std::string toml_header_key(const std::string& line)
         }
     }
     return {}; // no closing bracket: a header whose key we cannot read
+}
+
+// Whether this line of a table's body sets `key`: the key after optional blanks, then optional spaces,
+// then '='. (TOML also allows tabs here, so blanks covers both.)
+bool sets_toml_key(const std::string& line, const std::string& key)
+{
+    size_t pos = 0;
+    while (pos < line.size() && (line[pos] == ' ' || line[pos] == '\t'))
+        ++pos;
+    if (line.compare(pos, key.size(), key) != 0)
+        return false;
+    pos += key.size();
+    while (pos < line.size() && (line[pos] == ' ' || line[pos] == '\t'))
+        ++pos;
+    return pos < line.size() && line[pos] == '=';
+}
+
+// The integer a key line gives, when its whole value is one. A value with anything else in it -- a
+// comment, a string, a float -- is not one, and the caller keeps its own.
+bool toml_key_int(const std::string& line, int& value)
+{
+    const size_t equals = line.find('=');
+    if (equals == std::string::npos)
+        return false;
+    const std::string text = boost::algorithm::trim_copy(line.substr(equals + 1));
+    try {
+        size_t     used = 0;
+        const int  read = std::stoi(text, &used);
+        if (used != text.size())
+            return false;
+        value = read;
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+// Whether an "args =" line opens an array that does not close on this line: the removal then runs
+// through the line holding the closing ']'.
+bool toml_value_opens_multiline(const std::string& line)
+{
+    const size_t equals = line.find('=');
+    if (equals == std::string::npos)
+        return false;
+    const std::string value = line.substr(equals + 1);
+    return value.find('[') != std::string::npos && value.find(']') == std::string::npos;
 }
 
 } // namespace
@@ -537,6 +698,78 @@ std::string MCPClientConfig::replace_toml_server_table(const std::string& conten
     return rest + table;
 }
 
+// `content` with our table's text replaced in place by `table`: the table keeps its position in the
+// file. Without our table the content is returned as it is -- appending is replace_toml_server_table's
+// job, and write_client_entry only calls this once it has read a table.
+std::string MCPClientConfig::replace_toml_server_table_span(const std::string& content, const std::string& table)
+{
+    const auto span = toml_table_span(content);
+    if (span.first == std::string::npos)
+        return content;
+    return content.substr(0, span.first) + table + content.substr(span.first + span.second);
+}
+
+// Codex's table updated, never replaced: the header line stays as it is and every subtable stays
+// unchanged, the user's own keys stay in their order -- and the timeouts only ever grow, so a user who
+// raised tool_timeout_sec for a slow machine keeps it. What Connect owns is the command, the args and
+// the minimum the bridge needs.
+std::string MCPClientConfig::updated_toml_server_table(const std::string& existing_table, const BridgeCommand& command)
+{
+    if (existing_table.empty())
+        return toml_server_table(command);
+
+    // Split into lines, each keeping its newline (a Windows file's '\r' stays inside the line and
+    // survives untouched). The first line is our header; the main table runs until the first following
+    // header, and everything from there on is subtable text kept verbatim.
+    std::vector<std::string> lines;
+    for (size_t pos = 0; pos < existing_table.size();) {
+        const size_t newline = existing_table.find('\n', pos);
+        const size_t end     = (newline == std::string::npos) ? existing_table.size() : newline + 1;
+        lines.push_back(existing_table.substr(pos, end - pos));
+        pos = end;
+    }
+
+    size_t main_end = lines.size();
+    for (size_t i = 1; i < lines.size(); ++i) {
+        if (is_toml_header(lines[i])) {
+            main_end = i;
+            break;
+        }
+    }
+
+    // Our keys' values, from the main table only, and every other line of it, in order.
+    int         startup = STARTUP_TIMEOUT_SEC;
+    int         tool    = TOOL_TIMEOUT_SEC;
+    std::string kept;
+    for (size_t i = 1; i < main_end; ++i) {
+        int value = 0;
+        if (sets_toml_key(lines[i], "startup_timeout_sec")) {
+            if (toml_key_int(lines[i], value))
+                startup = std::max(startup, value);
+        } else if (sets_toml_key(lines[i], "tool_timeout_sec")) {
+            if (toml_key_int(lines[i], value))
+                tool = std::max(tool, value);
+        } else if (sets_toml_key(lines[i], "command") || sets_toml_key(lines[i], "args")) {
+            // A multi-line args array is removed whole: on through the line that closes it.
+            if (sets_toml_key(lines[i], "args") && toml_value_opens_multiline(lines[i]))
+                while (++i < main_end && lines[i].find(']') == std::string::npos) {}
+        } else {
+            kept += lines[i];
+        }
+    }
+
+    std::string out = lines[0]; // the header line, kept as it is -- comment and spacing included
+    if (out.empty() || out.back() != '\n')
+        out += '\n';
+    out += toml_command_lines(command);
+    out += "startup_timeout_sec = " + std::to_string(startup) + "\n";
+    out += "tool_timeout_sec = " + std::to_string(tool) + "\n";
+    out += kept;
+    for (size_t i = main_end; i < lines.size(); ++i)
+        out += lines[i];
+    return out;
+}
+
 namespace {
 
 // Every spelling of our bridge's location ends this way, once '\' reads as '/'.
@@ -579,25 +812,68 @@ bool MCPClientConfig::is_our_toml_table(const std::string& table_text)
     return boost::algorithm::contains(text, shared_bridge_suffix());
 }
 
+// Write one client's orca-slicer entry, whatever it held before. A JSON config that does not parse is
+// refused here and stays byte for byte as it is; every write that happens is atomic, so no client ever
+// reads a half-written config.
+bool MCPClientConfig::write_client_entry(const MCPClientInfo& info, const BridgeCommand& command, std::string& error)
+{
+    using OrcaMCP::write_file_atomically;
+    using OrcaMCP::WritePermissions;
+    try {
+        const boost::filesystem::path path(info.config_path);
+        const boost::filesystem::path parent = path.parent_path();
+        if (!parent.empty() && !boost::filesystem::exists(parent))
+            boost::filesystem::create_directories(parent);
+
+        std::string content;
+        if (info.is_toml) {
+            // An entry is updated where it stands, so its position, its own keys and its subtables
+            // survive; a client without one gains a fresh table at the end.
+            const std::string before   = read_whole_file(path);
+            const std::string existing = toml_server_table_of(before);
+            content = existing.empty()
+                          ? replace_toml_server_table(before, toml_server_table(command))
+                          : replace_toml_server_table_span(before, updated_toml_server_table(existing, command));
+        } else {
+            nlohmann::json config;
+            if (!read_json_config(info.config_path, config, error))
+                return false;
+            if (!config.contains(info.servers_key) || !config[info.servers_key].is_object())
+                config[info.servers_key] = nlohmann::json::object();
+            const nlohmann::json existing = config[info.servers_key].contains(SERVER_NAME)
+                                                ? config[info.servers_key][SERVER_NAME]
+                                                : nlohmann::json();
+            config[info.servers_key][SERVER_NAME] = updated_entry(info, existing, command);
+            content = config.dump(2);
+        }
+
+        const std::string write_error = write_file_atomically(path, content, WritePermissions::KeepExisting);
+        if (!write_error.empty()) {
+            error = write_error;
+            return false;
+        }
+        return true;
+    } catch (const std::exception& e) {
+        error = "Error writing client config: " + std::string(e.what());
+        return false;
+    }
+}
+
 // Get MCP server config as JSON string for copying to project .mcp.json
 std::string MCPClientConfig::get_mcp_server_json()
 {
-    std::string bridge_path = get_bridge_script_path();
+    // A client with neither extra field: the snippet is for a hand-written .mcp.json, built exactly
+    // like the entries Connect writes.
+    MCPClientInfo info{};
+    info.requires_type_field  = false;
+    info.requires_tools_field = false;
 
-    // Escape backslashes for JSON string
-    std::string escaped_path;
-    for (char c : bridge_path) {
-        if (c == '\\') {
-            escaped_path += "\\\\";
-        } else {
-            escaped_path += c;
-        }
-    }
+    const InterpreterChoice interpreter = bridge_interpreter();
+    // A hint the user pastes by hand: "python3" is all it can name when this app finds no interpreter.
+    const std::string command = interpreter.error.empty() ? interpreter.path : std::string("python3");
 
-    return "\"orca-slicer\": {\n"
-           "  \"command\": \"python3\",\n"
-           "  \"args\": [\"" + escaped_path + "\"]\n"
-           "}";
+    const nlohmann::json entry = server_entry(info, bridge_command(command, get_bridge_script_path()));
+    return "\"" + SERVER_NAME + "\": " + entry.dump(2);
 }
 
 // Get all supported clients with resolved paths
@@ -740,7 +1016,8 @@ bool MCPClientConfig::read_json_config(const std::string& path, nlohmann::json& 
     }
 }
 
-// Write JSON config file
+// Write JSON config file, atomically and keeping the file's own permissions: a crash or a full disk
+// must never leave a half-written client config behind.
 bool MCPClientConfig::write_json_config(const std::string& path, const nlohmann::json& config, std::string& error)
 {
     try {
@@ -751,13 +1028,12 @@ bool MCPClientConfig::write_json_config(const std::string& path, const nlohmann:
             boost::filesystem::create_directories(parent);
         }
 
-        boost::nowide::ofstream ofs(path);
-        if (!ofs) {
-            error = "Cannot open file for writing: " + path;
+        const std::string write_error = OrcaMCP::write_file_atomically(path, config.dump(2),  // Pretty print with 2-space indent
+                                                                       OrcaMCP::WritePermissions::KeepExisting);
+        if (!write_error.empty()) {
+            error = write_error;
             return false;
         }
-
-        ofs << config.dump(2);  // Pretty print with 2-space indent
         return true;
     }
     catch (const std::exception& e) {
@@ -785,27 +1061,15 @@ bool MCPClientConfig::connect_client(MCPClientId client_id, std::string& error_m
     MCPClientInfo info = it->second;
     info.config_path = resolve_config_path(info.config_path_template);
 
-    // Handle TOML format (Codex CLI)
-    if (info.is_toml) {
-        return add_to_toml_config(info.config_path, error_message);
-    }
-
-    // Handle JSON format
-    nlohmann::json config;
-    if (!read_json_config(info.config_path, config, error_message)) {
+    // The entry runs the bridge with the app's own Python. When the app cannot name one, Connect says
+    // so and writes nothing, rather than an entry that would die at the client's next start.
+    const InterpreterChoice interpreter = bridge_interpreter();
+    if (!interpreter.error.empty()) {
+        error_message = interpreter.error;
         return false;
     }
 
-    // Ensure servers object exists
-    if (!config.contains(info.servers_key)) {
-        config[info.servers_key] = nlohmann::json::object();
-    }
-
-    // Add our server entry
-    config[info.servers_key][SERVER_NAME] = server_entry(info, bridge_command("python3", get_bridge_script_path()));
-
-    // Write back
-    return write_json_config(info.config_path, config, error_message);
+    return write_client_entry(info, bridge_command(interpreter.path, get_bridge_script_path()), error_message);
 }
 
 // Disconnect a client (remove orca-slicer from config)
@@ -854,61 +1118,6 @@ bool MCPClientConfig::disconnect_client(MCPClientId client_id, std::string& erro
     return write_json_config(info.config_path, config, error_message);
 }
 
-// Add orca-slicer to TOML config (Codex CLI)
-bool MCPClientConfig::add_to_toml_config(const std::string& path, std::string& error)
-{
-    try {
-        // Ensure parent directory exists
-        boost::filesystem::path fs_path(path);
-        boost::filesystem::path parent = fs_path.parent_path();
-        if (!parent.empty() && !boost::filesystem::exists(parent)) {
-            boost::filesystem::create_directories(parent);
-        }
-
-        std::string content;
-        if (config_file_exists(path)) {
-            boost::nowide::ifstream ifs(path);
-            if (!ifs) {
-                error = "Cannot open file for reading: " + path;
-                return false;
-            }
-            std::stringstream buffer;
-            buffer << ifs.rdbuf();
-            content = buffer.str();
-        }
-
-        // Check if already configured
-        if (content.find("[mcp_servers." + SERVER_NAME + "]") != std::string::npos ||
-            content.find("[mcp_servers.\"" + SERVER_NAME + "\"]") != std::string::npos) {
-            // Already configured
-            return true;
-        }
-
-        // Generate TOML entry
-        std::string bridge_path = get_bridge_script_path();
-        // Convert backslashes to forward slashes for TOML compatibility
-        // (backslashes in TOML are escape sequences, e.g., \U is unicode)
-        std::replace(bridge_path.begin(), bridge_path.end(), '\\', '/');
-        std::string toml_entry = "\n[mcp_servers." + SERVER_NAME + "]\n"
-                                 "command = \"python3\"\n"
-                                 "args = [\"" + bridge_path + "\"]\n"
-                                 "startup_timeout_sec = 5\n";
-
-        // Append to file
-        boost::nowide::ofstream ofs(path, std::ios::app);
-        if (!ofs) {
-            error = "Cannot open file for writing: " + path;
-            return false;
-        }
-        ofs << toml_entry;
-        return true;
-    }
-    catch (const std::exception& e) {
-        error = "Error writing TOML config: " + std::string(e.what());
-        return false;
-    }
-}
-
 // Remove orca-slicer from TOML config (Codex CLI)
 bool MCPClientConfig::remove_from_toml_config(const std::string& path, std::string& error)
 {
@@ -944,21 +1153,106 @@ bool MCPClientConfig::remove_from_toml_config(const std::string& path, std::stri
 
         std::string new_content = std::regex_replace(content, section_regex, "");
 
-        // Write back
-        boost::nowide::ofstream ofs(path);
-        if (!ofs) {
-            error = "Cannot open file for writing: " + path;
+        // Trim trailing whitespace and add single newline; write back atomically, like every other
+        // client config write.
+        boost::algorithm::trim_right(new_content);
+        new_content += "\n";
+        const std::string write_error = OrcaMCP::write_file_atomically(path, new_content,
+                                                                       OrcaMCP::WritePermissions::KeepExisting);
+        if (!write_error.empty()) {
+            error = write_error;
             return false;
         }
-
-        // Trim trailing whitespace and add single newline
-        boost::algorithm::trim_right(new_content);
-        ofs << new_content << "\n";
         return true;
     }
     catch (const std::exception& e) {
         error = "Error modifying TOML config: " + std::string(e.what());
         return false;
+    }
+}
+
+// One client's entry, kept current: an entry of ours is rewritten when it differs from what Connect
+// would write now, and never when it is not ours or there is none. A config that does not parse fails
+// and stays untouched.
+EntryRefresh MCPClientConfig::refresh_client_entry(const MCPClientInfo& info, const BridgeCommand& expected,
+                                                   std::string& error)
+{
+    error.clear();
+    try {
+        if (!config_file_exists(info.config_path))
+            return EntryRefresh::NoEntry;
+
+        if (info.is_toml) {
+            const std::string content = read_whole_file(info.config_path);
+            const std::string table   = toml_server_table_of(content);
+            if (table.empty())
+                return EntryRefresh::NoEntry;
+            if (!is_our_toml_table(table))
+                return EntryRefresh::NotOurs;
+            if (updated_toml_server_table(table, expected) == table)
+                return EntryRefresh::Current;
+            return write_client_entry(info, expected, error) ? EntryRefresh::Rewritten : EntryRefresh::Failed;
+        }
+
+        nlohmann::json config;
+        if (!read_json_config(info.config_path, config, error))
+            return EntryRefresh::Failed;
+        if (!config.contains(info.servers_key) || !config[info.servers_key].is_object() ||
+            !config[info.servers_key].contains(SERVER_NAME))
+            return EntryRefresh::NoEntry;
+
+        const nlohmann::json& entry = config[info.servers_key][SERVER_NAME];
+        if (!is_our_entry(entry))
+            return EntryRefresh::NotOurs;
+        if (updated_entry(info, entry, expected) == entry)
+            return EntryRefresh::Current;
+        return write_client_entry(info, expected, error) ? EntryRefresh::Rewritten : EntryRefresh::Failed;
+    }
+    catch (const std::exception& e) {
+        error = "Error refreshing client entry: " + std::string(e.what());
+        return EntryRefresh::Failed;
+    }
+}
+
+// The user's client entries follow the same rule as ~/.orcamcp: the installed app keeps them current,
+// never a test launch and never a build. This repairs an old entry's "python3" -- which most machines
+// have no working answer for -- on the first launch of a new version, and follows the app when it moves.
+void MCPClientConfig::refresh_client_entries_at_startup(bool own_data_folder, const std::string& executable)
+{
+    if (own_data_folder) {
+        BOOST_LOG_TRIVIAL(info) << "MCP client entries: left as they are: this launch runs on a data folder of "
+                                   "its own (--datadir), as every test launch does: the user's client configs "
+                                   "are left to the installed app";
+        return;
+    }
+    if (executable_in_build_tree(executable)) {
+        BOOST_LOG_TRIVIAL(info) << "MCP client entries: left as they are: this is a build in a source tree "
+                                   "(a CMakeCache.txt above it): the user's client configs are left to the "
+                                   "installed app";
+        return;
+    }
+
+    const InterpreterChoice interpreter = bridge_interpreter();
+    if (!interpreter.error.empty()) {
+        BOOST_LOG_TRIVIAL(warning) << "MCP client entries: left as they are: " << interpreter.error;
+        return;
+    }
+
+    const BridgeCommand command = bridge_command(interpreter.path, get_bridge_script_path());
+    for (const MCPClientInfo& info : get_all_clients()) {
+        std::string error;
+        switch (refresh_client_entry(info, command, error)) {
+        case EntryRefresh::Rewritten:
+            BOOST_LOG_TRIVIAL(info) << "MCP client entries: rewrote the orca-slicer entry in " << info.config_path;
+            break;
+        case EntryRefresh::Failed:
+            BOOST_LOG_TRIVIAL(warning) << "MCP client entries: could not rewrite " << info.config_path << ": " << error;
+            break;
+        case EntryRefresh::NoEntry:
+        case EntryRefresh::NotOurs:
+        case EntryRefresh::Current:
+            break;
+        }
     }
 }
 

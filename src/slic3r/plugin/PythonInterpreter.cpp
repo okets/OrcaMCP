@@ -1,4 +1,5 @@
 #include "PythonInterpreter.hpp"
+#include "BundledPython.hpp" // the two finders below, declared for OrcaMCP's Connect (item CI)
 #include "GeneratedConfig.hpp"
 #include "libslic3r/Utils.hpp"
 #include "PluginAuditManager.hpp"
@@ -353,6 +354,11 @@ bool valid_python_home(const boost::filesystem::path& candidate)
 #endif
 }
 
+} // namespace
+
+// From here the two finders are Slic3r members, declared in BundledPython.hpp: valid_python_home
+// stays file-private, and the unqualified lookup below still reaches it through the enclosing
+// namespace. Bodies are upstream's, unchanged.
 boost::filesystem::path find_bundled_python_home()
 {
     namespace fs = boost::filesystem;
@@ -424,8 +430,6 @@ boost::filesystem::path find_python_executable(const boost::filesystem::path& py
 
     return {};
 }
-
-} // namespace
 
 std::string PythonInterpreter::python_abi_tag()
 {

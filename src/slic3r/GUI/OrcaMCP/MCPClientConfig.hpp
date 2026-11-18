@@ -34,6 +34,15 @@ enum class MCPClientStatus {
     Configured         // orca-slicer entry present in config
 };
 
+// What refreshing one client's entry at startup did (refresh_client_entry).
+enum class EntryRefresh {
+    NoEntry,    // The config holds no orca-slicer entry (or there is no config): nothing is created
+    NotOurs,    // The entry is not one of ours (it runs no ~/.orcamcp bridge): never touched
+    Current,    // The entry is ours and already what Connect would write now
+    Rewritten,  // The entry is ours and differed: written anew
+    Failed      // The config could not be read or written: left untouched
+};
+
 // Client metadata structure
 struct MCPClientInfo {
     MCPClientId     id;
@@ -84,6 +93,13 @@ public:
     // client needs ("type": "stdio", "tools": ["*"]).
     static nlohmann::json server_entry(const MCPClientInfo& info, const BridgeCommand& command);
 
+    // An existing entry brought up to date rather than replaced: the command, args and the client's
+    // required fields are set from `command`, and every other field the user put in the entry -- env
+    // (ORCAMCP_TIMEOUT, ORCAMCP_PORT), cwd, a client's own flags -- is kept. `existing` is used when it
+    // is an object and ignored otherwise.
+    static nlohmann::json updated_entry(const MCPClientInfo& info, const nlohmann::json& existing,
+                                        const BridgeCommand& command);
+
     // `value` as a TOML basic string: quoted, with '\' and '"' escaped and control characters as \u00XX.
     static std::string toml_basic_string(const std::string& value);
 
@@ -100,10 +116,64 @@ public:
     // content kept byte for byte.
     static std::string replace_toml_server_table(const std::string& content, const std::string& table);
 
+    // The table text updated to run `command` rather than replaced by a fresh one: the header line kept
+    // as it is, the command and args rewritten, each timeout the larger of the value the main table
+    // holds (when it is an integer) and the 20 / 140 Connect writes, every other line of the main table
+    // kept in order, and every subtable kept unchanged. "" -- no table yet -- gives
+    // toml_server_table(command).
+    static std::string updated_toml_server_table(const std::string& existing_table, const BridgeCommand& command);
+
     // Whether a JSON entry is one of ours: one of its args, with '\' read as '/', names the shared bridge.
     static bool is_our_entry(const nlohmann::json& entry);
     // The same for a Codex TOML table text, which may spell a backslash as "\\" or "\".
     static bool is_our_toml_table(const std::string& table_text);
+
+    // What an entry's interpreter is chosen from: the app's own bundled Python, whether this app runs
+    // from a Linux AppImage (where the bundled path is mounted afresh every launch and so cannot be
+    // named in an entry), and the system's python3 with its version, read only when the bundled one
+    // is not taken.
+    struct InterpreterInputs
+    {
+        std::string bundled;        // The bundled interpreter's path, "" when there is none
+        bool        in_appimage = false;
+        std::string system_python;  // The system python3's path, "" when there is none
+        int         system_major  = 0;
+        int         system_minor  = 0;
+    };
+
+    struct InterpreterChoice
+    {
+        std::string path;   // What an entry runs, "" when nothing does
+        std::string error;  // Why nothing does; "" when `path` is set
+    };
+
+    // The choice from its inputs, apart from the app: the bundled interpreter unless it is missing or
+    // this is an AppImage; else a system python3 of 3.9 or newer (the bridge runs on 3.9); else the
+    // error naming the install the user has -- an AppImage, whose fix is the distribution's python3,
+    // or any other install, whose fix is reinstalling OrcaMCP or installing Python.
+    static InterpreterChoice choose_interpreter(const InterpreterInputs& inputs);
+
+    // The interpreter a new entry runs the bridge with: `choose_interpreter` of this app's inputs --
+    // upstream's bundled-Python finder (BundledPython.hpp), APPIMAGE, and a system python3 that is
+    // found on PATH and run once for its version when the bundled one is not taken.
+    static InterpreterChoice bridge_interpreter();
+
+    // Write one client's orca-slicer entry, updating it where it stands rather than replacing it: the
+    // command and args become `command`'s and the user's own settings (env, cwd, other keys, Codex's
+    // subtables, a longer timeout) survive. A JSON config is read (an unparsable one is refused and
+    // left untouched), holds its servers object, and goes back through the atomic writer with its own
+    // permissions; a TOML config's table is replaced in place, every other line and server kept.
+    // Parent folders are created when missing.
+    static bool write_client_entry(const MCPClientInfo& info, const BridgeCommand& command, std::string& error);
+
+    // One client's entry, kept current at startup: never written when there is none, when it is not
+    // ours, or when it is already `expected`; rewritten through write_client_entry otherwise.
+    static EntryRefresh refresh_client_entry(const MCPClientInfo& info, const BridgeCommand& expected, std::string& error);
+
+    // At startup: bring every client entry that is ours up to date, after refresh_shared_bridge_at_startup
+    // has put the bridge in ~/.orcamcp. A test launch and a build in a source tree never touch the user's
+    // client configs (the same gate), and each rewrite and failure is logged, nothing shown.
+    static void refresh_client_entries_at_startup(bool own_data_folder, const std::string& executable);
 
     // Get MCP server config as JSON string for copying to project .mcp.json
     static std::string get_mcp_server_json();
@@ -161,10 +231,12 @@ private:
 
     // TOML config manipulation (for Codex CLI)
     static bool is_configured_in_toml(const std::string& path);
-    static bool add_to_toml_config(const std::string& path, std::string& error);
     static bool remove_from_toml_config(const std::string& path, std::string& error);
     // Where our table sits in a TOML content: start and length, or {npos, 0} when there is none.
     static std::pair<size_t, size_t> toml_table_span(const std::string& content);
+    // `content` with the bytes of our table's span replaced in place by `table`, so the table keeps its
+    // position in the file; `content` unchanged when it holds no such table.
+    static std::string replace_toml_server_table_span(const std::string& content, const std::string& table);
 
     // Client metadata storage
     static std::map<MCPClientId, MCPClientInfo> s_client_metadata;
