@@ -510,3 +510,15 @@ TEST_CASE("the startup refresh rewrites only entries that are ours", "[McpClient
     CHECK(MCPClientConfig::refresh_client_entry(broken, command, error) == EntryRefresh::Failed);
     CHECK(read_file(broken.config_path) == "{ not json");
 }
+
+TEST_CASE("Connect finds the Python this build ships", "[McpClientConfig]")
+{
+    // Upstream's finder (BundledPython.hpp) through bridge_interpreter, against the runtime copied beside
+    // this test program (tests/slic3rutils/CMakeLists.txt): on every CI platform, the interpreter a
+    // Connect entry would name exists. A runtime that moved or stopped shipping fails here, not on a
+    // user's machine.
+    const MCPClientConfig::InterpreterChoice choice = MCPClientConfig::bridge_interpreter();
+    INFO(choice.error);
+    REQUIRE(choice.error.empty());
+    CHECK(boost::filesystem::is_regular_file(choice.path));
+}
