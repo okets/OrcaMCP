@@ -14,7 +14,6 @@
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
-#include <regex>
 
 #include "libslic3r/Utils.hpp"  // For resources_dir()
 
@@ -245,6 +244,8 @@ std::string MCPClientConfig::get_shared_scripts_dir()
 
 namespace {
 
+namespace bp = boost::process;
+
 // The bridge script and the tool list it reads: they go to ~/.orcamcp together, since the bridge
 // cannot serve a single tool, start_orca included, without its list.
 const std::vector<std::string>& bridge_file_names()
@@ -261,6 +262,50 @@ std::string read_whole_file(const boost::filesystem::path& path)
     return content.str();
 }
 
+// Reads a config a client entry is edited inside of, telling "there is no file yet" apart from "the
+// file is there but I cannot read it": true with the file's bytes, or true with "" when there is no
+// file; false with an error when the file exists but cannot be opened or read. A file we cannot read
+// must never be replaced by a write of ours, so no config read on an edit path uses read_whole_file,
+// which answers a failed open with the empty string.
+bool read_existing_file(const boost::filesystem::path& path, std::string& content, std::string& error)
+{
+    if (!boost::filesystem::exists(path)) {
+        content.clear();
+        return true;
+    }
+    boost::nowide::ifstream in(path.string(), std::ios::binary);
+    if (!in) {
+        error = "Cannot open file for reading: " + path.string();
+        return false;
+    }
+    std::ostringstream buffer;
+    buffer << in.rdbuf();
+    if (in.bad()) {
+        error = "Cannot open file for reading: " + path.string();
+        return false;
+    }
+    content = buffer.str();
+    return true;
+}
+
+// What Connect says when Codex's config names our server in a TOML form this code will not guess at
+// (an inline table or dotted keys), and what an edit would corrupt: the user fixes that form by hand.
+std::string toml_undefined_form_error(const std::string& path, const std::string& server_name, const std::string& table_key)
+{
+    return "Codex's config " + path + " defines " + server_name + " in a form OrcaMCP cannot edit "
+           "(an inline table or dotted keys): replace it with a [" + table_key + "] table, or remove it, "
+           "then press Connect again.";
+}
+
+// What Connect says when our own table is there but rewriting its command and args safely is not
+// possible (a multi-line string command, a value whose end cannot be found): the table's two running
+// keys are the user's to edit by hand; nothing else of the file is touched.
+std::string toml_undatable_table_error(const std::string& path, const std::string& server_name)
+{
+    return "Codex's config " + path + " has an " + server_name + " table OrcaMCP cannot update "
+           "safely: edit its command and args by hand, or remove the table, then press Connect again.";
+}
+
 // What Connect and the startup refresh say when no interpreter can run the bridge (the user's words,
 // fixed: the docs and troubleshooting page quote them). Each names the install the user actually has:
 // an AppImage ships no Python by design and the fix is the distribution's package; any other install
@@ -271,6 +316,19 @@ const char* const NO_PYTHON_MESSAGE_APPIMAGE = "Connecting needs Python 3.9 or n
 const char* const NO_PYTHON_MESSAGE_INSTALL  = "Connecting needs Python 3.9 or newer, which this OrcaMCP install does "
                                                "not include: reinstall OrcaMCP, or install Python 3.9 or newer, then "
                                                "press Connect again.";
+
+// The probe runs the SYSTEM's python3 the system's way. Inside an AppImage, AppRun has put the
+// AppImage's own library folder in LD_LIBRARY_PATH and (for the bundled runtime) PYTHONHOME /
+// PYTHONPATH in the environment the probe would inherit: python3 launched with those loads the
+// AppImage's libpython against the system's standard library, which fails or prints the wrong
+// version. So the probe starts from a copy of this process' environment with exactly those three
+// taken out. (Needs no unit test: only a Linux AppImage sets them.)
+void strip_appimage_environment(bp::environment& env)
+{
+    env["LD_LIBRARY_PATH"].clear();
+    env["PYTHONHOME"].clear();
+    env["PYTHONPATH"].clear();
+}
 
 // The system's python3 on PATH, and its version: run once in the bridge's own isolated mode, printing
 // "3 12" on stdout, waited for at most 5 s. Anything short of a version read -- none found, no output,
@@ -284,9 +342,11 @@ void probe_system_python(MCPClientConfig::InterpreterInputs& inputs)
         if (python3.empty())
             return;
 
+        bp::environment env = boost::this_process::environment();
+        strip_appimage_environment(env);
         bp::ipstream out;
         bp::child    proc(python3.string(), std::string("-I"), std::string("-c"),
-                          std::string("import sys; print(*sys.version_info[:2])"), bp::std_out > out);
+                          std::string("import sys; print(*sys.version_info[:2])"), env, bp::std_out > out);
         if (!proc.wait_for(std::chrono::seconds(5))) {
             proc.terminate();
             return;
@@ -546,10 +606,130 @@ std::string MCPClientConfig::toml_server_table(const BridgeCommand& command)
 
 namespace {
 
-// A TOML table header is a line whose first non-blank character is '['.
+// Every spelling of our bridge's location ends this way, once '\' reads as '/'.
+const std::string& shared_bridge_suffix()
+{
+    static const std::string suffix = "/.orcamcp/orcamcp-bridge.py";
+    return suffix;
+}
+
+// Whether some path in `text` names the shared bridge, once a doubled '\\' has read as one and any
+// remaining '\' as '/'. Callers pass value bytes only: comments never reach here.
+bool names_shared_bridge(const std::string& text)
+{
+    std::string paths = text;
+    for (size_t pos = paths.find("\\\\"); pos != std::string::npos; pos = paths.find("\\\\", pos + 1))
+        paths.replace(pos, 2, "/");
+    std::replace(paths.begin(), paths.end(), '\\', '/');
+    return boost::algorithm::contains(paths, shared_bridge_suffix());
+}
+
+// What scan_toml_value read: where the value ends, and whether it used a multi-line string.
+struct TomlValue
+{
+    size_t end            = std::string::npos; // npos when the value never closes inside `content`
+    bool   multiline_text = false;             // the value opened a """ or ''' string
+};
+
+// Whether the characters at `pos` open a multi-line string of the quote character found there.
+bool opens_multiline_text(const std::string& content, size_t pos)
+{
+    const char quote = content[pos];
+    return pos + 2 < content.size() && content[pos + 1] == quote && content[pos + 2] == quote;
+}
+
+// The one TOML value reader, used wherever a value's real end matters. It answers where the value
+// starting at `from` ends: past the bracket that closes an array or inline table, past the closing
+// quote of a string, or at the newline that ends a bare value (a trailing comment in none of them).
+// Basic strings ("...", '\' escaping) and literal strings ('...') are taken whole, single-line or
+// multi-line ("""...""", '''...'''); '#' runs a comment to the end of its line; '[' and '{' nest
+// across lines, so a ']' inside a string or a comment never closes an array. `end` is npos when the
+// value runs unclosed to the end of `content` -- a caller may not touch such a line.
+TomlValue scan_toml_value(const std::string& content, size_t from)
+{
+    TomlValue result;
+    size_t    depth = 0;
+    size_t    pos   = from;
+    while (pos < content.size()) {
+        const char c = content[pos];
+        if (c == '#') {
+            if (depth == 0) { // a bare value ends where its comment begins
+                result.end = pos;
+                return result;
+            }
+            const size_t newline = content.find('\n', pos);
+            if (newline == std::string::npos)
+                return result; // the array that opened never closed
+            pos = newline + 1;
+            continue;
+        }
+        if (c == '"' || c == '\'') {
+            if (opens_multiline_text(content, pos)) {
+                result.multiline_text = true;
+                const std::string closer(3, c);
+                const size_t      close = content.find(closer, pos + 3);
+                if (close == std::string::npos)
+                    return result; // the string never closed: end stays npos
+                pos = close + closer.size();
+                continue;
+            }
+            // A basic string's '\' escapes the next character (\" does not close it); a literal string has no escapes.
+            size_t quote_end = pos + 1;
+            while (quote_end < content.size() && content[quote_end] != c && content[quote_end] != '\n')
+                quote_end += (c == '"' && content[quote_end] == '\\' && quote_end + 1 < content.size() && content[quote_end + 1] != '\n') ? 2 : 1;
+            if (quote_end >= content.size() || content[quote_end] != c) {
+                result.end = std::string::npos; // a single-line string that never closes on its line
+                return result;
+            }
+            pos = quote_end + 1;
+            continue;
+        }
+        if (c == '\n') {
+            if (depth == 0) { // a bare value ends at its line's end
+                result.end = pos;
+                return result;
+            }
+            ++pos; // the array continues on the next line
+            continue;
+        }
+        if (c == '[' || c == '{') {
+            ++depth;
+            ++pos;
+            continue;
+        }
+        if (c == ']' || c == '}') {
+            if (depth == 0) { // a stray closer with nothing of ours open: treat the value as ended
+                result.end = pos;
+                return result;
+            }
+            --depth;
+            ++pos;
+            if (depth == 0) {
+                result.end = pos;
+                return result;
+            }
+            continue;
+        }
+        ++pos;
+    }
+    return result; // npos: `content` ran out mid-value
+}
+
+// A UTF-8 BOM as the file's first bytes: they are not part of the header on that first line, and a
+// rewrite of the table leaves them where they are.
+size_t bom_prefix(const std::string& line)
+{
+    return line.size() >= 3 && static_cast<unsigned char>(line[0]) == 0xEF &&
+                   static_cast<unsigned char>(line[1]) == 0xBB && static_cast<unsigned char>(line[2]) == 0xBF
+               ? 3
+               : 0;
+}
+
+// A TOML table header is a line whose first non-blank character is '[', a leading BOM not counting.
 bool is_toml_header(const std::string& line)
 {
-    for (const char c : line) {
+    for (size_t pos = bom_prefix(line); pos < line.size(); ++pos) {
+        const char c = line[pos];
         if (c == ' ' || c == '\t')
             continue;
         return c == '[';
@@ -557,97 +737,213 @@ bool is_toml_header(const std::string& line)
     return false;
 }
 
-// The key path a table header names: the text between the first '[' and its ']', with spaces and tabs
-// outside quoted parts removed and anything after the closing bracket -- a "# comment" -- ignored.
-// "" for an array-of-tables header ([[...]]), which is never our table, or a line that is not a header.
+// Whether every character of `text` is one a bare TOML key may hold unquoted.
+bool is_bare_toml_key(const std::string& text)
+{
+    if (text.empty())
+        return false;
+    for (const char c : text) {
+        const bool word = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_';
+        if (!word)
+            return false;
+    }
+    return true;
+}
+
+// One dotted-key part as it can be compared: blanks removed, and quotes dropped when their text
+// would also fit a bare key -- so "orca-slicer" and 'orca-slicer' both read as orca-slicer while a
+// quoted key that is not ours keeps its quotes and never matches ours by accident.
+std::string normalized_toml_key_part(const std::string& part)
+{
+    const size_t first = part.find_first_not_of(" \t\r");
+    if (first == std::string::npos)
+        return part;
+    const size_t last  = part.find_last_not_of(" \t\r");
+    const char   quote = part[first];
+    if ((quote == '"' || quote == '\'') && last > first && part[last] == quote) {
+        const std::string inner = part.substr(first + 1, last - first - 1);
+        if (is_bare_toml_key(inner))
+            return inner;
+    }
+    return part.substr(first, last - first + 1);
+}
+
+// A dotted key as it can be compared: every part trimmed and normalized, spaces outside quotes gone,
+// dots inside quotes kept as part of their key.
+std::string normalized_toml_dotted_key(const std::string& text)
+{
+    std::string key;
+    size_t      part_start = 0;
+    char        quote      = 0;
+    for (size_t pos = 0; pos <= text.size(); ++pos) {
+        const bool at_end = pos == text.size();
+        const char c      = at_end ? '.' : text[pos];
+        if (quote != 0) {
+            if (c == quote)
+                quote = 0;
+            continue;
+        }
+        if (c == '"' || c == '\'') {
+            quote = c; // a dot inside a quoted part belongs to that part
+            continue;
+        }
+        if (c != '.')
+            continue;
+        if (!key.empty())
+            key += '.';
+        key += normalized_toml_key_part(text.substr(part_start, pos - part_start));
+        part_start = pos + 1;
+        if (at_end)
+            break;
+    }
+    return key;
+}
+
+// The key path a table header names, in that comparable form: [mcp_servers."orca-slicer"],
+// [mcp_servers.'orca-slicer'] and [ mcp_servers . orca-slicer ] all give mcp_servers.orca-slicer,
+// and subtable headers likewise. Anything after the closing bracket -- a "# comment" -- is ignored.
+// "" for an array-of-tables header ([[...]]), which is never our table, or a line that is not a
+// header or whose bracket never closes.
 std::string toml_header_key(const std::string& line)
 {
     const size_t open = line.find('[');
-    if (open == std::string::npos)
+    if (open == std::string::npos || open < bom_prefix(line))
         return {};
-    for (size_t i = 0; i < open; ++i)
-        if (line[i] != ' ' && line[i] != '\t')
+    for (size_t pos = bom_prefix(line); pos < open; ++pos)
+        if (line[pos] != ' ' && line[pos] != '\t')
             return {};
     if (open + 1 < line.size() && line[open + 1] == '[')
         return {};
 
-    std::string key;
-    bool        in_quotes = false;
+    std::string body;
+    char        quote = 0;
     for (size_t pos = open + 1; pos < line.size(); ++pos) {
         const char c = line[pos];
-        if (c == '"') {
-            in_quotes = !in_quotes;
-            key += c;
-        } else if (c == ']' && !in_quotes) {
-            return key;
-        } else if ((c == ' ' || c == '\t') && !in_quotes) {
-            continue;
+        if (quote != 0) {
+            body += c;
+            if (c == quote)
+                quote = 0;
+        } else if (c == '"' || c == '\'') {
+            body += c;
+            quote = c;
+        } else if (c == ']') {
+            return normalized_toml_dotted_key(body);
+        } else if (c == '\n' || c == '#') {
+            return {}; // the bracket never closes, or a bare '#' sits inside the key
         } else {
-            key += c;
+            body += c;
         }
     }
     return {}; // no closing bracket: a header whose key we cannot read
 }
 
-// Whether this line of a table's body sets `key`: the key after optional blanks, then optional spaces,
-// then '='. (TOML also allows tabs here, so blanks covers both.)
+// Whether this line of a table's body sets `key`: the key -- bare, "quoted" or 'quoted' -- after
+// optional blanks, then optional spaces, then '='. (TOML also allows tabs here, so blanks covers
+// both.) A quoted key of another text, or an unterminated quote, is not the key.
 bool sets_toml_key(const std::string& line, const std::string& key)
 {
     size_t pos = 0;
     while (pos < line.size() && (line[pos] == ' ' || line[pos] == '\t'))
         ++pos;
-    if (line.compare(pos, key.size(), key) != 0)
-        return false;
-    pos += key.size();
+    if (pos < line.size() && (line[pos] == '"' || line[pos] == '\'')) {
+        const char quote = line[pos];
+        const size_t close = line.find(quote, pos + 1);
+        if (close == std::string::npos || line.compare(pos + 1, close - pos - 1, key) != 0)
+            return false;
+        pos = close + 1;
+    } else {
+        if (line.compare(pos, key.size(), key) != 0)
+            return false;
+        pos += key.size();
+    }
     while (pos < line.size() && (line[pos] == ' ' || line[pos] == '\t'))
         ++pos;
     return pos < line.size() && line[pos] == '=';
 }
 
-// The integer a key line gives, when its whole value is one. A value with anything else in it -- a
-// comment, a string, a float -- is not one, and the caller keeps its own.
+// The integer a key line gives, read the way TOML reads one: an optional sign, digits with single '_'
+// between digits allowed (1_000), then optional blanks and an optional '# comment'. Anything else --
+// "600.0", a string, digits that run into another character -- is not a plain integer this code may
+// act on, and the caller keeps the user's line exactly as it is.
 bool toml_key_int(const std::string& line, int& value)
 {
     const size_t equals = line.find('=');
     if (equals == std::string::npos)
         return false;
-    const std::string text = boost::algorithm::trim_copy(line.substr(equals + 1));
-    try {
-        size_t     used = 0;
-        const int  read = std::stoi(text, &used);
-        if (used != text.size())
-            return false;
-        value = read;
-        return true;
-    } catch (const std::exception&) {
-        return false;
+    size_t pos = equals + 1;
+    while (pos < line.size() && (line[pos] == ' ' || line[pos] == '\t'))
+        ++pos;
+    std::string digits;
+    if (pos < line.size() && (line[pos] == '+' || line[pos] == '-')) {
+        digits += line[pos];
+        ++pos;
     }
+    bool any_digit = false;
+    while (pos < line.size()) {
+        const char c = line[pos];
+        if (c >= '0' && c <= '9') {
+            digits += c;
+            any_digit = true;
+            ++pos;
+            continue;
+        }
+        // A '_' counts only between two digits; "1__0" or a trailing '_' is not an integer here.
+        if (c == '_' && any_digit && pos + 1 < line.size() && line[pos + 1] >= '0' && line[pos + 1] <= '9') {
+            ++pos;
+            continue;
+        }
+        break;
+    }
+    if (!any_digit)
+        return false;
+    // The value ends at the line's end, or at a comment that runs to the line's end.
+    while (pos < line.size() && (line[pos] == ' ' || line[pos] == '\t' || line[pos] == '\r' || line[pos] == '\n'))
+        ++pos;
+    if (pos < line.size() && line[pos] != '#')
+        return false;
+    try {
+        value = std::stoi(digits);
+    } catch (const std::exception&) {
+        return false; // out of an int's range: a value this code will not compare, only keep
+    }
+    return true;
 }
 
-// Whether an "args =" line opens an array that does not close on this line: the removal then runs
-// through the line holding the closing ']'.
-bool toml_value_opens_multiline(const std::string& line)
+// What one Codex timeout key holds in the user's table: whether any of its lines could not be read
+// as a plain TOML integer, and the largest value of the lines that could.
+struct TimeoutRead
 {
-    const size_t equals = line.find('=');
-    if (equals == std::string::npos)
-        return false;
-    const std::string value = line.substr(equals + 1);
-    return value.find('[') != std::string::npos && value.find(']') == std::string::npos;
-}
+    bool any_unreadable = false;
+    int  largest        = 0;
+
+    void note(const std::string& line)
+    {
+        int value = 0;
+        if (toml_key_int(line, value))
+            largest = std::max(largest, value);
+        else
+            any_unreadable = true;
+    }
+
+    // Our line goes in only where every value read is smaller than ours: an unreadable value is not
+    // ours to reinterpret, and a value at least ours already gives the bridge its minimum.
+    bool ours_bigger(int ours) const { return !any_unreadable && largest < ours; }
+
+    // Whether the user's own line stays in the table: everything except the one case where it is
+    // replaced by our larger value (and with it, its comment).
+    bool keep_their_line(int ours) const { return !ours_bigger(ours); }
+};
 
 } // namespace
 
-// Our table runs from the header whose key is mcp_servers.orca-slicer (bare or quoted, however the
-// brackets are spaced, comment included) through every following [mcp_servers.orca-slicer.*] subtable,
-// and stops before the next table header that is not one of them. Non-header lines belong to the
-// table they follow.
+// Our table runs from the header whose key normalizes to mcp_servers.orca-slicer -- however its key
+// is quoted or spaced, a comment behind the bracket included, a leading BOM not part of it --
+// through every following [mcp_servers.orca-slicer.*] subtable, and stops before the next table
+// header that is not one of them. Non-header lines belong to the table they follow.
 std::pair<size_t, size_t> MCPClientConfig::toml_table_span(const std::string& content)
 {
-    const std::string key_bare   = "mcp_servers." + SERVER_NAME;
-    const std::string key_quoted = "mcp_servers.\"" + SERVER_NAME + "\"";
-    // A following header continues our table only while its key names one of our subtables.
-    const std::string subtable_bare   = key_bare + ".";
-    const std::string subtable_quoted = key_quoted + ".";
+    const std::string our_key      = "mcp_servers." + SERVER_NAME;
+    const std::string our_subtable = our_key + ".";
 
     size_t start = std::string::npos;
     size_t end   = content.size();
@@ -658,12 +954,10 @@ std::pair<size_t, size_t> MCPClientConfig::toml_table_span(const std::string& co
         const std::string line     = content.substr(pos, line_end - pos);
         if (is_toml_header(line)) {
             const std::string key = toml_header_key(line);
-            const bool        ours = boost::algorithm::starts_with(key, subtable_bare) ||
-                                boost::algorithm::starts_with(key, subtable_quoted);
             if (start == std::string::npos) {
-                if (key == key_bare || key == key_quoted)
-                    start = pos;
-            } else if (!ours) {
+                if (key == our_key)
+                    start = pos + bom_prefix(line); // the file's BOM stays outside the table's span
+            } else if (!boost::algorithm::starts_with(key, our_subtable)) {
                 end = pos;
                 break;
             }
@@ -673,6 +967,99 @@ std::pair<size_t, size_t> MCPClientConfig::toml_table_span(const std::string& co
     if (start == std::string::npos)
         return {std::string::npos, 0};
     return {start, end - start};
+}
+
+// Whether the text names our server another way than a table this code can edit: an
+// `orca-slicer = { ... }` line under [mcp_servers], or a dotted key starting mcp_servers.orca-slicer
+// (any quoting) on any line. Read statement by statement in TOML's own terms -- the one value scanner
+// jumps over strings and comments, so neither can hide or fake a key -- and outside our table's own
+// span, which is already the editable form.
+bool MCPClientConfig::toml_names_server_elsewhere(const std::string& content)
+{
+    const auto  span      = toml_table_span(content);
+    const size_t ours_beg = span.first; // npos when the content holds no table of ours
+    const size_t ours_end = (span.first == std::string::npos) ? 0 : span.first + span.second;
+
+    const std::string servers_table = "mcp_servers";
+    const std::string our_key       = servers_table + "." + SERVER_NAME;
+
+    std::string table;                      // the table the statements so far sit in; "" before any header
+    size_t      pos  = bom_prefix(content); // a BOM is the file's bytes, not a statement's
+    while (pos < content.size()) {
+        while (pos < content.size() && (content[pos] == ' ' || content[pos] == '\t' || content[pos] == '\r' || content[pos] == '\n'))
+            ++pos;
+        if (pos >= content.size())
+            break;
+        if (ours_beg != std::string::npos && pos >= ours_beg && pos < ours_end) {
+            // Inside our own table: the editable form, already found.
+            pos = content.find('\n', pos);
+            pos = (pos == std::string::npos) ? content.size() : pos + 1;
+            continue;
+        }
+        if (content[pos] == '#') {
+            pos = content.find('\n', pos);
+            pos = (pos == std::string::npos) ? content.size() : pos + 1;
+            continue;
+        }
+        if (content[pos] == '[') { // a table header: the statements that follow sit in it
+            const size_t newline  = content.find('\n', pos);
+            const size_t line_end = (newline == std::string::npos) ? content.size() : newline;
+            table                 = toml_header_key(content.substr(pos, line_end - pos));
+            pos                   = (newline == std::string::npos) ? content.size() : newline + 1;
+            continue;
+        }
+
+        // A key/value statement. The key runs to its '=', a quoted part of it stepped over to its own
+        // closing quote (as a header's quoted key is); then the value scanner jumps over the value,
+        // multi-line strings included, so no line inside it can be mistaken for a key.
+        const size_t key_start  = pos;
+        size_t       key_end    = content.size();
+        bool         has_value  = false;
+        while (pos < content.size() && content[pos] != '\n' && content[pos] != '#') {
+            const char c = content[pos];
+            if (c == '=') {
+                key_end   = pos;
+                has_value = true;
+                ++pos;
+                break;
+            }
+            if (c == '"' || c == '\'') {
+                size_t quote_end = pos + 1;
+                bool   closed    = false;
+                for (;; ++quote_end) {
+                    if (quote_end >= content.size() || content[quote_end] == '\n')
+                        break; // a quoted key that never closes on its line: not a statement we can read
+                    if (c == '"' && content[quote_end] == '\\')
+                        ++quote_end; // the escaped character belongs to the string
+                    else if (content[quote_end] == c) {
+                        closed = true;
+                        break;
+                    }
+                }
+                if (!closed) {
+                    pos = content.size();
+                    break;
+                }
+                pos = quote_end + 1;
+                continue;
+            }
+            ++pos;
+        }
+        if (!has_value) { // no '=' on the line: nothing this statement can name
+            pos = content.find('\n', pos);
+            pos = (pos == std::string::npos) ? content.size() : pos + 1;
+            continue;
+        }
+        const std::string key = normalized_toml_dotted_key(content.substr(key_start, key_end - key_start));
+        const TomlValue   value = scan_toml_value(content, pos);
+        pos                     = (value.end == std::string::npos) ? content.size() : value.end;
+
+        if (key == our_key || boost::algorithm::starts_with(key, our_key + "."))
+            return true;
+        if (table == servers_table && key == SERVER_NAME)
+            return true;
+    }
+    return false;
 }
 
 std::string MCPClientConfig::toml_server_table_of(const std::string& content)
@@ -712,19 +1099,25 @@ std::string MCPClientConfig::replace_toml_server_table_span(const std::string& c
 // Codex's table updated, never replaced: the header line stays as it is and every subtable stays
 // unchanged, the user's own keys stay in their order -- and the timeouts only ever grow, so a user who
 // raised tool_timeout_sec for a slow machine keeps it. What Connect owns is the command, the args and
-// the minimum the bridge needs.
-std::string MCPClientConfig::updated_toml_server_table(const std::string& existing_table, const BridgeCommand& command)
+// the minimum the bridge needs. A timeout line we cannot read as a plain integer stays exactly as the
+// user wrote it and ours is not added for that key, because guessing at a value would change what
+// Codex does; a command or args value we cannot read to its real end (a multi-line string, an
+// unterminated array) means the whole update is refused -- nothing half-written.
+std::optional<std::string> MCPClientConfig::updated_toml_server_table(const std::string& existing_table,
+                                                                      const BridgeCommand& command)
 {
     if (existing_table.empty())
         return toml_server_table(command);
 
     // Split into lines, each keeping its newline (a Windows file's '\r' stays inside the line and
-    // survives untouched). The first line is our header; the main table runs until the first following
-    // header, and everything from there on is subtable text kept verbatim.
+    // survives untouched), and remember where each line starts: the one value scanner answers a
+    // multi-line value's end in positions of the table text, and whole lines are removed around it.
     std::vector<std::string> lines;
+    std::vector<size_t>      line_start;
     for (size_t pos = 0; pos < existing_table.size();) {
         const size_t newline = existing_table.find('\n', pos);
         const size_t end     = (newline == std::string::npos) ? existing_table.size() : newline + 1;
+        line_start.push_back(pos);
         lines.push_back(existing_table.substr(pos, end - pos));
         pos = end;
     }
@@ -737,49 +1130,62 @@ std::string MCPClientConfig::updated_toml_server_table(const std::string& existi
         }
     }
 
-    // Our keys' values, from the main table only, and every other line of it, in order.
-    int         startup = STARTUP_TIMEOUT_SEC;
-    int         tool    = TOOL_TIMEOUT_SEC;
-    std::string kept;
+    // The timeouts, decided first: the largest plain integer value the main table gives, and whether
+    // any line of the key could not be read at all.
+    TimeoutRead startup;
+    TimeoutRead tool;
     for (size_t i = 1; i < main_end; ++i) {
-        int value = 0;
-        if (sets_toml_key(lines[i], "startup_timeout_sec")) {
-            if (toml_key_int(lines[i], value))
-                startup = std::max(startup, value);
-        } else if (sets_toml_key(lines[i], "tool_timeout_sec")) {
-            if (toml_key_int(lines[i], value))
-                tool = std::max(tool, value);
-        } else if (sets_toml_key(lines[i], "command") || sets_toml_key(lines[i], "args")) {
-            // A multi-line args array is removed whole: on through the line that closes it.
-            if (sets_toml_key(lines[i], "args") && toml_value_opens_multiline(lines[i]))
-                while (++i < main_end && lines[i].find(']') == std::string::npos) {}
-        } else {
-            kept += lines[i];
+        if (sets_toml_key(lines[i], "startup_timeout_sec"))
+            startup.note(lines[i]);
+        else if (sets_toml_key(lines[i], "tool_timeout_sec"))
+            tool.note(lines[i]);
+    }
+
+    std::string kept;
+    size_t      i = 1;
+    while (i < main_end) {
+        const std::string& line = lines[i];
+        if (sets_toml_key(line, "command") || sets_toml_key(line, "args")) {
+            // Ours to write anew: the line goes, on through the real end of its value -- a multi-line
+            // array's closing bracket may sit lines later, and a ']' inside a string or comment in it
+            // is not that bracket. A value whose end we cannot find, or a multi-line string standing
+            // where a command or args belongs, stops the whole update.
+            const size_t    equals = line.find('=');
+            const TomlValue value  = scan_toml_value(existing_table, line_start[i] + equals + 1);
+            if (value.multiline_text || value.end == std::string::npos)
+                return std::nullopt;
+            while (i < main_end && line_start[i] < value.end)
+                ++i;
+            continue;
         }
+        // A timeout line the user's value already covers, or one we cannot read, is kept as written;
+        // one we are raising is dropped (our line goes under the command).
+        const bool startup_line = sets_toml_key(line, "startup_timeout_sec");
+        const bool tool_line    = !startup_line && sets_toml_key(line, "tool_timeout_sec");
+        if (startup_line || tool_line) {
+            const TimeoutRead& timeout = startup_line ? startup : tool;
+            const int          ours    = startup_line ? STARTUP_TIMEOUT_SEC : TOOL_TIMEOUT_SEC;
+            if (timeout.keep_their_line(ours))
+                kept += line;
+        } else {
+            kept += line;
+        }
+        ++i;
     }
 
     std::string out = lines[0]; // the header line, kept as it is -- comment and spacing included
     if (out.empty() || out.back() != '\n')
         out += '\n';
     out += toml_command_lines(command);
-    out += "startup_timeout_sec = " + std::to_string(startup) + "\n";
-    out += "tool_timeout_sec = " + std::to_string(tool) + "\n";
+    if (startup.ours_bigger(STARTUP_TIMEOUT_SEC))
+        out += "startup_timeout_sec = " + std::to_string(STARTUP_TIMEOUT_SEC) + "\n";
+    if (tool.ours_bigger(TOOL_TIMEOUT_SEC))
+        out += "tool_timeout_sec = " + std::to_string(TOOL_TIMEOUT_SEC) + "\n";
     out += kept;
-    for (size_t i = main_end; i < lines.size(); ++i)
+    for (i = main_end; i < lines.size(); ++i)
         out += lines[i];
     return out;
 }
-
-namespace {
-
-// Every spelling of our bridge's location ends this way, once '\' reads as '/'.
-const std::string& shared_bridge_suffix()
-{
-    static const std::string suffix = "/.orcamcp/orcamcp-bridge.py";
-    return suffix;
-}
-
-} // namespace
 
 // Ours only when some argument, Windows separators read as '/', names the shared bridge: an entry
 // pointing at a repository script (./scripts/orcamcp-bridge.py) is the developer's, never touched.
@@ -802,19 +1208,39 @@ bool MCPClientConfig::is_our_entry(const nlohmann::json& entry)
     return false;
 }
 
+// The same for a Codex table -- and read like TOML, not like text: only the main table's args value
+// says what an entry runs. A comment after it, another key's value and a subtable's own keys never
+// make a table ours, so a developer's table whose comment merely mentions the shared path stays the
+// developer's.
 bool MCPClientConfig::is_our_toml_table(const std::string& table_text)
 {
-    // A TOML basic string escapes a backslash as "\\"; read both spellings as '/'.
-    std::string text = table_text;
-    for (size_t pos = text.find("\\\\"); pos != std::string::npos; pos = text.find("\\\\", pos + 1))
-        text.replace(pos, 2, "/");
-    std::replace(text.begin(), text.end(), '\\', '/');
-    return boost::algorithm::contains(text, shared_bridge_suffix());
+    const size_t body = table_text.find('\n'); // everything but the header line
+    size_t       pos  = (body == std::string::npos) ? table_text.size() : body + 1;
+    while (pos < table_text.size()) {
+        const size_t      newline   = table_text.find('\n', pos);
+        const size_t      line_end  = (newline == std::string::npos) ? table_text.size() : newline;
+        const std::string line      = table_text.substr(pos, line_end - pos);
+        if (is_toml_header(line))
+            break; // the main table ends; a subtable's args is not the entry's
+        if (sets_toml_key(line, "args")) {
+            const size_t    equals = line.find('=');
+            const TomlValue value  = scan_toml_value(table_text, pos + equals + 1);
+            if (value.end == std::string::npos)
+                return false; // an args value that never ends names nothing
+            if (names_shared_bridge(table_text.substr(pos + equals + 1, value.end - (pos + equals + 1))))
+                return true;
+        }
+        pos = (newline == std::string::npos) ? table_text.size() : newline + 1;
+    }
+    return false;
 }
 
-// Write one client's orca-slicer entry, whatever it held before. A JSON config that does not parse is
-// refused here and stays byte for byte as it is; every write that happens is atomic, so no client ever
-// reads a half-written config.
+// Write one client's orca-slicer entry, whatever it held before. Nothing that cannot be edited
+// safely is touched at all: a JSON config that does not parse, a servers value that is not an object,
+// a TOML table whose command or args cannot be rewritten, a config that names our server only in a
+// TOML form this code would have to guess at, and any file that exists but cannot be read are all
+// refused here and stay byte for byte as they are. Every write that happens is atomic and keeps the
+// user's key order, so no client ever reads a half-written config or loses the layout of its own.
 bool MCPClientConfig::write_client_entry(const MCPClientInfo& info, const BridgeCommand& command, std::string& error)
 {
     using OrcaMCP::write_file_atomically;
@@ -828,20 +1254,38 @@ bool MCPClientConfig::write_client_entry(const MCPClientInfo& info, const Bridge
         std::string content;
         if (info.is_toml) {
             // An entry is updated where it stands, so its position, its own keys and its subtables
-            // survive; a client without one gains a fresh table at the end.
-            const std::string before   = read_whole_file(path);
+            // survive; a client without one gains a fresh table at the end. A file we cannot read is
+            // never written over, and a table we cannot update safely is left for the user.
+            std::string before;
+            if (!read_existing_file(path, before, error))
+                return false;
             const std::string existing = toml_server_table_of(before);
-            content = existing.empty()
-                          ? replace_toml_server_table(before, toml_server_table(command))
-                          : replace_toml_server_table_span(before, updated_toml_server_table(existing, command));
+            if (existing.empty() && toml_names_server_elsewhere(before)) {
+                error = toml_undefined_form_error(info.config_path, SERVER_NAME, "mcp_servers." + SERVER_NAME);
+                return false;
+            }
+            const std::optional<std::string> updated = updated_toml_server_table(existing, command);
+            if (!updated) {
+                error = toml_undatable_table_error(info.config_path, SERVER_NAME);
+                return false;
+            }
+            content = existing.empty() ? replace_toml_server_table(before, *updated)
+                                       : replace_toml_server_table_span(before, *updated);
         } else {
-            nlohmann::json config;
+            nlohmann::ordered_json config;
             if (!read_json_config(info.config_path, config, error))
                 return false;
-            if (!config.contains(info.servers_key) || !config[info.servers_key].is_object())
-                config[info.servers_key] = nlohmann::json::object();
+            if (config.contains(info.servers_key) && !config[info.servers_key].is_object()) {
+                // The user's own value under the servers key: replacing it would delete their
+                // settings, and writing into it would not be JSON. Theirs to fix.
+                error = info.config_path + ": \"" + info.servers_key +
+                        "\" is not an object; fix it by hand, then press Connect again.";
+                return false;
+            }
+            if (!config.contains(info.servers_key))
+                config[info.servers_key] = nlohmann::ordered_json::object();
             const nlohmann::json existing = config[info.servers_key].contains(SERVER_NAME)
-                                                ? config[info.servers_key][SERVER_NAME]
+                                                ? nlohmann::json(config[info.servers_key][SERVER_NAME])
                                                 : nlohmann::json();
             config[info.servers_key][SERVER_NAME] = updated_entry(info, existing, command);
             content = config.dump(2);
@@ -908,46 +1352,26 @@ MCPClientInfo MCPClientConfig::get_client_info(MCPClientId client_id)
 // Check if orca-slicer is configured in a JSON config file
 bool MCPClientConfig::is_configured_in_json(const std::string& path, const std::string& servers_key)
 {
-    if (!config_file_exists(path))
+    std::string              error;
+    nlohmann::ordered_json   config;
+    if (!read_json_config(path, config, error))
         return false;
-
-    try {
-        boost::nowide::ifstream ifs(path);
-        if (!ifs)
-            return false;
-
-        nlohmann::json config;
-        ifs >> config;
-
-        if (!config.contains(servers_key))
-            return false;
-
-        auto& servers = config[servers_key];
-        return servers.is_object() && servers.contains(SERVER_NAME);
-    }
-    catch (...) {
-        return false;
-    }
+    return config.contains(servers_key) && config[servers_key].is_object() && config[servers_key].contains(SERVER_NAME);
 }
 
-// Check if orca-slicer is configured in a TOML config file
+// Check if orca-slicer is configured in a TOML config file: the editable table, however its header
+// is spelled, or the server named in a form only the user can edit.
 bool MCPClientConfig::is_configured_in_toml(const std::string& path)
 {
     if (!config_file_exists(path))
         return false;
 
     try {
-        boost::nowide::ifstream ifs(path);
-        if (!ifs)
+        std::string content;
+        std::string read_error;
+        if (!read_existing_file(boost::filesystem::path(path), content, read_error))
             return false;
-
-        std::stringstream buffer;
-        buffer << ifs.rdbuf();
-        std::string content = buffer.str();
-
-        // Check for [mcp_servers.orca-slicer] section
-        return content.find("[mcp_servers." + SERVER_NAME + "]") != std::string::npos ||
-               content.find("[mcp_servers.\"" + SERVER_NAME + "\"]") != std::string::npos;
+        return !toml_server_table_of(content).empty() || toml_names_server_elsewhere(content);
     }
     catch (...) {
         return false;
@@ -978,13 +1402,14 @@ MCPClientStatus MCPClientConfig::get_client_status(MCPClientId client_id)
     return configured ? MCPClientStatus::Configured : MCPClientStatus::NotConfigured;
 }
 
-// Read JSON config file
-bool MCPClientConfig::read_json_config(const std::string& path, nlohmann::json& config, std::string& error)
+// Read JSON config file. ordered_json all the way through: a client's config is rewritten as the
+// user laid it out, keys and all.
+bool MCPClientConfig::read_json_config(const std::string& path, nlohmann::ordered_json& config, std::string& error)
 {
     try {
         if (!config_file_exists(path)) {
             // Return empty object for new file
-            config = nlohmann::json::object();
+            config = nlohmann::ordered_json::object();
             return true;
         }
 
@@ -999,11 +1424,11 @@ bool MCPClientConfig::read_json_config(const std::string& path, nlohmann::json& 
 
         // Handle empty file
         if (content.empty() || boost::algorithm::trim_copy(content).empty()) {
-            config = nlohmann::json::object();
+            config = nlohmann::ordered_json::object();
             return true;
         }
 
-        config = nlohmann::json::parse(content);
+        config = nlohmann::ordered_json::parse(content);
         return true;
     }
     catch (const nlohmann::json::parse_error& e) {
@@ -1018,7 +1443,7 @@ bool MCPClientConfig::read_json_config(const std::string& path, nlohmann::json& 
 
 // Write JSON config file, atomically and keeping the file's own permissions: a crash or a full disk
 // must never leave a half-written client config behind.
-bool MCPClientConfig::write_json_config(const std::string& path, const nlohmann::json& config, std::string& error)
+bool MCPClientConfig::write_json_config(const std::string& path, const nlohmann::ordered_json& config, std::string& error)
 {
     try {
         // Ensure parent directory exists
@@ -1097,61 +1522,54 @@ bool MCPClientConfig::disconnect_client(MCPClientId client_id, std::string& erro
         return false;
     }
 
-    nlohmann::json config;
+    nlohmann::ordered_json config;
     if (!read_json_config(info.config_path, config, error_message)) {
         return false;
     }
 
-    if (!config.contains(info.servers_key)) {
+    if (config.contains(info.servers_key) && !config[info.servers_key].is_object()) {
+        // Not an object is the user's own value, not a servers list: nothing of it may be removed,
+        // and nothing is written.
+        error_message = info.config_path + ": \"" + info.servers_key +
+                        "\" is not an object; fix it by hand, then press Connect again.";
+        return false;
+    }
+
+    if (!config.contains(info.servers_key) || !config[info.servers_key].contains(SERVER_NAME)) {
         error_message = SERVER_NAME + " not found in config";
         return false;
     }
 
-    auto& servers = config[info.servers_key];
-    if (!servers.contains(SERVER_NAME)) {
-        error_message = SERVER_NAME + " not found in config";
-        return false;
-    }
-
-    servers.erase(SERVER_NAME);
+    config[info.servers_key].erase(SERVER_NAME);
 
     return write_json_config(info.config_path, config, error_message);
 }
 
-// Remove orca-slicer from TOML config (Codex CLI)
+// Remove orca-slicer from TOML config (Codex CLI): our table and its subtables, by the very span the
+// Connect update edits -- nothing else, whatever lines or servers stand around it. A table not found
+// but the server named in a form this code cannot edit is refused like Connect refuses it, the file
+// left alone; an old regex here once swallowed a ']' inside a string.
 bool MCPClientConfig::remove_from_toml_config(const std::string& path, std::string& error)
 {
     try {
-        if (!config_file_exists(path)) {
+        if (!boost::filesystem::exists(path)) {
             error = "Config file does not exist";
             return false;
         }
+        std::string content;
+        if (!read_existing_file(boost::filesystem::path(path), content, error))
+            return false;
 
-        boost::nowide::ifstream ifs(path);
-        if (!ifs) {
-            error = "Cannot open file for reading: " + path;
+        const auto span = toml_table_span(content);
+        if (span.first == std::string::npos) {
+            if (toml_names_server_elsewhere(content))
+                error = toml_undefined_form_error(path, SERVER_NAME, "mcp_servers." + SERVER_NAME);
+            else
+                error = SERVER_NAME + " not found in config";
             return false;
         }
 
-        std::stringstream buffer;
-        buffer << ifs.rdbuf();
-        std::string content = buffer.str();
-        ifs.close();
-
-        // Check if configured
-        if (content.find("[mcp_servers." + SERVER_NAME + "]") == std::string::npos &&
-            content.find("[mcp_servers.\"" + SERVER_NAME + "\"]") == std::string::npos) {
-            error = SERVER_NAME + " not found in config";
-            return false;
-        }
-
-        // Remove the section using regex
-        // Match [mcp_servers.orca-slicer] or [mcp_servers."orca-slicer"] and all following lines until next section
-        std::regex section_regex(
-            R"(\n?\[mcp_servers\.(?:")" + SERVER_NAME + R"("|)" + SERVER_NAME + R"()\][^\[]*(?=\[|$))",
-            std::regex::ECMAScript);
-
-        std::string new_content = std::regex_replace(content, section_regex, "");
+        std::string new_content = content.substr(0, span.first) + content.substr(span.first + span.second);
 
         // Trim trailing whitespace and add single newline; write back atomically, like every other
         // client config write.
@@ -1172,8 +1590,10 @@ bool MCPClientConfig::remove_from_toml_config(const std::string& path, std::stri
 }
 
 // One client's entry, kept current: an entry of ours is rewritten when it differs from what Connect
-// would write now, and never when it is not ours or there is none. A config that does not parse fails
-// and stays untouched.
+// would write now, and never when it is not ours or there is none. A config that does not parse, or
+// cannot be read, or holds a table whose command and args this code cannot rewrite, fails and stays
+// untouched; a server named only in a TOML form this code would have to guess at is NotOurs -- it is
+// the user's entry, in their form, and the startup refresh never edits it.
 EntryRefresh MCPClientConfig::refresh_client_entry(const MCPClientInfo& info, const BridgeCommand& expected,
                                                    std::string& error)
 {
@@ -1183,25 +1603,33 @@ EntryRefresh MCPClientConfig::refresh_client_entry(const MCPClientInfo& info, co
             return EntryRefresh::NoEntry;
 
         if (info.is_toml) {
-            const std::string content = read_whole_file(info.config_path);
-            const std::string table   = toml_server_table_of(content);
+            std::string content;
+            if (!read_existing_file(boost::filesystem::path(info.config_path), content, error))
+                return EntryRefresh::Failed;
+            const std::string table = toml_server_table_of(content);
             if (table.empty())
-                return EntryRefresh::NoEntry;
+                return toml_names_server_elsewhere(content) ? EntryRefresh::NotOurs : EntryRefresh::NoEntry;
             if (!is_our_toml_table(table))
                 return EntryRefresh::NotOurs;
-            if (updated_toml_server_table(table, expected) == table)
+            const std::optional<std::string> updated = updated_toml_server_table(table, expected);
+            if (!updated) {
+                error = toml_undatable_table_error(info.config_path, SERVER_NAME);
+                return EntryRefresh::Failed;
+            }
+            if (*updated == table)
                 return EntryRefresh::Current;
             return write_client_entry(info, expected, error) ? EntryRefresh::Rewritten : EntryRefresh::Failed;
         }
 
-        nlohmann::json config;
+        nlohmann::ordered_json config;
         if (!read_json_config(info.config_path, config, error))
             return EntryRefresh::Failed;
         if (!config.contains(info.servers_key) || !config[info.servers_key].is_object() ||
             !config[info.servers_key].contains(SERVER_NAME))
             return EntryRefresh::NoEntry;
 
-        const nlohmann::json& entry = config[info.servers_key][SERVER_NAME];
+        // Read as plain json: whether an entry needs rewriting is never a matter of key order.
+        const nlohmann::json entry = config[info.servers_key][SERVER_NAME];
         if (!is_our_entry(entry))
             return EntryRefresh::NotOurs;
         if (updated_entry(info, entry, expected) == entry)
@@ -1211,6 +1639,34 @@ EntryRefresh MCPClientConfig::refresh_client_entry(const MCPClientInfo& info, co
     catch (const std::exception& e) {
         error = "Error refreshing client entry: " + std::string(e.what());
         return EntryRefresh::Failed;
+    }
+}
+
+// Whether one client's config holds an entry of ours, which the startup refresh may have to bring up
+// to date -- decided by reading the config alone, with no interpreter probe, so a machine whose
+// configs hold none of ours starts no process at startup. A config that cannot be read or parsed
+// counts as one: refresh_client_entry reports its failure as it always did.
+bool MCPClientConfig::config_holds_our_entry(const MCPClientInfo& info, std::string& error)
+{
+    try {
+        if (!config_file_exists(info.config_path))
+            return false;
+        if (info.is_toml) {
+            std::string content;
+            if (!read_existing_file(boost::filesystem::path(info.config_path), content, error))
+                return true; // unreadable: let the refresh report it, rather than hush it
+            const std::string table = toml_server_table_of(content);
+            return !table.empty() && is_our_toml_table(table);
+        }
+        nlohmann::ordered_json config;
+        if (!read_json_config(info.config_path, config, error))
+            return true; // unparsable: the same
+        if (!config.contains(info.servers_key) || !config[info.servers_key].is_object() ||
+            !config[info.servers_key].contains(SERVER_NAME))
+            return false;
+        return is_our_entry(config[info.servers_key][SERVER_NAME]);
+    } catch (const std::exception&) {
+        return true; // a surprise here costs one probe, not a silently skipped repair
     }
 }
 
@@ -1232,6 +1688,17 @@ void MCPClientConfig::refresh_client_entries_at_startup(bool own_data_folder, co
         return;
     }
 
+    // An outdated entry is the only reason to ask which interpreter a rewrite would name, and asking
+    // can cost a process: read every config first, and probe only when one holds an entry of ours.
+    std::vector<MCPClientInfo> candidates;
+    for (const MCPClientInfo& info : get_all_clients()) {
+        std::string error;
+        if (config_holds_our_entry(info, error))
+            candidates.push_back(info);
+    }
+    if (candidates.empty())
+        return;
+
     const InterpreterChoice interpreter = bridge_interpreter();
     if (!interpreter.error.empty()) {
         BOOST_LOG_TRIVIAL(warning) << "MCP client entries: left as they are: " << interpreter.error;
@@ -1239,7 +1706,7 @@ void MCPClientConfig::refresh_client_entries_at_startup(bool own_data_folder, co
     }
 
     const BridgeCommand command = bridge_command(interpreter.path, get_bridge_script_path());
-    for (const MCPClientInfo& info : get_all_clients()) {
+    for (const MCPClientInfo& info : candidates) {
         std::string error;
         switch (refresh_client_entry(info, command, error)) {
         case EntryRefresh::Rewritten:
