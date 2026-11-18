@@ -366,6 +366,219 @@ std::string MCPClientConfig::get_bridge_script_path()
     return script_path.string();
 }
 
+MCPClientConfig::BridgeCommand MCPClientConfig::bridge_command(const std::string& interpreter, const std::string& bridge_script)
+{
+    return BridgeCommand{interpreter, {"-I", bridge_script}};
+}
+
+// The orca-slicer entry a client's config holds: the bridge command, plus the client's own extra fields.
+nlohmann::json MCPClientConfig::server_entry(const MCPClientInfo& info, const BridgeCommand& command)
+{
+    nlohmann::json entry;
+    entry["command"] = command.command;
+    entry["args"]    = command.args;
+
+    // Claude Code requires "type": "stdio"
+    if (info.requires_type_field)
+        entry["type"] = "stdio";
+
+    // GitHub Copilot requires "tools": ["*"]
+    if (info.requires_tools_field)
+        entry["tools"] = nlohmann::json::array({"*"});
+
+    return entry;
+}
+
+// `value` as a TOML basic string. Only '"' and '\' need escaping and control characters are written
+// \u00XX; everything else, apostrophes and UTF-8 bytes included, goes through as it is.
+std::string MCPClientConfig::toml_basic_string(const std::string& value)
+{
+    static const char HEX_DIGITS[] = "0123456789ABCDEF";
+
+    std::string out("\"");
+    for (const unsigned char c : value) {
+        if (c == '\\')
+            out += "\\\\";
+        else if (c == '"')
+            out += "\\\"";
+        else if (c < 0x20 || c == 0x7F) {
+            out += "\\u00";
+            out += HEX_DIGITS[c >> 4];
+            out += HEX_DIGITS[c & 0x0F];
+        } else
+            out += static_cast<char>(c);
+    }
+    out += '"';
+    return out;
+}
+
+std::string MCPClientConfig::toml_server_table(const BridgeCommand& command)
+{
+    std::string args = "[";
+    for (size_t i = 0; i < command.args.size(); ++i) {
+        if (i > 0)
+            args += ", ";
+        args += toml_basic_string(command.args[i]);
+    }
+    args += "]";
+
+    return "[mcp_servers." + SERVER_NAME + "]\n"
+           "command = " + toml_basic_string(command.command) + "\n"
+           "args = " + args + "\n"
+           "startup_timeout_sec = 20\n"
+           "tool_timeout_sec = 140\n";
+}
+
+namespace {
+
+// A TOML table header is a line whose first non-blank character is '['.
+bool is_toml_header(const std::string& line)
+{
+    for (const char c : line) {
+        if (c == ' ' || c == '\t')
+            continue;
+        return c == '[';
+    }
+    return false;
+}
+
+// The key path a table header names: the text between the first '[' and its ']', with spaces and tabs
+// outside quoted parts removed and anything after the closing bracket -- a "# comment" -- ignored.
+// "" for an array-of-tables header ([[...]]), which is never our table, or a line that is not a header.
+std::string toml_header_key(const std::string& line)
+{
+    const size_t open = line.find('[');
+    if (open == std::string::npos)
+        return {};
+    for (size_t i = 0; i < open; ++i)
+        if (line[i] != ' ' && line[i] != '\t')
+            return {};
+    if (open + 1 < line.size() && line[open + 1] == '[')
+        return {};
+
+    std::string key;
+    bool        in_quotes = false;
+    for (size_t pos = open + 1; pos < line.size(); ++pos) {
+        const char c = line[pos];
+        if (c == '"') {
+            in_quotes = !in_quotes;
+            key += c;
+        } else if (c == ']' && !in_quotes) {
+            return key;
+        } else if ((c == ' ' || c == '\t') && !in_quotes) {
+            continue;
+        } else {
+            key += c;
+        }
+    }
+    return {}; // no closing bracket: a header whose key we cannot read
+}
+
+} // namespace
+
+// Our table runs from the header whose key is mcp_servers.orca-slicer (bare or quoted, however the
+// brackets are spaced, comment included) through every following [mcp_servers.orca-slicer.*] subtable,
+// and stops before the next table header that is not one of them. Non-header lines belong to the
+// table they follow.
+std::pair<size_t, size_t> MCPClientConfig::toml_table_span(const std::string& content)
+{
+    const std::string key_bare   = "mcp_servers." + SERVER_NAME;
+    const std::string key_quoted = "mcp_servers.\"" + SERVER_NAME + "\"";
+    // A following header continues our table only while its key names one of our subtables.
+    const std::string subtable_bare   = key_bare + ".";
+    const std::string subtable_quoted = key_quoted + ".";
+
+    size_t start = std::string::npos;
+    size_t end   = content.size();
+    size_t pos   = 0;
+    while (pos < content.size()) {
+        const size_t      newline  = content.find('\n', pos);
+        const size_t      line_end = (newline == std::string::npos) ? content.size() : newline + 1;
+        const std::string line     = content.substr(pos, line_end - pos);
+        if (is_toml_header(line)) {
+            const std::string key = toml_header_key(line);
+            const bool        ours = boost::algorithm::starts_with(key, subtable_bare) ||
+                                boost::algorithm::starts_with(key, subtable_quoted);
+            if (start == std::string::npos) {
+                if (key == key_bare || key == key_quoted)
+                    start = pos;
+            } else if (!ours) {
+                end = pos;
+                break;
+            }
+        }
+        pos = line_end;
+    }
+    if (start == std::string::npos)
+        return {std::string::npos, 0};
+    return {start, end - start};
+}
+
+std::string MCPClientConfig::toml_server_table_of(const std::string& content)
+{
+    const auto span = toml_table_span(content);
+    if (span.first == std::string::npos)
+        return {};
+    return content.substr(span.first, span.second);
+}
+
+std::string MCPClientConfig::replace_toml_server_table(const std::string& content, const std::string& table)
+{
+    const auto    span = toml_table_span(content);
+    std::string   rest = content;
+    if (span.first != std::string::npos)
+        rest = content.substr(0, span.first) + content.substr(span.first + span.second);
+
+    if (!rest.empty()) {
+        if (rest.back() != '\n')
+            rest += '\n';
+        rest += '\n'; // one blank line before the new table
+    }
+    return rest + table;
+}
+
+namespace {
+
+// Every spelling of our bridge's location ends this way, once '\' reads as '/'.
+const std::string& shared_bridge_suffix()
+{
+    static const std::string suffix = "/.orcamcp/orcamcp-bridge.py";
+    return suffix;
+}
+
+} // namespace
+
+// Ours only when some argument, Windows separators read as '/', names the shared bridge: an entry
+// pointing at a repository script (./scripts/orcamcp-bridge.py) is the developer's, never touched.
+bool MCPClientConfig::is_our_entry(const nlohmann::json& entry)
+{
+    if (!entry.is_object() || !entry.contains("args"))
+        return false;
+    const nlohmann::json& args = entry.at("args");
+    if (!args.is_array())
+        return false;
+
+    for (const nlohmann::json& arg : args) {
+        if (!arg.is_string())
+            continue;
+        std::string path = arg.get<std::string>();
+        std::replace(path.begin(), path.end(), '\\', '/');
+        if (boost::algorithm::ends_with(path, shared_bridge_suffix()))
+            return true;
+    }
+    return false;
+}
+
+bool MCPClientConfig::is_our_toml_table(const std::string& table_text)
+{
+    // A TOML basic string escapes a backslash as "\\"; read both spellings as '/'.
+    std::string text = table_text;
+    for (size_t pos = text.find("\\\\"); pos != std::string::npos; pos = text.find("\\\\", pos + 1))
+        text.replace(pos, 2, "/");
+    std::replace(text.begin(), text.end(), '\\', '/');
+    return boost::algorithm::contains(text, shared_bridge_suffix());
+}
+
 // Get MCP server config as JSON string for copying to project .mcp.json
 std::string MCPClientConfig::get_mcp_server_json()
 {
@@ -553,35 +766,6 @@ bool MCPClientConfig::write_json_config(const std::string& path, const nlohmann:
     }
 }
 
-// Generate the MCP server entry for a specific client
-nlohmann::json MCPClientConfig::generate_server_entry(MCPClientId client_id)
-{
-    init_client_metadata();
-
-    auto it = s_client_metadata.find(client_id);
-    if (it == s_client_metadata.end())
-        return nlohmann::json::object();
-
-    const MCPClientInfo& info = it->second;
-    std::string bridge_path = get_bridge_script_path();
-
-    nlohmann::json entry;
-    entry["command"] = "python3";
-    entry["args"] = nlohmann::json::array({bridge_path});
-
-    // Claude Code requires "type": "stdio"
-    if (info.requires_type_field) {
-        entry["type"] = "stdio";
-    }
-
-    // GitHub Copilot requires "tools": ["*"]
-    if (info.requires_tools_field) {
-        entry["tools"] = nlohmann::json::array({"*"});
-    }
-
-    return entry;
-}
-
 // Connect a client (add orca-slicer to config)
 bool MCPClientConfig::connect_client(MCPClientId client_id, std::string& error_message)
 {
@@ -618,7 +802,7 @@ bool MCPClientConfig::connect_client(MCPClientId client_id, std::string& error_m
     }
 
     // Add our server entry
-    config[info.servers_key][SERVER_NAME] = generate_server_entry(client_id);
+    config[info.servers_key][SERVER_NAME] = server_entry(info, bridge_command("python3", get_bridge_script_path()));
 
     // Write back
     return write_json_config(info.config_path, config, error_message);

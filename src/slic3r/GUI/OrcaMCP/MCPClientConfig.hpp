@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <utility>
 #include "nlohmann/json.hpp"
 
 namespace Slic3r { namespace GUI {
@@ -69,6 +70,41 @@ public:
     // Get the bridge script path (bundled with app)
     static std::string get_bridge_script_path();
 
+    // The command a client runs to start the bridge: the interpreter, and the bridge script in isolated
+    // mode ("-I": no PYTHON* variables and no user site-packages, so the user's own Python setup cannot
+    // break the bridge).
+    struct BridgeCommand
+    {
+        std::string                command;
+        std::vector<std::string>   args;
+    };
+    static BridgeCommand bridge_command(const std::string& interpreter, const std::string& bridge_script);
+
+    // The orca-slicer entry a client's config holds: the command to run, plus the extra fields that
+    // client needs ("type": "stdio", "tools": ["*"]).
+    static nlohmann::json server_entry(const MCPClientInfo& info, const BridgeCommand& command);
+
+    // `value` as a TOML basic string: quoted, with '\' and '"' escaped and control characters as \u00XX.
+    static std::string toml_basic_string(const std::string& value);
+
+    // Codex's [mcp_servers.orca-slicer] table: the command to run, and timeouts wide enough for the
+    // bridge to start (startup_timeout_sec) and to answer a call (tool_timeout_sec, over its 120 s).
+    static std::string toml_server_table(const BridgeCommand& command);
+
+    // The exact text of the [mcp_servers.orca-slicer] table -- bare or quoted header -- and every
+    // [mcp_servers.orca-slicer.*] subtable that follows it, up to the next other table header.
+    // "" when the content holds no such table.
+    static std::string toml_server_table_of(const std::string& content);
+
+    // `content` without that table, `table` appended after one blank line; every other line of the
+    // content kept byte for byte.
+    static std::string replace_toml_server_table(const std::string& content, const std::string& table);
+
+    // Whether a JSON entry is one of ours: one of its args, with '\' read as '/', names the shared bridge.
+    static bool is_our_entry(const nlohmann::json& entry);
+    // The same for a Codex TOML table text, which may spell a backslash as "\\" or "\".
+    static bool is_our_toml_table(const std::string& table_text);
+
     // Get MCP server config as JSON string for copying to project .mcp.json
     static std::string get_mcp_server_json();
 
@@ -127,9 +163,8 @@ private:
     static bool is_configured_in_toml(const std::string& path);
     static bool add_to_toml_config(const std::string& path, std::string& error);
     static bool remove_from_toml_config(const std::string& path, std::string& error);
-
-    // Generate the MCP server entry for a client
-    static nlohmann::json generate_server_entry(MCPClientId client_id);
+    // Where our table sits in a TOML content: start and length, or {npos, 0} when there is none.
+    static std::pair<size_t, size_t> toml_table_span(const std::string& content);
 
     // Client metadata storage
     static std::map<MCPClientId, MCPClientInfo> s_client_metadata;
