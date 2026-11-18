@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <optional>
 #include <utility>
 #include "nlohmann/json.hpp"
 
@@ -107,10 +108,17 @@ public:
     // bridge to start (startup_timeout_sec) and to answer a call (tool_timeout_sec, over its 120 s).
     static std::string toml_server_table(const BridgeCommand& command);
 
-    // The exact text of the [mcp_servers.orca-slicer] table -- bare or quoted header -- and every
-    // [mcp_servers.orca-slicer.*] subtable that follows it, up to the next other table header.
-    // "" when the content holds no such table.
+    // The exact text of the [mcp_servers.orca-slicer] table -- the header however its key is quoted
+    // or spaced, a leading BOM not part of it -- and every [mcp_servers.orca-slicer.*] subtable that
+    // follows it, up to the next other table header. "" when the content holds no such table.
     static std::string toml_server_table_of(const std::string& content);
+
+    // Whether the text names our server another way than a table this code can edit: an
+    // `orca-slicer = { ... }` line under [mcp_servers], or a dotted key starting
+    // mcp_servers.orca-slicer (any quoting), on any line. Outside our table's own span, outside
+    // comments and strings. Such an entry is never edited: Connect refuses, the startup refresh
+    // leaves the file alone.
+    static bool toml_names_server_elsewhere(const std::string& content);
 
     // `content` without that table, `table` appended after one blank line; every other line of the
     // content kept byte for byte.
@@ -118,10 +126,20 @@ public:
 
     // The table text updated to run `command` rather than replaced by a fresh one: the header line kept
     // as it is, the command and args rewritten, each timeout the larger of the value the main table
-    // holds (when it is an integer) and the 20 / 140 Connect writes, every other line of the main table
+    // holds (when its line reads as a plain TOML integer, comment allowed) and the 20 / 140 Connect
+    // writes -- a timeout line the reader cannot read, or one already at least as large, kept exactly
+    // as the user wrote it, our line not added for that key --, every other line of the main table
     // kept in order, and every subtable kept unchanged. "" -- no table yet -- gives
-    // toml_server_table(command).
-    static std::string updated_toml_server_table(const std::string& existing_table, const BridgeCommand& command);
+    // toml_server_table(command). nullopt when the table cannot be updated safely: a command or args
+    // value that is a multi-line string, or whose end the reader cannot find. The file is then the
+    // user's to fix by hand, and nothing of it is written.
+    static std::optional<std::string> updated_toml_server_table(const std::string& existing_table,
+                                                                const BridgeCommand& command);
+
+    // `path` without our table and its subtables -- exactly the span toml_server_table_of answers --
+    // written back atomically with the file's own permissions. A file that cannot be read, and one
+    // that names our server only in a form this code cannot edit, are refused and left untouched.
+    static bool remove_from_toml_config(const std::string& path, std::string& error);
 
     // Whether a JSON entry is one of ours: one of its args, with '\' read as '/', names the shared bridge.
     static bool is_our_entry(const nlohmann::json& entry);
@@ -160,14 +178,18 @@ public:
 
     // Write one client's orca-slicer entry, updating it where it stands rather than replacing it: the
     // command and args become `command`'s and the user's own settings (env, cwd, other keys, Codex's
-    // subtables, a longer timeout) survive. A JSON config is read (an unparsable one is refused and
-    // left untouched), holds its servers object, and goes back through the atomic writer with its own
-    // permissions; a TOML config's table is replaced in place, every other line and server kept.
-    // Parent folders are created when missing.
+    // subtables, a longer timeout) survive. A JSON config is read with its key order kept (an
+    // unparsable one, a file that exists but cannot be read, and a servers value that is not an object
+    // are refused and left untouched) and goes back through the atomic writer with its own
+    // permissions; a TOML config a read fails on, or that names our server only in a form this code
+    // cannot edit, is refused and left byte for byte as it is; otherwise its table is replaced in
+    // place, every other line and server kept. Parent folders are created when missing.
     static bool write_client_entry(const MCPClientInfo& info, const BridgeCommand& command, std::string& error);
 
     // One client's entry, kept current at startup: never written when there is none, when it is not
-    // ours, or when it is already `expected`; rewritten through write_client_entry otherwise.
+    // ours, or when it is already `expected`; rewritten through write_client_entry otherwise. A file
+    // that exists but cannot be read, one that names our server only in a form that cannot be edited
+    // (NotOurs, never touched), and one whose table cannot be updated (Failed) all stay as they are.
     static EntryRefresh refresh_client_entry(const MCPClientInfo& info, const BridgeCommand& expected, std::string& error);
 
     // At startup: bring every client entry that is ours up to date, after refresh_shared_bridge_at_startup
@@ -224,14 +246,21 @@ private:
     static bool config_directory_exists(const std::string& config_path);
     static bool config_file_exists(const std::string& config_path);
 
-    // JSON config manipulation
-    static bool read_json_config(const std::string& path, nlohmann::json& config, std::string& error);
-    static bool write_json_config(const std::string& path, const nlohmann::json& config, std::string& error);
+    // JSON config manipulation. A whole config file is nlohmann::ordered_json, so a rewrite keeps the
+    // user's key order; individual entries are compared as plain nlohmann::json, where it matters
+    // that the order of an entry's own keys is not a difference.
+    static bool read_json_config(const std::string& path, nlohmann::ordered_json& config, std::string& error);
+    static bool write_json_config(const std::string& path, const nlohmann::ordered_json& config, std::string& error);
     static bool is_configured_in_json(const std::string& path, const std::string& servers_key);
+
+    // Whether one client's config holds an entry of ours, which the startup refresh may have to bring
+    // up to date: read without probing for an interpreter, so a launch that holds none starts no
+    // process. A config that cannot be read or parsed counts as one, so refresh_client_entry reports
+    // its failure as before.
+    static bool config_holds_our_entry(const MCPClientInfo& info, std::string& error);
 
     // TOML config manipulation (for Codex CLI)
     static bool is_configured_in_toml(const std::string& path);
-    static bool remove_from_toml_config(const std::string& path, std::string& error);
     // Where our table sits in a TOML content: start and length, or {npos, 0} when there is none.
     static std::pair<size_t, size_t> toml_table_span(const std::string& content);
     // `content` with the bytes of our table's span replaced in place by `table`, so the table keeps its

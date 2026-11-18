@@ -7,6 +7,12 @@
 
 #include <sstream>
 #include <string>
+#include <vector>
+
+#ifndef _WIN32
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 
 #include "test_utils.hpp"
 
@@ -65,6 +71,61 @@ size_t count_of(const std::string& text, const std::string& needle)
     for (size_t pos = text.find(needle); pos != std::string::npos; pos = text.find(needle, pos + needle.size()))
         ++n;
     return n;
+}
+
+// The UTF-8 BOM some Windows editors put at a file's very first bytes.
+const std::string& utf8_bom()
+{
+    static const std::string bom = std::string() + static_cast<char>(0xEF) + static_cast<char>(0xBB) + static_cast<char>(0xBF);
+    return bom;
+}
+
+// The lines of a Codex table's MAIN table -- up to its first subtable header -- that set `key`,
+// bare or quoted. A Connect update must leave exactly one command line and one args line: a second
+// of either makes Codex reject the user's whole config.
+size_t count_toml_key_lines(const std::string& table, const std::string& key)
+{
+    size_t n         = 0;
+    const size_t body = table.find('\n'); // start below the table's own header line
+    size_t pos       = (body == std::string::npos) ? table.size() : body + 1;
+    while (pos < table.size()) {
+        const size_t      newline = table.find('\n', pos);
+        const size_t      end     = (newline == std::string::npos) ? table.size() : newline;
+        const std::string line    = table.substr(pos, end - pos);
+        size_t            i       = 0;
+        while (i < line.size() && (line[i] == ' ' || line[i] == '\t'))
+            ++i;
+        if (i < line.size() && line[i] == '[')
+            break; // the main table ends where a subtable header begins
+        bool sets_key = false;
+        if (i < line.size() && (line[i] == '"' || line[i] == '\'')) {
+            const char   quote = line[i];
+            const size_t close = line.find(quote, i + 1);
+            sets_key           = close != std::string::npos && line.compare(i + 1, close - i - 1, key) == 0;
+            if (sets_key)
+                i = close + 1;
+        } else if (line.compare(i, key.size(), key) == 0) {
+            sets_key = true;
+            i += key.size();
+        }
+        if (sets_key) {
+            while (i < line.size() && (line[i] == ' ' || line[i] == '\t'))
+                ++i;
+            if (i < line.size() && line[i] == '=')
+                ++n;
+        }
+        pos = (newline == std::string::npos) ? table.size() : newline + 1;
+    }
+    return n;
+}
+
+// The keys of a parsed JSON object, in the order the file wrote them.
+std::vector<std::string> keys_in_order(const nlohmann::ordered_json& object)
+{
+    std::vector<std::string> keys;
+    for (auto it = object.begin(); it != object.end(); ++it)
+        keys.push_back(it.key());
+    return keys;
 }
 
 } // namespace
@@ -451,6 +512,11 @@ TEST_CASE("Codex keeps its own settings and longer timeouts", "[McpClientConfig]
     CHECK(content.find("python3") == std::string::npos);
     CHECK(count_of(content, "args") == 1);
 
+    // Exactly one command line and one args line survive in our main table, not two of either.
+    const std::string ours = MCPClientConfig::toml_server_table_of(content);
+    CHECK(count_toml_key_lines(ours, "command") == 1);
+    CHECK(count_toml_key_lines(ours, "args") == 1);
+
     // The table keeps its position: ours, with its env, still stands before [mcp_servers.other].
     CHECK(boost::algorithm::starts_with(content, "[mcp_servers.orca-slicer]"));
     CHECK(content.find("[mcp_servers.orca-slicer.env]") < content.find("[mcp_servers.other]\ncommand = \"keep\"\n"));
@@ -510,6 +576,407 @@ TEST_CASE("the startup refresh rewrites only entries that are ours", "[McpClient
     CHECK(MCPClientConfig::refresh_client_entry(broken, command, error) == EntryRefresh::Failed);
     CHECK(read_file(broken.config_path) == "{ not json");
 }
+
+// What an acceptance review of Connect found on inputs the first version guessed at (design items
+// 3-7, docs/superpowers/specs/2026-11-18-connect-without-python-design.md): a timeout line read by
+// TOML's rules, an unreadable file never written over, every spelling of our Codex table found and
+// the un-editable ones refused, updates that cannot be done safely refused whole, Disconnect using
+// the same span as Connect, ownership read from values not comments, and JSON configs that keep the
+// order the user wrote them in.
+
+TEST_CASE("a longer Codex timeout with a comment is kept", "[McpClientConfig]")
+{
+    ScopedTemporaryDir dir("orcamcp-timeout-comment");
+    const MCPClientInfo codex = codex_client(dir.path(), "config.toml");
+    write(codex.config_path, "[mcp_servers.orca-slicer]\n"
+                             "command = \"python3\"\n"
+                             "args = [\"/h/.orcamcp/orcamcp-bridge.py\"]\n"
+                             "tool_timeout_sec = 600 # slow machine\n"
+                             "startup_timeout_sec = 60 # slow disk\n");
+
+    const auto  command = MCPClientConfig::bridge_command("/opt/orcamcp/python", "/h/.orcamcp/orcamcp-bridge.py");
+    std::string error;
+    REQUIRE(MCPClientConfig::write_client_entry(codex, command, error));
+    const std::string content = read_file(codex.config_path);
+
+    // Both values already cover what the bridge needs, so both lines stay exactly as the user wrote
+    // them -- comment included -- and no line of ours joins either key.
+    CHECK(content.find("tool_timeout_sec = 600 # slow machine\n") != std::string::npos);
+    CHECK(content.find("startup_timeout_sec = 60 # slow disk\n") != std::string::npos);
+    const std::string ours = MCPClientConfig::toml_server_table_of(content);
+    CHECK(count_toml_key_lines(ours, "tool_timeout_sec") == 1);
+    CHECK(count_toml_key_lines(ours, "startup_timeout_sec") == 1);
+    CHECK(count_toml_key_lines(ours, "command") == 1);
+    CHECK(count_toml_key_lines(ours, "args") == 1);
+    CHECK(MCPClientConfig::refresh_client_entry(codex, command, error) == EntryRefresh::Current);
+}
+
+TEST_CASE("1_000 in a Codex timeout counts as 1000", "[McpClientConfig]")
+{
+    ScopedTemporaryDir dir("orcamcp-timeout-underscore");
+    const MCPClientInfo codex = codex_client(dir.path(), "config.toml");
+    write(codex.config_path, "[mcp_servers.orca-slicer]\n"
+                             "command = \"python3\"\n"
+                             "args = [\"/h/.orcamcp/orcamcp-bridge.py\"]\n"
+                             "tool_timeout_sec = 1_000\n"
+                             "startup_timeout_sec = 1_5\n");
+
+    const auto  command = MCPClientConfig::bridge_command("/opt/orcamcp/python", "/h/.orcamcp/orcamcp-bridge.py");
+    std::string error;
+    REQUIRE(MCPClientConfig::write_client_entry(codex, command, error));
+    const std::string content = read_file(codex.config_path);
+
+    // 1_000 reads as a thousand -- at least ours, so the line stands untouched. 1_5 reads as fifteen
+    // -- under our twenty, so it is raised, not stopped at the underscore and not refused as
+    // unreadable.
+    CHECK(content.find("tool_timeout_sec = 1_000\n") != std::string::npos);
+    CHECK(content.find("startup_timeout_sec = 1_5") == std::string::npos);
+    CHECK(content.find("startup_timeout_sec = 20\n") != std::string::npos);
+    const std::string ours = MCPClientConfig::toml_server_table_of(content);
+    CHECK(count_toml_key_lines(ours, "tool_timeout_sec") == 1);
+    CHECK(count_toml_key_lines(ours, "startup_timeout_sec") == 1);
+    CHECK(MCPClientConfig::refresh_client_entry(codex, command, error) == EntryRefresh::Current);
+}
+
+TEST_CASE("600.0 is kept as written", "[McpClientConfig]")
+{
+    ScopedTemporaryDir dir("orcamcp-timeout-unreadable");
+    const MCPClientInfo codex = codex_client(dir.path(), "config.toml");
+    write(codex.config_path, "[mcp_servers.orca-slicer]\n"
+                             "command = \"python3\"\n"
+                             "args = [\"/h/.orcamcp/orcamcp-bridge.py\"]\n"
+                             "tool_timeout_sec = 600.0\n");
+
+    const auto  command = MCPClientConfig::bridge_command("/opt/orcamcp/python", "/h/.orcamcp/orcamcp-bridge.py");
+    std::string error;
+    REQUIRE(MCPClientConfig::write_client_entry(codex, command, error));
+    const std::string content = read_file(codex.config_path);
+
+    // Not a plain integer, so not ours to read: the user's line survives byte for byte and the 140
+    // line is not added for that key. The absent startup key still gets our minimum.
+    CHECK(content.find("tool_timeout_sec = 600.0\n") != std::string::npos);
+    CHECK(content.find("tool_timeout_sec = 140") == std::string::npos);
+    CHECK(content.find("startup_timeout_sec = 20\n") != std::string::npos);
+    const std::string ours = MCPClientConfig::toml_server_table_of(content);
+    CHECK(count_toml_key_lines(ours, "tool_timeout_sec") == 1);
+    CHECK(count_toml_key_lines(ours, "startup_timeout_sec") == 1);
+    CHECK(MCPClientConfig::refresh_client_entry(codex, command, error) == EntryRefresh::Current);
+}
+
+TEST_CASE("Codex's table is found however its key is quoted", "[McpClientConfig]")
+{
+    const auto command = MCPClientConfig::bridge_command("/opt/orcamcp/python", "/h/.orcamcp/orcamcp-bridge.py");
+
+    // Basic quotes, literal quotes and spaces around the dotted key all name the same table, which
+    // Connect replaces in place -- header kept as written, exactly one table after.
+    for (const char* header : {"[mcp_servers.'orca-slicer']", "[mcp_servers.\"orca-slicer\"]", "[ mcp_servers . orca-slicer ]"}) {
+        ScopedTemporaryDir dir("orcamcp-quoted-key");
+        const MCPClientInfo codex = codex_client(dir.path(), "config.toml");
+        write(codex.config_path, std::string(header) + "\n"
+                                 "command = \"python3\"\n"
+                                 "args = [\"/h/.orcamcp/orcamcp-bridge.py\"]\n");
+        std::string error;
+        INFO(header);
+        REQUIRE(MCPClientConfig::write_client_entry(codex, command, error));
+        const std::string content = read_file(codex.config_path);
+        CHECK(count_of(content, "orca-slicer") == 1); // replaced in place: no second table appeared
+        CHECK(content.find("python3") == std::string::npos);
+        CHECK(content.find("command = \"/opt/orcamcp/python\"") != std::string::npos);
+        const std::string ours = MCPClientConfig::toml_server_table_of(content);
+        CHECK(boost::algorithm::starts_with(ours, header));
+        CHECK(count_toml_key_lines(ours, "command") == 1);
+        CHECK(count_toml_key_lines(ours, "args") == 1);
+        CHECK(MCPClientConfig::refresh_client_entry(codex, command, error) == EntryRefresh::Current);
+    }
+
+    // A UTF-8 BOM before a quoted header: the table is still found, and the file's first bytes stay.
+    ScopedTemporaryDir dir("orcamcp-bom");
+    const MCPClientInfo codex = codex_client(dir.path(), "config.toml");
+    const std::string   bom   = utf8_bom();
+    write(codex.config_path, bom + "[mcp_servers.\"orca-slicer\"]\n"
+                                   "command = \"python3\"\n"
+                                   "args = [\"/h/.orcamcp/orcamcp-bridge.py\"]\n");
+    std::string error;
+    REQUIRE(MCPClientConfig::write_client_entry(codex, command, error));
+    const std::string content = read_file(codex.config_path);
+    CHECK(boost::algorithm::starts_with(content, bom)); // the BOM is not part of the edited span
+    CHECK(count_of(content, "orca-slicer") == 1);
+    CHECK(content.find("command = \"/opt/orcamcp/python\"") != std::string::npos);
+    CHECK(MCPClientConfig::refresh_client_entry(codex, command, error) == EntryRefresh::Current);
+}
+
+TEST_CASE("Connect refuses an inline-table or dotted-key entry", "[McpClientConfig]")
+{
+    const auto command = MCPClientConfig::bridge_command("/opt/orcamcp/python", "/h/.orcamcp/orcamcp-bridge.py");
+
+    // Both forms define our server in TOML this code will not guess at.
+    for (const char* before : {"[mcp_servers]\nother = { command = \"keep\" }\norca-slicer = { command = \"python3\" }\n",
+                               "mcp_servers.orca-slicer.command = \"python3\"\n"
+                               "mcp_servers.orca-slicer.args = [\"-I\", \"/h/.orcamcp/orcamcp-bridge.py\"]\n",
+                               "mcp_servers.\"orca-slicer\".command = \"python3\"\n"}) {
+        ScopedTemporaryDir dir("orcamcp-undefined-form");
+        const MCPClientInfo codex = codex_client(dir.path(), "config.toml");
+        write(codex.config_path, before);
+        INFO(before);
+        CHECK(MCPClientConfig::toml_names_server_elsewhere(before));
+
+        std::string error;
+        CHECK_FALSE(MCPClientConfig::write_client_entry(codex, command, error));
+        CHECK(error.find("cannot edit") != std::string::npos);
+        CHECK(read_file(codex.config_path) == before); // byte for byte: refused means untouched
+        CHECK(MCPClientConfig::refresh_client_entry(codex, command, error) == EntryRefresh::NotOurs);
+    }
+
+    // A config that names no server of ours stays a config Connect may append to -- and the editable
+    // table form, comments and quoted strings aside, is not "elsewhere".
+    CHECK_FALSE(MCPClientConfig::toml_names_server_elsewhere("[mcp_servers]\nother = { command = \"x\" }\n"));
+    CHECK_FALSE(MCPClientConfig::toml_names_server_elsewhere("[mcp_servers.orca-slicer]\ncommand = \"x\"\n"));
+    CHECK_FALSE(MCPClientConfig::toml_names_server_elsewhere("# orca-slicer = { command = \"x\" }\n"
+                                                             "note = \"orca-slicer = 1\" # not mcp_servers.orca-slicer.x\n"
+                                                             "other = true\n"));
+}
+
+TEST_CASE("a multi-line args with a bracket in a path or comment is replaced whole", "[McpClientConfig]")
+{
+    ScopedTemporaryDir dir("orcamcp-multiline-args");
+    const MCPClientInfo codex = codex_client(dir.path(), "config.toml");
+    write(codex.config_path, "[mcp_servers.orca-slicer]\n"
+                             "command = \"python3\"\n"
+                             "args = [ # the bridge [here]\n"
+                             "  \"/h/x]y/.orcamcp/orcamcp-bridge.py\",\n"
+                             "]\n"
+                             "enabled = true\n"
+                             "\n"
+                             "[mcp_servers.orca-slicer.env]\n"
+                             "BRIDGE = \"/h/.orcamcp/orcamcp-bridge.py\"\n");
+
+    const auto  command = MCPClientConfig::bridge_command("/opt/orcamcp/python", "/h/.orcamcp/orcamcp-bridge.py");
+    std::string error;
+    REQUIRE(MCPClientConfig::write_client_entry(codex, command, error));
+    const std::string content = read_file(codex.config_path);
+
+    // The ']' inside the comment and the one inside the path did not close the array: it was removed
+    // through its real closing bracket, whole, and the one line Connect writes took its place.
+    CHECK(content.find("args = [\"-I\", \"/h/.orcamcp/orcamcp-bridge.py\"]\n") != std::string::npos);
+    CHECK(content.find("[here]") == std::string::npos);
+    CHECK(content.find("x]y") == std::string::npos);
+    CHECK(content.find("enabled = true\n") != std::string::npos);
+    CHECK(content.find("[mcp_servers.orca-slicer.env]\nBRIDGE = \"/h/.orcamcp/orcamcp-bridge.py\"\n") != std::string::npos);
+    const std::string ours = MCPClientConfig::toml_server_table_of(content);
+    CHECK(count_toml_key_lines(ours, "command") == 1);
+    CHECK(count_toml_key_lines(ours, "args") == 1);
+    CHECK(MCPClientConfig::refresh_client_entry(codex, command, error) == EntryRefresh::Current);
+}
+
+TEST_CASE("an escaped quote in a path does not end the string early", "[McpClientConfig]")
+{
+    // A basic string's \" is part of the string: read as its end, the ']' after it would close the
+    // array early and leave the rest of the path behind as text TOML cannot parse.
+    ScopedTemporaryDir dir("orcamcp-escaped-quote");
+    const MCPClientInfo codex = codex_client(dir.path(), "config.toml");
+    write(codex.config_path, "[mcp_servers.orca-slicer]\n"
+                             "command = \"python3\"\n"
+                             "args = [\n"
+                             "  \"/h/we\\\"ird]/.orcamcp/orcamcp-bridge.py\",\n"
+                             "]\n"
+                             "enabled = true\n");
+
+    const auto  command = MCPClientConfig::bridge_command("/opt/orcamcp/python", "/h/.orcamcp/orcamcp-bridge.py");
+    std::string error;
+    REQUIRE(MCPClientConfig::write_client_entry(codex, command, error));
+    const std::string content = read_file(codex.config_path);
+    CHECK(content.find("ird]") == std::string::npos);
+    CHECK(content.find("\n]\n") == std::string::npos); // no stray closing bracket of the old array
+    CHECK(content.find("enabled = true\n") != std::string::npos);
+    const std::string ours = MCPClientConfig::toml_server_table_of(content);
+    CHECK(count_toml_key_lines(ours, "args") == 1);
+    CHECK(MCPClientConfig::refresh_client_entry(codex, command, error) == EntryRefresh::Current);
+}
+
+TEST_CASE("a quoted command key is replaced, not duplicated", "[McpClientConfig]")
+{
+    ScopedTemporaryDir dir("orcamcp-quoted-keys");
+    const MCPClientInfo codex = codex_client(dir.path(), "config.toml");
+    write(codex.config_path, "[mcp_servers.orca-slicer]\n"
+                             "\"command\" = \"python3\"\n"
+                             "'args' = [\"/h/.orcamcp/orcamcp-bridge.py\"]\n");
+
+    const auto  command = MCPClientConfig::bridge_command("/opt/orcamcp/python", "/h/.orcamcp/orcamcp-bridge.py");
+    std::string error;
+    REQUIRE(MCPClientConfig::write_client_entry(codex, command, error));
+    const std::string content = read_file(codex.config_path);
+
+    // Both quoted lines were recognized as the keys they spell and replaced, leaving one line each.
+    CHECK(content.find("\"command\"") == std::string::npos);
+    CHECK(content.find("'args'") == std::string::npos);
+    const std::string ours = MCPClientConfig::toml_server_table_of(content);
+    CHECK(count_toml_key_lines(ours, "command") == 1);
+    CHECK(count_toml_key_lines(ours, "args") == 1);
+    CHECK(content.find("command = \"/opt/orcamcp/python\"") != std::string::npos);
+    CHECK(MCPClientConfig::refresh_client_entry(codex, command, error) == EntryRefresh::Current);
+}
+
+TEST_CASE("a multi-line string command is refused untouched", "[McpClientConfig]")
+{
+    ScopedTemporaryDir dir("orcamcp-multiline-command");
+    const MCPClientInfo codex = codex_client(dir.path(), "config.toml");
+    const std::string   before = "[mcp_servers.orca-slicer]\n"
+                                 "command = \"\"\"\n"
+                                 "python3\n"
+                                 "\"\"\"\n"
+                                 "startup_timeout_sec = 5\n";
+    write(codex.config_path, before);
+
+    const auto  command = MCPClientConfig::bridge_command("/opt/orcamcp/python", "/h/.orcamcp/orcamcp-bridge.py");
+    std::string error;
+    CHECK_FALSE(MCPClientConfig::write_client_entry(codex, command, error));
+    CHECK(error.find("cannot update") != std::string::npos);
+    CHECK(read_file(codex.config_path) == before);
+    CHECK_FALSE(MCPClientConfig::updated_toml_server_table(before, command).has_value());
+
+    // The same with the bridge in a multi-line string args -- a table whose args say it is ours, and
+    // whose value this code still cannot rewrite: Failed, and the startup refresh leaves it alone.
+    const std::string ours = "[mcp_servers.orca-slicer]\n"
+                             "command = \"python3\"\n"
+                             "args = \"\"\"\n/h/.orcamcp/orcamcp-bridge.py\n\"\"\"\n";
+    write(codex.config_path, ours);
+    CHECK(MCPClientConfig::is_our_toml_table(ours));
+    CHECK(MCPClientConfig::refresh_client_entry(codex, command, error) == EntryRefresh::Failed);
+    CHECK(error.find("cannot update") != std::string::npos);
+    CHECK(read_file(codex.config_path) == ours);
+}
+
+TEST_CASE("Disconnect removes Codex's table and nothing else", "[McpClientConfig]")
+{
+    ScopedTemporaryDir dir("orcamcp-codex-disconnect");
+    const auto         path = dir.path() / "config.toml";
+    write(path, "[mcp_servers.other]\n"
+                "command = \"keep left\"\n"
+                "\n"
+                "[mcp_servers.orca-slicer]\n"
+                "command = \"/opt/orcamcp/python\"\n"
+                "args = [\"-I\", \"/h/.orcamcp/orcamcp-bridge.py\"]\n"
+                "startup_timeout_sec = 20\n"
+                "tool_timeout_sec = 140\n"
+                "\n"
+                "[mcp_servers.orca-slicer.env]\n"
+                "ORCAMCP_TIMEOUT = \"300\"\n"
+                "\n"
+                "[mcp_servers.other]\n"
+                "command = \"keep right\"\n");
+
+    std::string error;
+    REQUIRE(MCPClientConfig::remove_from_toml_config(path.string(), error));
+    const std::string after = read_file(path);
+
+    // Our table and its env subtable went, by the span Connect itself edits; the neighbour before
+    // and the neighbour after stayed whole.
+    CHECK(after.find("orca-slicer") == std::string::npos); // main table and subtable, with their keys
+    CHECK(after.find("args") == std::string::npos);
+    CHECK(after.find("startup_timeout_sec") == std::string::npos);
+    CHECK(after.find("tool_timeout_sec") == std::string::npos);
+    CHECK(after.find("[mcp_servers.other]\ncommand = \"keep left\"\n") != std::string::npos);
+    CHECK(after.find("[mcp_servers.other]\ncommand = \"keep right\"\n") != std::string::npos);
+    CHECK(count_of(after, "[mcp_servers.other]") == 2);
+
+    // An entry in a form Disconnect cannot remove by span: refused, naming what to change, untouched.
+    const auto inline_path = dir.path() / "inline.toml";
+    write(inline_path, "[mcp_servers]\norca-slicer = { command = \"python3\" }\n");
+    CHECK_FALSE(MCPClientConfig::remove_from_toml_config(inline_path.string(), error));
+    CHECK(error.find("cannot edit") != std::string::npos);
+    CHECK(read_file(inline_path) == "[mcp_servers]\norca-slicer = { command = \"python3\" }\n");
+
+    // And nothing of ours at all: reported, file untouched.
+    const auto none_path = dir.path() / "none.toml";
+    write(none_path, "[mcp_servers.other]\ncommand = \"x\"\n");
+    CHECK_FALSE(MCPClientConfig::remove_from_toml_config(none_path.string(), error));
+    CHECK(error.find("not found") != std::string::npos);
+    CHECK(read_file(none_path) == "[mcp_servers.other]\ncommand = \"x\"\n");
+}
+
+TEST_CASE("a developer's table is not ours because of a comment", "[McpClientConfig]")
+{
+    // Ownership reads the main table's args value, not the table's text: a comment that mentions the
+    // shared path does not make the table ours.
+    CHECK_FALSE(MCPClientConfig::is_our_toml_table("[mcp_servers.orca-slicer]\n"
+                                                   "command = \"python3\"\n"
+                                                   "args = [\"./scripts/orcamcp-bridge.py\"]  # not ~/.orcamcp/orcamcp-bridge.py\n"));
+
+    // The shared bridge in the args value itself still says so, comment or not.
+    CHECK(MCPClientConfig::is_our_toml_table("[mcp_servers.orca-slicer]\n"
+                                             "args = [\"/h/.orcamcp/orcamcp-bridge.py\"]  # runs my bridge\n"));
+
+    // A path that stands only in a comment, or only in a subtable, names no entry of ours.
+    CHECK_FALSE(MCPClientConfig::is_our_toml_table("[mcp_servers.orca-slicer]\n"
+                                                   "command = \"python3\"  # runs ~/.orcamcp/orcamcp-bridge.py\n"));
+    CHECK_FALSE(MCPClientConfig::is_our_toml_table("[mcp_servers.orca-slicer]\n"
+                                                   "command = \"python3\"\n"
+                                                   "\n[mcp_servers.orca-slicer.env]\nBRIDGE = \"/h/.orcamcp/orcamcp-bridge.py\"\n"));
+}
+
+TEST_CASE("a rewritten JSON config keeps its key order", "[McpClientConfig]")
+{
+    ScopedTemporaryDir dir("orcamcp-json-order");
+    const MCPClientInfo client = json_client(dir.path(), "config.json");
+    write(client.config_path, R"({"zeta": 1, "alpha": "two", "mcpServers": {)"
+                              R"("keep": {"command": "x"}, )"
+                              R"("orca-slicer": {"command": "python3", "args": ["/h/.orcamcp/orcamcp-bridge.py"]}}})");
+
+    const auto  command = MCPClientConfig::bridge_command("/opt/orcamcp/python", "/h/.orcamcp/orcamcp-bridge.py");
+    std::string error;
+    CHECK(MCPClientConfig::refresh_client_entry(client, command, error) == EntryRefresh::Rewritten);
+
+    // The user's own keys keep the order the file wrote them in: the rewrite edits the entry, it does
+    // not rebuild the document.
+    const nlohmann::ordered_json after = nlohmann::ordered_json::parse(read_file(client.config_path));
+    CHECK(keys_in_order(after) == std::vector<std::string>{"zeta", "alpha", "mcpServers"});
+    CHECK(keys_in_order(after["mcpServers"]) == std::vector<std::string>{"keep", "orca-slicer"});
+    CHECK(after["mcpServers"]["orca-slicer"]["command"] == "/opt/orcamcp/python");
+
+    // An entry Connect would write now is current whatever the key order: a second launch writes
+    // nothing, so a rewrite can never churn on every startup.
+    CHECK(MCPClientConfig::refresh_client_entry(client, command, error) == EntryRefresh::Current);
+}
+
+TEST_CASE("Connect refuses a servers value that is not an object", "[McpClientConfig]")
+{
+    ScopedTemporaryDir dir("orcamcp-json-servers-value");
+    const MCPClientInfo client = json_client(dir.path(), "config.json");
+    const std::string   before = "{\"mcpServers\": \"my servers\"}";
+    write(client.config_path, before);
+
+    const auto  command = MCPClientConfig::bridge_command("/opt/orcamcp/python", "/h/.orcamcp/orcamcp-bridge.py");
+    std::string error;
+    CHECK_FALSE(MCPClientConfig::write_client_entry(client, command, error));
+    CHECK(error.find("\"mcpServers\" is not an object") != std::string::npos);
+    CHECK(read_file(client.config_path) == before); // the user's value is theirs to fix, byte for byte
+
+    // The startup refresh sees no entry of ours there and never replaces the value either.
+    CHECK(MCPClientConfig::refresh_client_entry(client, command, error) == EntryRefresh::NoEntry);
+    CHECK(read_file(client.config_path) == before);
+}
+
+#ifndef _WIN32
+TEST_CASE("an unreadable Codex config is left alone", "[McpClientConfig]")
+{
+    if (geteuid() == 0)
+        return; // root is not refused by a chmod 000: there would be nothing to test
+
+    ScopedTemporaryDir dir("orcamcp-unreadable-codex");
+    const MCPClientInfo codex = codex_client(dir.path(), "config.toml");
+    const std::string   before = "[mcp_servers.orca-slicer]\ncommand = \"python3\"\n";
+    write(codex.config_path, before);
+    REQUIRE(chmod(codex.config_path.c_str(), 0) == 0);
+
+    const auto  command = MCPClientConfig::bridge_command("/opt/orcamcp/python", "/h/.orcamcp/orcamcp-bridge.py");
+    std::string error;
+    CHECK_FALSE(MCPClientConfig::write_client_entry(codex, command, error));
+    CHECK_FALSE(error.empty()); // the refusal says which file could not be opened
+
+    REQUIRE(chmod(codex.config_path.c_str(), 0600) == 0);
+    CHECK(read_file(codex.config_path) == before); // nothing was written over the file we could not read
+}
+#endif
 
 TEST_CASE("Connect finds the Python this build ships", "[McpClientConfig]")
 {
