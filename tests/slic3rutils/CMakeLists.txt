@@ -129,6 +129,7 @@ add_executable(${_TEST_NAME}_tests
     test_mcp_port_choice.cpp
     test_instance_registry.cpp
     test_mcp_client_config.cpp
+    test_mcp_atomic_write.cpp
     test_mesh_health.cpp
     test_mesh_repair.cpp
     test_part_edits.cpp

@@ -1,5 +1,6 @@
 #include "OrcaMCPInstanceRegistry.hpp"
 #include "MCPClientConfig.hpp"
+#include "OrcaMCPAtomicWrite.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -348,27 +349,11 @@ void InstanceRegistry::remove_stale_entries(const InstanceIdentity& identity, co
     }
 }
 
-// Under a temporary name, then renamed over the entry, so a reader never sees half of one. The folder
-// and the file are the user's alone.
+// Written through the shared atomic writer, owner read/write only, so a reader never sees half of an
+// entry. The folder is the user's alone.
 std::string InstanceRegistry::write_entry(const InstanceIdentity& identity) const
 {
-    boost::system::error_code ec;
-    const fs::path target    = entry_path(identity.pid);
-    const fs::path temporary = target.string() + ".tmp";
-    {
-        boost::nowide::ofstream out(temporary.string(), std::ios::binary | std::ios::trunc);
-        out << to_json(identity).dump(2);
-        if (!out)
-            return "cannot write " + temporary.string();
-    }
-    fs::permissions(temporary, fs::owner_read | fs::owner_write, ec);
-    fs::rename(temporary, target, ec);
-    if (ec) {
-        boost::system::error_code ignored;
-        fs::remove(temporary, ignored);
-        return "cannot write " + target.string() + ": " + ec.message();
-    }
-    return {};
+    return write_file_atomically(entry_path(identity.pid), to_json(identity).dump(2), WritePermissions::OwnerOnly);
 }
 
 InstanceRegistry& instance_registry()

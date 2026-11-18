@@ -463,6 +463,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/OrcaMCP/OrcaMCPPortChoice.cpp
     GUI/OrcaMCP/OrcaMCPInstanceRegistry.hpp
     GUI/OrcaMCP/OrcaMCPInstanceRegistry.cpp
+    GUI/OrcaMCP/OrcaMCPAtomicWrite.hpp
+    GUI/OrcaMCP/OrcaMCPAtomicWrite.cpp
     GUI/OrcaMCP/OrcaMCPInstanceRegistryApp.cpp
     GUI/OrcaMCP/OrcaMCPToolArguments.hpp
     GUI/OrcaMCP/OrcaMCPToolArguments.cpp
