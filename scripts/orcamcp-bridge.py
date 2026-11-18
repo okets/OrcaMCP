@@ -32,6 +32,7 @@ import datetime
 import http.client
 import json
 import math
+import ntpath
 import os
 import socket
 import subprocess
@@ -186,9 +187,38 @@ _selected = None
 _last_heard = 0.0
 
 
-def get_orcamcp_executable() -> str | None:
-    """The OrcaMCP start_orca launches: ORCAMCP_APP_PATH, or the installed app. Never a build in a source
-    folder: it would run on the user's real data folder, as a test build must not (the user, 2026-09-28)."""
+WINDOWS_PROGRAM = "orca-mcp.exe"
+
+# The folder the Windows installer put the app in, whichever the user chose: CPack's NSIS template
+# (CMakeLists.txt, CPACK_PACKAGE_VENDOR and CPACK_PACKAGE_INSTALL_REGISTRY_KEY) writes it as this key's
+# default value, in HKLM for an install for all users and HKCU for one user's, and removes it on uninstall.
+# The installer is 32-bit and sets no registry view, so its HKLM write lands in the 32-bit view.
+WINDOWS_INSTALL_REGISTRY_KEY = r"Software\OrcaMCP\OrcaMCP"
+
+
+def registered_install_folders() -> list:
+    """Every folder the Windows installer recorded, current user's first; none elsewhere."""
+    try:
+        import winreg
+    except ImportError:
+        return []
+    folders = []
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        for view in (winreg.KEY_WOW64_64KEY, winreg.KEY_WOW64_32KEY):
+            try:
+                with winreg.OpenKey(hive, WINDOWS_INSTALL_REGISTRY_KEY, 0, winreg.KEY_READ | view) as key:
+                    folder, _ = winreg.QueryValueEx(key, "")
+            except OSError:
+                continue
+            if isinstance(folder, str) and folder and folder not in folders:
+                folders.append(folder)
+    return folders
+
+
+def orcamcp_executable_candidates() -> list:
+    """Where start_orca looks for the OrcaMCP to launch, in order: ORCAMCP_APP_PATH, then the installed app.
+    Never a build in a source folder: it would run on the user's real data folder, as a test build must not
+    (the user, 2026-09-28)."""
     import platform
     system = platform.system()
 
@@ -205,10 +235,11 @@ def get_orcamcp_executable() -> str | None:
             os.path.expanduser("~/Applications/OrcaMCP.app/Contents/MacOS/OrcaSlicer"),
         ])
     elif system == "Windows":
+        paths.extend(ntpath.join(folder, WINDOWS_PROGRAM) for folder in registered_install_folders())
         paths.extend([
-            os.path.join(os.environ.get("ProgramFiles", "C:\\Program Files"), "OrcaMCP", "orca-mcp.exe"),
-            os.path.join(os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)"), "OrcaMCP", "orca-mcp.exe"),
-            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "OrcaMCP", "orca-mcp.exe"),
+            ntpath.join(os.environ.get("ProgramFiles", "C:\\Program Files"), "OrcaMCP", WINDOWS_PROGRAM),
+            ntpath.join(os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)"), "OrcaMCP", WINDOWS_PROGRAM),
+            ntpath.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "OrcaMCP", WINDOWS_PROGRAM),
         ])
     else:  # Linux
         paths.extend([
@@ -217,9 +248,15 @@ def get_orcamcp_executable() -> str | None:
             os.path.expanduser("~/.local/bin/orca-mcp"),
             "/opt/OrcaMCP/bin/orca-mcp",
         ])
+    return [path for path in paths if path]
 
+
+def get_orcamcp_executable(paths=None) -> str | None:
+    """The first of the candidates that exists (orcamcp_executable_candidates), or None."""
+    if paths is None:
+        paths = orcamcp_executable_candidates()
     for path in paths:
-        if path and os.path.isfile(path):
+        if os.path.isfile(path):
             log_debug(f"Found OrcaMCP executable: {path}")
             return path
 
@@ -385,11 +422,12 @@ def launch_orcamcp(new_instance: bool = False) -> dict:
                                  f"none was launched. Choose one, or pass new_instance: true to launch another.",
                                  None, instances, choose_steps(instances, "several instances run"))
 
-    executable = get_orcamcp_executable()
+    candidates = orcamcp_executable_candidates()
+    executable = get_orcamcp_executable(candidates)
     if not executable:
         return launch_answer(False, "not_started",
-                             "Could not find the installed OrcaMCP app. Install it, or set ORCAMCP_APP_PATH to "
-                             "the OrcaMCP program to launch.", None, instances)
+                             f"Could not find the installed OrcaMCP app; looked for {', '.join(candidates)}. Install "
+                             "it, or set ORCAMCP_APP_PATH to the OrcaMCP program to launch.", None, instances)
     launch_id = str(uuid.uuid4())
     try:
         process = launch_process(executable, launch_id)

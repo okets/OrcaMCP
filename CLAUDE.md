@@ -1064,8 +1064,11 @@ Path normalization is applied to: `file_path`, `output_path`, `path` parameters.
 On Windows, OrcaMCP installs to:
 - `C:\Program Files\OrcaMCP\orca-mcp.exe`
 
-The bridge's `start_orca` launches the first of these that exists (and only these: never a build in a
-source folder, which would run on the real data folder):
+The installer lets the user choose another folder, and records the one chosen as the default value of
+`Software\OrcaMCP\OrcaMCP` (CPack's NSIS template: HKLM, in the 32-bit view, for all users; HKCU for one
+user). The bridge's `start_orca` launches `orca-mcp.exe` in each folder recorded there, then the first of
+these that exists (and only these: never a build in a source folder, which would run on the real data
+folder; until 2026-11-18 it looked in these only, and an install anywhere else was never found):
 - `%ProgramFiles%\OrcaMCP\orca-mcp.exe`
 - `%ProgramFiles(x86)%\OrcaMCP\orca-mcp.exe`
 - `%LOCALAPPDATA%\Programs\OrcaMCP\orca-mcp.exe`

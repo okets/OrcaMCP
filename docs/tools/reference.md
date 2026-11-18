@@ -5045,7 +5045,8 @@ These tools are handled by the MCP bridge script (`orcamcp-bridge.py`), not the 
 ### start_orca
 Start OrcaMCP and wait until it is ready; this session's calls then go to it. It launches the
 installed app (`/Applications/OrcaMCP.app`, `~/Applications/OrcaMCP.app`; on Windows
-`%ProgramFiles%\OrcaMCP\orca-mcp.exe`, `%ProgramFiles(x86)%\OrcaMCP\orca-mcp.exe`,
+`orca-mcp.exe` in the folder the installer recorded in the registry (`Software\OrcaMCP\OrcaMCP`, whichever
+folder was chosen), then `%ProgramFiles%\OrcaMCP\orca-mcp.exe`, `%ProgramFiles(x86)%\OrcaMCP\orca-mcp.exe`,
 `%LOCALAPPDATA%\Programs\OrcaMCP\orca-mcp.exe`; on Linux `orca-mcp` in `/usr/bin`, `/usr/local/bin`,
 `~/.local/bin`, `/opt/OrcaMCP/bin`), or `ORCAMCP_APP_PATH` when that is set: one program, which may be a
 wrapper script that execs the app (`systemd-run --scope`, `nice`, the AppImage's `AppRun`). Never a build in a source
