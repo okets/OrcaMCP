@@ -553,7 +553,12 @@ has), or of a build in a source tree (a `CMakeCache.txt` in a folder above the p
 `MCPClientConfig::executable_in_build_tree`). The log says, at info, which it did and why ("MCP bridge:
 ~/.orcamcp left as it is: ..." or "... copied ..."). An agent's launch of the installed app copies too:
 `start_orca` launches nothing else, so skipping those left `~/.orcamcp` on an old bridge after an update
-made that way. Connecting a client in Preferences copies by content as well. The instance registry
+made that way. Connecting a client in Preferences copies by content as well. The entries Connect writes run that bridge with
+the app's own Python (`-I`; the system's `python3` 3.9+ on the Linux AppImage, whose own files move every launch), and
+each launch that refreshes `~/.orcamcp` also rewrites, atomically, every AI app's `orca-slicer` entry that runs
+`~/.orcamcp/orcamcp-bridge.py` but differs from what Connect would write now (`refresh_client_entries_at_startup`):
+until 2026-11-18 entries ran `python3`, which failed on macOS's own 3.9 and on most Windows installs. Entries that
+run another bridge are never touched. The instance registry
 (`~/.orcamcp/instances`) is the one thing a test launch writes there, unless `ORCAMCP_INSTANCES_DIR`
 points elsewhere, as the live checks do.
 
@@ -1458,6 +1463,7 @@ echo "CE a plugin's permission prompt is a MsgDialog with Yes, which MCP's suppr
 echo "CF a geometry import's options and name clean-up dialogs (AMF, CAD 3MF, STEP) are skipped only for a silent load, so under MCP they are answered Cancel and the load fails (a hook: 0 = expected, keep ours): $(U src/slic3r/GUI/Plater.cpp | grep -c 'mcp_answer_geometry_import_options')"
 echo "CG upstream's primitive size lives in a dialog only: ObjectList's load_generic_subobject / load_shape_object take no size (a hook: 0 = expected, keep ours): $(U src/slic3r/GUI/GUI_ObjectList.hpp | grep -c 'const std::vector<double>\* size')"
 echo "CH Plater::rename_plate's refresh after the name is inline, which MCP's set_plate_settings needs too (a move: 0 = expected, keep ours; non-zero = upstream has one): $(U src/slic3r/GUI/Plater.cpp | grep -c 'refresh_after_plate_rename')"
+echo "CI upstream's bundled Python finder is file-private, which ours declares in BundledPython.hpp for MCP's Connect (a move: 0 = expected, keep ours) / upstream still ships the runtime (non-zero = expected; 0 = Connect has no Python to name): $(U src/slic3r/plugin/PythonInterpreter.cpp | grep -c 'BundledPython.hpp') / $(U src/CMakeLists.txt | grep -c 'Copying Python runtime into the build tree')"
 ```
 
 Items M and N: upstream's `HttpServer::stop` closes every connection at once, so a reply still being
@@ -2236,6 +2242,16 @@ calls after its own `set_plate_name`, inside its one undo step, answering `slice
 before the rename and is not after. The probe counts upstream's own `refresh_after_plate_rename`: 0 is expected. On a non-zero,
 upstream has a function of that name; and when upstream changes `rename_plate`'s refresh, redo the move on its version. There is no
 unit seam (it needs the Plater): check live by renaming a sliced plate whose filename format uses `{plate_name}`.
+
+Item CI is a move, plus a dependency: Connect in Preferences writes AI apps' entries to run the bridge with the
+Python the app ships for upstream's plugin system (`deps/python3`), found by upstream's `find_bundled_python_home` and
+`find_python_executable` (`PythonInterpreter.cpp`), which upstream keeps in an anonymous namespace. Ours moves them,
+bodies unchanged, into `Slic3r` and declares them in `plugin/BundledPython.hpp` (a header of its own, so
+`MCPClientConfig` does not include Python's C headers). On a non-zero first count, upstream exports them itself: use its
+declaration and drop ours. On a 0 second count, upstream no longer copies the runtime into the build: Connect would fall
+back to the system's `python3` on every platform (the Linux AppImage's path, `choose_interpreter`), which most Windows
+and macOS users lack -- re-check `MCPClientConfig::bridge_interpreter` before merging, and re-run
+`slic3rutils_tests "[McpClientConfig]"`.
 
 Item I is not a fork patch -- we deliberately carry nothing for it (see
 `docs/superpowers/plans/2026-09-17-next-release-plan.md`, Stage 3). It is here so the sync notices

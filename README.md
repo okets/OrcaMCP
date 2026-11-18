@@ -183,19 +183,14 @@ that used to mean an afternoon in menus.
 1. **Get the app.** Download a [release](https://github.com/okets/OrcaMCP/releases) or
    [build from source](docs/setup/building.md).
 
-2. **Connect Claude Code.** Open this repository folder in Claude Code; the included `.mcp.json`
-   registers the server. To use it from anywhere, add to `~/.claude.json`:
+2. **Connect your AI app.** In OrcaMCP, open Preferences, MCP Clients, and press Connect beside
+   Claude Desktop, Claude Code, Codex (the desktop app, the CLI and the IDE extension share its
+   config), Cursor, Windsurf, Cline or GitHub Copilot, then restart that app. No Python to install:
+   the entry runs the bridge with the Python OrcaMCP ships, and OrcaMCP keeps the entry current when
+   it is updated or moved. On the Linux AppImage the entry uses your system's `python3` (3.9 or newer).
 
-   ```json
-   {
-     "mcpServers": {
-       "orca-slicer": {
-         "command": "python3",
-         "args": ["/path/to/OrcaMCP/scripts/orcamcp-bridge.py"]
-       }
-     }
-   }
-   ```
+   Working in this repository with Claude Code, the included `.mcp.json` runs the repository's bridge
+   with your own `python3` instead.
 
    Or connect to a running OrcaMCP over HTTP, without the bridge:
 

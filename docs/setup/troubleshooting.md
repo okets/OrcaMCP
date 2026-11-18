@@ -326,11 +326,14 @@ failures, starting `[Flashforge HTTP] POST`, with the curl code and the elapsed 
    {"args": ["/full/path/to/scripts/orcamcp-bridge.py"]}
    ```
 
-3. **Python not found**
-   ```json
-   // Try explicit python path
-   {"command": "/usr/bin/python3"}
-   ```
+3. **Python not found, or the bridge exits at once**
+   - Press Connect again in Preferences, MCP Clients: the entry it writes runs the bridge with the
+     Python OrcaMCP ships (`-I` keeps your own Python settings out), so nothing needs installing. A
+     launch of the installed app also brings an older `python3` entry of OrcaMCP's up to date.
+   - On the Linux AppImage the entry uses the system's `python3`, which must be 3.9 or newer; Connect
+     says so when there is none.
+   - An entry written by hand needs Python 3.9 or newer. macOS's own `/usr/bin/python3` is 3.9 and
+     works; Windows' python.org installer provides `python` and `py`, not `python3`.
 
 4. **Bridge script error**
    - Test manually:

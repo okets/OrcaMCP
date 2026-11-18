@@ -2,9 +2,41 @@
 
 This guide covers configuring OrcaMCP for use with Claude Code and other MCP clients.
 
+## Any AI app: Connect in Preferences (Recommended)
+
+In OrcaMCP, Preferences, MCP Clients, press Connect beside your AI app, then restart the app. It writes an
+`orca-slicer` entry into that app's config: Claude Desktop, Claude Code (`~/.claude.json`), Codex
+(`~/.codex/config.toml`, which the Codex desktop app, CLI and IDE extension share), Cursor, Windsurf, Cline
+and GitHub Copilot. The entry runs the bridge, copied to `~/.orcamcp/`, with the Python OrcaMCP ships:
+
+```json
+{
+  "mcpServers": {
+    "orca-slicer": {
+      "command": "/Applications/OrcaMCP.app/Contents/MacOS/python/bin/python3",
+      "args": ["-I", "/Users/you/.orcamcp/orcamcp-bridge.py"]
+    }
+  }
+}
+```
+
+On Windows the command is `python\python.exe` in the folder OrcaMCP is installed in. On the Linux AppImage,
+whose own files move on every launch, it is the system's `python3`, which must be 3.9 or newer. `-I` keeps
+your own `PYTHON*` settings and packages out of the bridge.
+
+Codex's entry also sets `startup_timeout_sec = 20` and `tool_timeout_sec = 140`: Codex's own 60 s would cut
+off calls the bridge allows 120 s.
+
+**OrcaMCP keeps its entries current.** Each launch of the installed app checks every AI app's config for an
+`orca-slicer` entry that runs `~/.orcamcp/orcamcp-bridge.py` and rewrites it when it differs from what
+Connect would write now: an older `python3` entry, or one naming a Python the app no longer has after it
+moved. An entry that runs any other bridge (a repository's, by hand) is never touched. Configs are written
+atomically, keep their permissions, and stay links when they are links. Test launches (`--datadir`, a build
+in a source folder) touch nothing.
+
 ## Claude Code Configuration
 
-### Automatic (Recommended)
+### Automatic (this repository)
 
 OrcaMCP includes a `.mcp.json` file in the repository root:
 
