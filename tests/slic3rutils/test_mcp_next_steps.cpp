@@ -534,6 +534,11 @@ TEST_CASE("Painted modifiers left without a part point at deleting them, naming 
     CHECK(mentions(steps[0].why, "print nothing"));
     CHECK(unusable(steps[0]) == std::nullopt);
     CHECK(orphaned_painted_modifier_next_steps(0, {}).empty());
+    // One is named as one.
+    const std::vector<NextStep> single = orphaned_painted_modifier_next_steps(0, {3});
+    REQUIRE(single.size() == 1);
+    CHECK(mentions(single[0].why, "volume 3 of object 0 is a painted modifier"));
+    CHECK(mentions(single[0].why, "it prints nothing"));
 }
 
 TEST_CASE("An assembly is pointed at get_object_info, to list its volumes", "[McpNextSteps][orcamcp]")

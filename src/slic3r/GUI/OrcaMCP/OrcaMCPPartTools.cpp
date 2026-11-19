@@ -1230,8 +1230,9 @@ nlohmann::json set_volume_type_on_main_thread(const nlohmann::json& params)
         nlohmann::json& said = answer["info_messages"];
         if (!said.is_array())
             said = nlohmann::json::array();
-        said.push_back("painted modifiers " + listed_ids(orphaned_ids) +
-                       " print nothing now: the volume they were painted on is no longer a part");
+        said.push_back(orphaned_ids.size() == 1
+                           ? "painted modifier " + listed_ids(orphaned_ids) + " prints nothing now: the volume it was painted on is no longer a part"
+                           : "painted modifiers " + listed_ids(orphaned_ids) + " print nothing now: the volume they were painted on is no longer a part");
         append_next_steps(answer, orphaned_painted_modifier_next_steps(object_id, orphaned_ids));
     }
     return with_closed_tool(std::move(answer), closed_tool);

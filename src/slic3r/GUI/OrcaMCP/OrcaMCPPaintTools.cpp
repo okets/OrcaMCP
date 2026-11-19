@@ -79,9 +79,6 @@ bool parse_integer_field(const nlohmann::json& params, const char* key, int fall
 // three of the four have; the one exception states itself at its call site.
 struct PaintTargetNeeds
 {
-    // Mode painted_modifier without volume_id: every painted modifier of the object (none is a target with no
-    // volumes, not an error) -- what a read or a clear addresses. A paint names one.
-    bool every_painted_modifier = false;
     // Read volume_id, collect the object's model parts, and fail an object that has none. Only a
     // tool that writes or reads facet paint needs that -- set_brim_ears addresses the object as a
     // whole (brim_points live on the ModelObject), so requiring it a surface to paint would refuse
@@ -91,6 +88,10 @@ struct PaintTargetNeeds
     // tool whose request and response carry no coordinates at all has no frame to choose, and
     // validating the parameter anyway lets it reject a call it could have served.
     bool instance = true;
+    // Mode painted_modifier without volume_id: every painted modifier of the object (none is a target with no
+    // volumes, not an error) -- what a read or a clear addresses. A paint names one. Last: call sites brace-initialise
+    // the fields above by position.
+    bool every_painted_modifier = false;
 };
 
 // Main thread only. Reads object_id (required), and -- each only when the caller says it needs it

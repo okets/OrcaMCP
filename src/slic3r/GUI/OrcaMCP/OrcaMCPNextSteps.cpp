@@ -346,10 +346,13 @@ std::vector<NextStep> orphaned_painted_modifier_next_steps(int object_id, const 
 {
     if (ids.empty())
         return {};
+    const bool one = ids.size() == 1;
     return {{"delete_object",
-             "volumes " + listed_ids(ids) + " of object " + std::to_string(object_id) +
-                 " are painted modifiers whose part is no longer a part, so they print nothing: delete_object with "
-                 "volume_id removes one",
+             (one ? "volume " : "volumes ") + listed_ids(ids) + " of object " + std::to_string(object_id) +
+                 (one ? " is a painted modifier whose part is no longer a part, so it prints nothing: delete_object with "
+                        "volume_id removes it"
+                      : " are painted modifiers whose part is no longer a part, so they print nothing: delete_object with "
+                        "volume_id removes one"),
              {{"object_id", object_id}, {"volume_id", ids.front()}}}};
 }
 
