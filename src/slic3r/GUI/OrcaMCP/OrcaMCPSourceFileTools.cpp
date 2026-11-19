@@ -14,6 +14,8 @@
 #include "OrcaMCPServer.hpp"
 #include "OrcaMCPSourceFiles.hpp"
 
+#include <algorithm>
+
 #include "slic3r/GUI/GLCanvas3D.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/GUI_ObjectList.hpp"
@@ -58,7 +60,14 @@ std::vector<SourceObject> source_objects(const Model& model)
         entry.cut       = object.is_cut();
         for (size_t v = 0; v < object.volumes.size(); ++v) {
             const ModelVolume& volume = *object.volumes[v];
-            entry.volumes.push_back({int(v), volume.name, volume.source.input_file, is_reloadable_volume(volume)});
+            SourceVolume       row{int(v), volume.name, volume.source.input_file, is_reloadable_volume(volume)};
+            if (volume.is_painted_modifier()) {
+                row.painted_modifier = true;
+                const ModelVolume* host = object.painted_modifier_host(volume);
+                const auto         at   = std::find(object.volumes.begin(), object.volumes.end(), host);
+                row.painted_host        = (host != nullptr && at != object.volumes.end()) ? int(at - object.volumes.begin()) : -1;
+            }
+            entry.volumes.push_back(std::move(row));
         }
         scene.push_back(std::move(entry));
     }

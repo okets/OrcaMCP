@@ -160,6 +160,33 @@ TEST_CASE("a file replaces one part: volume_id is needed on an object of several
     CHECK(plan_replace(several, scene, any_file, no_file).volume_ids == std::vector<int>{1});
 }
 
+TEST_CASE("a painted modifier is never replaced on its own", "[McpSourceFiles][orcamcp]")
+{
+    // Upstream's painted modifier is its host part's mesh: replacing its row would replace the host.
+    SourceVolume painted{1, "paint", "/m/a.stl", false};
+    painted.painted_modifier = true;
+    painted.painted_host     = 0;
+    const std::vector<SourceObject> scene = {object(0, {from_file(0, "/m/a.stl"), painted})};
+
+    ReplaceRequest request;
+    request.object_id = 0;
+    request.file_path = "/new/c.stl";
+    // It does not count as a second volume a file could replace: the part is the one.
+    CHECK(plan_replace(request, scene, any_file, no_file).volume_ids == std::vector<int>{0});
+    request.volume_id = 1;
+    CHECK(mentions(plan_replace(request, scene, any_file, no_file).refusal, "volume 0, the part it is painted on"));
+
+    // A folder never replaces it either, whatever source it carries.
+    TempFolder folder;
+    folder.file("a.stl");
+    ReplaceRequest all;
+    all.object_id = 0;
+    all.folder    = folder.path.string();
+    CHECK(plan_replace(all, scene, [](const std::string& path) { return fs::is_regular_file(path); },
+                       [](const std::string& path) { return fs::is_directory(path); })
+              .volume_ids == std::vector<int>{0});
+}
+
 TEST_CASE("a folder replaces the parts whose file of the same name it holds", "[McpSourceFiles][orcamcp]")
 {
     TempFolder folder;

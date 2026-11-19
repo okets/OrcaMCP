@@ -11,6 +11,7 @@ add_subdirectory(fast_float)
 add_subdirectory(nanosvg)
 add_subdirectory(nlohmann)
 add_subdirectory(stb_dxt)     # Header-only STB DXT compression library
+add_subdirectory(tomlplusplus) # Header-only TOML parser (OrcaMCP: Codex config)
 
 # Static libraries
 add_subdirectory(Shiny)

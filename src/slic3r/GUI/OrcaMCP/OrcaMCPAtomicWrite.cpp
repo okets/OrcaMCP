@@ -35,19 +35,35 @@ fs::path link_target(const fs::path& target)
 std::string write_file_atomically(const fs::path& target, const std::string& content, WritePermissions permissions)
 {
     const fs::path destination = link_target(target);
-    const fs::path temporary   = destination.string() + ".tmp";
+    // A name of its own, never "<file>.tmp": a file of the user's by that name is neither clobbered nor
+    // removed, and two writers never share a temporary.
+    const fs::path temporary = destination.parent_path() /
+                               (destination.filename().string() + "." + fs::unique_path("%%%%%%%%").string() + ".tmp");
 
     // The permissions the new file takes: the old file's, when there is one to copy; the temporary's
-    // own defaults when there is not.
+    // own defaults when there is not. A file the user made read-only is theirs to unlock: the rename
+    // would replace it all the same.
     boost::system::error_code ec;
     fs::perms existing = fs::no_perms;
     if (permissions == WritePermissions::KeepExisting) {
         const fs::file_status old = fs::status(destination, ec);
-        existing                  = ec ? fs::no_perms : old.permissions();
+        if (!ec && fs::exists(old)) {
+            existing = old.permissions();
+            if ((existing & fs::owner_write) == fs::no_perms)
+                return destination.string() + " is read-only: make it writable, then try again";
+        }
     }
 
     {
         boost::nowide::ofstream out(temporary.string(), std::ios::binary | std::ios::trunc);
+        // The final permissions before any content goes in: a private file's content is never readable
+        // by others, not even for the moment of the write.
+        if (out) {
+            if (permissions == WritePermissions::OwnerOnly)
+                fs::permissions(temporary, fs::owner_read | fs::owner_write, ec);
+            else if (existing != fs::no_perms)
+                fs::permissions(temporary, existing, ec);
+        }
         out << content;
         out.close(); // a full disk shows only once the buffer flushes
         if (!out) {
@@ -56,11 +72,6 @@ std::string write_file_atomically(const fs::path& target, const std::string& con
             return "cannot write " + temporary.string();
         }
     }
-
-    if (permissions == WritePermissions::OwnerOnly)
-        fs::permissions(temporary, fs::owner_read | fs::owner_write, ec);
-    else if (existing != fs::no_perms)
-        fs::permissions(temporary, existing, ec);
 
     fs::rename(temporary, destination, ec);
     if (ec) {

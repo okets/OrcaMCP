@@ -159,18 +159,37 @@ std::optional<std::string> volume_id_error(int object_id, const ModelObject& obj
            std::to_string(int(object.volumes.size()) - 1) + ", as get_object_info lists them";
 }
 
+std::string painted_modifier_words(int object_id, int volume_id, int host_volume_id, const std::string& what)
+{
+    const std::string host = host_volume_id >= 0 ? "volume " + std::to_string(host_volume_id) + ", the part it is painted on"
+                                                 : std::string("the part it is painted on");
+    return volume_text(object_id, volume_id) + " is a painted modifier: it shares the mesh and placement of " + host +
+           ", so " + what + ". Act on that part instead";
+}
+
 std::optional<std::string> painted_modifier_refusal(int object_id, const ModelObject& object, int volume_id, const std::string& what)
 {
     const ModelVolume& volume = *object.volumes[std::size_t(volume_id)];
     if (!volume.is_painted_modifier())
         return std::nullopt;
-    std::string host = "the part it is painted on";
+    int host_id = -1;
     if (const ModelVolume* part = object.painted_modifier_host(volume))
         for (std::size_t i = 0; i < object.volumes.size(); ++i)
             if (object.volumes[i] == part)
-                host = "volume " + std::to_string(i) + ", the part it is painted on";
-    return volume_text(object_id, volume_id) + " is a painted modifier: it shares the mesh and placement of " + host +
-           ", so " + what + ". Act on that part instead";
+                host_id = int(i);
+    return painted_modifier_words(object_id, volume_id, host_id, what);
+}
+
+std::vector<int> painted_modifiers_on(const ModelObject& object, int volume_id)
+{
+    std::vector<int> painted;
+    const ModelVolume* host = object.volumes[std::size_t(volume_id)];
+    for (std::size_t i = 0; i < object.volumes.size(); ++i) {
+        const ModelVolume& volume = *object.volumes[i];
+        if (volume.is_painted_modifier() && object.painted_modifier_host(volume) == host)
+            painted.push_back(int(i));
+    }
+    return painted;
 }
 
 std::size_t model_part_count(const ModelObject& object)
@@ -318,6 +337,8 @@ std::optional<std::string> split_refusal(int object_id, const ModelObject& objec
                " volumes: name the one to split with volume_id (get_object_components lists each part's shells)";
     if (const auto error = volume_id_error(object_id, object, *volume))
         return error;
+    if (const auto painted = painted_modifier_refusal(object_id, object, *volume, "it is not split on its own"))
+        return painted;
     if (!object.volumes[std::size_t(*volume)]->is_splittable())
         return volume_text(object_id, *volume) + " is one shell: there is nothing to split";
     return std::nullopt;

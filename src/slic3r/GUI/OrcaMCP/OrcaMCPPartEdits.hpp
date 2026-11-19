@@ -202,6 +202,14 @@ std::optional<std::string> volume_settings_refusal(int object_id, int volume_id,
 // it on its own. The refusal names the host's volume_id. nullopt for any other volume; `volume_id` must be valid.
 std::optional<std::string> painted_modifier_refusal(int object_id, const ModelObject& object, int volume_id, const std::string& what);
 
+// That refusal's words, apart from the Model: `host_volume_id` is the host part's volume_id, -1 when it is not
+// found. replace_volume_with_file's planner (OrcaMCPSourceFiles.cpp), which reads no Model, says the same.
+std::string painted_modifier_words(int object_id, int volume_id, int host_volume_id, const std::string& what);
+
+// The painted modifiers painted on volume `volume_id` (their host), by volume_id: deleting the part deletes
+// them with it, as the object list does.
+std::vector<int> painted_modifiers_on(const ModelObject& object, int volume_id);
+
 // ---- assemble_objects and merge_parts ----
 
 // Why the objects cannot be assembled into one, or nothing: two or more distinct objects, none of them

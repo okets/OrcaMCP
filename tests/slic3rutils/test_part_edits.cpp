@@ -111,6 +111,13 @@ TEST_CASE("A painted modifier is refused where it follows its host part, and the
     // It takes a modifier's settings, and nothing is refused for an ordinary part.
     CHECK_FALSE(volume_settings_refusal(0, painted_id, *painted));
     CHECK_FALSE(painted_modifier_refusal(0, object, host_id, "anything"));
+
+    // A split to parts never runs on it: it shares a multi-shell host's mesh, but the list offers no Split for it.
+    CHECK(mentions(split_refusal(0, object, SplitTarget::parts, painted_id, false, {}), host_text));
+    // Deleting the host deletes it too: the delete names it.
+    CHECK(painted_modifiers_on(object, host_id) == std::vector<int>{painted_id});
+    CHECK(painted_modifiers_on(object, painted_id).empty());
+    CHECK(painted_modifiers_on(object, 0).empty());
 }
 
 TEST_CASE("A volume id names one of the object's volumes", "[PartEdits][orcamcp]")

@@ -1,5 +1,6 @@
 // src/slic3r/GUI/OrcaMCP/OrcaMCPSourceFiles.cpp
 #include "OrcaMCPSourceFiles.hpp"
+#include "OrcaMCPPartEdits.hpp" // painted_modifier_words, the refusal the part tools give
 
 #include <boost/filesystem/path.hpp>
 
@@ -117,12 +118,22 @@ ReplaceDecision plan_replace(const ReplaceRequest& request, const std::vector<So
 
     ReplaceDecision decision;
     if (request.file_path) {
-        if (!request.volume_id && object->volumes.size() > 1)
-            return refuse(object_words(object->object_id) + " has " + std::to_string(object->volumes.size()) +
-                          " volumes, and a file replaces one: pass its volume_id (get_object_info lists them)");
+        // A painted modifier is its host part's mesh: replacing its row replaces the host. It is never one of
+        // the volumes a file could replace, and naming it is refused with the part to name instead.
+        std::vector<int> replaceable;
+        for (const SourceVolume& volume : object->volumes)
+            if (!volume.painted_modifier)
+                replaceable.push_back(volume.volume_id);
+        if (!request.volume_id && replaceable.size() > 1)
+            return refuse(object_words(object->object_id) + " has " + std::to_string(replaceable.size()) +
+                          " parts and modifiers, and a file replaces one: pass its volume_id (get_object_info lists them)");
+        const int target = request.volume_id.value_or(replaceable.empty() ? 0 : replaceable.front());
+        const SourceVolume& volume = object->volumes[std::size_t(target)];
+        if (volume.painted_modifier)
+            return refuse(painted_modifier_words(object->object_id, target, volume.painted_host, "it is never replaced on its own"));
         if (!is_file(*request.file_path))
             return refuse("file_path \"" + *request.file_path + "\" is not a file");
-        decision.volume_ids.push_back(request.volume_id.value_or(0));
+        decision.volume_ids.push_back(target);
         return decision;
     }
     if (!is_folder(*request.folder))
@@ -131,7 +142,7 @@ ReplaceDecision plan_replace(const ReplaceRequest& request, const std::vector<So
     // and one whose file is not there, or is the one it was loaded from, is skipped.
     std::vector<std::string> sources;
     for (const SourceVolume& volume : object->volumes) {
-        if (volume.source_file.empty() || (request.volume_id && volume.volume_id != *request.volume_id))
+        if (volume.source_file.empty() || volume.painted_modifier || (request.volume_id && volume.volume_id != *request.volume_id))
             continue;
         sources.push_back(volume.source_file);
         const std::string candidate = (boost::filesystem::path(*request.folder) / boost::filesystem::path(volume.source_file).filename()).string();

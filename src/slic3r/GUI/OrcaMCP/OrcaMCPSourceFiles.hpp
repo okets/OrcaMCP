@@ -23,6 +23,8 @@ struct SourceVolume
     std::string name;
     std::string source_file; // ModelVolume::source.input_file, "" when it was not loaded from a file
     bool        reloadable = false; // is_reloadable_volume: loaded from a file, not a built-in shape
+    bool        painted_modifier = false; // upstream's PAINTED_MODIFIER: its host part's mesh, never replaced alone
+    int         painted_host     = -1;    // that host's volume_id, -1 when not found
 };
 
 struct SourceObject
@@ -73,7 +75,8 @@ struct ReplaceRequest
 
 // The volumes the call replaces, or why it is refused: file_path and folder both or neither; an object
 // or volume out of range; a cut piece (the app's replace is off for one); no volume_id with file_path on
-// an object of several volumes (Replace 3D file takes one); a file or a folder that is not there; with a
+// an object of several volumes (Replace 3D file takes one; painted modifiers do not count, they follow their
+// part), or one naming a painted modifier; a file or a folder that is not there; with a
 // folder, no volume loaded from a file whose file name the folder holds (other than the file itself),
 // which Replace all with 3D files would skip.
 struct ReplaceDecision

@@ -19,11 +19,12 @@ namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
 enum class WritePermissions { KeepExisting, OwnerOnly };
 
-// Writes `content` to `target` so no reader ever sees half of it: into "<file>.tmp" beside the file,
-// then renamed over it. A symbolic link is followed: the file it points to is replaced and the link
-// stays. KeepExisting gives the new file the permissions the old one had (none to copy: the defaults);
-// OwnerOnly gives owner read and write only. Returns "" or what went wrong; on failure the temporary
-// is removed and the target is unchanged.
+// Writes `content` to `target` so no reader ever sees half of it: into a temporary of its own name beside
+// the file ("<file>.<random>.tmp"), given its final permissions before any content, then renamed over it.
+// A symbolic link is followed: the file it points to is replaced and the link stays. KeepExisting gives
+// the new file the permissions the old one had (none to copy: the defaults), and refuses a file its owner
+// cannot write; OwnerOnly gives owner read and write only. Returns "" or what went wrong; on failure the
+// temporary is removed and the target is unchanged.
 std::string write_file_atomically(const boost::filesystem::path& target, const std::string& content,
                                   WritePermissions permissions);
 

@@ -108,42 +108,41 @@ public:
     // bridge to start (startup_timeout_sec) and to answer a call (tool_timeout_sec, over its 120 s).
     static std::string toml_server_table(const BridgeCommand& command);
 
-    // The exact text of the [mcp_servers.orca-slicer] table -- the header however its key is quoted
-    // or spaced, a leading BOM not part of it -- and every [mcp_servers.orca-slicer.*] subtable that
-    // follows it, up to the next other table header. "" when the content holds no such table.
+    // The exact text of the [mcp_servers.orca-slicer] table -- the header however its key is quoted,
+    // spaced or escaped, a leading BOM not part of it -- and every [mcp_servers.orca-slicer.*] subtable
+    // right after it, up to the next other table header. Headers are the TOML parser's
+    // (OrcaMCPCodexToml.hpp): a header-like line inside a multi-line string or array is not one. ""
+    // when the content holds no such table, or is not TOML.
     static std::string toml_server_table_of(const std::string& content);
 
-    // Whether the text names our server another way than a table this code can edit: an
-    // `orca-slicer = { ... }` line under [mcp_servers], or a dotted key starting
-    // mcp_servers.orca-slicer (any quoting), on any line. Outside our table's own span, outside
-    // comments and strings. Such an entry is never edited: Connect refuses, the startup refresh
-    // leaves the file alone.
+    // Whether the text defines our server, as the parser reads it, but not as a table this code can
+    // edit: an inline table, dotted keys (under [mcp_servers] or anywhere above), an array of tables.
+    // Such an entry is never edited: Connect refuses, the startup refresh leaves the file alone.
     static bool toml_names_server_elsewhere(const std::string& content);
 
     // `content` without that table, `table` appended after one blank line; every other line of the
     // content kept byte for byte.
     static std::string replace_toml_server_table(const std::string& content, const std::string& table);
 
-    // The table text updated to run `command` rather than replaced by a fresh one: the header line kept
-    // as it is, the command and args rewritten, each timeout the larger of the value the main table
-    // holds (when its line reads as a plain TOML integer, comment allowed) and the 20 / 140 Connect
-    // writes -- a timeout line the reader cannot read, or one already at least as large, kept exactly
-    // as the user wrote it, our line not added for that key --, every other line of the main table
-    // kept in order, and every subtable kept unchanged. "" -- no table yet -- gives
-    // toml_server_table(command). nullopt when the table cannot be updated safely: a command or args
-    // value that is a multi-line string, or whose end the reader cannot find. The file is then the
-    // user's to fix by hand, and nothing of it is written.
+    // The table text updated to run `command` rather than replaced by a fresh one
+    // (OrcaMCP::update_codex_table): the header line kept as it is, the command and args statements
+    // rewritten however many lines their values take, each timeout the larger of the integer the main
+    // table holds and the 20 / 140 Connect writes -- a value of another type (600.0, "30"), or an
+    // integer already at least as large, kept exactly as the user wrote it, ours not added for that key
+    // --, every other line of the main table kept in order, and every subtable kept unchanged. "" -- no
+    // table yet -- gives toml_server_table(command). nullopt when the text is not TOML.
     static std::optional<std::string> updated_toml_server_table(const std::string& existing_table,
                                                                 const BridgeCommand& command);
 
-    // `path` without our table and its subtables -- exactly the span toml_server_table_of answers --
-    // written back atomically with the file's own permissions. A file that cannot be read, and one
-    // that names our server only in a form this code cannot edit, are refused and left untouched.
+    // `path` without our table and every one of its subtables, wherever they stand, written back
+    // atomically with the file's own permissions. A file that cannot be read or is not TOML, one that
+    // names our server only in a form this code cannot edit, and an edit that would read differently
+    // anywhere else (OrcaMCP::codex_disconnect_difference) are refused and left untouched.
     static bool remove_from_toml_config(const std::string& path, std::string& error);
 
     // Whether a JSON entry is one of ours: one of its args, with '\' read as '/', names the shared bridge.
     static bool is_our_entry(const nlohmann::json& entry);
-    // The same for a Codex TOML table text, which may spell a backslash as "\\" or "\".
+    // The same for a Codex TOML table text, by its args as the parser reads them: never a comment.
     static bool is_our_toml_table(const std::string& table_text);
 
     // What an entry's interpreter is chosen from: the app's own bundled Python, whether this app runs
@@ -181,9 +180,11 @@ public:
     // subtables, a longer timeout) survive. A JSON config is read with its key order kept (an
     // unparsable one, a file that exists but cannot be read, and a servers value that is not an object
     // are refused and left untouched) and goes back through the atomic writer with its own
-    // permissions; a TOML config a read fails on, or that names our server only in a form this code
-    // cannot edit, is refused and left byte for byte as it is; otherwise its table is replaced in
-    // place, every other line and server kept. Parent folders are created when missing.
+    // permissions; a TOML config a read fails on, that is not TOML, or that names our server only in a
+    // form this code cannot edit, is refused and left byte for byte as it is; otherwise its table is
+    // updated in place, every other line and server kept, and the result checked to read as the old
+    // file everywhere but our entry (OrcaMCP::codex_connect_difference) before it is written. Parent
+    // folders are created when missing.
     static bool write_client_entry(const MCPClientInfo& info, const BridgeCommand& command, std::string& error);
 
     // One client's entry, kept current at startup: never written when there is none, when it is not

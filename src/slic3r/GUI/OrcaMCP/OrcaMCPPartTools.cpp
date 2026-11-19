@@ -501,6 +501,10 @@ nlohmann::json delete_volume_on_main_thread(Plater& plater, int object_id, Model
         return error_response(*refusal);
     const nlohmann::json           deleted = volume_row_json(object, std::size_t(volume_id));
     const std::vector<std::string> moving  = settings_moving_to_object(object, volume_id);
+    // A part's painted modifiers go with it (the object list deletes them): the answer names each.
+    nlohmann::json painted_deleted = nlohmann::json::array();
+    for (int painted : painted_modifiers_on(object, volume_id))
+        painted_deleted.push_back(volume_row_json(object, std::size_t(painted)));
     const std::size_t              before  = object.volumes.size();
 
     std::string closed_tool;
@@ -529,6 +533,8 @@ nlohmann::json delete_volume_on_main_thread(Plater& plater, int object_id, Model
                              {"volumes", volume_rows_json(object)}};
     if (!moving.empty())
         answer["settings_moved_to_object"] = moving;
+    if (!painted_deleted.empty())
+        answer["deleted_painted_modifiers"] = std::move(painted_deleted);
     rehome_and_report_placement(answer, object_id, /*moved=*/true);
     answer["active_warnings"] = get_active_warnings_json(&plater);
     answer = guard.report(std::move(answer));
