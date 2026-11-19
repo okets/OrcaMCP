@@ -79,6 +79,9 @@ bool parse_integer_field(const nlohmann::json& params, const char* key, int fall
 // three of the four have; the one exception states itself at its call site.
 struct PaintTargetNeeds
 {
+    // Mode painted_modifier without volume_id: every painted modifier of the object (none is a target with no
+    // volumes, not an error) -- what a read or a clear addresses. A paint names one.
+    bool every_painted_modifier = false;
     // Read volume_id, collect the object's model parts, and fail an object that has none. Only a
     // tool that writes or reads facet paint needs that -- set_brim_ears addresses the object as a
     // whole (brim_points live on the ModelObject), so requiring it a surface to paint would refuse
@@ -99,7 +102,7 @@ struct PaintTargetNeeds
 // mode painted_modifier: exactly the painted modifier volume_id names, painted over its own mesh and frame, which
 // are its host's once synced (the app syncs before every slice and save; a host repaired or reloaded since would
 // otherwise leave the paint on facets the host no longer has).
-bool resolve_painted_modifier_target(const nlohmann::json& params, PaintTarget& out, std::string& error)
+bool resolve_painted_modifier_target(const nlohmann::json& params, PaintTarget& out, std::string& error, bool every_when_unnamed)
 {
     ensure_painted_modifiers_synced(*out.object);
     std::optional<int> volume_id;
@@ -109,6 +112,13 @@ bool resolve_painted_modifier_target(const nlohmann::json& params, PaintTarget& 
             return false;
         if (id != -1) // -1 means every part, which names no painted modifier
             volume_id = id;
+    }
+    if (!volume_id && every_when_unnamed) {
+        for (const int id : painted_modifier_ids(*out.object)) {
+            out.volumes.push_back(out.object->volumes[std::size_t(id)]);
+            out.volume_ids.push_back(id);
+        }
+        return true;
     }
     if (const auto refusal = painted_modifier_target_refusal(out.object_id, *out.object, volume_id)) {
         error = *refusal;
@@ -153,7 +163,7 @@ bool resolve_paint_target(const nlohmann::json&  params,
     if (!needs.volumes)
         return true;
     if (channel.mode == PaintMode::PaintedModifier)
-        return resolve_painted_modifier_target(params, out, error);
+        return resolve_painted_modifier_target(params, out, error, needs.every_painted_modifier);
 
     int volume_id = -1;
     if (!parse_integer_field(params, "volume_id", -1, volume_id, error))
@@ -391,6 +401,17 @@ void add_painted_modifier_answer(nlohmann::json& result, const PaintTarget& targ
     result.update(coverage);
     add_next_steps(result, painted_modifier_paint_next_steps(target.object_id, volume_id, coverage["painted_facets"].get<int>() > 0,
                                                              !painted_modifier.config.empty()));
+}
+
+// A read or clear of mode painted_modifier on an object with none: nothing to report, and the call that adds one.
+void add_no_painted_modifier_answer(nlohmann::json& result, const PaintTarget& target, const PaintSelection& selection)
+{
+    const bool asked = selection.named_mode && selection.modes == std::vector<PaintMode>{PaintMode::PaintedModifier};
+    if (!asked || !target.volumes.empty())
+        return;
+    const int host = first_model_part_id(*target.object);
+    if (host >= 0)
+        add_next_steps(result, add_painted_modifier_next_steps(target.object_id, host));
 }
 
 // paint_object with mode painted_modifier and depth_mm but no selection: the gizmo's Depth field. One main-thread
@@ -1866,8 +1887,10 @@ void OrcaMCPServer::register_paint_tools()
                 }},
                 {"mode", {
                     {"type", "string"},
-                    {"enum", {"color", "support", "seam", "fuzzy_skin", "texture"}},
-                    {"description", "Which annotation to clear; omit to clear the four paint modes (texture masks stay)"}
+                    {"enum", {"color", "support", "seam", "fuzzy_skin", "texture", "painted_modifier"}},
+                    {"description", "Which annotation to clear; omit to clear the four paint modes (texture masks and painted "
+                                    "modifiers' areas stay). painted_modifier clears the area of the painted modifier volume_id "
+                                    "names, or of every one of the object; the volumes, depth and settings stay"}
                 }},
                 {"texture_layer", {
                     {"type", "integer"},
@@ -1887,8 +1910,9 @@ void OrcaMCPServer::register_paint_tools()
                 // shares, and this response carries no coordinate. Validating instance_id here
                 // rejected {object_id: 0, instance_id: 1} on a single-instance object over a value
                 // that could not have changed the outcome.
-                if (!resolve_paint_target(params, target, error,
-                                          PaintTargetNeeds{/*volumes=*/true, /*instance=*/false}))
+                PaintTargetNeeds needs{/*volumes=*/true, /*instance=*/false};
+                needs.every_painted_modifier = true;
+                if (!resolve_paint_target(params, target, error, needs, target_channel_of(params)))
                     return nlohmann::json{{"status", "error"}, {"message", error}};
 
                 PaintSelection selection;
@@ -1997,6 +2021,8 @@ void OrcaMCPServer::register_paint_tools()
                     // The texture layers' paint as get_object_paint reports it, read after the clear.
                     if (selection.texture)
                         volume["texture"] = {{"layers", texture_paint_layers_cleared_json(selection.texture_slots)}};
+                    // A painted modifier keeps its volume, depth and settings: say so beside its cleared area.
+                    volume.update(painted_modifier_row_fields(*target.object, std::size_t(target.volume_ids[i])));
                     volumes.push_back(std::move(volume));
                 }
 
@@ -2012,6 +2038,7 @@ void OrcaMCPServer::register_paint_tools()
                 if (!changed)
                     result["info_messages"] = std::vector<std::string>{
                         "Nothing was cleared: the requested annotation(s) were already empty."};
+                add_no_painted_modifier_answer(result, target, selection);
                 return with_closed_tool(std::move(result), closed_tool);
             });
         }
@@ -2258,9 +2285,11 @@ void OrcaMCPServer::register_paint_tools()
                 }},
                 {"mode", {
                     {"type", "string"},
-                    {"enum", {"color", "support", "seam", "fuzzy_skin", "texture"}},
+                    {"enum", {"color", "support", "seam", "fuzzy_skin", "texture", "painted_modifier"}},
                     {"description", "Omit to report the four paint modes and the texture layers' paint; texture "
-                                    "reads only the texture displacement masks"}
+                                    "reads only the texture displacement masks; painted_modifier reports the painted modifier "
+                                    "volume_id names, or every one of the object, each with its host, depth, coverage of the "
+                                    "host's surface and settings"}
                 }},
                 {"texture_layer", {
                     {"type", "integer"},
@@ -2277,9 +2306,11 @@ void OrcaMCPServer::register_paint_tools()
             std::vector<int>       texture_slots;
             bool                   with_texture = false;
             nlohmann::json         result = run_on_main_thread([&params, &mask_inputs, &texture_slots, &with_texture]() -> nlohmann::json {
-                PaintTarget target;
-                std::string error;
-                if (!resolve_paint_target(params, target, error))
+                PaintTarget      target;
+                std::string      error;
+                PaintTargetNeeds needs;
+                needs.every_painted_modifier = true;
+                if (!resolve_paint_target(params, target, error, needs, target_channel_of(params)))
                     return nlohmann::json{{"status", "error"}, {"message", error}};
 
                 PaintSelection selection;
@@ -2307,7 +2338,7 @@ void OrcaMCPServer::register_paint_tools()
                         volume_to_plate(*target.object, *mv, target.instance_idx));
                     object_bbox.merge(volume_bbox);
                     original_facets_total += int(mv->mesh().its.indices.size());
-                    volumes.push_back({
+                    nlohmann::json volume = {
                         {"volume_id", target.volume_ids[i]},
                         {"name", mv->name},
                         // Original triangles. Deliberately not named facets_total: the per-state
@@ -2316,7 +2347,13 @@ void OrcaMCPServer::register_paint_tools()
                         {"original_facets", int(mv->mesh().its.indices.size())},
                         {"bounding_box", bbox_json(volume_bbox)},
                         {"modes", by_mode}
-                    });
+                    };
+                    // A painted modifier: its host, depth, settings, and how much of the host's surface it claims.
+                    if (mv->is_painted_modifier()) {
+                        volume.update(painted_modifier_row_fields(*target.object, std::size_t(target.volume_ids[i])));
+                        volume.update(painted_modifier_coverage_json(*mv));
+                    }
+                    volumes.push_back(std::move(volume));
                 }
 
                 // brim_points is object-level data that Brim.cpp resolves through instance 0 only
@@ -2326,13 +2363,14 @@ void OrcaMCPServer::register_paint_tools()
                 // in the response, not left implicit, so a caller reading a non-zero instance_id
                 // does not assume brim_ears shares that frame too. set_brim_ears enforces the same
                 // instance 0 rule on the write side, so the two agree.
-                return nlohmann::json{
+                nlohmann::json answer = {
                     {"status", "success"},
                     {"object_id", target.object_id},
                     {"object_name", target.object->name},
                     {"coordinate_frame", "plate"},
                     {"instance_id", int(target.instance_idx)},
-                    {"bounding_box", bbox_json(object_bbox)},
+                    // Null for a painted_modifier read of an object with none: no volume, no box.
+                    {"bounding_box", target.volumes.empty() ? nlohmann::json(nullptr) : bbox_json(object_bbox)},
                     // The same sum paint_object reports under the same name, so a caller comparing
                     // a write against a read is comparing two fields that mean the same thing.
                     {"original_facets_total", original_facets_total},
@@ -2340,6 +2378,8 @@ void OrcaMCPServer::register_paint_tools()
                     {"brim_ears_instance_id", 0},
                     {"brim_ears", brim_ears_json(*target.object, 0)}
                 };
+                add_no_painted_modifier_answer(answer, target, selection);
+                return answer;
             });
             if (result.value("status", "") != "success" || !with_texture)
                 return result;

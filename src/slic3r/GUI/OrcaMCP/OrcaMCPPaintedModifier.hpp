@@ -83,6 +83,14 @@ nlohmann::json painted_modifier_coverage_json(const std::vector<PaintedStateInfo
 // part to paint on: them, when `to` is not MODEL_PART (call this before the change); none otherwise.
 std::vector<int> painted_modifiers_orphaned_by_type_change(const ModelObject& object, int volume_id, ModelVolumeType to);
 
+// The first model part's volume_id, the part the object list's Add Painted Modifier menu paints when no part is
+// chosen; -1 when the object has none.
+int first_model_part_id(const ModelObject& object);
+
+// The channel a read or clear call's target follows: mode painted_modifier addresses painted modifiers, every
+// other mode (or none, or one that does not parse: the caller's own parse refuses it) the model parts.
+PaintChannel target_channel_of(const nlohmann::json& params);
+
 // ---- paint_object's painted_modifier arguments ----
 
 // Why a paint_object call without a selection cannot run, or nothing: every mode needs one, but mode

@@ -700,13 +700,14 @@
         "additionalProperties": false,
         "properties": {
           "mode": {
-            "description": "Which annotation to clear; omit to clear the four paint modes (texture masks stay)",
+            "description": "Which annotation to clear; omit to clear the four paint modes (texture masks and painted modifiers' areas stay). painted_modifier clears the area of the painted modifier volume_id names, or of every one of the object; the volumes, depth and settings stay",
             "enum": [
               "color",
               "support",
               "seam",
               "fuzzy_skin",
-              "texture"
+              "texture",
+              "painted_modifier"
             ],
             "type": "string"
           },
@@ -1467,13 +1468,14 @@
             "type": "integer"
           },
           "mode": {
-            "description": "Omit to report the four paint modes and the texture layers' paint; texture reads only the texture displacement masks",
+            "description": "Omit to report the four paint modes and the texture layers' paint; texture reads only the texture displacement masks; painted_modifier reports the painted modifier volume_id names, or every one of the object, each with its host, depth, coverage of the host's surface and settings",
             "enum": [
               "color",
               "support",
               "seam",
               "fuzzy_skin",
-              "texture"
+              "texture",
+              "painted_modifier"
             ],
             "type": "string"
           },

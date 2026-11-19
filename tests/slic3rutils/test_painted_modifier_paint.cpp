@@ -11,6 +11,7 @@
 
 #include "slic3r/GUI/OrcaMCP/OrcaMCPPaintModel.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPPaintedModifier.hpp"
+#include "slic3r/GUI/OrcaMCP/OrcaMCPTextureDisplacement.hpp"
 #include "libslic3r/ExPolygon.hpp"
 #include "libslic3r/Layer.hpp"
 #include "libslic3r/Model.hpp"
@@ -391,4 +392,30 @@ TEST_CASE("a connected seed on the host's facet is taken as the painted modifier
     CHECK(seed_volume_for_mode(*scene.object, pm_channel, scene.pm_id(), scene.host_id()) == scene.pm_id());
     CHECK(seed_volume_for_mode(*scene.object, pm_channel, scene.pm_id(), scene.second_id()) == scene.second_id());
     CHECK(seed_volume_for_mode(*scene.object, PaintChannel(PaintMode::Color), scene.pm_id(), scene.host_id()) == scene.host_id());
+}
+
+// ---- Task 5: reading and clearing ----
+
+TEST_CASE("get_object_paint and clear_object_paint name painted_modifier as a mode of its own", "[McpPaint][orcamcp]")
+{
+    PaintSelection selection;
+    std::string    error;
+    REQUIRE(resolve_paint_selection({{"mode", "painted_modifier"}}, {}, true, selection, error));
+    CHECK(selection.modes == std::vector<PaintMode>{PaintMode::PaintedModifier});
+    CHECK(selection.named_mode);
+    CHECK(selection.label == "painted_modifier");
+    CHECK_FALSE(selection.texture);
+    // Without a mode, the print-paint modes only: a painted modifier's area is neither read nor cleared.
+    REQUIRE(resolve_paint_selection(json::object(), {}, true, selection, error));
+    CHECK(selection.modes == std::vector<PaintMode>{PaintMode::Color, PaintMode::Support, PaintMode::Seam, PaintMode::FuzzySkin});
+
+    // The target follows the mode: painted modifiers for this one, parts for every other (and for a bad mode,
+    // which the selection then refuses).
+    CHECK(target_channel_of({{"mode", "painted_modifier"}}).mode == PaintMode::PaintedModifier);
+    CHECK(target_channel_of({{"mode", "support"}}).mode == PaintMode::Color);
+    CHECK(target_channel_of(json::object()).mode == PaintMode::Color);
+    CHECK(target_channel_of({{"mode", 3}}).mode == PaintMode::Color);
+
+    const Scene scene;
+    CHECK(first_model_part_id(*scene.object) == scene.host_id());
 }

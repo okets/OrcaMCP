@@ -40,8 +40,8 @@ std::optional<std::string> painted_modifier_shape_refusal(const nlohmann::json& 
     return std::nullopt;
 }
 
-// The first model part's volume_id -- the object list's Add Painted Modifier paints the part under the
-// cursor, and the first part is what an agent's call defaults to. -1 when the object has none.
+} // namespace
+
 int first_model_part_id(const ModelObject& object)
 {
     for (std::size_t i = 0; i < object.volumes.size(); ++i)
@@ -50,7 +50,14 @@ int first_model_part_id(const ModelObject& object)
     return -1;
 }
 
-} // namespace
+PaintChannel target_channel_of(const nlohmann::json& params)
+{
+    PaintMode mode = PaintMode::Color;
+    if (params.contains("mode") && params["mode"].is_string() && parse_paint_mode(params["mode"].get<std::string>(), mode) &&
+        mode == PaintMode::PaintedModifier)
+        return PaintChannel(PaintMode::PaintedModifier);
+    return PaintChannel(PaintMode::Color);
+}
 
 std::vector<int> painted_modifier_ids(const ModelObject& object)
 {
