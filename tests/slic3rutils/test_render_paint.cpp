@@ -86,6 +86,69 @@ TEST_CASE("Texture tints are one per slot, chosen slots first and the plate's la
     CHECK(paint_tints({"texture"}, {}, {}).empty());
 }
 
+TEST_CASE("Painted modifiers get one tint each, in the given order, in colours of their own", "[RenderPaint][orcamcp]")
+{
+    const std::vector<PaintedModifierRef> refs = {{2, 5, 0, {"wall_loops"}}, {2, 7, 3, {"top_shell_layers", "wall_loops"}}};
+    const auto                            tints = paint_tints({"painted_modifier"}, {}, {}, refs);
+    REQUIRE(tints.size() == 2);
+    CHECK(tints[0].channel == "painted_modifier");
+    CHECK(tints[0].label == "painted modifier 5 of object 2");
+    CHECK(tints[0].object_id == 2);
+    CHECK(tints[0].volume_id == 5);
+    CHECK(tints[0].host_volume_id == 0);
+    CHECK(tints[0].settings == std::vector<std::string>({"wall_loops"}));
+    CHECK(paint_channel_of(tints[0]).mode == PaintMode::PaintedModifier);
+    CHECK(tints[1].label == "painted modifier 7 of object 2");
+    CHECK(tints[1].volume_id == 7);
+    CHECK(tints[1].host_volume_id == 3);
+    CHECK(tints[1].settings == std::vector<std::string>({"top_shell_layers", "wall_loops"}));
+    // Each its own colour, from the shared table, and they tell apart.
+    CHECK(tints[0].color == texture_layer_color(0));
+    CHECK(tints[1].color == texture_layer_color(1));
+    CHECK(distance(tints[0].color, tints[1].color) > 0.3);
+    // Not the asked channel: the refs make no tints.
+    CHECK(paint_tints({"support"}, {}, {}, refs).size() == 2);   // support's enforcer and blocker only
+    CHECK(paint_tints({"texture"}, {}, {1}, refs).size() == 1);  // texture layer 1 only
+}
+
+TEST_CASE("The legend names each painted modifier with its host and settings, and counts its facets", "[RenderPaint][orcamcp]")
+{
+    TriangleMesh mesh(its_make_cube(10.0, 10.0, 10.0));
+    const std::vector<PaintedModifierRef> refs = {{2, 5, 0, {"wall_loops"}}};
+    const auto                            tints = paint_tints({"painted_modifier"}, {}, {}, refs);
+    REQUIRE(tints.size() == 1);
+    PaintVolumeInput in;
+    in.object_id     = 2;
+    in.volume_id     = 5;   // the painted modifier
+    in.draw_volume_id = 0;  // tinted on its host part
+    in.mesh          = std::make_shared<const TriangleMesh>(mesh);
+    in.per_tint      = {{0, cube_paint(mesh, PaintMode::PaintedModifier, 1, 0)}};
+    const auto result = compute_paint_facets({in}, tints, [] { return false; });
+    REQUIRE(result.facets.size() == 1);
+    CHECK(result.facets[0].volume_id == 5);
+    CHECK(result.facets[0].draw_volume_id == 0);   // carried through: the draw finds the host's GLVolume
+    const json legend = tint_legend_json(tints, result);
+    REQUIRE(legend.size() == 1);
+    CHECK(legend[0]["channel"] == "painted_modifier");
+    CHECK(legend[0]["state_name"] == "painted");
+    CHECK(legend[0]["label"] == "painted modifier 5 of object 2");
+    CHECK(legend[0]["object_id"] == 2);
+    CHECK(legend[0]["volume_id"] == 5);
+    CHECK(legend[0]["host_volume_id"] == 0);
+    CHECK(legend[0]["settings"] == json::array({"wall_loops"}));
+    REQUIRE(legend[0]["objects"].size() == 1);
+    CHECK(legend[0]["objects"][0]["facets"] == 4);
+}
+
+TEST_CASE("Capture notes ride into tint_notes, so an undrawable painted modifier is named", "[RenderPaint][orcamcp]")
+{
+    PaintResult result;
+    result.notes.push_back("painted modifier 5 of object 2 has no model part to tint");
+    const auto notes = tint_notes({"painted_modifier"}, paint_tints({"painted_modifier"}, {}, {}, {{2, 5, 3, {}}}), result);
+    REQUIRE(notes.size() == 1);
+    CHECK(notes[0].find("no model part") != std::string::npos);
+}
+
 TEST_CASE("The eight texture colours differ from each other, the object palette, the gizmo colours and the grey", "[RenderPaint][orcamcp]")
 {
     std::vector<ColorRGBA> others;

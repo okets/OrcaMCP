@@ -12,7 +12,7 @@ namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
 const std::vector<std::string>& paint_channel_names()
 {
-    static const std::vector<std::string> names = {"support", "seam", "fuzzy_skin", "texture"};
+    static const std::vector<std::string> names = {"support", "seam", "fuzzy_skin", "texture", "painted_modifier"};
     return names;
 }
 
@@ -30,7 +30,7 @@ ColorRGBA texture_layer_color(int slot)
 }
 
 std::vector<PaintTint> paint_tints(const std::vector<std::string>& channels, const std::vector<int>& texture_slots,
-                                   const std::vector<int>& slots_with_layers)
+                                   const std::vector<int>& slots_with_layers, const std::vector<PaintedModifierRef>& painted_modifiers)
 {
     const auto asked = [&](const std::string& name) { return std::find(channels.begin(), channels.end(), name) != channels.end(); };
     std::vector<PaintTint> tints;
@@ -48,6 +48,19 @@ std::vector<PaintTint> paint_tints(const std::vector<std::string>& channels, con
         for (int slot : slots)
             tints.push_back({"texture", slot, 1, texture_layer_color(slot), "texture layer " + std::to_string(slot)});
     }
+    if (asked("painted_modifier"))
+        for (size_t i = 0; i < painted_modifiers.size(); ++i) {
+            const PaintedModifierRef& ref = painted_modifiers[i];
+            PaintTint tint;
+            tint.channel       = "painted_modifier";
+            tint.color         = texture_layer_color(int(i % 8));
+            tint.label         = "painted modifier " + std::to_string(ref.volume_id) + " of object " + std::to_string(ref.object_id);
+            tint.object_id     = ref.object_id;
+            tint.volume_id     = ref.volume_id;
+            tint.host_volume_id = ref.host_volume_id;
+            tint.settings      = ref.settings;
+            tints.push_back(std::move(tint));
+        }
     return tints;
 }
 
@@ -130,9 +143,10 @@ PaintResult compute_paint_facets(const std::vector<PaintVolumeInput>& inputs, co
                 found = std::prev(selectors.end());
             }
             PaintFacets facets;
-            facets.object_id = in.object_id;
-            facets.volume_id = in.volume_id;
-            facets.tint      = tint_index;
+            facets.object_id      = in.object_id;
+            facets.volume_id      = in.volume_id;
+            facets.draw_volume_id = in.draw_volume_id;
+            facets.tint           = tint_index;
             facets.its       = found->second->get_facets(EnforcerBlockerType(tint.state));
             facets.facets    = int(facets.its.indices.size());
             if (facets.facets == 0)
@@ -182,10 +196,16 @@ nlohmann::json tint_legend_json(const std::vector<PaintTint>& tints, const Paint
         for (const auto& [object_id, count] : by_object)
             objects.push_back({{"object_id", object_id}, {"facets", count.first}, {"area_mm2", std::round(count.second * 100.) / 100.}});
         nlohmann::json row = {{"channel", tint.channel}, {"state", tint.state},
-                              {"state_name", tint.channel == "texture" ? "painted" : tint.channel == "fuzzy_skin" ? "fuzzy_skin" : tint.state == 2 ? "blocker" : "enforcer"},
+                              {"state_name", paint_state_label(paint_channel_of(tint).mode, tint.state)},
                               {"label", tint.label}, {"color", hex_color(tint.color)}, {"objects", std::move(objects)}};
         if (tint.texture_layer >= 0)
             row["layer"] = tint.texture_layer;
+        if (tint.channel == "painted_modifier") {
+            row["object_id"]      = tint.object_id;
+            row["volume_id"]      = tint.volume_id;
+            row["host_volume_id"] = tint.host_volume_id;
+            row["settings"]       = tint.settings;
+        }
         nlohmann::json stale = nlohmann::json::array();
         for (const auto& [stale_tint, object_id] : result.stale)
             if (stale_tint == int(t))
@@ -211,6 +231,7 @@ std::vector<std::string> tint_notes(const std::vector<std::string>& channels, co
     if (!result.stale.empty())
         notes.push_back("A paint mask indexes triangles its mesh no longer has (the mesh was replaced after it was painted), so it is not "
                         "drawn: the legend marks it stale. Paint it again, or clear it.");
+    notes.insert(notes.end(), result.notes.begin(), result.notes.end());
     return notes;
 }
 

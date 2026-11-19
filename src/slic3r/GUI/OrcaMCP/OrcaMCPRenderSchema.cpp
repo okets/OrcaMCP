@@ -245,8 +245,8 @@ json render_plate_view_schema()
             {"section", section_schema()},
             {"paint", {
                 {"type", "array"},
-                {"items", {{"type", "string"}, {"enum", {"support", "seam", "fuzzy_skin", "texture"}}}},
-                {"description", "Paint to tint on the parts, as the paint panels colour it: support and seam enforcers light green and blockers light red, fuzzy_skin light green, texture one colour per layer (texture_layers chooses). The unpainted surface is then drawn neutral grey so the tints read. Colour paint is always drawn in its filaments' colours, without this. The answer's tint_legend gives each tint's colour and, per object, its facets (get_object_paint's count) and area_mm2 (one instance). A texture mask its mesh has outgrown is not drawn and is marked stale; tint_notes explains an empty case. Ask one channel at a time to tell support from seam in the picture: they share the panels' colours. 3D views only."}
+                {"items", {{"type", "string"}, {"enum", {"support", "seam", "fuzzy_skin", "texture", "painted_modifier"}}}},
+                {"description", "Paint to tint on the parts, as the paint panels colour it: support and seam enforcers light green and blockers light red, fuzzy_skin light green, texture one colour per layer (texture_layers chooses). painted_modifier tints each painted modifier's area on its part, one colour each; the legend names each with its host and settings. The unpainted surface is then drawn neutral grey so the tints read. Colour paint is always drawn in its filaments' colours, without this. The answer's tint_legend gives each tint's colour and, per object, its facets (get_object_paint's count) and area_mm2 (one instance). A texture mask its mesh has outgrown is not drawn and is marked stale; tint_notes explains an empty case. Ask one channel at a time to tell support from seam in the picture: they share the panels' colours. painted_modifier and texture cannot be asked together: they share colours. 3D views only."}
             }},
             {"texture_layers", {
                 {"type", "array"},

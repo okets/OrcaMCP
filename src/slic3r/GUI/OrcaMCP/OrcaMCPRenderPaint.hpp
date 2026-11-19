@@ -22,14 +22,29 @@
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
 
 // One colour a picture tints a state of a paint channel in. `channel` is the name a request uses ("support", "seam",
-// "fuzzy_skin", "texture"); a texture tint also names its layer slot.
+// "fuzzy_skin", "texture", "painted_modifier"); a texture tint also names its layer slot, a painted_modifier tint the
+// modifier it tints, the part it draws on, and that modifier's own settings.
 struct PaintTint
 {
     std::string channel;
     int         texture_layer = -1;   // texture only
     int         state         = 1;    // the facet state tinted: enforcer / painted 1, blocker 2
     ColorRGBA   color;
-    std::string label;                // "support enforcer", "texture layer 3"
+    std::string label;                // "support enforcer", "texture layer 3", "painted modifier 5 of object 2"
+    // painted_modifier only: which modifier this is, and the model part its facets are drawn on.
+    int                      object_id = -1;
+    int                      volume_id = -1;
+    int                      host_volume_id = -1;
+    std::vector<std::string> settings;    // the keys of the modifier's own config
+};
+
+// One painted modifier of a picture: which it is, its host part, and the settings the legend names it by.
+struct PaintedModifierRef
+{
+    int                      object_id = -1;
+    int                      volume_id = -1;
+    int                      host_volume_id = -1;
+    std::vector<std::string> settings;
 };
 
 // The channel names `paint` takes, in the order tints are made.
@@ -45,9 +60,11 @@ ColorRGBA texture_layer_color(int slot);
 
 // The tints of `channels` (a subset of paint_channel_names(), any order). support and seam: enforcer then blocker in the
 // gizmos' colours; fuzzy_skin: the enforcer colour only; texture: one tint per slot of `texture_slots`, or when that is
-// empty per slot of `slots_with_layers`, in ascending slot order.
+// empty per slot of `slots_with_layers`, in ascending slot order; painted_modifier: one tint per `painted_modifiers` ref
+// in the given order, each in its own colour (texture_layer_color of its position mod 8).
 std::vector<PaintTint> paint_tints(const std::vector<std::string>& channels, const std::vector<int>& texture_slots,
-                                   const std::vector<int>& slots_with_layers);
+                                   const std::vector<int>& slots_with_layers,
+                                   const std::vector<PaintedModifierRef>& painted_modifiers = {});
 
 // The paint channel a tint reads from a volume.
 PaintChannel paint_channel_of(const PaintTint& tint);
@@ -67,6 +84,7 @@ struct PaintVolumeInput
 {
     int                                 object_id = -1;
     int                                 volume_id = -1;
+    int                                 draw_volume_id = -1;  // the GLVolume the facets are drawn on: the host for a painted modifier, else volume_id
     ObjectID                            object_identity;
     ObjectID                            volume_identity;
     std::shared_ptr<const TriangleMesh> mesh;
@@ -79,6 +97,7 @@ struct PaintFacets
 {
     int                  object_id = -1;
     int                  volume_id = -1;
+    int                  draw_volume_id = -1;   // the GLVolume these facets are drawn on (the host for a painted modifier)
     int                  tint      = 0;
     indexed_triangle_set its;
     int                  facets   = 0;      // leaf triangles, the count get_object_paint reports
@@ -96,6 +115,7 @@ struct PaintResult
 {
     std::vector<PaintFacets> facets;            // parts and tints with none are left out
     std::vector<std::pair<int, int>> stale;     // (tint, object_id) whose mask indexes triangles the mesh no longer has: skipped
+    std::vector<std::string> notes;             // what the capture could not draw (a painted modifier with no host); ride into tint_notes
     bool                     complete = true;   // false: `stop` said so before every part was read
 };
 
@@ -107,10 +127,11 @@ PaintResult compute_paint_facets(const std::vector<PaintVolumeInput>& inputs, co
 
 // The answer's legend: per tint {channel, layer?, state, state_name, label, color (#rrggbb), objects: [{object_id, facets,
 // area_mm2}], stale?: [object ids]} -- objects with none of it are left out, so a tint nothing carries has an empty list.
+// A painted_modifier tint also gives object_id, volume_id, host_volume_id and settings.
 nlohmann::json tint_legend_json(const std::vector<PaintTint>& tints, const PaintResult& result);
 
-// What to tell the reader beyond the legend: a texture request when no object on the plate has a texture layer, and a
-// stale mask. Empty when there is nothing to say.
+// What to tell the reader beyond the legend: a texture request when no object on the plate has a texture layer, a
+// stale mask, and whatever the capture left in `result.notes`. Empty when there is nothing to say.
 std::vector<std::string> tint_notes(const std::vector<std::string>& channels, const std::vector<PaintTint>& tints,
                                      const PaintResult& result);
 

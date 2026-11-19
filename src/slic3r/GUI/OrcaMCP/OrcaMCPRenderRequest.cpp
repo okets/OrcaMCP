@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <stdexcept>
 
+#include "slic3r/GUI/OrcaMCP/OrcaMCPRenderPaint.hpp"
 #include "slic3r/GUI/OrcaMCP/OrcaMCPTextureDisplacement.hpp"
 
 namespace Slic3r { namespace GUI { namespace OrcaMCP {
@@ -306,8 +307,10 @@ void adopt_replay_resolution(const nlohmann::json& payload, RenderRequest& reque
 // paint (channels), texture_layers (slots) and color_by, read together because they refuse each other's mistakes.
 void read_paint_options(const nlohmann::json& payload, RenderRequest& out)
 {
-    const std::vector<std::string> channels = {"support", "seam", "fuzzy_skin", "texture"};
-    const std::string              channel_list = "support, seam, fuzzy_skin, texture";
+    const std::vector<std::string>& channels = paint_channel_names();   // the tints' own order: the canonical order of `paint`
+    std::string                     channel_list;
+    for (size_t i = 0; i < channels.size(); ++i)
+        channel_list += (i == 0 ? "" : ", ") + channels[i];
     if (payload.contains("paint")) {
         const nlohmann::json& paint = payload["paint"];
         if (!paint.is_array())
@@ -325,6 +328,10 @@ void read_paint_options(const nlohmann::json& payload, RenderRequest& out)
                     out.paint.push_back(channel);
                     break;
                 }
+        const auto asked = [&out](const std::string& name) { return std::find(out.paint.begin(), out.paint.end(), name) != out.paint.end(); };
+        if (asked("painted_modifier") && asked("texture"))
+            throw std::runtime_error("paint: painted_modifier and texture cannot be tinted in one picture, for "
+                                     "they share colours: ask them in separate pictures");
     }
     if (payload.contains("texture_layers")) {
         const nlohmann::json& layers = payload["texture_layers"];

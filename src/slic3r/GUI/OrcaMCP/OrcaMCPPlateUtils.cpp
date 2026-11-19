@@ -18,6 +18,7 @@
 #include "OrcaMCPUiJob.hpp"
 #include "slic3r/GUI/Gizmos/GLGizmoTextureDisplacement.hpp"
 #include "OrcaMCPPaintModel.hpp"
+#include "OrcaMCPPaintedModifier.hpp"
 #include "slic3r/GUI/TextureDisplacementObject.hpp"
 #include "slic3r/GUI/GLCanvas3D.hpp"
 #include "slic3r/GUI/OpenGLManager.hpp"
@@ -457,14 +458,18 @@ static BoundingBoxf3 view_fit_box(const OrcaMCP::ViewRequest& view, PartPlate& p
 
 // What paint asks for, captured on the main thread: the tints (texture: the slots the plate's texture stacks have layers
 // in, unless texture_layers chose) and, per model part of every object on the plate, the annotation data of each tint
-// it carries. Parts that carry none are left out.
+// it carries. Parts that carry none are left out. With the painted_modifier channel: each object's painted modifiers are
+// first brought onto their hosts' meshes (as before every slice), each host-bearing one becomes a tint of its own and one
+// input whose facets draw on the host's GLVolume, and a modifier with no host is named in the answer's tint_notes.
 static void capture_paint(const OrcaMCP::RenderRequest& asked, PartPlate& plate, RenderJob& job)
 {
     if (asked.paint.empty())
         return;
+    const bool modifiers_asked = std::find(asked.paint.begin(), asked.paint.end(), "painted_modifier") != asked.paint.end();
     const ModelObjectPtrs& objects = wxGetApp().model().objects;
     std::vector<size_t>    first_instance(objects.size(), size_t(-1));
     std::vector<int>       slots_with_layers;
+    std::vector<OrcaMCP::PaintedModifierRef> painted_modifiers;
     for (size_t oi = 0; oi < objects.size(); ++oi) {
         for (size_t ii = 0; ii < objects[oi]->instances.size(); ++ii)
             if (plate.contain_instance(int(oi), int(ii))) {
@@ -475,8 +480,30 @@ static void capture_paint(const OrcaMCP::RenderRequest& asked, PartPlate& plate,
             continue;
         const std::vector<int> slots = OrcaMCP::layer_slots_of(texture_stack_owner(*objects[oi]));
         slots_with_layers.insert(slots_with_layers.end(), slots.begin(), slots.end());
+        if (!modifiers_asked)
+            continue;
+        ModelObject& object = *objects[oi];
+        // The render reads a modifier's own mesh and paint: a host whose mesh changed since leaves them on old facets.
+        OrcaMCP::ensure_painted_modifiers_synced(object);
+        for (const int volume_id : OrcaMCP::painted_modifier_ids(object)) {
+            const int host = OrcaMCP::host_volume_id(object, *object.volumes[size_t(volume_id)]);
+            if (host < 0) {
+                job.paint_result.notes.push_back("painted modifier " + std::to_string(volume_id) + " of object " + std::to_string(oi) +
+                                                 " has no model part to tint (its host was removed or is no longer a part): delete_object "
+                                                 "with its volume_id removes it.");
+                continue;
+            }
+            OrcaMCP::PaintedModifierRef ref;
+            ref.object_id      = int(oi);
+            ref.volume_id      = volume_id;
+            ref.host_volume_id = host;
+            t_config_option_keys keys = object.volumes[size_t(volume_id)]->config.keys();
+            std::sort(keys.begin(), keys.end());
+            ref.settings.assign(keys.begin(), keys.end());
+            painted_modifiers.push_back(std::move(ref));
+        }
     }
-    job.tints = OrcaMCP::paint_tints(asked.paint, asked.texture_layers, slots_with_layers);
+    job.tints = OrcaMCP::paint_tints(asked.paint, asked.texture_layers, slots_with_layers, painted_modifiers);
 
     for (size_t oi = 0; oi < objects.size(); ++oi) {
         if (first_instance[oi] == size_t(-1))
@@ -484,11 +511,19 @@ static void capture_paint(const OrcaMCP::RenderRequest& asked, PartPlate& plate,
         const ModelObject& object = *objects[oi];
         for (size_t vi = 0; vi < object.volumes.size(); ++vi) {
             const ModelVolume& volume = *object.volumes[vi];
-            if (!volume.is_model_part())
+            const bool         is_painted_modifier = modifiers_asked && volume.is_painted_modifier();
+            if (!volume.is_model_part() && !is_painted_modifier)
                 continue;
             OrcaMCP::PaintVolumeInput input;
             for (size_t t = 0; t < job.tints.size(); ++t) {
-                const FacetsAnnotation& annotation = OrcaMCP::annotation_for(volume, OrcaMCP::paint_channel_of(job.tints[t]));
+                const OrcaMCP::PaintChannel channel = OrcaMCP::paint_channel_of(job.tints[t]);
+                if (channel.mode == OrcaMCP::PaintMode::PaintedModifier) {
+                    // A painted modifier's tint belongs to its own modifier alone -- never to a part, never to another modifier's.
+                    if (!is_painted_modifier || job.tints[t].volume_id != int(vi))
+                        continue;
+                } else if (is_painted_modifier)
+                    continue;   // a modifier carries only its own paint
+                const FacetsAnnotation& annotation = OrcaMCP::annotation_for(volume, channel);
                 if (!annotation.empty())
                     input.per_tint.emplace_back(int(t), annotation.get_data());
             }
@@ -496,6 +531,8 @@ static void capture_paint(const OrcaMCP::RenderRequest& asked, PartPlate& plate,
                 continue;
             input.object_id        = int(oi);
             input.volume_id        = int(vi);
+            // A painted modifier has no GLVolume of its own: its facets are drawn on its host's (a tint's ref had a host).
+            input.draw_volume_id   = is_painted_modifier ? OrcaMCP::host_volume_id(object, volume) : int(vi);
             input.object_identity  = object.id();
             input.volume_identity  = volume.id();
             input.mesh             = volume.mesh_ptr();
@@ -505,7 +542,10 @@ static void capture_paint(const OrcaMCP::RenderRequest& asked, PartPlate& plate,
     }
     RenderJob* self = &job;
     job.work.push_back([self](const std::function<bool()>& stop) {
+        // The capture's notes (a painted modifier with no host) are not the work's: they survive it.
+        std::vector<std::string> captured_notes = std::move(self->paint_result.notes);
         self->paint_result = OrcaMCP::compute_paint_facets(self->paint_inputs, self->tints, stop);
+        self->paint_result.notes = std::move(captured_notes);
         self->paint_done   = self->paint_result.complete;
     });
 }
@@ -521,6 +561,12 @@ static bool paint_unchanged_since(const RenderJob& job)
         if (in.volume_id < 0 || size_t(in.volume_id) >= object.volumes.size() || object.volumes[in.volume_id]->id() != in.volume_identity ||
             object.volumes[in.volume_id]->mesh_ptr() != in.mesh)
             return false;
+        // A painted modifier draws on its host's GLVolume: the host's mesh is the surface the tint must still lie on.
+        if (in.draw_volume_id != in.volume_id) {
+            if (in.draw_volume_id < 0 || size_t(in.draw_volume_id) >= object.volumes.size() ||
+                object.volumes[in.draw_volume_id]->mesh_ptr() != in.mesh)
+                return false;
+        }
         for (const auto& [tint, data] : in.per_tint)
             if (OrcaMCP::annotation_for(*object.volumes[in.volume_id], OrcaMCP::paint_channel_of(job.tints[size_t(tint)])).get_data() != data)
                 return false;
@@ -649,7 +695,8 @@ static void capture_texture_preview(PartPlate& plate, RenderJob& job)
             entry.volume_ids.push_back(position);
             entry.colours.colour_paint.push_back(position >= 0 ? object.volumes[size_t(position)]->mmu_segmentation_facets.get_data() : TriangleSelector::TriangleSplittingData());
             for (const OrcaMCP::PaintVolumeInput& painted : job.paint_inputs)
-                if (painted.object_id == int(oi) && painted.volume_id == position)
+                // The part being previewed displaced is the one the facets draw on -- a painted modifier's ride it.
+                if (painted.object_id == int(oi) && painted.draw_volume_id == position)
                     throw std::runtime_error("paint draws on the unbaked surface and object " + std::to_string(oi) + " part " + std::to_string(position) +
                                              " is previewed displaced; render the paint and the preview separately, or leave this paint channel out");
         }
@@ -1125,7 +1172,8 @@ struct PaintOverlay
                 glFrontFace(GL_CW);
             for (size_t i = 0; i < models.size(); ++i) {
                 const OrcaMCP::PaintFacets& f = job->paint_result.facets[i];
-                if (f.object_id == vol->composite_id.object_id && f.volume_id == vol->composite_id.volume_id &&
+                // draw_volume_id: a painted modifier's facets ride the host's GLVolume (it has none of its own).
+                if (f.object_id == vol->composite_id.object_id && f.draw_volume_id == vol->composite_id.volume_id &&
                     size_t(f.object_id) < objects.size())
                     models[i]->render(&pass.shader);
             }

@@ -78,6 +78,20 @@ TEST_CASE("A layer view takes the place of the views", "[RenderRequest][orcamcp]
     CHECK(read_ok({{"plate_index", 0}, {"layer_view", ""}}).layer_view.is_null());
 }
 
+TEST_CASE("Painted modifier paint is read alone, and refused with texture or a layer view", "[RenderRequest][orcamcp]")
+{
+    CHECK(read_ok({{"plate_index", 0}, {"paint", {"painted_modifier"}}}).paint == std::vector<std::string>{"painted_modifier"});
+    // Canonical order keeps every other channel in front of it.
+    CHECK(read_ok({{"plate_index", 0}, {"paint", {"painted_modifier", "support"}}}).paint == std::vector<std::string>{"support", "painted_modifier"});
+    // Each painted modifier takes a colour of its own and texture layers use the same palette.
+    CHECK(refusal_of({{"plate_index", 0}, {"paint", {"painted_modifier", "texture"}}}).find("they share colours: ask them in separate pictures") !=
+          std::string::npos);
+    CHECK(refusal_of({{"plate_index", 0}, {"paint", {"texture", "painted_modifier"}}}).find("they share colours: ask them in separate pictures") !=
+          std::string::npos);
+    // A layer plan, as for every other channel.
+    CHECK(refusal_of({{"plate_index", 0}, {"layer_view", "first_layer"}, {"paint", {"painted_modifier"}}}).find("3D views") != std::string::npos);
+}
+
 TEST_CASE("Every view refusal keeps its message", "[RenderRequest][orcamcp]")
 {
     CHECK(refusal_of({{"plate_index", 0}, {"views", json::array()}}) == "views must not be empty");
