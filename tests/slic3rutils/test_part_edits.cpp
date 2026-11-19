@@ -11,6 +11,7 @@
 #include "libslic3r/TriangleMesh.hpp"
 
 #include <algorithm>
+#include <boost/filesystem.hpp>
 #include <fstream>
 #include <map>
 #include <cmath>

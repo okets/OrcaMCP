@@ -4,6 +4,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <boost/algorithm/string/predicate.hpp>
+#include <boost/filesystem.hpp>
 #include <boost/nowide/fstream.hpp>
 
 #include <sstream>
