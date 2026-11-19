@@ -333,6 +333,49 @@ its parts.
 
 ---
 
+## Painted Modifier Workflow: Strengthen Part of a Part
+
+**Goal:** Different settings on one painted area of a part (more walls on the face that takes a load,
+denser infill under a screw hole), without building a modifier shape to cover it. A painted modifier
+shares its part's mesh and placement; what it changes is where it is painted, how deep it reaches, and
+the settings it is given.
+
+```
+1. add_volume          type: "painted_modifier" -- empty, on the object's first part (host_volume_id: another)
+        ↓
+2. pick_facet          (optional) the face to start from
+3. paint_object        mode: "painted_modifier", volume_id: the new volume, a selection, depth_mm
+        ↓
+4. set_object_config   with volume_id: the settings inside the painted area
+        ↓
+5. render_plate_view   paint: ["painted_modifier"] -- the area, tinted, with its settings in the legend
+6. slice_all, wait_for_slice
+7. render_plate_view   layer_view: {layer: N} -- the toolpaths that changed
+```
+
+**Example:**
+```json
+{"name": "add_volume", "arguments": {"object_id": 0, "type": "painted_modifier"}}
+{"name": "paint_object", "arguments": {"object_id": 0, "volume_id": 1, "mode": "painted_modifier",
+  "selection": "box", "box": {"min": [138, 100, 0], "max": [142, 140, 40]}, "state": "painted", "depth_mm": 3}}
+{"name": "set_object_config", "arguments": {"object_id": 0, "volume_id": 1,
+  "settings": [{"key": "wall_loops", "value": 6}]}}
+{"name": "render_plate_view", "arguments": {"paint": ["painted_modifier"]}}
+{"name": "slice_all", "arguments": {}}
+{"name": "wait_for_slice", "arguments": {}}
+{"name": "render_plate_view", "arguments": {"layer_view": {"layer": 5}}}
+```
+
+`paint_object` with `selection: "connected"` and a `seed` from `pick_facet` paints a face up to its
+edges: `pick_facet` names the part, and the painted modifier takes that seed as its own. `depth_mm`
+alone (no selection) changes only how deep it reaches; 0 is through the part to its nearest unpainted
+surface. `get_object_info` shows each painted modifier's host, depth, coverage and settings;
+`get_object_paint` / `clear_object_paint` with `mode: "painted_modifier"` read and clear its area, and
+`delete_object` with its `volume_id` removes it. Every answer that leaves it painted nowhere, or with no
+settings, names the call that fixes it in `next_steps`.
+
+---
+
 ## Texture Workflow: Texture a Part
 
 **Goal:** Put a surface texture on part of an object and print it. A texture layer is a plan until it is

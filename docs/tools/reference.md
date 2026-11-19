@@ -1077,15 +1077,17 @@ runs. `add_volume` adds a primitive to an existing object instead.
 
 ### add_volume
 Add a volume to an object, as the object list's Add Part / Add Negative Part / Add Modifier / Add
-Support Blocker / Add Support Enforcer does.
+Support Blocker / Add Support Enforcer / Add Painted Modifier does.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `object_id` | integer | Yes | Object index |
-| `type` | string | Yes | `part`, `negative_volume`, `modifier`, `support_blocker` or `support_enforcer` |
+| `type` | string | Yes | `part`, `negative_volume`, `modifier`, `support_blocker`, `support_enforcer` or `painted_modifier` |
 | `shape` | string | One of the two | A primitive: `cube`, `cylinder`, `sphere`, `cone`, `disc`, `torus` (`ObjectList::load_generic_subobject`) |
 | `file_path` | string | One of the two | A model file whose meshes become the volume (the list's Load..., `ObjectList::load_subobject`; its file chooser is answered with this path) |
+| `host_volume_id` | integer | No | `painted_modifier` only: the model part it is painted on (default: the object's first part, as the list's menu takes) |
+| `depth_mm` | number | No | `painted_modifier` only: how far into the part the painted area reaches, 0 to 1000 mm; 0 (default) = through the part to its nearest unpainted surface |
 
 - **A primitive** is sized the app's default for its shape (`primitive_size_fields`' own: a tenth of the bed's longest side for most, a thinner disc, a torus of its own proportions) and stands beside the object at its
   right-front corner, on the bed: `next_steps` points at `move_object` (and `scale_object`) with
@@ -1098,6 +1100,12 @@ Support Blocker / Add Support Enforcer does.
   STEP file is tessellated with the configured deflection (its dialog is answered).
 - **A modifier** changes only the settings it is given: `next_steps` points at `set_object_config`
   with `volume_id`.
+- **A painted modifier** (`type: "painted_modifier"`) takes no `shape`, `size` or `file_path`: it shares
+  its host part's mesh and placement (`ObjectList::add_painted_modifier`), under the list's own "Add
+  painted modifier" undo step. It is added painted nowhere (`painted_facets: 0`), so it changes nothing
+  yet: `next_steps` points at `paint_object` with `mode: "painted_modifier"` and at `set_object_config`
+  with its `volume_id`. The answer adds `host_volume_id` and `depth_mm`. `host_volume_id` or `depth_mm`
+  with another type is refused; a host that is not a model part is refused (upstream's rule).
 
 The answer: `volume` (its `volume_id`, `bounding_box` and `position` in plate mm) and every volume.
 One undo step. An open toolbar tool is closed first (`closed_toolbar_tool`); refused while an arrange
@@ -1133,6 +1141,11 @@ a support blocker or enforcer (both refused by the list), and any volume of a cu
 (probe AL fixes that map). The same type is a change of
 nothing (`changed: false`, no undo step). A change marks the object's plates not sliced. One undo step;
 an open toolbar tool is closed first; refused while an arrange or orient runs.
+
+A part with painted modifiers on it that becomes anything but a part leaves them painted on nothing:
+they print nothing. The answer lists their new ids in `orphaned_painted_modifiers`, says so in
+`info_messages`, and `next_steps` points at `delete_object` with the first one's `volume_id`.
+`painted_modifier` is not a type this tool takes (the list's Change Type does not offer it).
 
 ---
 
@@ -2581,6 +2594,12 @@ describes them, and each volume row (here, and in the part tools' `volumes`) has
 a UV channel), `texture_layers` (its layer count when it owns the stack, else `0`) and
 `texture_paint_layers` (the slots whose mask holds readable paint -- not a stale or all-unpainted mask --, `[]` for none).
 
+**Painted modifiers:** a painted modifier's volume row (`type: "painted_modifier"`, here and in the part
+tools' `volumes`) adds `host_volume_id` (the part it is painted on; null when that part is no longer a
+part, so it prints nothing), `depth_mm`, `painted` (whether any of it is painted) and `settings` (the keys
+it sets). Here it also has `painted_facets` and `coverage_percent` of its host's surface (the part tools
+leave them out: they read the paint).
+
 **Placement fields:** alongside `position`, `bounding_box`, `rotation_degrees` and `scale`, the
 response carries the same placement fields the transform tools return:
 
@@ -3225,6 +3244,11 @@ baked relief. The tints do not need the `mcp_render` shader (`shader_fallback` i
 while the paint is being prepared answers "the scene changed ..."; paint that needs more than the call's wait answers an error naming
 `ORCAMCP_TIMEOUT` and one channel at a time.
 
+`paint: ["painted_modifier"]` tints each painted modifier's area on its part, one colour each, and its
+legend entry names it (`object_id`, `volume_id`, `host_volume_id`) with the `settings` it applies there. A
+painted modifier whose part is no longer a part is left out and named in `tint_notes`. It is refused with
+`texture` in the same picture (their tints share colours: ask them in separate pictures).
+
 **Texture preview.** `texture_preview: true` draws, in place of each previewed part's flat mesh, what `bake_texture_displacement` would make of it: the bake's own capture (`capture_texture_bake`, with the colour settings the bake tool uses) planned (`plan_texture_bake`) with the render's cap (1,000,000 triangles per part) as the triangle budget, on every instance on the plate. A part under the cap is as the unbudgeted panel preview (flat faces harvested); a part whose refinement is over it is **simplified to it in the same plan, never thrown away**: the part reports `simplified_to_cap: true`, `triangles_unsimplified` and a note naming `texture_preview: {resolution_mm: X}`, the value at which it would fit unsimplified (computed from the refinement's size); only a part that is still over the cap (geometry the bake merely preserves) is `too_large` and drawn unbaked. The object form `texture_preview: {resolution_mm, budget_k}` plans with those values (a budget over the cap, or 0, is held to the cap); on a classic part they are not used (`classic_budget_k` is), and the answer says so. For a **classic** part (`pipeline` classic) the bake's preparation (remesh and refinement) is planned first, on a copy, so the preview shows the surface the bake would make (`preparation`: `applied`, `unchanged`, or `paint_lost` when the bake would refuse it; the preview then shows the unprepared mesh). Texture colours draw in the palette's colours, **the part's own colour paint is carried onto the preview** as the bake carries it (so it is still there under the texture's colours), and the rest in the part's colour. It previews each object on the plate that holds texture layers with paint (`needs_bake`); the others draw as usual. When every view fits an object (`fit` `{object_id}`, or a box or point that only some objects reach) only those objects are previewed (`outside_fit` lists the others); otherwise all of them, so fit a view to one object to save time. The work runs on the HTTP thread within the call's wait: kept previews first, then the lightest, so one slow object cannot starve the rest. An object whose preview does not finish is drawn unbaked and listed `timed_out`; one that was never started because the wait ran out is `not_reached` (raise `ORCAMCP_TIMEOUT`). A part over 1,000,000 triangles (before or after the preview) is `too_large` with its count and drawn unbaked; one render draws at most 2 million preview triangles in all (`undrawn: over_render_total` for the rest, which stay cached), and the upload is held to the call's time (`undrawn: draw_deadline`). The previews of the last 4 objects (2 million triangles in all; the answer's `cache` says how much is held) are kept by a content key -- never the captured meshes or images -- one per object, until its layers (the image included), paint, mesh, placement, colour paint or the palette change: a second render of the same state answers `cached: true` at no cost; edits drop the entry, deleted objects are pruned, and a new or opened project drops them all. Each entry answers `texture_preview: {requested, previewed, complete, objects: [{object_id, parts: [{volume_id, triangles_base, triangles_preview, skipped?}], cached, seconds, preparation?, panel_open?, timed_out?, not_reached?, undrawn?, note?}], skipped: [{object_id, reason, next_steps?}], no_texture_layers: [ids], outside_fit?, cache: {objects, triangles, bytes, max_objects, max_triangles}, note?}`; `skipped` lists objects with layers that were not previewed (painted nowhere, with the `paint_object` next step; too large) and `note` says so when nothing at all was previewed. With the texture panel open on an object its strokes since the panel last wrote them into the model are not in the preview (`panel_open`: the panel is not closed, a render changes nothing). `objects_in_frame` boxes are the unbaked parts', and the fit boxes too. Other `paint` channels are refused when painted on a previewed part (they are drawn on the unbaked mesh); `light` works, and shows the relief best at a raking angle. The next steps of `set_texture_displacement`, `paint_object` (mode texture) and `get_texture_displacement` name this render for an object with unbaked paint.
 
 **Section.** `section` removes what lies on the normal's side of a plane and draws the cut: `{"plate_index": 0, "section": {"plane": "z", "at_mm": 15}, "views": [{"preset": "iso", "fit": {"object_id": 0}}]}` on a 30 mm cube shows the lower half with a 900 mm2 dark grey cap (`section_area_mm2`). The faces are computed from the parts' meshes (sliced at the plane, unioned, negative volumes subtracted; the 3D view's `MeshClipper` caps each part on its own and subtracts nothing, so ours matches what prints) on the HTTP thread, so a heavy mesh counts against the call's wait (an error naming `ORCAMCP_TIMEOUT` when it runs out). The cut face of a mesh with an inner cavity shows the cavity as a hole. An object with open edges gets a note: slicing drops an open outline, so its cut face may be missing or too small (`repair_mesh` closes it). A plane that cuts nothing is not an error: the answer's `section.empty` and `notes` say whether it kept or removed every object.
@@ -3800,11 +3824,12 @@ takes the panel's own "Leaving ..." undo step. The answer's `closed_toolbar_tool
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `object_id` | integer | Yes | Object index (0-based) |
-| `selection` | string | Yes | `bands`, `box`, `sphere`, `all`, `visible`, `connected`, `component` or `state` |
-| `mode` | string | No | `color` (default), `support`, `seam`, `fuzzy_skin`, `texture` |
+| `selection` | string | Yes (but see `depth_mm`) | `bands`, `box`, `sphere`, `all`, `visible`, `connected`, `component` or `state` |
+| `mode` | string | No | `color` (default), `support`, `seam`, `fuzzy_skin`, `texture`, `painted_modifier` |
+| `depth_mm` | number | No | `painted_modifier` only: how far into the part the painted area reaches, 0 to 1000 mm (0 = through the part to its nearest unpainted surface). With a selection it is written under the paint's undo step; alone, with no selection, only the depth changes ("Change painted modifier depth") |
 | `texture_layer` | integer 0-7 | `texture` | The slot of the texture displacement layer whose paint this writes. The object must have a layer in that slot. Refused with any other mode |
 | `view` | object | `visible` | `{direction, vector, frame_layer}`: `direction` is a named view (`iso`, `top`, `bottom`, `front`, `back`, `left`, `right`) or `current` (the 3D view's camera now), `vector` is `[x, y, z]`, the direction the view looks along in plate axes (give one of the two); `frame_layer` (0-7) keeps only the facets inside that texture layer's projection frame |
-| `volume_id` | integer | No | Part index (0-based); omit or `-1` for every model part |
+| `volume_id` | integer | No | Part index (0-based); omit or `-1` for every model part. `painted_modifier`: the painted modifier, required |
 | `instance_id` | integer | No | Whose transform reads your coordinates (default 0) |
 | `axis` | string | `bands` | `x`, `y` or `z` — the plate axis the bands run along |
 | `filaments` | array | `bands` + `color` | One 1-based slot per band, split evenly. `0` = unpainted |
@@ -3829,6 +3854,20 @@ takes the panel's own "Leaving ..." undo step. The answer's `closed_toolbar_tool
   adds `texture_layer`, `needs_bake` (some layer of the object is painted, so a bake would change the
   mesh), `plate_index` (the plate of the object's first instance, -1 on none) and, when the layer is now painted on no part, a `next_steps` entry that paints it on the whole object; while paint is unbaked, one that renders `texture_preview`.
   `get_texture_displacement` reads each layer's paint per part; `bake_texture_displacement` turns it into geometry (the answer's `next_steps` names it while paint is unbaked).
+- **Painted modifiers.** `mode: painted_modifier` paints where a painted modifier (`add_volume` type
+  `painted_modifier`) applies its own settings: `volume_id` names the painted modifier (required; without it
+  the answer lists the object's painted modifiers, or names the `add_volume` call that adds one), and its
+  paint lies on its host part's surface, which it shares. States are `painted` (or `enforcer`) and `none`.
+  Every selection works; a `connected` seed `{volume_id, facet}` from `pick_facet` names the host, and is
+  taken as the painted modifier's (the same facets). Before anything is read the modifier is brought onto
+  its host's current mesh, as the app does before every slice (a host repaired or reloaded since). One undo
+  step "Paint Object (painted_modifier)", the depth included when given. The answer adds `volume_id`,
+  `host_volume_id`, `depth_mm`, `depth_changed`, `painted_facets` and `coverage_percent` of the host's
+  surface, and `next_steps` while the modifier is painted nowhere (`paint_object`) or has no settings of its
+  own (`set_object_config` with its `volume_id`). A modifier whose part is no longer a part is refused with
+  the app's words for it ("The part this modifier was painted on has been removed.") and the `delete_object`
+  that removes it. `remap_paint` does not take this mode (one state); `selection: state` does, without
+  `depth_mm`.
 - **`visible`** paints the facets seen from `view`, in any mode: a facet whose normal faces the view
   (from the eye under a perspective `current` camera, along the view direction otherwise) and that no
   facet of any model part of the object hides (a ray from its centroid toward the viewer, started
@@ -4000,7 +4039,7 @@ Read back what is painted, plus the object's brim ears.
 | `object_id` | integer | Yes | Object index (0-based) |
 | `volume_id` | integer | No | Part index (0-based); omit or `-1` for every part |
 | `instance_id` | integer | No | Whose transform reports plate coordinates for paint (default 0). Brim ears always report through instance 0 regardless — see below |
-| `mode` | string | No | Report one mode (`color`, `support`, `seam`, `fuzzy_skin`, `texture`); omit for the four paint modes and the texture layers |
+| `mode` | string | No | Report one mode (`color`, `support`, `seam`, `fuzzy_skin`, `texture`, `painted_modifier`); omit for the four paint modes and the texture layers. `painted_modifier` reports the object's painted modifiers (one with `volume_id`): each with `host_volume_id`, `depth_mm`, `painted_facets`, `coverage_percent` of its host's surface and `settings`; an object with none answers `volumes: []` and a `next_steps` to `add_volume` |
 | `texture_layer` | integer | No | With `mode: texture`: one layer slot (0-7); omit for every layer of the object's stack |
 
 **Response includes:** the object's plate-frame `bounding_box` and `original_facets_total`,
@@ -4027,7 +4066,7 @@ Reset an annotation, the equivalent of the gizmo's "Remove all".
 |-----------|------|----------|-------------|
 | `object_id` | integer | Yes | Object index (0-based) |
 | `volume_id` | integer | No | Part index (0-based); omit or `-1` for every part |
-| `mode` | string | No | Which annotation; omit to clear the four paint modes (texture masks are not print paint and stay) |
+| `mode` | string | No | Which annotation; omit to clear the four paint modes (texture masks and painted modifiers' areas stay). `painted_modifier` clears the painted area of the painted modifiers (one with `volume_id`): the volumes, their depth and settings stay; one undo step "Clear Object Paint (painted_modifier)" |
 | `texture_layer` | integer | No | With `mode: texture`: clear this slot's mask (0-7); omit to clear all eight. The layers stay. A texture panel open on the object is closed first, so strokes it has not written back are cleared too; that close is the panel's own undo step, taken even when nothing is left to clear |
 
 There is no `instance_id`: paint lives on the volume and every instance shares it, so
@@ -4967,6 +5006,10 @@ nothing to suggest has no `next_steps`.
 | `split_object` `to: "objects"`, `merge_parts` | `get_mesh_health`, `get_object_components` | as for `load_model`: a new object with the mesh warning icon, or a part of several shells |
 | `add_volume` | `move_object` with `object_id` and `volume_id` | a primitive: it stands beside the object |
 | `add_volume`, `set_volume_type` | `set_object_config` with `object_id` and `volume_id` | the volume is a modifier, which changes only the settings it is given |
+| `add_volume` (`type: painted_modifier`), `paint_object` (`mode: painted_modifier`) | `paint_object` with `mode: painted_modifier`, its `volume_id`, `selection: visible`, `view: {direction: front}`, `state: painted` (a starting point: the `why` says to put the faces meant in the selection) | the painted modifier is painted nowhere, so it applies nowhere |
+| `add_volume` (`type: painted_modifier`), `paint_object` (`mode: painted_modifier`) | `set_object_config` with `object_id` and the painted modifier's `volume_id` | it has no settings of its own, so it changes nothing where it is painted |
+| `get_object_paint` (`mode: painted_modifier`) | `add_volume` with `type: painted_modifier` and `host_volume_id` | the object has no painted modifier |
+| `set_volume_type` | `delete_object` with `object_id` and the first `volume_id` (`why` names every one) | the volume was a part with painted modifiers on it, which now print nothing |
 | `assemble_objects` | `get_object_info` of the assembly | always: its volumes, with their boxes |
 | `set_instance_count` | `arrange_objects` with `all_plates: true` | an added instance stands on no plate: a plate's arrange takes only the instances it holds |
 | | `arrange_objects` with the `plate_index` of the new instances | an added instance overlaps another instance on its plate, or stands partly off it: Add instance puts each a small step from the last |
