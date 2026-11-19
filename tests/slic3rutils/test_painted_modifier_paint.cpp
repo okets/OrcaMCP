@@ -419,3 +419,51 @@ TEST_CASE("get_object_paint and clear_object_paint name painted_modifier as a mo
     const Scene scene;
     CHECK(first_model_part_id(*scene.object) == scene.host_id());
 }
+
+// ---- Review fixes ----
+
+TEST_CASE("unpainted paint is summarised without a selector, exactly as the selector would", "[McpPaint][orcamcp]")
+{
+    // What the selector reports for no paint (summarize_selector over a fresh selector): one row, state none, every
+    // original facet, the whole area.
+    const TriangleMesh                  mesh(its_make_cube(10., 10., 10.));
+    const std::vector<PaintedStateInfo> fast = summarize_paint_data(mesh, PaintData{});
+    REQUIRE(fast.size() == 1);
+    CHECK(fast[0].state == 0);
+    CHECK(fast[0].facet_count == 12);
+    CHECK_THAT(fast[0].area_ratio, WithinAbs(1.0, 1e-9));
+    // And painted data still goes through the selector: one face of six.
+    Scene scene;
+    REQUIRE(apply_facet_states(*scene.pm, PaintMode::PaintedModifier, states_facing_x(scene.pm->mesh().its), true));
+    const std::vector<PaintedStateInfo> painted = read_volume_paint(*scene.pm, PaintMode::PaintedModifier);
+    REQUIRE(painted.size() == 2);
+    CHECK(painted[1].state == 1);
+    CHECK_THAT(painted[1].area_ratio, WithinAbs(1. / 6., 1e-6));
+}
+
+TEST_CASE("a depth-only call refuses a selection's arguments given without a selection", "[McpPaint][orcamcp]")
+{
+    CHECK(stray_selection_argument_refusal({{"depth_mm", 2}}) == std::nullopt);
+    for (const char* key : {"box", "sphere", "seed", "view", "state", "replace"}) {
+        const auto refusal = stray_selection_argument_refusal({{"depth_mm", 2}, {key, json::object()}});
+        INFO(key);
+        REQUIRE(refusal.has_value());
+        CHECK(mentions(*refusal, std::string(key) + " belongs to a selection"));
+    }
+}
+
+TEST_CASE("unpainting a whole painted modifier by state is pointed at the clear", "[McpPaint][orcamcp]")
+{
+    const auto refusal = painted_modifier_unpaint_refusal(PaintChannel(PaintMode::PaintedModifier), 1, 0);
+    REQUIRE(refusal.has_value());
+    CHECK(mentions(*refusal, "clear_object_paint"));
+    CHECK(painted_modifier_unpaint_refusal(PaintChannel(PaintMode::PaintedModifier), 0, 1) == std::nullopt);
+    CHECK(painted_modifier_unpaint_refusal(PaintChannel(PaintMode::Support), 1, 0) == std::nullopt);
+}
+
+TEST_CASE("a former host that changes type again orphans nothing new", "[McpPaint][orcamcp]")
+{
+    Scene scene;
+    scene.host->set_type(ModelVolumeType::PARAMETER_MODIFIER); // the painted modifier is orphaned already
+    CHECK(painted_modifiers_orphaned_by_type_change(*scene.object, scene.host_id(), ModelVolumeType::NEGATIVE_VOLUME).empty());
+}

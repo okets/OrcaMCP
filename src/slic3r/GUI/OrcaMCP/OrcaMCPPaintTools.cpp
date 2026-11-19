@@ -463,6 +463,8 @@ nlohmann::json paint_without_selection(const nlohmann::json& params)
             return error_response(*refusal);
         if (const auto refusal = missing_selection_refusal(channel, false, params.contains("depth_mm")))
             return error_response(*refusal);
+        if (const auto refusal = stray_selection_argument_refusal(params))
+            return error_response(*refusal);
         return set_painted_modifier_depth(params, channel);
     });
 }
@@ -1115,6 +1117,8 @@ nlohmann::json paint_by_state(const nlohmann::json& params)
     int         to   = 0;
     if (!parse_state_param(params, mode, k_repaint_from, from, error) || !parse_state_param(params, mode, k_paint_with, to, error))
         return error_response(error);
+    if (const auto refusal = painted_modifier_unpaint_refusal(channel, from, to))
+        return error_response(*refusal);
     return run_paint_remap(params, {channel, {{from, to}}, _u8L("Paint Object") + " (" + paint_mode_name(mode) + ")", {{"selection", "state"}}, "paint_object"});
 }
 
@@ -1948,9 +1952,10 @@ void OrcaMCPServer::register_paint_tools()
                             texture_will_change |= channel.mode == PaintMode::Texture;
                         }
 
-                // Any other open toolbar tool is closed right before the change, and only for a texture mask that will
-                // change: closing takes its own undo step, which a call that changes nothing must not leave.
-                if (texture_will_change && closed_tool.empty())
+                // Any other open toolbar tool is closed right before the change, and only for one: a paint panel open on
+                // the object keeps its own copy of the paint and would write the cleared paint back with its next stroke;
+                // closing takes its own undo step, which a call that changes nothing must not leave.
+                if (will_change && closed_tool.empty())
                     if (const auto failed = close_toolbar_tool_for_change(*plater, target.object_id, target.object->volumes.size(), closed_tool))
                         return *failed;
 
@@ -2023,7 +2028,10 @@ void OrcaMCPServer::register_paint_tools()
                     if (selection.texture)
                         volume["texture"] = {{"layers", texture_paint_layers_cleared_json(selection.texture_slots)}};
                     // A painted modifier keeps its volume, depth and settings: say so beside its cleared area.
-                    volume.update(painted_modifier_row_fields(*target.object, std::size_t(target.volume_ids[i])));
+                    if (mv->is_painted_modifier()) {
+                        volume.update(painted_modifier_row_fields(*target.object, std::size_t(target.volume_ids[i])));
+                        volume.update(painted_modifier_coverage_json(*mv));
+                    }
                     volumes.push_back(std::move(volume));
                 }
 

@@ -207,7 +207,9 @@ std::vector<int> painted_modifiers_orphaned_by_type_change(const ModelObject& ob
     // Turning a part into a part changes nothing, and a painted modifier named by another volume's id
     // is that volume's own; only a host leaving MODEL_PART orphans one (PrintApply reads the region of
     // a painted modifier through the part it paints).
-    if (to == ModelVolumeType::MODEL_PART || volume_id < 0 || std::size_t(volume_id) >= object.volumes.size())
+    // A volume that is not a part now hosts nothing: its painted modifiers were orphaned when it stopped being one.
+    if (to == ModelVolumeType::MODEL_PART || volume_id < 0 || std::size_t(volume_id) >= object.volumes.size() ||
+        !object.volumes[std::size_t(volume_id)]->is_model_part())
         return {};
     const ObjectID host_id = object.volumes[std::size_t(volume_id)]->id();
     std::vector<int> ids;
@@ -237,6 +239,24 @@ std::optional<std::string> depth_argument_refusal(const PaintChannel& channel, c
         return std::string("depth_mm belongs to mode painted_modifier: it is how far a painted modifier reaches into its part");
     std::optional<float> depth;
     return read_depth_mm(params, depth);
+}
+
+std::optional<std::string> stray_selection_argument_refusal(const nlohmann::json& params)
+{
+    for (const char* key : {"box", "sphere", "bands", "filaments", "axis", "from", "to", "seed", "angle", "view", "component",
+                            "state", "filament", "match_state", "match_filament", "replace"})
+        if (params.contains(key))
+            return std::string(key) + " belongs to a selection, and this call has none: add selection to paint (depth_mm may come "
+                                      "with it), or leave " + key + " out to change only the depth";
+    return std::nullopt;
+}
+
+std::optional<std::string> painted_modifier_unpaint_refusal(const PaintChannel& channel, int from, int to)
+{
+    if (channel.mode != PaintMode::PaintedModifier || from != 1 || to != 0)
+        return std::nullopt;
+    return std::string("selection state from painted to none unpaints the whole painted modifier: clear_object_paint with mode "
+                       "painted_modifier and its volume_id does that, and leaves nothing that reads as painted");
 }
 
 int seed_volume_for_mode(const ModelObject& object, const PaintChannel& channel, int painted_modifier_id, int seed_volume_id)

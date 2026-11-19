@@ -1015,7 +1015,7 @@ nlohmann::json add_painted_modifier_on_main_thread(Plater& plater, int object_id
                              {"object_id", object_id},
                              {"volume", volume_row_json(object, std::size_t(volume_id))},
                              {"volumes", volume_rows_json(object)},
-                             {"host_volume_id", request.host_volume_id},
+                             {"host_volume_id", index_of(object, host)}, // after the list re-sorted the volumes
                              {"depth_mm", double(request.depth_mm.value_or(0.f))},
                              {"painted_facets", 0}}; // the list adds it unpainted: paint_object paints it
     report_placement(answer, object_id);

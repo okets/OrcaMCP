@@ -519,7 +519,7 @@ static void capture_paint(const OrcaMCP::RenderRequest& asked, PartPlate& plate,
                 const OrcaMCP::PaintChannel channel = OrcaMCP::paint_channel_of(job.tints[t]);
                 if (channel.mode == OrcaMCP::PaintMode::PaintedModifier) {
                     // A painted modifier's tint belongs to its own modifier alone -- never to a part, never to another modifier's.
-                    if (!is_painted_modifier || job.tints[t].volume_id != int(vi))
+                    if (!is_painted_modifier || job.tints[t].object_id != int(oi) || job.tints[t].volume_id != int(vi))
                         continue;
                 } else if (is_painted_modifier)
                     continue;   // a modifier carries only its own paint

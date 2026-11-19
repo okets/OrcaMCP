@@ -101,6 +101,15 @@ std::optional<std::string> missing_selection_refusal(const PaintChannel& channel
 // gizmo's range (read_depth_mm).
 std::optional<std::string> depth_argument_refusal(const PaintChannel& channel, const nlohmann::json& params);
 
+// Why a paint_object call without a selection cannot carry a selection's arguments (box, sphere, bands, seed, view,
+// component, state, ...): a depth-only call would change the depth and paint nothing, reading as a paint that worked.
+// Nothing when none is given.
+std::optional<std::string> stray_selection_argument_refusal(const nlohmann::json& params);
+
+// Why selection state cannot unpaint a painted modifier's painted facets (from 1 to 0): what is left is split facets
+// with nothing painted, which reads as painted; clear_object_paint resets it. Nothing for any other mode or mapping.
+std::optional<std::string> painted_modifier_unpaint_refusal(const PaintChannel& channel, int from, int to);
+
 // The volume a connected fill's facet seed starts on: pick_facet names the part a ray hit, which for a painted
 // modifier is its host -- the same mesh and the same facet numbers -- so in mode painted_modifier a seed on the
 // host of `painted_modifier_id` is that modifier's. Any other seed is left as given.

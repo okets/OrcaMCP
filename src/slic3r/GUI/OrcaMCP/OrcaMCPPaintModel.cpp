@@ -344,6 +344,10 @@ std::vector<PaintedStateInfo> summarize_paint_data(const TriangleMesh& mesh, con
 {
     if (mesh.its.indices.empty())
         return {};
+    // Nothing painted: every original facet is unpainted, the whole surface. No selector -- its constructor walks the
+    // whole mesh, and the main-thread readers (get_object_info's painted modifier rows) ask this for every volume.
+    if (data.triangles_to_split.empty())
+        return {PaintedStateInfo{0, int(mesh.its.indices.size()), its_surface_area(mesh.its) > 0.0 ? 1.0 : 0.0}};
     TriangleSelector selector(mesh);
     selector.deserialize(data, false);
     return summarize_selector(selector, its_surface_area(mesh.its));

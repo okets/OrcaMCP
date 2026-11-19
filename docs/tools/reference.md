@@ -3867,7 +3867,9 @@ takes the panel's own "Leaving ..." undo step. The answer's `closed_toolbar_tool
   own (`set_object_config` with its `volume_id`). A modifier whose part is no longer a part is refused with
   the app's words for it ("The part this modifier was painted on has been removed.") and the `delete_object`
   that removes it. `remap_paint` does not take this mode (one state); `selection: state` does, without
-  `depth_mm`.
+  `depth_mm`, but not from `painted` to `none`, which `clear_object_paint` does. A depth-only call (no
+  `selection`) refuses a selection's own arguments (`box`, `state`, `seed`, ...), which would otherwise be
+  ignored.
 - **`visible`** paints the facets seen from `view`, in any mode: a facet whose normal faces the view
   (from the eye under a perspective `current` camera, along the view direction otherwise) and that no
   facet of any model part of the object hides (a ray from its centroid toward the viewer, started
@@ -4066,7 +4068,7 @@ Reset an annotation, the equivalent of the gizmo's "Remove all".
 |-----------|------|----------|-------------|
 | `object_id` | integer | Yes | Object index (0-based) |
 | `volume_id` | integer | No | Part index (0-based); omit or `-1` for every part |
-| `mode` | string | No | Which annotation; omit to clear the four paint modes (texture masks and painted modifiers' areas stay). `painted_modifier` clears the painted area of the painted modifiers (one with `volume_id`): the volumes, their depth and settings stay; one undo step "Clear Object Paint (painted_modifier)" |
+| `mode` | string | No | Which annotation; omit to clear the four paint modes (texture masks and painted modifiers' areas stay). `painted_modifier` clears the painted area of the painted modifiers (one with `volume_id`): the volumes, their depth and settings stay; one undo step "Clear Object Paint (painted_modifier)". In any mode, a paint panel open on the object is closed first when something will be cleared, or its next stroke would write the old paint back |
 | `texture_layer` | integer | No | With `mode: texture`: clear this slot's mask (0-7); omit to clear all eight. The layers stay. A texture panel open on the object is closed first, so strokes it has not written back are cleared too; that close is the panel's own undo step, taken even when nothing is left to clear |
 
 There is no `instance_id`: paint lives on the volume and every instance shares it, so
