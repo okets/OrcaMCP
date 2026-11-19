@@ -368,6 +368,8 @@ TEST_CASE("paint_object without a selection is refused, except a painted modifie
     CHECK(missing_selection_refusal(PaintChannel(PaintMode::PaintedModifier), false, true) == std::nullopt);
     const auto neither = missing_selection_refusal(PaintChannel(PaintMode::PaintedModifier), false, false);
     REQUIRE(neither.has_value());
+    CHECK(mentions(*neither, "Which faces should the painted modifier cover?"));
+    CHECK(mentions(*neither, "pick_facet"));
     CHECK(mentions(*neither, "depth_mm"));
     CHECK(missing_selection_refusal(PaintChannel(PaintMode::Color), true, false) == std::nullopt);
 }

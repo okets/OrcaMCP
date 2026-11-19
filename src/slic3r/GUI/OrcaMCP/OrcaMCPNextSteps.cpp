@@ -317,14 +317,10 @@ std::vector<NextStep> painted_modifier_paint_next_steps(int object_id, int volum
     if (!painted)
         steps.push_back({"paint_object",
                          what + " is a painted modifier painted nowhere, so it applies nowhere: paint_object with mode "
-                                "painted_modifier paints where it goes; replace the call's selection with the faces to change "
-                                "-- a box, a sphere, connected from a pick_facet, or visible from a view",
-                         {{"object_id", object_id},
-                          {"volume_id", volume_id},
-                          {"mode", "painted_modifier"},
-                          {"selection", "visible"},
-                          {"view", {{"direction", "front"}}},
-                          {"state", "painted"}}});
+                                "painted_modifier paints where it goes. This step names no faces, on purpose: add the selection "
+                                "that covers the faces to change (box, sphere, connected with a seed from pick_facet, visible "
+                                "with a view) and state painted. Sent as it is, it is refused, asking which faces",
+                         {{"object_id", object_id}, {"volume_id", volume_id}, {"mode", "painted_modifier"}}});
     if (!has_settings)
         steps.push_back({"set_object_config",
                          "a painted modifier changes only the settings it is given: set_object_config with volume_id " +

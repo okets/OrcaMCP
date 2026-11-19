@@ -146,8 +146,8 @@ std::vector<NextStep> support_paint_next_steps(int object_id, bool support_enabl
 std::vector<NextStep> texture_paint_next_steps(int object_id, int slot, bool painted, bool needs_bake);
 
 // What a painted modifier that fixes nothing yet leads to: painted nowhere it applies nowhere, so paint_object with
-// mode painted_modifier (its `visible` selection and `view` are a starting point: the faces to change go in their
-// place -- a box, a sphere, `connected` from a pick_facet, or `visible` from a view); and a modifier with no settings
+// mode painted_modifier -- with no selection: only the caller knows which faces, and a step that guessed some would
+// paint them for an agent that runs it as it is; sent bare it is refused, asking --; and a modifier with no settings
 // of its own changes nothing it would apply, so set_object_config with volume_id gives them. Nothing once both hold.
 std::vector<NextStep> painted_modifier_paint_next_steps(int object_id, int volume_id, bool painted, bool has_settings);
 

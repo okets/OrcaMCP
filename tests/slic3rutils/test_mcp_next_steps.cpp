@@ -489,14 +489,14 @@ TEST_CASE("A painted modifier painted nowhere points at painting it, then at its
     const std::vector<NextStep> both = painted_modifier_paint_next_steps(0, 2, false, false);
     REQUIRE(both.size() == 2);
     CHECK(both[0].tool == "paint_object");
-    CHECK(both[0].arguments == json{{"object_id", 0}, {"volume_id", 2}, {"mode", "painted_modifier"}, {"selection", "visible"},
-                                    {"view", {{"direction", "front"}}}, {"state", "painted"}});
+    // No faces: only the caller knows them, and an agent running the step as it is must be asked, not given a guess.
+    CHECK(both[0].arguments == json{{"object_id", 0}, {"volume_id", 2}, {"mode", "painted_modifier"}});
     CHECK(mentions(both[0].why, "volume 2 of object 0"));
-    // The `visible` selection is a starting point: the why sends the agent to the faces it means.
     CHECK(mentions(both[0].why, "box"));
     CHECK(mentions(both[0].why, "sphere"));
     CHECK(mentions(both[0].why, "pick_facet"));
     CHECK(mentions(both[0].why, "visible"));
+    CHECK(mentions(both[0].why, "refused, asking which faces"));
     CHECK(unusable(both[0]) == std::nullopt);
 
     CHECK(both[1].tool == "set_object_config");

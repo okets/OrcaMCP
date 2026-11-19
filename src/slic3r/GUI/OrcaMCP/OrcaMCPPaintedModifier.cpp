@@ -225,10 +225,11 @@ std::optional<std::string> missing_selection_refusal(const PaintChannel& channel
 {
     if (has_selection || (has_depth && channel.mode == PaintMode::PaintedModifier))
         return std::nullopt;
-    std::string message = "selection is required: bands, box, sphere, all, visible, connected, component or state";
     if (channel.mode == PaintMode::PaintedModifier)
-        message += " (or depth_mm alone, to change only the painted modifier's depth)";
-    return message;
+        return std::string("Which faces should the painted modifier cover? Add a selection: box (with box), sphere (with sphere), "
+                           "connected (with a seed from pick_facet), visible (with a view), all, component or bands, and state "
+                           "painted. Or send depth_mm alone to change only its depth");
+    return std::string("selection is required: bands, box, sphere, all, visible, connected, component or state");
 }
 
 std::optional<std::string> depth_argument_refusal(const PaintChannel& channel, const nlohmann::json& params)
